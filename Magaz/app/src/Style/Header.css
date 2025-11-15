@@ -1,0 +1,44 @@
+header{
+    margin: 36px;
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 36px;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center; 
+    width: auto; 
+}
+
+.head{
+    display: flex;
+    align-items: center;
+    text-align: right;
+}
+
+header img{
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0; 
+}
+header h5{
+    font-size: 28px;
+    font-weight: 500;
+    padding: 0;
+    margin: 0; 
+    margin-left: 12px;
+    line-height: 1;
+    color: #000000; 
+}
+
+header a{
+    padding: 16px;
+    border-radius: 1000px;
+    text-decoration: none;
+    transition: 0.3s ease-in-out;
+    background-color: white;
+}
+
+header a:hover{
+    background-color: #E5E5E5;
+}

@@ -1,0 +1,111 @@
+@import url('https://fonts.googleapis.com/css2?family=Parkinsans:wght@498&display=swap');
+
+body {
+    font-family: "Parkinsans", sans-serif;
+    font-optical-sizing: auto;
+    margin: 0;
+    padding: 0;
+    background-color: #ffffff;
+    text-align: center;
+    font-style: normal;
+}
+
+a {
+    text-decoration: none;
+}
+
+.text-section {
+    padding: 264px 20px 144px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.main-title {
+    font-size: 64px;
+    font-weight: 600px;
+    margin: 0 0 16px 0;
+    color: #000000;
+}
+
+.subtitle {
+    font-size: 16px;
+    color: #555555;
+    line-height: 1.4;
+    margin-bottom: 50px;
+    font-weight: 400px;
+}
+
+.image-grid-section {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    padding: 0 20px 50px;
+    max-width: 1200px;
+    margin: 0 auto;
+    justify-content: center;
+}
+
+.card-gruop h3 {
+    text-align: left;
+    margin-top: 6px;
+    margin-bottom: 3px;
+    font-size: 18px;
+    font-weight: 550;
+}
+
+.card-gruop h2 {
+    text-align: left;
+    margin: 6px 0;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.card {
+    aspect-ratio: 3 / 4;
+    overflow: hidden;
+    border-radius: 16px;
+    box-shadow: 0 px 0px rgba(0, 0, 0, 0);
+    transition: 0.3s ease-in-out;
+}
+
+.a-card {
+    color: #000000;
+    padding: 0px;
+    border-radius: 16px;
+    background-color: #ffffff;
+    transition: 0.3s ease-in-out, padding 0.3s ease-in-out;
+}
+
+.a-card:hover {
+    background-color: #0000001a;
+    border-radius: 28px;
+    padding: 12px;
+}
+
+.a-card:hover .card {
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.15);
+}
+
+.card-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+@media (max-width: 768px) {
+    .image-grid-section {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .main-title {
+        font-size: 40px;
+    }
+}
+
+@media (max-width: 480px) {
+    .image-grid-section {
+        grid-template-columns: 1fr;
+    }
+}
