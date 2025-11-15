@@ -1,16 +1,12 @@
-# React + Vite
+# The frontend is written using React + Vite
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Frontend of an online clothing store, created using React + Vite
 
-Currently, two official plugins are available:
+## How to run a project locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+[Install Node.js](https://nodejs.org/en/download)
+...\DIPLOM\Magaz\app> npm run dev
 
-## React Compiler
+## What I used when creating the design for Frontend
 
-The React Compiler is not enabled on this template. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+[Figma](https://www.figma.com/design/qVbePWrdnfdeheaH8JySH6/Frontend-for-a-clothing-store?node-id=0-1&t=SrIYAZWya3ybrzki-1)
