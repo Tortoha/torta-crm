@@ -11,11 +11,13 @@ The frontend is written using React + Vite, and the backend is written using the
 ### CRM
 
 [Frontend](https://github.com/Tortoha/Diplom/tree/main)
+
 [Backend](https://github.com/Tortoha/Diplom/tree/main)
 
 ### Clothing store
 
 [Frontend](https://github.com/Tortoha/Diplom/tree/main/Magaz/app)
+
 [Backend](https://github.com/Tortoha/Diplom/tree/main/Magaz/backend)
 
 
