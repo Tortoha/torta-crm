@@ -75,7 +75,7 @@ function Login() {
                                 type="password"
                                 id="password"
                                 name="password"
-                                placeholder="password"
+                                placeholder="Password"
                                 value={password}
                                 onChange={handlePasswordChange}
                                 autoComplete="current-password"
