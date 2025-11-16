@@ -13,7 +13,7 @@ function Login() {
     const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
 
     // Запрещённые символы и пробелы для пароля
-    const forbiddenCharsRegex = /[!?#$%&*+=()<>{}|^`'"\\\s]/g;
+    const forbiddenCharsRegex = /[;:.,/#$%&*+=()<>{}|^`'"\\\s]/g;
 
     // Email обработчик: удаляет запрещённые символы по вводу
     const handleEmailChange = (e) => {
@@ -33,10 +33,10 @@ function Login() {
         if (pwd.length < 8 || pwd.length > 24) {
             errors.push("Must be 8–24 characters");
         }
-        if (!/[A-Za-z]/.test(pwd)) {
+        else if (!/[A-Za-z]/.test(pwd)) {
             errors.push("Must be at least 1 letter");
         }
-        if (!/\d/.test(pwd)) {
+        else if (!/\d/.test(pwd)) {
             errors.push("Must be at least 1 digit");
         }
         return errors;

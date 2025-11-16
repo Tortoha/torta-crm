@@ -20,7 +20,7 @@ function Regis() {
     const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
 
     // Запрещённые символы для пароля и повтор пароля
-    const forbiddenPasswordCharsRegex = /[;:!?#$%&*+=()<>{}|^`'"\\\s]/g;
+    const forbiddenPasswordCharsRegex = /[;:.,/#$%&*+=()<>{}|^`'"\\\s]/g;
 
     // Имя: только буквы и цифры
     const handleNameChange = (e) => {
@@ -50,10 +50,10 @@ function Regis() {
         if (pwd.length < 8 || pwd.length > 24) {
             errors.push("Must be 8–24 characters");
         }
-        if (!/[A-Za-z]/.test(pwd)) {
+        else if (!/[A-Za-z]/.test(pwd)) {
             errors.push("Must be at least 1 letter");
         }
-        if (!/\d/.test(pwd)) {
+        else if (!/\d/.test(pwd)) {
             errors.push("Must be at least 1 digit");
         }
         return errors;
