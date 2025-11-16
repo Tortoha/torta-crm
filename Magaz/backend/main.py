@@ -20,7 +20,7 @@ db_config = {
     'host': 'localhost',
     'user': 'root',
     'password': 'root',
-    'database': 'magaz'
+    'database': 'crmdb'
 }
 
 @app.get("/api-products")
