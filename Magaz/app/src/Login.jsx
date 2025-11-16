@@ -58,7 +58,6 @@ function Login() {
                 <div className="reg">
                     <form onSubmit={e => e.preventDefault()}>
                         <div className="secsh">
-                            <label htmlFor="email">Email</label>
                             <input
                                 type="email"
                                 id="email"
@@ -71,13 +70,12 @@ function Login() {
                             />
                             {emailError && <p className="error">{emailError}</p>}
                         </div>
-                        <div className="secsh">
-                            <label htmlFor="password">Password</label>
+                        <div className="secsh0">
                             <input
                                 type="password"
                                 id="password"
                                 name="password"
-                                placeholder="Password"
+                                placeholder="password"
                                 value={password}
                                 onChange={handlePasswordChange}
                                 autoComplete="current-password"

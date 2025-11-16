@@ -39,7 +39,7 @@ function Regis() {
                                 {error && <p className="error">{error}</p>}
                             </div>
                             <div className="secsh1">
-                                <Link to="/"><input className="button3" type="button" value="Next" disabled={!isValid} /></Link>
+                                <Link to="/"><input className="button1" type="button" value="Next" disabled={!isValid} /></Link>
                             </div>
                             <div className="secsh1">
                                 <Link to="/login"><input className="button2" type="button" value="Sign in" /></Link>
