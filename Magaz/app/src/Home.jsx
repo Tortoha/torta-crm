@@ -10,8 +10,8 @@ function Home() {
       <Header />
 
       <section className="text-section">
-        <h1 className="main-title">Random text then<br />replacement</h1>
-        <p className="subtitle">Lorem ipsum dolor sit amet,<br />consectetur adipiscing elit.</p>
+        <h1 className="main-title">Invest in Pieces That Stand<br />the Test of Time</h1>
+        <p className="subtitle">Premium Materials, Honest Prices — Luxury<br />You Can Actually Afford</p>
       </section>
 
       <Grid/>
