@@ -1,5 +1,6 @@
 fastapi
 uvicorn
-sqlalchemy
-aiosqlite
+pyjwt
 mysql-connector-python
+pydantic
+python-dotenv

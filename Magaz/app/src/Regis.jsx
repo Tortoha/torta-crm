@@ -1,168 +1,162 @@
 import React, { useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
-import { Link } from "react-router-dom";
 
 function Regis() {
-    const [name, setName] = useState("");
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [repeatPassword, setRepeatPassword] = useState("");
-    const [nameError, setNameError] = useState("");
-    const [emailError, setEmailError] = useState("");
-    const [passwordErrors, setPasswordErrors] = useState([]);
-    const [repeatError, setRepeatError] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [repeatPassword, setRepeatPassword] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [passwordErrors, setPasswordErrors] = useState([]);
+  const [repeatError, setRepeatError] = useState("");
+  const [generalError, setGeneralError] = useState("");
+  const navigate = useNavigate();
 
-    // Только буквы и цифры для имени (любого регистра)
-    const allowedNameRegex = /^[a-zA-Z0-9]*$/;
+  const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
+  const forbiddenPasswordCharsRegex = /[;:.,/#$%&*+=()<>{}|^`'"\\\s]/g;
 
-    // Email разрешённые символы: a-z, A-Z, 0-9, точка, дефис, подчёркивание, @
-    const allowedEmailRegex = /^[a-zA-Z0-9._@-]*$/;
-    const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
+  const handleNameChange = (e) => {
+    const value = e.target.value.replace(/[^a-zA-Z0-9]/g, "");
+    setName(value);
+    setNameError(value.length < 2 ? "Must be at least 2 characters" : "");
+  };
 
-    // Запрещённые символы для пароля и повтор пароля
-    const forbiddenPasswordCharsRegex = /[;:.,/#$%&*+=()<>{}|^`'"\\\s]/g;
+  const handleEmailChange = (e) => {
+    const value = e.target.value.replace(/[^a-zA-Z0-9._@-]/g, "");
+    setEmail(value);
+    setEmailError(!emailFormatRegex.test(value) ? "Incorrect email" : "");
+  };
 
-    // Имя: только буквы и цифры
-    const handleNameChange = (e) => {
-        const value = e.target.value.replace(/[^a-zA-Z0-9]/g, ""); // сразу убираем лишнее
-        setName(value);
-        if (value.length < 1) {
-            setNameError("Must be at least 1 characters");
-        } else {
-            setNameError("");
-        }
-    };
+  const validatePassword = (pwd) => {
+    let errors = [];
+    if (pwd.length < 8 || pwd.length > 24) {
+      errors.push("Must be 8–24 characters");
+    }
+    else if (!/[A-Za-z]/.test(pwd)) {
+      errors.push("Must be at least 1 letter");
+    }
+    else if (!/\d/.test(pwd)) {
+      errors.push("Must be at least 1 digit");
+    }
+    return errors;
+  };
 
-    // Email: только разрешённые символы и формат
-    const handleEmailChange = (e) => {
-        let value = e.target.value.replace(/[^a-zA-Z0-9._@-]/g, "");
-        setEmail(value);
-        if (!emailFormatRegex.test(value)) {
-            setEmailError("Incorrect email");
-        } else {
-            setEmailError("");
-        }
-    };
+  const handlePasswordChange = (e) => {
+    const value = e.target.value.replace(forbiddenPasswordCharsRegex, "");
+    setPassword(value);
+    setPasswordErrors(validatePassword(value));
+    setRepeatError(repeatPassword && value !== repeatPassword
+      ? "Passwords do not match" : "");
+  };
 
-    // Подходящие требования к паролю — от 8 до 24 символов, хотя бы одна буква и хотя бы одна цифра
-    const validatePassword = (pwd) => {
-        let errors = [];
-        if (pwd.length < 8 || pwd.length > 24) {
-            errors.push("Must be 8–24 characters");
-        }
-        else if (!/[A-Za-z]/.test(pwd)) {
-            errors.push("Must be at least 1 letter");
-        }
-        else if (!/\d/.test(pwd)) {
-            errors.push("Must be at least 1 digit");
-        }
-        return errors;
-    };
+  const handleRepeatPasswordChange = (e) => {
+    const value = e.target.value.replace(forbiddenPasswordCharsRegex, "");
+    setRepeatPassword(value);
+    setRepeatError(value !== password ? "Passwords do not match" : "");
+  };
 
-    // Пароль: запрещённые символы не вводятся
-    const handlePasswordChange = (e) => {
-        const value = e.target.value.replace(forbiddenPasswordCharsRegex, "");
-        setPassword(value);
-        setPasswordErrors(validatePassword(value));
-        if (repeatPassword && value !== repeatPassword) {
-            setRepeatError("Passwords do not match");
-        } else {
-            setRepeatError("");
-        }
-    };
+  const isValid = (
+    !nameError && !emailError &&
+    passwordErrors.length === 0 && !repeatError &&
+    name.length >= 2 && email.length >= 5 &&
+    password.length >= 8 && password === repeatPassword
+  );
 
-    // Повтор пароля: запрещённые символы не вводятся, сравнение с основным паролем
-    const handleRepeatPasswordChange = (e) => {
-        const value = e.target.value.replace(forbiddenPasswordCharsRegex, "");
-        setRepeatPassword(value);
-        if (value !== password) {
-            setRepeatError("Passwords do not match");
-        } else {
-            setRepeatError("");
-        }
-    };
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setGeneralError("");
+    if (!isValid) return;
+    try {
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ name, email, password })
+      });
+      if (res.ok) {
+        navigate("/");
+        window.location.reload();
+      } else {
+        const data = await res.json();
+        setGeneralError(data.detail || "Registration failed");
+      }
+    } catch {
+      setGeneralError("Network error");
+    }
+  };
 
-    const isValid =
-        !nameError &&
-        !emailError &&
-        passwordErrors.length === 0 &&
-        !repeatError &&
-        name.length >= 2 &&
-        email.length >= 5 &&
-        password.length >= 8 &&
-        password === repeatPassword;
-
-    return (
-        <div className="regist">
-            <section className="regis">
-                <h1>Create Account</h1>
-                <div className="reg" id="r">
-                    <form onSubmit={(e) => e.preventDefault()}>
-                        <div className="secsh2">
-                            <input
-                                type="text"
-                                id="username"
-                                name="username"
-                                placeholder="Your name"
-                                value={name}
-                                onChange={handleNameChange}
-                                required
-                            />
-                            {nameError && <p className="error">{nameError}</p>}
-                        </div>
-                        <div className="secsh0">
-                            <input
-                                type="email"
-                                id="email"
-                                name="email"
-                                placeholder="example@email.com"
-                                value={email}
-                                onChange={handleEmailChange}
-                                required
-                            />
-                            {emailError && <p className="error">{emailError}</p>}
-                        </div>
-                        <div className="secsh0">
-                            <input
-                                type="password"
-                                id="password"
-                                name="password"
-                                placeholder="Create password"
-                                value={password}
-                                onChange={handlePasswordChange}
-                                required
-                            />
-                            {passwordErrors.length > 0 && passwordErrors.map((err, idx) => (
-                                <p className="error" key={idx}>{err}</p>
-                            ))}
-                        </div>
-                        <div className="secsh0">
-                            <input
-                                type="password"
-                                id="repeatPassword"
-                                name="repeatPassword"
-                                placeholder="Repeat password"
-                                value={repeatPassword}
-                                onChange={handleRepeatPasswordChange}
-                                required
-                            />
-                            {repeatError && <p className="error">{repeatError}</p>}
-                        </div>
-                        <div className="secsh1">
-                            <Link to="/">
-                                <input className="button1" type="button" value="Next" disabled={!isValid} />
-                            </Link>
-                        </div>
-                        <div className="secsh1">
-                            <Link to="/login">
-                                <input className="button2" type="button" value="Sign in" />
-                            </Link>
-                        </div>
-                    </form>
-                </div>
-            </section>
+  return (
+    <div className="regist">
+      <section className="regis">
+        <h1>Create Account</h1>
+        <div className="reg" id="r">
+          <form onSubmit={handleRegister}>
+            <div className="secsh2">
+              <input
+                type="text"
+                id="username"
+                name="username"
+                placeholder="Your name"
+                value={name}
+                onChange={handleNameChange}
+                required
+              />
+              {nameError && <p className="error">{nameError}</p>}
+            </div>
+            <div className="secsh0">
+              <input
+                type="email"
+                id="email"
+                name="email"
+                placeholder="example@email.com"
+                value={email}
+                onChange={handleEmailChange}
+                required
+              />
+              {emailError && <p className="error">{emailError}</p>}
+            </div>
+            <div className="secsh0">
+              <input
+                type="password"
+                id="password"
+                name="password"
+                placeholder="Create password"
+                value={password}
+                onChange={handlePasswordChange}
+                required
+              />
+              {passwordErrors.length > 0 && passwordErrors.map((err, idx) => (
+                <p className="error" key={idx}>{err}</p>
+              ))}
+            </div>
+            <div className="secsh0">
+              <input
+                type="password"
+                id="repeatPassword"
+                name="repeatPassword"
+                placeholder="Repeat password"
+                value={repeatPassword}
+                onChange={handleRepeatPasswordChange}
+                required
+              />
+              {repeatError && <p className="error">{repeatError}</p>}
+            </div>
+            {generalError && <p className="error">{generalError}</p>}
+            <div className="secsh1">
+              <input className="button1" type="submit" value="Next" disabled={!isValid} />
+            </div>
+            <div className="secsh1">
+              <Link to="/login">
+                <input className="button2" type="button" value="Sign in" />
+              </Link>
+            </div>
+          </form>
         </div>
-    );
+      </section>
+    </div>
+  );
 }
 
-export default Regis;
+export default Regis
