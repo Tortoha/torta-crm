@@ -1,4 +1,4 @@
-header{
+header {
     margin: 36px;
     position: fixed;
     top: 0;
@@ -6,32 +6,33 @@ header{
     height: 36px;
     display: flex;
     justify-content: flex-end;
-    align-items: center; 
-    width: auto; 
+    align-items: center;
+    width: auto;
 }
 
-.head{
+.head {
     display: flex;
     align-items: center;
     text-align: right;
 }
 
-header img{
+header img {
     width: 32px;
     height: 32px;
-    flex-shrink: 0; 
+    flex-shrink: 0;
 }
-header h5{
+
+header h5 {
     font-size: 28px;
     font-weight: 500;
     padding: 0;
-    margin: 0; 
+    margin: 0;
     margin-left: 12px;
     line-height: 1;
-    color: #000000; 
+    color: #000000;
 }
 
-header a{
+header a {
     padding: 16px;
     border-radius: 1000px;
     text-decoration: none;
@@ -39,6 +40,137 @@ header a{
     background-color: white;
 }
 
-header a:hover{
+header a:hover {
     background-color: #E5E5E5;
+}
+
+.a{
+    padding: 16px;
+    border-radius: 1000px;
+    text-decoration: none;
+    transition: 0.3s ease-in-out;
+    background-color: white;
+    cursor: pointer;
+    box-shadow: 0px 0px 16px rgba(0, 0, 0, 0.0);
+}
+
+.a:hover{
+    background-color: #E5E5E5;
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
+}
+
+.user-header-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.menu {
+    margin: 22px 36px;
+    position: fixed;
+    top: 0;
+    right: 0;
+    min-width: 256px;
+    background: white;
+    border-radius: 36px;
+    box-shadow: 4px 8px 32px rgba(0, 0, 0, 0.2);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    animation: bounce 0.4s cubic-bezier(0.55, 1.25, 0.5, 1.1);
+    z-index: 1000;
+}
+
+@keyframes bounce {
+    0% {
+        transform: translateY(-10px) scale(0.95);
+        opacity: 0;
+    }
+
+    60% {
+        transform: translateY(2px) scale(1.02);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translateY(0) scale(1);
+    }
+}
+
+.menu-header {
+    width: 100%;
+    background-color: rgb(255, 255, 255);
+    padding: 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: 0px 0px 16px rgba(0, 0, 0, 0.0);
+    transition: 0.2s ease-in-out;
+}
+
+.menu-head {
+    display: flex;
+    align-items: center;
+}
+
+.menu-header:hover {
+    background-color: #E5E5E5;
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
+}
+
+.menu a {
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    padding: 12px;
+    cursor: pointer;
+    color: #000000;
+    border-radius: 999px;
+    transition: 0.2s ease-in-out;
+    box-shadow: 0px 0px 16px rgba(0, 0, 0, 0.0);
+}
+
+.menu a:hover {
+    background-color: #E5E5E5;
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
+}
+
+.logout {
+    background: #e30000;
+    color: white;
+    border: none;
+    border-radius: 999px;
+    font-size: 24px;
+    font-weight: 600;
+    padding: 16px 0;
+    cursor: pointer;
+    transition: 0.2s ease-in-out;
+}
+
+.logout:hover {
+    background: #ed0000;
+    box-shadow: 2px 2px 18px #ed000085;
+}
+
+@keyframes bounceOut {
+    0% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+    40% {
+        transform: translateY(2px) scale(1.02);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(-10px) scale(0.95);
+        opacity: 0;
+    }
+}
+
+.menu-closing {
+    animation: bounceOut 0.3s cubic-bezier(0.55, 0.5, 0.5, 0.9) forwards !important;
 }
