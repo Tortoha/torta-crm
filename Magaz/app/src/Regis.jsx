@@ -15,7 +15,6 @@ function Regis() {
   const navigate = useNavigate();
 
   const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
-  const forbiddenPasswordCharsRegex = /[;:.,/#$%&*+=()<>{}|^`'"\\\s]/g;
 
   const handleNameChange = (e) => {
     const value = e.target.value.replace(/[^a-zA-Z0-9]/g, "");
@@ -43,8 +42,10 @@ function Regis() {
     return errors;
   };
 
+  const allowedPasswordCharsRegex = /[^A-Za-z0-9!@#$%_+-/\=]/g;
+
   const handlePasswordChange = (e) => {
-    const value = e.target.value.replace(forbiddenPasswordCharsRegex, "");
+    const value = e.target.value.replace(allowedPasswordCharsRegex, "");
     setPassword(value);
     setPasswordErrors(validatePassword(value));
     setRepeatError(repeatPassword && value !== repeatPassword
@@ -52,7 +53,7 @@ function Regis() {
   };
 
   const handleRepeatPasswordChange = (e) => {
-    const value = e.target.value.replace(forbiddenPasswordCharsRegex, "");
+    const value = e.target.value.replace(allowedPasswordCharsRegex, "");
     setRepeatPassword(value);
     setRepeatError(value !== password ? "Passwords do not match" : "");
   };

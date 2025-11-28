@@ -11,7 +11,6 @@ function Login() {
   const navigate = useNavigate();
 
   const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
-  const forbiddenCharsRegex = /[;:.,/#$%&*+=()<>{}|^`'"\\\s]/g;
 
   const handleEmailChange = (e) => {
     const value = e.target.value.replace(/[^a-zA-Z0-9._@-]/g, "");
@@ -33,8 +32,10 @@ function Login() {
     return errors;
   };
 
+  const allowedPasswordCharsRegex = /[^A-Za-z0-9!@#$%_+-/\=]/g;
+
   const handlePasswordChange = (e) => {
-    const value = e.target.value.replace(forbiddenCharsRegex, "");
+    const value = e.target.value.replace(allowedPasswordCharsRegex, "");
     setPassword(value);
     setPasswordErrors(validatePassword(value));
   };
