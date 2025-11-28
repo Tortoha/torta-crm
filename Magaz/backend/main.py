@@ -1,14 +1,12 @@
 from fastapi import FastAPI, Response, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-import mysql.connector
 from pydantic import BaseModel
-from dotenv import load_dotenv
-import jwt
 from datetime import datetime, timedelta
+import mysql.connector
 import hashlib
+import jwt
 import os
 
-load_dotenv()
 #cd Magaz\backend
 #.\venv\Scripts\activate
 #pip install -r .\requirements.txt
@@ -25,38 +23,70 @@ app.add_middleware(
 
 # Настройки подключения к базе
 db_config = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': 'root',
-    'database': 'crmdb'
+    "host": "localhost",
+    "user": "root",
+    "password": "root",
+    "database": "crmdb",
 }
+
+def get_db():
+    return mysql.connector.connect(**db_config)
 
 @app.get("/api-products")
 def get_products():
-    conn = mysql.connector.connect(**db_config)
+    conn = get_db()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM products")
-    result = cursor.fetchall()
+    products = cursor.fetchall()
     cursor.close()
     conn.close()
-    return result
+    return products
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "SUPER_SECRET_KEY")
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+SECRET_KEY = os.getenv("SECRET_KEY", "SUPER_SECRET_KEY")
 JWT_ALGORITHM = "HS256"
-JWT_EXP = 24
+JWT_HOURS = 24 * 7
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
-def verify_password(password: str, hash_: str) -> bool:
-    return hash_password(password) == hash_
-
-def create_jwt(user_id: int) -> str:
+def create_token(user_id: int) -> str:
     payload = {
-        "sub": str(user_id),  # ИСПРАВЛЕНО!
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXP)
+        "sub": str(user_id),
+        "exp": datetime.utcnow() + timedelta(hours=JWT_HOURS),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+def get_user_by_email(email: str):
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM users WHERE email=%s", (email,))
+    user = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return user
+
+def get_user_by_id(user_id: int):
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id, name, email FROM users WHERE id=%s", (user_id,))
+    user = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return user
+
+def set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key="authx_token",
+        value=token,
+        httponly=True,
+        max_age=60 * 60 * 24 * 7,
+        samesite="lax",
+        secure=False,
+    )
+
+# --- МОДЕЛИ ---
 
 class UserRegister(BaseModel):
     name: str
@@ -67,87 +97,52 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
+# --- АУТЕНТИФИКАЦИЯ ---
+
 @app.post("/api/register")
 def register(user: UserRegister, response: Response):
-    conn = mysql.connector.connect(**db_config)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT 1 FROM users WHERE email=%s", (user.email,))
-    if cursor.fetchone():
-        cursor.close()
-        conn.close()
+    if get_user_by_email(user.email):
         raise HTTPException(status_code=400, detail="Email already exists")
-    
-    password_hash = hash_password(user.password)
+
+    conn = get_db()
+    cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO users (name, email, password_hash) VALUES (%s,%s,%s)",
-        (user.name, user.email, password_hash)
+        (user.name, user.email, hash_password(user.password)),
     )
     conn.commit()
-    
+
     cursor.execute("SELECT id FROM users WHERE email=%s", (user.email,))
     user_id = cursor.fetchone()[0]
     cursor.close()
     conn.close()
-    
-    token = create_jwt(user_id)
-    response.set_cookie(
-        key="authx_token",
-        value=token,
-        httponly=True,
-        max_age=60*60*24,
-        samesite="lax",
-        secure=False
-    )
+
+    token = create_token(user_id)
+    set_auth_cookie(response, token)
     return {"success": True}
 
 @app.post("/api/login")
 def login(user: UserLogin, response: Response):
-    conn = mysql.connector.connect(**db_config)
-    cursor = conn.cursor(dictionary=True)
-    
-    cursor.execute("SELECT * FROM users WHERE email=%s", (user.email,))
-    db_user = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    
-    if not db_user or not verify_password(user.password, db_user["password_hash"]):
+    db_user = get_user_by_email(user.email)
+    if not db_user or hash_password(user.password) != db_user["password_hash"]:
         raise HTTPException(status_code=400, detail="Invalid email or password")
-    
-    token = create_jwt(db_user["id"])
-    response.set_cookie(
-        key="authx_token",
-        value=token,
-        httponly=True,
-        max_age=60*60*24,
-        samesite="lax",
-        secure=False
-    )
+
+    token = create_token(db_user["id"])
+    set_auth_cookie(response, token)
     return {"success": True, "username": db_user["name"]}
 
 @app.get("/api/me")
 def get_current_user(request: Request):
-    authx_token = request.cookies.get("authx_token")
-    
-    if not authx_token:
+    token = request.cookies.get("authx_token")
+    if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
+
     try:
-        payload = jwt.decode(authx_token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        user_id = int(payload.get("sub"))  # ИСПРАВЛЕНО!
-        
-        conn = mysql.connector.connect(**db_config)
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT id, name, email FROM users WHERE id=%s", (user_id,))
-        user = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        user = get_user_by_id(int(payload["sub"]))
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        
         return {"name": user["name"], "email": user["email"]}
-        
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
@@ -155,5 +150,5 @@ def get_current_user(request: Request):
 
 @app.post("/api/logout")
 def logout(response: Response):
-    response.delete_cookie(key="authx_token")
+    response.delete_cookie("authx_token")
     return {"success": True}
