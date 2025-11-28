@@ -15,7 +15,7 @@ a {
 }
 
 .text-section {
-    padding: 264px 20px 144px;
+    padding: 264px 20px 94px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -40,7 +40,7 @@ a {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 20px;
-    padding: 0 20px 50px;
+    padding: 50px 20px;
     max-width: 1200px;
     margin: 0 auto;
     justify-content: center;
@@ -75,12 +75,14 @@ a {
     border-radius: 16px;
     background-color: #ffffff;
     transition: 0.3s ease-in-out, padding 0.3s ease-in-out;
+    box-shadow: 0px 0px 48px rgba(0, 0, 0, 0.0);
 }
 
 .a-card:hover {
     background-color: #0000001a;
     border-radius: 28px;
     padding: 12px;
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
 }
 
 .a-card:hover .card {
