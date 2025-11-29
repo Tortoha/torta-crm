@@ -19,7 +19,11 @@ function Regis() {
   const handleNameChange = (e) => {
     const value = e.target.value.replace(/[^a-zA-Z0-9]/g, "");
     setName(value);
-    setNameError(value.length < 2 ? "Must be at least 2 characters" : "");
+    if (value.length > 20) {
+      setNameError("No more than 20 characters");
+    } else {
+      setNameError("");
+    }
   };
 
   const handleEmailChange = (e) => {
