@@ -132,3 +132,12 @@ input {
     font-size: 16px;
     margin: 2px 0;
 }
+
+.not-button {
+    background-color: #E5E5E5;
+    color: #ffffff;
+    font-size: 32px;
+    margin-top: 64px;
+    padding: 0;
+    font-weight: 400;
+}

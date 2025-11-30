@@ -42,7 +42,7 @@ function Login() {
 
   const isValid = (
     !emailError && passwordErrors.length === 0 &&
-    email.length >= 5 && password.length >= 8
+    email.length >= 1 && password.length >= 1
   );
 
   const handleLogin = async (e) => {
@@ -50,7 +50,7 @@ function Login() {
     setGeneralError("");
     if (!isValid) return;
     try {
-      const res = await fetch("/api/login", {  // ИЗМЕНЕНО!
+      const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -104,7 +104,7 @@ function Login() {
             </div>
             {generalError && <p className="error">{generalError}</p>}
             <div className="secsh1">
-              <input className="button1" type="submit" value="Next" disabled={!isValid} />
+              <input className={isValid ? "button1" : "not-button"} type="submit" value="Next" disabled={!isValid} />
             </div>
             <div className="secsh1">
               <Link to="/registration">

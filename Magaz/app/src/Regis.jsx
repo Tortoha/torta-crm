@@ -65,8 +65,7 @@ function Regis() {
   const isValid = (
     !nameError && !emailError &&
     passwordErrors.length === 0 && !repeatError &&
-    name.length >= 2 && email.length >= 5 &&
-    password.length >= 8 && password === repeatPassword
+    name.length >= 1 && email.length >= 1 && password.length >= 1 && password === repeatPassword
   );
 
   const handleRegister = async (e) => {
@@ -150,7 +149,7 @@ function Regis() {
             </div>
             {generalError && <p className="error">{generalError}</p>}
             <div className="secsh1">
-              <input className="button1" type="submit" value="Next" disabled={!isValid} />
+              <input className={isValid ? "button1" : "not-button"} type="submit" value="Next" disabled={!isValid} />
             </div>
             <div className="secsh1">
               <Link to="/login">
