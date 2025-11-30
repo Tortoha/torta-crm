@@ -11,7 +11,7 @@ function Header() {
     fetch("/api/me", { credentials: "include" })
       .then(res => res.ok ? res.json() : null)
       .then(data => { if (data) setUsername(data.name); })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const handleCloseMenu = () => {
@@ -38,14 +38,21 @@ function Header() {
     window.location.reload();
   };
 
+  const truncateName = (name) => {
+    if (name && name.length > 8) {
+      return name.substring(0, 7) + "...";
+    }
+    return name;
+  };
+
   return (
     <header>
       {username ? (
-        <div className="user-header-container" ref={menuRef}>
+        <div className="header-container" ref={menuRef}>
           <div className="a" onClick={() => menuOpen ? handleCloseMenu() : setMenuOpen(true)}>
             <div className="head">
               <img src="https://cdn-icons-png.flaticon.com/512/266/266033.png" alt="" />
-              <h5>{username}</h5>
+              <h5>{truncateName(username)}</h5>
             </div>
           </div>
 
@@ -54,7 +61,7 @@ function Header() {
               <div className="menu-header" onClick={handleCloseMenu}>
                 <div className="menu-head">
                   <img src="https://cdn-icons-png.flaticon.com/512/266/266033.png" alt="" />
-                  <h5>{username}</h5>
+                  <h5>{truncateName(username)}</h5>
                 </div>
               </div>
               <Link to={"/"}>Settings</Link>
