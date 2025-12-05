@@ -8,6 +8,7 @@ function Login() {
   const [emailError, setEmailError] = useState("");
   const [passwordErrors, setPasswordErrors] = useState([]);
   const [generalError, setGeneralError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
@@ -22,11 +23,9 @@ function Login() {
     let errors = [];
     if (pwd.length < 8 || pwd.length > 24) {
       errors.push("Must be 8–24 characters");
-    }
-    else if (!/[A-Za-z]/.test(pwd)) {
+    } else if (!/[A-Za-z]/.test(pwd)) {
       errors.push("Must be at least 1 letter");
-    }
-    else if (!/\d/.test(pwd)) {
+    } else if (!/\d/.test(pwd)) {
       errors.push("Must be at least 1 digit");
     }
     return errors;
@@ -49,22 +48,32 @@ function Login() {
     e.preventDefault();
     setGeneralError("");
     if (!isValid) return;
+    
+    setLoading(true);
+    
     try {
-      const res = await fetch("/api/login", {
+      const res = await fetch("/api/send-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ 
+          email, 
+          password,
+          type: "login"
+        })
       });
+      
       if (res.ok) {
-        navigate("/");
-        window.location.reload();
+        localStorage.setItem("pendingEmail", email);
+        navigate("/login/verification");
       } else {
         const data = await res.json();
         setGeneralError(data.detail || "Login failed");
       }
     } catch {
       setGeneralError("Network error");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -104,7 +113,12 @@ function Login() {
             </div>
             {generalError && <p className="error">{generalError}</p>}
             <div className="secsh1">
-              <input className={isValid ? "button1" : "not-button"} type="submit" value="Next" disabled={!isValid} />
+              <input 
+                className={isValid && !loading ? "button1" : "not-button"} 
+                type="submit" 
+                value={loading ? "Sending..." : "Next"} 
+                disabled={!isValid || loading} 
+              />
             </div>
             <div className="secsh1">
               <Link to="/registration">

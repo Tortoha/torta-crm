@@ -4,3 +4,4 @@ pyjwt
 mysql-connector-python
 pydantic
 python-dotenv
+resend
