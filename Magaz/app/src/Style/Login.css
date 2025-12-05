@@ -13,7 +13,7 @@ section {
     box-sizing: border-box;
 }
 
-.regist{
+.regist {
     background-color: #f0f0f0;
     min-height: 100vh;
     display: flex;
@@ -90,9 +90,10 @@ input {
     padding: 2px 16px;
     font-family: "Parkinsans", sans-serif;
     font-weight: 300;
+    outline: none;
 }
 
-.button1{
+.button1 {
     background-color: #0071e3;
     color: #ffffff;
     font-size: 32px;
@@ -103,7 +104,7 @@ input {
     cursor: pointer;
 }
 
-.button2{
+.button2 {
     background-color: #ffffff00;
     color: #000000;
     font-size: 24px;
@@ -116,13 +117,13 @@ input {
     box-shadow: 0px 0px 16px rgba(0, 0, 0, 0.0);
 }
 
-.button1:hover{
+.button1:hover {
     background-color: #0077ED;
     color: #ffffff;
     box-shadow: 4px 4px 18px #0076ed85;
 }
 
-.button2:hover{
+.button2:hover {
     background-color: #E5E5E5;
     box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
 }
@@ -138,6 +139,51 @@ input {
     color: #ffffff;
     font-size: 32px;
     margin-top: 64px;
+    padding: 0;
+    font-weight: 400;
+}
+
+.verify-h1 {
+    margin-bottom: 0px;
+}
+
+.verify-p {
+  color: #666;
+  font-size: 16px;
+  margin-top: 8px;
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.verify-input {
+    letter-spacing: 4px;
+    text-align: center;
+}
+
+.verify-button {
+    background-color: #0071e3;
+    color: #ffffff;
+    font-size: 32px;
+    margin-top: 18px;
+    margin-bottom: 32px;
+    padding: 0;
+    transition: 0.2s ease-in-out;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.verify-button:hover {
+    background-color: #0077ED;
+    color: #ffffff;
+    box-shadow: 4px 4px 18px #0076ed85;
+}
+
+.verify-not-button {
+    background-color: #E5E5E5;
+    color: #ffffff;
+    font-size: 32px;
+    margin-top: 18px;
+    margin-bottom: 32px;
     padding: 0;
     font-weight: 400;
 }
