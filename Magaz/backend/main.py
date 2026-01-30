@@ -8,6 +8,9 @@ import jwt
 import random
 import resend
 
+#cd Magaz\backend
+#.\venv\Scripts\activate
+#pip install -r .\requirements.txt
 
 SECRET_KEY = "d2a9c8f0e5b741a39f6c8d2e1b5a9c3f8e7d6c5b4a3928173645e5f6a7b8c9d0"
 JWT_ALGORITHM = "HS256"
@@ -19,7 +22,6 @@ resend.api_key = "re_AixvxJe9_aQ8UsEwgVTFQjjrcUUMnAi6e"
 pending_verifications = {}
 
 
-# ИСПРАВЛЕННЫЕ CORS НАСТРОЙКИ
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
