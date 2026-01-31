@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import Header from "./Header";
 import "./Style/Product.css";
 import heartIcon from "../icons/Like.png";
+import StarRating from "./Elements/StarRating";
+import Star from "./Elements/Star";
 
 const API_URL = "http://localhost:8000";
 
@@ -314,7 +316,6 @@ function Product() {
                 }
             }
         } catch (error) {
-            // Ошибка без alert
         }
     };
 
@@ -339,7 +340,6 @@ function Product() {
                 setIsFavorite(!isFavorite);
             }
         } catch (error) {
-            // Ошибка без alert
         }
     };
 
@@ -483,10 +483,7 @@ function Product() {
                             <div className="reviews-header">
                                 <h3>Reviews ({prod.reviews.length})</h3>
                                 <div className="reviews-header-right">
-                                    <div className="reviews-rating">
-                                        <span className="rating-value">{averageRating}</span>
-                                        <span className="rating-stars">★★★★★</span>
-                                    </div>
+                                    <StarRating rating={parseFloat(averageRating)} />
                                     <button className="btn-write-review">Write a Review</button>
                                 </div>
                             </div>
@@ -499,9 +496,11 @@ function Product() {
                                                     {r.user_name} · {formatTimeAgo(r.created_at)}
                                                 </span>
                                             </div>
-                                            <span className="review-rating">
-                                                {"★".repeat(r.rating)}
-                                            </span>
+                                            <div className="review-stars-only">
+                                                {[...Array(5)].map((_, index) => (
+                                                    <Star key={index} filled={index < r.rating} />
+                                                ))}
+                                            </div>
                                         </div>
                                         <p className="review-text">{r.comment}</p>
                                     </article>
@@ -509,6 +508,7 @@ function Product() {
                             </div>
                         </section>
                     )}
+
                 </div>
             </main>
         </>
