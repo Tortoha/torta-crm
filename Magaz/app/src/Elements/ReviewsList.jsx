@@ -1,0 +1,57 @@
+import Star from "./Star";
+
+function ReviewsList({ reviews }) {
+    const formatTimeAgo = (dateString) => {
+        if (!dateString) return "just now";
+
+        const reviewDate = new Date(dateString);
+        const now = new Date();
+        const diffMs = now - reviewDate;
+        const diffSec = Math.floor(diffMs / 1000);
+        const diffMin = Math.floor(diffSec / 60);
+        const diffHour = Math.floor(diffMin / 60);
+        const diffDay = Math.floor(diffHour / 24);
+        const diffMonth = Math.floor(diffDay / 30);
+        const diffYear = Math.floor(diffDay / 365);
+
+        if (diffSec < 60) return "just now";
+        if (diffMin < 60) return `${diffMin}m ago`;
+        if (diffHour < 24) return `${diffHour}h ago`;
+        if (diffDay < 30) return `${diffDay}d ago`;
+        if (diffMonth < 12) return `${diffMonth}mo ago`;
+        return `${diffYear}y ago`;
+    };
+
+    const sortedReviews = reviews ? [...reviews].sort((a, b) => {
+        return new Date(b.created_at) - new Date(a.created_at);
+    }) : [];
+
+    if (sortedReviews.length === 0) return null;
+
+    return (
+        <div className="reviews-list">
+            {sortedReviews.map((r, i) => (
+                <article key={i} className="review-card">
+                    <div className="review-header">
+                        <div className="review-author">
+                            <span className="review-user-time">
+                                {r.user_name} · {formatTimeAgo(r.created_at)}
+                            </span>
+                        </div>
+                        <div className="review-stars-only">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                                <Star
+                                    key={star}
+                                    fillType={star <= r.rating ? "full" : "empty"}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                    <p className="review-text">{r.comment}</p>
+                </article>
+            ))}
+        </div>
+    );
+}
+
+export default ReviewsList
