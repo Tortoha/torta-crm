@@ -508,3 +508,242 @@ body {
   align-items: center;
   gap: 0px;
 }
+
+.review-menu-container {
+    position: relative;
+    display: inline-block;
+}
+
+.review-menu {
+    position: absolute;
+    top: -2px;
+    right: 0;
+    width: 622px;
+    height: 300px;
+    background: white;
+    border-radius: 24px;
+    box-shadow: 4px 8px 32px rgba(0, 0, 0, 0.2);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    animation: bounce 0.4s cubic-bezier(0.55, 1.25, 0.5, 1.1);
+    z-index: 1000;
+    box-sizing: border-box;
+}
+
+@keyframes bounce {
+    0% {
+        transform: translateY(-10px) scale(0.95);
+        opacity: 0;
+    }
+    60% {
+        transform: translateY(2px) scale(1.02);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes bounceOut {
+    0% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+    40% {
+        transform: translateY(2px) scale(1.02);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(-10px) scale(0.95);
+        opacity: 0;
+    }
+}
+
+.review-menu-closing {
+    animation: bounceOut 0.3s cubic-bezier(0.55, 0.5, 0.5, 0.9) forwards !important;
+}
+
+.review-menu-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.review-stars-input {
+    display: flex;
+    gap: 0px;
+    align-items: center;
+}
+
+.star-input-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+}
+
+.star-input-btn:hover {
+    transform: scale(1.15);
+}
+
+.star-input-btn svg {
+    width: 28px;
+    height: 28px;
+}
+
+.btn-send-review {
+    background: #E5E5E5;
+    color: #ffffff;
+    border: none;
+    border-radius: 1000px;
+    padding: 12px 24px;
+    font-size: 20px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+        box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+        transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.btn-send-review.active {
+    background: #000000;
+    color: #ffffff;
+}
+
+.btn-send-review.active:hover:not(:disabled) {
+    background: #0071e3;
+    box-shadow: 0 8px 24px rgba(0, 113, 227, 0.4);
+    transform: translateY(-2px);
+}
+
+.btn-send-review.active:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
+}
+
+.btn-send-review:disabled {
+    cursor: not-allowed;
+}
+
+.review-textarea {
+    width: 100%;
+    flex: 1;
+    padding: 16px;
+    font-size: 20px;
+    font-family: inherit;
+    border: none;
+    border-radius: 8px;
+    background: #E5E5E5;
+    resize: none;
+    box-sizing: border-box;
+}
+
+.review-textarea:focus {
+    outline: none;
+    background: #d9d9d9;
+}
+
+.review-textarea::placeholder {
+    color: rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 1200px) {
+    .review-menu {
+        width: 550px;
+        height: 280px;
+    }
+
+    .review-textarea {
+        font-size: 18px;
+    }
+
+    .btn-send-review {
+        font-size: 18px;
+        padding: 10px 20px;
+    }
+}
+
+@media (max-width: 768px) {
+    .reviews-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+    }
+
+    .reviews-header-right {
+        width: 100%;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .review-menu-container {
+        width: 100%;
+    }
+
+    .btn-write-review {
+        width: 100%;
+    }
+
+    .review-menu {
+        width: calc(100vw - 80px);
+        max-width: 550px;
+        height: auto;
+        min-height: 250px;
+        right: auto;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+
+    .review-menu-top {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .review-stars-input {
+        justify-content: center;
+    }
+
+    .btn-send-review {
+        width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    .review-menu {
+        width: calc(100vw - 48px);
+        padding: 12px;
+        gap: 12px;
+    }
+
+    .review-textarea {
+        font-size: 16px;
+        padding: 12px;
+    }
+
+    .btn-send-review {
+        font-size: 16px;
+        padding: 10px 16px;
+    }
+
+    .star-input-btn svg {
+        width: 24px;
+        height: 24px;
+    }
+
+    .star-input-btn {
+        width: 24px;
+        height: 24px;
+    }
+}

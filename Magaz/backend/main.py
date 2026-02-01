@@ -629,7 +629,6 @@ def add_to_favorites(item: AddToFavorites, request: Request):
         )
         conn.commit()
     except mysql.connector.IntegrityError:
-        # Уже в избранном
         pass
     
     cursor.close()
@@ -677,3 +676,52 @@ def remove_from_favorites(product_id: int, request: Request):
     conn.close()
     
     return {"success": True}
+
+# ============================================
+# ENDPOINTS ДЛЯ ОТЗЫВОВ
+# ============================================
+
+class AddReview(BaseModel):
+    product_id: int
+    rating: int
+    comment: str
+
+@app.post("/api/reviews/add")
+def add_review(review: AddReview, request: Request):
+    user_id = get_current_user_id(request)
+    
+    # Валидация рейтинга
+    if review.rating < 1 or review.rating > 5:
+        raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+    
+    # Комментарий теперь необязателен
+    if len(review.comment) > 500:
+        raise HTTPException(status_code=400, detail="Comment too long")
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    try:
+        # Проверяем, существует ли продукт
+        cursor.execute("SELECT id FROM products WHERE id=%s", (review.product_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Product not found")
+        
+        # Добавляем отзыв (comment может быть пустым)
+        cursor.execute(
+            """INSERT INTO product_reviews (product_id, user_id, rating, comment, created_at)
+               VALUES (%s, %s, %s, %s, NOW())""",
+            (review.product_id, user_id, review.rating, review.comment if review.comment else "")
+        )
+        conn.commit()
+        
+        return {"success": True, "message": "Review added successfully"}
+        
+    except mysql.connector.IntegrityError:
+        raise HTTPException(status_code=400, detail="You have already reviewed this product")
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()

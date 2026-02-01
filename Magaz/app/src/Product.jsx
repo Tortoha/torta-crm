@@ -1,5 +1,5 @@
 import { useParams } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Header from "./Header";
 import "./Style/Product.css";
 import heartIcon from "../icons/Like.png";
@@ -21,6 +21,14 @@ function Product() {
     const [cartQuantity, setCartQuantity] = useState(1);
     const [addingToCart, setAddingToCart] = useState(false);
     const [cartItems, setCartItems] = useState([]);
+    const [reviewMenuOpen, setReviewMenuOpen] = useState(false);
+    const [reviewMenuClosing, setReviewMenuClosing] = useState(false);
+    const [reviewRating, setReviewRating] = useState(0);
+    const [reviewComment, setReviewComment] = useState("");
+    const [hoveredStar, setHoveredStar] = useState(0);
+    const [submittingReview, setSubmittingReview] = useState(false);
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const reviewMenuRef = useRef();
 
     const { id } = useParams();
 
@@ -29,10 +37,19 @@ function Product() {
         Promise.all([
             fetch(`${API_URL}/api-products`).then((res) => res.json()),
             fetch(`${API_URL}/api/favorites`, { credentials: "include" })
-                .then((res) => res.json())
+                .then((res) => {
+                    if (res.ok) {
+                        setIsAuthenticated(true);
+                        return res.json();
+                    }
+                    return [];
+                })
                 .catch(() => []),
             fetch(`${API_URL}/api/cart`, { credentials: "include" })
-                .then((res) => res.json())
+                .then((res) => {
+                    if (res.ok) return res.json();
+                    return [];
+                })
                 .catch(() => []),
         ])
             .then(([products, favorites, cart]) => {
@@ -45,7 +62,6 @@ function Product() {
             .catch(() => setLoading(false));
     }, [id]);
 
-    // Фильтрация вариаций и размеров по наличию на складе
     const getAvailableVariations = (product) => {
         if (!product || !product.variations) return [];
 
@@ -58,7 +74,6 @@ function Product() {
         }));
     };
 
-    // Автоматически выбираем первый размер
     useEffect(() => {
         if (data.length > 0) {
             const prod = data.find((item) => item.id === parseInt(id, 10));
@@ -72,7 +87,6 @@ function Product() {
         }
     }, [data, activeVariation, id]);
 
-    // Проверяем, есть ли товар в корзине
     useEffect(() => {
         const checkIfInCart = async () => {
             if (!activeSize) return;
@@ -112,6 +126,27 @@ function Product() {
         }
     }, [data, activeVariation, activeSize, id, cartItems]);
 
+    const handleCloseReviewMenu = () => {
+        setReviewMenuClosing(true);
+        setTimeout(() => {
+            setReviewMenuOpen(false);
+            setReviewMenuClosing(false);
+            setReviewRating(0);
+            setReviewComment("");
+            setHoveredStar(0);
+        }, 300);
+    };
+
+    useEffect(() => {
+        function handleClick(e) {
+            if (reviewMenuOpen && reviewMenuRef.current && !reviewMenuRef.current.contains(e.target)) {
+                handleCloseReviewMenu();
+            }
+        }
+        document.addEventListener("mousedown", handleClick);
+        return () => document.removeEventListener("mousedown", handleClick);
+    }, [reviewMenuOpen]);
+
     const formatTimeAgo = (dateString) => {
         if (!dateString) return "just now";
 
@@ -133,7 +168,6 @@ function Product() {
         return `${diffYear}y ago`;
     };
 
-    // Проверка, есть ли вариация в корзине
     const isVariationInCart = (variationId) => {
         return cartItems.some(item =>
             item.product_id === parseInt(id, 10) &&
@@ -141,7 +175,6 @@ function Product() {
         );
     };
 
-    // Проверка, есть ли размер в корзине
     const isSizeInCart = (sizeId) => {
         const prod = data.find((item) => item.id === parseInt(id, 10));
         if (!prod) return false;
@@ -155,40 +188,6 @@ function Product() {
             item.size_id === sizeId
         );
     };
-
-    if (loading) {
-        return (
-            <div id="mask" className="mask">
-                <svg>
-                    <circle cx="50" cy="50" r="40" />
-                </svg>
-            </div>
-        );
-    }
-
-    const prod = data.find((item) => item.id === parseInt(id, 10));
-    if (!prod) {
-        return (
-            <div className="center">
-                <section className="text-section">
-                    <h1 className="main-title">Error 404</h1>
-                    <p className="subtitle">Page not found</p>
-                </section>
-            </div>
-        );
-    }
-
-    const availableVariations = getAvailableVariations(prod);
-    const currentVariation = availableVariations[activeVariation];
-    const showVariationsList = availableVariations.length > 1;
-
-    const averageRating =
-        prod.reviews?.length > 0
-            ? (
-                prod.reviews.reduce((sum, r) => sum + r.rating, 0) /
-                prod.reviews.length
-            ).toFixed(1)
-            : "0.0";
 
     const handleSizeClick = (sizeId, sizeName) => {
         setActiveSize({ id: sizeId, name: sizeName });
@@ -209,6 +208,11 @@ function Product() {
     };
 
     const handleToggleCart = async () => {
+        if (!isAuthenticated) {
+            window.location.href = "/login";
+            return;
+        }
+
         if (!currentVariation || !currentVariation.id) {
             return;
         }
@@ -221,7 +225,6 @@ function Product() {
 
         try {
             if (isInCart && cartItemId) {
-                // Удаляем из корзины
                 const response = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
                     method: "DELETE",
                     credentials: "include",
@@ -232,7 +235,6 @@ function Product() {
                     setCartItemId(null);
                     setCartQuantity(1);
 
-                    // Обновляем список корзины
                     const cartResponse = await fetch(`${API_URL}/api/cart`, {
                         credentials: "include",
                     });
@@ -242,7 +244,6 @@ function Product() {
                     }
                 }
             } else {
-                // Добавляем в корзину
                 const requestBody = {
                     product_id: prod.id,
                     variation_id: currentVariation.id,
@@ -260,7 +261,6 @@ function Product() {
                 });
 
                 if (response.ok) {
-                    // Перезагружаем корзину
                     const cartResponse = await fetch(`${API_URL}/api/cart`, {
                         credentials: "include",
                     });
@@ -306,7 +306,6 @@ function Product() {
             if (response.ok) {
                 setCartQuantity(newQuantity);
 
-                // Обновляем список корзины
                 const cartResponse = await fetch(`${API_URL}/api/cart`, {
                     credentials: "include",
                 });
@@ -320,6 +319,11 @@ function Product() {
     };
 
     const handleToggleFavorite = async () => {
+        if (!isAuthenticated) {
+            window.location.href = "/login";
+            return;
+        }
+
         try {
             const method = isFavorite ? "DELETE" : "POST";
             const url = isFavorite
@@ -355,6 +359,84 @@ function Product() {
             hoveredSize !== null ? hoveredSize : getActiveSizeIndex();
         return index === indicatorIndex;
     };
+
+    const handleSubmitReview = async () => {
+        if (reviewRating === 0) {
+            return;
+        }
+
+        if (!isAuthenticated) {
+            window.location.href = "/login";
+            return;
+        }
+
+        setSubmittingReview(true);
+
+        try {
+            const response = await fetch(`${API_URL}/api/reviews/add`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                credentials: "include",
+                body: JSON.stringify({
+                    product_id: prod.id,
+                    rating: reviewRating,
+                    comment: reviewComment.trim()
+                })
+            });
+
+            if (response.ok) {
+                window.location.reload();
+            } else {
+                const error = await response.json();
+                console.error(error.detail);
+            }
+        } catch (error) {
+            console.error("Error submitting review");
+        } finally {
+            setSubmittingReview(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div id="mask" className="mask">
+                <svg>
+                    <circle cx="50" cy="50" r="40" />
+                </svg>
+            </div>
+        );
+    }
+
+    const prod = data.find((item) => item.id === parseInt(id, 10));
+    if (!prod) {
+        return (
+            <div className="center">
+                <section className="text-section">
+                    <h1 className="main-title">Error 404</h1>
+                    <p className="subtitle">Page not found</p>
+                </section>
+            </div>
+        );
+    }
+
+    const availableVariations = getAvailableVariations(prod);
+    const currentVariation = availableVariations[activeVariation];
+    const showVariationsList = availableVariations.length > 1;
+
+    // Сортировка отзывов: последние сверху
+    const sortedReviews = prod.reviews ? [...prod.reviews].sort((a, b) => {
+        return new Date(b.created_at) - new Date(a.created_at);
+    }) : [];
+
+    const averageRating =
+        sortedReviews.length > 0
+            ? (
+                sortedReviews.reduce((sum, r) => sum + r.rating, 0) /
+                sortedReviews.length
+            ).toFixed(1)
+            : "0.0";
 
     return (
         <>
@@ -478,17 +560,68 @@ function Product() {
                         <p>{prod.characteristics}</p>
                     </div>
 
-                    {prod.reviews && prod.reviews.length > 0 && (
-                        <section className="product-reviews">
-                            <div className="reviews-header">
-                                <h3>Reviews ({prod.reviews.length})</h3>
-                                <div className="reviews-header-right">
-                                    <StarRating rating={parseFloat(averageRating)} />
-                                    <button className="btn-write-review">Write a Review</button>
+                    <section className="product-reviews">
+                        <div className="reviews-header">
+                            <h3>Reviews ({sortedReviews.length})</h3>
+                            <div className="reviews-header-right">
+                                <StarRating rating={parseFloat(averageRating)} />
+
+                                <div className="review-menu-container" ref={reviewMenuRef}>
+                                    <button
+                                        className="btn-write-review"
+                                        onClick={() => {
+                                            if (!isAuthenticated) {
+                                                window.location.href = "/login";
+                                                return;
+                                            }
+                                            reviewMenuOpen ? handleCloseReviewMenu() : setReviewMenuOpen(true);
+                                        }}
+                                    >
+                                        Write a Review
+                                    </button>
+
+                                    {reviewMenuOpen && (
+                                        <div className={`review-menu ${reviewMenuClosing ? 'review-menu-closing' : ''}`}>
+                                            <div className="review-menu-top">
+                                                <div className="review-stars-input">
+                                                    {[1, 2, 3, 4, 5].map((star) => (
+                                                        <button
+                                                            key={star}
+                                                            className="star-input-btn"
+                                                            onClick={() => setReviewRating(star)}
+                                                            onMouseEnter={() => setHoveredStar(star)}
+                                                            onMouseLeave={() => setHoveredStar(0)}
+                                                        >
+                                                            <Star fillType={star <= (hoveredStar || reviewRating) ? "full" : "empty"} />
+                                                        </button>
+                                                    ))}
+                                                </div>
+
+                                                <button
+                                                    className={`btn-send-review ${reviewRating > 0 ? 'active' : ''}`}
+                                                    onClick={handleSubmitReview}
+                                                    disabled={reviewRating === 0 || submittingReview}
+                                                >
+                                                    {submittingReview ? "Sending..." : "Send a Review"}
+                                                </button>
+                                            </div>
+
+                                            <textarea
+                                                className="review-textarea"
+                                                placeholder="Write your review of the product here..."
+                                                value={reviewComment}
+                                                onChange={(e) => setReviewComment(e.target.value)}
+                                                maxLength={500}
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
+                        </div>
+
+                        {sortedReviews.length > 0 && (
                             <div className="reviews-list">
-                                {prod.reviews.map((r, i) => (
+                                {sortedReviews.map((r, i) => (
                                     <article key={i} className="review-card">
                                         <div className="review-header">
                                             <div className="review-author">
@@ -497,8 +630,11 @@ function Product() {
                                                 </span>
                                             </div>
                                             <div className="review-stars-only">
-                                                {[...Array(5)].map((_, index) => (
-                                                    <Star key={index} filled={index < r.rating} />
+                                                {[1, 2, 3, 4, 5].map((star) => (
+                                                    <Star
+                                                        key={star}
+                                                        fillType={star <= r.rating ? "full" : "empty"}
+                                                    />
                                                 ))}
                                             </div>
                                         </div>
@@ -506,9 +642,8 @@ function Product() {
                                     </article>
                                 ))}
                             </div>
-                        </section>
-                    )}
-
+                        )}
+                    </section>
                 </div>
             </main>
         </>
