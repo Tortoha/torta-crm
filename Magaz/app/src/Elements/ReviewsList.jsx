@@ -1,6 +1,12 @@
+import { useState } from "react";
 import Star from "./Star";
 
-function ReviewsList({ reviews }) {
+const API_URL = "http://localhost:8000";
+
+function ReviewsList({ reviews, currentUserId, onReviewDeleted }) {
+    const [hoveredReviewId, setHoveredReviewId] = useState(null);
+    const [deletingReviewId, setDeletingReviewId] = useState(null);
+
     const formatTimeAgo = (dateString) => {
         if (!dateString) return "just now";
 
@@ -22,6 +28,28 @@ function ReviewsList({ reviews }) {
         return `${diffYear}y ago`;
     };
 
+    const handleDeleteReview = async (reviewId) => {
+        setDeletingReviewId(reviewId);
+
+        try {
+            const response = await fetch(`${API_URL}/api/reviews/${reviewId}`, {
+                method: "DELETE",
+                credentials: "include",
+            });
+
+            if (response.ok) {
+                onReviewDeleted();
+            } else {
+                const errorData = await response.json();
+                console.error("Failed to delete review:", errorData);
+            }
+        } catch (error) {
+            console.error("Error deleting review:", error);
+        } finally {
+            setDeletingReviewId(null);
+        }
+    };
+
     const sortedReviews = reviews ? [...reviews].sort((a, b) => {
         return new Date(b.created_at) - new Date(a.created_at);
     }) : [];
@@ -30,8 +58,13 @@ function ReviewsList({ reviews }) {
 
     return (
         <div className="reviews-list">
-            {sortedReviews.map((r, i) => (
-                <article key={i} className="review-card">
+            {sortedReviews.map((r) => (
+                <article
+                    key={r.id}
+                    className="review-card"
+                    onMouseEnter={() => setHoveredReviewId(r.id)}
+                    onMouseLeave={() => setHoveredReviewId(null)}
+                >
                     <div className="review-header">
                         <div className="review-author">
                             <span className="review-user-time">
@@ -47,7 +80,17 @@ function ReviewsList({ reviews }) {
                             ))}
                         </div>
                     </div>
-                    <p className="review-text">{r.comment}</p>
+                    {r.comment && <p className="review-text">{r.comment}</p>}
+
+                    {currentUserId === r.user_id && hoveredReviewId === r.id && (
+                        <button
+                            className="btn-delete-review"
+                            onClick={() => handleDeleteReview(r.id)}
+                            disabled={deletingReviewId === r.id}
+                        >
+                            ×
+                        </button>
+                    )}
                 </article>
             ))}
         </div>

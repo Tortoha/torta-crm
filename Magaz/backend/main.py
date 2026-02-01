@@ -191,7 +191,9 @@ def get_products():
     cursor.execute(
         f"""
         SELECT 
+            pr.id,
             pr.product_id,
+            pr.user_id,
             pr.rating,
             pr.comment,
             pr.created_at,
@@ -232,6 +234,8 @@ def get_products():
     for r in reviews:
         pid = r["product_id"]
         reviews_by_product.setdefault(pid, []).append({
+            "id": r["id"],
+            "user_id": r["user_id"],
             "rating": r["rating"],
             "comment": r["comment"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
@@ -369,7 +373,7 @@ def get_current_user(request: Request):
         user = get_user_by_id(int(payload["sub"]))
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        return {"name": user["name"], "email": user["email"]}
+        return {"id": user["id"], "name": user["name"], "email": user["email"]}
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
@@ -684,17 +688,16 @@ def remove_from_favorites(product_id: int, request: Request):
 class AddReview(BaseModel):
     product_id: int
     rating: int
-    comment: str
+    comment: str = ""
+
 
 @app.post("/api/reviews/add")
 def add_review(review: AddReview, request: Request):
     user_id = get_current_user_id(request)
     
-    # Валидация рейтинга
     if review.rating < 1 or review.rating > 5:
         raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
     
-    # Комментарий теперь необязателен
     if len(review.comment) > 500:
         raise HTTPException(status_code=400, detail="Comment too long")
     
@@ -702,16 +705,14 @@ def add_review(review: AddReview, request: Request):
     cursor = conn.cursor()
     
     try:
-        # Проверяем, существует ли продукт
         cursor.execute("SELECT id FROM products WHERE id=%s", (review.product_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Product not found")
         
-        # Добавляем отзыв (comment может быть пустым)
         cursor.execute(
             """INSERT INTO product_reviews (product_id, user_id, rating, comment, created_at)
                VALUES (%s, %s, %s, %s, NOW())""",
-            (review.product_id, user_id, review.rating, review.comment if review.comment else "")
+            (review.product_id, user_id, review.rating, review.comment)
         )
         conn.commit()
         
@@ -722,6 +723,102 @@ def add_review(review: AddReview, request: Request):
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.get("/api/reviews/can-review/{product_id}")
+def can_user_review(product_id: int, request: Request):
+    try:
+        user_id = get_current_user_id(request)
+    except:
+        return {"can_review": False, "reason": "not_authenticated"}
+    
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        cursor.execute(
+            "SELECT id FROM product_reviews WHERE product_id=%s AND user_id=%s",
+            (product_id, user_id)
+        )
+        existing_review = cursor.fetchone()
+        
+        if existing_review:
+            return {"can_review": False, "reason": "already_reviewed"}
+        
+        cursor.execute(
+            """
+            SELECT DISTINCT oh.id 
+            FROM order_history oh
+            JOIN order_items oi ON oh.id = oi.order_id
+            WHERE oh.user_id = %s 
+            AND oi.product_id = %s 
+            AND oh.status IN ('delivered', 'returned')
+            LIMIT 1
+            """,
+            (user_id, product_id)
+        )
+        order = cursor.fetchone()
+        
+        if order:
+            return {"can_review": True}
+        else:
+            return {"can_review": False, "reason": "not_purchased"}
+            
+    except Exception as e:
+        print(f"Error checking review permission: {e}")
+        return {"can_review": False, "reason": "error"}
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.delete("/api/reviews/{review_id}")
+def delete_review(review_id: int, request: Request):
+    try:
+        user_id = get_current_user_id(request)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Auth error: {e}")
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        cursor.execute(
+            "SELECT id, user_id FROM product_reviews WHERE id=%s",
+            (review_id,)
+        )
+        review = cursor.fetchone()
+        
+        print(f"[DELETE] Review ID: {review_id}, User ID: {user_id}")
+        print(f"[DELETE] Review data: {review}")
+        
+        if not review:
+            print("[DELETE] Review not found")
+            raise HTTPException(status_code=404, detail="Review not found")
+        
+        if review["user_id"] != user_id:
+            print(f"[DELETE] Permission denied: {review['user_id']} != {user_id}")
+            raise HTTPException(status_code=403, detail="Not authorized to delete this review")
+        
+        cursor.execute("DELETE FROM product_reviews WHERE id=%s", (review_id,))
+        conn.commit()
+        
+        print(f"[DELETE] Review {review_id} deleted successfully")
+        
+        return {"success": True, "message": "Review deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[DELETE] Database error: {e}")
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete review: {str(e)}")
     finally:
         cursor.close()
         conn.close()

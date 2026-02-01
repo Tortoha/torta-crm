@@ -747,3 +747,57 @@ body {
         height: 24px;
     }
 }
+
+.review-card {
+  position: relative;
+  overflow: visible;
+}
+
+.btn-delete-review {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 36px;
+  height: 36px;
+  background: #e30000;
+  color: #ffffff;
+  border: none;
+  border-radius: 12px;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  opacity: 0;
+  animation: fadeIn 0.2s ease forwards;
+  z-index: 10;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.btn-delete-review:hover:not(:disabled) {
+  background: #ff0000;
+  box-shadow: 0 4px 12px rgba(227, 0, 0, 0.4);
+  transform: scale(1.1);
+}
+
+.btn-delete-review:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.btn-delete-review:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

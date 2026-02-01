@@ -3,7 +3,7 @@ import Star from "./Star";
 
 const API_URL = "http://localhost:8000";
 
-function ReviewMenu({ productId, isAuthenticated, onReviewSubmitted }) {
+function ReviewMenu({ productId, isAuthenticated, canReview, onReviewSubmitted }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [menuClosing, setMenuClosing] = useState(false);
     const [rating, setRating] = useState(0);
@@ -63,6 +63,11 @@ function ReviewMenu({ productId, isAuthenticated, onReviewSubmitted }) {
             setSubmitting(false);
         }
     };
+
+    // Не показываем кнопку, если пользователь не может оставить отзыв
+    if (!canReview) {
+        return null;
+    }
 
     return (
         <div className="review-menu-container" ref={menuRef}>

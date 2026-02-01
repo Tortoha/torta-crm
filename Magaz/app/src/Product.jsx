@@ -25,6 +25,8 @@ function Product() {
     const [addingToCart, setAddingToCart] = useState(false);
     const [cartItems, setCartItems] = useState([]);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [currentUserId, setCurrentUserId] = useState(null);
+    const [canReview, setCanReview] = useState(false);
 
     const { id } = useParams();
 
@@ -48,15 +50,39 @@ function Product() {
             fetch(`${API_URL}/api/cart`, { credentials: "include" })
                 .then((res) => res.ok ? res.json() : [])
                 .catch(() => []),
+            fetch(`${API_URL}/api/me`, { credentials: "include" })
+                .then((res) => res.ok ? res.json() : null)
+                .catch(() => null),
         ])
-            .then(([products, favorites, cart]) => {
+            .then(([products, favorites, cart, user]) => {
                 setData(products);
                 setCartItems(cart);
                 const favoriteIds = favorites.map((f) => f.product_id);
                 setIsFavorite(favoriteIds.includes(parseInt(id, 10)));
+
+                if (user) {
+                    setCurrentUserId(user.id);
+                    // Проверяем, может ли пользователь оставить отзыв
+                    checkCanReview();
+                }
+
                 setLoading(false);
             })
             .catch(() => setLoading(false));
+    };
+
+    const checkCanReview = async () => {
+        try {
+            const response = await fetch(`${API_URL}/api/reviews/can-review/${id}`, {
+                credentials: "include",
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setCanReview(data.can_review);
+            }
+        } catch (error) {
+            setCanReview(false);
+        }
     };
 
     const getAvailableVariations = (product) => {
@@ -278,7 +304,7 @@ function Product() {
 
     const availableVariations = getAvailableVariations(prod);
     const currentVariation = availableVariations[activeVariation];
-    const sortedReviews = prod.reviews ? [...prod.reviews].sort((a, b) => 
+    const sortedReviews = prod.reviews ? [...prod.reviews].sort((a, b) =>
         new Date(b.created_at) - new Date(a.created_at)
     ) : [];
     const averageRating = sortedReviews.length > 0
@@ -341,11 +367,16 @@ function Product() {
                                 <ReviewMenu
                                     productId={prod.id}
                                     isAuthenticated={isAuthenticated}
+                                    canReview={canReview}
                                     onReviewSubmitted={() => window.location.reload()}
                                 />
                             </div>
                         </div>
-                        <ReviewsList reviews={prod.reviews} />
+                        <ReviewsList
+                            reviews={prod.reviews}
+                            currentUserId={currentUserId}
+                            onReviewDeleted={() => window.location.reload()}
+                        />
                     </section>
                 </div>
             </main>
