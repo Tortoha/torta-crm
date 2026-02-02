@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Response, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime, timedelta
 import mysql.connector
 import hashlib
@@ -8,19 +9,21 @@ import jwt
 import random
 import resend
 
-#cd Magaz\backend
-#.\venv\Scripts\activate
-#pip install -r .\requirements.txt
-
+# НАСТРОЙКИ
 SECRET_KEY = "d2a9c8f0e5b741a39f6c8d2e1b5a9c3f8e7d6c5b4a3928173645e5f6a7b8c9d0"
 JWT_ALGORITHM = "HS256"
 JWT_HOURS = 24 * 7
 
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "root",
+    "password": "root",
+    "database": "crmdb",
+}
 
 app = FastAPI()
 resend.api_key = "re_AixvxJe9_aQ8UsEwgVTFQjjrcUUMnAi6e"
 pending_verifications = {}
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,59 +31,51 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
+# МОДЕЛИ
+class SendCodeRequest(BaseModel):
+    email: str
+    type: str
+    name: str = None
+    password: str = None
 
-# Настройки подключения к базе
-db_config = {
-    "host": "localhost",
-    "user": "root",
-    "password": "root",
-    "database": "crmdb",
-}
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str
 
+class AddToCart(BaseModel):
+    product_id: int
+    variation_id: Optional[int] = None
+    size_id: Optional[int] = None
+    quantity: int = 1
+
+class UpdateCartQuantity(BaseModel):
+    quantity: int
+
+class AddToFavorites(BaseModel):
+    product_id: int
+
+class AddReview(BaseModel):
+    product_id: int
+    rating: int
+    comment: str = ""
+
+# ============================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================
 
 def get_db():
-    return mysql.connector.connect(**db_config)
-
-
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
+    return mysql.connector.connect(**DB_CONFIG)
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
-
 def create_token(user_id: int) -> str:
-    payload = {
-        "sub": str(user_id),
-        "exp": datetime.utcnow() + timedelta(hours=JWT_HOURS),
-    }
+    payload = {"sub": str(user_id), "exp": datetime.utcnow() + timedelta(hours=JWT_HOURS)}
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-
-def get_user_by_email(email: str):
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM users WHERE email=%s", (email,))
-    user = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return user
-
-
-def get_user_by_id(user_id: int):
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT id, name, email FROM users WHERE id=%s", (user_id,))
-    user = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return user
-
-
-def set_auth_cookie(response: Response, token: str) -> None:
+def set_auth_cookie(response: Response, token: str):
     response.set_cookie(
         key="authx_token",
         value=token,
@@ -91,6 +86,35 @@ def set_auth_cookie(response: Response, token: str) -> None:
         path="/",
     )
 
+def get_current_user_id(request: Request) -> int:
+    token = request.cookies.get("authx_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return int(payload["sub"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def get_user_by_email(email: str):
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM users WHERE email=%s", (email,))
+    user = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return user
+
+def get_user_by_id(user_id: int):
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id, name, email FROM users WHERE id=%s", (user_id,))
+    user = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return user
 
 def send_code_email(email: str, code: int) -> bool:
     try:
@@ -113,53 +137,103 @@ def send_code_email(email: str, code: int) -> bool:
         print(f"Email error: {e}")
         return False
 
+# ============================================
+# АУТЕНТИФИКАЦИЯ
+# ============================================
 
-# --- МОДЕЛИ ---
+@app.post("/api/send-code")
+def send_code(request: SendCodeRequest):
+    email = request.email
+    
+    if request.type == "register":
+        if get_user_by_email(email):
+            raise HTTPException(status_code=400, detail="Email already exists")
+        if not request.name or not request.password:
+            raise HTTPException(status_code=400, detail="Name and password required")
+    elif request.type == "login":
+        db_user = get_user_by_email(email)
+        if not db_user:
+            raise HTTPException(status_code=400, detail="User not found")
+        if hash_password(request.password) != db_user["password_hash"]:
+            raise HTTPException(status_code=400, detail="Invalid password")
+    
+    code = random.randint(100000, 999999)
+    pending_verifications[email] = {
+        "code": code,
+        "type": request.type,
+        "name": request.name,
+        "password": request.password,
+        "expires": datetime.utcnow() + timedelta(minutes=10)
+    }
+    
+    return {"success": True} if send_code_email(email, code) else HTTPException(status_code=500, detail="Failed to send email")
 
+@app.post("/api/verify-code")
+def verify_code(request: VerifyCodeRequest, response: Response):
+    email, code = request.email, request.code
+    
+    if email not in pending_verifications:
+        raise HTTPException(status_code=400, detail="Code not found or expired")
+    
+    pending = pending_verifications[email]
+    
+    if datetime.utcnow() > pending["expires"]:
+        del pending_verifications[email]
+        raise HTTPException(status_code=400, detail="Code expired")
+    
+    if int(code) != pending["code"]:
+        raise HTTPException(status_code=400, detail="Invalid code")
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    if pending["type"] == "register":
+        cursor.execute(
+            "INSERT INTO users (name, email, password_hash) VALUES (%s,%s,%s)",
+            (pending["name"], email, hash_password(pending["password"]))
+        )
+        conn.commit()
+        cursor.execute("SELECT id FROM users WHERE email=%s", (email,))
+        user_id = cursor.fetchone()[0]
+    else:
+        user_id = get_user_by_email(email)["id"]
+    
+    cursor.close()
+    conn.close()
+    
+    token = create_token(user_id)
+    set_auth_cookie(response, token)
+    del pending_verifications[email]
+    
+    return {"success": True}
 
-class UserRegister(BaseModel):
-    name: str
-    email: str
-    password: str
+@app.post("/api/resend-code")
+def resend_code(request: dict):
+    email = request.get("email")
+    if email not in pending_verifications:
+        raise HTTPException(status_code=400, detail="No pending verification")
+    
+    code = random.randint(100000, 999999)
+    pending_verifications[email]["code"] = code
+    pending_verifications[email]["expires"] = datetime.utcnow() + timedelta(minutes=10)
+    
+    return {"success": True} if send_code_email(email, code) else HTTPException(status_code=500, detail="Failed to send email")
 
+@app.get("/api/me")
+def get_current_user(request: Request):
+    user = get_user_by_id(get_current_user_id(request))
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return {"id": user["id"], "name": user["name"], "email": user["email"]}
 
-class UserLogin(BaseModel):
-    email: str
-    password: str
+@app.post("/api/logout")
+def logout(response: Response):
+    response.delete_cookie("authx_token", path="/")
+    return {"success": True}
 
-
-class SendCodeRequest(BaseModel):
-    email: str
-    type: str
-    name: str = None
-    password: str = None
-
-
-class VerifyCodeRequest(BaseModel):
-    email: str
-    code: str
-
-
-from typing import Optional
-
-
-class AddToCart(BaseModel):
-    product_id: int
-    variation_id: Optional[int] = None
-    size_id: Optional[int] = None
-    quantity: int = 1
-
-
-class AddToFavorites(BaseModel):
-    product_id: int
-
-
-class UpdateCartQuantity(BaseModel):
-    quantity: int
-
-
-# --- PRODUCTS ---
-
+# ============================================
+# ПРОДУКТЫ
+# ============================================
 
 @app.get("/api-products")
 def get_products():
@@ -176,557 +250,281 @@ def get_products():
     product_ids = [p["id"] for p in products]
     format_ids = ",".join(["%s"] * len(product_ids))
 
-    cursor.execute(
-        f"SELECT * FROM product_variations WHERE product_id IN ({format_ids})",
-        product_ids
-    )
+    # Получаем все связанные данные одним запросом
+    cursor.execute(f"SELECT * FROM product_variations WHERE product_id IN ({format_ids})", product_ids)
     variations = cursor.fetchall()
-
-    cursor.execute(
-        f"SELECT * FROM product_sizes WHERE product_id IN ({format_ids})",
-        product_ids
-    )
+    
+    cursor.execute(f"SELECT * FROM product_sizes WHERE product_id IN ({format_ids})", product_ids)
     sizes = cursor.fetchall()
-
+    
     cursor.execute(
-        f"""
-        SELECT 
-            pr.id,
-            pr.product_id,
-            pr.user_id,
-            pr.rating,
-            pr.comment,
-            pr.created_at,
-            u.name AS user_name
-        FROM product_reviews pr
-        JOIN users u ON pr.user_id = u.id
-        WHERE pr.product_id IN ({format_ids})
-        """,
+        f"""SELECT pr.*, u.name AS user_name
+            FROM product_reviews pr
+            JOIN users u ON pr.user_id = u.id
+            WHERE pr.product_id IN ({format_ids})""",
         product_ids
     )
     reviews = cursor.fetchall()
-
+    
     cursor.close()
     conn.close()
 
+    # Группировка данных
     sizes_by_variation = {}
     for s in sizes:
         sizes_by_variation.setdefault(s["variation_id"], []).append({
-            "id": s["id"],
-            "size_name": s["size_name"],
-            "stock_quantity": s["stock_quantity"],
-            "sold_quantity": s["sold_quantity"],
+            "id": s["id"], "size_name": s["size_name"],
+            "stock_quantity": s["stock_quantity"], "sold_quantity": s["sold_quantity"]
         })
 
     variations_by_product = {}
     for v in variations:
-        v_id = v["id"]
-        pid = v["product_id"]
-        variation_obj = {
-            "id": v_id,
-            "variation_name": v["variation_name"],
-            "image": v["image_url"],
-            "sizes": sizes_by_variation.get(v_id, []),
-        }
-        variations_by_product.setdefault(pid, []).append(variation_obj)
+        variations_by_product.setdefault(v["product_id"], []).append({
+            "id": v["id"], "variation_name": v["variation_name"],
+            "image": v["image_url"], "sizes": sizes_by_variation.get(v["id"], [])
+        })
 
     reviews_by_product = {}
     for r in reviews:
-        pid = r["product_id"]
-        reviews_by_product.setdefault(pid, []).append({
-            "id": r["id"],
-            "user_id": r["user_id"],
-            "rating": r["rating"],
+        reviews_by_product.setdefault(r["product_id"], []).append({
+            "id": r["id"], "user_id": r["user_id"], "rating": r["rating"],
             "comment": r["comment"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-            "user_name": r["user_name"],
+            "user_name": r["user_name"]
         })
 
-    result = []
+    # Формирование результата
     for p in products:
-        pid = p["id"]
-        product_obj = dict(p)
-        product_obj["variations"] = variations_by_product.get(pid, [])
-        product_obj["reviews"] = reviews_by_product.get(pid, [])
-        result.append(product_obj)
+        p["variations"] = variations_by_product.get(p["id"], [])
+        p["reviews"] = reviews_by_product.get(p["id"], [])
 
-    return result
-
-
-# --- ОТПРАВКА КОДА ---
-
-
-@app.post("/api/send-code")
-def send_code(request: SendCodeRequest):
-    email = request.email
-    
-    if request.type == "register":
-        if get_user_by_email(email):
-            raise HTTPException(status_code=400, detail="Email already exists")
-        if not request.name or not request.password:
-            raise HTTPException(status_code=400, detail="Name and password required")
-    
-    elif request.type == "login":
-        db_user = get_user_by_email(email)
-        if not db_user:
-            raise HTTPException(status_code=400, detail="User not found")
-        if hash_password(request.password) != db_user["password_hash"]:
-            raise HTTPException(status_code=400, detail="Invalid password")
-    
-    code = random.randint(100000, 999999)
-    
-    pending_verifications[email] = {
-        "code": code,
-        "type": request.type,
-        "name": request.name,
-        "password": request.password,
-        "expires": datetime.utcnow() + timedelta(minutes=10)
-    }
-    
-    if send_code_email(email, code):
-        return {"success": True, "message": "Code sent"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to send email")
-
-
-# --- ПРОВЕРКА КОДА ---
-
-
-@app.post("/api/verify-code")
-def verify_code(request: VerifyCodeRequest, response: Response):
-    email = request.email
-    code = request.code
-    
-    if email not in pending_verifications:
-        raise HTTPException(status_code=400, detail="Code not found or expired")
-    
-    pending = pending_verifications[email]
-    
-    if datetime.utcnow() > pending["expires"]:
-        del pending_verifications[email]
-        raise HTTPException(status_code=400, detail="Code expired")
-    
-    if int(code) != pending["code"]:
-        raise HTTPException(status_code=400, detail="Invalid code")
-    
-    if pending["type"] == "register":
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO users (name, email, password_hash) VALUES (%s,%s,%s)",
-            (pending["name"], email, hash_password(pending["password"])),
-        )
-        conn.commit()
-        
-        cursor.execute("SELECT id FROM users WHERE email=%s", (email,))
-        user_id = cursor.fetchone()[0]
-        cursor.close()
-        conn.close()
-        
-        token = create_token(user_id)
-        set_auth_cookie(response, token)
-    
-    elif pending["type"] == "login":
-        db_user = get_user_by_email(email)
-        token = create_token(db_user["id"])
-        set_auth_cookie(response, token)
-    
-    del pending_verifications[email]
-    
-    return {"success": True}
-
-
-# --- ПОВТОРНАЯ ОТПРАВКА КОДА ---
-
-
-@app.post("/api/resend-code")
-def resend_code(request: dict):
-    email = request.get("email")
-    
-    if email not in pending_verifications:
-        raise HTTPException(status_code=400, detail="No pending verification")
-    
-    pending = pending_verifications[email]
-    
-    code = random.randint(100000, 999999)
-    pending["code"] = code
-    pending["expires"] = datetime.utcnow() + timedelta(minutes=10)
-    
-    if send_code_email(email, code):
-        return {"success": True, "message": "Code resent"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to send email")
-
-
-# --- АУТЕНТИФИКАЦИЯ ---
-
-
-@app.get("/api/me")
-def get_current_user(request: Request):
-    token = request.cookies.get("authx_token")
-    
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        user = get_user_by_id(int(payload["sub"]))
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        return {"id": user["id"], "name": user["name"], "email": user["email"]}
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
-@app.post("/api/logout")
-def logout(response: Response):
-    response.delete_cookie("authx_token", path="/")
-    return {"success": True}
-
-
-# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ USER_ID ---
-
-
-def get_current_user_id(request: Request) -> int:
-    token = request.cookies.get("authx_token")
-    
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        user_id = int(payload["sub"])
-        return user_id
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
+    return products
 
 # ============================================
-# ENDPOINTS ДЛЯ КОРЗИНЫ (ИСПРАВЛЕННЫЕ ДЛЯ 2 ТАБЛИЦ)
+# КОРЗИНА
 # ============================================
-
 
 @app.post("/api/cart/add")
 def add_to_cart(item: AddToCart, request: Request):
-    print("=" * 50)
-    print("ADD TO CART")
     user_id = get_current_user_id(request)
-    print(f"User ID: {user_id}")
-    print(f"Product: {item.product_id}, Variation: {item.variation_id}, Size: {item.size_id}")
-    
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
     try:
-        # 1. Находим или создаем корзину пользователя
         cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
         cart = cursor.fetchone()
         
         if not cart:
-            # Создаем новую корзину
             cursor.execute("INSERT INTO carts (user_id) VALUES (%s)", (user_id,))
             conn.commit()
             cart_id = cursor.lastrowid
-            print(f"Created new cart: {cart_id}")
         else:
             cart_id = cart["id"]
-            print(f"Found existing cart: {cart_id}")
         
-        # 2. Проверяем, есть ли уже такой товар в корзине
         cursor.execute(
             """SELECT id, quantity FROM cart_items 
                WHERE cart_id=%s AND product_id=%s AND variation_id=%s AND size_id=%s""",
             (cart_id, item.product_id, item.variation_id, item.size_id)
         )
-        existing_item = cursor.fetchone()
+        existing = cursor.fetchone()
         
-        if existing_item:
-            # Обновляем количество
-            new_quantity = existing_item["quantity"] + item.quantity
+        if existing:
             cursor.execute(
                 "UPDATE cart_items SET quantity=%s WHERE id=%s",
-                (new_quantity, existing_item["id"])
+                (existing["quantity"] + item.quantity, existing["id"])
             )
-            print(f"Updated item quantity to {new_quantity}")
         else:
-            # Добавляем новый товар
             cursor.execute(
                 """INSERT INTO cart_items (cart_id, product_id, variation_id, size_id, quantity)
                    VALUES (%s, %s, %s, %s, %s)""",
                 (cart_id, item.product_id, item.variation_id, item.size_id, item.quantity)
             )
-            print(f"Added new item to cart")
         
         conn.commit()
-        print("SUCCESS")
-        print("=" * 50)
+        return {"success": True}
         
     except Exception as e:
-        print(f"DATABASE ERROR: {e}")
         conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         cursor.close()
         conn.close()
-    
-    return {"success": True, "message": "Item added to cart"}
-
 
 @app.get("/api/cart")
 def get_cart(request: Request):
     user_id = get_current_user_id(request)
-    
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
-    try:
-        # 1. Находим корзину пользователя
-        cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
-        cart = cursor.fetchone()
-        
-        if not cart:
-            # Корзина пустая
-            return []
-        
-        # 2. Получаем все товары из корзины с информацией о продукте
-        cursor.execute(
-            """SELECT 
-                ci.id as cart_item_id,
-                ci.quantity,
-                ci.product_id,
-                ci.variation_id,
-                ci.size_id,
-                p.title,
-                p.price,
-                p.description,
-                pv.variation_name,
-                pv.image_url,
-                ps.size_name
-               FROM cart_items ci
-               JOIN products p ON ci.product_id = p.id
-               LEFT JOIN product_variations pv ON ci.variation_id = pv.id
-               LEFT JOIN product_sizes ps ON ci.size_id = ps.id
-               WHERE ci.cart_id = %s""",
-            (cart["id"],)
-        )
-        items = cursor.fetchall()
-        
-        return items
-        
-    finally:
+    cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
+    cart = cursor.fetchone()
+    
+    if not cart:
         cursor.close()
         conn.close()
-
+        return []
+    
+    cursor.execute(
+        """SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.size_id,
+           p.title, p.price, pv.variation_name, pv.image_url, ps.size_name
+           FROM cart_items ci
+           JOIN products p ON ci.product_id = p.id
+           LEFT JOIN product_variations pv ON ci.variation_id = pv.id
+           LEFT JOIN product_sizes ps ON ci.size_id = ps.id
+           WHERE ci.cart_id = %s""",
+        (cart["id"],)
+    )
+    items = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return items
 
 @app.delete("/api/cart/{cart_item_id}")
 def remove_from_cart(cart_item_id: int, request: Request):
     user_id = get_current_user_id(request)
-    
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
-    try:
-        # Проверяем, что этот cart_item принадлежит корзине пользователя
-        cursor.execute(
-            """SELECT ci.id FROM cart_items ci
-               JOIN carts c ON ci.cart_id = c.id
-               WHERE ci.id=%s AND c.user_id=%s""",
-            (cart_item_id, user_id)
-        )
-        item = cursor.fetchone()
-        
-        if not item:
-            raise HTTPException(status_code=404, detail="Cart item not found")
-        
-        # Удаляем товар из корзины
-        cursor.execute("DELETE FROM cart_items WHERE id=%s", (cart_item_id,))
-        conn.commit()
-        
-        return {"success": True, "message": "Item removed from cart"}
-        
-    finally:
+    cursor.execute(
+        """SELECT ci.id FROM cart_items ci
+           JOIN carts c ON ci.cart_id = c.id
+           WHERE ci.id=%s AND c.user_id=%s""",
+        (cart_item_id, user_id)
+    )
+    
+    if not cursor.fetchone():
         cursor.close()
         conn.close()
-
+        raise HTTPException(status_code=404, detail="Cart item not found")
+    
+    cursor.execute("DELETE FROM cart_items WHERE id=%s", (cart_item_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"success": True}
 
 @app.put("/api/cart/{cart_item_id}")
 def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: Request):
     user_id = get_current_user_id(request)
-    
     if data.quantity < 1:
         raise HTTPException(status_code=400, detail="Quantity must be at least 1")
     
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
-    try:
-        # Проверяем права доступа
-        cursor.execute(
-            """SELECT ci.id FROM cart_items ci
-               JOIN carts c ON ci.cart_id = c.id
-               WHERE ci.id=%s AND c.user_id=%s""",
-            (cart_item_id, user_id)
-        )
-        item = cursor.fetchone()
-        
-        if not item:
-            raise HTTPException(status_code=404, detail="Cart item not found")
-        
-        # Обновляем количество
-        cursor.execute(
-            "UPDATE cart_items SET quantity=%s WHERE id=%s",
-            (data.quantity, cart_item_id)
-        )
-        conn.commit()
-        
-        return {"success": True, "message": "Quantity updated"}
-        
-    finally:
+    cursor.execute(
+        """SELECT ci.id FROM cart_items ci
+           JOIN carts c ON ci.cart_id = c.id
+           WHERE ci.id=%s AND c.user_id=%s""",
+        (cart_item_id, user_id)
+    )
+    
+    if not cursor.fetchone():
         cursor.close()
         conn.close()
-
+        raise HTTPException(status_code=404, detail="Cart item not found")
+    
+    cursor.execute("UPDATE cart_items SET quantity=%s WHERE id=%s", (data.quantity, cart_item_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"success": True}
 
 @app.delete("/api/cart/clear")
 def clear_cart(request: Request):
     user_id = get_current_user_id(request)
-    
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
-    try:
-        # Находим корзину
-        cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
-        cart = cursor.fetchone()
-        
-        if cart:
-            # Удаляем все товары из корзины
-            cursor.execute("DELETE FROM cart_items WHERE cart_id=%s", (cart["id"],))
-            conn.commit()
-        
-        return {"success": True, "message": "Cart cleared"}
-        
-    finally:
-        cursor.close()
-        conn.close()
-
+    cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
+    cart = cursor.fetchone()
+    
+    if cart:
+        cursor.execute("DELETE FROM cart_items WHERE cart_id=%s", (cart["id"],))
+        conn.commit()
+    
+    cursor.close()
+    conn.close()
+    return {"success": True}
 
 # ============================================
-# ENDPOINTS ДЛЯ ИЗБРАННОГО
+# ИЗБРАННОЕ
 # ============================================
-
 
 @app.post("/api/favorites/add")
 def add_to_favorites(item: AddToFavorites, request: Request):
     user_id = get_current_user_id(request)
-    
     conn = get_db()
     cursor = conn.cursor()
     
     try:
-        cursor.execute(
-            "INSERT INTO favorites (user_id, product_id) VALUES (%s, %s)",
-            (user_id, item.product_id)
-        )
+        cursor.execute("INSERT INTO favorites (user_id, product_id) VALUES (%s, %s)", (user_id, item.product_id))
         conn.commit()
     except mysql.connector.IntegrityError:
         pass
-    
-    cursor.close()
-    conn.close()
+    finally:
+        cursor.close()
+        conn.close()
     
     return {"success": True}
-
 
 @app.get("/api/favorites")
 def get_favorites(request: Request):
     user_id = get_current_user_id(request)
-    
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
     cursor.execute(
-        """SELECT f.*, p.title, p.price, p.description
+        """SELECT f.*, p.title, p.price
            FROM favorites f
            JOIN products p ON f.product_id = p.id
            WHERE f.user_id = %s""",
         (user_id,)
     )
     items = cursor.fetchall()
-    
     cursor.close()
     conn.close()
-    
     return items
-
 
 @app.delete("/api/favorites/{product_id}")
 def remove_from_favorites(product_id: int, request: Request):
     user_id = get_current_user_id(request)
-    
     conn = get_db()
     cursor = conn.cursor()
     
-    cursor.execute(
-        "DELETE FROM favorites WHERE product_id=%s AND user_id=%s",
-        (product_id, user_id)
-    )
-    
+    cursor.execute("DELETE FROM favorites WHERE product_id=%s AND user_id=%s", (product_id, user_id))
     conn.commit()
     cursor.close()
     conn.close()
-    
     return {"success": True}
 
 # ============================================
-# ENDPOINTS ДЛЯ ОТЗЫВОВ
+# ОТЗЫВЫ
 # ============================================
-
-class AddReview(BaseModel):
-    product_id: int
-    rating: int
-    comment: str = ""
-
 
 @app.post("/api/reviews/add")
 def add_review(review: AddReview, request: Request):
     user_id = get_current_user_id(request)
     
-    if review.rating < 1 or review.rating > 5:
+    if not 1 <= review.rating <= 5:
         raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
-    
-    if len(review.comment) > 500:
-        raise HTTPException(status_code=400, detail="Comment too long")
     
     conn = get_db()
     cursor = conn.cursor()
     
     try:
-        cursor.execute("SELECT id FROM products WHERE id=%s", (review.product_id,))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Product not found")
-        
         cursor.execute(
             """INSERT INTO product_reviews (product_id, user_id, rating, comment, created_at)
                VALUES (%s, %s, %s, %s, NOW())""",
             (review.product_id, user_id, review.rating, review.comment)
         )
         conn.commit()
-        
-        return {"success": True, "message": "Review added successfully"}
-        
+        return {"success": True}
     except mysql.connector.IntegrityError:
         raise HTTPException(status_code=400, detail="You have already reviewed this product")
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     finally:
         cursor.close()
         conn.close()
-
 
 @app.get("/api/reviews/can-review/{product_id}")
 def can_user_review(product_id: int, request: Request):
@@ -738,87 +536,47 @@ def can_user_review(product_id: int, request: Request):
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
-    try:
-        cursor.execute(
-            "SELECT id FROM product_reviews WHERE product_id=%s AND user_id=%s",
-            (product_id, user_id)
-        )
-        existing_review = cursor.fetchone()
-        
-        if existing_review:
-            return {"can_review": False, "reason": "already_reviewed"}
-        
-        cursor.execute(
-            """
-            SELECT DISTINCT oh.id 
-            FROM order_history oh
-            JOIN order_items oi ON oh.id = oi.order_id
-            WHERE oh.user_id = %s 
-            AND oi.product_id = %s 
-            AND oh.status IN ('delivered', 'returned')
-            LIMIT 1
-            """,
-            (user_id, product_id)
-        )
-        order = cursor.fetchone()
-        
-        if order:
-            return {"can_review": True}
-        else:
-            return {"can_review": False, "reason": "not_purchased"}
-            
-    except Exception as e:
-        print(f"Error checking review permission: {e}")
-        return {"can_review": False, "reason": "error"}
-    finally:
+    cursor.execute("SELECT id FROM product_reviews WHERE product_id=%s AND user_id=%s", (product_id, user_id))
+    if cursor.fetchone():
         cursor.close()
         conn.close()
-
+        return {"can_review": False, "reason": "already_reviewed"}
+    
+    cursor.execute(
+        """SELECT DISTINCT oh.id 
+           FROM order_history oh
+           JOIN order_items oi ON oh.id = oi.order_id
+           WHERE oh.user_id = %s AND oi.product_id = %s AND oh.status IN ('delivered', 'returned')
+           LIMIT 1""",
+        (user_id, product_id)
+    )
+    can_review = cursor.fetchone() is not None
+    cursor.close()
+    conn.close()
+    
+    return {"can_review": can_review} if can_review else {"can_review": False, "reason": "not_purchased"}
 
 @app.delete("/api/reviews/{review_id}")
 def delete_review(review_id: int, request: Request):
-    try:
-        user_id = get_current_user_id(request)
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        print(f"Auth error: {e}")
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    
+    user_id = get_current_user_id(request)
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
-    try:
-        cursor.execute(
-            "SELECT id, user_id FROM product_reviews WHERE id=%s",
-            (review_id,)
-        )
-        review = cursor.fetchone()
-        
-        print(f"[DELETE] Review ID: {review_id}, User ID: {user_id}")
-        print(f"[DELETE] Review data: {review}")
-        
-        if not review:
-            print("[DELETE] Review not found")
-            raise HTTPException(status_code=404, detail="Review not found")
-        
-        if review["user_id"] != user_id:
-            print(f"[DELETE] Permission denied: {review['user_id']} != {user_id}")
-            raise HTTPException(status_code=403, detail="Not authorized to delete this review")
-        
-        cursor.execute("DELETE FROM product_reviews WHERE id=%s", (review_id,))
-        conn.commit()
-        
-        print(f"[DELETE] Review {review_id} deleted successfully")
-        
-        return {"success": True, "message": "Review deleted successfully"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[DELETE] Database error: {e}")
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to delete review: {str(e)}")
-    finally:
+    cursor.execute("SELECT user_id FROM product_reviews WHERE id=%s", (review_id,))
+    review = cursor.fetchone()
+    
+    if not review:
         cursor.close()
         conn.close()
+        raise HTTPException(status_code=404, detail="Review not found")
+    
+    if review["user_id"] != user_id:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    cursor.execute("DELETE FROM product_reviews WHERE id=%s", (review_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"success": True}
