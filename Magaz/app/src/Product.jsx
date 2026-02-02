@@ -62,7 +62,6 @@ function Product() {
 
                 if (user) {
                     setCurrentUserId(user.id);
-                    // Проверяем, может ли пользователь оставить отзыв
                     checkCanReview();
                 }
 
@@ -222,6 +221,18 @@ function Product() {
     const handleUpdateQuantity = async (newQuantity) => {
         if (newQuantity < 1 || !cartItemId) return;
 
+        const prod = data.find((item) => item.id === parseInt(id, 10));
+        if (!prod) return;
+
+        const availableVariations = getAvailableVariations(prod);
+        const currentVariation = availableVariations[activeVariation];
+        const currentSize = currentVariation.sizes.find(s => s.id === activeSize.id);
+
+        // Проверка: не превышает ли количество stock_quantity
+        if (newQuantity > currentSize.stock_quantity) {
+            return;
+        }
+
         try {
             const response = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
                 method: "PUT",
@@ -237,6 +248,9 @@ function Product() {
                     const updatedCart = await cartResponse.json();
                     setCartItems(updatedCart);
                 }
+            } else {
+                const error = await response.json();
+                console.error(error.detail);
             }
         } catch (error) {
             console.error(error);
@@ -311,6 +325,9 @@ function Product() {
         ? (sortedReviews.reduce((sum, r) => sum + r.rating, 0) / sortedReviews.length).toFixed(1)
         : "0.0";
 
+    const currentSize = currentVariation?.sizes.find(s => s.id === activeSize?.id);
+    const maxStock = currentSize?.stock_quantity || 999;
+
     return (
         <>
             <Header />
@@ -350,6 +367,7 @@ function Product() {
                         isFavorite={isFavorite}
                         cartQuantity={cartQuantity}
                         addingToCart={addingToCart}
+                        maxStock={maxStock}
                         onToggleCart={handleToggleCart}
                         onUpdateQuantity={handleUpdateQuantity}
                         onToggleFavorite={handleToggleFavorite}

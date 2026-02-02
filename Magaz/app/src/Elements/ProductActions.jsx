@@ -1,13 +1,14 @@
 import heartIcon from "../../icons/Like.png";
 
-function ProductActions({ 
-    isInCart, 
-    isFavorite, 
-    cartQuantity, 
+function ProductActions({
+    isInCart,
+    isFavorite,
+    cartQuantity,
     addingToCart,
-    onToggleCart, 
-    onUpdateQuantity, 
-    onToggleFavorite 
+    maxStock,
+    onToggleCart,
+    onUpdateQuantity,
+    onToggleFavorite
 }) {
     return (
         <div className="product-actions">
@@ -31,7 +32,11 @@ function ProductActions({
                         <span className="quantity-value">{cartQuantity}</span>
                         <button
                             className="quantity-btn"
-                            onClick={() => onUpdateQuantity(cartQuantity + 1)}
+                            onClick={() => {
+                                if (cartQuantity < maxStock) {
+                                    onUpdateQuantity(cartQuantity + 1);
+                                }
+                            }}
                         >
                             +
                         </button>
