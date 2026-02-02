@@ -12,64 +12,64 @@ import ReviewsList from "./Elements/ReviewsList";
 const API_URL = "http://localhost:8000";
 
 function Product() {
-    const [data, setData] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [activeVariation, setActiveVariation] = useState(0);
-    const [activeSize, setActiveSize] = useState(null);
-    const [hoveredVariation, setHoveredVariation] = useState(null);
-    const [hoveredSize, setHoveredSize] = useState(null);
-    const [isFavorite, setIsFavorite] = useState(false);
-    const [isInCart, setIsInCart] = useState(false);
-    const [cartItemId, setCartItemId] = useState(null);
-    const [cartQuantity, setCartQuantity] = useState(1);
-    const [addingToCart, setAddingToCart] = useState(false);
-    const [cartItems, setCartItems] = useState([]);
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
-    const [currentUserId, setCurrentUserId] = useState(null);
-    const [canReview, setCanReview] = useState(false);
-
+    // ПОЛУЧЕНИЕ ID ПРОДУКТА ИЗ URL
     const { id } = useParams();
 
+    // STATE ПЕРЕМЕННЫЕ
+    const [data, setData] = useState([]);                      // Все продукты из API
+    const [loading, setLoading] = useState(true);              // Индикатор загрузки
+    const [activeVariation, setActiveVariation] = useState(0); // Активная вариация (цвет)
+    const [activeSize, setActiveSize] = useState(null);        // Активный размер
+    const [hoveredVariation, setHoveredVariation] = useState(null); // Наведенная вариация
+    const [hoveredSize, setHoveredSize] = useState(null);      // Наведенный размер
+    const [isFavorite, setIsFavorite] = useState(false);       // В избранном или нет
+    const [cartItems, setCartItems] = useState([]);            // Товары в корзине
+    const [addingToCart, setAddingToCart] = useState(false);   // Процесс добавления в корзину
+    const [isAuthenticated, setIsAuthenticated] = useState(false); // Залогинен ли пользователь
+    const [currentUserId, setCurrentUserId] = useState(null);  // ID текущего пользователя
+    const [canReview, setCanReview] = useState(false);         // Может ли оставить отзыв
+
+    // ЗАГРУЗКА ДАННЫХ ПРИ МОНТИРОВАНИИ
     useEffect(() => {
         loadProductData();
     }, [id]);
 
-    const loadProductData = () => {
+    // ФУНКЦИЯ ЗАГРУЗКИ ВСЕХ ДАННЫХ
+    // Загружает: продукты, избранное, корзину, пользователя
+    const loadProductData = async () => {
         setLoading(true);
-        Promise.all([
-            fetch(`${API_URL}/api-products`).then((res) => res.json()),
-            fetch(`${API_URL}/api/favorites`, { credentials: "include" })
-                .then((res) => {
-                    if (res.ok) {
-                        setIsAuthenticated(true);
-                        return res.json();
-                    }
-                    return [];
-                })
-                .catch(() => []),
-            fetch(`${API_URL}/api/cart`, { credentials: "include" })
-                .then((res) => res.ok ? res.json() : [])
-                .catch(() => []),
-            fetch(`${API_URL}/api/me`, { credentials: "include" })
-                .then((res) => res.ok ? res.json() : null)
-                .catch(() => null),
-        ])
-            .then(([products, favorites, cart, user]) => {
-                setData(products);
-                setCartItems(cart);
-                const favoriteIds = favorites.map((f) => f.product_id);
-                setIsFavorite(favoriteIds.includes(parseInt(id, 10)));
+        try {
+            const [products, favorites, cart, user] = await Promise.all([
+                fetch(`${API_URL}/api-products`).then(r => r.json()),
+                fetch(`${API_URL}/api/favorites`, { credentials: "include" })
+                    .then(r => r.ok ? r.json() : [])
+                    .catch(() => []),
+                fetch(`${API_URL}/api/cart`, { credentials: "include" })
+                    .then(r => r.ok ? r.json() : [])
+                    .catch(() => []),
+                fetch(`${API_URL}/api/me`, { credentials: "include" })
+                    .then(r => r.ok ? r.json() : null)
+                    .catch(() => null),
+            ]);
 
-                if (user) {
-                    setCurrentUserId(user.id);
-                    checkCanReview();
-                }
+            setData(products);
+            setCartItems(cart);
+            setIsFavorite(favorites.some(f => f.product_id === parseInt(id, 10)));
 
-                setLoading(false);
-            })
-            .catch(() => setLoading(false));
+            if (user) {
+                setCurrentUserId(user.id);
+                setIsAuthenticated(true);
+                checkCanReview(); // Проверяем возможность оставить отзыв
+            }
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoading(false);
+        }
     };
 
+    // ПРОВЕРКА: МОЖЕТ ЛИ ПОЛЬЗОВАТЕЛЬ ОСТАВИТЬ ОТЗЫВ
+    // Условия: купил товар и еще не оставлял отзыв
     const checkCanReview = async () => {
         try {
             const response = await fetch(`${API_URL}/api/reviews/can-review/${id}`, {
@@ -84,23 +84,25 @@ function Product() {
         }
     };
 
+    // ФИЛЬТРАЦИЯ ВАРИАЦИЙ С ДОСТУПНЫМИ РАЗМЕРАМИ
+    // Возвращает только те вариации, у которых есть размеры с stock > 0
     const getAvailableVariations = (product) => {
-        if (!product || !product.variations) return [];
-        return product.variations.filter(variation => {
-            const availableSizes = variation.sizes.filter(size => size.stock_quantity > 0);
-            return availableSizes.length > 0;
-        }).map(variation => ({
-            ...variation,
-            sizes: variation.sizes.filter(size => size.stock_quantity > 0)
-        }));
+        if (!product?.variations) return [];
+        return product.variations
+            .filter(v => v.sizes.some(s => s.stock_quantity > 0))
+            .map(v => ({
+                ...v,
+                sizes: v.sizes.filter(s => s.stock_quantity > 0)
+            }));
     };
 
+    // УСТАНОВКА ПЕРВОГО РАЗМЕРА ПРИ ЗАГРУЗКЕ
     useEffect(() => {
         if (data.length > 0) {
-            const prod = data.find((item) => item.id === parseInt(id, 10));
+            const prod = data.find(item => item.id === parseInt(id, 10));
             if (prod) {
                 const availableVariations = getAvailableVariations(prod);
-                if (availableVariations[activeVariation]?.sizes?.length > 0) {
+                if (availableVariations[activeVariation]?.sizes?.[0]) {
                     const firstSize = availableVariations[activeVariation].sizes[0];
                     setActiveSize({ id: firstSize.id, name: firstSize.size_name });
                 }
@@ -108,59 +110,11 @@ function Product() {
         }
     }, [data, activeVariation, id]);
 
-    useEffect(() => {
-        if (data.length > 0 && activeSize) {
-            checkIfInCart();
-        }
-    }, [data, activeVariation, activeSize, id, cartItems]);
-
-    const checkIfInCart = () => {
-        if (!activeSize) return;
-        const prod = data.find((item) => item.id === parseInt(id, 10));
-        if (!prod) return;
-
-        const availableVariations = getAvailableVariations(prod);
-        const currentVariation = availableVariations[activeVariation];
-
-        const foundItem = cartItems.find(
-            (item) =>
-                item.product_id === prod.id &&
-                item.variation_id === currentVariation.id &&
-                item.size_id === activeSize.id
-        );
-
-        if (foundItem) {
-            setIsInCart(true);
-            setCartItemId(foundItem.cart_item_id);
-            setCartQuantity(foundItem.quantity);
-        } else {
-            setIsInCart(false);
-            setCartItemId(null);
-            setCartQuantity(1);
-        }
-    };
-
-    const isVariationInCart = (variationId) => {
-        return cartItems.some(item =>
-            item.product_id === parseInt(id, 10) && item.variation_id === variationId
-        );
-    };
-
-    const isSizeInCart = (sizeId) => {
-        const prod = data.find((item) => item.id === parseInt(id, 10));
-        if (!prod) return false;
-        const availableVariations = getAvailableVariations(prod);
-        const currentVariation = availableVariations[activeVariation];
-        return cartItems.some(item =>
-            item.product_id === prod.id &&
-            item.variation_id === currentVariation.id &&
-            item.size_id === sizeId
-        );
-    };
-
+    // СМЕНА ВАРИАЦИИ
+    // Автоматически выбирает первый доступный размер если текущего нет
     const handleVariationClick = (index) => {
         setActiveVariation(index);
-        const prod = data.find((item) => item.id === parseInt(id, 10));
+        const prod = data.find(item => item.id === parseInt(id, 10));
         const availableVariations = getAvailableVariations(prod);
         const newVariation = availableVariations[index];
         if (activeSize) {
@@ -172,27 +126,31 @@ function Product() {
         }
     };
 
+    // ДОБАВЛЕНИЕ/УДАЛЕНИЕ ИЗ КОРЗИНЫ
     const handleToggleCart = async () => {
+        // Проверка авторизации
         if (!isAuthenticated) {
             window.location.href = "/login";
             return;
         }
 
-        const prod = data.find((item) => item.id === parseInt(id, 10));
+        const prod = data.find(item => item.id === parseInt(id, 10));
         const availableVariations = getAvailableVariations(prod);
         const currentVariation = availableVariations[activeVariation];
-
         if (!currentVariation || !activeSize) return;
 
         setAddingToCart(true);
 
         try {
-            if (isInCart && cartItemId) {
-                await fetch(`${API_URL}/api/cart/${cartItemId}`, {
+            const cartInfo = getCartInfo();
+            if (cartInfo) {
+                // Удаление из корзины
+                await fetch(`${API_URL}/api/cart/${cartInfo.cart_item_id}`, {
                     method: "DELETE",
                     credentials: "include",
                 });
             } else {
+                // Добавление в корзину
                 await fetch(`${API_URL}/api/cart/add`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -206,6 +164,7 @@ function Product() {
                 });
             }
 
+            // Обновление корзины
             const cartResponse = await fetch(`${API_URL}/api/cart`, { credentials: "include" });
             if (cartResponse.ok) {
                 const updatedCart = await cartResponse.json();
@@ -218,23 +177,24 @@ function Product() {
         }
     };
 
+    // ИЗМЕНЕНИЕ КОЛИЧЕСТВА ТОВАРА В КОРЗИНЕ
+    // Проверяет: не превышает ли количество stock_quantity
     const handleUpdateQuantity = async (newQuantity) => {
-        if (newQuantity < 1 || !cartItemId) return;
+        const cartInfo = getCartInfo();
+        if (newQuantity < 1 || !cartInfo) return;
 
-        const prod = data.find((item) => item.id === parseInt(id, 10));
+        const prod = data.find(item => item.id === parseInt(id, 10));
         if (!prod) return;
 
         const availableVariations = getAvailableVariations(prod);
         const currentVariation = availableVariations[activeVariation];
         const currentSize = currentVariation.sizes.find(s => s.id === activeSize.id);
 
-        // Проверка: не превышает ли количество stock_quantity
-        if (newQuantity > currentSize.stock_quantity) {
-            return;
-        }
+        // Блокировка увеличения если превышает запас
+        if (newQuantity > currentSize.stock_quantity) return;
 
         try {
-            const response = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
+            const response = await fetch(`${API_URL}/api/cart/${cartInfo.cart_item_id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
@@ -242,28 +202,25 @@ function Product() {
             });
 
             if (response.ok) {
-                setCartQuantity(newQuantity);
                 const cartResponse = await fetch(`${API_URL}/api/cart`, { credentials: "include" });
                 if (cartResponse.ok) {
                     const updatedCart = await cartResponse.json();
                     setCartItems(updatedCart);
                 }
-            } else {
-                const error = await response.json();
-                console.error(error.detail);
             }
         } catch (error) {
             console.error(error);
         }
     };
 
+    // ДОБАВЛЕНИЕ/УДАЛЕНИЕ ИЗ ИЗБРАННОГО
     const handleToggleFavorite = async () => {
         if (!isAuthenticated) {
             window.location.href = "/login";
             return;
         }
 
-        const prod = data.find((item) => item.id === parseInt(id, 10));
+        const prod = data.find(item => item.id === parseInt(id, 10));
         const method = isFavorite ? "DELETE" : "POST";
         const url = isFavorite
             ? `${API_URL}/api/favorites/${prod.id}`
@@ -285,8 +242,46 @@ function Product() {
         }
     };
 
+    // ПОЛУЧЕНИЕ ИНФОРМАЦИИ О ТОВАРЕ В КОРЗИНЕ
+    // Возвращает объект товара если он в корзине, иначе null
+    const getCartInfo = () => {
+        if (!activeSize) return null;
+        const prod = data.find(item => item.id === parseInt(id, 10));
+        if (!prod) return null;
+        const availableVariations = getAvailableVariations(prod);
+        const currentVariation = availableVariations[activeVariation];
+        return cartItems.find(
+            item =>
+                item.product_id === prod.id &&
+                item.variation_id === currentVariation.id &&
+                item.size_id === activeSize.id
+        );
+    };
+
+    // ПРОВЕРКА: ЕСТЬ ЛИ ВАРИАЦИЯ В КОРЗИНЕ
+    // Для отображения синей точки на вариации
+    const isVariationInCart = (variationId) => {
+        return cartItems.some(item => item.product_id === parseInt(id, 10) && item.variation_id === variationId);
+    };
+
+    // ПРОВЕРКА: ЕСТЬ ЛИ РАЗМЕР В КОРЗИНЕ
+    // Для отображения синей точки на размере
+    const isSizeInCart = (sizeId) => {
+        const prod = data.find(item => item.id === parseInt(id, 10));
+        if (!prod) return false;
+        const availableVariations = getAvailableVariations(prod);
+        const currentVariation = availableVariations[activeVariation];
+        return cartItems.some(item =>
+            item.product_id === prod.id &&
+            item.variation_id === currentVariation.id &&
+            item.size_id === sizeId
+        );
+    };
+
+    // ПОЛУЧЕНИЕ ИНДЕКСА АКТИВНОГО РАЗМЕРА
+    // Для подсветки активного размера
     const getActiveSizeIndex = () => {
-        const prod = data.find((item) => item.id === parseInt(id, 10));
+        const prod = data.find(item => item.id === parseInt(id, 10));
         if (!prod) return 0;
         const availableVariations = getAvailableVariations(prod);
         const currentVariation = availableVariations[activeVariation];
@@ -294,6 +289,7 @@ function Product() {
         return currentVariation.sizes.findIndex(s => s.size_name === activeSize.name);
     };
 
+    // ЭКРАН ЗАГРУЗКИ
     if (loading) {
         return (
             <div id="mask" className="mask">
@@ -304,7 +300,8 @@ function Product() {
         );
     }
 
-    const prod = data.find((item) => item.id === parseInt(id, 10));
+    // ПОИСК ПРОДУКТА ПО ID
+    const prod = data.find(item => item.id === parseInt(id, 10));
     if (!prod) {
         return (
             <div className="center">
@@ -316,17 +313,24 @@ function Product() {
         );
     }
 
-    const availableVariations = getAvailableVariations(prod);
-    const currentVariation = availableVariations[activeVariation];
+    // ВЫЧИСЛЕНИЕ ДАННЫХ ДЛЯ РЕНДЕРА
+    const availableVariations = getAvailableVariations(prod);        // Вариации с доступными размерами
+    const currentVariation = availableVariations[activeVariation];   // Текущая вариация
+    const currentSize = currentVariation?.sizes.find(s => s.id === activeSize?.id); // Текущий размер
+    const maxStock = currentSize?.stock_quantity || 999;             // Максимальное количество на складе
+    const cartInfo = getCartInfo();                                  // Информация о товаре в корзине
+    const isInCart = !!cartInfo;                                     // Находится ли товар в корзине
+    const cartQuantity = cartInfo?.quantity || 1;                    // Количество в корзине
+
+    // Сортировка отзывов по дате
     const sortedReviews = prod.reviews ? [...prod.reviews].sort((a, b) =>
         new Date(b.created_at) - new Date(a.created_at)
     ) : [];
+    
+    // Расчет среднего рейтинга
     const averageRating = sortedReviews.length > 0
         ? (sortedReviews.reduce((sum, r) => sum + r.rating, 0) / sortedReviews.length).toFixed(1)
         : "0.0";
-
-    const currentSize = currentVariation?.sizes.find(s => s.id === activeSize?.id);
-    const maxStock = currentSize?.stock_quantity || 999;
 
     return (
         <>

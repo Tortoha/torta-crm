@@ -64,7 +64,6 @@ function ReviewMenu({ productId, isAuthenticated, canReview, onReviewSubmitted }
         }
     };
 
-    // Не показываем кнопку, если пользователь не может оставить отзыв
     if (!canReview) {
         return null;
     }
