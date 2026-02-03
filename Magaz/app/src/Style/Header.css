@@ -45,7 +45,7 @@ header a:hover {
     background-color: #E5E5E5;
 }
 
-.a{
+.a {
     padding: 16px;
     border-radius: 1000px;
     text-decoration: none;
@@ -55,7 +55,7 @@ header a:hover {
     box-shadow: 0px 0px 16px rgba(0, 0, 0, 0.0);
 }
 
-.a:hover{
+.a:hover {
     background-color: #E5E5E5;
     box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
 }
@@ -89,12 +89,10 @@ header a:hover {
         transform: translateY(-10px) scale(0.95);
         opacity: 0;
     }
-
     60% {
         transform: translateY(2px) scale(1.02);
         opacity: 1;
     }
-
     100% {
         transform: translateY(0) scale(1);
     }
@@ -174,4 +172,146 @@ header a:hover {
 
 .menu-closing {
     animation: bounceOut 0.3s cubic-bezier(0.55, 0.5, 0.5, 0.9) forwards !important;
+}
+
+/* ============================================
+   АДАПТИВНОСТЬ
+   ============================================ */
+
+/* Планшеты */
+@media (max-width: 1024px) {
+    header {
+        margin: 24px;
+    }
+
+    .menu {
+        margin: 16px 24px;
+    }
+}
+
+/* Мобильные устройства */
+@media (max-width: 768px) {
+    header {
+        margin: 20px;
+    }
+
+    header h5 {
+        font-size: 24px;
+    }
+
+    header img {
+        width: 28px;
+        height: 28px;
+    }
+
+    .a, header a {
+        padding: 14px;
+    }
+
+    .menu {
+        margin: 14px 20px;
+        min-width: 220px;
+        max-width: calc(100vw - 40px);
+        border-radius: 32px;
+    }
+
+    .menu a {
+        font-size: 17px;
+        padding: 11px;
+    }
+
+    .logout {
+        font-size: 22px;
+        padding: 14px 0;
+    }
+}
+
+/* Маленькие мобильные */
+@media (max-width: 480px) {
+    header {
+        margin: 16px;
+    }
+
+    header h5 {
+        font-size: 20px;
+    }
+
+    header img {
+        width: 24px;
+        height: 24px;
+    }
+
+    header .head {
+        gap: 8px;
+    }
+
+    .a, header a {
+        padding: 12px;
+    }
+
+    .menu {
+        margin: 10px 16px;
+        min-width: 200px;
+        max-width: calc(100vw - 32px);
+        border-radius: 28px;
+    }
+
+    .menu-header {
+        padding: 12px;
+    }
+
+    .menu-head {
+        gap: 8px;
+    }
+
+    .menu a {
+        font-size: 16px;
+        padding: 10px;
+    }
+
+    .logout {
+        font-size: 20px;
+        padding: 12px 0;
+    }
+}
+
+/* Очень маленькие экраны */
+@media (max-width: 360px) {
+    header {
+        margin: 12px;
+    }
+
+    header h5 {
+        font-size: 18px;
+    }
+
+    header img {
+        width: 22px;
+        height: 22px;
+    }
+
+    .a, header a {
+        padding: 10px;
+    }
+
+    .menu {
+        margin: 8px 12px;
+        min-width: 180px;
+        max-width: calc(100vw - 24px);
+        border-radius: 24px;
+    }
+
+    .menu-header {
+        padding: 10px;
+    }
+
+    .menu a {
+        font-size: 15px;
+        padding: 9px;
+    }
+
+    .logout {
+        font-size: 18px;
+        padding: 11px 0;
+    }
 }

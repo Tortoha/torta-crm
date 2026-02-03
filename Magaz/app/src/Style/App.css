@@ -96,18 +96,184 @@ a {
     display: block;
 }
 
+/* ============================================
+   АДАПТИВНОСТЬ
+   ============================================ */
+
+/* Средние экраны (1024px - 1200px) */
+@media (max-width: 1200px) {
+    .image-grid-section {
+        gap: 18px;
+        padding: 45px 18px;
+    }
+}
+
+/* Планшеты (768px - 1024px) */
+@media (max-width: 1024px) {
+    .image-grid-section {
+        gap: 16px;
+        padding: 40px 16px;
+    }
+    
+    .card-gruop h3 {
+        font-size: 17px;
+    }
+    
+    .card-gruop h2 {
+        font-size: 22px;
+    }
+}
+
+/* Планшеты маленькие и мобильные большие (481px - 768px) */
 @media (max-width: 768px) {
     .image-grid-section {
         grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+        padding: 35px 14px;
     }
 
     .main-title {
         font-size: 40px;
     }
+    
+    .card-gruop h3 {
+        font-size: 16px;
+        margin-top: 5px;
+    }
+    
+    .card-gruop h2 {
+        font-size: 20px;
+    }
+    
+    .card {
+        border-radius: 14px;
+    }
+    
+    .a-card {
+        border-radius: 14px;
+    }
+    
+    .a-card:hover {
+        border-radius: 24px;
+        padding: 10px;
+    }
 }
 
+/* Мобильные (361px - 480px) */
 @media (max-width: 480px) {
     .image-grid-section {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        padding: 30px 12px;
+    }
+    
+    .card-gruop h3 {
+        font-size: 15px;
+        margin-top: 4px;
+        margin-bottom: 2px;
+    }
+    
+    .card-gruop h2 {
+        font-size: 18px;
+        margin: 4px 0;
+    }
+    
+    .card {
+        border-radius: 12px;
+    }
+    
+    .a-card {
+        border-radius: 12px;
+    }
+    
+    .a-card:hover {
+        border-radius: 20px;
+        padding: 8px;
+    }
+}
+
+/* Маленькие мобильные (до 360px) */
+@media (max-width: 360px) {
+    .image-grid-section {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        padding: 25px 10px;
+    }
+    
+    .card-gruop h3 {
+        font-size: 14px;
+        margin-top: 3px;
+        margin-bottom: 1px;
+    }
+    
+    .card-gruop h2 {
+        font-size: 17px;
+        margin: 3px 0;
+    }
+    
+    .card {
+        border-radius: 11px;
+    }
+    
+    .a-card {
+        border-radius: 11px;
+    }
+    
+    .a-card:hover {
+        border-radius: 18px;
+        padding: 6px;
+    }
+}
+
+/* Очень маленькие экраны (до 320px) */
+@media (max-width: 320px) {
+    .image-grid-section {
+        gap: 8px;
+        padding: 20px 8px;
+    }
+    
+    .card-gruop h3 {
+        font-size: 13px;
+    }
+    
+    .card-gruop h2 {
+        font-size: 16px;
+    }
+    
+    .card {
+        border-radius: 10px;
+    }
+    
+    .a-card {
+        border-radius: 10px;
+    }
+    
+    .a-card:hover {
+        border-radius: 16px;
+        padding: 5px;
+    }
+}
+
+/* Touch устройства - отключаем hover, включаем active */
+@media (hover: none) and (pointer: coarse) {
+    .a-card:hover {
+        background-color: #ffffff;
+        border-radius: 16px;
+        padding: 0px;
+        box-shadow: 0px 0px 48px rgba(0, 0, 0, 0.0);
+    }
+
+    .a-card:hover .card {
+        box-shadow: 0 px 0px rgba(0, 0, 0, 0);
+    }
+
+    .a-card:active {
+        background-color: #0000001a;
+        border-radius: 24px;
+        padding: 10px;
+    }
+
+    .a-card:active .card {
+        box-shadow: 0 2px 14px rgba(0, 0, 0, 0.15);
     }
 }

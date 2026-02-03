@@ -64,8 +64,10 @@ function Header() {
                   <h5>{truncateName(username)}</h5>
                 </div>
               </div>
-              <Link to={"/"}>Settings</Link>
-              <button className="logout" onClick={handleLogout}>Sing Out</button>
+              <Link to={"/cart"}>Cart</Link>
+              <Link to={"/favorites"}>Favorites</Link>
+              <Link to={"/history"}>History</Link>
+              <button className="logout" onClick={handleLogout}>Sign Out</button>
             </div>
           )}
         </div>
