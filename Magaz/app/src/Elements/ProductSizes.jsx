@@ -8,10 +8,29 @@ function ProductSizes({
     isSizeInCart 
 }) {
     if (!sizes || sizes.length === 0) return null;
+    const getOffset = (index) => {
+        const width = window.innerWidth;
+        let itemWidth, gap;
+        
+        if (width <= 480) {
+            itemWidth = 48;
+            gap = 8;
+        } else if (width <= 768) {
+            itemWidth = 56;
+            gap = 8;
+        } else {
+            itemWidth = 64;
+            gap = 12;
+        }
+        
+        return index * (itemWidth + gap);
+    };
 
     const isSizeUnderIndicator = (index) => {
         return index === (hoveredIndex !== null ? hoveredIndex : activeSizeIndex);
     };
+
+    const currentIndex = hoveredIndex !== null ? hoveredIndex : activeSizeIndex;
 
     return (
         <div className="product-sizes">
@@ -19,7 +38,7 @@ function ProductSizes({
                 <div
                     className="size-indicator"
                     style={{
-                        transform: `translateX(${(hoveredIndex !== null ? hoveredIndex : activeSizeIndex) * 76}px)`,
+                        transform: `translateX(${getOffset(currentIndex)}px)`,
                     }}
                 />
                 {sizes.map((s, index) => (

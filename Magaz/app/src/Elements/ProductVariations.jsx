@@ -7,6 +7,25 @@ function ProductVariations({
     isVariationInCart 
 }) {
     if (variations.length <= 1) return null;
+    const getOffset = (index) => {
+        const width = window.innerWidth;
+        let itemWidth, gap;
+        
+        if (width <= 480) {
+            itemWidth = 60;
+            gap = 8;
+        } else if (width <= 768) {
+            itemWidth = 70;
+            gap = 8;
+        } else {
+            itemWidth = 80;
+            gap = 12;
+        }
+        
+        return index * (itemWidth + gap);
+    };
+
+    const currentIndex = hoveredIndex !== null ? hoveredIndex : activeIndex;
 
     return (
         <div className="product-variations">
@@ -28,7 +47,7 @@ function ProductVariations({
                 <div
                     className="variation-underline"
                     style={{
-                        transform: `translateX(${(hoveredIndex !== null ? hoveredIndex : activeIndex) * 92}px)`,
+                        transform: `translateX(${getOffset(currentIndex)}px)`,
                     }}
                 />
             </div>
