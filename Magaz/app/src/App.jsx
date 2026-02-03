@@ -7,6 +7,7 @@ import Product from './Product';
 import Login from './Login';
 import Regis from './Regis';
 import Verification from './Verification';
+import Favorites from './Favorites';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
           <Route path='/login/verification' element={<Verification />} />
           <Route path='/registration' element={<Regis />} />
           <Route path='/registration/verification' element={<Verification />} />
+          <Route path='/favorites' element={<Favorites />} />
         </Routes>
       </Router>
     </>

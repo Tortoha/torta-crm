@@ -1,0 +1,182 @@
+@import url('https://fonts.googleapis.com/css2?family=Parkinsans:wght@498&display=swap');
+
+.favorites-text-section {
+    padding: 200px 20px 0px;
+    align-items: right;
+}
+
+.favorites-main-title {
+    font-size: 64px;
+    font-weight: 600;
+    margin: 0;
+    color: #000000;
+}
+
+.favorites-grid-section {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    padding: 50px 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+    justify-content: center;
+}
+
+.favorites-loading,
+.favorites-error {
+    grid-column: 1 / -1;
+    text-align: center;
+    font-size: 18px;
+    color: #555555;
+    padding: 100px 20px;
+}
+
+.favorites-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 100px 20px;
+}
+
+.favorites-empty h2 {
+    font-size: 32px;
+    font-weight: 600;
+    color: #000000;
+    margin-bottom: 12px;
+}
+
+.favorites-empty p {
+    font-size: 16px;
+    color: #555555;
+}
+
+/* ============================================
+   АДАПТИВНОСТЬ
+   ============================================ */
+
+/* Большие экраны (1400px+) */
+@media (min-width: 1400px) {
+    .favorites-grid-section {
+        max-width: 1600px;
+    }
+}
+
+/* Средние экраны (1024px - 1400px) */
+@media (max-width: 1400px) {
+    .favorites-grid-section {
+        gap: 18px;
+        padding: 45px 18px;
+    }
+}
+
+/* Планшеты большие (900px - 1024px) */
+@media (max-width: 1024px) {
+    .favorites-grid-section {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        padding: 40px 16px;
+    }
+}
+
+/* Планшеты (768px - 900px) */
+@media (max-width: 900px) {
+    .favorites-grid-section {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+        padding: 35px 14px;
+    }
+
+    .favorites-main-title {
+        font-size: 48px;
+    }
+}
+
+/* Планшеты маленькие и мобильные большие (481px - 768px) */
+@media (max-width: 768px) {
+    .favorites-grid-section {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+        padding: 35px 14px;
+    }
+
+    .favorites-main-title {
+        font-size: 40px;
+    }
+
+    .favorites-text-section {
+        padding: 200px 20px 70px;
+    }
+}
+
+/* Мобильные (361px - 480px) */
+@media (max-width: 480px) {
+    .favorites-grid-section {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        padding: 30px 12px;
+    }
+
+    .favorites-main-title {
+        font-size: 36px;
+    }
+
+    .favorites-subtitle {
+        font-size: 14px;
+    }
+
+    .favorites-text-section {
+        padding: 180px 20px 60px;
+    }
+}
+
+/* Маленькие мобильные (до 360px) */
+@media (max-width: 360px) {
+    .favorites-grid-section {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        padding: 25px 10px;
+    }
+
+    .favorites-main-title {
+        font-size: 32px;
+    }
+
+    .favorites-empty h2 {
+        font-size: 24px;
+    }
+}
+
+/* Очень маленькие экраны (до 320px) */
+@media (max-width: 320px) {
+    .favorites-grid-section {
+        gap: 8px;
+        padding: 20px 8px;
+    }
+
+    .favorites-main-title {
+        font-size: 28px;
+    }
+}
+
+/* Touch устройства - отключаем hover, включаем active */
+@media (hover: none) and (pointer: coarse) {
+    .a-card:hover {
+        background-color: #ffffff;
+        border-radius: 16px;
+        padding: 0px;
+        box-shadow: 0px 0px 48px rgba(0, 0, 0, 0.0);
+    }
+
+    .a-card:hover .card {
+        box-shadow: 0 px 0px rgba(0, 0, 0, 0);
+    }
+
+    .a-card:active {
+        background-color: #0000001a;
+        border-radius: 24px;
+        padding: 10px;
+    }
+
+    .a-card:active .card {
+        box-shadow: 0 2px 14px rgba(0, 0, 0, 0.15);
+    }
+}

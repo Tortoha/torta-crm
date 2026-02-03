@@ -580,3 +580,16 @@ def delete_review(review_id: int, request: Request):
     cursor.close()
     conn.close()
     return {"success": True}
+
+@app.get("/api/pages/favorites")
+def get_favorites(request: Request):
+    user_id = get_current_user_id(request)
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    
+    cursor.execute("SELECT product_id FROM favorites WHERE user_id = %s", (user_id,))
+    favorites = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    return [f["product_id"] for f in favorites]
