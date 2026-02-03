@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import { useState, useEffect } from "react";
 import Header from "./Header";
 import "./Style/Product.css";
+import "./Style/Load.css";
 import StarRating from "./Elements/StarRating";
 import ProductVariations from "./Elements/ProductVariations";
 import ProductSizes from "./Elements/ProductSizes";
