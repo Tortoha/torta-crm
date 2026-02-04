@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import Card from "./Card";
 
+import "./Style/Load.css";
+
 const API_URL = "http://localhost:8000";
 
 function FavoritesGrid() {
@@ -28,9 +30,11 @@ function FavoritesGrid() {
 
   if (loading) {
     return (
-      <section className="favorites-grid-section">
-        <p className="favorites-loading">Loading your favorites...</p>
-      </section>
+      <div id="mask" className="mask">
+        <svg>
+          <circle cx="50" cy="50" r="40" />
+        </svg>
+      </div>
     );
   }
 

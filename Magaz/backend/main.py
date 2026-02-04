@@ -581,6 +581,9 @@ def delete_review(review_id: int, request: Request):
     conn.close()
     return {"success": True}
 
+# ============================================
+# ИЗБРАННОЕ для получения только ID продуктов
+# ============================================
 @app.get("/api/pages/favorites")
 def get_favorites(request: Request):
     user_id = get_current_user_id(request)
