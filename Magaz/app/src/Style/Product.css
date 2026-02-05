@@ -194,8 +194,9 @@ body {
 
 .size-item {
   position: relative;
-  width: 64px;
+  min-width: 64px;
   height: 64px;
+  padding: 0 16px;
   border-radius: var(--radius-sm);
   border: none;
   background: transparent;
@@ -208,6 +209,7 @@ body {
   transition: color 0.3s ease;
   color: var(--color-black);
   z-index: 2;
+  white-space: nowrap;
 }
 
 .size-item--white {
@@ -218,13 +220,13 @@ body {
   position: absolute;
   left: 0;
   top: 0;
-  width: 64px;
   height: 64px;
   border-radius: var(--radius-sm);
   background: var(--color-black);
   z-index: 1;
   pointer-events: none;
-  transition: transform 0.5s var(--transition-bounce);
+  transition: transform 0.5s var(--transition-bounce),
+              width 0.5s var(--transition-bounce);
 }
 
 /* ============================================
@@ -825,14 +827,18 @@ body {
   }
 
   .size-item {
-    width: 56px;
+    min-width: 56px;
     height: 56px;
+    padding: 0 12px;
     font-size: 28px;
   }
 
   .size-indicator {
-    width: 56px;
     height: 56px;
+  }
+
+  .sizes-wrapper {
+    gap: 8px;
   }
 
   .product-actions {
@@ -1000,21 +1006,21 @@ body {
     margin-top: 24px;
   }
 
-  .sizes-wrapper {
-    gap: 8px;
-  }
-
   .size-item {
-    width: 48px;
+    min-width: 48px;
     height: 48px;
+    padding: 0 10px;
     font-size: 24px;
     border-radius: 12px;
   }
 
   .size-indicator {
-    width: 48px;
     height: 48px;
     border-radius: 12px;
+  }
+
+  .sizes-wrapper {
+    gap: 8px;
   }
 
   .product-actions {

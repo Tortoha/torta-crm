@@ -1,3 +1,5 @@
+import { useRef, useEffect, useState } from 'react';
+
 function ProductSizes({ 
     sizes, 
     activeSize, 
@@ -7,43 +9,40 @@ function ProductSizes({
     onSizeHover, 
     isSizeInCart 
 }) {
-    if (!sizes || sizes.length === 0) return null;
-    const getOffset = (index) => {
-        const width = window.innerWidth;
-        let itemWidth, gap;
+    const sizeRefs = useRef([]);
+    const [indicatorStyle, setIndicatorStyle] = useState({ transform: 'translateX(0px)', width: '64px' });
+
+    useEffect(() => {
+        const currentIndex = hoveredIndex !== null ? hoveredIndex : activeSizeIndex;
+        const currentButton = sizeRefs.current[currentIndex];
         
-        if (width <= 480) {
-            itemWidth = 48;
-            gap = 8;
-        } else if (width <= 768) {
-            itemWidth = 56;
-            gap = 8;
-        } else {
-            itemWidth = 64;
-            gap = 12;
+        if (currentButton) {
+            const offset = currentButton.offsetLeft;
+            const width = currentButton.offsetWidth;
+            setIndicatorStyle({
+                transform: `translateX(${offset}px)`,
+                width: `${width}px`
+            });
         }
-        
-        return index * (itemWidth + gap);
-    };
+    }, [hoveredIndex, activeSizeIndex, sizes]);
+
+    if (!sizes || sizes.length === 0) return null;
 
     const isSizeUnderIndicator = (index) => {
         return index === (hoveredIndex !== null ? hoveredIndex : activeSizeIndex);
     };
-
-    const currentIndex = hoveredIndex !== null ? hoveredIndex : activeSizeIndex;
 
     return (
         <div className="product-sizes">
             <div className="sizes-wrapper">
                 <div
                     className="size-indicator"
-                    style={{
-                        transform: `translateX(${getOffset(currentIndex)}px)`,
-                    }}
+                    style={indicatorStyle}
                 />
                 {sizes.map((s, index) => (
                     <button
                         key={s.id}
+                        ref={(el) => (sizeRefs.current[index] = el)}
                         className={`size-item ${isSizeUnderIndicator(index) ? "size-item--white" : ""}`}
                         onClick={() => onSizeClick(s.id, s.size_name)}
                         onMouseEnter={() => onSizeHover(index)}
