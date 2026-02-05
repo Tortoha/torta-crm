@@ -322,6 +322,7 @@ function Product() {
     const cartInfo = getCartInfo();                                  // Информация о товаре в корзине
     const isInCart = !!cartInfo;                                     // Находится ли товар в корзине
     const cartQuantity = cartInfo?.quantity || 1;                    // Количество в корзине
+    const currentPrice = currentSize?.price || prod.price || 0;      // Цена выбранного размера
 
     // Сортировка отзывов по дате
     const sortedReviews = prod.reviews ? [...prod.reviews].sort((a, b) =>
@@ -346,7 +347,7 @@ function Product() {
                 <div className="product-info">
                     <h1 className="product-title">{prod.title}</h1>
                     <p className="product-description">{prod.description}</p>
-                    <h2 className="product-price">{prod.price}$</h2>
+                    <h2 className="product-price">${currentPrice}</h2>
 
                     <ProductVariations
                         variations={availableVariations}

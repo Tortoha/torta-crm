@@ -274,7 +274,9 @@ def get_products():
     for s in sizes:
         sizes_by_variation.setdefault(s["variation_id"], []).append({
             "id": s["id"], "size_name": s["size_name"],
-            "stock_quantity": s["stock_quantity"], "sold_quantity": s["sold_quantity"]
+            "price": float(s["price"]),
+            "stock_quantity": s["stock_quantity"],
+            "sold_quantity": s["sold_quantity"]
         })
 
     variations_by_product = {}
@@ -293,10 +295,21 @@ def get_products():
             "user_name": r["user_name"]
         })
 
+    # Вычисление минимальной цены для каждого продукта
+    min_price_by_product = {}
+    for s in sizes:
+        product_id = s["product_id"]
+        price = float(s["price"])
+        if product_id not in min_price_by_product:
+            min_price_by_product[product_id] = price
+        else:
+            min_price_by_product[product_id] = min(min_price_by_product[product_id], price)
+
     # Формирование результата
     for p in products:
         p["variations"] = variations_by_product.get(p["id"], [])
         p["reviews"] = reviews_by_product.get(p["id"], [])
+        p["price"] = min_price_by_product.get(p["id"], 0)
 
     return products
 
@@ -366,7 +379,7 @@ def get_cart(request: Request):
     
     cursor.execute(
         """SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.size_id,
-           p.title, p.price, pv.variation_name, pv.image_url, ps.size_name
+           p.title, ps.price, pv.variation_name, pv.image_url, ps.size_name
            FROM cart_items ci
            JOIN products p ON ci.product_id = p.id
            LEFT JOIN product_variations pv ON ci.variation_id = pv.id
@@ -475,7 +488,7 @@ def get_favorites(request: Request):
     cursor = conn.cursor(dictionary=True)
     
     cursor.execute(
-        """SELECT f.*, p.title, p.price
+        """SELECT f.*, p.title
            FROM favorites f
            JOIN products p ON f.product_id = p.id
            WHERE f.user_id = %s""",
