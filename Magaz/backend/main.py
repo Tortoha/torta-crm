@@ -609,3 +609,156 @@ def get_favorites(request: Request):
     conn.close()
     
     return [f["product_id"] for f in favorites]
+
+# ============================================
+# КОРЗИНА (расширенная версия)
+# ============================================
+
+@app.get("/api/pages/cart")
+def get_cart_page(request: Request):
+    user_id = get_current_user_id(request)
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        # Получаем корзину пользователя
+        cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
+        cart = cursor.fetchone()
+        
+        if not cart:
+            cursor.close()
+            conn.close()
+            return {"items": [], "shipping_settings": get_shipping_settings_data(cursor, conn)}
+        
+        # Получаем товары в корзине с полной информацией
+        cursor.execute(
+            """SELECT 
+                ci.id as cart_item_id,
+                ci.quantity,
+                ci.product_id,
+                ci.variation_id,
+                ci.size_id,
+                p.title,
+                p.description,
+                ps.price,
+                ps.size_name,
+                pv.variation_name,
+                pv.image_url
+               FROM cart_items ci
+               JOIN products p ON ci.product_id = p.id
+               LEFT JOIN product_variations pv ON ci.variation_id = pv.id
+               LEFT JOIN product_sizes ps ON ci.size_id = ps.id
+               WHERE ci.cart_id = %s""",
+            (cart["id"],)
+        )
+        items = cursor.fetchall()
+        
+        # Получаем настройки доставки
+        shipping_settings = get_shipping_settings_data(cursor, conn)
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "items": items,
+            "shipping_settings": shipping_settings
+        }
+        
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def get_shipping_settings_data(cursor, conn):
+    """Вспомогательная функция для получения настроек доставки"""
+    cursor.execute("SELECT shipping_cost, free_shipping_threshold FROM shipping_settings LIMIT 1")
+    settings = cursor.fetchone()
+    if settings:
+        return {
+            "shipping_cost": float(settings["shipping_cost"]),
+            "free_shipping_threshold": float(settings["free_shipping_threshold"])
+        }
+    return {"shipping_cost": 10.0, "free_shipping_threshold": 2000.0}
+
+
+# ============================================
+# ПРОМОКОДЫ
+# ============================================
+
+class ApplyPromoCode(BaseModel):
+    code: str
+    subtotal: float
+
+@app.post("/api/promo-code/apply")
+def apply_promo_code(data: ApplyPromoCode, request: Request):
+    user_id = get_current_user_id(request)
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        cursor.execute(
+            """SELECT * FROM promo_codes 
+               WHERE code = %s AND is_active = TRUE""",
+            (data.code.upper(),)
+        )
+        promo = cursor.fetchone()
+        
+        if not promo:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Promo code not found or inactive")
+        
+        # Проверка срока действия
+        now = datetime.utcnow()
+        if promo["valid_from"] and promo["valid_from"] > now:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=400, detail="Promo code not yet valid")
+        
+        if promo["valid_until"] and promo["valid_until"] < now:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=400, detail="Promo code expired")
+        
+        # Проверка минимальной суммы заказа
+        if data.subtotal < float(promo["min_order_amount"]):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Minimum order amount is ${promo['min_order_amount']}"
+            )
+        
+        # Проверка лимита использований
+        if promo["usage_limit"] and promo["times_used"] >= promo["usage_limit"]:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=400, detail="Promo code usage limit reached")
+        
+        # Рассчитываем скидку
+        discount = 0
+        if promo["discount_type"] == "percentage":
+            discount = data.subtotal * (float(promo["discount_value"]) / 100)
+            if promo["max_discount"]:
+                discount = min(discount, float(promo["max_discount"]))
+        else:  # fixed
+            discount = float(promo["discount_value"])
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "success": True,
+            "discount": discount,
+            "code": promo["code"],
+            "discount_type": promo["discount_type"],
+            "discount_value": float(promo["discount_value"])
+        }
+        
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))

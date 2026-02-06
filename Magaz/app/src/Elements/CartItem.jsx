@@ -1,0 +1,54 @@
+import heartIcon from "../../icons/Like.png";
+
+function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavorite }) {
+  const isQuantityOne = item.quantity === 1;
+
+  return (
+    <div className="cart-item">
+      <img src={item.image_url} alt={item.title} className="cart-item-image" />
+
+      <div className="cart-item-content">
+        <div className="cart-item-header">
+          <div className="cart-item-info">
+            <h2 className="cart-item-title">{item.title}</h2>
+            <p className="cart-item-description">{item.description}</p>
+            <p className="cart-item-size">{item.size_name}</p>
+          </div>
+          <div className="cart-item-price">{item.price}$</div>
+        </div>
+
+        <div className="cart-item-actions">
+          <div className="cart-qty-control">
+            <button
+              className={`cart-qty-btn ${isQuantityOne ? "cart-qty-btn--remove" : ""}`}
+              onClick={() => isQuantityOne 
+                ? onRemove(item.cart_item_id) 
+                : onUpdateQuantity(item.cart_item_id, item.quantity - 1)
+              }
+            >
+              {isQuantityOne ? "+" : "−"}
+            </button>
+
+            <span className="cart-qty-value">{item.quantity}</span>
+
+            <button
+              className="cart-qty-btn"
+              onClick={() => onUpdateQuantity(item.cart_item_id, item.quantity + 1)}
+            >
+              +
+            </button>
+          </div>
+
+          <button
+            className={`cart-fav-btn ${isFavorite ? "cart-fav-btn--active" : ""}`}
+            onClick={() => onToggleFavorite(item.product_id)}
+          >
+            <img src={heartIcon} alt="Favorite" className="heart-icon" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default CartItem
