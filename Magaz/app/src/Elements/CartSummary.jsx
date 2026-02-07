@@ -1,22 +1,6 @@
 import { useEffect } from "react";
 
-function CartSummary({ items, shippingSettings, promoCode, setPromoCode, appliedPromo, promoError, onApplyPromo }) {
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const shippingCost = subtotal >= (shippingSettings.free_shipping_threshold || 2000) 
-    ? 0 
-    : (shippingSettings.shipping_cost || 10);
-  const discount = appliedPromo ? appliedPromo.discount : 0;
-  const total = subtotal + shippingCost - discount;
-
-  const freeShippingProgress = Math.min(
-    (subtotal / (shippingSettings.free_shipping_threshold || 2000)) * 100, 
-    100
-  );
-  const amountToFreeShipping = Math.max(
-    (shippingSettings.free_shipping_threshold || 2000) - subtotal, 
-    0
-  );
-
+function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onApplyPromo, cartData }) {
   useEffect(() => {
     if (promoCode.length >= 3) {
       const timer = setTimeout(() => {
@@ -25,11 +9,13 @@ function CartSummary({ items, shippingSettings, promoCode, setPromoCode, applied
       
       return () => clearTimeout(timer);
     }
-  }, [promoCode]);
+  }, [promoCode, onApplyPromo]);
 
-  const discountPercent = appliedPromo 
-    ? Math.round((appliedPromo.discount / subtotal) * 100)
-    : 0;
+  const subtotal = appliedPromo ? appliedPromo.subtotal : cartData.subtotal;
+  const shippingCost = appliedPromo ? appliedPromo.shipping_cost : cartData.shipping_cost;
+  const discount = appliedPromo ? appliedPromo.discount : 0;
+  const total = appliedPromo ? appliedPromo.total : cartData.total;
+  const discountPercent = appliedPromo ? appliedPromo.discount_percent : 0;
 
   return (
     <div className="cart-summary">
@@ -38,12 +24,6 @@ function CartSummary({ items, shippingSettings, promoCode, setPromoCode, applied
           <span>Subtotal</span>
           <span>{Math.round(subtotal)}$</span>
         </div>
-        {items.map((item) => (
-          <div key={item.cart_item_id} className="summary-item">
-            <span>{item.title}</span>
-            <span>{Math.round(item.price * item.quantity)}$</span>
-          </div>
-        ))}
 
         <div className="summary-row summary-shipping">
           <span>Estimated Shipping</span>
@@ -53,10 +33,10 @@ function CartSummary({ items, shippingSettings, promoCode, setPromoCode, applied
         <div className="shipping-progress">
           <div className="progress-header">
             <span className="progress-text">To free shipping</span>
-            <span className="progress-amount">{Math.round(amountToFreeShipping)}$</span>
+            <span className="progress-amount">{Math.round(cartData.amount_to_free_shipping)}$</span>
           </div>
           <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${freeShippingProgress}%` }} />
+            <div className="progress-fill" style={{ width: `${cartData.shipping_progress}%` }} />
           </div>
         </div>
 

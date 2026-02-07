@@ -9,6 +9,7 @@ import ProductSizes from "./Elements/ProductSizes";
 import ProductActions from "./Elements/ProductActions";
 import ReviewMenu from "./Elements/ReviewMenu";
 import ReviewsList from "./Elements/ReviewsList";
+import CartButton from './CartButton'
 
 const API_URL = "http://localhost:8000";
 
@@ -404,6 +405,8 @@ function Product() {
                     </section>
                 </div>
             </main>
+            
+            <CartButton />
         </>
     );
 }

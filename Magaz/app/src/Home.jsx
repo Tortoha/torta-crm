@@ -3,6 +3,7 @@ import './Style/App.css'
 import './Style/Header.css'
 import Header from './Header'
 import Grid from './Grid'
+import CartButton from './CartButton'
 
 function Home() {
   return (
@@ -15,6 +16,7 @@ function Home() {
       </section>
 
       <Grid/>
+      <CartButton />
     </>
   )
 }

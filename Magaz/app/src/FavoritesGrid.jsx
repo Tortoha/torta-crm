@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Card from "./Card";
+import { Link } from "react-router-dom";
 
 import "./Style/Load.css";
 
@@ -44,6 +45,7 @@ function FavoritesGrid() {
         <div className="favorites-empty">
           <h2>No favorites yet</h2>
           <p>Start adding items to your favorites!</p>
+          <Link to={"/"} className="btn-home">To the home page</Link>
         </div>
       </section>
     );

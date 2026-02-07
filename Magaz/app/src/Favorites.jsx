@@ -3,6 +3,7 @@ import './Style/App.css'
 import './Style/Header.css'
 import Header from './Header'
 import FavoritesGrid from './FavoritesGrid'
+import CartButton from './CartButton'
 
 function Favorites() {
   return (
@@ -14,6 +15,7 @@ function Favorites() {
       </section>
 
       <FavoritesGrid/>
+      <CartButton />
     </>
   )
 }

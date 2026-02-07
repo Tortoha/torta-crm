@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import Header from "./Header";
 import CartItem from "./Elements/CartItem";
 import CartSummary from "./Elements/CartSummary";
@@ -9,7 +9,7 @@ import "./Style/Load.css";
 const API_URL = "http://localhost:8000";
 
 function Cart() {
-  const [cartData, setCartData] = useState({ items: [], shipping_settings: {} });
+  const [cartData, setCartData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [promoCode, setPromoCode] = useState("");
   const [appliedPromo, setAppliedPromo] = useState(null);
@@ -61,6 +61,7 @@ function Cart() {
       if (response.ok) {
         await loadCart();
         setAppliedPromo(null);
+        setPromoCode("");
       }
     } catch (error) {
       console.error("Error updating quantity:", error);
@@ -77,6 +78,7 @@ function Cart() {
       if (response.ok) {
         await loadCart();
         setAppliedPromo(null);
+        setPromoCode("");
       }
     } catch (error) {
       console.error("Error removing item:", error);
@@ -98,11 +100,9 @@ function Cart() {
         body: method === "POST" ? JSON.stringify({ product_id: productId }) : undefined,
       });
 
-      if (isFavorite) {
-        setFavoritesIds(favoritesIds.filter(id => id !== productId));
-      } else {
-        setFavoritesIds([...favoritesIds, productId]);
-      }
+      setFavoritesIds(prev => 
+        isFavorite ? prev.filter(id => id !== productId) : [...prev, productId]
+      );
     } catch (error) {
       console.error("Error toggling favorite:", error);
     }
@@ -115,17 +115,12 @@ function Cart() {
       return;
     }
 
-    const subtotal = cartData.items.reduce(
-      (sum, item) => sum + item.price * item.quantity,
-      0
-    );
-
     try {
       const response = await fetch(`${API_URL}/api/promo-code/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ code: promoCode.toUpperCase(), subtotal }),
+        body: JSON.stringify({ code: promoCode.toUpperCase() }),
       });
 
       if (response.ok) {
@@ -154,13 +149,14 @@ function Cart() {
     );
   }
 
-  if (cartData.items.length === 0) {
+  if (!cartData || cartData.items.length === 0) {
     return (
       <>
         <Header />
         <div className="cart-empty">
           <h1>Your cart is empty</h1>
           <p>Add some items to get started!</p>
+          <Link to="/" className="btn-home">To the home page</Link>
         </div>
       </>
     );
@@ -189,8 +185,7 @@ function Cart() {
         <div className="cart-right">
           <h1 className="cart-section-title">Summary</h1>
           <CartSummary
-            items={cartData.items}
-            shippingSettings={cartData.shipping_settings}
+            cartData={cartData}
             promoCode={promoCode}
             setPromoCode={setPromoCode}
             appliedPromo={appliedPromo}

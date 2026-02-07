@@ -1,0 +1,53 @@
+.cart-button {
+  position: fixed;
+  right: 32px;
+  bottom: 32px;
+  z-index: 1000;
+  animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cart-button a {
+  display: flex;
+  padding: 16px 32px;
+  background: #000;
+  color: #fff;
+  text-decoration: none;
+  border-radius: 50px;
+  font-size: 28px;
+  font-weight: 600;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  transition: all 0.4s ease-in-out;
+}
+
+.cart-button a:hover {
+  background: #0071e3;
+  box-shadow: 0 8px 32px rgba(0, 113, 227, 0.5);
+  transform: translateY(-4px);
+}
+
+.cart-button a:active {
+  transform: translateY(-2px);
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .cart-button {
+    right: 20px;
+    bottom: 20px;
+  }
+
+  .cart-button a {
+    padding: 12px 24px;
+    font-size: 24px;
+  }
+}

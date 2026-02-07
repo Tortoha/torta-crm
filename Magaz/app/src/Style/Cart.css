@@ -28,6 +28,25 @@
   gap: 20px;
 }
 
+.btn-home {
+    display: inline-block;
+    margin-top: 20px;
+    padding: 12px 24px;
+    background-color: #000000;
+    color: #ffffff;
+    text-decoration: none;
+    border-radius: 99999px;
+    font-size: 24px;
+    font-weight: 600;
+    transition: 0.3s ease;
+}
+
+.btn-home:hover {
+    background: #0071e3;
+    box-shadow: 0 8px 24px rgba(0, 113, 227, 0.4);
+    transform: translateY(-2px);
+}
+
 /* КАРТОЧКА ТОВАРА */
 .cart-item {
   position: relative;
@@ -98,7 +117,7 @@
   text-align: right;
 }
 
-/* КНОПКИ (счетчик + избранное) */
+/* КНОПКИ */
 .cart-item-actions {
   position: absolute;
   display: flex;
