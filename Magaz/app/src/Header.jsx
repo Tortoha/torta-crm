@@ -64,6 +64,7 @@ function Header() {
                   <h5>{truncateName(username)}</h5>
                 </div>
               </div>
+              <Link to={"/"}>Home</Link>
               <Link to={"/cart"}>Cart</Link>
               <Link to={"/favorites"}>Favorites</Link>
               <Link to={"/history"}>History</Link>

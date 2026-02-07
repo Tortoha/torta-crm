@@ -742,7 +742,7 @@ def apply_promo_code(data: ApplyPromoCode, request: Request):
             discount = data.subtotal * (float(promo["discount_value"]) / 100)
             if promo["max_discount"]:
                 discount = min(discount, float(promo["max_discount"]))
-        else:  # fixed
+        else:
             discount = float(promo["discount_value"])
         
         cursor.close()
