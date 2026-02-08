@@ -7,22 +7,26 @@ const API_URL = "http://localhost:8000";
 function CartButton() {
   const [subtotal, setSubtotal] = useState(0);
 
-  useEffect(() => {
-    const fetchCart = async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/pages/cart`, { credentials: "include" });
-        if (response.ok) {
-          const data = await response.json();
-          setSubtotal(data.subtotal || 0);
-        }
-      } catch (error) {
-        console.error("Error fetching cart:", error);
+  const fetchCart = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/pages/cart`, { 
+        credentials: "include" 
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSubtotal(data.subtotal || 0);
       }
-    };
+    } catch (error) {
+      console.error("Error fetching cart:", error);
+    }
+  };
 
+  useEffect(() => {
     fetchCart();
-    const interval = setInterval(fetchCart, 2000);
-    return () => clearInterval(interval);
+    window.addEventListener('cartUpdated', fetchCart);
+    return () => {
+      window.removeEventListener('cartUpdated', fetchCart);
+    };
   }, []);
 
   if (subtotal === 0) return null;

@@ -31,6 +31,12 @@ function Product() {
     const [currentUserId, setCurrentUserId] = useState(null);  // ID текущего пользователя
     const [canReview, setCanReview] = useState(false);         // Может ли оставить отзыв
 
+
+    // ФУНКЦИЯ ДЛЯ УВЕДОМЛЕНИЯ CARTBUTTON ОБ ОБНОВЛЕНИИ КОРЗИНЫ
+    const notifyCartUpdate = () => {
+        window.dispatchEvent(new Event('cartUpdated'));
+    };
+
     // ЗАГРУЗКА ДАННЫХ ПРИ МОНТИРОВАНИИ
     useEffect(() => {
         loadProductData();
@@ -147,13 +153,16 @@ function Product() {
             const cartInfo = getCartInfo();
             if (cartInfo) {
                 // Удаление из корзины
-                await fetch(`${API_URL}/api/cart/${cartInfo.cart_item_id}`, {
+                const response = await fetch(`${API_URL}/api/cart/${cartInfo.cart_item_id}`, {
                     method: "DELETE",
                     credentials: "include",
                 });
+                if (response.ok) {
+                    notifyCartUpdate();
+                }
             } else {
                 // Добавление в корзину
-                await fetch(`${API_URL}/api/cart/add`, {
+                const response = await fetch(`${API_URL}/api/cart/add`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     credentials: "include",
@@ -164,6 +173,9 @@ function Product() {
                         quantity: 1,
                     }),
                 });
+                if (response.ok) {
+                    notifyCartUpdate();
+                }
             }
 
             // Обновление корзины
@@ -204,6 +216,7 @@ function Product() {
             });
 
             if (response.ok) {
+                notifyCartUpdate();           
                 const cartResponse = await fetch(`${API_URL}/api/cart`, { credentials: "include" });
                 if (cartResponse.ok) {
                     const updatedCart = await cartResponse.json();
