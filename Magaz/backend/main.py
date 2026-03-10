@@ -5,14 +5,28 @@ from typing import Optional
 from datetime import datetime, timedelta
 import mysql.connector
 import hashlib
+import secrets
 import jwt
 import random
 import resend
 
+
+# ============================================
 # НАСТРОЙКИ
+# ============================================
+
 SECRET_KEY = "d2a9c8f0e5b741a39f6c8d2e1b5a9c3f8e7d6c5b4a3928173645e5f6a7b8c9d0"
 JWT_ALGORITHM = "HS256"
 JWT_HOURS = 24 * 7
+
+RESEND_API_KEY = "re_AixvxJe9_aQ8UsEwgVTFQjjrcUUMnAi6e"
+RESEND_FROM = "onboarding@resend.dev"
+FRONTEND_URL = "http://localhost:5173"
+MAX_FAILED_ATTEMPTS = 5
+BLOCK_MINUTES = 10
+CODE_TTL_MINUTES = 10
+RESEND_COOLDOWN_SECONDS = 60
+RESET_TTL_MINUTES = 30
 
 DB_CONFIG = {
     "host": "localhost",
@@ -22,8 +36,11 @@ DB_CONFIG = {
 }
 
 app = FastAPI()
-resend.api_key = "re_AixvxJe9_aQ8UsEwgVTFQjjrcUUMnAi6e"
-pending_verifications = {}
+resend.api_key = RESEND_API_KEY
+
+pending_verifications = {}   # email -> { code, type, name, password, expires, next_resend_at }
+login_attempts        = {}   # "ip:..." / "email:..." -> { count, blocked_until }
+password_reset_tokens = {}   # sha256(token) -> { email, expires }
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +50,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================
 # МОДЕЛИ
+# ============================================
+
 class SendCodeRequest(BaseModel):
     email: str
     type: str
@@ -43,6 +64,17 @@ class SendCodeRequest(BaseModel):
 class VerifyCodeRequest(BaseModel):
     email: str
     code: str
+
+class ResendCodeRequest(BaseModel):
+    email: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str
+    repeat_password: str
 
 class AddToCart(BaseModel):
     product_id: int
@@ -61,6 +93,10 @@ class AddReview(BaseModel):
     rating: int
     comment: str = ""
 
+class ApplyPromoCode(BaseModel):
+    code: str
+
+
 # ============================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================
@@ -77,13 +113,9 @@ def create_token(user_id: int) -> str:
 
 def set_auth_cookie(response: Response, token: str):
     response.set_cookie(
-        key="authx_token",
-        value=token,
-        httponly=True,
-        max_age=60 * 60 * 24 * 7,
-        samesite="lax",
-        secure=False,
-        path="/",
+        key="authx_token", value=token,
+        httponly=True, max_age=60 * 60 * 24 * 7,
+        samesite="lax", secure=False, path="/",
     )
 
 def get_current_user_id(request: Request) -> int:
@@ -103,8 +135,7 @@ def get_user_by_email(email: str):
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM users WHERE email=%s", (email,))
     user = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return user
 
 def get_user_by_id(user_id: int):
@@ -112,14 +143,19 @@ def get_user_by_id(user_id: int):
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT id, name, email FROM users WHERE id=%s", (user_id,))
     user = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return user
+
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 def send_code_email(email: str, code: int) -> bool:
     try:
         resend.Emails.send({
-            "from": "onboarding@resend.dev",
+            "from": RESEND_FROM,
             "to": email,
             "subject": "Verification Code",
             "html": f"""
@@ -137,87 +173,193 @@ def send_code_email(email: str, code: int) -> bool:
         print(f"Email error: {e}")
         return False
 
+def send_reset_email(email: str, token: str) -> bool:
+    reset_url = f"{FRONTEND_URL}/reset-password/{token}"
+    try:
+        resend.Emails.send({
+            "from": RESEND_FROM,
+            "to": email,
+            "subject": "Password Reset",
+            "html": f"""
+                <div style="font-family: Arial, sans-serif; text-align: center; padding: 40px;">
+                    <h1 style="color: #333;">Reset your password</h1>
+                    <p style="font-size: 16px; color: #666;">
+                        Click the button below to set a new password. Link expires in 30 minutes.
+                    </p>
+                    <a href="{reset_url}" style="
+                        display: inline-block; margin-top: 24px; padding: 14px 32px;
+                        background: #0071e3; color: #fff; text-decoration: none;
+                        border-radius: 16px; font-size: 18px; font-weight: 600;">
+                        Reset password
+                    </a>
+                    <p style="margin-top: 24px; color: #999; font-size: 12px; word-break: break-all;">
+                        {reset_url}
+                    </p>
+                </div>
+            """
+        })
+        return True
+    except Exception as e:
+        print(f"Reset email error: {e}")
+        return False
+
+
 # ============================================
 # АУТЕНТИФИКАЦИЯ
 # ============================================
 
 @app.post("/api/send-code")
-def send_code(request: SendCodeRequest):
-    email = request.email
-    
+def send_code(request: SendCodeRequest, req: Request):
+    email = request.email.lower().strip()
+    ip    = get_client_ip(req)
+    now   = datetime.utcnow()
+
+    # Проверка блокировки
+    for key in [f"ip:{ip}", f"email:{email}"]:
+        state = login_attempts.get(key)
+        if state and state.get("blocked_until") and now < state["blocked_until"]:
+            left = int((state["blocked_until"] - now).total_seconds())
+            raise HTTPException(status_code=429, detail=f"Too many failed attempts. Try again in {left} seconds.")
+
+    def fail(detail: str):
+        for key in [f"ip:{ip}", f"email:{email}"]:
+            state = login_attempts.get(key, {"count": 0, "blocked_until": None})
+            state["count"] += 1
+            if state["count"] >= MAX_FAILED_ATTEMPTS:
+                state = {"count": 0, "blocked_until": now + timedelta(minutes=BLOCK_MINUTES)}
+                left  = int((state["blocked_until"] - now).total_seconds())
+                login_attempts[key] = state
+                raise HTTPException(status_code=429, detail=f"Too many failed attempts. Try again in {left} seconds.")
+            login_attempts[key] = state
+        raise HTTPException(status_code=400, detail=detail)
+
     if request.type == "register":
         if get_user_by_email(email):
-            raise HTTPException(status_code=400, detail="Email already exists")
+            fail("Email already exists")
         if not request.name or not request.password:
-            raise HTTPException(status_code=400, detail="Name and password required")
+            fail("Name and password required")
+
     elif request.type == "login":
         db_user = get_user_by_email(email)
         if not db_user:
-            raise HTTPException(status_code=400, detail="User not found")
-        if hash_password(request.password) != db_user["password_hash"]:
-            raise HTTPException(status_code=400, detail="Invalid password")
-    
+            fail("Invalid email or password")
+        if hash_password(request.password or "") != db_user["password_hash"]:
+            fail("Invalid email or password")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid type")
+
     code = random.randint(100000, 999999)
     pending_verifications[email] = {
-        "code": code,
+        "code": str(code),
         "type": request.type,
         "name": request.name,
         "password": request.password,
-        "expires": datetime.utcnow() + timedelta(minutes=10)
+        "expires": now + timedelta(minutes=CODE_TTL_MINUTES),
+        "next_resend_at": now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
     }
-    
-    return {"success": True} if send_code_email(email, code) else HTTPException(status_code=500, detail="Failed to send email")
+
+    if not send_code_email(email, code):
+        del pending_verifications[email]
+        raise HTTPException(status_code=500, detail="Failed to send email")
+
+    # Успех — сбрасываем счётчик
+    for key in [f"ip:{ip}", f"email:{email}"]:
+        login_attempts.pop(key, None)
+
+    return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
+
 
 @app.post("/api/verify-code")
-def verify_code(request: VerifyCodeRequest, response: Response):
-    email, code = request.email, request.code
-    
+def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
+    email = request.email.lower().strip()
+    code  = (request.code or "").replace(" ", "").strip()
+    ip    = get_client_ip(req)
+    now   = datetime.utcnow()
+
+    # Проверка блокировки
+    for key in [f"ip:{ip}", f"email:{email}"]:
+        state = login_attempts.get(key)
+        if state and state.get("blocked_until") and now < state["blocked_until"]:
+            left = int((state["blocked_until"] - now).total_seconds())
+            raise HTTPException(status_code=429, detail=f"Too many failed attempts. Try again in {left} seconds.")
+
+    def fail(detail: str):
+        for key in [f"ip:{ip}", f"email:{email}"]:
+            state = login_attempts.get(key, {"count": 0, "blocked_until": None})
+            state["count"] += 1
+            if state["count"] >= MAX_FAILED_ATTEMPTS:
+                state = {"count": 0, "blocked_until": now + timedelta(minutes=BLOCK_MINUTES)}
+                left  = int((state["blocked_until"] - now).total_seconds())
+                login_attempts[key] = state
+                raise HTTPException(status_code=429, detail=f"Too many failed attempts. Try again in {left} seconds.")
+            login_attempts[key] = state
+        raise HTTPException(status_code=400, detail=detail)
+
     if email not in pending_verifications:
-        raise HTTPException(status_code=400, detail="Code not found or expired")
-    
+        fail("Code not found or expired")
+
     pending = pending_verifications[email]
-    
-    if datetime.utcnow() > pending["expires"]:
+
+    if now > pending["expires"]:
         del pending_verifications[email]
         raise HTTPException(status_code=400, detail="Code expired")
-    
-    if int(code) != pending["code"]:
-        raise HTTPException(status_code=400, detail="Invalid code")
-    
-    conn = get_db()
+
+    if code != pending["code"]:
+        fail("Invalid code")
+
+    conn   = get_db()
     cursor = conn.cursor()
-    
-    if pending["type"] == "register":
-        cursor.execute(
-            "INSERT INTO users (name, email, password_hash) VALUES (%s,%s,%s)",
-            (pending["name"], email, hash_password(pending["password"]))
-        )
-        conn.commit()
-        cursor.execute("SELECT id FROM users WHERE email=%s", (email,))
-        user_id = cursor.fetchone()[0]
-    else:
-        user_id = get_user_by_email(email)["id"]
-    
-    cursor.close()
-    conn.close()
-    
+    try:
+        if pending["type"] == "register":
+            cursor.execute(
+                "INSERT INTO users (name, email, password_hash) VALUES (%s,%s,%s)",
+                (pending["name"], email, hash_password(pending["password"]))
+            )
+            conn.commit()
+            user_id = cursor.lastrowid
+        else:
+            user_id = get_user_by_email(email)["id"]
+    finally:
+        cursor.close(); conn.close()
+
     token = create_token(user_id)
     set_auth_cookie(response, token)
     del pending_verifications[email]
-    
+
+    for key in [f"ip:{ip}", f"email:{email}"]:
+        login_attempts.pop(key, None)
+
     return {"success": True}
 
+
 @app.post("/api/resend-code")
-def resend_code(request: dict):
-    email = request.get("email")
+def resend_code(request: ResendCodeRequest):
+    email = request.email.lower().strip()
+    now   = datetime.utcnow()
+
     if email not in pending_verifications:
         raise HTTPException(status_code=400, detail="No pending verification")
-    
+
+    pending = pending_verifications[email]
+
+    if now > pending["expires"]:
+        del pending_verifications[email]
+        raise HTTPException(status_code=400, detail="Code expired. Start again.")
+
+    if now < pending["next_resend_at"]:
+        left = int((pending["next_resend_at"] - now).total_seconds())
+        raise HTTPException(status_code=429, detail=f"Resend available in {left} seconds")
+
     code = random.randint(100000, 999999)
-    pending_verifications[email]["code"] = code
-    pending_verifications[email]["expires"] = datetime.utcnow() + timedelta(minutes=10)
-    
-    return {"success": True} if send_code_email(email, code) else HTTPException(status_code=500, detail="Failed to send email")
+    pending_verifications[email]["code"]           = str(code)
+    pending_verifications[email]["expires"]        = now + timedelta(minutes=CODE_TTL_MINUTES)
+    pending_verifications[email]["next_resend_at"] = now + timedelta(seconds=RESEND_COOLDOWN_SECONDS)
+
+    if not send_code_email(email, code):
+        raise HTTPException(status_code=500, detail="Failed to send email")
+
+    return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
+
 
 @app.get("/api/me")
 def get_current_user(request: Request):
@@ -226,10 +368,83 @@ def get_current_user(request: Request):
         raise HTTPException(status_code=401, detail="User not found")
     return {"id": user["id"], "name": user["name"], "email": user["email"]}
 
+
 @app.post("/api/logout")
 def logout(response: Response):
     response.delete_cookie("authx_token", path="/")
     return {"success": True}
+
+
+# ============================================
+# ВОССТАНОВЛЕНИЕ ПАРОЛЯ
+# ============================================
+
+@app.post("/api/forgot-password")
+def forgot_password(request: ForgotPasswordRequest):
+    email = request.email.lower().strip()
+    user  = get_user_by_email(email)
+
+    if not user:
+        return {"success": True, "message": "If the account exists, a reset email has been sent."}
+
+    # Удаляем старые токены этого email
+    for t in [t for t, d in password_reset_tokens.items() if d["email"] == email]:
+        del password_reset_tokens[t]
+
+    raw_token  = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
+    password_reset_tokens[token_hash] = {
+        "email":   email,
+        "expires": datetime.utcnow() + timedelta(minutes=RESET_TTL_MINUTES),
+    }
+
+    if not send_reset_email(email, raw_token):
+        del password_reset_tokens[token_hash]
+        raise HTTPException(status_code=500, detail="Failed to send email")
+
+    return {"success": True, "message": "If the account exists, a reset email has been sent."}
+
+
+@app.get("/api/reset-password/validate/{token}")
+def validate_reset_token(token: str):
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    data       = password_reset_tokens.get(token_hash)
+
+    if not data or datetime.utcnow() > data["expires"]:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+
+    return {"valid": True, "email": data["email"]}
+
+
+@app.post("/api/reset-password")
+def reset_password(request: ResetPasswordRequest):
+    token    = (request.token or "").strip()
+    password = request.password or ""
+
+    if password != (request.repeat_password or ""):
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    token_data = password_reset_tokens.get(token_hash)
+
+    if not token_data or datetime.utcnow() > token_data["expires"]:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+
+    conn   = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE users SET password_hash=%s WHERE email=%s",
+            (hash_password(password), token_data["email"])
+        )
+        conn.commit()
+    finally:
+        cursor.close(); conn.close()
+
+    del password_reset_tokens[token_hash]
+    return {"success": True}
+
 
 # ============================================
 # ПРОДУКТЫ
@@ -237,20 +452,18 @@ def logout(response: Response):
 
 @app.get("/api-products")
 def get_products():
-    conn = get_db()
+    conn   = get_db()
     cursor = conn.cursor(dictionary=True)
 
     cursor.execute("SELECT * FROM products")
     products = cursor.fetchall()
     if not products:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
         return []
 
     product_ids = [p["id"] for p in products]
     format_ids = ",".join(["%s"] * len(product_ids))
 
-    # Получаем все связанные данные одним запросом
     cursor.execute(f"SELECT * FROM product_variations WHERE product_id IN ({format_ids})", product_ids)
     variations = cursor.fetchall()
     
@@ -313,6 +526,7 @@ def get_products():
 
     return products
 
+
 # ============================================
 # КОРЗИНА
 # ============================================
@@ -320,27 +534,24 @@ def get_products():
 @app.post("/api/cart/add")
 def add_to_cart(item: AddToCart, request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
     try:
         cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
         cart = cursor.fetchone()
-        
         if not cart:
             cursor.execute("INSERT INTO carts (user_id) VALUES (%s)", (user_id,))
             conn.commit()
             cart_id = cursor.lastrowid
         else:
             cart_id = cart["id"]
-        
+
         cursor.execute(
-            """SELECT id, quantity FROM cart_items 
+            """SELECT id, quantity FROM cart_items
                WHERE cart_id=%s AND product_id=%s AND variation_id=%s AND size_id=%s""",
             (cart_id, item.product_id, item.variation_id, item.size_id)
         )
         existing = cursor.fetchone()
-        
         if existing:
             cursor.execute(
                 "UPDATE cart_items SET quantity=%s WHERE id=%s",
@@ -352,31 +563,25 @@ def add_to_cart(item: AddToCart, request: Request):
                    VALUES (%s, %s, %s, %s, %s)""",
                 (cart_id, item.product_id, item.variation_id, item.size_id, item.quantity)
             )
-        
         conn.commit()
         return {"success": True}
-        
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
+
 
 @app.get("/api/cart")
 def get_cart(request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
     cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
     cart = cursor.fetchone()
-    
     if not cart:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
         return []
-    
     cursor.execute(
         """SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.size_id,
            p.title, ps.price, pv.variation_name, pv.image_url, ps.size_name
@@ -388,77 +593,65 @@ def get_cart(request: Request):
         (cart["id"],)
     )
     items = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return items
+
 
 @app.delete("/api/cart/{cart_item_id}")
 def remove_from_cart(cart_item_id: int, request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
     cursor.execute(
         """SELECT ci.id FROM cart_items ci
            JOIN carts c ON ci.cart_id = c.id
            WHERE ci.id=%s AND c.user_id=%s""",
         (cart_item_id, user_id)
     )
-    
     if not cursor.fetchone():
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
         raise HTTPException(status_code=404, detail="Cart item not found")
-    
     cursor.execute("DELETE FROM cart_items WHERE id=%s", (cart_item_id,))
     conn.commit()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return {"success": True}
+
 
 @app.put("/api/cart/{cart_item_id}")
 def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: Request):
     user_id = get_current_user_id(request)
     if data.quantity < 1:
         raise HTTPException(status_code=400, detail="Quantity must be at least 1")
-    
-    conn = get_db()
+    conn   = get_db()
     cursor = conn.cursor(dictionary=True)
-    
     cursor.execute(
         """SELECT ci.id FROM cart_items ci
            JOIN carts c ON ci.cart_id = c.id
            WHERE ci.id=%s AND c.user_id=%s""",
         (cart_item_id, user_id)
     )
-    
     if not cursor.fetchone():
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
         raise HTTPException(status_code=404, detail="Cart item not found")
-    
     cursor.execute("UPDATE cart_items SET quantity=%s WHERE id=%s", (data.quantity, cart_item_id))
     conn.commit()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return {"success": True}
+
 
 @app.delete("/api/cart/clear")
 def clear_cart(request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
     cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
     cart = cursor.fetchone()
-    
     if cart:
         cursor.execute("DELETE FROM cart_items WHERE cart_id=%s", (cart["id"],))
         conn.commit()
-    
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return {"success": True}
+
 
 # ============================================
 # ИЗБРАННОЕ
@@ -467,49 +660,44 @@ def clear_cart(request: Request):
 @app.post("/api/favorites/add")
 def add_to_favorites(item: AddToFavorites, request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor()
-    
+    conn    = get_db()
+    cursor  = conn.cursor()
     try:
         cursor.execute("INSERT INTO favorites (user_id, product_id) VALUES (%s, %s)", (user_id, item.product_id))
         conn.commit()
     except mysql.connector.IntegrityError:
         pass
     finally:
-        cursor.close()
-        conn.close()
-    
+        cursor.close(); conn.close()
     return {"success": True}
+
 
 @app.get("/api/favorites")
 def get_favorites(request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
     cursor.execute(
-        """SELECT f.*, p.title
-           FROM favorites f
+        """SELECT f.*, p.title FROM favorites f
            JOIN products p ON f.product_id = p.id
            WHERE f.user_id = %s""",
         (user_id,)
     )
     items = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return items
+
 
 @app.delete("/api/favorites/{product_id}")
 def remove_from_favorites(product_id: int, request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor()
-    
+    conn    = get_db()
+    cursor  = conn.cursor()
     cursor.execute("DELETE FROM favorites WHERE product_id=%s AND user_id=%s", (product_id, user_id))
     conn.commit()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return {"success": True}
+
 
 # ============================================
 # ОТЗЫВЫ
@@ -518,13 +706,10 @@ def remove_from_favorites(product_id: int, request: Request):
 @app.post("/api/reviews/add")
 def add_review(review: AddReview, request: Request):
     user_id = get_current_user_id(request)
-    
     if not 1 <= review.rating <= 5:
         raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
-    
-    conn = get_db()
+    conn   = get_db()
     cursor = conn.cursor()
-    
     try:
         cursor.execute(
             """INSERT INTO product_reviews (product_id, user_id, rating, comment, created_at)
@@ -536,125 +721,93 @@ def add_review(review: AddReview, request: Request):
     except mysql.connector.IntegrityError:
         raise HTTPException(status_code=400, detail="You have already reviewed this product")
     finally:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
+
 
 @app.get("/api/reviews/can-review/{product_id}")
 def can_user_review(product_id: int, request: Request):
     try:
         user_id = get_current_user_id(request)
-    except:
+    except Exception:
         return {"can_review": False, "reason": "not_authenticated"}
-    
-    conn = get_db()
+    conn   = get_db()
     cursor = conn.cursor(dictionary=True)
-    
     cursor.execute("SELECT id FROM product_reviews WHERE product_id=%s AND user_id=%s", (product_id, user_id))
     if cursor.fetchone():
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
         return {"can_review": False, "reason": "already_reviewed"}
-    
     cursor.execute(
-        """SELECT DISTINCT oh.id 
-           FROM order_history oh
+        """SELECT DISTINCT oh.id FROM order_history oh
            JOIN order_items oi ON oh.id = oi.order_id
            WHERE oh.user_id = %s AND oi.product_id = %s AND oh.status IN ('delivered', 'returned')
            LIMIT 1""",
         (user_id, product_id)
     )
     can_review = cursor.fetchone() is not None
-    cursor.close()
-    conn.close()
-    
+    cursor.close(); conn.close()
     return {"can_review": can_review} if can_review else {"can_review": False, "reason": "not_purchased"}
+
 
 @app.delete("/api/reviews/{review_id}")
 def delete_review(review_id: int, request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
     cursor.execute("SELECT user_id FROM product_reviews WHERE id=%s", (review_id,))
     review = cursor.fetchone()
-    
     if not review:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
         raise HTTPException(status_code=404, detail="Review not found")
-    
     if review["user_id"] != user_id:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
         raise HTTPException(status_code=403, detail="Not authorized")
-    
     cursor.execute("DELETE FROM product_reviews WHERE id=%s", (review_id,))
     conn.commit()
-    cursor.close()
-    conn.close()
+    cursor.close(); conn.close()
     return {"success": True}
 
-# ============================================
-# ИЗБРАННОЕ для получения только ID продуктов
-# ============================================
-@app.get("/api/pages/favorites")
-def get_favorites(request: Request):
-    user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
-    cursor.execute("SELECT product_id FROM favorites WHERE user_id = %s", (user_id,))
-    favorites = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    
-    return [f["product_id"] for f in favorites]
 
 # ============================================
-# КОРЗИНА
+# СТРАНИЦЫ — ИЗБРАННОЕ / КОРЗИНА
 # ============================================
+
+@app.get("/api/pages/favorites")
+def get_favorites_ids(request: Request):
+    user_id = get_current_user_id(request)
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
+    cursor.execute("SELECT product_id FROM favorites WHERE user_id = %s", (user_id,))
+    favorites = cursor.fetchall()
+    cursor.close(); conn.close()
+    return [f["product_id"] for f in favorites]
+
 
 @app.get("/api/pages/cart")
 def get_cart_page(request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
     try:
         cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
         cart = cursor.fetchone()
-        
-        # Получаем настройки доставки
+
         cursor.execute("SELECT shipping_cost, free_shipping_threshold FROM shipping_settings LIMIT 1")
-        settings = cursor.fetchone()
-        shipping_cost = float(settings["shipping_cost"]) if settings else 10.0
+        settings       = cursor.fetchone()
+        shipping_cost  = float(settings["shipping_cost"])           if settings else 10.0
         free_threshold = float(settings["free_shipping_threshold"]) if settings else 2000.0
-        
+
         if not cart:
             return {
-                "items": [],
-                "subtotal": 0,
+                "items": [], "subtotal": 0,
                 "shipping_cost": shipping_cost,
                 "free_shipping_threshold": free_threshold,
                 "amount_to_free_shipping": free_threshold,
-                "shipping_progress": 0,
-                "total": 0
+                "shipping_progress": 0, "total": 0
             }
-        
-        # Получаем товары в корзине
+
         cursor.execute(
-            """SELECT 
-                ci.id as cart_item_id,
-                ci.quantity,
-                ci.product_id,
-                ci.variation_id,
-                ci.size_id,
-                p.title,
-                p.description,
-                ps.price,
-                ps.size_name,
-                pv.variation_name,
-                pv.image_url
+            """SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.size_id,
+                p.title, p.description, ps.price, ps.size_name, pv.variation_name, pv.image_url
                FROM cart_items ci
                JOIN products p ON ci.product_id = p.id
                LEFT JOIN product_variations pv ON ci.variation_id = pv.id
@@ -662,58 +815,42 @@ def get_cart_page(request: Request):
                WHERE ci.cart_id = %s""",
             (cart["id"],)
         )
-        items = cursor.fetchall()
-        
-        # Вычисляем subtotal
+        items    = cursor.fetchall()
         subtotal = sum(float(item["price"]) * item["quantity"] for item in items)
-        
-        # Вычисляем стоимость доставки
-        final_shipping_cost = 0 if subtotal >= free_threshold else shipping_cost
-        
-        # Прогресс до бесплатной доставки
-        shipping_progress = min((subtotal / free_threshold) * 100, 100)
-        amount_to_free = max(free_threshold - subtotal, 0)
-        
-        # Итоговая сумма (без промокода)
-        total = subtotal + final_shipping_cost
-        
+
+        final_shipping    = 0 if subtotal >= free_threshold else shipping_cost
+        shipping_progress = min((subtotal / free_threshold) * 100, 100) if free_threshold > 0 else 100
+        amount_to_free    = max(free_threshold - subtotal, 0)
+        total             = subtotal + final_shipping
+
         return {
             "items": items,
             "subtotal": round(subtotal, 2),
-            "shipping_cost": final_shipping_cost,
+            "shipping_cost": final_shipping,
             "free_shipping_threshold": free_threshold,
             "amount_to_free_shipping": round(amount_to_free, 2),
             "shipping_progress": round(shipping_progress, 2),
             "total": round(total, 2)
         }
-        
     finally:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
 
 
 # ============================================
 # ПРОМОКОДЫ
 # ============================================
 
-class ApplyPromoCode(BaseModel):
-    code: str
-
-
 @app.post("/api/promo-code/apply")
 def apply_promo_code(data: ApplyPromoCode, request: Request):
     user_id = get_current_user_id(request)
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
+    conn    = get_db()
+    cursor  = conn.cursor(dictionary=True)
     try:
-        # Получаем корзину и вычисляем subtotal
         cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
         cart = cursor.fetchone()
-        
         if not cart:
             raise HTTPException(status_code=400, detail="Cart is empty")
-        
+
         cursor.execute(
             """SELECT SUM(ps.price * ci.quantity) as subtotal
                FROM cart_items ci
@@ -721,61 +858,44 @@ def apply_promo_code(data: ApplyPromoCode, request: Request):
                WHERE ci.cart_id = %s""",
             (cart["id"],)
         )
-        result = cursor.fetchone()
-        subtotal = float(result["subtotal"] or 0)
-        
+        subtotal = float((cursor.fetchone() or {}).get("subtotal") or 0)
         if subtotal == 0:
             raise HTTPException(status_code=400, detail="Cart is empty")
-        
-        # Получаем промокод
+
         cursor.execute(
-            """SELECT * FROM promo_codes 
-               WHERE code = %s AND is_active = TRUE""",
+            "SELECT * FROM promo_codes WHERE code = %s AND is_active = TRUE",
             (data.code.upper(),)
         )
         promo = cursor.fetchone()
-        
         if not promo:
             raise HTTPException(status_code=404, detail="Promo code not found")
-        
-        # Проверка срока действия
+
         now = datetime.utcnow()
-        if promo["valid_from"] and promo["valid_from"] > now:
+        if promo["valid_from"]  and promo["valid_from"]  > now:
             raise HTTPException(status_code=400, detail="Promo code not yet valid")
-        
         if promo["valid_until"] and promo["valid_until"] < now:
             raise HTTPException(status_code=400, detail="Promo code expired")
-        
-        # Проверка минимальной суммы
         if subtotal < float(promo["min_order_amount"]):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Minimum order amount is ${promo['min_order_amount']}"
-            )
-        
-        # Проверка лимита использований
+            raise HTTPException(status_code=400, detail=f"Minimum order amount is ${promo['min_order_amount']}")
         if promo["usage_limit"] and promo["times_used"] >= promo["usage_limit"]:
             raise HTTPException(status_code=400, detail="Usage limit reached")
-        
-        # Вычисляем скидку
+
         discount_value = float(promo["discount_value"])
-        
         if promo["discount_type"] == "percentage":
             discount = subtotal * (discount_value / 100)
             if promo["max_discount"]:
                 discount = min(discount, float(promo["max_discount"]))
         else:
             discount = discount_value
-        
-        # Получаем настройки доставки
+
         cursor.execute("SELECT shipping_cost, free_shipping_threshold FROM shipping_settings LIMIT 1")
-        settings = cursor.fetchone()
-        shipping_cost = float(settings["shipping_cost"]) if settings else 10.0
+        settings       = cursor.fetchone()
+        shipping_cost  = float(settings["shipping_cost"])           if settings else 10.0
         free_threshold = float(settings["free_shipping_threshold"]) if settings else 2000.0
-        
+
         final_shipping = 0 if subtotal >= free_threshold else shipping_cost
-        total = subtotal + final_shipping - discount
-        
+        total          = subtotal + final_shipping - discount
+
         return {
             "success": True,
             "code": promo["code"],
@@ -785,7 +905,5 @@ def apply_promo_code(data: ApplyPromoCode, request: Request):
             "shipping_cost": final_shipping,
             "total": round(total, 2)
         }
-        
     finally:
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()

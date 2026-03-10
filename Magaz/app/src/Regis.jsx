@@ -16,10 +16,12 @@ function Regis() {
   const navigate = useNavigate();
 
   const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
+  const allowedPasswordCharsRegex = /[^A-Za-z0-9!@#$%_+-/\=]/g;
 
   const handleNameChange = (e) => {
     const value = e.target.value.replace(/[^a-zA-Z0-9]/g, "");
     setName(value);
+
     if (value.length > 20) {
       setNameError("No more than 20 characters");
     } else {
@@ -30,11 +32,12 @@ function Regis() {
   const handleEmailChange = (e) => {
     const value = e.target.value.replace(/[^a-zA-Z0-9._@-]/g, "");
     setEmail(value);
-    setEmailError(!emailFormatRegex.test(value) ? "Incorrect email" : "");
+    setEmailError(value && !emailFormatRegex.test(value) ? "Incorrect email" : "");
   };
 
   const validatePassword = (pwd) => {
     let errors = [];
+
     if (pwd.length < 8 || pwd.length > 24) {
       errors.push("Must be 8–24 characters");
     } else if (!/[A-Za-z]/.test(pwd)) {
@@ -42,17 +45,18 @@ function Regis() {
     } else if (!/\d/.test(pwd)) {
       errors.push("Must be at least 1 digit");
     }
+
     return errors;
   };
-
-  const allowedPasswordCharsRegex = /[^A-Za-z0-9!@#$%_+-/\=]/g;
 
   const handlePasswordChange = (e) => {
     const value = e.target.value.replace(allowedPasswordCharsRegex, "");
     setPassword(value);
     setPasswordErrors(validatePassword(value));
-    setRepeatError(repeatPassword && value !== repeatPassword
-      ? "Passwords do not match" : "");
+
+    setRepeatError(
+      repeatPassword && value !== repeatPassword ? "Passwords do not match" : ""
+    );
   };
 
   const handleRepeatPasswordChange = (e) => {
@@ -61,37 +65,49 @@ function Regis() {
     setRepeatError(value !== password ? "Passwords do not match" : "");
   };
 
-  const isValid = (
-    !nameError && !emailError &&
-    passwordErrors.length === 0 && !repeatError &&
-    name.length >= 1 && email.length >= 1 && password.length >= 1 && password === repeatPassword
-  );
+  const isValid =
+    !nameError &&
+    !emailError &&
+    passwordErrors.length === 0 &&
+    !repeatError &&
+    name.length >= 1 &&
+    email.length >= 1 &&
+    password.length >= 1 &&
+    password === repeatPassword;
 
   const handleRegister = async (e) => {
     e.preventDefault();
     setGeneralError("");
+
     if (!isValid) return;
-    
+
     setLoading(true);
-    
+
     try {
       const res = await fetch("/api/send-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           name,
-          email, 
+          email,
           password,
-          type: "register"
-        })
+          type: "register",
+        }),
       });
-      
+
+      const data = await res.json();
+
       if (res.ok) {
         localStorage.setItem("pendingEmail", email);
+        localStorage.setItem("pendingVerificationType", "register");
+
+        const resendSeconds = Number(data.resend_available_in || 60);
+        const resendUntil = Date.now() + resendSeconds * 1000;
+        localStorage.setItem("pendingResendUntil", String(resendUntil));
+
         navigate("/registration/verification");
       } else {
-        const data = await res.json();
         setGeneralError(data.detail || "Registration failed");
       }
     } catch {
@@ -119,6 +135,7 @@ function Regis() {
               />
               {nameError && <p className="error">{nameError}</p>}
             </div>
+
             <div className="secsh0">
               <input
                 type="email"
@@ -131,6 +148,7 @@ function Regis() {
               />
               {emailError && <p className="error">{emailError}</p>}
             </div>
+
             <div className="secsh0">
               <input
                 type="password"
@@ -141,10 +159,14 @@ function Regis() {
                 onChange={handlePasswordChange}
                 required
               />
-              {passwordErrors.length > 0 && passwordErrors.map((err, idx) => (
-                <p className="error" key={idx}>{err}</p>
-              ))}
+              {passwordErrors.length > 0 &&
+                passwordErrors.map((err, idx) => (
+                  <p className="error" key={idx}>
+                    {err}
+                  </p>
+                ))}
             </div>
+
             <div className="secsh0">
               <input
                 type="password"
@@ -157,15 +179,18 @@ function Regis() {
               />
               {repeatError && <p className="error">{repeatError}</p>}
             </div>
+
             {generalError && <p className="error">{generalError}</p>}
+
             <div className="secsh1">
-              <input 
-                className={isValid && !loading ? "button1" : "not-button"} 
-                type="submit" 
-                value={loading ? "Sending..." : "Next"} 
-                disabled={!isValid || loading} 
+              <input
+                className={isValid && !loading ? "button1" : "not-button"}
+                type="submit"
+                value={loading ? "Sending..." : "Next"}
+                disabled={!isValid || loading}
               />
             </div>
+
             <div className="secsh1">
               <Link to="/login">
                 <input className="button2" type="button" value="Sign in" />
