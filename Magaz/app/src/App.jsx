@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
-
+import { useEffect } from 'react';            // + добавить
 import './Style/App.css'
 
 import Home from './Home';
@@ -13,6 +13,10 @@ import Favorites from './Favorites';
 import Cart from './Cart';
 
 function App() {
+  useEffect(() => {
+    fetch("/api/track/visit", { method: "POST", credentials: "include" });
+  }, []);
+
   return (
     <>
       <Router>

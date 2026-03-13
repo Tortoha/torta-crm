@@ -67,8 +67,15 @@ function Product() {
             if (user) {
                 setCurrentUserId(user.id);
                 setIsAuthenticated(true);
-                checkCanReview(); // Проверяем возможность оставить отзыв
+                checkCanReview();
             }
+            // + ТРЕКИНГ ПРОСМОТРА ТОВАРА
+            fetch("/api/track/product-view", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ product_id: parseInt(id, 10) }),
+            });
         } catch (error) {
             console.error(error);
         } finally {
@@ -216,7 +223,7 @@ function Product() {
             });
 
             if (response.ok) {
-                notifyCartUpdate();           
+                notifyCartUpdate();
                 const cartResponse = await fetch(`${API_URL}/api/cart`, { credentials: "include" });
                 if (cartResponse.ok) {
                     const updatedCart = await cartResponse.json();
@@ -342,7 +349,7 @@ function Product() {
     const sortedReviews = prod.reviews ? [...prod.reviews].sort((a, b) =>
         new Date(b.created_at) - new Date(a.created_at)
     ) : [];
-    
+
     // Расчет среднего рейтинга
     const averageRating = sortedReviews.length > 0
         ? (sortedReviews.reduce((sum, r) => sum + r.rating, 0) / sortedReviews.length).toFixed(1)
@@ -418,7 +425,7 @@ function Product() {
                     </section>
                 </div>
             </main>
-            
+
             <CartButton />
         </>
     );

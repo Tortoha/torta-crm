@@ -907,3 +907,71 @@ def apply_promo_code(data: ApplyPromoCode, request: Request):
         }
     finally:
         cursor.close(); conn.close()
+        
+# ============================================
+# ТРЕКИНГ
+# ============================================
+
+class TrackProductView(BaseModel):
+    product_id: int
+
+
+@app.post("/api/track/visit")
+def track_visit(request: Request):
+    try:
+        user_id = get_current_user_id(request)
+    except Exception:
+        user_id = None
+
+    ip = get_client_ip(request)
+
+    conn   = get_db()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """SELECT id FROM site_visits
+               WHERE ip = %s
+               AND created_at >= NOW() - INTERVAL 30 SECOND""",
+            (ip,)
+        )
+        if cursor.fetchone():
+            return {"success": True, "skipped": True}
+
+        cursor.execute(
+            "INSERT INTO site_visits (user_id, ip) VALUES (%s, %s)",
+            (user_id, ip)
+        )
+        conn.commit()
+    finally:
+        cursor.close(); conn.close()
+    return {"success": True}
+
+@app.post("/api/track/product-view")
+def track_product_view(data: TrackProductView, request: Request):
+    try:
+        user_id = get_current_user_id(request)
+    except Exception:
+        user_id = None
+
+    ip = get_client_ip(request)
+
+    conn   = get_db()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """SELECT id FROM product_page_views
+               WHERE ip = %s AND product_id = %s
+               AND created_at >= NOW() - INTERVAL 30 SECOND""",
+            (ip, data.product_id)
+        )
+        if cursor.fetchone():
+            return {"success": True, "skipped": True}
+
+        cursor.execute(
+            "INSERT INTO product_page_views (product_id, user_id, ip) VALUES (%s, %s, %s)",
+            (data.product_id, user_id, ip)
+        )
+        conn.commit()
+    finally:
+        cursor.close(); conn.close()
+    return {"success": True}
