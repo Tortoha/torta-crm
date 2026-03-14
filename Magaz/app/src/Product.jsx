@@ -17,41 +17,32 @@ function Product() {
     const { id } = useParams();
 
     // API STATE
-    const [page, setPage]               = useState(null);
-    const [loading, setLoading]         = useState(true);
+    const [page, setPage]                 = useState(null);
+    const [loading, setLoading]           = useState(true);
     const [addingToCart, setAddingToCart] = useState(false);
 
-    // Начальная загрузка
-    const loadPage = async () => {
-        setLoading(true);
+    const loadPage = async (silent = false) => {
+        if (!silent) setLoading(true);
         try {
             const res = await fetch(`${API_URL}/api/product/${id}`, { credentials: "include" });
             if (!res.ok) { setPage(null); return; }
             const data = await res.json();
             setPage(data);
-            setActiveVariation(data.initial_variation_index || 0);
-            setActiveSize(data.initial_size_id ? { id: data.initial_size_id } : null);
-            fetch(`${API_URL}/api/track/product-view`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({ product_id: parseInt(id, 10) }),
-            }).catch(() => {});
+            if (!silent) {
+                setActiveVariation(data.initial_variation_index || 0);
+                setActiveSize(data.initial_size_id ? { id: data.initial_size_id } : null);
+                fetch(`${API_URL}/api/track/product-view`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ product_id: parseInt(id, 10) }),
+                }).catch(() => {});
+            }
         } catch (e) {
             console.error(e);
             setPage(null);
         } finally {
-            setLoading(false);
-        }
-    };
-
-    // Тихое обновление страницы после действий (добавление в корзину, изменение количества, добавление в избранное)
-    const refreshPage = async () => {
-        try {
-            const res = await fetch(`${API_URL}/api/product/${id}`, { credentials: "include" });
-            if (res.ok) setPage(await res.json());
-        } catch (e) {
-            console.error(e);
+            if (!silent) setLoading(false);
         }
     };
 
@@ -72,70 +63,57 @@ function Product() {
         if (!page.is_authenticated) { window.location.href = "/login"; return; }
         if (!currentVariation || !currentSize) return;
         setAddingToCart(true);
-        try {
-            if (currentSize.cart_item_id) {
-                await fetch(`${API_URL}/api/cart/${currentSize.cart_item_id}`, {
-                    method: "DELETE", credentials: "include",
-                });
-            } else {
-                await fetch(`${API_URL}/api/cart/add`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    credentials: "include",
-                    body: JSON.stringify({
-                        product_id: page.id,
-                        variation_id: currentVariation.id,
-                        size_id: currentSize.id,
-                        quantity: 1,
-                    }),
-                });
-            }
-            notifyCartUpdate();
-            await refreshPage();
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setAddingToCart(false);
+        if (currentSize.cart_item_id) {
+            await fetch(`${API_URL}/api/cart/${currentSize.cart_item_id}`, {
+                method: "DELETE", credentials: "include",
+            });
+        } else {
+            await fetch(`${API_URL}/api/cart/add`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({
+                    product_id: page.id,
+                    variation_id: currentVariation.id,
+                    size_id: currentSize.id,
+                    quantity: 1,
+                }),
+            });
         }
+        notifyCartUpdate();
+        await loadPage(true);
+        setAddingToCart(false);
     };
 
     const handleUpdateQuantity = async (newQuantity) => {
         if (!currentSize?.cart_item_id || newQuantity < 1 || newQuantity > maxStock) return;
-        try {
-            await fetch(`${API_URL}/api/cart/${currentSize.cart_item_id}`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({ quantity: newQuantity }),
-            });
-            notifyCartUpdate();
-            await refreshPage();
-        } catch (e) {
-            console.error(e);
-        }
+        await fetch(`${API_URL}/api/cart/${currentSize.cart_item_id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ quantity: newQuantity }),
+        });
+        notifyCartUpdate();
+        loadPage(true);
     };
 
     const handleToggleFavorite = async () => {
         if (!page.is_authenticated) { window.location.href = "/login"; return; }
-        try {
-            await fetch(
-                page.is_favorite ? `${API_URL}/api/favorites/${page.id}` : `${API_URL}/api/favorites/add`,
-                {
-                    method: page.is_favorite ? "DELETE" : "POST",
-                    headers: { "Content-Type": "application/json" },
-                    credentials: "include",
-                    body: !page.is_favorite ? JSON.stringify({ product_id: page.id }) : undefined,
-                }
-            );
-            await refreshPage();
-        } catch (e) {
-            console.error(e);
-        }
+        await fetch(
+            page.is_favorite ? `${API_URL}/api/favorites/${page.id}` : `${API_URL}/api/favorites/add`,
+            {
+                method: page.is_favorite ? "DELETE" : "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: !page.is_favorite ? JSON.stringify({ product_id: page.id }) : undefined,
+            }
+        );
+        loadPage(true);
     };
-    
+
     // VISUAL STATE
-    const [activeVariation, setActiveVariation] = useState(0);
-    const [activeSize, setActiveSize]           = useState(null);
+    const [activeVariation, setActiveVariation]   = useState(0);
+    const [activeSize, setActiveSize]             = useState(null);
     const [hoveredVariation, setHoveredVariation] = useState(null);
     const [hoveredSize, setHoveredSize]           = useState(null);
 
@@ -226,14 +204,14 @@ function Product() {
                                     productId={page.id}
                                     isAuthenticated={page.is_authenticated}
                                     canReview={page.can_review}
-                                    onReviewSubmitted={refreshPage}
+                                    onReviewSubmitted={() => loadPage(true)}
                                 />
                             </div>
                         </div>
                         <ReviewsList
                             reviews={page.reviews}
                             currentUserId={page.current_user_id}
-                            onReviewDeleted={refreshPage}
+                            onReviewDeleted={() => loadPage(true)}
                         />
                     </section>
                 </div>

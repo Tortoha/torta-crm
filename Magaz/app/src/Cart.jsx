@@ -9,193 +9,135 @@ import "./Style/Load.css";
 const API_URL = "http://localhost:8000";
 
 function Cart() {
-  const [cartData, setCartData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [promoCode, setPromoCode] = useState("");
-  const [appliedPromo, setAppliedPromo] = useState(null);
-  const [favoritesIds, setFavoritesIds] = useState([]);
-  const [promoError, setPromoError] = useState("");
-  const navigate = useNavigate();
+    // API STATE
+    const [cartData, setCartData] = useState(null);
+    const [loading, setLoading]   = useState(true);
+    const navigate                = useNavigate();
 
-  const loadCart = async () => {
-    try {
-      const [cartRes, favRes] = await Promise.all([
-        fetch(`${API_URL}/api/pages/cart`, { credentials: "include" }),
-        fetch(`${API_URL}/api/pages/favorites`, { credentials: "include" })
-          .then(r => r.ok ? r.json() : [])
-          .catch(() => [])
-      ]);
+    const loadCart = async (silent = false) => {
+        if (!silent) setLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/api/cart`, { credentials: "include" });
+            if (res.status === 401) { navigate("/login"); return; }
+            if (res.ok) setCartData(await res.json());
+        } catch (e) {
+            console.error(e);
+        } finally {
+            if (!silent) setLoading(false);
+        }
+    };
 
-      if (cartRes.status === 401) {
-        navigate("/login");
-        return;
-      }
+    useEffect(() => { loadCart(); }, []);
 
-      if (cartRes.ok) {
-        const data = await cartRes.json();
-        setCartData(data);
-        setFavoritesIds(favRes);
-      }
-    } catch (error) {
-      console.error("Error loading cart:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    // API ACTIONS
+    const handleUpdateQuantity = async (cartItemId, newQuantity) => {
+        if (newQuantity < 1) return;
+        const res = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ quantity: newQuantity }),
+        });
+        if (res.ok) { setAppliedPromo(null); setPromoCode(""); loadCart(true); }
+    };
 
-  useEffect(() => {
-    loadCart();
-  }, []);
+    const handleRemoveItem = async (cartItemId) => {
+        const res = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
+            method: "DELETE",
+            credentials: "include",
+        });
+        if (res.ok) { setAppliedPromo(null); setPromoCode(""); loadCart(true); }
+    };
 
-  const handleUpdateQuantity = async (cartItemId, newQuantity) => {
-    if (newQuantity < 1) return;
+    const handleToggleFavorite = async (productId) => {
+        const isFav = cartData.favorites_ids.includes(productId);
+        await fetch(
+            isFav ? `${API_URL}/api/favorites/${productId}` : `${API_URL}/api/favorites/add`,
+            {
+                method: isFav ? "DELETE" : "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: !isFav ? JSON.stringify({ product_id: productId }) : undefined,
+            }
+        );
+        loadCart(true);
+    };
 
-    try {
-      const response = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ quantity: newQuantity }),
-      });
+    const handleApplyPromo = async () => {
+        if (!promoCode.trim()) { setPromoError(""); setAppliedPromo(null); return; }
+        const res = await fetch(`${API_URL}/api/promo-code/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ code: promoCode }),
+        });
+        if (res.ok) {
+            setAppliedPromo(await res.json());
+            setPromoError("");
+        } else {
+            const err = await res.json();
+            setAppliedPromo(null);
+            setPromoError(err.detail || "Invalid promo code");
+        }
+    };
 
-      if (response.ok) {
-        await loadCart();
-        setAppliedPromo(null);
-        setPromoCode("");
-      }
-    } catch (error) {
-      console.error("Error updating quantity:", error);
-    }
-  };
+    // VISUAL STATE
+    const [promoCode, setPromoCode]       = useState("");
+    const [appliedPromo, setAppliedPromo] = useState(null);
+    const [promoError, setPromoError]     = useState("");
 
-  const handleRemoveItem = async (cartItemId) => {
-    try {
-      const response = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-
-      if (response.ok) {
-        await loadCart();
-        setAppliedPromo(null);
-        setPromoCode("");
-      }
-    } catch (error) {
-      console.error("Error removing item:", error);
-    }
-  };
-
-  const handleToggleFavorite = async (productId) => {
-    const isFavorite = favoritesIds.includes(productId);
-    const url = isFavorite
-      ? `${API_URL}/api/favorites/${productId}`
-      : `${API_URL}/api/favorites/add`;
-    const method = isFavorite ? "DELETE" : "POST";
-
-    try {
-      await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: method === "POST" ? JSON.stringify({ product_id: productId }) : undefined,
-      });
-
-      setFavoritesIds(prev => 
-        isFavorite ? prev.filter(id => id !== productId) : [...prev, productId]
-      );
-    } catch (error) {
-      console.error("Error toggling favorite:", error);
-    }
-  };
-
-  const handleApplyPromo = async () => {
-    if (!promoCode.trim()) {
-      setPromoError("");
-      setAppliedPromo(null);
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/api/promo-code/apply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ code: promoCode.toUpperCase() }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setAppliedPromo(data);
-        setPromoError("");
-      } else {
-        const error = await response.json();
-        setAppliedPromo(null);
-        setPromoError(error.detail || "Invalid promo code");
-      }
-    } catch (error) {
-      console.error("Error applying promo:", error);
-      setAppliedPromo(null);
-      setPromoError("Error applying promo code");
-    }
-  };
-
-  if (loading) {
-    return (
-      <div id="mask" className="mask">
-        <svg>
-          <circle cx="50" cy="50" r="40" />
-        </svg>
-      </div>
+    // LOADING / EMPTY
+    if (loading) return (
+        <div id="mask" className="mask">
+            <svg><circle cx="50" cy="50" r="40" /></svg>
+        </div>
     );
-  }
 
-  if (!cartData || cartData.items.length === 0) {
-    return (
-      <>
-        <Header />
-        <div className="cart-empty">
-          <h1>Your cart is empty</h1>
-          <p>Add some items to get started!</p>
-          <Link to="/" className="btn-home">To the home page</Link>
-        </div>
-      </>
+    if (!cartData || cartData.items.length === 0) return (
+        <>
+            <Header />
+            <div className="cart-empty">
+                <h1>Your cart is empty</h1>
+                <p>Add some items to get started!</p>
+                <Link to="/" className="btn-home">To the home page</Link>
+            </div>
+        </>
     );
-  }
 
-  return (
-    <>
-      <Header />
-      <div className="cart-page">
-        <div className="cart-left">
-          <h1 className="cart-section-title">Cart</h1>
-          <div className="cart-items-list">
-            {cartData.items.map((item) => (
-              <CartItem
-                key={item.cart_item_id}
-                item={item}
-                isFavorite={favoritesIds.includes(item.product_id)}
-                onUpdateQuantity={handleUpdateQuantity}
-                onRemove={handleRemoveItem}
-                onToggleFavorite={handleToggleFavorite}
-              />
-            ))}
-          </div>
-        </div>
+    return (
+        <>
+            <Header />
+            <div className="cart-page">
+                <div className="cart-left">
+                    <h1 className="cart-section-title">Cart</h1>
+                    <div className="cart-items-list">
+                        {cartData.items.map((item) => (
+                            <CartItem
+                                key={item.cart_item_id}
+                                item={item}
+                                isFavorite={item.is_favorite}
+                                onUpdateQuantity={handleUpdateQuantity}
+                                onRemove={handleRemoveItem}
+                                onToggleFavorite={handleToggleFavorite}
+                            />
+                        ))}
+                    </div>
+                </div>
 
-        <div className="cart-right">
-          <h1 className="cart-section-title">Summary</h1>
-          <CartSummary
-            cartData={cartData}
-            promoCode={promoCode}
-            setPromoCode={setPromoCode}
-            appliedPromo={appliedPromo}
-            promoError={promoError}
-            onApplyPromo={handleApplyPromo}
-          />
-        </div>
-      </div>
-    </>
-  );
+                <div className="cart-right">
+                    <h1 className="cart-section-title">Summary</h1>
+                    <CartSummary
+                        cartData={cartData}
+                        promoCode={promoCode}
+                        setPromoCode={setPromoCode}
+                        appliedPromo={appliedPromo}
+                        promoError={promoError}
+                        onApplyPromo={handleApplyPromo}
+                    />
+                </div>
+            </div>
+        </>
+    );
 }
 
 export default Cart

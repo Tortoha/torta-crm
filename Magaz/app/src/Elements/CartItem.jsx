@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import heartIcon from "../../icons/Like.png";
 
 function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavorite }) {
@@ -5,12 +6,16 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
 
   return (
     <div className="cart-item">
-      <img src={item.image_url} alt={item.title} className="cart-item-image" />
+      <Link to={`/product/${item.product_id}`}>
+        <img src={item.image_url} alt={item.title} className="cart-item-image cart-item-image--link" />
+      </Link>
 
       <div className="cart-item-content">
         <div className="cart-item-header">
           <div className="cart-item-info">
-            <h2 className="cart-item-title">{item.title}</h2>
+            <Link to={`/product/${item.product_id}`} className="cart-item-title-link">
+              <h2 className="cart-item-title">{item.title}</h2>
+            </Link>
             <p className="cart-item-description">{item.description}</p>
             <p className="cart-item-size">{item.size_name}</p>
           </div>
@@ -21,8 +26,8 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
           <div className="cart-qty-control">
             <button
               className={`cart-qty-btn ${isQuantityOne ? "cart-qty-btn--remove" : ""}`}
-              onClick={() => isQuantityOne 
-                ? onRemove(item.cart_item_id) 
+              onClick={() => isQuantityOne
+                ? onRemove(item.cart_item_id)
                 : onUpdateQuantity(item.cart_item_id, item.quantity - 1)
               }
             >

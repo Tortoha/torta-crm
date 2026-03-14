@@ -139,6 +139,31 @@ class ProductPageResponse(BaseModel):
     variations: List[FrontVariation]
     reviews: List[FrontReview]
 
+class CartPageItem(BaseModel):
+    cart_item_id: int
+    quantity: int
+    product_id: int
+    variation_id: Optional[int] = None
+    size_id: Optional[int] = None
+    title: str
+    description: Optional[str] = ""
+    price: float
+    size_name: Optional[str] = None
+    variation_name: Optional[str] = None
+    image_url: Optional[str] = None
+    is_favorite: bool = False
+
+class CartPageResponse(BaseModel):
+    items: List[CartPageItem]
+    favorites_ids: List[int]
+    subtotal: float
+    shipping_cost: float
+    free_shipping_threshold: float
+    amount_to_free_shipping: float
+    shipping_progress: float
+    total: float
+
+
 # ============================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================
@@ -776,30 +801,18 @@ def add_to_cart(item: AddToCart, request: Request):
     finally:
         cursor.close(); conn.close()
 
-
-@app.get("/api/cart")
-def get_cart(request: Request):
+@app.delete("/api/cart/clear")
+def clear_cart(request: Request):
     user_id = get_current_user_id(request)
     conn    = get_db()
     cursor  = conn.cursor(dictionary=True)
     cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
     cart = cursor.fetchone()
-    if not cart:
-        cursor.close(); conn.close()
-        return []
-    cursor.execute(
-        """SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.size_id,
-           p.title, ps.price, pv.variation_name, pv.image_url, ps.size_name
-           FROM cart_items ci
-           JOIN products p ON ci.product_id = p.id
-           LEFT JOIN product_variations pv ON ci.variation_id = pv.id
-           LEFT JOIN product_sizes ps ON ci.size_id = ps.id
-           WHERE ci.cart_id = %s""",
-        (cart["id"],)
-    )
-    items = cursor.fetchall()
+    if cart:
+        cursor.execute("DELETE FROM cart_items WHERE cart_id=%s", (cart["id"],))
+        conn.commit()
     cursor.close(); conn.close()
-    return items
+    return {"success": True}
 
 
 @app.delete("/api/cart/{cart_item_id}")
@@ -844,18 +857,70 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
     return {"success": True}
 
 
-@app.delete("/api/cart/clear")
-def clear_cart(request: Request):
+@app.get("/api/cart", response_model=CartPageResponse)
+def get_cart_page_v2(request: Request):
     user_id = get_current_user_id(request)
-    conn    = get_db()
-    cursor  = conn.cursor(dictionary=True)
-    cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
-    cart = cursor.fetchone()
-    if cart:
-        cursor.execute("DELETE FROM cart_items WHERE cart_id=%s", (cart["id"],))
-        conn.commit()
-    cursor.close(); conn.close()
-    return {"success": True}
+    conn   = get_db()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT shipping_cost, free_shipping_threshold FROM shipping_settings LIMIT 1")
+        settings       = cursor.fetchone()
+        shipping_cost  = float(settings["shipping_cost"])           if settings else 10.0
+        free_threshold = float(settings["free_shipping_threshold"]) if settings else 2000.0
+
+        cursor.execute("SELECT product_id FROM favorites WHERE user_id=%s", (user_id,))
+        favorites_ids = [row["product_id"] for row in cursor.fetchall()]
+        favorites_set = set(favorites_ids)
+
+        cursor.execute("SELECT id FROM carts WHERE user_id=%s", (user_id,))
+        cart = cursor.fetchone()
+
+        if not cart:
+            return {
+                "items": [], "favorites_ids": favorites_ids,
+                "subtotal": 0, "shipping_cost": shipping_cost,
+                "free_shipping_threshold": free_threshold,
+                "amount_to_free_shipping": free_threshold,
+                "shipping_progress": 0, "total": 0,
+            }
+
+        cursor.execute(
+            """SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.size_id,
+                      p.title, p.description, ps.price, ps.size_name,
+                      pv.variation_name, pv.image_url
+               FROM cart_items ci
+               JOIN products p            ON ci.product_id  = p.id
+               LEFT JOIN product_variations pv ON ci.variation_id = pv.id
+               LEFT JOIN product_sizes      ps ON ci.size_id      = ps.id
+               WHERE ci.cart_id = %s""",
+            (cart["id"],)
+        )
+        rows = cursor.fetchall()
+
+        items    = []
+        subtotal = 0.0
+        for row in rows:
+            price     = float(row["price"] or 0)
+            subtotal += price * row["quantity"]
+            items.append({**row, "price": price, "is_favorite": row["product_id"] in favorites_set})
+
+        final_shipping    = 0.0 if subtotal >= free_threshold else shipping_cost
+        shipping_progress = min((subtotal / free_threshold) * 100, 100) if free_threshold > 0 else 100
+        amount_to_free    = max(free_threshold - subtotal, 0)
+
+        return {
+            "items":                   items,
+            "favorites_ids":           favorites_ids,
+            "subtotal":                round(subtotal, 2),
+            "shipping_cost":           round(final_shipping, 2),
+            "free_shipping_threshold": free_threshold,
+            "amount_to_free_shipping": round(amount_to_free, 2),
+            "shipping_progress":       round(shipping_progress, 2),
+            "total":                   round(subtotal + final_shipping, 2),
+        }
+    finally:
+        cursor.close()
+        conn.close()
 
 
 # ============================================
@@ -1048,6 +1113,7 @@ def get_cart_page(request: Request):
 @app.post("/api/promo-code/apply")
 def apply_promo_code(data: ApplyPromoCode, request: Request):
     user_id = get_current_user_id(request)
+    now     = datetime.utcnow()
     conn    = get_db()
     cursor  = conn.cursor(dictionary=True)
     try:
@@ -1069,13 +1135,12 @@ def apply_promo_code(data: ApplyPromoCode, request: Request):
 
         cursor.execute(
             "SELECT * FROM promo_codes WHERE code = %s AND is_active = TRUE",
-            (data.code.upper(),)
+            (data.code.strip().upper(),)
         )
         promo = cursor.fetchone()
         if not promo:
             raise HTTPException(status_code=404, detail="Promo code not found")
 
-        now = datetime.utcnow()
         if promo["valid_from"]  and promo["valid_from"]  > now:
             raise HTTPException(status_code=400, detail="Promo code not yet valid")
         if promo["valid_until"] and promo["valid_until"] < now:
@@ -1098,20 +1163,21 @@ def apply_promo_code(data: ApplyPromoCode, request: Request):
         shipping_cost  = float(settings["shipping_cost"])           if settings else 10.0
         free_threshold = float(settings["free_shipping_threshold"]) if settings else 2000.0
 
-        final_shipping = 0 if subtotal >= free_threshold else shipping_cost
+        final_shipping = 0.0 if subtotal >= free_threshold else shipping_cost
         total          = subtotal + final_shipping - discount
 
         return {
-            "success": True,
-            "code": promo["code"],
-            "discount": round(discount, 2),
+            "success":          True,
+            "code":             promo["code"],
+            "discount":         round(discount, 2),
             "discount_percent": round((discount / subtotal) * 100) if subtotal > 0 else 0,
-            "subtotal": round(subtotal, 2),
-            "shipping_cost": final_shipping,
-            "total": round(total, 2)
+            "subtotal":         round(subtotal, 2),
+            "shipping_cost":    final_shipping,
+            "total":            round(total, 2),
         }
     finally:
-        cursor.close(); conn.close()
+        cursor.close()
+        conn.close()
         
 # ============================================
 # ТРЕКИНГ
