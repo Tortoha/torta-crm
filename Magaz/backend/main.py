@@ -9,6 +9,8 @@ import secrets
 import jwt
 import random
 import resend
+from pydantic import BaseModel
+from typing import Optional, List
 
 
 # ============================================
@@ -96,6 +98,46 @@ class AddReview(BaseModel):
 class ApplyPromoCode(BaseModel):
     code: str
 
+class FrontReview(BaseModel):
+    id: int
+    user_id: int
+    user_name: str
+    rating: int
+    comment: str = ""
+    created_at: Optional[str] = None
+
+class FrontSize(BaseModel):
+    id: int
+    size_name: str
+    price: float
+    stock_quantity: int
+    sold_quantity: int
+    is_in_cart: bool = False
+    cart_item_id: Optional[int] = None
+    cart_quantity: int = 0
+
+class FrontVariation(BaseModel):
+    id: int
+    variation_name: str
+    image: Optional[str] = None
+    is_in_cart: bool = False
+    sizes: List[FrontSize]
+
+class ProductPageResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = ""
+    characteristics: Optional[str] = ""
+    is_authenticated: bool
+    current_user_id: Optional[int] = None
+    is_favorite: bool
+    can_review: bool
+    reviews_count: int
+    average_rating: float
+    initial_variation_index: int
+    initial_size_id: Optional[int] = None
+    variations: List[FrontVariation]
+    reviews: List[FrontReview]
 
 # ============================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -202,6 +244,12 @@ def send_reset_email(email: str, token: str) -> bool:
     except Exception as e:
         print(f"Reset email error: {e}")
         return False
+    
+def try_get_current_user_id(request: Request):
+    try:
+        return get_current_user_id(request)
+    except Exception:
+        return None
 
 
 # ============================================
@@ -526,6 +574,163 @@ def get_products():
 
     return products
 
+@app.get("/api/product/{product_id}", response_model=ProductPageResponse)
+def get_product_page(product_id: int, request: Request):
+    user_id = try_get_current_user_id(request)
+
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            "SELECT id, title, description, characteristics FROM products WHERE id=%s",
+            (product_id,)
+        )
+        product = cursor.fetchone()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        cursor.execute(
+            "SELECT id, product_id, variation_name, image_url FROM product_variations WHERE product_id=%s",
+            (product_id,)
+        )
+        variations = cursor.fetchall()
+
+        variation_ids = [v["id"] for v in variations]
+        sizes = []
+        if variation_ids:
+            format_ids = ",".join(["%s"] * len(variation_ids))
+            cursor.execute(
+                f"""SELECT id, product_id, variation_id, size_name, price, stock_quantity, sold_quantity
+                    FROM product_sizes
+                    WHERE variation_id IN ({format_ids})""",
+                variation_ids
+            )
+            sizes = cursor.fetchall()
+
+        cursor.execute(
+            """SELECT pr.id, pr.user_id, pr.rating, pr.comment, pr.created_at, u.name AS user_name
+               FROM product_reviews pr
+               JOIN users u ON pr.user_id = u.id
+               WHERE pr.product_id=%s
+               ORDER BY pr.created_at DESC""",
+            (product_id,)
+        )
+        reviews_raw = cursor.fetchall()
+
+        is_favorite = False
+        can_review = False
+        cart_map = {}
+
+        if user_id:
+            cursor.execute(
+                "SELECT 1 FROM favorites WHERE user_id=%s AND product_id=%s LIMIT 1",
+                (user_id, product_id)
+            )
+            is_favorite = cursor.fetchone() is not None
+
+            cursor.execute(
+                """SELECT ci.id AS cart_item_id, ci.variation_id, ci.size_id, ci.quantity
+                   FROM cart_items ci
+                   JOIN carts c ON ci.cart_id = c.id
+                   WHERE c.user_id=%s AND ci.product_id=%s""",
+                (user_id, product_id)
+            )
+            for row in cursor.fetchall():
+                cart_map[(row["variation_id"], row["size_id"])] = row
+
+            cursor.execute(
+                "SELECT id FROM product_reviews WHERE product_id=%s AND user_id=%s LIMIT 1",
+                (product_id, user_id)
+            )
+            already_reviewed = cursor.fetchone() is not None
+
+            if not already_reviewed:
+                cursor.execute(
+                    """SELECT DISTINCT oh.id
+                       FROM order_history oh
+                       JOIN order_items oi ON oh.id = oi.order_id
+                       WHERE oh.user_id = %s
+                         AND oi.product_id = %s
+                         AND oh.status IN ('delivered', 'returned')
+                       LIMIT 1""",
+                    (user_id, product_id)
+                )
+                can_review = cursor.fetchone() is not None
+
+        sizes_by_variation = {}
+        for s in sizes:
+            if s["stock_quantity"] <= 0:
+                continue
+
+            cart_item = cart_map.get((s["variation_id"], s["id"]))
+
+            sizes_by_variation.setdefault(s["variation_id"], []).append({
+                "id": s["id"],
+                "size_name": s["size_name"],
+                "price": float(s["price"]),
+                "stock_quantity": s["stock_quantity"],
+                "sold_quantity": s["sold_quantity"],
+                "is_in_cart": cart_item is not None,
+                "cart_item_id": cart_item["cart_item_id"] if cart_item else None,
+                "cart_quantity": cart_item["quantity"] if cart_item else 0,
+            })
+
+        final_variations = []
+        for v in variations:
+            var_sizes = sizes_by_variation.get(v["id"], [])
+            if not var_sizes:
+                continue
+
+            final_variations.append({
+                "id": v["id"],
+                "variation_name": v["variation_name"],
+                "image": v["image_url"],
+                "is_in_cart": any(s["is_in_cart"] for s in var_sizes),
+                "sizes": var_sizes
+            })
+
+        reviews = []
+        for r in reviews_raw:
+            reviews.append({
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "user_name": r["user_name"],
+                "rating": r["rating"],
+                "comment": r["comment"] or "",
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None
+            })
+
+        reviews_count = len(reviews)
+        average_rating = round(
+            sum(r["rating"] for r in reviews) / reviews_count, 1
+        ) if reviews_count > 0 else 0.0
+
+        initial_variation_index = 0
+        initial_size_id = None
+        if final_variations and final_variations[0]["sizes"]:
+            initial_size_id = final_variations[0]["sizes"][0]["id"]
+
+        return {
+            "id": product["id"],
+            "title": product["title"],
+            "description": product["description"] or "",
+            "characteristics": product["characteristics"] or "",
+            "is_authenticated": user_id is not None,
+            "current_user_id": user_id,
+            "is_favorite": is_favorite,
+            "can_review": can_review,
+            "reviews_count": reviews_count,
+            "average_rating": average_rating,
+            "initial_variation_index": initial_variation_index,
+            "initial_size_id": initial_size_id,
+            "variations": final_variations,
+            "reviews": reviews,
+        }
+
+    finally:
+        cursor.close()
+        conn.close()
 
 # ============================================
 # КОРЗИНА

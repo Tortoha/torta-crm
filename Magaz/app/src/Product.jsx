@@ -9,351 +9,160 @@ import ProductSizes from "./Elements/ProductSizes";
 import ProductActions from "./Elements/ProductActions";
 import ReviewMenu from "./Elements/ReviewMenu";
 import ReviewsList from "./Elements/ReviewsList";
-import CartButton from './CartButton'
+import CartButton from "./CartButton";
 
 const API_URL = "http://localhost:8000";
 
 function Product() {
-    // ПОЛУЧЕНИЕ ID ПРОДУКТА ИЗ URL
     const { id } = useParams();
 
-    // STATE ПЕРЕМЕННЫЕ
-    const [data, setData] = useState([]);                      // Все продукты из API
-    const [loading, setLoading] = useState(true);              // Индикатор загрузки
-    const [activeVariation, setActiveVariation] = useState(0); // Активная вариация (цвет)
-    const [activeSize, setActiveSize] = useState(null);        // Активный размер
-    const [hoveredVariation, setHoveredVariation] = useState(null); // Наведенная вариация
-    const [hoveredSize, setHoveredSize] = useState(null);      // Наведенный размер
-    const [isFavorite, setIsFavorite] = useState(false);       // В избранном или нет
-    const [cartItems, setCartItems] = useState([]);            // Товары в корзине
-    const [addingToCart, setAddingToCart] = useState(false);   // Процесс добавления в корзину
-    const [isAuthenticated, setIsAuthenticated] = useState(false); // Залогинен ли пользователь
-    const [currentUserId, setCurrentUserId] = useState(null);  // ID текущего пользователя
-    const [canReview, setCanReview] = useState(false);         // Может ли оставить отзыв
+    // API STATE
+    const [page, setPage]               = useState(null);
+    const [loading, setLoading]         = useState(true);
+    const [addingToCart, setAddingToCart] = useState(false);
 
-
-    // ФУНКЦИЯ ДЛЯ УВЕДОМЛЕНИЯ CARTBUTTON ОБ ОБНОВЛЕНИИ КОРЗИНЫ
-    const notifyCartUpdate = () => {
-        window.dispatchEvent(new Event('cartUpdated'));
-    };
-
-    // ЗАГРУЗКА ДАННЫХ ПРИ МОНТИРОВАНИИ
-    useEffect(() => {
-        loadProductData();
-    }, [id]);
-
-    // ФУНКЦИЯ ЗАГРУЗКИ ВСЕХ ДАННЫХ
-    // Загружает: продукты, избранное, корзину, пользователя
-    const loadProductData = async () => {
+    // Начальная загрузка
+    const loadPage = async () => {
         setLoading(true);
         try {
-            const [products, favorites, cart, user] = await Promise.all([
-                fetch(`${API_URL}/api-products`).then(r => r.json()),
-                fetch(`${API_URL}/api/favorites`, { credentials: "include" })
-                    .then(r => r.ok ? r.json() : [])
-                    .catch(() => []),
-                fetch(`${API_URL}/api/cart`, { credentials: "include" })
-                    .then(r => r.ok ? r.json() : [])
-                    .catch(() => []),
-                fetch(`${API_URL}/api/me`, { credentials: "include" })
-                    .then(r => r.ok ? r.json() : null)
-                    .catch(() => null),
-            ]);
-
-            setData(products);
-            setCartItems(cart);
-            setIsFavorite(favorites.some(f => f.product_id === parseInt(id, 10)));
-
-            if (user) {
-                setCurrentUserId(user.id);
-                setIsAuthenticated(true);
-                checkCanReview();
-            }
-            // + ТРЕКИНГ ПРОСМОТРА ТОВАРА
-            fetch("/api/track/product-view", {
+            const res = await fetch(`${API_URL}/api/product/${id}`, { credentials: "include" });
+            if (!res.ok) { setPage(null); return; }
+            const data = await res.json();
+            setPage(data);
+            setActiveVariation(data.initial_variation_index || 0);
+            setActiveSize(data.initial_size_id ? { id: data.initial_size_id } : null);
+            fetch(`${API_URL}/api/track/product-view`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
                 body: JSON.stringify({ product_id: parseInt(id, 10) }),
-            });
-        } catch (error) {
-            console.error(error);
+            }).catch(() => {});
+        } catch (e) {
+            console.error(e);
+            setPage(null);
         } finally {
             setLoading(false);
         }
     };
 
-    // ПРОВЕРКА: МОЖЕТ ЛИ ПОЛЬЗОВАТЕЛЬ ОСТАВИТЬ ОТЗЫВ
-    // Условия: купил товар и еще не оставлял отзыв
-    const checkCanReview = async () => {
+    // Тихое обновление страницы после действий (добавление в корзину, изменение количества, добавление в избранное)
+    const refreshPage = async () => {
         try {
-            const response = await fetch(`${API_URL}/api/reviews/can-review/${id}`, {
-                credentials: "include",
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setCanReview(data.can_review);
-            }
-        } catch (error) {
-            setCanReview(false);
+            const res = await fetch(`${API_URL}/api/product/${id}`, { credentials: "include" });
+            if (res.ok) setPage(await res.json());
+        } catch (e) {
+            console.error(e);
         }
     };
 
-    // ФИЛЬТРАЦИЯ ВАРИАЦИЙ С ДОСТУПНЫМИ РАЗМЕРАМИ
-    // Возвращает только те вариации, у которых есть размеры с stock > 0
-    const getAvailableVariations = (product) => {
-        if (!product?.variations) return [];
-        return product.variations
-            .filter(v => v.sizes.some(s => s.stock_quantity > 0))
-            .map(v => ({
-                ...v,
-                sizes: v.sizes.filter(s => s.stock_quantity > 0)
-            }));
-    };
+    useEffect(() => { loadPage(); }, [id]);
 
-    // УСТАНОВКА ПЕРВОГО РАЗМЕРА ПРИ ЗАГРУЗКЕ
-    useEffect(() => {
-        if (data.length > 0) {
-            const prod = data.find(item => item.id === parseInt(id, 10));
-            if (prod) {
-                const availableVariations = getAvailableVariations(prod);
-                if (availableVariations[activeVariation]?.sizes?.[0]) {
-                    const firstSize = availableVariations[activeVariation].sizes[0];
-                    setActiveSize({ id: firstSize.id, name: firstSize.size_name });
-                }
-            }
-        }
-    }, [data, activeVariation, id]);
+    // API ACTIONS
+    const notifyCartUpdate = () => window.dispatchEvent(new Event("cartUpdated"));
 
-    // СМЕНА ВАРИАЦИИ
-    // Автоматически выбирает первый доступный размер если текущего нет
     const handleVariationClick = (index) => {
         setActiveVariation(index);
-        const prod = data.find(item => item.id === parseInt(id, 10));
-        const availableVariations = getAvailableVariations(prod);
-        const newVariation = availableVariations[index];
-        if (activeSize) {
-            const sizeExists = newVariation.sizes.some(s => s.size_name === activeSize.name);
-            if (!sizeExists && newVariation.sizes.length > 0) {
-                const firstSize = newVariation.sizes[0];
-                setActiveSize({ id: firstSize.id, name: firstSize.size_name });
-            }
-        }
+        const sizes = page.variations?.[index]?.sizes || [];
+        const same  = sizes.find(s => s.id === activeSize?.id);
+        const pick  = same || sizes[0];
+        setActiveSize(pick ? { id: pick.id, name: pick.size_name } : null);
     };
 
-    // ДОБАВЛЕНИЕ/УДАЛЕНИЕ ИЗ КОРЗИНЫ
     const handleToggleCart = async () => {
-        // Проверка авторизации
-        if (!isAuthenticated) {
-            window.location.href = "/login";
-            return;
-        }
-
-        const prod = data.find(item => item.id === parseInt(id, 10));
-        const availableVariations = getAvailableVariations(prod);
-        const currentVariation = availableVariations[activeVariation];
-        if (!currentVariation || !activeSize) return;
-
+        if (!page.is_authenticated) { window.location.href = "/login"; return; }
+        if (!currentVariation || !currentSize) return;
         setAddingToCart(true);
-
         try {
-            const cartInfo = getCartInfo();
-            if (cartInfo) {
-                // Удаление из корзины
-                const response = await fetch(`${API_URL}/api/cart/${cartInfo.cart_item_id}`, {
-                    method: "DELETE",
-                    credentials: "include",
+            if (currentSize.cart_item_id) {
+                await fetch(`${API_URL}/api/cart/${currentSize.cart_item_id}`, {
+                    method: "DELETE", credentials: "include",
                 });
-                if (response.ok) {
-                    notifyCartUpdate();
-                }
             } else {
-                // Добавление в корзину
-                const response = await fetch(`${API_URL}/api/cart/add`, {
+                await fetch(`${API_URL}/api/cart/add`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     credentials: "include",
                     body: JSON.stringify({
-                        product_id: prod.id,
+                        product_id: page.id,
                         variation_id: currentVariation.id,
-                        size_id: activeSize.id,
+                        size_id: currentSize.id,
                         quantity: 1,
                     }),
                 });
-                if (response.ok) {
-                    notifyCartUpdate();
-                }
             }
-
-            // Обновление корзины
-            const cartResponse = await fetch(`${API_URL}/api/cart`, { credentials: "include" });
-            if (cartResponse.ok) {
-                const updatedCart = await cartResponse.json();
-                setCartItems(updatedCart);
-            }
-        } catch (error) {
-            console.error(error);
+            notifyCartUpdate();
+            await refreshPage();
+        } catch (e) {
+            console.error(e);
         } finally {
             setAddingToCart(false);
         }
     };
 
-    // ИЗМЕНЕНИЕ КОЛИЧЕСТВА ТОВАРА В КОРЗИНЕ
-    // Проверяет: не превышает ли количество stock_quantity
     const handleUpdateQuantity = async (newQuantity) => {
-        const cartInfo = getCartInfo();
-        if (newQuantity < 1 || !cartInfo) return;
-
-        const prod = data.find(item => item.id === parseInt(id, 10));
-        if (!prod) return;
-
-        const availableVariations = getAvailableVariations(prod);
-        const currentVariation = availableVariations[activeVariation];
-        const currentSize = currentVariation.sizes.find(s => s.id === activeSize.id);
-
-        // Блокировка увеличения если превышает запас
-        if (newQuantity > currentSize.stock_quantity) return;
-
+        if (!currentSize?.cart_item_id || newQuantity < 1 || newQuantity > maxStock) return;
         try {
-            const response = await fetch(`${API_URL}/api/cart/${cartInfo.cart_item_id}`, {
+            await fetch(`${API_URL}/api/cart/${currentSize.cart_item_id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
                 body: JSON.stringify({ quantity: newQuantity }),
             });
-
-            if (response.ok) {
-                notifyCartUpdate();
-                const cartResponse = await fetch(`${API_URL}/api/cart`, { credentials: "include" });
-                if (cartResponse.ok) {
-                    const updatedCart = await cartResponse.json();
-                    setCartItems(updatedCart);
-                }
-            }
-        } catch (error) {
-            console.error(error);
+            notifyCartUpdate();
+            await refreshPage();
+        } catch (e) {
+            console.error(e);
         }
     };
 
-    // ДОБАВЛЕНИЕ/УДАЛЕНИЕ ИЗ ИЗБРАННОГО
     const handleToggleFavorite = async () => {
-        if (!isAuthenticated) {
-            window.location.href = "/login";
-            return;
-        }
-
-        const prod = data.find(item => item.id === parseInt(id, 10));
-        const method = isFavorite ? "DELETE" : "POST";
-        const url = isFavorite
-            ? `${API_URL}/api/favorites/${prod.id}`
-            : `${API_URL}/api/favorites/add`;
-
+        if (!page.is_authenticated) { window.location.href = "/login"; return; }
         try {
-            const response = await fetch(url, {
-                method,
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: method === "POST" ? JSON.stringify({ product_id: prod.id }) : undefined,
-            });
-
-            if (response.ok) {
-                setIsFavorite(!isFavorite);
-            }
-        } catch (error) {
-            console.error(error);
+            await fetch(
+                page.is_favorite ? `${API_URL}/api/favorites/${page.id}` : `${API_URL}/api/favorites/add`,
+                {
+                    method: page.is_favorite ? "DELETE" : "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: !page.is_favorite ? JSON.stringify({ product_id: page.id }) : undefined,
+                }
+            );
+            await refreshPage();
+        } catch (e) {
+            console.error(e);
         }
     };
+    
+    // VISUAL STATE
+    const [activeVariation, setActiveVariation] = useState(0);
+    const [activeSize, setActiveSize]           = useState(null);
+    const [hoveredVariation, setHoveredVariation] = useState(null);
+    const [hoveredSize, setHoveredSize]           = useState(null);
 
-    // ПОЛУЧЕНИЕ ИНФОРМАЦИИ О ТОВАРЕ В КОРЗИНЕ
-    // Возвращает объект товара если он в корзине, иначе null
-    const getCartInfo = () => {
-        if (!activeSize) return null;
-        const prod = data.find(item => item.id === parseInt(id, 10));
-        if (!prod) return null;
-        const availableVariations = getAvailableVariations(prod);
-        const currentVariation = availableVariations[activeVariation];
-        return cartItems.find(
-            item =>
-                item.product_id === prod.id &&
-                item.variation_id === currentVariation.id &&
-                item.size_id === activeSize.id
-        );
-    };
+    // LOADING / NOT FOUND
+    if (loading) return (
+        <div id="mask" className="mask">
+            <svg><circle cx="50" cy="50" r="40" /></svg>
+        </div>
+    );
 
-    // ПРОВЕРКА: ЕСТЬ ЛИ ВАРИАЦИЯ В КОРЗИНЕ
-    // Для отображения синей точки на вариации
-    const isVariationInCart = (variationId) => {
-        return cartItems.some(item => item.product_id === parseInt(id, 10) && item.variation_id === variationId);
-    };
+    if (!page) return (
+        <div className="center">
+            <section className="text-section">
+                <h1 className="main-title">Error 404</h1>
+                <p className="subtitle">Page not found</p>
+            </section>
+        </div>
+    );
 
-    // ПРОВЕРКА: ЕСТЬ ЛИ РАЗМЕР В КОРЗИНЕ
-    // Для отображения синей точки на размере
-    const isSizeInCart = (sizeId) => {
-        const prod = data.find(item => item.id === parseInt(id, 10));
-        if (!prod) return false;
-        const availableVariations = getAvailableVariations(prod);
-        const currentVariation = availableVariations[activeVariation];
-        return cartItems.some(item =>
-            item.product_id === prod.id &&
-            item.variation_id === currentVariation.id &&
-            item.size_id === sizeId
-        );
-    };
-
-    // ПОЛУЧЕНИЕ ИНДЕКСА АКТИВНОГО РАЗМЕРА
-    // Для подсветки активного размера
-    const getActiveSizeIndex = () => {
-        const prod = data.find(item => item.id === parseInt(id, 10));
-        if (!prod) return 0;
-        const availableVariations = getAvailableVariations(prod);
-        const currentVariation = availableVariations[activeVariation];
-        if (!currentVariation || !activeSize) return 0;
-        return currentVariation.sizes.findIndex(s => s.size_name === activeSize.name);
-    };
-
-    // ЭКРАН ЗАГРУЗКИ
-    if (loading) {
-        return (
-            <div id="mask" className="mask">
-                <svg>
-                    <circle cx="50" cy="50" r="40" />
-                </svg>
-            </div>
-        );
-    }
-
-    // ПОИСК ПРОДУКТА ПО ID
-    const prod = data.find(item => item.id === parseInt(id, 10));
-    if (!prod) {
-        return (
-            <div className="center">
-                <section className="text-section">
-                    <h1 className="main-title">Error 404</h1>
-                    <p className="subtitle">Page not found</p>
-                </section>
-            </div>
-        );
-    }
-
-    // ВЫЧИСЛЕНИЕ ДАННЫХ ДЛЯ РЕНДЕРА
-    const availableVariations = getAvailableVariations(prod);        // Вариации с доступными размерами
-    const currentVariation = availableVariations[activeVariation];   // Текущая вариация
-    const currentSize = currentVariation?.sizes.find(s => s.id === activeSize?.id); // Текущий размер
-    const maxStock = currentSize?.stock_quantity || 999;             // Максимальное количество на складе
-    const cartInfo = getCartInfo();                                  // Информация о товаре в корзине
-    const isInCart = !!cartInfo;                                     // Находится ли товар в корзине
-    const cartQuantity = cartInfo?.quantity || 1;                    // Количество в корзине
-    const currentPrice = currentSize?.price || prod.price || 0;      // Цена выбранного размера
-
-    // Сортировка отзывов по дате
-    const sortedReviews = prod.reviews ? [...prod.reviews].sort((a, b) =>
-        new Date(b.created_at) - new Date(a.created_at)
-    ) : [];
-
-    // Расчет среднего рейтинга
-    const averageRating = sortedReviews.length > 0
-        ? (sortedReviews.reduce((sum, r) => sum + r.rating, 0) / sortedReviews.length).toFixed(1)
-        : "0.0";
+    // VISUAL DERIVED DATA
+    const currentVariation = page.variations?.[activeVariation] || null;
+    const currentSize      = currentVariation?.sizes?.find(s => s.id === activeSize?.id) || null;
+    const isInCart         = !!currentSize?.cart_item_id;
+    const cartQuantity     = currentSize?.cart_quantity || 1;
+    const maxStock         = currentSize?.stock_quantity || 0;
+    const currentPrice     = currentSize?.price || 0;
+    const activeSizeIndex  = currentVariation?.sizes?.findIndex(s => s.id === activeSize?.id) ?? 0;
 
     return (
         <>
@@ -361,37 +170,41 @@ function Product() {
             <main className="product-page">
                 <div className="product-image-wrapper">
                     {currentVariation && (
-                        <img src={currentVariation.image} alt={prod.title} className="product-main-image" />
+                        <img src={currentVariation.image} alt={page.title} className="product-main-image" />
                     )}
                 </div>
 
                 <div className="product-info">
-                    <h1 className="product-title">{prod.title}</h1>
-                    <p className="product-description">{prod.description}</p>
+                    <h1 className="product-title">{page.title}</h1>
+                    <p className="product-description">{page.description}</p>
                     <h2 className="product-price">${currentPrice}</h2>
 
                     <ProductVariations
-                        variations={availableVariations}
+                        variations={page.variations}
                         activeIndex={activeVariation}
                         hoveredIndex={hoveredVariation}
                         onVariationClick={handleVariationClick}
                         onVariationHover={setHoveredVariation}
-                        isVariationInCart={isVariationInCart}
+                        isVariationInCart={(variationId) =>
+                            page.variations.some(v => v.id === variationId && v.is_in_cart)
+                        }
                     />
 
                     <ProductSizes
                         sizes={currentVariation?.sizes}
                         activeSize={activeSize}
                         hoveredIndex={hoveredSize}
-                        activeSizeIndex={getActiveSizeIndex()}
-                        onSizeClick={(id, name) => setActiveSize({ id, name })}
+                        activeSizeIndex={activeSizeIndex}
+                        onSizeClick={(sizeId, sizeName) => setActiveSize({ id: sizeId, name: sizeName })}
                         onSizeHover={setHoveredSize}
-                        isSizeInCart={isSizeInCart}
+                        isSizeInCart={(sizeId) =>
+                            currentVariation?.sizes?.some(s => s.id === sizeId && s.is_in_cart) || false
+                        }
                     />
 
                     <ProductActions
                         isInCart={isInCart}
-                        isFavorite={isFavorite}
+                        isFavorite={page.is_favorite}
                         cartQuantity={cartQuantity}
                         addingToCart={addingToCart}
                         maxStock={maxStock}
@@ -401,26 +214,26 @@ function Product() {
                     />
 
                     <div className="product-characteristics">
-                        <p>{prod.characteristics}</p>
+                        <p>{page.characteristics}</p>
                     </div>
 
                     <section className="product-reviews">
                         <div className="reviews-header">
-                            <h3>Reviews ({sortedReviews.length})</h3>
+                            <h3>Reviews ({page.reviews_count})</h3>
                             <div className="reviews-header-right">
-                                <StarRating rating={parseFloat(averageRating)} />
+                                <StarRating rating={page.average_rating} />
                                 <ReviewMenu
-                                    productId={prod.id}
-                                    isAuthenticated={isAuthenticated}
-                                    canReview={canReview}
-                                    onReviewSubmitted={() => window.location.reload()}
+                                    productId={page.id}
+                                    isAuthenticated={page.is_authenticated}
+                                    canReview={page.can_review}
+                                    onReviewSubmitted={refreshPage}
                                 />
                             </div>
                         </div>
                         <ReviewsList
-                            reviews={prod.reviews}
-                            currentUserId={currentUserId}
-                            onReviewDeleted={() => window.location.reload()}
+                            reviews={page.reviews}
+                            currentUserId={page.current_user_id}
+                            onReviewDeleted={refreshPage}
                         />
                     </section>
                 </div>
