@@ -527,77 +527,51 @@ def reset_password(request: ResetPasswordRequest):
 def get_products():
     conn   = get_db()
     cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id, title FROM products")
+        products = cursor.fetchall()
+        if not products:
+            return []
 
-    cursor.execute("SELECT * FROM products")
-    products = cursor.fetchall()
-    if not products:
-        cursor.close(); conn.close()
-        return []
+        product_ids = [p["id"] for p in products]
+        format_ids  = ",".join(["%s"] * len(product_ids))
 
-    product_ids = [p["id"] for p in products]
-    format_ids = ",".join(["%s"] * len(product_ids))
+        # Первая вариация каждого продукта — только для картинки
+        cursor.execute(
+            f"""SELECT product_id, MIN(id) as variation_id
+                FROM product_variations
+                WHERE product_id IN ({format_ids})
+                GROUP BY product_id""",
+            product_ids
+        )
+        first_variation = {row["product_id"]: row["variation_id"] for row in cursor.fetchall()}
 
-    cursor.execute(f"SELECT * FROM product_variations WHERE product_id IN ({format_ids})", product_ids)
-    variations = cursor.fetchall()
-    
-    cursor.execute(f"SELECT * FROM product_sizes WHERE product_id IN ({format_ids})", product_ids)
-    sizes = cursor.fetchall()
-    
-    cursor.execute(
-        f"""SELECT pr.*, u.name AS user_name
-            FROM product_reviews pr
-            JOIN users u ON pr.user_id = u.id
-            WHERE pr.product_id IN ({format_ids})""",
-        product_ids
-    )
-    reviews = cursor.fetchall()
-    
-    cursor.close()
-    conn.close()
+        variation_ids = list(first_variation.values())
+        images = {}
+        if variation_ids:
+            fmt = ",".join(["%s"] * len(variation_ids))
+            cursor.execute(f"SELECT id, image_url FROM product_variations WHERE id IN ({fmt})", variation_ids)
+            images = {row["id"]: row["image_url"] for row in cursor.fetchall()}
 
-    # Группировка данных
-    sizes_by_variation = {}
-    for s in sizes:
-        sizes_by_variation.setdefault(s["variation_id"], []).append({
-            "id": s["id"], "size_name": s["size_name"],
-            "price": float(s["price"]),
-            "stock_quantity": s["stock_quantity"],
-            "sold_quantity": s["sold_quantity"]
-        })
+        # Минимальная цена
+        cursor.execute(
+            f"SELECT product_id, MIN(price) as price FROM product_sizes WHERE product_id IN ({format_ids}) GROUP BY product_id",
+            product_ids
+        )
+        prices = {row["product_id"]: float(row["price"]) for row in cursor.fetchall()}
 
-    variations_by_product = {}
-    for v in variations:
-        variations_by_product.setdefault(v["product_id"], []).append({
-            "id": v["id"], "variation_name": v["variation_name"],
-            "image": v["image_url"], "sizes": sizes_by_variation.get(v["id"], [])
-        })
-
-    reviews_by_product = {}
-    for r in reviews:
-        reviews_by_product.setdefault(r["product_id"], []).append({
-            "id": r["id"], "user_id": r["user_id"], "rating": r["rating"],
-            "comment": r["comment"],
-            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-            "user_name": r["user_name"]
-        })
-
-    # Вычисление минимальной цены для каждого продукта
-    min_price_by_product = {}
-    for s in sizes:
-        product_id = s["product_id"]
-        price = float(s["price"])
-        if product_id not in min_price_by_product:
-            min_price_by_product[product_id] = price
-        else:
-            min_price_by_product[product_id] = min(min_price_by_product[product_id], price)
-
-    # Формирование результата
-    for p in products:
-        p["variations"] = variations_by_product.get(p["id"], [])
-        p["reviews"] = reviews_by_product.get(p["id"], [])
-        p["price"] = min_price_by_product.get(p["id"], 0)
-
-    return products
+        return [
+            {
+                "id":    p["id"],
+                "title": p["title"],
+                "price": prices.get(p["id"], 0),
+                "variations": [{"image": images.get(first_variation.get(p["id"]))}],
+            }
+            for p in products
+        ]
+    finally:
+        cursor.close()
+        conn.close()
 
 @app.get("/api/product/{product_id}", response_model=ProductPageResponse)
 def get_product_page(product_id: int, request: Request):

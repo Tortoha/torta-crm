@@ -10,7 +10,7 @@ function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onAppl
       <div className="summary-card">
         <div className="summary-row summary-subtotal">
           <span>Subtotal</span>
-          <span>{Math.round(subtotal)}$</span>
+          <span>${Math.round(subtotal)}</span>
         </div>
 
         <div className="summary-row summary-shipping">
@@ -21,7 +21,7 @@ function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onAppl
         <div className="shipping-progress">
           <div className="progress-header">
             <span className="progress-text">To free shipping</span>
-            <span className="progress-amount">{Math.round(cartData.amount_to_free_shipping)}$</span>
+            <span className="progress-amount">${Math.round(cartData.amount_to_free_shipping)}</span>
           </div>
           <div className="progress-bar">
             <div className="progress-fill" style={{ width: `${cartData.shipping_progress}%` }} />
@@ -51,7 +51,7 @@ function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onAppl
       <div className="summary-card">
         <div className="summary-row summary-total">
           <span>Total</span>
-          <span>{Math.round(total)}$</span>
+          <span>${Math.round(total)}</span>
         </div>
         <button className="checkout-btn">Checkout</button>
       </div>

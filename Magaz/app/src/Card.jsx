@@ -12,7 +12,7 @@ function Card(props) {
                         <img src={imag} alt="" className="card-image" />
                     </div>
                     <h3>{title}</h3>
-                    <h2>{price}$</h2>
+                    <h2><span className="mini-price-title">From</span> ${price}</h2>
                 </div>
             </Link>
         </>

@@ -61,6 +61,12 @@ a {
     font-weight: 600;
 }
 
+.mini-price-title {
+    font-size: 14px;
+    color: #000000;
+    font-weight: 500;
+}
+
 .card {
     aspect-ratio: 3 / 4;
     overflow: hidden;

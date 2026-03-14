@@ -33,7 +33,7 @@ function CartButton() {
 
   return (
     <div className="cart-button">
-      <Link to="/cart">{Math.round(subtotal)}$</Link>
+      <Link to="/cart">${Math.round(subtotal)}</Link>
     </div>
   );
 }

@@ -19,7 +19,7 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
             <p className="cart-item-description">{item.description}</p>
             <p className="cart-item-size">{item.size_name}</p>
           </div>
-          <div className="cart-item-price">{item.price}$</div>
+          <div className="cart-item-price">${item.price}</div>
         </div>
 
         <div className="cart-item-actions">
