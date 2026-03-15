@@ -5,8 +5,7 @@ import CartItem from "./Elements/CartItem";
 import CartSummary from "./Elements/CartSummary";
 import "./Style/Cart.css";
 import "./Style/Load.css";
-
-const API_URL = "http://localhost:8000";
+import { API_BASE } from "./api.js"
 
 function Cart() {
     // API STATE
@@ -17,7 +16,7 @@ function Cart() {
     const loadCart = async (silent = false) => {
         if (!silent) setLoading(true);
         try {
-            const res = await fetch(`${API_URL}/api/cart`, { credentials: "include" });
+            const res = await fetch(`${API_BASE}/api/cart`, { credentials: "include" });
             if (res.status === 401) { navigate("/login"); return; }
             if (res.ok) setCartData(await res.json());
         } catch (e) {
@@ -32,7 +31,7 @@ function Cart() {
     // API ACTIONS
     const handleUpdateQuantity = async (cartItemId, newQuantity) => {
         if (newQuantity < 1) return;
-        const res = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
+        const res = await fetch(`${API_BASE}/api/cart/${cartItemId}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -42,7 +41,7 @@ function Cart() {
     };
 
     const handleRemoveItem = async (cartItemId) => {
-        const res = await fetch(`${API_URL}/api/cart/${cartItemId}`, {
+        const res = await fetch(`${API_BASE}/api/cart/${cartItemId}`, {
             method: "DELETE",
             credentials: "include",
         });
@@ -52,7 +51,7 @@ function Cart() {
     const handleToggleFavorite = async (productId) => {
         const isFav = cartData.favorites_ids.includes(productId);
         await fetch(
-            isFav ? `${API_URL}/api/favorites/${productId}` : `${API_URL}/api/favorites/add`,
+            isFav ? `${API_BASE}/api/favorites/${productId}` : `${API_BASE}/api/favorites/add`,
             {
                 method: isFav ? "DELETE" : "POST",
                 headers: { "Content-Type": "application/json" },

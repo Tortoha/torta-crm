@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 
 import "./Style/Load.css";
 
-const API_URL = "http://localhost:8000";
+import { API_BASE } from "./api.js"
 
 function FavoritesGrid() {
   const [items, setItems] = useState([]);
@@ -14,8 +14,8 @@ function FavoritesGrid() {
     (async () => {
       try {
         const [favRes, prodRes] = await Promise.all([
-          fetch(`${API_URL}/api/pages/favorites`, { credentials: "include" }),
-          fetch(`${API_URL}/api-products`),
+          fetch(`${API_BASE}/api/pages/favorites`, { credentials: "include" }),
+          fetch(`${API_BASE}/api/products`),
         ]);
 
         const favoriteIds = favRes.ok ? (await favRes.json()).map(Number) : [];

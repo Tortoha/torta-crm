@@ -1,17 +1,14 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import "./Style/CartButton.css";
-
-const API_URL = "http://localhost:8000";
+import { API_BASE } from "./api.js"
 
 function CartButton() {
   const [subtotal, setSubtotal] = useState(0);
 
   const fetchCart = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/pages/cart`, { 
-        credentials: "include" 
-      });
+      const response = await fetch(`${API_BASE}/api/pages/cart`, {credentials: "include"});
       if (response.ok) {
         const data = await response.json();
         setSubtotal(data.subtotal || 0);

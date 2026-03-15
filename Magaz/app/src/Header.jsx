@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
+import { API_BASE } from "./api.js"
 
 function Header() {
   const [username, setUsername] = useState(null);
@@ -8,7 +9,7 @@ function Header() {
   const menuRef = useRef();
 
   useEffect(() => {
-    fetch("/api/me", { credentials: "include" })
+    fetch(`${API_BASE}/api/me`, { credentials: "include" })
       .then(res => res.ok ? res.json() : null)
       .then(data => { if (data) setUsername(data.name); })
       .catch(() => { });
@@ -33,7 +34,7 @@ function Header() {
   }, [menuOpen]);
 
   const handleLogout = async () => {
-    await fetch("/api/logout", { method: "POST", credentials: "include" });
+    await fetch(`${API_BASE}/api/logout`, { method: "POST", credentials: "include" });
     setUsername(null);
     window.location.reload();
   };

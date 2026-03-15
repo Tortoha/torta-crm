@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, Link, useParams } from "react-router-dom";
 import "./Style/Login.css";
 
+import { API_BASE } from "./api.js"
+
 function ResetPassword() {
   const { token } = useParams();
   const navigate = useNavigate();
@@ -27,7 +29,7 @@ function ResetPassword() {
 
   useEffect(() => {
     let ignore = false;
-    fetch(`/api/reset-password/validate/${token}`)
+    fetch(`${API_BASE}/api/reset-password/validate/${token}`)
       .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
         if (ignore) return;
@@ -67,7 +69,7 @@ function ResetPassword() {
     if (!isValid) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/reset-password", {
+      const res = await fetch(`${API_BASE}/api/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, password, repeat_password: repeatPassword }),

@@ -10,8 +10,7 @@ import ProductActions from "./Elements/ProductActions";
 import ReviewMenu from "./Elements/ReviewMenu";
 import ReviewsList from "./Elements/ReviewsList";
 import CartButton from "./CartButton";
-
-const API_URL = "http://localhost:8000";
+import { API_BASE } from "./api.js"
 
 function Product() {
     const { id } = useParams();
@@ -24,14 +23,14 @@ function Product() {
     const loadPage = async (silent = false) => {
         if (!silent) setLoading(true);
         try {
-            const res = await fetch(`${API_URL}/api/product/${id}`, { credentials: "include" });
+            const res = await fetch(`${API_BASE}/api/product/${id}`, { credentials: "include" });
             if (!res.ok) { setPage(null); return; }
             const data = await res.json();
             setPage(data);
             if (!silent) {
                 setActiveVariation(data.initial_variation_index || 0);
                 setActiveSize(data.initial_size_id ? { id: data.initial_size_id } : null);
-                fetch(`${API_URL}/api/track/product-view`, {
+                fetch(`${API_BASE}/api/track/product-view`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     credentials: "include",
@@ -64,11 +63,11 @@ function Product() {
         if (!currentVariation || !currentSize) return;
         setAddingToCart(true);
         if (currentSize.cart_item_id) {
-            await fetch(`${API_URL}/api/cart/${currentSize.cart_item_id}`, {
+            await fetch(`${API_BASE}/api/cart/${currentSize.cart_item_id}`, {
                 method: "DELETE", credentials: "include",
             });
         } else {
-            await fetch(`${API_URL}/api/cart/add`, {
+            await fetch(`${API_BASE}/api/cart/add`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
@@ -87,7 +86,7 @@ function Product() {
 
     const handleUpdateQuantity = async (newQuantity) => {
         if (!currentSize?.cart_item_id || newQuantity < 1 || newQuantity > maxStock) return;
-        await fetch(`${API_URL}/api/cart/${currentSize.cart_item_id}`, {
+        await fetch(`${API_BASE}/api/cart/${currentSize.cart_item_id}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -100,7 +99,7 @@ function Product() {
     const handleToggleFavorite = async () => {
         if (!page.is_authenticated) { window.location.href = "/login"; return; }
         await fetch(
-            page.is_favorite ? `${API_URL}/api/favorites/${page.id}` : `${API_URL}/api/favorites/add`,
+            page.is_favorite ? `${API_BASE}/api/favorites/${page.id}` : `${API_BASE}/api/favorites/add`,
             {
                 method: page.is_favorite ? "DELETE" : "POST",
                 headers: { "Content-Type": "application/json" },

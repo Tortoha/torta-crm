@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
+import { API_BASE } from "./api.js"
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -51,7 +52,7 @@ function Login() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/send-code", {
+      const res = await fetch(`${API_BASE}/api/send-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import Star from "./Star";
-
-const API_URL = "http://localhost:8000";
+import { API_BASE } from "../api.js"
 
 function ReviewsList({ reviews, currentUserId, onReviewDeleted }) {
     const [hoveredReviewId, setHoveredReviewId] = useState(null);
@@ -32,7 +31,7 @@ function ReviewsList({ reviews, currentUserId, onReviewDeleted }) {
         setDeletingReviewId(reviewId);
 
         try {
-            const response = await fetch(`${API_URL}/api/reviews/${reviewId}`, {
+            const response = await fetch(`${API_BASE}/api/reviews/${reviewId}`, {
                 method: "DELETE",
                 credentials: "include",
             });

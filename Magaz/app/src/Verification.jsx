@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import "./Style/Login.css";
+import { API_BASE } from "./api.js"
 
 function Verification() {
   const [code, setCode] = useState("");
@@ -68,7 +69,7 @@ function Verification() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/verify-code", {
+      const res = await fetch(`${API_BASE}/api/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -100,7 +101,7 @@ function Verification() {
     setGeneralError("");
 
     try {
-      const res = await fetch("/api/resend-code", {
+      const res = await fetch(`${API_BASE}/api/resend-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
