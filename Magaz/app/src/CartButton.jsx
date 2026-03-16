@@ -8,7 +8,7 @@ function CartButton() {
 
   const fetchCart = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/pages/cart`, {credentials: "include"});
+      const response = await fetch(`${API_BASE}/api/cart`, {credentials: "include"});
       if (response.ok) {
         const data = await response.json();
         setSubtotal(data.subtotal || 0);
