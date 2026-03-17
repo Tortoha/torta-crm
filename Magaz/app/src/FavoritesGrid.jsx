@@ -14,15 +14,15 @@ function FavoritesGrid() {
     (async () => {
       try {
         const [favRes, prodRes] = await Promise.all([
-          fetch(`${API_BASE}/api/pages/favorites`, { credentials: "include" }),
-          fetch(`${API_BASE}/api/products`),
+          fetch(`${API_BASE}/api/favorites`, { credentials: "include" }),
+          fetch(`${API_BASE}/api-products`),
         ]);
 
-        const favoriteIds = favRes.ok ? (await favRes.json()).map(Number) : [];
+        const favorites = favRes.ok ? await favRes.json() : [];
         const products = prodRes.ok ? await prodRes.json() : [];
 
-        const favSet = new Set(favoriteIds);
-        setItems(products.filter((p) => favSet.has(Number(p.id))));
+        const favSet = new Set(favorites.map(f => f.product_id));
+        setItems(products.filter((p) => favSet.has(p.id)));
       } finally {
         setLoading(false);
       }
@@ -56,8 +56,8 @@ function FavoritesGrid() {
       {items.map((d) => (
         <Card
           key={d.id}
-          id={d.id}
-          imag={d.variations?.[0]?.image}
+          id={d.hash}
+          imag={d.image}
           title={d.title}
           price={d.price}
         />

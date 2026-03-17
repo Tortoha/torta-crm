@@ -16,8 +16,8 @@ function Product() {
     const { id } = useParams();
 
     // API STATE
-    const [page, setPage]                 = useState(null);
-    const [loading, setLoading]           = useState(true);
+    const [page, setPage] = useState(null);
+    const [loading, setLoading] = useState(true);
     const [addingToCart, setAddingToCart] = useState(false);
 
     const loadPage = async (silent = false) => {
@@ -34,8 +34,8 @@ function Product() {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     credentials: "include",
-                    body: JSON.stringify({ product_id: parseInt(id, 10) }),
-                }).catch(() => {});
+                    body: JSON.stringify({ product_id: data.id }),
+                }).catch(() => { });
             }
         } catch (e) {
             console.error(e);
@@ -53,8 +53,8 @@ function Product() {
     const handleVariationClick = (index) => {
         setActiveVariation(index);
         const sizes = page.variations?.[index]?.sizes || [];
-        const same  = sizes.find(s => s.id === activeSize?.id);
-        const pick  = same || sizes[0];
+        const same = sizes.find(s => s.id === activeSize?.id);
+        const pick = same || sizes[0];
         setActiveSize(pick ? { id: pick.id, name: pick.size_name } : null);
     };
 
@@ -99,7 +99,9 @@ function Product() {
     const handleToggleFavorite = async () => {
         if (!page.is_authenticated) { window.location.href = "/login"; return; }
         await fetch(
-            page.is_favorite ? `${API_BASE}/api/favorites/${page.id}` : `${API_BASE}/api/favorites/add`,
+            page.is_favorite
+                ? `${API_BASE}/api/favorites/${page.product_hash}`
+                : `${API_BASE}/api/favorites/add`,
             {
                 method: page.is_favorite ? "DELETE" : "POST",
                 headers: { "Content-Type": "application/json" },
@@ -111,10 +113,10 @@ function Product() {
     };
 
     // VISUAL STATE
-    const [activeVariation, setActiveVariation]   = useState(0);
-    const [activeSize, setActiveSize]             = useState(null);
+    const [activeVariation, setActiveVariation] = useState(0);
+    const [activeSize, setActiveSize] = useState(null);
     const [hoveredVariation, setHoveredVariation] = useState(null);
-    const [hoveredSize, setHoveredSize]           = useState(null);
+    const [hoveredSize, setHoveredSize] = useState(null);
 
     // LOADING / NOT FOUND
     if (loading) return (
@@ -134,12 +136,12 @@ function Product() {
 
     // VISUAL DERIVED DATA
     const currentVariation = page.variations?.[activeVariation] || null;
-    const currentSize      = currentVariation?.sizes?.find(s => s.id === activeSize?.id) || null;
-    const isInCart         = !!currentSize?.cart_item_id;
-    const cartQuantity     = currentSize?.cart_quantity || 1;
-    const maxStock         = currentSize?.stock_quantity || 0;
-    const currentPrice     = currentSize?.price || 0;
-    const activeSizeIndex  = currentVariation?.sizes?.findIndex(s => s.id === activeSize?.id) ?? 0;
+    const currentSize = currentVariation?.sizes?.find(s => s.id === activeSize?.id) || null;
+    const isInCart = !!currentSize?.cart_item_id;
+    const cartQuantity = currentSize?.cart_quantity || 1;
+    const maxStock = currentSize?.stock_quantity || 0;
+    const currentPrice = currentSize?.price || 0;
+    const activeSizeIndex = currentVariation?.sizes?.findIndex(s => s.id === activeSize?.id) ?? 0;
 
     return (
         <>

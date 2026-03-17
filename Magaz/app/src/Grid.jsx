@@ -17,7 +17,7 @@ function Grid() {
     <>
       <section className="image-grid-section">
         {data.map((d) => (
-          <Card key={d.id} id={d.id} imag={d.image} title={d.title} price={d.price} />
+          <Card key={d.id} id={d.hash} imag={d.image} title={d.title} price={d.price} />
         ))}
       </section>
     </>

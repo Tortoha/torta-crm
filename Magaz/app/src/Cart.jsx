@@ -51,7 +51,7 @@ function Cart() {
     const handleToggleFavorite = async (productId) => {
         const isFav = cartData.favorites_ids.includes(productId);
         await fetch(
-            isFav ? `${API_BASE}/api/favorites/${productId}` : `${API_BASE}/api/favorites/add`,
+            isFav ? `${API_BASE}/api/favorites/${productHash}` : `${API_BASE}/api/favorites/add`,
             {
                 method: isFav ? "DELETE" : "POST",
                 headers: { "Content-Type": "application/json" },
@@ -64,7 +64,7 @@ function Cart() {
 
     const handleApplyPromo = async () => {
         if (!promoCode.trim()) { setPromoError(""); setAppliedPromo(null); return; }
-        const res = await fetch(`${API_URL}/api/promo-code/apply`, {
+        const res = await fetch(`${API_BASE}/api/promo-code/apply`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",

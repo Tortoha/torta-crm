@@ -6,14 +6,14 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
 
   return (
     <div className="cart-item">
-      <Link to={`/product/${item.product_id}`}>
+      <Link to={`/product/${item.product_hash}`}>
         <img src={item.image_url} alt={item.title} className="cart-item-image cart-item-image--link" />
       </Link>
 
       <div className="cart-item-content">
         <div className="cart-item-header">
           <div className="cart-item-info">
-            <Link to={`/product/${item.product_id}`} className="cart-item-title-link">
+            <Link to={`/product/${item.product_hash}`} className="cart-item-title-link">
               <h2 className="cart-item-title">{item.title}</h2>
             </Link>
             <p className="cart-item-description">{item.description}</p>
@@ -46,7 +46,7 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
 
           <button
             className={`cart-fav-btn ${isFavorite ? "cart-fav-btn--active" : ""}`}
-            onClick={() => onToggleFavorite(item.product_id)}
+            onClick={() => onToggleFavorite(item.product_hash, item.product_id)}
           >
             <img src={heartIcon} alt="Favorite" className="heart-icon" />
           </button>

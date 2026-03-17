@@ -12,6 +12,7 @@ import random
 import resend
 from pydantic import BaseModel
 from typing import Optional, List
+from hashids import Hashids
 
 
 # ============================================
@@ -37,6 +38,8 @@ DB_CONFIG = {
     "password": "root",
     "database": "crmdb",
 }
+
+hashids = Hashids(salt="qpzmrld10vsljklfgdnsdsafjkhfl526742228666777mzpqnxowhgf", min_length=6)
 
 app = FastAPI()
 resend.api_key = RESEND_API_KEY
@@ -126,6 +129,7 @@ class FrontVariation(BaseModel):
 
 class ProductPageResponse(BaseModel):
     id: int
+    product_hash: str
     title: str
     description: Optional[str] = ""
     characteristics: Optional[str] = ""
@@ -149,6 +153,7 @@ class CartPageItem(BaseModel):
     cart_item_id: int
     quantity: int
     product_id: int
+    product_hash: str
     variation_id: Optional[int] = None
     size_id: Optional[int] = None
     title: str
@@ -641,17 +646,15 @@ def get_products(api_key_record: dict = Depends(resolve_api_key)):
                 WHERE api_key_id = %s AND product_id IN ({format_ids})""",
             [api_key_id] + product_ids
         )
-        custom_fields_raw = cursor.fetchall()
-
-        # Группируем по product_id: { product_id: { key: value, ... } }
         custom_fields_map = {}
-        for row in custom_fields_raw:
+        for row in cursor.fetchall():
             pid = row["product_id"]
             custom_fields_map.setdefault(pid, {})[row["field_key"]] = row["field_value"]
 
         return [
             {
                 "id":              p["id"],
+                "hash":            hashids.encode(p["id"]),
                 "title":           p["title"],
                 "price":           prices.get(p["id"], 0),
                 "image":           images.get(first_variation.get(p["id"])),
@@ -666,14 +669,19 @@ def get_products(api_key_record: dict = Depends(resolve_api_key)):
         cursor.close()
         conn.close()
 
-@app.get("/{api_key}/api/product/{product_id}", response_model=ProductPageResponse)
+@app.get("/{api_key}/api/product/{product_hash}", response_model=ProductPageResponse)
 def get_product_page(
-    product_id: int,
+    product_hash: str,
     request: Request,
     api_key_record: dict = Depends(resolve_api_key)
 ):
+    decoded = hashids.decode(product_hash)
+    if not decoded:
+        raise HTTPException(status_code=404, detail="Product not found")
+    product_id = decoded[0]
+
     api_key_id = api_key_record["id"]
-    user_id = try_get_current_user_id(request)
+    user_id    = try_get_current_user_id(request)
 
     conn   = get_db()
     cursor = conn.cursor(dictionary=True)
@@ -813,6 +821,7 @@ def get_product_page(
 
         return {
             "id":                      product["id"],
+            "product_hash":            hashids.encode(product["id"]),
             "title":                   product["title"],
             "description":             product["description"] or "",
             "characteristics":         product["characteristics"] or "",
@@ -1040,7 +1049,7 @@ def get_cart(
         for row in rows:
             price     = float(row["price"] or 0)
             subtotal += price * row["quantity"]
-            items.append({**row, "price": price, "is_favorite": row["product_id"] in favorites_set})
+            items.append({**row, "price": price, "product_hash": hashids.encode(row["product_id"]), "is_favorite": row["product_id"] in favorites_set})
 
         final_shipping    = 0.0 if subtotal >= free_threshold else shipping_cost
         shipping_progress = min((subtotal / free_threshold) * 100, 100) if free_threshold > 0 else 100
@@ -1102,26 +1111,35 @@ def get_favorites(
 ):
     api_key_id = api_key_record["id"]
     user_id = get_current_user_id(request)
-    conn    = get_db()
-    cursor  = conn.cursor(dictionary=True)
+    conn   = get_db()
+    cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute(
-            """SELECT f.*, p.title FROM favorites f
+            """SELECT f.product_id, p.title FROM favorites f
                JOIN products p ON f.product_id = p.id
                WHERE f.user_id = %s AND p.api_key_id = %s""",
             (user_id, api_key_id)
         )
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+        return [
+            {**row, "hash": hashids.encode(row["product_id"])}
+            for row in rows
+        ]
     finally:
         cursor.close(); conn.close()
 
 
-@app.delete("/{api_key}/api/favorites/{product_id}")
+@app.delete("/{api_key}/api/favorites/{product_hash}")
 def remove_from_favorites(
-    product_id: int,
+    product_hash: str,
     request: Request,
     api_key_record: dict = Depends(resolve_api_key)
 ):
+    decoded = hashids.decode(product_hash)
+    if not decoded:
+        raise HTTPException(status_code=404, detail="Product not found")
+    product_id = decoded[0]
+
     user_id = get_current_user_id(request)
     conn    = get_db()
     cursor  = conn.cursor()
@@ -1134,6 +1152,7 @@ def remove_from_favorites(
         return {"success": True}
     finally:
         cursor.close(); conn.close()
+
 
 
 # ============================================
