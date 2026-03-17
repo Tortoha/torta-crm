@@ -129,6 +129,10 @@ class ProductPageResponse(BaseModel):
     title: str
     description: Optional[str] = ""
     characteristics: Optional[str] = ""
+    seo_title: Optional[str] = None
+    seo_description: Optional[str] = None
+    seo_keywords: Optional[str] = None
+    custom_fields: Optional[dict] = {}
     is_authenticated: bool
     current_user_id: Optional[int] = None
     is_favorite: bool
@@ -139,6 +143,7 @@ class ProductPageResponse(BaseModel):
     initial_size_id: Optional[int] = None
     variations: List[FrontVariation]
     reviews: List[FrontReview]
+
 
 class CartPageItem(BaseModel):
     cart_item_id: int
@@ -589,12 +594,13 @@ def reset_password(
 
 @app.get("/{api_key}/api-products")
 def get_products(api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]   # ← это ID из crm_api_keys
+    api_key_id = api_key_record["id"]
     conn   = get_db()
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute(
-            "SELECT id, title FROM products WHERE api_key_id = %s",
+            """SELECT id, title, seo_title, seo_description, seo_keywords
+               FROM products WHERE api_key_id = %s""",
             (api_key_id,)
         )
         products = cursor.fetchall()
@@ -604,7 +610,6 @@ def get_products(api_key_record: dict = Depends(resolve_api_key)):
         product_ids = [p["id"] for p in products]
         format_ids  = ",".join(["%s"] * len(product_ids))
 
-        # Первая вариация каждого продукта — только для картинки
         cursor.execute(
             f"""SELECT product_id, MIN(id) as variation_id
                 FROM product_variations
@@ -624,19 +629,36 @@ def get_products(api_key_record: dict = Depends(resolve_api_key)):
             )
             images = {row["id"]: row["image_url"] for row in cursor.fetchall()}
 
-        # Минимальная цена
         cursor.execute(
             f"SELECT product_id, MIN(price) as price FROM product_sizes WHERE product_id IN ({format_ids}) GROUP BY product_id",
             product_ids
         )
         prices = {row["product_id"]: float(row["price"]) for row in cursor.fetchall()}
 
+        cursor.execute(
+            f"""SELECT product_id, field_key, field_value, field_type
+                FROM product_custom_fields
+                WHERE api_key_id = %s AND product_id IN ({format_ids})""",
+            [api_key_id] + product_ids
+        )
+        custom_fields_raw = cursor.fetchall()
+
+        # Группируем по product_id: { product_id: { key: value, ... } }
+        custom_fields_map = {}
+        for row in custom_fields_raw:
+            pid = row["product_id"]
+            custom_fields_map.setdefault(pid, {})[row["field_key"]] = row["field_value"]
+
         return [
             {
-                "id":    p["id"],
-                "title": p["title"],
-                "price": prices.get(p["id"], 0),
-                "image": images.get(first_variation.get(p["id"])),
+                "id":              p["id"],
+                "title":           p["title"],
+                "price":           prices.get(p["id"], 0),
+                "image":           images.get(first_variation.get(p["id"])),
+                "seo_title":       p["seo_title"],
+                "seo_description": p["seo_description"],
+                "seo_keywords":    p["seo_keywords"],
+                "custom_fields":   custom_fields_map.get(p["id"], {}),
             }
             for p in products
         ]
@@ -653,12 +675,14 @@ def get_product_page(
     api_key_id = api_key_record["id"]
     user_id = try_get_current_user_id(request)
 
-    conn = get_db()
+    conn   = get_db()
     cursor = conn.cursor(dictionary=True)
 
     try:
         cursor.execute(
-            "SELECT id, title, description, characteristics FROM products WHERE id = %s AND api_key_id = %s",
+            """SELECT id, title, description, characteristics,
+                      seo_title, seo_description, seo_keywords
+               FROM products WHERE id = %s AND api_key_id = %s""",
             (product_id, api_key_id)
         )
         product = cursor.fetchone()
@@ -677,8 +701,7 @@ def get_product_page(
             format_ids = ",".join(["%s"] * len(variation_ids))
             cursor.execute(
                 f"""SELECT id, product_id, variation_id, size_name, price, stock_quantity, sold_quantity
-                    FROM product_sizes
-                    WHERE variation_id IN ({format_ids})""",
+                    FROM product_sizes WHERE variation_id IN ({format_ids})""",
                 variation_ids
             )
             sizes = cursor.fetchall()
@@ -693,9 +716,20 @@ def get_product_page(
         )
         reviews_raw = cursor.fetchall()
 
+        cursor.execute(
+            """SELECT field_key, field_value, field_type
+               FROM product_custom_fields
+               WHERE api_key_id = %s AND product_id = %s""",
+            (api_key_id, product_id)
+        )
+        custom_fields = {
+            row["field_key"]: row["field_value"]
+            for row in cursor.fetchall()
+        }
+
         is_favorite = False
-        can_review = False
-        cart_map = {}
+        can_review  = False
+        cart_map    = {}
 
         if user_id:
             cursor.execute(
@@ -722,11 +756,9 @@ def get_product_page(
 
             if not already_reviewed:
                 cursor.execute(
-                    """SELECT DISTINCT oh.id
-                       FROM order_history oh
+                    """SELECT DISTINCT oh.id FROM order_history oh
                        JOIN order_items oi ON oh.id = oi.order_id
-                       WHERE oh.user_id = %s
-                         AND oi.product_id = %s
+                       WHERE oh.user_id = %s AND oi.product_id = %s
                          AND oh.api_key_id = %s
                          AND oh.status IN ('delivered', 'returned')
                        LIMIT 1""",
@@ -780,20 +812,24 @@ def get_product_page(
         initial_size_id = final_variations[0]["sizes"][0]["id"] if final_variations and final_variations[0]["sizes"] else None
 
         return {
-            "id":                     product["id"],
-            "title":                  product["title"],
-            "description":            product["description"] or "",
-            "characteristics":        product["characteristics"] or "",
-            "is_authenticated":       user_id is not None,
-            "current_user_id":        user_id,
-            "is_favorite":            is_favorite,
-            "can_review":             can_review,
-            "reviews_count":          reviews_count,
-            "average_rating":         average_rating,
+            "id":                      product["id"],
+            "title":                   product["title"],
+            "description":             product["description"] or "",
+            "characteristics":         product["characteristics"] or "",
+            "seo_title":               product["seo_title"],
+            "seo_description":         product["seo_description"],
+            "seo_keywords":            product["seo_keywords"],
+            "custom_fields":           custom_fields,
+            "is_authenticated":        user_id is not None,
+            "current_user_id":         user_id,
+            "is_favorite":             is_favorite,
+            "can_review":              can_review,
+            "reviews_count":           reviews_count,
+            "average_rating":          average_rating,
             "initial_variation_index": 0,
-            "initial_size_id":        initial_size_id,
-            "variations":             final_variations,
-            "reviews":                reviews,
+            "initial_size_id":         initial_size_id,
+            "variations":              final_variations,
+            "reviews":                 reviews,
         }
 
     finally:
