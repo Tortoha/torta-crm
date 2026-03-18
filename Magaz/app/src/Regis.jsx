@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
 import { API_BASE } from "./api.js"
+import PasswordInput from "./Elements/PasswordInput";
 
 function Regis() {
   const [name, setName] = useState("");
@@ -151,32 +152,26 @@ function Regis() {
             </div>
 
             <div className="secsh0">
-              <input
-                type="password"
+              <PasswordInput
                 id="password"
                 name="password"
                 placeholder="Create password"
                 value={password}
                 onChange={handlePasswordChange}
-                required
               />
               {passwordErrors.length > 0 &&
                 passwordErrors.map((err, idx) => (
-                  <p className="error" key={idx}>
-                    {err}
-                  </p>
+                  <p className="error" key={idx}>{err}</p>
                 ))}
             </div>
 
             <div className="secsh0">
-              <input
-                type="password"
+              <PasswordInput
                 id="repeatPassword"
                 name="repeatPassword"
                 placeholder="Repeat password"
                 value={repeatPassword}
                 onChange={handleRepeatPasswordChange}
-                required
               />
               {repeatError && <p className="error">{repeatError}</p>}
             </div>

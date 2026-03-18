@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
 import { API_BASE } from "./api.js"
+import PasswordInput from "./Elements/PasswordInput";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -98,15 +99,13 @@ function Login() {
             </div>
 
             <div className="secsh0">
-              <input
-                type="password"
+              <PasswordInput
                 id="password"
                 name="password"
                 placeholder="Password"
                 value={password}
                 onChange={handlePasswordChange}
                 autoComplete="current-password"
-                required
               />
               {passwordErrors.length > 0 &&
                 passwordErrors.map((err, idx) => (

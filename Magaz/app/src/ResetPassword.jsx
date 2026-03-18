@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, Link, useParams } from "react-router-dom";
 import "./Style/Login.css";
+import PasswordInput from "./Elements/PasswordInput";
 
 import { API_BASE } from "./api.js"
 
@@ -125,13 +126,11 @@ function ResetPassword() {
             <div className="reg">
               <form onSubmit={handleSubmit}>
                 <div className="secsh">
-                  <input
-                    type="password"
+                  <PasswordInput
                     placeholder="New password"
                     value={password}
                     onChange={handlePasswordChange}
                     autoComplete="new-password"
-                    required
                   />
                   {passwordErrors.map((err, idx) => (
                     <p className="error" key={idx}>{err}</p>
@@ -139,13 +138,11 @@ function ResetPassword() {
                 </div>
 
                 <div className="secsh0">
-                  <input
-                    type="password"
+                  <PasswordInput
                     placeholder="Repeat new password"
                     value={repeatPassword}
                     onChange={handleRepeatPasswordChange}
                     autoComplete="new-password"
-                    required
                   />
                   {repeatError && <p className="error">{repeatError}</p>}
                 </div>
