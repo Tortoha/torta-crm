@@ -1,0 +1,637 @@
+@import url('https://fonts.googleapis.com/css2?family=Parkinsans:wght@498&display=swap');
+
+body {
+    font-family: "Parkinsans", sans-serif;
+    font-optical-sizing: auto;
+}
+
+section {
+    overflow: hidden;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+.regist {
+    background-color: #F2F1F6;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0;
+}
+
+.regis {
+    width: 100%;
+}
+
+.reg {
+    background-color: #ffffff;
+    color: black;
+    border: 0;
+    border-radius: 48px;
+    align-items: center;
+    transition: 0.3s ease-in-out;
+    margin: 32px auto;
+    text-align: center;
+    overflow: hidden;
+    width: 376px;
+    transition: 0.6s ease-in-out;
+}
+
+.reg:hover {
+    box-shadow: 8px 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.regis h1 {
+    font-size: 48px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.secsh {
+    width: 312px;
+    margin: 0 auto;
+    margin-top: 32px;
+}
+
+.secsh0 {
+    width: 312px;
+    margin: 0 auto;
+    margin-top: 18px;
+}
+
+.secsh1 {
+    width: 312px;
+    margin: 0 auto;
+}
+
+.secsh2 {
+    width: 312px;
+    margin: 0 auto;
+    margin-top: 32px;
+}
+
+label {
+    font-size: 32px;
+    font-weight: 500;
+    margin-top: 48px;
+}
+
+input {
+    width: 100%;
+    height: 56px;
+    background-color: #f0f0f0;
+    color: #000000;
+    border: 0;
+    border-radius: 16px;
+    font-size: 24px;
+    font-weight: 100;
+    padding: 2px 16px;
+    font-family: "Parkinsans", sans-serif;
+    font-weight: 300;
+    outline: none;
+}
+
+.button1 {
+    background-color: #0071e3;
+    color: #ffffff;
+    font-size: 32px;
+    margin-top: 64px;
+    padding: 0;
+    transition: 0.2s ease-in-out;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.button2 {
+    background-color: #ffffff00;
+    color: #000000;
+    font-size: 24px;
+    margin-bottom: 32px;
+    margin-top: 18px;
+    padding: 0;
+    transition: 0.2s ease-in-out;
+    font-weight: 300;
+    cursor: pointer;
+    box-shadow: 0px 0px 16px rgba(0, 0, 0, 0.0);
+}
+
+.button3 {
+    background-color: #ffffff;
+    color: #000000;
+    font-size: 24px;
+    margin-top: 18px;
+    padding: 0;
+    transition: 0.2s ease-in-out;
+    font-weight: 300;
+    cursor: pointer;
+    box-shadow: 12px 6px 28px rgba(0, 0, 0, 0.2);
+}
+
+.button1:hover {
+    background-color: #0077ED;
+    color: #ffffff;
+    box-shadow: 4px 4px 18px #0076ed85;
+}
+
+.button2:hover {
+    background-color: #E5E5E5;
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
+}
+
+.button3:hover {
+    background-color: #ffffff;
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.2);
+}
+
+.error {
+    color: rgb(218, 17, 17);
+    font-size: 16px;
+    margin: 2px 0;
+}
+
+.not-button {
+    background-color: #E5E5E5;
+    color: #ffffff;
+    font-size: 32px;
+    margin-top: 64px;
+    padding: 0;
+    font-weight: 400;
+}
+
+.not-button3 {
+    background-color: #E5E5E5;
+    color: #ffffff;
+    font-size: 24px;
+    margin-top: 18px;
+    padding: 0;
+    font-weight: 400;
+}
+
+.verify-h1 {
+    margin-bottom: 12px;
+}
+
+.verify-p {
+    color: #666;
+    font-size: 16px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+    font-weight: 400;
+    text-align: center;
+}
+
+.verify-input {
+    letter-spacing: 4px;
+    text-align: center;
+}
+
+.verify-email {
+    font-size: 20px;
+    font-weight: 500;
+    margin-top: -12px;
+    margin-bottom: 24px;
+    text-align: center;
+}
+
+.auth-link-wrap {
+    width: 312px;
+    margin: 10px auto 0;
+    text-align: right;
+}
+
+.auth-link {
+    color: #666666;
+    font-size: 16px;
+    font-weight: 400;
+    text-decoration: none;
+    transition: 0.2s ease-in-out;
+}
+
+.auth-link:hover {
+    color: #000000;
+    text-decoration: underline;
+}
+
+.success-message {
+    color: #1b7f3b;
+    font-size: 16px;
+    margin: 12px 32px 0;
+    text-align: center;
+    font-weight: 400;
+}
+
+.loading-text {
+    color: #666;
+    font-size: 16px;
+    margin: 0 0 24px 0;
+    text-align: center;
+    font-weight: 400;
+}
+
+.password-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.password-wrapper input {
+  padding-right: 52px;
+}
+
+.password-eye {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #999;
+  padding: 0;
+  width: auto;
+  height: auto;
+  display: flex;
+  align-items: center;
+  transition: color 0.2s ease;
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.password-eye:hover {
+  color: #333;
+}
+
+.eye-icon {
+  position: absolute;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease,
+    filter 0.25s ease;
+}
+
+.eye-icon:last-child {
+  position: relative;
+}
+
+.eye-visible {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+  filter: blur(0px);
+}
+
+.eye-hidden {
+  opacity: 0;
+  transform: scale(0.6) rotate(15deg);
+  filter: blur(2px);
+  pointer-events: none;
+  position: absolute;
+}
+
+/* ============================================
+   АДАПТИВНОСТЬ
+   ============================================ */
+
+/* Планшеты (768px - 1024px) */
+@media (max-width: 1024px) {
+    .reg {
+        width: 360px;
+        border-radius: 44px;
+    }
+    
+    h1 {
+        font-size: 44px;
+    }
+    
+    .secsh, .secsh0, .secsh1, .secsh2, .auth-link-wrap {
+        width: 296px;
+    }
+}
+
+/* Мобильные большие (481px - 768px) */
+@media (max-width: 768px) {
+    .regist {
+        padding: 20px;
+    }
+    
+    .reg {
+        width: 100%;
+        max-width: 400px;
+        border-radius: 40px;
+        margin: 24px auto;
+    }
+    
+    h1 {
+        font-size: 40px;
+    }
+    
+    .secsh, .secsh0, .secsh1, .secsh2, .auth-link-wrap {
+        width: calc(100% - 64px);
+        max-width: 312px;
+    }
+    
+    input {
+        height: 52px;
+        font-size: 22px;
+        border-radius: 14px;
+    }
+    
+    .button1, .not-button {
+        font-size: 28px;
+        margin-top: 56px;
+    }
+    
+    .button2 {
+        font-size: 22px;
+        margin-bottom: 28px;
+    }
+    
+    .error {
+        font-size: 15px;
+    }
+    
+    .verify-p {
+        font-size: 15px;
+    }
+    
+    .verify-email {
+        font-size: 19px;
+    }
+
+    .auth-link {
+        font-size: 15px;
+    }
+
+    .success-message,
+    .loading-text {
+        font-size: 15px;
+    }
+}
+
+/* Мобильные средние (361px - 480px) */
+@media (max-width: 480px) {
+    .regist {
+        padding: 16px;
+    }
+    
+    .reg {
+        border-radius: 36px;
+        margin: 20px auto;
+    }
+    
+    h1 {
+        font-size: 36px;
+        margin-top: 8px;
+    }
+    
+    .secsh, .secsh0, .secsh1, .secsh2, .auth-link-wrap {
+        width: calc(100% - 48px);
+    }
+    
+    .secsh {
+        margin-top: 28px;
+    }
+    
+    .secsh0 {
+        margin-top: 16px;
+    }
+    
+    .secsh2 {
+        margin-top: 28px;
+    }
+    
+    input {
+        height: 50px;
+        font-size: 20px;
+        padding: 2px 14px;
+        border-radius: 13px;
+    }
+    
+    .button1, .not-button {
+        font-size: 26px;
+        margin-top: 48px;
+    }
+    
+    .button2 {
+        font-size: 20px;
+        margin-bottom: 24px;
+        margin-top: 16px;
+    }
+    
+    .error {
+        font-size: 14px;
+    }
+    
+    .verify-p {
+        font-size: 14px;
+    }
+    
+    .verify-email {
+        font-size: 18px;
+    }
+
+    .auth-link {
+        font-size: 14px;
+    }
+
+    .success-message,
+    .loading-text {
+        font-size: 14px;
+        margin-left: 24px;
+        margin-right: 24px;
+    }
+}
+
+/* Мобильные маленькие (до 360px) */
+@media (max-width: 360px) {
+    .regist {
+        padding: 12px;
+    }
+    
+    .reg {
+        border-radius: 32px;
+        margin: 16px auto;
+    }
+    
+    h1 {
+        font-size: 32px;
+    }
+    
+    .secsh, .secsh0, .secsh1, .secsh2, .auth-link-wrap {
+        width: calc(100% - 40px);
+    }
+    
+    .secsh {
+        margin-top: 24px;
+    }
+    
+    .secsh0 {
+        margin-top: 14px;
+    }
+    
+    .secsh2 {
+        margin-top: 24px;
+    }
+    
+    input {
+        height: 48px;
+        font-size: 18px;
+        padding: 2px 12px;
+        border-radius: 12px;
+    }
+    
+    .button1, .not-button {
+        font-size: 24px;
+        margin-top: 40px;
+    }
+    
+    .button2 {
+        font-size: 18px;
+        margin-bottom: 20px;
+        margin-top: 14px;
+    }
+    
+    label {
+        font-size: 28px;
+        margin-top: 40px;
+    }
+    
+    .error {
+        font-size: 13px;
+    }
+    
+    .verify-p {
+        font-size: 13px;
+    }
+    
+    .verify-email {
+        font-size: 17px;
+        margin-top: -8px;
+        margin-bottom: 20px;
+    }
+
+    .auth-link {
+        font-size: 13px;
+    }
+
+    .success-message,
+    .loading-text {
+        font-size: 13px;
+    }
+}
+
+/* Очень маленькие экраны (до 320px) */
+@media (max-width: 320px) {
+    .regist {
+        padding: 10px;
+    }
+    
+    .reg {
+        border-radius: 28px;
+        margin: 12px auto;
+    }
+    
+    h1 {
+        font-size: 28px;
+    }
+    
+    .secsh, .secsh0, .secsh1, .secsh2, .auth-link-wrap {
+        width: calc(100% - 32px);
+    }
+    
+    .secsh {
+        margin-top: 20px;
+    }
+    
+    .secsh0 {
+        margin-top: 12px;
+    }
+    
+    .secsh2 {
+        margin-top: 20px;
+    }
+    
+    input {
+        height: 46px;
+        font-size: 17px;
+        padding: 2px 10px;
+        border-radius: 11px;
+    }
+    
+    .button1, .not-button {
+        font-size: 22px;
+        margin-top: 36px;
+    }
+    
+    .button2 {
+        font-size: 17px;
+        margin-bottom: 18px;
+        margin-top: 12px;
+    }
+    
+    label {
+        font-size: 26px;
+        margin-top: 36px;
+    }
+    
+    .error {
+        font-size: 12px;
+    }
+    
+    .verify-p {
+        font-size: 12px;
+    }
+    
+    .verify-email {
+        font-size: 16px;
+    }
+
+    .auth-link {
+        font-size: 12px;
+    }
+
+    .success-message,
+    .loading-text {
+        font-size: 12px;
+    }
+}
+
+/* Touch устройства */
+@media (hover: none) and (pointer: coarse) {
+    .button1:hover {
+        background-color: #0071e3;
+        box-shadow: none;
+    }
+    
+    .button2:hover {
+        background-color: #ffffff00;
+        box-shadow: 0px 0px 16px rgba(0, 0, 0, 0.0);
+    }
+    
+    .button1:active {
+        background-color: #0077ED;
+        box-shadow: 4px 4px 18px #0076ed85;
+    }
+    
+    .button2:active {
+        background-color: #E5E5E5;
+        box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
+    }
+    
+    .reg:hover {
+        box-shadow: none;
+    }
+
+    .auth-link:hover {
+        color: #666666;
+        text-decoration: none;
+    }
+    
+    .auth-link:active {
+        color: #000000;
+        text-decoration: underline;
+    }
+}

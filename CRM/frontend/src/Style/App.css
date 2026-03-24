@@ -1,42 +1,48 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
+.home-wrap {
+  min-height: 100vh;
+  background: #F2F1F6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-hero {
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.home-title {
+  font-size: 64px;
+  font-weight: 700;
+  margin: 0;
+  font-family: "Parkinsans", sans-serif;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.home-sub {
+  font-size: 20px;
+  color: #666;
+  margin: 0;
+  font-family: "Parkinsans", sans-serif;
+  font-weight: 300;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.home-btn {
+  display: inline-block;
+  background: #0071e3;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 400;
+  padding: 16px 40px;
+  border-radius: 20px;
+  text-decoration: none;
+  font-family: "Parkinsans", sans-serif;
+  transition: background 0.2s, box-shadow 0.2s;
 }
 
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
+.home-btn:hover {
+  background: #0077ED;
+  box-shadow: 4px 4px 18px #0076ed85;
 }
