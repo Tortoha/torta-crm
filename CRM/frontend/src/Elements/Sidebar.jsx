@@ -5,6 +5,7 @@ import {
   TagIcon, ShoppingCartIcon, UsersIcon, ArchiveBoxIcon, ReceiptPercentIcon,
   ChatBubbleLeftRightIcon, CodeBracketSquareIcon, UserGroupIcon, CreditCardIcon,
   ChevronDownIcon, Cog6ToothIcon, UserCircleIcon, ArrowRightOnRectangleIcon,
+  Bars3Icon, XMarkIcon,
 } from '@heroicons/react/24/solid';
 import { API_BASE } from '../api.js';
 
@@ -49,7 +50,8 @@ const getRouteState = (pathname) => {
   return { activeSectionId: null, activeItemKey: null };
 };
 
-function NavSection({ section, open, onToggle, activeItemKey, pathname }) {
+
+function NavSection({ section, open, onToggle, activeItemKey, pathname, onNavClick }) {
   const itemsEl = useRef(null);
   const itemEls = useRef({});
   const [hoveredKey, setHoveredKey] = useState(null);
@@ -72,11 +74,7 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname }) {
     const cr = container.getBoundingClientRect();
     const ir = el.getBoundingClientRect();
 
-    setInd({
-      opacity: 1,
-      y: ir.top - cr.top,
-      h: ir.height,
-    });
+    setInd({ opacity: 1, y: ir.top - cr.top, h: ir.height });
   }, [currentKey, open, pathname]);
 
   return (
@@ -88,7 +86,6 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname }) {
 
       <div className={`sb-items-wrapper${open ? ' sb-items-wrapper--open' : ''}`}>
         <div className="sb-items" ref={itemsEl}>
-
           <div
             className="sb-indicator"
             style={{
@@ -106,22 +103,64 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname }) {
               onMouseEnter={() => setHoveredKey(to)}
               onMouseLeave={() => setHoveredKey(null)}
             >
-              <NavLink to={to} className="sb-item">
+              <NavLink to={to} className="sb-item" onClick={onNavClick}>
                 <Icon className="sb-icon" />
                 <span>{label}</span>
               </NavLink>
             </div>
           ))}
-
         </div>
       </div>
     </div>
   );
 }
 
+
+function SidebarContent({ user, logout, activeSectionId, activeItemKey, location, open, setOpen, onNavClick }) {
+  const toggleSection = id => setOpen(prev => {
+    if (id === activeSectionId && prev[id]) return prev;
+    return { ...prev, [id]: !prev[id] };
+  });
+
+  return (
+    <>
+      {SECTIONS.map(section => (
+        <NavSection
+          key={section.id}
+          section={section}
+          open={open[section.id]}
+          onToggle={() => toggleSection(section.id)}
+          activeItemKey={activeItemKey}
+          pathname={location.pathname}
+          onNavClick={onNavClick}
+        />
+      ))}
+
+      <div className="sb-spacer" />
+
+      <div className="sb-block sb-user-block">
+        <div className="sb-user-info">
+          <UserCircleIcon className="sb-user-avatar" />
+          <span className="sb-user-name">{user?.name || 'User'}</span>
+        </div>
+        <div className="sb-user-actions">
+          <button type="button" className="sb-user-btn" title="Logout" onClick={logout}>
+            <ArrowRightOnRectangleIcon className="sb-icon" />
+          </button>
+          <button type="button" className="sb-user-btn" title="Settings">
+            <Cog6ToothIcon className="sb-icon" />
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+
 function Sidebar({ user }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const { activeSectionId, activeItemKey } = useMemo(
     () => getRouteState(location.pathname), [location.pathname]
@@ -129,56 +168,65 @@ function Sidebar({ user }) {
 
   const [open, setOpen] = useState({ overview: true, store: true, account: true });
 
-  // Нельзя закрыть секцию с активной страницей
-  const toggleSection = id => setOpen(prev => {
-    if (id === activeSectionId && prev[id]) return prev;
-    return { ...prev, [id]: !prev[id] };
-  });
-
-  // Если активная страница в закрытой секции - открыть её
   useEffect(() => {
     if (!activeSectionId) return;
     setOpen(prev => prev[activeSectionId] ? prev : { ...prev, [activeSectionId]: true });
   }, [activeSectionId]);
+
+  useEffect(() => {
+    document.body.style.overflow = mobileOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileOpen]);
+
+  useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
   const logout = async () => {
     await fetch(`${API_BASE}/api/logout`, { method: 'POST', credentials: 'include' });
     navigate('/');
   };
 
+  const sharedProps = { user, logout, activeSectionId, activeItemKey, location, open, setOpen };
+
   return (
-    <aside className="sidebar">
-      <div className="sidebar-scroll">
-        {SECTIONS.map(section => (
-          <NavSection
-            key={section.id}
-            section={section}
-            open={open[section.id]}
-            onToggle={() => toggleSection(section.id)}
-            activeItemKey={activeItemKey}
-            pathname={location.pathname}
-          />
-        ))}
-
-        <div className="sb-spacer" />
-
-        <div className="sb-block sb-user-block">
-          <div className="sb-user-info">
-            <UserCircleIcon className="sb-user-avatar" />
-            <span className="sb-user-name">{user?.name || 'User'}</span>
-          </div>
-          <div className="sb-user-actions">
-            <button type="button" className="sb-user-btn" title="Logout" onClick={logout}>
-              <ArrowRightOnRectangleIcon className="sb-icon" />
-            </button>
-            <button type="button" className="sb-user-btn" title="Settings">
-              <Cog6ToothIcon className="sb-icon" />
-            </button>
-          </div>
+    <>
+      <aside className="sidebar">
+        <div className="sidebar-scroll">
+          <SidebarContent {...sharedProps} onNavClick={undefined} />
         </div>
+      </aside>
 
+      <button
+        type="button"
+        className={`sb-burger${mobileOpen ? ' sb-burger--open' : ''}`}
+        onClick={() => setMobileOpen(v => !v)}
+        aria-label="Toggle menu"
+      >
+        {mobileOpen
+          ? <XMarkIcon className="sb-burger-icon" />
+          : <Bars3Icon className="sb-burger-icon" />
+        }
+      </button>
+
+      <div
+        className={`sb-mobile-backdrop${mobileOpen ? ' sb-mobile-backdrop--visible' : ''}`}
+        onClick={() => setMobileOpen(false)}
+      />
+
+      <div
+        className={`sb-mobile-drawer${mobileOpen ? ' sb-mobile-drawer--open' : ''}`}
+        onClick={() => setMobileOpen(false)}
+      >
+        <div
+          className="sb-mobile-scroll"
+          onClick={e => e.stopPropagation()}
+        >
+          <SidebarContent
+            {...sharedProps}
+            onNavClick={() => setMobileOpen(false)}
+          />
+        </div>
       </div>
-    </aside>
+    </>
   );
 }
 
