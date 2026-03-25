@@ -10,6 +10,9 @@ import Reset         from './Reset.jsx';
 import Layout        from './Layout.jsx';
 import Dashboard     from './Pages/Dashboard.jsx';
 import Revenue       from './Pages/Revenue.jsx';
+import Api           from './Pages/Api.jsx';
+import Team          from './Pages/Team.jsx';
+import Invite        from './Pages/Invite.jsx';
 
 function App() {
   return (
@@ -22,11 +25,18 @@ function App() {
         <Route path="/registration/verification" element={<Verification />} />
         <Route path="/forgot-password"           element={<Forgot />} />
         <Route path="/reset-password/:token"     element={<Reset />} />
+        <Route path="/invite/:token"             element={<Invite />} />
         <Route path="/dashboard"                 element={<Layout />}>
           <Route index element={<Dashboard />} />
         </Route>
         <Route path="/revenue"                   element={<Layout />}>
           <Route index element={<Revenue />} />
+        </Route>
+        <Route path="/api"                       element={<Layout />}>
+          <Route index element={<Api />} />
+        </Route>
+        <Route path="/team"                      element={<Layout />}>
+          <Route index element={<Team />} />
         </Route>
       </Routes>
     </Router>

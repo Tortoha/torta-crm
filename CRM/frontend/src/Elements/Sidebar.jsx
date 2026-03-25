@@ -34,7 +34,7 @@ const SECTIONS = [
     id: 'account', label: 'Account',
     items: [
       { to: '/api',          label: 'API',                  Icon: CodeBracketSquareIcon },
-      { to: '/team',         label: 'Team | Users & Roles', Icon: UserGroupIcon },
+      { to: '/team',         label: 'Team', Icon: UserGroupIcon },
       { to: '/subscription', label: 'Subscription',         Icon: CreditCardIcon },
     ],
   },

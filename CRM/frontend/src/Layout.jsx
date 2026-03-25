@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import Sidebar from './Elements/Sidebar.jsx';
+import Header from './Elements/Header.jsx';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
@@ -12,10 +13,7 @@ function Layout() {
 
   useEffect(() => {
     fetch(`${API_BASE}/api/me`, { credentials: 'include' })
-      .then((res) => {
-        if (!res.ok) throw new Error();
-        return res.json();
-      })
+      .then((res) => { if (!res.ok) throw new Error(); return res.json(); })
       .then(setUser)
       .catch(() => navigate('/login'))
       .finally(() => setLoading(false));
@@ -31,6 +29,7 @@ function Layout() {
     <div className="crm-layout">
       <Sidebar user={user} />
       <main className="crm-main">
+        <Header />
         <div className="crm-content">
           <Outlet />
         </div>

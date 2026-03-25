@@ -1,0 +1,124 @@
+@import './shared.css';
+
+/* Members */
+.team-member-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 24px;
+}
+
+.team-member-card--me {
+  outline: 2px solid #000;
+}
+
+.team-member-avatar {
+  width: 36px;
+  height: 36px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.team-member-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.team-member-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.team-member-email {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Role select */
+.team-role-select {
+  padding: 6px 12px;
+  border: 1.5px solid #e0e0e0;
+  border-radius: var(--radius-item);
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.team-role-select:focus {
+  border-color: #000;
+}
+
+.team-role-badge {
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.team-role-badge--owner {
+  background: #000;
+  color: #fff;
+}
+
+/* Roles list */
+.team-role-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 24px;
+}
+
+.team-role-card-name {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Invites */
+.team-invite-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 24px;
+}
+
+.team-invite-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.team-invite-role {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.team-invite-url {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-invite-meta {
+  font-size: 12px;
+  color: var(--muted);
+}

@@ -31,9 +31,7 @@ body {
   font-family: "Parkinsans", sans-serif;
 }
 
-/* ============================================
-   LAYOUT
-   ============================================ */
+/* LAYOUT */
 
 .crm-layout {
   display: flex;
@@ -53,9 +51,7 @@ body {
   padding-right: 20px;
 }
 
-/* ============================================
-   SIDEBAR
-   ============================================ */
+/* SIDEBAR */
 
 .sidebar {
   width: 405px;
@@ -82,9 +78,7 @@ body {
   display: none;
 }
 
-/* ============================================
-   BLOCKS
-   ============================================ */
+/* BLOCKS */
 
 .sb-block {
   position: relative;
@@ -95,9 +89,7 @@ body {
   box-shadow: var(--shadow-sidebar);
 }
 
-/* ============================================
-   NAVIGATION
-   ============================================ */
+/* NAVIGATION */
 
 .sb-section-block {
   padding: 8px;
@@ -211,9 +203,7 @@ body {
   color: #ffffff;
 }
 
-/* ============================================
-   USER BLOCK
-   ============================================ */
+/* USER BLOCK */
 
 .sb-spacer {
   flex: 1;
@@ -275,9 +265,7 @@ body {
   color: var(--icon);
 }
 
-/* ============================================
-   PAGE TYPOGRAPHY
-   ============================================ */
+/* PAGE TYPOGRAPHY */
 
 .crm-page-title {
   margin: 0;
@@ -330,9 +318,7 @@ body {
   font-weight: 300;
 }
 
-/* ============================================
-   LOADING
-   ============================================ */
+/* LOADING */
 
 .crm-page-loading {
   min-height: 100vh;
@@ -357,9 +343,7 @@ body {
   }
 }
 
-/* ============================================
-   RESPONSIVE
-   ============================================ */
+/* RESPONSIVE */
 
 @media (max-width: 1200px) {
   .crm-layout {
@@ -450,9 +434,7 @@ body {
   }
 }
 
-/* ============================================
-   MOBILE BURGER BUTTON
-   ============================================ */
+/* MOBILE BURGER BUTTON */
 
 .sb-burger {
   display: none;
@@ -490,9 +472,7 @@ body {
   flex-shrink: 0;
 }
 
-/* ============================================
-   MOBILE BACKDROP
-   ============================================ */
+/* MOBILE BACKDROP */
 
 .sb-mobile-backdrop {
   display: none;
@@ -515,9 +495,7 @@ body {
   pointer-events: all;
 }
 
-/* ============================================
-   MOBILE DRAWER
-   ============================================ */
+/* MOBILE DRAWER */
 
 .sb-mobile-drawer {
   display: none;
@@ -562,9 +540,7 @@ body {
   opacity: 1;
 }
 
-/* ============================================
-   RESPONSIVE — показываем мобильное меню
-   ============================================ */
+/* RESPONSIVE */
 
 @media (max-width: 1240px) {
   .sidebar {

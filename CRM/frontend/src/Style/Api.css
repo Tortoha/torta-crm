@@ -1,0 +1,46 @@
+@import './shared.css';
+
+.api-key-card {
+  padding: 20px 24px;
+}
+
+.api-key-card--active {
+  outline: 2px solid #000;
+}
+
+.api-key-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.api-key-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+}
+
+.api-key-value {
+  display: block;
+  font-family: monospace;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 10px 16px;
+  border-radius: var(--radius-item);
+  word-break: break-all;
+  margin-bottom: 10px;
+}
+
+.api-key-meta-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.api-key-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
