@@ -1,8 +1,22 @@
-from fastapi import FastAPI, Response, HTTPException, Request, Depends
+from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-import mysql.connector, hashlib, secrets, jwt, random, resend
+import mysql.connector, hashlib, secrets, jwt, random, resend, os, io
+
+try:
+    from PIL import Image as PilImage
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+try:
+    import cloudinary
+    import cloudinary.uploader
+    CLOUDINARY_AVAILABLE = True
+except ImportError:
+    CLOUDINARY_AVAILABLE = False
 
 
 # ════════════════════════════════════════════
@@ -22,9 +36,25 @@ BLOCK_MINUTES           = 10
 CODE_TTL_MINUTES        = 10
 RESEND_COOLDOWN_SECONDS = 60
 RESET_TTL_MINUTES       = 30
+UPLOADS_DIR             = "uploads"
+GOOGLE_CLIENT_ID        = "507611541846-pcl6rqv08gc54021vq4tctca9pnntj0e.apps.googleusercontent.com"
+CLOUDINARY_CLOUD_NAME   = "due5yumdr"
+CLOUDINARY_API_KEY      = "513475749664165"
+CLOUDINARY_API_SECRET   = "I35G6txxRQ5A8QKkHh76TzlVDnU"
+
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 app = FastAPI()
 resend.api_key = RESEND_API_KEY
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
+if CLOUDINARY_AVAILABLE:
+    cloudinary.config(
+        cloud_name = CLOUDINARY_CLOUD_NAME,
+        api_key    = CLOUDINARY_API_KEY,
+        api_secret = CLOUDINARY_API_SECRET,
+        secure     = True
+    )
 
 # In-memory хранилища
 pending_verifications = {}
@@ -71,9 +101,80 @@ class UpdateMemberRoleRequest(BaseModel):
 class CreateInviteRequest(BaseModel):
     crm_role_id: int; expires_hours: int = None; max_uses: int = None
 
+class RenameApiKeyRequest(BaseModel):
+    name: str
+
+class CreateChannelRequest(BaseModel):
+    name: str
+
+class SendMessageRequest(BaseModel):
+    message: str
+
+class CreateProductRequest(BaseModel):
+    title: str
+    description: str = None
+    characteristics: str = None
+    seo_title: str = None
+    seo_description: str = None
+    seo_keywords: str = None
+
+class UpdateProductRequest(BaseModel):
+    title: str = None
+    description: str = None
+    characteristics: str = None
+    seo_title: str = None
+    seo_description: str = None
+    seo_keywords: str = None
+
+class CreateVariationRequest(BaseModel):
+    variation_name: str
+    image_url: str = None
+
+class UpdateVariationRequest(BaseModel):
+    variation_name: str = None
+    image_url: str = None
+
+class CreateSizeRequest(BaseModel):
+    size_name: str
+    price: float
+    stock_quantity: int = 0
+
+class UpdateSizeRequest(BaseModel):
+    size_name: str = None
+    price: float = None
+    stock_quantity: int = None
+
+class UpsertCustomFieldRequest(BaseModel):
+    field_key: str
+    field_value: str = None
+    field_type: str = "string"
+    is_global: bool = False
+
+class UpdateSettingsRequest(BaseModel):
+    name: str = None
+    language: str = None
+    currency: str = None
+    theme: str = None
+
+class SetPermissionsRequest(BaseModel):
+    permissions: list
+
+class GoogleAuthRequest(BaseModel):
+    token: str
+
 # ════════════════════════════════════════════
 # ФУНКЦИИ
 # ════════════════════════════════════════════
+
+ROLE_PERMISSIONS = [
+    ("manage_products",  "Manage Products",  "Add, edit and delete products"),
+    ("view_orders",      "View Orders",      "View all orders and their status"),
+    ("manage_orders",    "Manage Orders",    "Update order status and details"),
+    ("view_analytics",   "View Analytics",   "Access revenue and analytics data"),
+    ("manage_discounts", "Manage Discounts", "Create and edit promo codes"),
+    ("manage_invites",   "Manage Invites",   "Create and revoke invite links"),
+]
+
 
 def get_db():
     return mysql.connector.connect(**DB_CONFIG)
@@ -93,6 +194,28 @@ def db_all(sql: str, params: tuple = ()):
     rows = cur.fetchall()
     cur.close(); conn.close()
     return rows
+
+def run_migrations():
+    conn = get_db(); cur = conn.cursor()
+    for sql in [
+        "ALTER TABLE crm_users ADD COLUMN avatar_url varchar(500) DEFAULT NULL",
+        "ALTER TABLE product_custom_fields ADD COLUMN is_global tinyint(1) NOT NULL DEFAULT 0",
+        """CREATE TABLE IF NOT EXISTS crm_role_permissions (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            role_id int(11) NOT NULL,
+            permission varchar(100) NOT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY role_perm (role_id, permission)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
+        "ALTER TABLE crm_users ADD COLUMN google_id varchar(255) DEFAULT NULL",
+        "ALTER TABLE crm_users ADD COLUMN apple_id varchar(255) DEFAULT NULL",
+    ]:
+        try: cur.execute(sql); conn.commit()
+        except: pass
+    cur.close(); conn.close()
+
+run_migrations()
+
 
 def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -768,3 +891,687 @@ def accept_invite(token: str, user: dict = Depends(get_current_user)):
     finally:
         cur.close(); conn.close()
     return {"ok": True, "project_name": inv["project_name"], "role": inv["role_name"]}
+
+
+# ════════════════════════════════════════════
+# RENAME API KEY
+# ════════════════════════════════════════════
+
+@app.put("/api/api-keys/{key_id}/rename")
+def rename_api_key(key_id: int, request: RenameApiKeyRequest, user: dict = Depends(get_current_user)):
+    name = request.name.strip()
+    if not name:         raise HTTPException(400, "Name is required")
+    if len(name) > 100:  raise HTTPException(400, "Name too long (max 100)")
+    if user["role"] != "owner": raise HTTPException(403, "Only owner can rename API keys")
+    if not db_one("SELECT id FROM crm_api_keys WHERE id=%s AND crm_user_id=%s", (key_id, user["id"])):
+        raise HTTPException(404, "API key not found")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crm_api_keys SET name=%s WHERE id=%s", (name, key_id))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True, "name": name}
+
+
+# ════════════════════════════════════════════
+# CHAT
+# ════════════════════════════════════════════
+
+def require_team_member_or_owner(user: dict, api_key_id: int):
+    key_row = db_one("SELECT crm_user_id FROM crm_api_keys WHERE id=%s AND is_active=1", (api_key_id,))
+    if not key_row:
+        raise HTTPException(404, "Project not found")
+    if key_row["crm_user_id"] == user["id"]:
+        return  # owner — доступ есть
+    if not db_one(
+        "SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s",
+        (api_key_id, user["id"])
+    ):
+        raise HTTPException(403, "Not a member of this project")
+
+
+@app.get("/api/chat/channels")
+def get_channels(user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    require_team_member_or_owner(user, kid)
+
+    # Авто-создаём #general если каналов ещё нет
+    cnt = db_one("SELECT COUNT(*) AS c FROM crm_chat_channels WHERE api_key_id=%s", (kid,))["c"]
+    if cnt == 0:
+        conn = get_db(); cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO crm_chat_channels (api_key_id, name, is_general, created_by) VALUES(%s,'general',1,%s)",
+                (kid, user["id"])
+            )
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+
+    rows = db_all(
+        "SELECT id, name, is_general, created_at FROM crm_chat_channels WHERE api_key_id=%s ORDER BY is_general DESC, created_at ASC",
+        (kid,)
+    )
+    for r in rows:
+        r["created_at"] = str(r["created_at"])
+    return rows
+
+
+@app.post("/api/chat/channels")
+def create_channel(request: CreateChannelRequest, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    require_owner(user, kid)
+
+    name = request.name.strip().lower().replace(" ", "-")
+    if not name:        raise HTTPException(400, "Channel name is required")
+    if len(name) > 50:  raise HTTPException(400, "Channel name too long (max 50)")
+    if db_one("SELECT id FROM crm_chat_channels WHERE api_key_id=%s AND name=%s", (kid, name)):
+        raise HTTPException(400, "Channel already exists")
+
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO crm_chat_channels (api_key_id, name, is_general, created_by) VALUES(%s,%s,0,%s)",
+            (kid, name, user["id"])
+        )
+        conn.commit()
+        return {"id": cur.lastrowid, "name": name, "is_general": False, "created_at": str(datetime.utcnow())}
+    finally:
+        cur.close(); conn.close()
+
+
+@app.delete("/api/chat/channels/{channel_id}")
+def delete_channel(channel_id: int, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    require_owner(user, kid)
+    ch = db_one("SELECT id, is_general FROM crm_chat_channels WHERE id=%s AND api_key_id=%s", (channel_id, kid))
+    if not ch:          raise HTTPException(404, "Channel not found")
+    if ch["is_general"]: raise HTTPException(400, "Cannot delete the general channel")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM crm_chat_channels WHERE id=%s", (channel_id,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/chat/channels/{channel_id}/messages")
+def get_messages(channel_id: int, after_id: int = None, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    require_team_member_or_owner(user, kid)
+    if not db_one("SELECT id FROM crm_chat_channels WHERE id=%s AND api_key_id=%s", (channel_id, kid)):
+        raise HTTPException(404, "Channel not found")
+
+    if after_id:
+        rows = db_all("""
+            SELECT m.id, m.message, m.created_at, u.id AS user_id, u.name AS user_name
+            FROM crm_chat_messages m
+            JOIN crm_users u ON u.id = m.user_id
+            WHERE m.channel_id=%s AND m.id > %s
+            ORDER BY m.created_at ASC
+        """, (channel_id, after_id))
+    else:
+        rows = db_all("""
+            SELECT m.id, m.message, m.created_at, u.id AS user_id, u.name AS user_name
+            FROM crm_chat_messages m
+            JOIN crm_users u ON u.id = m.user_id
+            WHERE m.channel_id=%s
+            ORDER BY m.created_at DESC LIMIT 50
+        """, (channel_id,))
+        rows = list(reversed(rows))
+
+    for r in rows:
+        r["created_at"] = str(r["created_at"])
+        r["is_me"] = (r["user_id"] == user["id"])
+    return rows
+
+
+@app.post("/api/chat/channels/{channel_id}/messages")
+def send_message(channel_id: int, request: SendMessageRequest, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    require_team_member_or_owner(user, kid)
+    if not db_one("SELECT id FROM crm_chat_channels WHERE id=%s AND api_key_id=%s", (channel_id, kid)):
+        raise HTTPException(404, "Channel not found")
+
+    msg = request.message.strip()
+    if not msg:         raise HTTPException(400, "Message cannot be empty")
+    if len(msg) > 2000: raise HTTPException(400, "Message too long (max 2000)")
+
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO crm_chat_messages (channel_id, user_id, message) VALUES(%s,%s,%s)",
+            (channel_id, user["id"], msg)
+        )
+        conn.commit()
+        return {
+            "id": cur.lastrowid, "message": msg,
+            "user_id": user["id"], "user_name": user["name"],
+            "is_me": True, "created_at": str(datetime.utcnow()),
+        }
+    finally:
+        cur.close(); conn.close()
+
+# в•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђ
+# PRODUCTS
+# в•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђ
+
+@app.get("/api/products")
+def list_products(user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    rows = db_all(
+        "SELECT p.id, p.title,"
+        " COUNT(DISTINCT v.id) AS variations_count,"
+        " COALESCE(SUM(ps.stock_quantity),0) AS total_stock,"
+        " COALESCE(MIN(ps.price),0) AS min_price,"
+        " COALESCE(MAX(ps.price),0) AS max_price,"
+        " COALESCE(AVG(pr.rating),0) AS avg_rating,"
+        " COUNT(DISTINCT pr.id) AS reviews_count"
+        " FROM products p"
+        " LEFT JOIN product_variations v ON v.product_id=p.id"
+        " LEFT JOIN product_sizes ps ON ps.product_id=p.id"
+        " LEFT JOIN product_reviews pr ON pr.product_id=p.id"
+        " WHERE p.api_key_id=%s GROUP BY p.id ORDER BY p.id DESC",
+        (kid,)
+    )
+    for r in rows:
+        r["avg_rating"]  = round(float(r["avg_rating"] or 0), 1)
+        r["min_price"]   = float(r["min_price"] or 0)
+        r["max_price"]   = float(r["max_price"] or 0)
+        r["total_stock"] = int(r["total_stock"] or 0)
+    return rows
+
+
+@app.post("/api/products")
+def create_product(request: CreateProductRequest, user: dict = Depends(get_current_user)):
+    kid  = active_key_id(user["id"])
+    name = request.title.strip()
+    if not name: raise HTTPException(400, "Title is required")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO products (api_key_id,title,description,characteristics,seo_title,seo_description,seo_keywords) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (kid, name, request.description, request.characteristics,
+             request.seo_title, request.seo_description, request.seo_keywords)
+        )
+        conn.commit()
+        return {"id": cur.lastrowid, "title": name}
+    finally:
+        cur.close(); conn.close()
+
+
+@app.get("/api/products/{product_id}")
+def get_product(product_id: int, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    p   = db_one("SELECT * FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid))
+    if not p: raise HTTPException(404, "Product not found")
+    variations = db_all(
+        "SELECT id, variation_name, image_url FROM product_variations WHERE product_id=%s ORDER BY id ASC",
+        (product_id,)
+    )
+    var_ids = [v["id"] for v in variations]
+    sizes = []
+    if var_ids:
+        fmt   = ",".join(["%s"] * len(var_ids))
+        sizes = db_all(
+            "SELECT id,variation_id,size_name,price,stock_quantity,sold_quantity"
+            " FROM product_sizes WHERE variation_id IN (" + fmt + ") ORDER BY id ASC",
+            tuple(var_ids)
+        )
+    sizes_by_var = {}
+    for s in sizes:
+        s["price"] = float(s["price"])
+        sizes_by_var.setdefault(s["variation_id"], []).append(s)
+    for v in variations:
+        v["sizes"] = sizes_by_var.get(v["id"], [])
+    custom_fields = db_all(
+        "SELECT field_key,field_value,field_type,is_global FROM product_custom_fields"
+        " WHERE product_id=%s AND api_key_id=%s ORDER BY created_at ASC",
+        (product_id, kid)
+    )
+    for cf in custom_fields:
+        cf["is_global"] = bool(cf.get("is_global", 0))
+    reviews = db_all(
+        "SELECT pr.id,pr.rating,pr.comment,pr.created_at,u.name AS user_name"
+        " FROM product_reviews pr JOIN users u ON u.id=pr.user_id"
+        " WHERE pr.product_id=%s ORDER BY pr.created_at DESC",
+        (product_id,)
+    )
+    for r in reviews:
+        r["created_at"] = str(r["created_at"])
+    return {
+        "id": p["id"], "title": p["title"],
+        "description":    p["description"]     or "",
+        "characteristics":p["characteristics"] or "",
+        "seo_title":      p["seo_title"]        or "",
+        "seo_description":p["seo_description"]  or "",
+        "seo_keywords":   p["seo_keywords"]     or "",
+        "variations": variations, "custom_fields": custom_fields, "reviews": reviews,
+    }
+
+
+@app.put("/api/products/{product_id}")
+def update_product(product_id: int, request: UpdateProductRequest, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    fields = []; vals = []
+    if request.title           is not None: fields.append("title=%s");           vals.append(request.title.strip())
+    if request.description     is not None: fields.append("description=%s");     vals.append(request.description)
+    if request.characteristics is not None: fields.append("characteristics=%s"); vals.append(request.characteristics)
+    if request.seo_title       is not None: fields.append("seo_title=%s");       vals.append(request.seo_title)
+    if request.seo_description is not None: fields.append("seo_description=%s"); vals.append(request.seo_description)
+    if request.seo_keywords    is not None: fields.append("seo_keywords=%s");    vals.append(request.seo_keywords)
+    if not fields: return {"ok": True}
+    vals.append(product_id)
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE products SET " + ", ".join(fields) + " WHERE id=%s", vals)
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}")
+def delete_product(product_id: int, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE ps FROM product_sizes ps JOIN product_variations v ON ps.variation_id=v.id WHERE v.product_id=%s", (product_id,))
+        cur.execute("DELETE FROM product_variations WHERE product_id=%s",    (product_id,))
+        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s", (product_id,))
+        cur.execute("DELETE FROM product_reviews WHERE product_id=%s",       (product_id,))
+        cur.execute("DELETE FROM products WHERE id=%s",                      (product_id,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+# в”Ђв”Ђ Variations в”Ђв”Ђ
+
+@app.post("/api/products/{product_id}/variations")
+def create_variation(product_id: int, request: CreateVariationRequest, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    name = request.variation_name.strip()
+    if not name: raise HTTPException(400, "Variation name is required")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO product_variations (product_id,variation_name,image_url) VALUES(%s,%s,%s)",
+                    (product_id, name, request.image_url))
+        conn.commit()
+        return {"id": cur.lastrowid, "variation_name": name, "image_url": request.image_url, "sizes": []}
+    finally:
+        cur.close(); conn.close()
+
+
+@app.put("/api/products/{product_id}/variations/{var_id}")
+def update_variation(product_id: int, var_id: int, request: UpdateVariationRequest, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    if not db_one("SELECT id FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id)):
+        raise HTTPException(404, "Variation not found")
+    fields = []; vals = []
+    if request.variation_name is not None: fields.append("variation_name=%s"); vals.append(request.variation_name.strip())
+    if request.image_url      is not None: fields.append("image_url=%s");      vals.append(request.image_url)
+    if not fields: return {"ok": True}
+    vals.append(var_id)
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE product_variations SET " + ", ".join(fields) + " WHERE id=%s", vals)
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/variations/{var_id}")
+def delete_variation(product_id: int, var_id: int, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM product_sizes WHERE variation_id=%s", (var_id,))
+        cur.execute("DELETE FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+# в”Ђв”Ђ Sizes в”Ђв”Ђ
+
+@app.post("/api/products/{product_id}/variations/{var_id}/sizes")
+def create_size(product_id: int, var_id: int, request: CreateSizeRequest, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    if not db_one("SELECT id FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id)):
+        raise HTTPException(404, "Variation not found")
+    name = request.size_name.strip()
+    if not name: raise HTTPException(400, "Size name is required")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO product_sizes (product_id,variation_id,size_name,price,stock_quantity) VALUES(%s,%s,%s,%s,%s)",
+            (product_id, var_id, name, request.price, request.stock_quantity)
+        )
+        conn.commit()
+        return {"id": cur.lastrowid, "variation_id": var_id, "size_name": name,
+                "price": request.price, "stock_quantity": request.stock_quantity, "sold_quantity": 0}
+    finally:
+        cur.close(); conn.close()
+
+
+@app.put("/api/products/{product_id}/variations/{var_id}/sizes/{size_id}")
+def update_size(product_id: int, var_id: int, size_id: int, request: UpdateSizeRequest, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    fields = []; vals = []
+    if request.size_name      is not None: fields.append("size_name=%s");      vals.append(request.size_name.strip())
+    if request.price          is not None: fields.append("price=%s");          vals.append(request.price)
+    if request.stock_quantity is not None: fields.append("stock_quantity=%s"); vals.append(request.stock_quantity)
+    if not fields: return {"ok": True}
+    vals.append(size_id)
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE product_sizes SET " + ", ".join(fields) + " WHERE id=%s", vals)
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/variations/{var_id}/sizes/{size_id}")
+def delete_size(product_id: int, var_id: int, size_id: int, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM product_sizes WHERE id=%s AND variation_id=%s", (size_id, var_id))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+# в”Ђв”Ђ Custom Fields в”Ђв”Ђ
+
+@app.post("/api/products/{product_id}/custom-fields")
+def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    key = request.field_key.strip().lower().replace(" ", "_")
+    if not key: raise HTTPException(400, "Field key is required")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        ex = db_one("SELECT id FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
+                    (product_id, kid, key))
+        if ex:
+            cur.execute("UPDATE product_custom_fields SET field_value=%s,field_type=%s,is_global=%s WHERE id=%s",
+                        (request.field_value, request.field_type, int(request.is_global), ex["id"]))
+        else:
+            cur.execute("INSERT INTO product_custom_fields (api_key_id,product_id,field_key,field_value,field_type,is_global) VALUES(%s,%s,%s,%s,%s,%s)",
+                        (kid, product_id, key, request.field_value, request.field_type, int(request.is_global)))
+        conn.commit()
+        return {"ok": True, "field_key": key, "is_global": request.is_global}
+    finally:
+        cur.close(); conn.close()
+
+
+@app.delete("/api/products/{product_id}/custom-fields/{field_key}")
+def delete_custom_field(product_id: int, field_key: str, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+        raise HTTPException(404, "Product not found")
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
+                    (product_id, kid, field_key))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+@app.patch("/api/products/{product_id}/custom-fields/{field_key}/global")
+def toggle_custom_field_global(product_id: int, field_key: str, user: dict = Depends(get_current_user)):
+    kid = active_key_id(user["id"])
+    row = db_one("SELECT id, is_global FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
+                 (product_id, kid, field_key))
+    if not row: raise HTTPException(404, "Field not found")
+    new_val = 0 if row["is_global"] else 1
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE product_custom_fields SET is_global=%s WHERE id=%s", (new_val, row["id"]))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True, "is_global": bool(new_val)}
+
+
+# ════════════════════════════════════════════
+# UPLOAD
+# ════════════════════════════════════════════
+
+@app.post("/api/upload/image")
+async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "Only image files are allowed")
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 10MB)")
+    if not PIL_AVAILABLE:
+        raise HTTPException(500, "Pillow not installed. Run: pip install Pillow")
+    try:
+        img = PilImage.open(io.BytesIO(contents)).convert("RGB")
+        out = io.BytesIO()
+        img.save(out, "WEBP", quality=85, method=4)
+        out.seek(0)
+    except Exception:
+        raise HTTPException(400, "Invalid image file")
+    if CLOUDINARY_AVAILABLE:
+        try:
+            result = cloudinary.uploader.upload(
+                out,
+                folder="crm/products",
+                format="webp",
+                quality="auto:good",
+                resource_type="image"
+            )
+            return {"url": result["secure_url"]}
+        except Exception as e:
+            raise HTTPException(500, f"Cloudinary upload failed: {e}")
+    else:
+        filename = f"{secrets.token_hex(16)}.webp"
+        path = os.path.join(UPLOADS_DIR, filename)
+        with open(path, "wb") as f:
+            f.write(out.read())
+        return {"url": f"http://localhost:8001/uploads/{filename}"}
+
+
+@app.post("/api/upload/avatar")
+async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "Only image files are allowed")
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 5MB)")
+    if not PIL_AVAILABLE:
+        raise HTTPException(500, "Pillow not installed. Run: pip install Pillow")
+    try:
+        img = PilImage.open(io.BytesIO(contents)).convert("RGB")
+        img.thumbnail((256, 256), PilImage.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, "WEBP", quality=85)
+        out.seek(0)
+    except Exception:
+        raise HTTPException(400, "Invalid image file")
+    if CLOUDINARY_AVAILABLE:
+        try:
+            result = cloudinary.uploader.upload(
+                out,
+                folder="crm/avatars",
+                public_id=f"avatar_{user['id']}",
+                overwrite=True,
+                format="webp",
+                quality="auto:good",
+                resource_type="image"
+            )
+            url = result["secure_url"]
+        except Exception as e:
+            raise HTTPException(500, f"Cloudinary upload failed: {e}")
+    else:
+        filename = f"avatar_{user['id']}_{secrets.token_hex(8)}.webp"
+        path = os.path.join(UPLOADS_DIR, filename)
+        with open(path, "wb") as f:
+            f.write(out.read())
+        url = f"http://localhost:8001/uploads/{filename}"
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crm_users SET avatar_url=%s WHERE id=%s", (url, user["id"]))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"url": url}
+
+
+# ════════════════════════════════════════════
+# SETTINGS
+# ════════════════════════════════════════════
+
+@app.get("/api/settings")
+def get_settings(user: dict = Depends(get_current_user)):
+    u = db_one("SELECT id, name, email, role, avatar_url FROM crm_users WHERE id=%s", (user["id"],))
+    s = db_one("SELECT language, currency, theme FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
+    return {
+        "id":         u["id"],
+        "name":       u["name"],
+        "email":      u["email"],
+        "role":       u["role"],
+        "avatar_url": u.get("avatar_url"),
+        "language":   (s or {}).get("language", "en"),
+        "currency":   (s or {}).get("currency", "USD"),
+        "theme":      (s or {}).get("theme", "light"),
+    }
+
+
+@app.put("/api/settings")
+def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    try:
+        if request.name is not None:
+            name = request.name.strip()
+            if not name: raise HTTPException(400, "Name cannot be empty")
+            if len(name) > 80: raise HTTPException(400, "Name too long (max 80)")
+            cur.execute("UPDATE crm_users SET name=%s WHERE id=%s", (name, user["id"]))
+        upd = {}
+        if request.language is not None: upd["language"] = request.language
+        if request.currency is not None: upd["currency"] = request.currency
+        if request.theme    is not None: upd["theme"]    = request.theme
+        if upd:
+            sets = ", ".join(f"{k}=%s" for k in upd)
+            cur.execute(f"UPDATE crm_settings SET {sets} WHERE crm_user_id=%s",
+                        list(upd.values()) + [user["id"]])
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# ROLE PERMISSIONS
+# ════════════════════════════════════════════
+
+@app.get("/api/roles/{role_id}/permissions")
+def get_role_permissions(role_id: int, user: dict = Depends(get_current_user)):
+    kid  = active_key_id(user["id"])
+    role = db_one("SELECT id, name, is_system FROM crm_roles WHERE id=%s AND api_key_id=%s", (role_id, kid))
+    if not role: raise HTTPException(404, "Role not found")
+    perms = db_all("SELECT permission FROM crm_role_permissions WHERE role_id=%s", (role_id,))
+    return {
+        "role":            role,
+        "permissions":     [p["permission"] for p in perms],
+        "all_permissions": [{"key": k, "label": l, "desc": d} for k, l, d in ROLE_PERMISSIONS],
+    }
+
+
+@app.put("/api/roles/{role_id}/permissions")
+def set_role_permissions(role_id: int, request: SetPermissionsRequest, user: dict = Depends(get_current_user)):
+    kid  = active_key_id(user["id"])
+    require_owner(user, kid)
+    role = db_one("SELECT id, is_system FROM crm_roles WHERE id=%s AND api_key_id=%s", (role_id, kid))
+    if not role:          raise HTTPException(404, "Role not found")
+    if role["is_system"]: raise HTTPException(400, "Cannot edit system role permissions")
+    valid = {p[0] for p in ROLE_PERMISSIONS}
+    perms = [p for p in request.permissions if p in valid]
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM crm_role_permissions WHERE role_id=%s", (role_id,))
+        if perms:
+            cur.executemany(
+                "INSERT INTO crm_role_permissions (role_id, permission) VALUES (%s,%s)",
+                [(role_id, p) for p in perms]
+            )
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True, "permissions": perms}
+
+
+# ════════════════════════════════════════════
+# GOOGLE OAUTH
+# ════════════════════════════════════════════
+
+@app.post("/api/auth/google")
+def google_auth(request: GoogleAuthRequest, response: Response):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(501, "Google OAuth not configured (set GOOGLE_CLIENT_ID)")
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as g_requests
+        idinfo = id_token.verify_oauth2_token(request.token, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
+        g_id    = idinfo["sub"]
+        email   = idinfo["email"]
+        name    = idinfo.get("name", email.split("@")[0])
+        picture = idinfo.get("picture")
+    except Exception as e:
+        raise HTTPException(400, f"Invalid Google token: {e}")
+
+    user = db_one("SELECT id FROM crm_users WHERE google_id=%s OR (email=%s AND google_id IS NULL)", (g_id, email))
+    if user:
+        user_id = user["id"]
+        conn = get_db(); cur = conn.cursor()
+        try:
+            cur.execute("UPDATE crm_users SET google_id=%s, last_login_at=NOW() WHERE id=%s", (g_id, user_id))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+    else:
+        conn = get_db(); cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'',\'owner\',%s,%s)",
+                (name, email, g_id, picture)
+            )
+            conn.commit()
+            user_id = cur.lastrowid
+            cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES(%s)", (user_id,))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+
+    set_cookie(response, make_token(user_id))
+    return {"success": True}

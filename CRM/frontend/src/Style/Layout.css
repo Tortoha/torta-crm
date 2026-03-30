@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Parkinsans:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
 
 :root {
   --bg: #F2F1F6;
@@ -28,7 +28,7 @@ body,
 body {
   margin: 0;
   background: var(--bg);
-  font-family: "Parkinsans", sans-serif;
+  font-family: "Inter", sans-serif;
 }
 
 /* LAYOUT */
@@ -43,7 +43,6 @@ body {
 .crm-main {
   flex: 1;
   min-width: 0;
-  padding-bottom: 40px;
 }
 
 .crm-content {
@@ -421,7 +420,7 @@ body {
   }
 
   .crm-main {
-    padding: 0 16px 40px;
+    padding: 0 16px;
   }
 
   .crm-page-title {

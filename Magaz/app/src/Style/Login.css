@@ -264,30 +264,25 @@ input {
   color: #333;
 }
 
-.eye-icon {
-  position: absolute;
-  transition:
-    opacity 0.25s ease,
-    transform 0.25s ease,
-    filter 0.25s ease;
-}
-
-.eye-icon:last-child {
-  position: relative;
-}
-
-.eye-visible {
+.eye-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.22s ease, filter 0.22s ease, transform 0.22s ease;
   opacity: 1;
-  transform: scale(1) rotate(0deg);
   filter: blur(0px);
+  transform: scale(1);
 }
 
-.eye-hidden {
-  opacity: 0;
-  transform: scale(0.6) rotate(15deg);
-  filter: blur(2px);
-  pointer-events: none;
+.eye-icon-wrap--abs {
   position: absolute;
+}
+
+.eye-icon-wrap--hidden {
+  opacity: 0;
+  filter: blur(3px);
+  transform: scale(0.75);
+  pointer-events: none;
 }
 
 /* ============================================

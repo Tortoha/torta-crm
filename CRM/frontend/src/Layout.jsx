@@ -29,7 +29,7 @@ function Layout() {
     <div className="crm-layout">
       <Sidebar user={user} />
       <main className="crm-main">
-        <Header />
+        <Header user={user} />
         <div className="crm-content">
           <Outlet />
         </div>

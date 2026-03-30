@@ -1,46 +1,166 @@
-import { useEffect, useState } from 'react';
-import { ClipboardDocumentIcon, ClipboardDocumentCheckIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline';
-import { KeyIcon } from '@heroicons/react/24/solid';
+import { useEffect, useState, useRef } from 'react';
+import {
+  ClipboardDocumentIcon, TrashIcon, PlusIcon,
+  EllipsisVerticalIcon, PencilIcon, XMarkIcon,
+  MagnifyingGlassIcon,
+} from '@heroicons/react/24/solid';
 import { API_BASE } from '../api.js';
 import '../Style/Api.css';
 
-function CopyBtn({ text }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); };
+function Modal({ title, onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <button className="crm-icon-btn" onClick={copy} title="Copy">
-      {copied
-        ? <ClipboardDocumentCheckIcon className="crm-icon crm-icon--success" />
-        : <ClipboardDocumentIcon className="crm-icon" />}
-    </button>
+    <div className="api-modal-backdrop" onClick={onClose}>
+      <div className="api-modal" onClick={e => e.stopPropagation()}>
+        <div className="api-modal-header">
+          <span className="api-modal-title">{title}</span>
+          <button className="crm-icon-btn" onClick={onClose}>
+            <XMarkIcon className="crm-icon" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 
-function ApiKeyCard({ k, onDelete }) {
+const sanitizeName = (v) => v.replace(/[^a-zA-Zа-яА-ЯёЁ0-9 _\-]/g, '');
+
+function CreateModal({ onClose, onCreated }) {
+  const [name, setName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState('');
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    const n = name.trim();
+    if (!n) return setErr('Enter a name');
+    setCreating(true); setErr('');
+    try {
+      const res = await fetch(`${API_BASE}/api/api-keys`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: n }),
+      });
+      const data = await res.json();
+      if (!res.ok) return setErr(data.detail || 'Error');
+      onCreated();
+    } catch { setErr('Network error'); }
+    finally { setCreating(false); }
+  };
+
   return (
-    <div className={`crm-card api-key-card${k.is_selected ? ' api-key-card--active' : ''}`}>
-      <div className="api-key-top">
-        <KeyIcon className="crm-icon crm-icon--sm" />
-        <span className="api-key-name">{k.name}</span>
-        {k.is_selected && <span className="crm-badge crm-badge--dark">Active</span>}
-        {k.user_role && !k.is_selected && <span className="crm-badge crm-badge--light">{k.user_role}</span>}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          <CopyBtn text={k.api_key} />
-          <button className="crm-icon-btn crm-icon-btn--danger" onClick={() => onDelete(k.id)} title="Delete">
-            <TrashIcon className="crm-icon" />
+    <Modal title="New API Key" onClose={onClose}>
+      <form className="api-modal-form" onSubmit={handleCreate}>
+        <div className="api-modal-row">
+          <input className="api-modal-input" placeholder="Key name, e.g. My Store"
+            value={name} onChange={e => setName(sanitizeName(e.target.value))} maxLength={100} autoFocus />
+          <button className="api-modal-btn" type="submit" disabled={creating}>
+            {creating ? 'Creating…' : 'Create'}
           </button>
         </div>
+        {err && <span className="crm-form-error" style={{ padding: '0 4px' }}>{err}</span>}
+      </form>
+    </Modal>
+  );
+}
+
+function RenameModal({ k, onClose, onRenamed }) {
+  const [name, setName] = useState(k.name);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    const n = name.trim();
+    if (!n || n === k.name) { onClose(); return; }
+    setSaving(true); setErr('');
+    try {
+      const res = await fetch(`${API_BASE}/api/api-keys/${k.id}/rename`, {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: n }),
+      });
+      const data = await res.json();
+      if (!res.ok) return setErr(data.detail || 'Error');
+      onRenamed(k.id, data.name);
+      onClose();
+    } catch { setErr('Network error'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal title="Rename API Key" onClose={onClose}>
+      <form className="api-modal-form" onSubmit={handleSave}>
+        <div className="api-modal-row">
+          <input className="api-modal-input" value={name}
+            onChange={e => setName(sanitizeName(e.target.value))} maxLength={100} autoFocus />
+          <button className="api-modal-btn" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        {err && <span className="crm-form-error" style={{ padding: '0 4px' }}>{err}</span>}
+      </form>
+    </Modal>
+  );
+}
+
+function ApiRow({ k, onDelete, onRenameClick, onSwitch }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef();
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const fmt = (d) => d
+    ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : '—';
+
+  return (
+    <div
+      className={`api-row${k.is_selected ? ' api-row--active' : ''}`}
+      onClick={() => !k.is_selected && onSwitch(k.id)}
+    >
+      <span className="api-row-name">{k.name}</span>
+      <div className="api-row-key-col">
+        <span className="api-key-badge">{k.api_key.slice(0, 16)}…</span>
       </div>
+      <span className="api-row-date">{fmt(k.last_used_at)}</span>
+      <span className="api-row-date">{fmt(k.created_at)}</span>
 
-      <code className="api-key-value">{k.api_key}</code>
-
-      <div className="api-key-meta-row">
-        {k.created_at && <span className="api-key-meta">Created: {new Date(k.created_at).toLocaleDateString()}</span>}
-        {k.last_used_at && (
-          <span className="api-key-meta">
-            Last used: {new Date(k.last_used_at).toLocaleDateString()}
-            {k.last_used_ip && ` · ${k.last_used_ip}`}
-          </span>
+      <div className="api-row-actions" ref={menuRef} onClick={e => e.stopPropagation()}>
+        <button className="crm-icon-btn" onClick={() => setMenuOpen(v => !v)}>
+          <EllipsisVerticalIcon className="crm-icon" />
+        </button>
+        {menuOpen && (
+          <div className="api-drop-menu">
+            <button className="api-drop-item" onClick={() => {
+              navigator.clipboard.writeText(k.api_key); setMenuOpen(false);
+            }}>
+              <ClipboardDocumentIcon className="api-drop-icon" /> Copy key
+            </button>
+            <button className="api-drop-item" onClick={() => {
+              onRenameClick(k); setMenuOpen(false);
+            }}>
+              <PencilIcon className="api-drop-icon" /> Rename
+            </button>
+            <button className="api-drop-item api-drop-item--danger" onClick={() => {
+              onDelete(k.id); setMenuOpen(false);
+            }}>
+              <TrashIcon className="api-drop-icon" /> Delete
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -51,10 +171,9 @@ function Api() {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [formErr, setFormErr] = useState('');
+  const [search, setSearch] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [renameKey, setRenameKey] = useState(null);
 
   const load = () => {
     setLoading(true);
@@ -71,26 +190,6 @@ function Api() {
     return () => window.removeEventListener('api-key-switched', load);
   }, []);
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    const name = newName.trim();
-    if (!name) return setFormErr('Enter a name');
-    setCreating(true); setFormErr('');
-    try {
-      const res = await fetch(`${API_BASE}/api/api-keys`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      });
-      const data = await res.json();
-      if (!res.ok) return setFormErr(data.detail || 'Error');
-      setNewName(''); setShowForm(false);
-      load();
-      window.dispatchEvent(new CustomEvent('api-keys-changed'));
-    } catch { setFormErr('Network error'); }
-    finally { setCreating(false); }
-  };
-
   const handleDelete = async (id) => {
     if (!confirm('Delete this API key?')) return;
     const res = await fetch(`${API_BASE}/api/api-keys/${id}`, { method: 'DELETE', credentials: 'include' });
@@ -100,34 +199,99 @@ function Api() {
     window.dispatchEvent(new CustomEvent('api-keys-changed'));
   };
 
+  const handleRename = (id, name) => {
+    setKeys(prev => prev.map(k => k.id === id ? { ...k, name } : k));
+    window.dispatchEvent(new CustomEvent('api-keys-changed'));
+  };
+
+  const handleSwitch = async (id) => {
+    const res = await fetch(`${API_BASE}/api/api-keys/switch`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key_id: id }),
+    });
+    if (!res.ok) return;
+    load();
+    window.dispatchEvent(new CustomEvent('api-key-switched'));
+    window.dispatchEvent(new CustomEvent('api-keys-changed'));
+  };
+
+  const filtered = keys.filter(k =>
+    k.name.toLowerCase().includes(search.toLowerCase()) ||
+    k.api_key.toLowerCase().includes(search.toLowerCase())
+  );
+
   return (
     <>
-      <h1 className="crm-page-title">API Keys</h1>
-      <div className="crm-section">
+      {createOpen && (
+        <CreateModal
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => { setCreateOpen(false); load(); window.dispatchEvent(new CustomEvent('api-keys-changed')); }}
+        />
+      )}
+      {renameKey && (
+        <RenameModal
+          k={renameKey}
+          onClose={() => setRenameKey(null)}
+          onRenamed={handleRename}
+        />
+      )}
 
-        <div className="crm-section-row" style={{ justifyContent: 'flex-end' }}>
-          <button className="crm-add-btn" onClick={() => { setShowForm(v => !v); setFormErr(''); setNewName(''); }}>
-            <PlusIcon className="crm-add-btn-icon" />
-            {showForm ? 'Cancel' : 'New API Key'}
-          </button>
-        </div>
+      <div className="api-page">
+        <div className="api-center">
+          <h1 className="api-title">API Keys</h1>
 
-        <div className={`crm-form-wrap${showForm ? ' crm-form-wrap--open' : ''}`}>
-          <form className="crm-card crm-form" onSubmit={handleCreate}>
-            <input className="crm-input" placeholder="Key name, e.g. My Store"
-              value={newName} onChange={e => setNewName(e.target.value)} maxLength={100} autoFocus />
-            {formErr && <span className="crm-form-error">{formErr}</span>}
-            <button className="crm-submit-btn" type="submit" disabled={creating}>
-              {creating ? 'Creating…' : 'Create'}
+          <div className="api-topbar">
+            <div className="api-search-wrap" onClick={() => document.getElementById('api-search').focus()}>
+              <MagnifyingGlassIcon className="api-search-icon" />
+              <input
+                id="api-search"
+                className="api-search-input"
+                placeholder="Search by name or token…"
+                value={search}
+                onChange={e => setSearch(sanitizeName(e.target.value))}
+              />
+            </div>
+            <button className="api-new-btn" onClick={() => setCreateOpen(true)}>
+              <PlusIcon className="api-new-btn-icon" /> New API Key
             </button>
-          </form>
+          </div>
+
+          <div className="api-list-wrapper">
+            <div className="api-list-head">
+              <span>Name</span>
+              <span>API key</span>
+              <span>Last Used</span>
+              <span>Created</span>
+              <span />
+            </div>
+            <div className="api-list-card">
+              <div className="api-list-scroll">
+                {loading ? (
+                  <div className="crm-placeholder">Loading…</div>
+                ) : error ? (
+                  <div className="crm-placeholder" style={{ color: '#e3342f' }}>{error}</div>
+                ) : filtered.length === 0 ? (
+                  <div className="crm-placeholder">No API keys found</div>
+                ) : filtered.reduce((acc, k, i) => {
+                    const prev = filtered[i - 1];
+                    const showDivider = prev && !prev.is_selected && !k.is_selected;
+                    return [
+                      ...acc,
+                      showDivider && <div key={`div-${k.id}`} className="api-row-divider" />,
+                      <ApiRow key={k.id} k={k}
+                        onDelete={handleDelete} onRenameClick={setRenameKey} onSwitch={handleSwitch} />
+                    ];
+                  }, [])
+                }
+              </div>
+            </div>
+          </div>
         </div>
 
-        {loading ? <div className="crm-placeholder">Loading…</div>
-          : error ? <div className="crm-placeholder" style={{ color: '#e3342f' }}>{error}</div>
-            : keys.length === 0 ? <div className="crm-placeholder">No API keys yet</div>
-              : <div className="crm-cards-list">{keys.map(k => <ApiKeyCard key={k.id} k={k} onDelete={handleDelete} />)}</div>}
-
+        <div className="api-right">
+          <div className="api-right-stub" />
+        </div>
       </div>
     </>
   );

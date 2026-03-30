@@ -1,13 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
-  ChartBarIcon, CurrencyDollarIcon, DocumentChartBarIcon, FlagIcon,
+  ChartBarIcon, CurrencyDollarIcon, DocumentChartBarIcon, TrophyIcon,
   TagIcon, ShoppingCartIcon, UsersIcon, ArchiveBoxIcon, ReceiptPercentIcon,
   ChatBubbleLeftRightIcon, CodeBracketSquareIcon, UserGroupIcon, CreditCardIcon,
-  ChevronDownIcon, Cog6ToothIcon, UserCircleIcon, ArrowRightOnRectangleIcon,
-  Bars3Icon, XMarkIcon,
+  ChevronDownIcon, Bars3Icon, XMarkIcon,
 } from '@heroicons/react/24/solid';
-import { API_BASE } from '../api.js';
 
 const SECTIONS = [
   {
@@ -16,7 +14,7 @@ const SECTIONS = [
       { to: '/dashboard',  label: 'Dashboard',          Icon: ChartBarIcon },
       { to: '/revenue',    label: 'Revenue',            Icon: CurrencyDollarIcon },
       { to: '/reports',    label: 'Reports',            Icon: DocumentChartBarIcon },
-      { to: '/objectives', label: 'Objectives',         Icon: FlagIcon },
+      { to: '/targets',    label: 'Target',             Icon: TrophyIcon },
     ],
   },
   {
@@ -33,9 +31,9 @@ const SECTIONS = [
   {
     id: 'account', label: 'Account',
     items: [
-      { to: '/api',          label: 'API',                  Icon: CodeBracketSquareIcon },
-      { to: '/team',         label: 'Team', Icon: UserGroupIcon },
-      { to: '/subscription', label: 'Subscription',         Icon: CreditCardIcon },
+      { to: '/api',          label: 'API',          Icon: CodeBracketSquareIcon },
+      { to: '/team',         label: 'Team',         Icon: UserGroupIcon },
+      { to: '/subscription', label: 'Subscription', Icon: CreditCardIcon },
     ],
   },
 ];
@@ -116,7 +114,7 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname, onNavCli
 }
 
 
-function SidebarContent({ user, logout, activeSectionId, activeItemKey, location, open, setOpen, onNavClick }) {
+function SidebarContent({ activeSectionId, activeItemKey, location, open, setOpen, onNavClick }) {
   const toggleSection = id => setOpen(prev => {
     if (id === activeSectionId && prev[id]) return prev;
     return { ...prev, [id]: !prev[id] };
@@ -135,30 +133,12 @@ function SidebarContent({ user, logout, activeSectionId, activeItemKey, location
           onNavClick={onNavClick}
         />
       ))}
-
-      <div className="sb-spacer" />
-
-      <div className="sb-block sb-user-block">
-        <div className="sb-user-info">
-          <UserCircleIcon className="sb-user-avatar" />
-          <span className="sb-user-name">{user?.name || 'User'}</span>
-        </div>
-        <div className="sb-user-actions">
-          <button type="button" className="sb-user-btn" title="Logout" onClick={logout}>
-            <ArrowRightOnRectangleIcon className="sb-icon" />
-          </button>
-          <button type="button" className="sb-user-btn" title="Settings">
-            <Cog6ToothIcon className="sb-icon" />
-          </button>
-        </div>
-      </div>
     </>
   );
 }
 
 
-function Sidebar({ user }) {
-  const navigate = useNavigate();
+function Sidebar() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -180,12 +160,7 @@ function Sidebar({ user }) {
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
-  const logout = async () => {
-    await fetch(`${API_BASE}/api/logout`, { method: 'POST', credentials: 'include' });
-    navigate('/');
-  };
-
-  const sharedProps = { user, logout, activeSectionId, activeItemKey, location, open, setOpen };
+  const sharedProps = { activeSectionId, activeItemKey, location, open, setOpen };
 
   return (
     <>
@@ -230,4 +205,4 @@ function Sidebar({ user }) {
   );
 }
 
-export default Sidebar
+export default Sidebar;

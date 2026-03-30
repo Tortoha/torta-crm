@@ -12,6 +12,8 @@ import Dashboard     from './Pages/Dashboard.jsx';
 import Revenue       from './Pages/Revenue.jsx';
 import Api           from './Pages/Api.jsx';
 import Team          from './Pages/Team.jsx';
+import Products      from './Pages/Products.jsx';
+import Settings      from './Pages/Settings.jsx';
 import Invite        from './Pages/Invite.jsx';
 
 function App() {
@@ -37,6 +39,12 @@ function App() {
         </Route>
         <Route path="/team"                      element={<Layout />}>
           <Route index element={<Team />} />
+        </Route>
+        <Route path="/products"                  element={<Layout />}>
+          <Route index element={<Products />} />
+        </Route>
+        <Route path="/settings"                  element={<Layout />}>
+          <Route index element={<Settings />} />
         </Route>
       </Routes>
     </Router>
