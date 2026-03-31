@@ -3,7 +3,7 @@
 .api-page {
   display: flex;
   flex: 1;
-  gap: 20px;
+  gap: 16px;
   align-items: stretch;
 }
 
@@ -181,18 +181,18 @@
 .api-row:hover { background: rgba(0, 0, 0, 0.05); }
 
 .api-row--active {
-  background: #22c55e !important;
+  background: #000000 !important;
   border-radius: 999px !important;
   margin: 2px 16px;
 }
 
-.api-row--active:hover { background: #20b958 !important; }
+.api-row--active:hover { background: #242424 !important; }
 .api-row--active .api-row-name { color: #fff; font-weight: 700; }
 .api-row--active .api-row-date { color: #fff; }
 
 .api-row--active .api-key-badge {
   background: #fff;
-  color: #20b958;
+  color: #000000;
 }
 
 .api-row .crm-icon-btn:hover { background: rgba(0, 0, 0, 0.1); }

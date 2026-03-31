@@ -1,9 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import {
-  ClipboardDocumentIcon, TrashIcon, PlusIcon,
-  EllipsisVerticalIcon, PencilIcon, XMarkIcon,
-  MagnifyingGlassIcon,
-} from '@heroicons/react/24/solid';
+import { Copy, Trash, Plus, DotsThreeVertical, PencilSimple, X, MagnifyingGlass } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import '../Style/Api.css';
 
@@ -20,7 +16,7 @@ function Modal({ title, onClose, children }) {
         <div className="api-modal-header">
           <span className="api-modal-title">{title}</span>
           <button className="crm-icon-btn" onClick={onClose}>
-            <XMarkIcon className="crm-icon" />
+            <X className="crm-icon" />
           </button>
         </div>
         {children}
@@ -141,24 +137,24 @@ function ApiRow({ k, onDelete, onRenameClick, onSwitch }) {
 
       <div className="api-row-actions" ref={menuRef} onClick={e => e.stopPropagation()}>
         <button className="crm-icon-btn" onClick={() => setMenuOpen(v => !v)}>
-          <EllipsisVerticalIcon className="crm-icon" />
+          <DotsThreeVertical className="crm-icon" />
         </button>
         {menuOpen && (
           <div className="api-drop-menu">
             <button className="api-drop-item" onClick={() => {
               navigator.clipboard.writeText(k.api_key); setMenuOpen(false);
             }}>
-              <ClipboardDocumentIcon className="api-drop-icon" /> Copy key
+              <Copy className="api-drop-icon" /> Copy key
             </button>
             <button className="api-drop-item" onClick={() => {
               onRenameClick(k); setMenuOpen(false);
             }}>
-              <PencilIcon className="api-drop-icon" /> Rename
+              <PencilSimple className="api-drop-icon" /> Rename
             </button>
             <button className="api-drop-item api-drop-item--danger" onClick={() => {
               onDelete(k.id); setMenuOpen(false);
             }}>
-              <TrashIcon className="api-drop-icon" /> Delete
+              <Trash className="api-drop-icon" /> Delete
             </button>
           </div>
         )}
@@ -239,11 +235,11 @@ function Api() {
 
       <div className="api-page">
         <div className="api-center">
-          <h1 className="api-title">API Keys</h1>
+          <h1 className="api-title">Tokens</h1>
 
           <div className="api-topbar">
             <div className="api-search-wrap" onClick={() => document.getElementById('api-search').focus()}>
-              <MagnifyingGlassIcon className="api-search-icon" />
+              <MagnifyingGlass className="api-search-icon" />
               <input
                 id="api-search"
                 className="api-search-input"
@@ -253,14 +249,14 @@ function Api() {
               />
             </div>
             <button className="api-new-btn" onClick={() => setCreateOpen(true)}>
-              <PlusIcon className="api-new-btn-icon" /> New API Key
+              <Plus className="api-new-btn-icon" /> New API Key
             </button>
           </div>
 
           <div className="api-list-wrapper">
             <div className="api-list-head">
               <span>Name</span>
-              <span>API key</span>
+              <span>Token</span>
               <span>Last Used</span>
               <span>Created</span>
               <span />

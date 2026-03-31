@@ -1,9 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  ChevronDownIcon, KeyIcon,
-  Cog6ToothIcon, ArrowRightOnRectangleIcon,
-} from '@heroicons/react/24/solid';
+import { CaretDown, Key, GearSix, SignOut } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import '../Style/Header.css';
 
@@ -99,10 +96,10 @@ function ApiComboBox() {
       <div className={`hdr-combo-block${open ? ' hdr-combo-block--open' : ''}`}>
 
         <button className="hdr-combo-trigger" onClick={() => setOpen(v => !v)} type="button">
-          <KeyIcon className="hdr-combo-icon" />
+          <Key className="hdr-combo-icon" />
           <span className="hdr-combo-label">{active.name}</span>
           {userRole && <span className="hdr-combo-role">{userRole}</span>}
-          <ChevronDownIcon className={`hdr-combo-chevron${open ? ' hdr-combo-chevron--open' : ''}`} />
+          <CaretDown className={`hdr-combo-chevron${open ? ' hdr-combo-chevron--open' : ''}`} />
         </button>
 
         <div className={`hdr-combo-list-wrap${open ? ' hdr-combo-list-wrap--open' : ''}`}>
@@ -159,7 +156,7 @@ function UserMenu({ user }) {
         <button className="hdr-user-trigger" onClick={() => setOpen(v => !v)} type="button">
           <InitialsAvatar name={user?.name} size={28} />
           <span className="hdr-user-name">{user?.name || 'User'}</span>
-          <ChevronDownIcon className={`hdr-combo-chevron${open ? ' hdr-combo-chevron--open' : ''}`} />
+          <CaretDown className={`hdr-combo-chevron${open ? ' hdr-combo-chevron--open' : ''}`} />
         </button>
 
         <div className={`hdr-combo-list-wrap${open ? ' hdr-combo-list-wrap--open' : ''}`}>
@@ -173,10 +170,10 @@ function UserMenu({ user }) {
             </div>
             <div className="hdr-user-divider" />
             <button className="api-drop-item" onClick={() => { setOpen(false); navigate('/settings'); }}>
-              <Cog6ToothIcon className="api-drop-icon" /> Settings
+              <GearSix className="api-drop-icon" /> Settings
             </button>
             <button className="api-drop-item api-drop-item--danger" onClick={logout}>
-              <ArrowRightOnRectangleIcon className="api-drop-icon" /> Log out
+              <SignOut className="api-drop-icon" /> Log out
             </button>
           </div>
         </div>

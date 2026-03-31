@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ShoppingBagIcon } from "@heroicons/react/24/solid";
+import { Bag } from '@phosphor-icons/react';
 import "./Style/CartButton.css";
 import { API_BASE } from "./api.js"
 
@@ -32,7 +32,7 @@ function CartButton() {
   return (
     <div className="cart-button">
       <Link to="/cart">
-        <ShoppingBagIcon style={{ width: '1em', height: '1em' }} />
+        <Bag style={{ width: '1em', height: '1em' }} />
         ${(+subtotal % 1 === 0) ? +subtotal : (+subtotal).toFixed(2)}
       </Link>
     </div>

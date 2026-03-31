@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { EyeIcon, EyeSlashIcon } from "@heroicons/react/24/solid";
+import { Eye, EyeSlash } from '@phosphor-icons/react';
 
 function PasswordInput({ id, name, placeholder, value, onChange, autoComplete }) {
   const [show, setShow] = useState(false);
@@ -23,10 +23,10 @@ function PasswordInput({ id, name, placeholder, value, onChange, autoComplete })
         tabIndex={-1}
       >
         <span className={`eye-icon-wrap${show ? ' eye-icon-wrap--hidden' : ''}`}>
-          <EyeSlashIcon width={22} height={22} />
+          <EyeSlash size={22} />
         </span>
         <span className={`eye-icon-wrap eye-icon-wrap--abs${!show ? ' eye-icon-wrap--hidden' : ''}`}>
-          <EyeIcon width={22} height={22} />
+          <Eye size={22} />
         </span>
       </button>
     </div>

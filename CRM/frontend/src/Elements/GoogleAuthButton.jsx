@@ -1,70 +1,23 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../api.js';
-
-const GOOGLE_CLIENT_ID = '507611541846-pcl6rqv08gc54021vq4tctca9pnntj0e.apps.googleusercontent.com';
 
 function GoogleAuthButton() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [ready, setReady] = useState(false);
 
+  // If Google redirected back with ?error=... — show message
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) return;
-    if (window.google) { setReady(true); return; }
-
-    const existing = document.getElementById('gsi-script');
-    if (existing) {
-      existing.addEventListener('load', () => setReady(true));
-      return;
-    }
-    const script = document.createElement('script');
-    script.id = 'gsi-script';
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => setReady(true);
-    document.head.appendChild(script);
-  }, []);
+    const err = searchParams.get('error');
+    if (err === 'google_cancelled') setError('Sign-in cancelled');
+    else if (err) setError('Google sign-in failed. Try again.');
+  }, [searchParams]);
 
   const handleClick = () => {
-    if (!window.google || !GOOGLE_CLIENT_ID) return;
-    setError('');
-    setLoading(true);
-
-    window.google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: async (response) => {
-        try {
-          const res = await fetch(`${API_BASE}/api/auth/google`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ token: response.credential }),
-          });
-          const data = await res.json();
-          if (res.ok) {
-            navigate('/dashboard');
-          } else {
-            setError(data.detail || 'Sign in failed');
-            setLoading(false);
-          }
-        } catch {
-          setError('Network error');
-          setLoading(false);
-        }
-      },
-    });
-
-    window.google.accounts.id.prompt((notification) => {
-      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-        setLoading(false);
-      }
-    });
+    // Redirect the whole page to backend — backend redirects to Google
+    window.location.href = `${API_BASE}/api/auth/google/login`;
   };
-
-  if (!GOOGLE_CLIENT_ID) return null;
 
   return (
     <div className="oauth-wrap">
@@ -73,7 +26,6 @@ function GoogleAuthButton() {
         type="button"
         className="oauth-btn"
         onClick={handleClick}
-        disabled={!ready || loading}
       >
         <svg className="oauth-logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -81,7 +33,7 @@ function GoogleAuthButton() {
           <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
           <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
         </svg>
-        {loading ? 'Signing in…' : 'Continue with Google'}
+        Continue with Google
       </button>
       {error && <p className="error" style={{ textAlign: 'center', marginTop: 6 }}>{error}</p>}
     </div>

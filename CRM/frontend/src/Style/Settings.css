@@ -20,14 +20,14 @@
   padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
 /* Avatar block */
 .sett-avatar-block {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
 }
 
 .sett-avatar-wrap {
@@ -184,7 +184,7 @@
 .sett-pref-row {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
   padding: 18px 24px;
 }
 

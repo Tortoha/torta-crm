@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import {
-  PlusIcon, TrashIcon, PencilIcon, EllipsisVerticalIcon,
-  MagnifyingGlassIcon, XMarkIcon, CheckIcon, ChevronDownIcon,
-  ChevronRightIcon, PhotoIcon, ArrowUpTrayIcon,
-} from '@heroicons/react/24/solid';
-import { StarIcon } from '@heroicons/react/24/solid';
+import { Plus, Trash, PencilSimple, DotsThreeVertical, MagnifyingGlass, X, Check, CaretDown, CaretRight, Image, UploadSimple } from '@phosphor-icons/react';
+import { Star } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import '../Style/Products.css';
 
@@ -172,13 +168,13 @@ function SizeRow({ size, productId, varId, onDeleted, onUpdated }) {
       <td>
         <div className="prod-size-actions">
           {saved
-            ? <CheckIcon className="prod-check-icon" />
+            ? <Check className="prod-check-icon" />
             : <button className="crm-icon-btn" title="Save" onClick={save} disabled={saving}>
-                <CheckIcon className="crm-icon crm-icon--sm" style={{ color: saving ? '#ccc' : '#16a34a' }} />
+                <Check className="crm-icon crm-icon--sm" style={{ color: saving ? '#ccc' : '#16a34a' }} />
               </button>
           }
           <button className="crm-icon-btn crm-icon-btn--danger" title="Delete" onClick={del}>
-            <TrashIcon className="crm-icon crm-icon--sm" />
+            <Trash className="crm-icon crm-icon--sm" />
           </button>
         </div>
       </td>
@@ -276,18 +272,18 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
       <div className="prod-var-header">
         <button className="prod-var-toggle" onClick={() => setOpen(v => !v)}>
           {open
-            ? <ChevronDownIcon className="prod-var-chevron" />
-            : <ChevronRightIcon className="prod-var-chevron" />}
+            ? <CaretDown className="prod-var-chevron" />
+            : <CaretRight className="prod-var-chevron" />}
         </button>
         <div className="prod-var-preview">
           {imgUrl
             ? <img src={imgUrl} alt={name} className="prod-var-img" />
-            : <PhotoIcon className="prod-var-img-placeholder" />}
+            : <Image className="prod-var-img-placeholder" />}
         </div>
         <span className="prod-var-title">{name || 'Unnamed'}</span>
         <span className="prod-var-sizes-count">{sizes.length} size{sizes.length !== 1 ? 's' : ''}</span>
         <button className="crm-icon-btn crm-icon-btn--danger" onClick={deleteVariation} title="Delete variation">
-          <TrashIcon className="crm-icon crm-icon--sm" />
+          <Trash className="crm-icon crm-icon--sm" />
         </button>
       </div>
 
@@ -313,7 +309,7 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
                   <>
                     <img src={imgUrl} alt={name} className="prod-dropzone-preview" />
                     <div className="prod-dropzone-overlay">
-                      <ArrowUpTrayIcon className="prod-dropzone-overlay-icon" />
+                      <UploadSimple className="prod-dropzone-overlay-icon" />
                       <span>Replace image</span>
                     </div>
                   </>
@@ -324,7 +320,7 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
                   </div>
                 ) : (
                   <div className="prod-dropzone-empty">
-                    <ArrowUpTrayIcon className="prod-dropzone-upload-icon" />
+                    <UploadSimple className="prod-dropzone-upload-icon" />
                     <span className="prod-dropzone-title">Drop image here</span>
                     <span className="prod-dropzone-hint">or click to browse · WebP</span>
                   </div>
@@ -379,13 +375,13 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
                 min="0" value={newSizeStock} onChange={e => setNewSizeStock(e.target.value)} />
               <button className="prod-save-btn prod-save-btn--sm" type="submit" disabled={addingSize}>Add</button>
               <button className="crm-icon-btn" type="button" onClick={() => setShowSizeForm(false)}>
-                <XMarkIcon className="crm-icon crm-icon--sm" />
+                <X className="crm-icon crm-icon--sm" />
               </button>
             </form>
           </div>
 
           <button className="prod-add-size-btn" onClick={() => setShowSizeForm(v => !v)}>
-            <PlusIcon className="prod-add-size-icon" />
+            <Plus className="prod-add-size-icon" />
             {showSizeForm ? 'Cancel' : 'Add size'}
           </button>
         </div>
@@ -472,7 +468,7 @@ function VariationsTab({ product, productId, onSaved }) {
               <>
                 <img src={varImg} alt="variation" className="prod-dropzone-preview" />
                 <div className="prod-dropzone-overlay">
-                  <ArrowUpTrayIcon className="prod-dropzone-overlay-icon" />
+                  <UploadSimple className="prod-dropzone-overlay-icon" />
                   <span>Replace image</span>
                 </div>
               </>
@@ -483,7 +479,7 @@ function VariationsTab({ product, productId, onSaved }) {
               </div>
             ) : (
               <div className="prod-dropzone-empty">
-                <ArrowUpTrayIcon className="prod-dropzone-upload-icon" />
+                <UploadSimple className="prod-dropzone-upload-icon" />
                 <span className="prod-dropzone-title">Drop image here</span>
                 <span className="prod-dropzone-hint">or click to browse · WebP</span>
               </div>
@@ -499,7 +495,7 @@ function VariationsTab({ product, productId, onSaved }) {
 
       <button className="crm-add-btn" style={{ marginTop: 12 }}
         onClick={() => { setShowVarForm(v => !v); setVarErr(''); }}>
-        <PlusIcon className="crm-add-btn-icon" />
+        <Plus className="crm-add-btn-icon" />
         {showVarForm ? 'Cancel' : 'New Variation'}
       </button>
     </div>
@@ -585,7 +581,7 @@ function CustomFieldsTab({ product, productId }) {
                   </td>
                   <td>
                     <button className="crm-icon-btn crm-icon-btn--danger" onClick={() => deleteField(f.field_key)}>
-                      <TrashIcon className="crm-icon crm-icon--sm" />
+                      <Trash className="crm-icon crm-icon--sm" />
                     </button>
                   </td>
                 </tr>
@@ -628,7 +624,7 @@ function CustomFieldsTab({ product, productId }) {
 
       <button className="crm-add-btn" style={{ marginTop: 12 }}
         onClick={() => { setShowForm(v => !v); setErr(''); }}>
-        <PlusIcon className="crm-add-btn-icon" />
+        <Plus className="crm-add-btn-icon" />
         {showForm ? 'Cancel' : 'New Field'}
       </button>
     </div>
@@ -656,7 +652,7 @@ function ReviewsTab({ product }) {
               <span className="prod-review-author">{r.user_name}</span>
               <div className="prod-review-stars">
                 {[1,2,3,4,5].map(n => (
-                  <StarIcon key={n} className={`prod-star${n <= r.rating ? ' prod-star--on' : ''}`} />
+                  <Star key={n} className={`prod-star${n <= r.rating ? ' prod-star--on' : ''}`} />
                 ))}
               </div>
               <span className="prod-review-date">
@@ -800,7 +796,7 @@ function ProductDrawer({ open, loading, product, onClose, onSaved, onCreated }) 
           }
         </div>
         <button className="crm-icon-btn" onClick={onClose} title="Close">
-          <XMarkIcon className="crm-icon" />
+          <X className="crm-icon" />
         </button>
       </div>
 
@@ -875,22 +871,22 @@ function ProductRow({ p, selected, menuId, setMenuId, menuRef, onOpen, onDelete 
       <td className="prod-td prod-td--num">{priceLabel}</td>
       <td className="prod-td prod-td--num">
         {p.reviews_count > 0
-          ? <span className="prod-rating"><StarIcon className="prod-star prod-star--on prod-star--sm" /> {p.avg_rating.toFixed(1)}</span>
+          ? <span className="prod-rating"><Star className="prod-star prod-star--on prod-star--sm" /> {p.avg_rating.toFixed(1)}</span>
           : '—'}
       </td>
       <td className="prod-td prod-td--act" onClick={e => e.stopPropagation()}>
         <div className="prod-menu-wrap" ref={menuId === p.id ? menuRef : null}>
           <button className="crm-icon-btn"
             onClick={() => setMenuId(menuId === p.id ? null : p.id)} title="Options">
-            <EllipsisVerticalIcon className="crm-icon" />
+            <DotsThreeVertical className="crm-icon" />
           </button>
           {menuId === p.id && (
             <div className="api-drop-menu">
               <button className="api-drop-item" onClick={() => { onOpen(); setMenuId(null); }}>
-                <PencilIcon className="api-drop-icon" /> Edit
+                <PencilSimple className="api-drop-icon" /> Edit
               </button>
               <button className="api-drop-item api-drop-item--danger" onClick={() => { onDelete(); setMenuId(null); }}>
-                <TrashIcon className="api-drop-icon" /> Delete
+                <Trash className="api-drop-icon" /> Delete
               </button>
             </div>
           )}
@@ -980,7 +976,7 @@ function Products() {
         <h1 className="crm-page-title" style={{ paddingTop: 0 }}>Products</h1>
         <div className="prod-toolbar">
           <div className="prod-search-wrap">
-            <MagnifyingGlassIcon className="prod-search-icon" />
+            <MagnifyingGlass className="prod-search-icon" />
             <input
               className="prod-search"
               placeholder="Search products…"
@@ -989,7 +985,7 @@ function Products() {
             />
           </div>
           <button className="crm-add-btn" onClick={openNewDrawer}>
-            <PlusIcon className="crm-add-btn-icon" /> New Product
+            <Plus className="crm-add-btn-icon" /> New Product
           </button>
         </div>
       </div>

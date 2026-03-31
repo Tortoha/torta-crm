@@ -1,9 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import {
-  TrashIcon, LinkIcon, ClipboardDocumentIcon, ClipboardDocumentCheckIcon,
-  PlusIcon, XMarkIcon, HashtagIcon, PaperAirplaneIcon, EllipsisVerticalIcon,
-  ShieldCheckIcon, ChevronLeftIcon, PencilSquareIcon,
-} from '@heroicons/react/24/solid';
+import { Trash, Link, Copy, CheckCircle, Plus, X, Hash, PaperPlaneTilt, DotsThreeVertical, ShieldCheck, CaretLeft, NotePencil } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import '../Style/Team.css';
 
@@ -15,8 +11,8 @@ function CopyBtn({ text }) {
     <button className="crm-icon-btn" title="Copy"
       onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); }}>
       {copied
-        ? <ClipboardDocumentIcon className="crm-icon crm-icon--success" />
-        : <ClipboardDocumentIcon className="crm-icon" />}
+        ? <Copy className="crm-icon crm-icon--success" />
+        : <Copy className="crm-icon" />}
     </button>
   );
 }
@@ -69,9 +65,9 @@ function PermissionsPanel({ role, onClose }) {
   return (
     <div className="team-perms-panel">
       <div className="team-perms-header">
-        <ShieldCheckIcon className="team-perms-icon" />
+        <ShieldCheck className="team-perms-icon" />
         <span className="team-perms-title">Permissions — {role.name}</span>
-        <button className="crm-icon-btn" onClick={onClose}><XMarkIcon className="crm-icon" /></button>
+        <button className="crm-icon-btn" onClick={onClose}><X className="crm-icon" /></button>
       </div>
       {loading ? <div className="crm-placeholder">Loading…</div> : (
         <>
@@ -128,10 +124,19 @@ function ChatPanel({ isOwner }) {
   }, []);
 
   useEffect(() => {
+    const handleSwitch = () => { setActiveId(null); setMessages([]); loadChannels(); };
     loadChannels();
-    window.addEventListener('api-key-switched', loadChannels);
-    return () => window.removeEventListener('api-key-switched', loadChannels);
+    window.addEventListener('api-key-switched', handleSwitch);
+    return () => window.removeEventListener('api-key-switched', handleSwitch);
   }, [loadChannels]);
+
+  // safety: if activeId points to a deleted/non-existent channel — go back
+  useEffect(() => {
+    if (activeId !== null && channels.length > 0 && !channels.some(c => c.id === activeId)) {
+      setActiveId(null);
+      setMessages([]);
+    }
+  }, [channels, activeId]);
 
   // ── messages ──
   const loadMessages = useCallback(async (channelId, full = false) => {
@@ -235,15 +240,14 @@ function ChatPanel({ isOwner }) {
   return (
     <div className="chat-app">
 
-      <div className={`chat-slider${activeId !== null ? ' chat-slider--chat' : ''}`}>
       {/* ── SCREEN 1: Channel list ══ */}
-      <div className="chat-screen">
+      <div className={`chat-screen chat-screen--list${activeId !== null ? ' chat-hidden' : ''}`}>
           {/* Header */}
           <div className="chat-app-header">
             <span className="chat-app-title">Team Chat</span>
             {isOwner && (
               <button className="chat-app-action" onClick={() => setShowNewCh(v => !v)} title="New channel">
-                {showNewCh ? <XMarkIcon style={{ width: 20, height: 20 }} /> : <PencilSquareIcon style={{ width: 20, height: 20 }} />}
+                {showNewCh ? <X style={{ width: 20, height: 20 }} /> : <NotePencil style={{ width: 20, height: 20 }} />}
               </button>
             )}
           </div>
@@ -252,7 +256,7 @@ function ChatPanel({ isOwner }) {
           {showNewCh && (
             <form className="chat-new-ch-form" onSubmit={createChannel}>
               <div className="chat-new-ch-row">
-                <HashtagIcon style={{ width: 14, height: 14, color: '#8e8e93', flexShrink: 0 }} />
+                <Hash style={{ width: 14, height: 14, color: '#8e8e93', flexShrink: 0 }} />
                 <input
                   className="chat-new-ch-input"
                   placeholder="channel-name"
@@ -276,7 +280,7 @@ function ChatPanel({ isOwner }) {
               <div key={ch.id} className="chat-ch-item-wrap" ref={menuChId === ch.id ? menuRef : null}>
                 <button className="chat-ch-row" onClick={() => openChannel(ch.id)}>
                   <div className="chat-ch-icon-wrap">
-                    <HashtagIcon style={{ width: 18, height: 18, color: '#fff' }} />
+                    <Hash style={{ width: 18, height: 18, color: '#fff' }} />
                   </div>
                   <div className="chat-ch-info">
                     <span className="chat-ch-name">{ch.name}</span>
@@ -288,7 +292,7 @@ function ChatPanel({ isOwner }) {
                         className="chat-ch-dots"
                         onClick={e => { e.stopPropagation(); setMenuChId(menuChId === ch.id ? null : ch.id); }}
                       >
-                        <EllipsisVerticalIcon style={{ width: 16, height: 16 }} />
+                        <DotsThreeVertical style={{ width: 16, height: 16 }} />
                       </button>
                     )}
                   </div>
@@ -297,7 +301,7 @@ function ChatPanel({ isOwner }) {
                 {menuChId === ch.id && (
                   <div className="chat-ctx-menu">
                     <button className="chat-ctx-item chat-ctx-item--danger" onClick={() => deleteChannel(ch.id)}>
-                      <TrashIcon style={{ width: 14, height: 14 }} /> Delete channel
+                      <Trash style={{ width: 14, height: 14 }} /> Delete channel
                     </button>
                   </div>
                 )}
@@ -307,16 +311,16 @@ function ChatPanel({ isOwner }) {
         </div>
 
       {/* ══ SCREEN 2: Chat view ══ */}
-      <div className="chat-screen">
+      <div className={`chat-screen chat-screen--chat${activeId !== null ? ' chat-visible' : ''}`}>
           {/* Chat header */}
           <div className="chat-app-header chat-app-header--chat">
             <button className="chat-back-btn" onClick={goBack}>
-              <ChevronLeftIcon style={{ width: 20, height: 20 }} />
+              <CaretLeft style={{ width: 20, height: 20 }} />
               <span>Back</span>
             </button>
             <div className="chat-app-header-center">
               <div className="chat-ch-icon-wrap chat-ch-icon-wrap--sm">
-                <HashtagIcon style={{ width: 14, height: 14, color: '#fff' }} />
+                <Hash style={{ width: 14, height: 14, color: '#fff' }} />
               </div>
               <span className="chat-app-header-name">{activeChannel?.name ?? ''}</span>
             </div>
@@ -368,11 +372,10 @@ function ChatPanel({ isOwner }) {
               type="submit"
               disabled={sending || !newMsg.trim()}
             >
-              <PaperAirplaneIcon style={{ width: 16, height: 16 }} />
+              <PaperPlaneTilt style={{ width: 16, height: 16 }} />
             </button>
           </form>
       </div>
-      </div>{/* /chat-slider */}
 
     </div>
   );
@@ -537,12 +540,12 @@ function Team() {
                         <div className="team-member-menu-wrap" ref={memberMenuId === m.id ? memberMenuRef : null}>
                           <button className="crm-icon-btn crm-icon-btn--danger"
                             onClick={() => setMemberMenuId(memberMenuId === m.id ? null : m.id)}>
-                            <EllipsisVerticalIcon className="crm-icon" />
+                            <DotsThreeVertical className="crm-icon" />
                           </button>
                           {memberMenuId === m.id && (
                             <div className="api-drop-menu">
                               <button className="api-drop-item api-drop-item--danger" onClick={() => removeMember(m.id)}>
-                                <TrashIcon className="api-drop-icon" /> Remove member
+                                <Trash className="api-drop-icon" /> Remove member
                               </button>
                             </div>
                           )}
@@ -563,7 +566,7 @@ function Team() {
               <div className="team-section-header">
                 <h2 className="team-section-title">Roles</h2>
                 <button className="crm-add-btn" onClick={() => { setShowRoleForm(v => !v); setRoleError(''); }}>
-                  {showRoleForm ? <><XMarkIcon className="crm-add-btn-icon" />Cancel</> : <><PlusIcon className="crm-add-btn-icon" />New Role</>}
+                  {showRoleForm ? <><X className="crm-add-btn-icon" />Cancel</> : <><Plus className="crm-add-btn-icon" />New Role</>}
                 </button>
               </div>
               <div className={`crm-form-wrap${showRoleForm ? ' crm-form-wrap--open' : ''}`}>
@@ -583,13 +586,13 @@ function Team() {
                         {!r.is_system && (
                           <button className={`crm-icon-btn team-perms-btn${permsRoleId === r.id ? ' team-perms-btn--active' : ''}`}
                             onClick={() => setPermsRoleId(permsRoleId === r.id ? null : r.id)}>
-                            <ShieldCheckIcon className="crm-icon" />
+                            <ShieldCheck className="crm-icon" />
                           </button>
                         )}
                         {r.is_system
                           ? <span className="crm-badge crm-badge--gray">System</span>
                           : <button className="crm-icon-btn crm-icon-btn--danger" onClick={() => deleteRole(r.id)}>
-                              <TrashIcon className="crm-icon" />
+                              <Trash className="crm-icon" />
                             </button>}
                       </div>
                     </div>
@@ -604,7 +607,7 @@ function Team() {
               <div className="team-section-header">
                 <h2 className="team-section-title">Invite Links</h2>
                 <button className="crm-add-btn" onClick={() => { setShowInvForm(v => !v); setInvError(''); }}>
-                  {showInvForm ? <><XMarkIcon className="crm-add-btn-icon" />Cancel</> : <><LinkIcon className="crm-add-btn-icon" />New Invite</>}
+                  {showInvForm ? <><X className="crm-add-btn-icon" />Cancel</> : <><Link className="crm-add-btn-icon" />New Invite</>}
                 </button>
               </div>
               <div className={`crm-form-wrap${showInvForm ? ' crm-form-wrap--open' : ''}`}>
@@ -625,7 +628,7 @@ function Team() {
                 <div className="team-invites-card">
                   {invites.map(inv => (
                     <div className="team-invite-row" key={inv.id}>
-                      <LinkIcon className="crm-icon" style={{ flexShrink: 0 }} />
+                      <Link className="crm-icon" style={{ flexShrink: 0 }} />
                       <div className="team-invite-info">
                         <span className="team-invite-role">{inv.role_name}</span>
                         <code className="team-invite-url">{inv.invite_url}</code>
@@ -636,7 +639,7 @@ function Team() {
                       </div>
                       <CopyBtn text={inv.invite_url} />
                       <button className="crm-icon-btn crm-icon-btn--danger" onClick={() => revokeInvite(inv.id)}>
-                        <TrashIcon className="crm-icon" />
+                        <Trash className="crm-icon" />
                       </button>
                     </div>
                   ))}

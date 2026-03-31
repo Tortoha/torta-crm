@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  CameraIcon, CheckIcon, UserCircleIcon,
-} from '@heroicons/react/24/solid';
+import { Camera, Check, UserCircle } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import '../Style/Settings.css';
 
@@ -156,7 +154,7 @@ function Settings() {
                   disabled={avatarUploading}
                   title="Change photo"
                 >
-                  <CameraIcon className="sett-avatar-cam-icon" />
+                  <Camera className="sett-avatar-cam-icon" />
                 </button>
                 <input
                   ref={avatarInputRef}
@@ -195,7 +193,7 @@ function Settings() {
                   className={`crm-submit-btn sett-save-btn${nameSaved ? ' sett-save-btn--saved' : ''}`}
                   type="submit"
                 >
-                  {nameSaved ? <><CheckIcon className="sett-check-icon" />Saved</> : 'Save'}
+                  {nameSaved ? <><Check className="sett-check-icon" />Saved</> : 'Save'}
                 </button>
               </div>
               {nameError && <span className="crm-form-error">{nameError}</span>}
@@ -281,7 +279,7 @@ function Settings() {
                   className={`crm-submit-btn sett-save-btn${prefSaved ? ' sett-save-btn--saved' : ''}`}
                   type="submit"
                 >
-                  {prefSaved ? <><CheckIcon className="sett-check-icon" />Saved</> : 'Save preferences'}
+                  {prefSaved ? <><Check className="sett-check-icon" />Saved</> : 'Save preferences'}
                 </button>
               </div>
 

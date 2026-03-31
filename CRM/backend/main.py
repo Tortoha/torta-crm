@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -38,6 +39,8 @@ RESEND_COOLDOWN_SECONDS = 60
 RESET_TTL_MINUTES       = 30
 UPLOADS_DIR             = "uploads"
 GOOGLE_CLIENT_ID        = "507611541846-pcl6rqv08gc54021vq4tctca9pnntj0e.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET    = "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"
+GOOGLE_REDIRECT_URI     = "http://localhost:8001/api/auth/google/callback"
 CLOUDINARY_CLOUD_NAME   = "due5yumdr"
 CLOUDINARY_API_KEY      = "513475749664165"
 CLOUDINARY_API_SECRET   = "I35G6txxRQ5A8QKkHh76TzlVDnU"
@@ -286,7 +289,10 @@ def gen_api_key() -> str:
     ts  = str(datetime.utcnow().timestamp()).encode()
     return hashlib.sha256(raw + ts).hexdigest()
 
-# ── Email ─────────────────────────────────────────────────────
+# ════════════════════════════════════════════
+# Email
+# ════════════════════════════════════════════
+
 def send_code_email(email: str, code: int) -> bool:
     try:
         resend.Emails.send({
@@ -1054,9 +1060,9 @@ def send_message(channel_id: int, request: SendMessageRequest, user: dict = Depe
     finally:
         cur.close(); conn.close()
 
-# в•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђ
+# ════════════════════════════════════════════
 # PRODUCTS
-# в•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђв•ђ
+# ════════════════════════════════════════════
 
 @app.get("/api/products")
 def list_products(user: dict = Depends(get_current_user)):
@@ -1192,8 +1198,9 @@ def delete_product(product_id: int, user: dict = Depends(get_current_user)):
         cur.close(); conn.close()
     return {"ok": True}
 
-
-# в”Ђв”Ђ Variations в”Ђв”Ђ
+# ════════════════════════════════════════════
+# Variations
+# ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/variations")
 def create_variation(product_id: int, request: CreateVariationRequest, user: dict = Depends(get_current_user)):
@@ -1248,7 +1255,9 @@ def delete_variation(product_id: int, var_id: int, user: dict = Depends(get_curr
     return {"ok": True}
 
 
-# в”Ђв”Ђ Sizes в”Ђв”Ђ
+# ════════════════════════════════════════════
+# Sizes
+# ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/variations/{var_id}/sizes")
 def create_size(product_id: int, var_id: int, request: CreateSizeRequest, user: dict = Depends(get_current_user)):
@@ -1306,7 +1315,9 @@ def delete_size(product_id: int, var_id: int, size_id: int, user: dict = Depends
     return {"ok": True}
 
 
-# в”Ђв”Ђ Custom Fields в”Ђв”Ђ
+# ════════════════════════════════════════════
+# Custom Fields
+# ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/custom-fields")
 def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, user: dict = Depends(get_current_user)):
@@ -1534,6 +1545,101 @@ def set_role_permissions(role_id: int, request: SetPermissionsRequest, user: dic
 # ════════════════════════════════════════════
 # GOOGLE OAUTH
 # ════════════════════════════════════════════
+
+@app.get("/api/auth/google/login")
+def google_login():
+    """Redirect browser to Google sign-in page."""
+    import urllib.parse
+    params = {
+        "client_id":     GOOGLE_CLIENT_ID,
+        "redirect_uri":  GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "access_type":   "offline",
+        "prompt":        "select_account",   # always show account picker
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url)
+
+
+@app.get("/api/auth/google/callback")
+def google_callback(code: str = None, error: str = None):
+    """Google redirects here with ?code=... after sign-in."""
+    if error or not code:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_cancelled")
+
+    import urllib.request, urllib.parse, json as _json
+    # Exchange code → tokens
+    data = urllib.parse.urlencode({
+        "code":          code,
+        "client_id":     GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri":  GOOGLE_REDIRECT_URI,
+        "grant_type":    "authorization_code",
+    }).encode()
+    try:
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            tokens = _json.loads(resp.read())
+    except Exception as e:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_token")
+
+    id_token_str = tokens.get("id_token")
+    if not id_token_str:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_no_id_token")
+
+    # Verify id_token and extract user info
+    try:
+        from google.oauth2 import id_token as g_id_token
+        from google.auth.transport import requests as g_requests
+        idinfo = g_id_token.verify_oauth2_token(
+            id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10
+        )
+        g_id    = idinfo["sub"]
+        email   = idinfo["email"]
+        name    = idinfo.get("name", email.split("@")[0])
+        picture = idinfo.get("picture")
+    except Exception as e:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_verify")
+
+    # Upsert user
+    user = db_one("SELECT id FROM crm_users WHERE google_id=%s OR (email=%s AND google_id IS NULL)", (g_id, email))
+    if user:
+        user_id = user["id"]
+        conn = get_db(); cur = conn.cursor()
+        try:
+            cur.execute("UPDATE crm_users SET google_id=%s, last_login_at=NOW() WHERE id=%s", (g_id, user_id))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+    else:
+        conn = get_db(); cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'','owner',%s,%s)",
+                (name, email, g_id, picture)
+            )
+            conn.commit()
+            user_id = cur.lastrowid
+            cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES(%s)", (user_id,))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+
+    # Set JWT cookie and redirect to dashboard
+    jwt_token = make_token(user_id)
+    redirect = RedirectResponse(f"{FRONTEND_URL}/dashboard", status_code=302)
+    redirect.set_cookie(
+        key="crm_token", value=jwt_token,
+        httponly=True, samesite="lax", max_age=60 * 60 * 24 * 7,
+    )
+    return redirect
+
 
 @app.post("/api/auth/google")
 def google_auth(request: GoogleAuthRequest, response: Response):

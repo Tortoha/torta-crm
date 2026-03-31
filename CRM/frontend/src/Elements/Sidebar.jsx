@@ -1,39 +1,34 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import {
-  ChartBarIcon, CurrencyDollarIcon, DocumentChartBarIcon, TrophyIcon,
-  TagIcon, ShoppingCartIcon, UsersIcon, ArchiveBoxIcon, ReceiptPercentIcon,
-  ChatBubbleLeftRightIcon, CodeBracketSquareIcon, UserGroupIcon, CreditCardIcon,
-  ChevronDownIcon, Bars3Icon, XMarkIcon,
-} from '@heroicons/react/24/solid';
+import { ChartBar, CurrencyDollar, ChartLineUp, Trophy, Tag, ShoppingCart, Users, Package, Receipt, ChatsCircle, CodeBlock, UsersThree, CreditCard, CaretDown, List, X } from '@phosphor-icons/react';
 
 const SECTIONS = [
   {
     id: 'overview', label: 'Overview',
     items: [
-      { to: '/dashboard',  label: 'Dashboard',          Icon: ChartBarIcon },
-      { to: '/revenue',    label: 'Revenue',            Icon: CurrencyDollarIcon },
-      { to: '/reports',    label: 'Reports',            Icon: DocumentChartBarIcon },
-      { to: '/targets',    label: 'Target',             Icon: TrophyIcon },
+      { to: '/dashboard',  label: 'Dashboard',          Icon: ChartBar },
+      { to: '/revenue',    label: 'Revenue',            Icon: CurrencyDollar },
+      { to: '/reports',    label: 'Reports',            Icon: ChartLineUp },
+      { to: '/targets',    label: 'Target',             Icon: Trophy },
     ],
   },
   {
     id: 'store', label: 'Store',
     items: [
-      { to: '/products',  label: 'Products',            Icon: TagIcon },
-      { to: '/orders',    label: 'Orders',              Icon: ShoppingCartIcon },
-      { to: '/customers', label: 'Customers',           Icon: UsersIcon },
-      { to: '/inventory', label: 'Inventory | Stock',   Icon: ArchiveBoxIcon },
-      { to: '/discounts', label: 'Discounts',           Icon: ReceiptPercentIcon },
-      { to: '/chat',      label: 'Chat with customers', Icon: ChatBubbleLeftRightIcon },
+      { to: '/products',  label: 'Products',            Icon: Tag },
+      { to: '/orders',    label: 'Orders',              Icon: ShoppingCart },
+      { to: '/customers', label: 'Customers',           Icon: Users },
+      { to: '/inventory', label: 'Inventory | Stock',   Icon: Package },
+      { to: '/discounts', label: 'Discounts',           Icon: Receipt },
+      { to: '/chat',      label: 'Chat with customers', Icon: ChatsCircle },
     ],
   },
   {
     id: 'account', label: 'Account',
     items: [
-      { to: '/api',          label: 'API',          Icon: CodeBracketSquareIcon },
-      { to: '/team',         label: 'Team',         Icon: UserGroupIcon },
-      { to: '/subscription', label: 'Subscription', Icon: CreditCardIcon },
+      { to: '/api',          label: 'API',          Icon: CodeBlock },
+      { to: '/team',         label: 'Team',         Icon: UsersThree },
+      { to: '/subscription', label: 'Subscription', Icon: CreditCard },
     ],
   },
 ];
@@ -79,7 +74,7 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname, onNavCli
     <div className="sb-block sb-section-block">
       <button type="button" className="sb-section-header" onClick={onToggle}>
         <span>{section.label}</span>
-        <ChevronDownIcon className={`sb-chevron${open ? ' sb-chevron--open' : ''}`} />
+        <CaretDown className={`sb-chevron${open ? ' sb-chevron--open' : ''}`} />
       </button>
 
       <div className={`sb-items-wrapper${open ? ' sb-items-wrapper--open' : ''}`}>
@@ -177,8 +172,8 @@ function Sidebar() {
         aria-label="Toggle menu"
       >
         {mobileOpen
-          ? <XMarkIcon className="sb-burger-icon" />
-          : <Bars3Icon className="sb-burger-icon" />
+          ? <X className="sb-burger-icon" />
+          : <List className="sb-burger-icon" />
         }
       </button>
 
