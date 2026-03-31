@@ -14,28 +14,22 @@ function Login() {
   const navigate = useNavigate();
 
   const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
-  const allowedPasswordCharsRegex = /[^A-Za-z0-9!@#$%_+-/\=]/g;
-
   const handleEmailChange = (e) => {
-    const value = e.target.value.replace(/[^a-zA-Z0-9._@-]/g, "");
+    const value = e.target.value;
     setEmail(value);
     setEmailError(value && !emailFormatRegex.test(value) ? "Incorrect email" : "");
   };
 
   const validatePassword = (pwd) => {
-    let errors = [];
-    if (pwd.length < 8 || pwd.length > 24) {
-      errors.push("Must be 8–24 characters");
-    } else if (!/[A-Za-z]/.test(pwd)) {
-      errors.push("Must be at least 1 letter");
-    } else if (!/\d/.test(pwd)) {
-      errors.push("Must be at least 1 digit");
-    }
-    return errors;
+    if (/\s/.test(pwd))                   return ['No spaces allowed'];
+    if (pwd.length < 8 || pwd.length > 24) return ['Must be 8-24 characters'];
+    if (!/[\p{L}]/u.test(pwd))            return ['Must contain at least 1 letter'];
+    if (!/\d/.test(pwd))                  return ['Must contain at least 1 digit'];
+    return [];
   };
 
   const handlePasswordChange = (e) => {
-    const value = e.target.value.replace(allowedPasswordCharsRegex, "");
+    const value = e.target.value;
     setPassword(value);
     setPasswordErrors(validatePassword(value));
   };

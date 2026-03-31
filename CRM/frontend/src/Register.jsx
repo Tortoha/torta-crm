@@ -19,36 +19,35 @@ function Register() {
   const navigate = useNavigate();
 
   const emailFormatRegex        = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
-  const allowedPasswordCharsRegex = /[^A-Za-z0-9!@#$%_+\-/=]/g;
-
   const handleNameChange = (e) => {
-    const value = e.target.value.replace(/[^a-zA-Z0-9]/g, "");
+    const value = e.target.value;
     setName(value);
     setNameError(value.length > 20 ? "No more than 20 characters" : "");
   };
 
   const handleEmailChange = (e) => {
-    const value = e.target.value.replace(/[^a-zA-Z0-9._@-]/g, "");
+    const value = e.target.value;
     setEmail(value);
     setEmailError(value && !emailFormatRegex.test(value) ? "Incorrect email" : "");
   };
 
   const validatePassword = (pwd) => {
-    if (pwd.length < 8 || pwd.length > 24) return ["Must be 8–24 characters"];
-    if (!/[A-Za-z]/.test(pwd))            return ["Must be at least 1 letter"];
-    if (!/\d/.test(pwd))                  return ["Must be at least 1 digit"];
+    if (/\s/.test(pwd))                   return ['No spaces allowed'];
+    if (pwd.length < 8 || pwd.length > 24) return ['Must be 8-24 characters'];
+    if (!/[\p{L}]/u.test(pwd))            return ['Must contain at least 1 letter'];
+    if (!/\d/.test(pwd))                  return ['Must contain at least 1 digit'];
     return [];
   };
 
   const handlePasswordChange = (e) => {
-    const value = e.target.value.replace(allowedPasswordCharsRegex, "");
+    const value = e.target.value;
     setPassword(value);
     setPasswordErrors(validatePassword(value));
     setRepeatError(repeatPassword && value !== repeatPassword ? "Passwords do not match" : "");
   };
 
   const handleRepeatPasswordChange = (e) => {
-    const value = e.target.value.replace(allowedPasswordCharsRegex, "");
+    const value = e.target.value;
     setRepeatPassword(value);
     setRepeatError(value !== password ? "Passwords do not match" : "");
   };

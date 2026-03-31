@@ -19,12 +19,11 @@ function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
 
-  const allowedPasswordCharsRegex = /[^A-Za-z0-9!@#$%_+-/\=]/g;
-
   const validatePassword = (pwd) => {
-    if (pwd.length < 8 || pwd.length > 24) return ["Must be 8–24 characters"];
-    if (!/[A-Za-z]/.test(pwd)) return ["Must be at least 1 letter"];
-    if (!/\d/.test(pwd)) return ["Must be at least 1 digit"];
+    if (/\s/.test(pwd))                   return ['No spaces allowed'];
+    if (pwd.length < 8 || pwd.length > 24) return ['Must be 8-24 characters'];
+    if (!/[\p{L}]/u.test(pwd))            return ['Must contain at least 1 letter'];
+    if (!/\d/.test(pwd))                  return ['Must contain at least 1 digit'];
     return [];
   };
 
@@ -43,7 +42,7 @@ function ResetPassword() {
   }, [token]);
 
   const handlePasswordChange = (e) => {
-    const value = e.target.value.replace(allowedPasswordCharsRegex, "");
+    const value = e.target.value;
     setPassword(value);
     setPasswordErrors(validatePassword(value));
     setRepeatError(repeatPassword && value !== repeatPassword ? "Passwords do not match" : "");
@@ -51,7 +50,7 @@ function ResetPassword() {
   };
 
   const handleRepeatPasswordChange = (e) => {
-    const value = e.target.value.replace(allowedPasswordCharsRegex, "");
+    const value = e.target.value;
     setRepeatPassword(value);
     setRepeatError(value !== password ? "Passwords do not match" : "");
     setGeneralError("");

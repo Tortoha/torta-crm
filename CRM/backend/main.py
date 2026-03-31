@@ -223,6 +223,21 @@ run_migrations()
 def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
 
+def sanitize(v: str) -> str:
+    if not isinstance(v, str): return v
+    return v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;").replace("'","&#x27;")
+
+def validate_password(pwd: str):
+    """Server-side password rules — applied at registration and reset."""
+    if not pwd or " " in pwd:
+        raise HTTPException(400, "Password must not contain spaces")
+    if len(pwd) < 8 or len(pwd) > 24:
+        raise HTTPException(400, "Password must be 8–24 characters")
+    if not any(c.isalpha() for c in pwd):
+        raise HTTPException(400, "Password must contain at least 1 letter")
+    if not any(c.isdigit() for c in pwd):
+        raise HTTPException(400, "Password must contain at least 1 digit")
+
 def get_ip(req: Request) -> str:
     fwd = req.headers.get("x-forwarded-for")
     return fwd.split(",")[0].strip() if fwd else (req.client.host if req.client else "unknown")
@@ -342,6 +357,7 @@ def send_code(request: SendCodeRequest, req: Request):
             record_fail(keys, now); raise HTTPException(400, "Email already exists")
         if not request.name or not request.password:
             raise HTTPException(400, "Name and password required")
+        validate_password(request.password)
     elif request.type == "login":
         if not existing or not existing.get("is_active"):
             record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
@@ -387,7 +403,7 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
         if pending["type"] == "register":
             cur.execute(
                 "INSERT INTO crm_users (name, email, password, role) VALUES (%s,%s,%s,'owner')",
-                (pending["name"], email, hash_pw(pending["password"]))
+                (sanitize(pending["name"]), email, hash_pw(pending["password"]))
             )
             conn.commit()
             user_id = cur.lastrowid
@@ -475,6 +491,7 @@ def validate_reset_token(token: str):
 def reset_password(request: ResetPasswordRequest):
     if request.password != request.repeat_password:
         raise HTTPException(400, "Passwords do not match")
+    validate_password(request.password)
     h    = hashlib.sha256(request.token.encode()).hexdigest()
     data = password_reset_tokens.get(h)
     if not data or datetime.utcnow() > data["expires"]:
@@ -538,7 +555,7 @@ def create_api_key(request: CreateApiKeyRequest, req: Request, user: dict = Depe
     try:
         cur.execute(
             "INSERT INTO crm_api_keys (crm_user_id, name, api_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,1)",
-            (user["id"], name, new_key, get_ip(req))
+            (user["id"], sanitize(name), new_key, get_ip(req))
         )
         conn.commit()
         new_id = cur.lastrowid  # ← получаем ID сразу после INSERT
@@ -652,9 +669,9 @@ def create_role(request: CreateRoleRequest, user: dict = Depends(get_current_use
 
     conn = get_db(); cur = conn.cursor()
     try:
-        cur.execute("INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,%s,0)", (kid, name))
+        cur.execute("INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,%s,0)", (kid, sanitize(name)))
         conn.commit()
-        return {"id": cur.lastrowid, "name": name, "is_system": False}
+        return {"id": cur.lastrowid, "name": sanitize(name), "is_system": False}
     finally:
         cur.close(); conn.close()
 
@@ -913,7 +930,7 @@ def rename_api_key(key_id: int, request: RenameApiKeyRequest, user: dict = Depen
         raise HTTPException(404, "API key not found")
     conn = get_db(); cur = conn.cursor()
     try:
-        cur.execute("UPDATE crm_api_keys SET name=%s WHERE id=%s", (name, key_id))
+        cur.execute("UPDATE crm_api_keys SET name=%s WHERE id=%s", (sanitize(name), key_id))
         conn.commit()
     finally:
         cur.close(); conn.close()
@@ -979,10 +996,10 @@ def create_channel(request: CreateChannelRequest, user: dict = Depends(get_curre
     try:
         cur.execute(
             "INSERT INTO crm_chat_channels (api_key_id, name, is_general, created_by) VALUES(%s,%s,0,%s)",
-            (kid, name, user["id"])
+            (kid, sanitize(name), user["id"])
         )
         conn.commit()
-        return {"id": cur.lastrowid, "name": name, "is_general": False, "created_at": str(datetime.utcnow())}
+        return {"id": cur.lastrowid, "name": sanitize(name), "is_general": False, "created_at": str(datetime.utcnow())}
     finally:
         cur.close(); conn.close()
 
@@ -1049,7 +1066,7 @@ def send_message(channel_id: int, request: SendMessageRequest, user: dict = Depe
     try:
         cur.execute(
             "INSERT INTO crm_chat_messages (channel_id, user_id, message) VALUES(%s,%s,%s)",
-            (channel_id, user["id"], msg)
+            (channel_id, user["id"], sanitize(msg))
         )
         conn.commit()
         return {
@@ -1099,8 +1116,8 @@ def create_product(request: CreateProductRequest, user: dict = Depends(get_curre
     try:
         cur.execute(
             "INSERT INTO products (api_key_id,title,description,characteristics,seo_title,seo_description,seo_keywords) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (kid, name, request.description, request.characteristics,
-             request.seo_title, request.seo_description, request.seo_keywords)
+            (kid, sanitize(name), sanitize(request.description), sanitize(request.characteristics),
+             sanitize(request.seo_title), sanitize(request.seo_description), sanitize(request.seo_keywords))
         )
         conn.commit()
         return {"id": cur.lastrowid, "title": name}
@@ -1212,7 +1229,7 @@ def create_variation(product_id: int, request: CreateVariationRequest, user: dic
     conn = get_db(); cur = conn.cursor()
     try:
         cur.execute("INSERT INTO product_variations (product_id,variation_name,image_url) VALUES(%s,%s,%s)",
-                    (product_id, name, request.image_url))
+                    (product_id, sanitize(name), request.image_url))
         conn.commit()
         return {"id": cur.lastrowid, "variation_name": name, "image_url": request.image_url, "sizes": []}
     finally:
@@ -1487,7 +1504,7 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
             name = request.name.strip()
             if not name: raise HTTPException(400, "Name cannot be empty")
             if len(name) > 80: raise HTTPException(400, "Name too long (max 80)")
-            cur.execute("UPDATE crm_users SET name=%s WHERE id=%s", (name, user["id"]))
+            cur.execute("UPDATE crm_users SET name=%s WHERE id=%s", (sanitize(name), user["id"]))
         upd = {}
         if request.language is not None: upd["language"] = request.language
         if request.currency is not None: upd["currency"] = request.currency
@@ -1622,7 +1639,7 @@ def google_callback(code: str = None, error: str = None):
         try:
             cur.execute(
                 "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'','owner',%s,%s)",
-                (name, email, g_id, picture)
+                (sanitize(name), email, g_id, picture)
             )
             conn.commit()
             user_id = cur.lastrowid
@@ -1670,7 +1687,7 @@ def google_auth(request: GoogleAuthRequest, response: Response):
         try:
             cur.execute(
                 "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'',\'owner\',%s,%s)",
-                (name, email, g_id, picture)
+                (sanitize(name), email, g_id, picture)
             )
             conn.commit()
             user_id = cur.lastrowid

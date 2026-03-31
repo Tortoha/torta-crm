@@ -188,6 +188,20 @@ def get_db():
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
+def sanitize(v: str) -> str:
+    if not isinstance(v, str): return v
+    return v.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#x27;")
+
+def validate_password(pwd: str):
+    if not pwd or " " in pwd:
+        raise HTTPException(status_code=400, detail="Password must not contain spaces")
+    if len(pwd) < 8 or len(pwd) > 24:
+        raise HTTPException(status_code=400, detail="Password must be 8–24 characters")
+    if not any(c.isalpha() for c in pwd):
+        raise HTTPException(status_code=400, detail="Password must contain at least 1 letter")
+    if not any(c.isdigit() for c in pwd):
+        raise HTTPException(status_code=400, detail="Password must contain at least 1 digit")
+
 def create_token(user_id: int) -> str:
     payload = {"sub": str(user_id), "exp": datetime.utcnow() + timedelta(hours=JWT_HOURS)}
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
@@ -352,6 +366,7 @@ def send_code(
             fail("Email already exists")
         if not request.name or not request.password:
             fail("Name and password required")
+        validate_password(request.password)
 
     elif request.type == "login":
         db_user = get_user_by_email(email, api_key_id)
@@ -434,7 +449,7 @@ def verify_code(
         if pending["type"] == "register":
             cursor.execute(
                 "INSERT INTO users (name, email, password_hash, api_key_id) VALUES (%s, %s, %s, %s)",
-                (pending["name"], email, hash_password(pending["password"]), api_key_id)
+                (sanitize(pending["name"]), email, hash_password(pending["password"]), api_key_id)
             )
             conn.commit()
             user_id = cursor.lastrowid
@@ -571,6 +586,7 @@ def reset_password(
 
     if password != (request.repeat_password or ""):
         raise HTTPException(status_code=400, detail="Passwords do not match")
+    validate_password(password)
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     token_data = password_reset_tokens.get(token_hash)
@@ -1181,7 +1197,7 @@ def add_review(
         cursor.execute(
             """INSERT INTO product_reviews (product_id, user_id, rating, comment, created_at)
                VALUES (%s, %s, %s, %s, NOW())""",
-            (review.product_id, user_id, review.rating, review.comment)
+            (review.product_id, user_id, review.rating, sanitize(review.comment))
         )
         conn.commit()
         return {"success": True}

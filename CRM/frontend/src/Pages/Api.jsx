@@ -25,7 +25,6 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-const sanitizeName = (v) => v.replace(/[^a-zA-Zа-яА-ЯёЁ0-9 _\-]/g, '');
 
 function CreateModal({ onClose, onCreated }) {
   const [name, setName] = useState('');
@@ -55,7 +54,7 @@ function CreateModal({ onClose, onCreated }) {
       <form className="api-modal-form" onSubmit={handleCreate}>
         <div className="api-modal-row">
           <input className="api-modal-input" placeholder="Key name, e.g. My Store"
-            value={name} onChange={e => setName(sanitizeName(e.target.value))} maxLength={100} autoFocus />
+            value={name} onChange={e => setName(e.target.value)} maxLength={100} autoFocus />
           <button className="api-modal-btn" type="submit" disabled={creating}>
             {creating ? 'Creating…' : 'Create'}
           </button>
@@ -95,7 +94,7 @@ function RenameModal({ k, onClose, onRenamed }) {
       <form className="api-modal-form" onSubmit={handleSave}>
         <div className="api-modal-row">
           <input className="api-modal-input" value={name}
-            onChange={e => setName(sanitizeName(e.target.value))} maxLength={100} autoFocus />
+            onChange={e => setName(e.target.value)} maxLength={100} autoFocus />
           <button className="api-modal-btn" type="submit" disabled={saving}>
             {saving ? 'Saving…' : 'Save'}
           </button>
@@ -245,7 +244,7 @@ function Api() {
                 className="api-search-input"
                 placeholder="Search by name or token…"
                 value={search}
-                onChange={e => setSearch(sanitizeName(e.target.value))}
+                onChange={e => setSearch(e.target.value)}
               />
             </div>
             <button className="api-new-btn" onClick={() => setCreateOpen(true)}>

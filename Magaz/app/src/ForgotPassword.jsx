@@ -13,7 +13,7 @@ function ForgotPassword() {
   const emailFormatRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
 
   const handleEmailChange = (e) => {
-    const value = e.target.value.replace(/[^a-zA-Z0-9._@-]/g, "");
+    const value = e.target.value;
     setEmail(value);
     setEmailError(value && !emailFormatRegex.test(value) ? "Incorrect email" : "");
     setGeneralError("");
