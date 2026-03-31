@@ -565,9 +565,9 @@ def create_api_key(request: CreateApiKeyRequest, req: Request, user: dict = Depe
         conn.commit()
         owner_role_id = cur.lastrowid
 
-        # Добавляем создателя как участника
+        # Добавляем создателя как участника (IGNORE — на случай если запись уже есть)
         cur.execute(
-            "INSERT INTO crm_team_members (api_key_id, crm_user_id, crm_role_id) VALUES (%s,%s,%s)",
+            "INSERT IGNORE INTO crm_team_members (api_key_id, crm_user_id, crm_role_id) VALUES (%s,%s,%s)",
             (new_id, user["id"], owner_role_id)
         )
 
