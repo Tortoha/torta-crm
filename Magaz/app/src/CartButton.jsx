@@ -2,18 +2,15 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Bag } from '@phosphor-icons/react';
 import "./Style/CartButton.css";
-import { API_BASE } from "./api.js"
+import { client } from "./api.js"
 
 function CartButton() {
   const [subtotal, setSubtotal] = useState(0);
 
   const fetchCart = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/cart`, {credentials: "include"});
-      if (response.ok) {
-        const data = await response.json();
-        setSubtotal(data.subtotal || 0);
-      }
+      const { ok, data } = await client.cart.get();
+      if (ok) setSubtotal(data.subtotal || 0);
     } catch (error) {
       console.error("Error fetching cart:", error);
     }

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
-import { API_BASE } from "./api.js"
+import { client } from "./api.js"
 import PasswordInput from "./Elements/PasswordInput";
 
 function Login() {
@@ -47,23 +47,16 @@ function Login() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/send-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email, password, type: "login" }),
-      });
+      const { ok, data } = await client.auth.sendCode({ email, password, type: "login" });
 
-      const data = await res.json();
-
-      if (res.ok) {
+      if (ok) {
         localStorage.setItem("pendingEmail", email);
         localStorage.setItem("pendingVerificationType", "login");
         const resendSeconds = Number(data.resend_available_in || 60);
         localStorage.setItem("pendingResendUntil", String(Date.now() + resendSeconds * 1000));
         navigate("/login/verification");
       } else {
-        setGeneralError(data.detail || "Login failed");
+        setGeneralError(data?.detail || "Login failed");
       }
     } catch {
       setGeneralError("Network error");

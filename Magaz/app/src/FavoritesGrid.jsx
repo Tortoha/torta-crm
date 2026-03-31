@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 
 import "./Style/Load.css";
 
-import { API_BASE } from "./api.js"
+import { client } from "./api.js"
 
 function FavoritesGrid() {
   const [items, setItems] = useState([]);
@@ -13,16 +13,16 @@ function FavoritesGrid() {
   useEffect(() => {
     (async () => {
       try {
-        const [favRes, prodRes] = await Promise.all([
-          fetch(`${API_BASE}/api/favorites`, { credentials: "include" }),
-          fetch(`${API_BASE}/api-products`),
+        const [{ ok: favOk, data: favorites }, { ok: prodOk, data: products }] = await Promise.all([
+          client.favorites.list(),
+          client.products.list(),
         ]);
 
-        const favorites = favRes.ok ? await favRes.json() : [];
-        const products = prodRes.ok ? await prodRes.json() : [];
+        const favList = favOk ? favorites : [];
+        const prodList = prodOk ? products : [];
 
-        const favSet = new Set(favorites.map(f => f.product_id));
-        setItems(products.filter((p) => favSet.has(p.id)));
+        const favSet = new Set(favList.map(f => f.product_id));
+        setItems(prodList.filter((p) => favSet.has(p.id)));
       } finally {
         setLoading(false);
       }

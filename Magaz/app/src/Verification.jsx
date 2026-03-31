@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import "./Style/Login.css";
-import { API_BASE } from "./api.js"
+import { client } from "./api.js"
 
 function Verification() {
   const [code, setCode] = useState("");
@@ -69,23 +69,16 @@ function Verification() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/verify-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email, code }),
-      });
+      const { ok, data } = await client.auth.verifyCode(email, code);
 
-      const data = await res.json();
-
-      if (res.ok) {
+      if (ok) {
         localStorage.removeItem("pendingEmail");
         localStorage.removeItem("pendingVerificationType");
         localStorage.removeItem("pendingResendUntil");
         navigate("/");
         window.location.reload();
       } else {
-        setGeneralError(data.detail || "Verification failed");
+        setGeneralError(data?.detail || "Verification failed");
       }
     } catch {
       setGeneralError("Network error");
@@ -101,15 +94,9 @@ function Verification() {
     setGeneralError("");
 
     try {
-      const res = await fetch(`${API_BASE}/api/resend-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
+      const { ok, status, data } = await client.auth.resendCode(email);
 
-      const data = await res.json();
-
-      if (res.ok) {
+      if (ok) {
         const resendSeconds = Number(data.resend_available_in || 60);
         const resendUntil = Date.now() + resendSeconds * 1000;
 
@@ -117,15 +104,15 @@ function Verification() {
         setCooldown(resendSeconds);
         setGeneralError("Code resent!");
       } else {
-        if (res.status === 429) {
-          const seconds = extractSecondsFromMessage(data.detail);
+        if (status === 429) {
+          const seconds = extractSecondsFromMessage(data?.detail);
           const resendUntil = Date.now() + seconds * 1000;
 
           localStorage.setItem("pendingResendUntil", String(resendUntil));
           setCooldown(seconds);
         }
 
-        setGeneralError(data.detail || "Failed to resend");
+        setGeneralError(data?.detail || "Failed to resend");
       }
     } catch {
       setGeneralError("Network error");

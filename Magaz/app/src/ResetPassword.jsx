@@ -2,8 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, Link, useParams } from "react-router-dom";
 import "./Style/Login.css";
 import PasswordInput from "./Elements/PasswordInput";
-
-import { API_BASE } from "./api.js"
+import { client } from "./api.js"
 
 function ResetPassword() {
   const { token } = useParams();
@@ -29,12 +28,11 @@ function ResetPassword() {
 
   useEffect(() => {
     let ignore = false;
-    fetch(`${API_BASE}/api/reset-password/validate/${token}`)
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+    client.auth.validateResetToken(token)
       .then(({ ok, data }) => {
         if (ignore) return;
         if (ok) setEmail(data.email || "");
-        else setGeneralError(data.detail || "Invalid or expired reset link");
+        else setGeneralError(data?.detail || "Invalid or expired reset link");
       })
       .catch(() => { if (!ignore) setGeneralError("Network error"); })
       .finally(() => { if (!ignore) setPageLoading(false); });
@@ -69,17 +67,12 @@ function ResetPassword() {
     if (!isValid) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/reset-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, password, repeat_password: repeatPassword }),
-      });
-      const data = await res.json();
-      if (res.ok) {
+      const { ok, data } = await client.auth.resetPassword(token, password, repeatPassword);
+      if (ok) {
         setSuccessMessage("Password changed successfully");
         setTimeout(() => navigate("/login"), 1200);
       } else {
-        setGeneralError(data.detail || "Failed to reset password");
+        setGeneralError(data?.detail || "Failed to reset password");
       }
     } catch {
       setGeneralError("Network error");
@@ -93,7 +86,6 @@ function ResetPassword() {
       <section className="regis">
         <h1 className="verify-h1">Reset Password</h1>
 
-        {/* Страница загружается — токен проверяется */}
         {pageLoading && (
           <div className="reg">
             <div className="secsh2">
@@ -102,7 +94,6 @@ function ResetPassword() {
           </div>
         )}
 
-        {/* Токен невалиден */}
         {!pageLoading && !email && (
           <div className="reg">
             <div className="secsh2">
@@ -116,7 +107,6 @@ function ResetPassword() {
           </div>
         )}
 
-        {/* Основная форма */}
         {!pageLoading && email && (
           <>
             <p className="verify-p">Create a new password for</p>

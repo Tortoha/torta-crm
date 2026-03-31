@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import Star from "./Star";
-import { API_BASE } from "../api.js"
+import { client } from "../api.js"
 
 function ReviewMenu({ productId, isAuthenticated, canReview, onReviewSubmitted }) {
     const [menuOpen, setMenuOpen] = useState(false);
@@ -42,20 +42,8 @@ function ReviewMenu({ productId, isAuthenticated, canReview, onReviewSubmitted }
         setSubmitting(true);
 
         try {
-            const response = await fetch(`${API_BASE}/api/reviews/add`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({
-                    product_id: productId,
-                    rating: rating,
-                    comment: comment.trim()
-                })
-            });
-
-            if (response.ok) {
-                onReviewSubmitted();
-            }
+            const { ok } = await client.reviews.add(productId, rating, comment.trim());
+            if (ok) onReviewSubmitted();
         } catch (error) {
             console.error("Error submitting review");
         } finally {

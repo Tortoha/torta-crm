@@ -11,11 +11,11 @@ import ForgotPassword from './ForgotPassword';
 import ResetPassword from './ResetPassword';
 import Favorites from './Favorites';
 import Cart from './Cart';
-import { API_BASE } from "./api.js"
+import { client } from "./api.js"
 
 function App() {
   useEffect(() => {
-    fetch(`${API_BASE}/api/track/visit`, { method: "POST", credentials: "include" });
+    client.track.visit();
   }, []);
 
   return (

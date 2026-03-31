@@ -1,16 +1,15 @@
 import { useEffect } from 'react'
 import Card from './Card'
 import { useState } from 'react'
-import { API_BASE } from "./api.js"
+import { client } from "./api.js"
 
 function Grid() {
   const [data, setData] = useState([]);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api-products`)
-      .then(res => res.json())
-      .then(data => setData(data))
-      .catch(err => console.log(err))
+    client.products.list().then(({ ok, data }) => {
+      if (ok) setData(data);
+    }).catch(err => console.log(err));
   }, [])
 
   return (

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Star from "./Star";
-import { API_BASE } from "../api.js"
+import { client } from "../api.js"
 
 function ReviewsList({ reviews, currentUserId, onReviewDeleted }) {
     const [hoveredReviewId, setHoveredReviewId] = useState(null);
@@ -31,16 +31,11 @@ function ReviewsList({ reviews, currentUserId, onReviewDeleted }) {
         setDeletingReviewId(reviewId);
 
         try {
-            const response = await fetch(`${API_BASE}/api/reviews/${reviewId}`, {
-                method: "DELETE",
-                credentials: "include",
-            });
-
-            if (response.ok) {
+            const { ok, data } = await client.reviews.delete(reviewId);
+            if (ok) {
                 onReviewDeleted();
             } else {
-                const errorData = await response.json();
-                console.error("Failed to delete review:", errorData);
+                console.error("Failed to delete review:", data);
             }
         } catch (error) {
             console.error("Error deleting review:", error);

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
-import { API_BASE } from "./api.js"
+import { client } from "./api.js"
 import PasswordInput from "./Elements/PasswordInput";
 
 function Regis() {
@@ -78,21 +78,9 @@ function Regis() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/send-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          name,
-          email,
-          password,
-          type: "register",
-        }),
-      });
+      const { ok, data } = await client.auth.sendCode({ name, email, password, type: "register" });
 
-      const data = await res.json();
-
-      if (res.ok) {
+      if (ok) {
         localStorage.setItem("pendingEmail", email);
         localStorage.setItem("pendingVerificationType", "register");
 
@@ -102,7 +90,7 @@ function Regis() {
 
         navigate("/registration/verification");
       } else {
-        setGeneralError(data.detail || "Registration failed");
+        setGeneralError(data?.detail || "Registration failed");
       }
     } catch {
       setGeneralError("Network error");
