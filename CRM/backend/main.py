@@ -4,7 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-import mysql.connector, hashlib, secrets, jwt, random, resend, os, io
+import mysql.connector, hashlib, secrets, jwt, random, os, io, smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 try:
     from PIL import Image as PilImage
@@ -30,8 +32,11 @@ JWT_HOURS    = 24 * 7
 FRONTEND_URL = "http://localhost:5174"
 DB_CONFIG    = {"host": "localhost", "user": "root", "password": "root", "database": "crmdb"}
 
-RESEND_API_KEY          = "re_fqgeUf1L_NnvvDEmuLumrE2pkLGLv7wUC"
-RESEND_FROM             = "onboarding@resend.dev"
+SMTP_HOST               = "email-smtp.eu-north-1.amazonaws.com"
+SMTP_PORT               = 587
+SMTP_USER               = "AKIASY5ETQGYQK5YLIM3"
+SMTP_PASS               = "BL6yBolOEm/aYUODmJ5M+G0AQi14nTd3M4rpnPZN7yI6"
+EMAIL_FROM              = "support@tortafinance.com"
 MAX_FAILED_ATTEMPTS     = 5
 BLOCK_MINUTES           = 10
 CODE_TTL_MINUTES        = 10
@@ -48,7 +53,20 @@ CLOUDINARY_API_SECRET   = "I35G6txxRQ5A8QKkHh76TzlVDnU"
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 app = FastAPI()
-resend.api_key = RESEND_API_KEY
+def send_email(to: str, subject: str, html: str) -> bool:
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = f"Torta CRM <{EMAIL_FROM}>"
+        msg["To"]      = to
+        msg.attach(MIMEText(html, "html"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.sendmail(EMAIL_FROM, to, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"Email error: {e}"); return False
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 if CLOUDINARY_AVAILABLE:
@@ -309,34 +327,22 @@ def gen_api_key() -> str:
 # ════════════════════════════════════════════
 
 def send_code_email(email: str, code: int) -> bool:
-    try:
-        resend.Emails.send({
-            "from": RESEND_FROM, "to": email, "subject": "Verification Code",
-            "html": f"""<div style="font-family:Arial;text-align:center;padding:40px">
+    html = f"""<div style="font-family:Arial;text-align:center;padding:40px">
                 <h1>Your verification code</h1>
                 <p style="font-size:36px;font-weight:bold;letter-spacing:8px">
                     {str(code)[:3]} {str(code)[3:]}</p>
                 <p style="color:#666">Expires in 10 minutes.</p></div>"""
-        })
-        return True
-    except Exception as e:
-        print(f"Email error: {e}"); return False
+    return send_email(email, "Verification Code", html)
 
 def send_reset_email(email: str, token: str) -> bool:
     url = f"{FRONTEND_URL}/reset-password/{token}"
-    try:
-        resend.Emails.send({
-            "from": RESEND_FROM, "to": email, "subject": "Password Reset",
-            "html": f"""<div style="font-family:Arial;text-align:center;padding:40px">
+    html = f"""<div style="font-family:Arial;text-align:center;padding:40px">
                 <h1>Reset your password</h1>
                 <a href="{url}" style="display:inline-block;margin-top:24px;padding:14px 32px;
                     background:#0071e3;color:#fff;text-decoration:none;border-radius:16px;
                     font-size:18px;font-weight:600">Reset password</a>
                 <p style="margin-top:24px;color:#999;font-size:12px">{url}</p></div>"""
-        })
-        return True
-    except Exception as e:
-        print(f"Reset email error: {e}"); return False
+    return send_email(email, "Password Reset", html)
 
 # ════════════════════════════════════════════
 # АУТЕНТИФИКАЦИЯ
@@ -1697,4 +1703,171 @@ def google_auth(request: GoogleAuthRequest, response: Response):
             cur.close(); conn.close()
 
     set_cookie(response, make_token(user_id))
+    return {"success": True}
+
+
+# ════════════════════════════════════════════
+# EMAIL DOMAIN
+# ════════════════════════════════════════════
+
+import dns.resolver
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+import base64
+
+class EmailDomainRequest(BaseModel):
+    domain: str
+    from_name: str
+    from_email: str
+
+def _gen_dkim_keys():
+    """Generate RSA-2048 key pair for DKIM. Returns (private_pem, public_dns_value)."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption()
+    ).decode()
+    pub_der = key.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    pub_b64 = base64.b64encode(pub_der).decode()
+    dns_value = f"v=DKIM1; k=rsa; p={pub_b64}"
+    return private_pem, dns_value
+
+def _check_txt(hostname: str, expected: str) -> bool:
+    """Return True if a TXT record containing expected string exists on hostname."""
+    try:
+        answers = dns.resolver.resolve(hostname, "TXT", lifetime=5)
+        for r in answers:
+            txt = b"".join(r.strings).decode(errors="ignore")
+            if expected in txt:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+@app.get("/api/email-domain")
+def get_email_domain(user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    row = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+    if not row:
+        return {"configured": False}
+    return {
+        "configured":   True,
+        "domain":       row["domain"],
+        "from_name":    row["from_name"],
+        "from_email":   row["from_email"],
+        "is_verified":  bool(row["is_verified"]),
+        "verified_at":  row["verified_at"].isoformat() if row["verified_at"] else None,
+        "dkim_selector": row["dkim_selector"],
+        "dkim_public":  row["dkim_public"],
+        "verify_token": row["verify_token"],
+    }
+
+
+@app.post("/api/email-domain")
+def save_email_domain(req: EmailDomainRequest, user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    require_owner(user, key_id)
+
+    domain     = req.domain.lower().strip().rstrip("/")
+    domain     = domain.removeprefix("https://").removeprefix("http://")
+    from_name  = sanitize(req.from_name.strip())
+    from_email = req.from_email.lower().strip()
+
+    if not domain or "." not in domain:
+        raise HTTPException(400, "Invalid domain")
+    if not from_email or "@" not in from_email:
+        raise HTTPException(400, "Invalid from email")
+
+    existing = db_one("SELECT id FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+
+    if existing:
+        # Update — regenerate DKIM only if domain changed
+        old = db_one("SELECT domain, dkim_private, dkim_public, verify_token FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+        if old["domain"] != domain:
+            private_pem, dns_value = _gen_dkim_keys()
+            token = secrets.token_hex(24)
+            conn = get_db(); cur = conn.cursor()
+            try:
+                cur.execute("""
+                    UPDATE crm_email_domains
+                    SET domain=%s, from_name=%s, from_email=%s,
+                        verify_token=%s, is_verified=0, verified_at=NULL,
+                        dkim_private=%s, dkim_public=%s
+                    WHERE api_key_id=%s
+                """, (domain, from_name, from_email, token, private_pem, dns_value, key_id))
+                conn.commit()
+            finally:
+                cur.close(); conn.close()
+        else:
+            conn = get_db(); cur = conn.cursor()
+            try:
+                cur.execute("""
+                    UPDATE crm_email_domains
+                    SET from_name=%s, from_email=%s
+                    WHERE api_key_id=%s
+                """, (from_name, from_email, key_id))
+                conn.commit()
+            finally:
+                cur.close(); conn.close()
+    else:
+        private_pem, dns_value = _gen_dkim_keys()
+        token = secrets.token_hex(24)
+        conn = get_db(); cur = conn.cursor()
+        try:
+            cur.execute("""
+                INSERT INTO crm_email_domains
+                    (api_key_id, domain, from_name, from_email, verify_token, dkim_private, dkim_public)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, (key_id, domain, from_name, from_email, token, private_pem, dns_value))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+
+    return get_email_domain(user)
+
+
+@app.post("/api/email-domain/verify")
+def verify_email_domain(user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    row = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+    if not row:
+        raise HTTPException(404, "No domain configured")
+
+    domain = row["domain"]
+    results = {
+        "verification": _check_txt(f"_torta-verify.{domain}", row["verify_token"]),
+        "dkim":         _check_txt(f"{row['dkim_selector']}._domainkey.{domain}", "DKIM1"),
+        "spf":          _check_txt(domain, "v=spf1"),
+    }
+    all_ok = results["verification"] and results["dkim"]
+
+    if all_ok and not row["is_verified"]:
+        conn = get_db(); cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE crm_email_domains SET is_verified=1, verified_at=NOW() WHERE api_key_id=%s",
+                (key_id,)
+            )
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+
+    return {"results": results, "all_ok": all_ok}
+
+
+@app.delete("/api/email-domain")
+def delete_email_domain(user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    require_owner(user, key_id)
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM crm_email_domains WHERE api_key_id=%s", (key_id,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
     return {"success": True}

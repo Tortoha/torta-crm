@@ -15,6 +15,7 @@ import Team          from './Pages/Team.jsx';
 import Products      from './Pages/Products.jsx';
 import Settings      from './Pages/Settings.jsx';
 import Invite        from './Pages/Invite.jsx';
+import Email         from './Pages/Email.jsx';
 
 function App() {
   return (
@@ -45,6 +46,9 @@ function App() {
         </Route>
         <Route path="/settings"                  element={<Layout />}>
           <Route index element={<Settings />} />
+        </Route>
+        <Route path="/email"                     element={<Layout />}>
+          <Route index element={<Email />} />
         </Route>
       </Routes>
     </Router>

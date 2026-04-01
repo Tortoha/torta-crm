@@ -9,7 +9,9 @@ import hashlib
 import secrets
 import jwt
 import random
-import resend
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pydantic import BaseModel
 from typing import Optional, List
 from hashids import Hashids
@@ -23,8 +25,11 @@ SECRET_KEY = "d2a9c8f0e5b741a39f6c8d2e1b5a9c3f8e7d6c5b4a3928173645e5f6a7b8c9d0"
 JWT_ALGORITHM = "HS256"
 JWT_HOURS = 24 * 7
 
-RESEND_API_KEY = "re_AixvxJe9_aQ8UsEwgVTFQjjrcUUMnAi6e"
-RESEND_FROM = "onboarding@resend.dev"
+SMTP_HOST = "email-smtp.eu-north-1.amazonaws.com"
+SMTP_PORT = 587
+SMTP_USER = "AKIASY5ETQGYQK5YLIM3"
+SMTP_PASS = "BL6yBolOEm/aYUODmJ5M+G0AQi14nTd3M4rpnPZN7yI6"
+EMAIL_FROM = "support@tortafinance.com"
 FRONTEND_URL = "http://localhost:5173"
 MAX_FAILED_ATTEMPTS = 5
 BLOCK_MINUTES = 10
@@ -42,7 +47,37 @@ DB_CONFIG = {
 hashids = Hashids(salt="qpzmrld10vsljklfgdnsdsafjkhfl526742228666777mzpqnxowhgf", min_length=6)
 
 app = FastAPI()
-resend.api_key = RESEND_API_KEY
+def get_project_email(api_key_id: int) -> tuple[str, str]:
+    """Return (from_name, from_email) for this project.
+    Uses verified custom domain if configured, otherwise falls back to platform default."""
+    conn = get_db(); cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT from_name, from_email FROM crm_email_domains "
+            "WHERE api_key_id = %s AND is_verified = 1",
+            (api_key_id,)
+        )
+        row = cursor.fetchone()
+    finally:
+        cursor.close(); conn.close()
+    if row:
+        return row["from_name"], row["from_email"]
+    return "Torta Store", EMAIL_FROM
+
+def send_email(to: str, subject: str, html: str, from_name: str = "Torta Store", from_email: str = EMAIL_FROM) -> bool:
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = f"{from_name} <{from_email}>"
+        msg["To"]      = to
+        msg.attach(MIMEText(html, "html"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.sendmail(from_email, to, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"Email error: {e}"); return False
 
 pending_verifications = {}   # email -> { code, type, name, password, expires, next_resend_at }
 login_attempts        = {}   # "ip:..." / "email:..." -> { count, blocked_until }
@@ -247,56 +282,38 @@ def get_client_ip(request: Request) -> str:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
-def send_code_email(email: str, code: int) -> bool:
-    try:
-        resend.Emails.send({
-            "from": RESEND_FROM,
-            "to": email,
-            "subject": "Verification Code",
-            "html": f"""
-                <div style="font-family: Arial, sans-serif; text-align: center; padding: 40px;">
-                    <h1 style="color: #333;">Your verification code</h1>
-                    <p style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #000;">
-                        {str(code)[:3]} {str(code)[3:]}
-                    </p>
-                    <p style="color: #666;">This code expires in 10 minutes.</p>
-                </div>
-            """
-        })
-        return True
-    except Exception as e:
-        print(f"Email error: {e}")
-        return False
+def send_code_email(email: str, code: int, api_key_id: int = None) -> bool:
+    from_name, from_email = get_project_email(api_key_id) if api_key_id else ("Torta Store", EMAIL_FROM)
+    html = f"""
+        <div style="font-family: Arial, sans-serif; text-align: center; padding: 40px;">
+            <h1 style="color: #333;">Your verification code</h1>
+            <p style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #000;">
+                {str(code)[:3]} {str(code)[3:]}
+            </p>
+            <p style="color: #666;">This code expires in 10 minutes.</p>
+        </div>"""
+    return send_email(email, "Verification Code", html, from_name, from_email)
 
-def send_reset_email(email: str, token: str) -> bool:
+def send_reset_email(email: str, token: str, api_key_id: int = None) -> bool:
+    from_name, from_email = get_project_email(api_key_id) if api_key_id else ("Torta Store", EMAIL_FROM)
     reset_url = f"{FRONTEND_URL}/reset-password/{token}"
-    try:
-        resend.Emails.send({
-            "from": RESEND_FROM,
-            "to": email,
-            "subject": "Password Reset",
-            "html": f"""
-                <div style="font-family: Arial, sans-serif; text-align: center; padding: 40px;">
-                    <h1 style="color: #333;">Reset your password</h1>
-                    <p style="font-size: 16px; color: #666;">
-                        Click the button below to set a new password. Link expires in 30 minutes.
-                    </p>
-                    <a href="{reset_url}" style="
-                        display: inline-block; margin-top: 24px; padding: 14px 32px;
-                        background: #0071e3; color: #fff; text-decoration: none;
-                        border-radius: 16px; font-size: 18px; font-weight: 600;">
-                        Reset password
-                    </a>
-                    <p style="margin-top: 24px; color: #999; font-size: 12px; word-break: break-all;">
-                        {reset_url}
-                    </p>
-                </div>
-            """
-        })
-        return True
-    except Exception as e:
-        print(f"Reset email error: {e}")
-        return False
+    html = f"""
+        <div style="font-family: Arial, sans-serif; text-align: center; padding: 40px;">
+            <h1 style="color: #333;">Reset your password</h1>
+            <p style="font-size: 16px; color: #666;">
+                Click the button below to set a new password. Link expires in 30 minutes.
+            </p>
+            <a href="{reset_url}" style="
+                display: inline-block; margin-top: 24px; padding: 14px 32px;
+                background: #0071e3; color: #fff; text-decoration: none;
+                border-radius: 16px; font-size: 18px; font-weight: 600;">
+                Reset password
+            </a>
+            <p style="margin-top: 24px; color: #999; font-size: 12px; word-break: break-all;">
+                {reset_url}
+            </p>
+        </div>"""
+    return send_email(email, "Password Reset", html, from_name, from_email)
     
 def try_get_current_user_id(request: Request):
     try:
@@ -389,7 +406,7 @@ def send_code(
         "next_resend_at": now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
     }
 
-    if not send_code_email(email, code):
+    if not send_code_email(email, code, api_key_id):
         del pending_verifications[pv_key]
         raise HTTPException(status_code=500, detail="Failed to send email")
 
@@ -496,7 +513,7 @@ def resend_code(
     pending_verifications[pv_key]["expires"]         = now + timedelta(minutes=CODE_TTL_MINUTES)
     pending_verifications[pv_key]["next_resend_at"]  = now + timedelta(seconds=RESEND_COOLDOWN_SECONDS)
 
-    if not send_code_email(email, code):
+    if not send_code_email(email, code, pending_verifications[pv_key]["api_key_id"]):
         raise HTTPException(status_code=500, detail="Failed to send email")
 
     return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
@@ -553,7 +570,7 @@ def forgot_password(
         "expires":    datetime.utcnow() + timedelta(minutes=RESET_TTL_MINUTES),
     }
 
-    if not send_reset_email(email, raw_token):
+    if not send_reset_email(email, raw_token, api_key_id):
         del password_reset_tokens[token_hash]
         raise HTTPException(status_code=500, detail="Failed to send email")
 
