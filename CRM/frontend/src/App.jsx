@@ -16,6 +16,7 @@ import Products      from './Pages/Products.jsx';
 import Settings      from './Pages/Settings.jsx';
 import Invite        from './Pages/Invite.jsx';
 import Email         from './Pages/Email.jsx';
+import OAuth         from './Pages/OAuth.jsx';
 
 function App() {
   return (
@@ -49,6 +50,9 @@ function App() {
         </Route>
         <Route path="/email"                     element={<Layout />}>
           <Route index element={<Email />} />
+        </Route>
+        <Route path="/oauth"                     element={<Layout />}>
+          <Route index element={<OAuth />} />
         </Route>
       </Routes>
     </Router>

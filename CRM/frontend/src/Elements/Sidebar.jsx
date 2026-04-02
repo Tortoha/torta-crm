@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { ChartBar, CurrencyDollar, ChartLineUp, Trophy, Tag, ShoppingCart, Users, Package, Receipt, ChatsCircle, CodeBlock, UsersThree, CreditCard, Envelope, CaretDown, List, X } from '@phosphor-icons/react';
+import { ChartBar, CurrencyDollar, ChartLineUp, Trophy, Tag, ShoppingCart, Users, Package, Receipt, ChatsCircle, CodeBlock, UsersThree, CreditCard, Envelope, GoogleLogo, CaretDown, List, X } from '@phosphor-icons/react';
 
 const SECTIONS = [
   {
@@ -29,6 +29,7 @@ const SECTIONS = [
       { to: '/api',          label: 'API',          Icon: CodeBlock },
       { to: '/team',         label: 'Team',         Icon: UsersThree },
       { to: '/email',        label: 'Email',        Icon: Envelope },
+      { to: '/oauth',        label: 'OAuth',        Icon: GoogleLogo },
       { to: '/subscription', label: 'Subscription', Icon: CreditCard },
     ],
   },

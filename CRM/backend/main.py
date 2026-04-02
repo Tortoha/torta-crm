@@ -230,6 +230,15 @@ def run_migrations():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
         "ALTER TABLE crm_users ADD COLUMN google_id varchar(255) DEFAULT NULL",
         "ALTER TABLE crm_users ADD COLUMN apple_id varchar(255) DEFAULT NULL",
+        """CREATE TABLE IF NOT EXISTS crm_oauth_settings (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            api_key_id int(11) NOT NULL,
+            google_client_id varchar(500) DEFAULT NULL,
+            google_client_secret varchar(500) DEFAULT NULL,
+            google_enabled tinyint(1) DEFAULT 0,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_api_key_oauth (api_key_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
     ]:
         try: cur.execute(sql); conn.commit()
         except: pass
@@ -1871,3 +1880,73 @@ def delete_email_domain(user: dict = Depends(get_current_user)):
     finally:
         cur.close(); conn.close()
     return {"success": True}
+
+
+# ════════════════════════════════════════════
+# OAUTH SETTINGS
+# ════════════════════════════════════════════
+
+MAGAZ_BACKEND_URL = "http://localhost:8000"
+
+class OAuthSettingsRequest(BaseModel):
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_enabled: bool = False
+
+@app.get("/api/oauth-settings")
+def get_oauth_settings(user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    key_row = db_one("SELECT api_key FROM crm_api_keys WHERE id=%s", (key_id,))
+    api_key_str = key_row["api_key"] if key_row else ""
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/api/auth/google/callback"
+
+    row = db_one("SELECT * FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
+    if not row:
+        return {
+            "configured": False,
+            "google_client_id": "",
+            "google_client_secret": "",
+            "google_enabled": False,
+            "redirect_uri": redirect_uri,
+        }
+    return {
+        "configured": True,
+        "google_client_id": row["google_client_id"] or "",
+        "google_client_secret": row["google_client_secret"] or "",
+        "google_enabled": bool(row["google_enabled"]),
+        "redirect_uri": redirect_uri,
+    }
+
+@app.post("/api/oauth-settings")
+def save_oauth_settings(req: OAuthSettingsRequest, user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    require_owner(user, key_id)
+    existing = db_one("SELECT id FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
+    conn = get_db(); cur = conn.cursor()
+    try:
+        if existing:
+            cur.execute(
+                "UPDATE crm_oauth_settings SET google_client_id=%s, google_client_secret=%s, google_enabled=%s WHERE api_key_id=%s",
+                (req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled), key_id)
+            )
+        else:
+            cur.execute(
+                "INSERT INTO crm_oauth_settings (api_key_id, google_client_id, google_client_secret, google_enabled) VALUES(%s,%s,%s,%s)",
+                (key_id, req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled))
+            )
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}
+
+@app.delete("/api/oauth-settings")
+def delete_oauth_settings(user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    require_owner(user, key_id)
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+    return {"ok": True}

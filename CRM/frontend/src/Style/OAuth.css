@@ -1,0 +1,149 @@
+.oauth-page {
+  padding: 32px;
+  max-width: 620px;
+}
+
+.oauth-subtitle {
+  font-size: 14px;
+  color: var(--muted);
+  margin: -8px 0 24px;
+}
+
+/* ── Provider card ── */
+.oauth-provider-card {
+  background: var(--card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.oauth-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.oauth-provider-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.oauth-provider-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.oauth-provider-desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.oauth-provider-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+}
+
+/* ── Fields ── */
+.oauth-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.oauth-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* ── Secret input wrapper ── */
+.oauth-secret-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.oauth-secret-wrap .crm-input {
+  width: 100%;
+  padding-right: 40px;
+}
+.oauth-eye-btn {
+  position: absolute;
+  right: 10px;
+}
+
+.oauth-redirect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: var(--radius-item);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.oauth-redirect-uri {
+  font-size: 12px;
+  font-family: 'Courier New', monospace;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Console link ── */
+.oauth-console-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color .15s;
+  width: fit-content;
+}
+.oauth-console-link:hover { color: var(--text); }
+
+/* ── Toggle switch ── */
+.oauth-toggle {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+}
+.oauth-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+
+.oauth-toggle-track {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+  border-radius: 24px;
+  cursor: pointer;
+  transition: background .2s;
+}
+.oauth-toggle-track::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform .2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+.oauth-toggle input:checked + .oauth-toggle-track {
+  background: #27ae60;
+}
+.oauth-toggle input:checked + .oauth-toggle-track::before {
+  transform: translateX(18px);
+}

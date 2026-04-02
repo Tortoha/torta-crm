@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Response, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
 from pydantic import BaseModel
@@ -219,6 +220,17 @@ class TrackProductView(BaseModel):
 
 def get_db():
     return mysql.connector.connect(**DB_CONFIG)
+
+def run_migrations():
+    conn = get_db(); cur = conn.cursor()
+    for sql in [
+        "ALTER TABLE users ADD COLUMN google_id varchar(255) DEFAULT NULL",
+    ]:
+        try: cur.execute(sql); conn.commit()
+        except: pass
+    cur.close(); conn.close()
+
+run_migrations()
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -1468,3 +1480,148 @@ def track_product_view(
         return {"success": True}
     finally:
         cursor.close(); conn.close()
+
+# ════════════════════════════════════════════
+# GOOGLE OAUTH (per-project credentials)
+# ════════════════════════════════════════════
+
+def get_google_credentials(api_key_id: int):
+    """Return (client_id, client_secret) if Google OAuth is configured and enabled."""
+    conn = get_db(); cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT google_client_id, google_client_secret FROM crm_oauth_settings "
+            "WHERE api_key_id = %s AND google_enabled = 1",
+            (api_key_id,)
+        )
+        row = cursor.fetchone()
+    finally:
+        cursor.close(); conn.close()
+    if row and row["google_client_id"] and row["google_client_secret"]:
+        return row["google_client_id"], row["google_client_secret"]
+    return None, None
+
+
+@app.get("/{api_key}/api/auth/google/login")
+def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_key)):
+    import urllib.parse
+    client_id, _ = get_google_credentials(api_key_record["id"])
+    if not client_id:
+        raise HTTPException(404, "Google OAuth not configured for this store")
+    redirect_uri = f"http://localhost:8000/{api_key}/api/auth/google/callback"
+    params = {
+        "client_id":     client_id,
+        "redirect_uri":  redirect_uri,
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "access_type":   "offline",
+        "prompt":        "select_account",
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url)
+
+
+@app.get("/{api_key}/api/auth/google/callback")
+def magaz_google_callback(
+    api_key: str,
+    api_key_record: dict = Depends(resolve_api_key),
+    code: str = None,
+    error: str = None,
+):
+    import urllib.request, urllib.parse, json as _json, traceback
+    api_key_id = api_key_record["id"]
+
+    try:
+        return _magaz_google_callback_inner(api_key, api_key_id, code, error)
+    except Exception:
+        traceback.print_exc()
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=server_error")
+
+
+def _magaz_google_callback_inner(api_key, api_key_id, code, error):
+    import urllib.request, urllib.parse, json as _json
+
+    if error or not code:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_cancelled")
+
+    client_id, client_secret = get_google_credentials(api_key_id)
+    if not client_id:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_not_configured")
+
+    redirect_uri = f"http://localhost:8000/{api_key}/api/auth/google/callback"
+
+    post_data = urllib.parse.urlencode({
+        "code":          code,
+        "client_id":     client_id,
+        "client_secret": client_secret,
+        "redirect_uri":  redirect_uri,
+        "grant_type":    "authorization_code",
+    }).encode()
+    try:
+        token_req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=post_data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(token_req) as resp:
+            tokens = _json.loads(resp.read())
+    except Exception:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_token")
+
+    id_token_str = tokens.get("id_token")
+    if not id_token_str:
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_no_id_token")
+
+    # Verify id_token via Google's tokeninfo endpoint (no extra library needed)
+    try:
+        info_req = urllib.request.Request(
+            f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token_str}"
+        )
+        with urllib.request.urlopen(info_req) as resp:
+            idinfo = _json.loads(resp.read())
+        if idinfo.get("aud") != client_id:
+            raise ValueError("audience mismatch")
+        g_id  = idinfo["sub"]
+        email = idinfo["email"]
+        name  = idinfo.get("name", email.split("@")[0])
+    except Exception as e:
+        print(f"Google verify error: {e}")
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_verify")
+
+    conn = get_db(); cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT id FROM users WHERE google_id=%s AND api_key_id=%s",
+            (g_id, api_key_id)
+        )
+        user = cursor.fetchone()
+        if not user:
+            cursor.execute(
+                "SELECT id FROM users WHERE email=%s AND api_key_id=%s AND google_id IS NULL",
+                (email, api_key_id)
+            )
+            user = cursor.fetchone()
+            if user:
+                cursor.execute("UPDATE users SET google_id=%s WHERE id=%s", (g_id, user["id"]))
+                conn.commit()
+        if not user:
+            cursor.execute(
+                "INSERT INTO users (name, email, password_hash, api_key_id, google_id) VALUES(%s,%s,'',%s,%s)",
+                (sanitize(name), email, api_key_id, g_id)
+            )
+            conn.commit()
+            user_id = cursor.lastrowid
+        else:
+            user_id = user["id"]
+    finally:
+        cursor.close(); conn.close()
+
+    token    = create_token(user_id)
+    redirect = RedirectResponse(f"{FRONTEND_URL}", status_code=302)
+    redirect.set_cookie(
+        key="authx_token", value=token,
+        httponly=True, max_age=60 * 60 * 24 * 7,
+        samesite="lax", secure=False, path="/",
+    )
+    return redirect

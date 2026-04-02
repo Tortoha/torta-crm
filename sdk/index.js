@@ -112,6 +112,11 @@ export function createClient(baseUrl, apiKey) {
       async resetPassword(token, password, repeat_password) {
         return req("POST", "/api/reset-password", { token, password, repeat_password });
       },
+
+      /** Redirect to Google OAuth login for this store (full page redirect). */
+      googleLogin() {
+        window.location.href = `${base}/api/auth/google/login`;
+      },
     },
 
     // ── Products ─────────────────────────────────────────────────────────────

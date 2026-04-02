@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
 import { client } from "./api.js"
 import PasswordInput from "./Elements/PasswordInput";
+import GoogleAuthButton from "./Elements/GoogleAuthButton";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -116,6 +117,8 @@ function Login() {
                 disabled={!isValid || loading}
               />
             </div>
+
+            <GoogleAuthButton />
 
             <div className="secsh1">
               <Link to="/registration">
