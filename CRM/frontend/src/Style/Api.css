@@ -336,6 +336,17 @@
 .api-modal-btn:hover:not(:disabled) { background: #333; }
 .api-modal-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.api-modal-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.api-modal-btn--full {
+  width: 100%;
+  justify-content: center;
+}
+
 .api-drop-menu {
   position: absolute;
   top: calc(100% + 6px);

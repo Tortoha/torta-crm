@@ -17,6 +17,7 @@ import Settings      from './Pages/Settings.jsx';
 import Invite        from './Pages/Invite.jsx';
 import Email         from './Pages/Email.jsx';
 import OAuth         from './Pages/OAuth.jsx';
+import UrlConfig     from './Pages/UrlConfig.jsx';
 
 function App() {
   return (
@@ -53,6 +54,9 @@ function App() {
         </Route>
         <Route path="/oauth"                     element={<Layout />}>
           <Route index element={<OAuth />} />
+        </Route>
+        <Route path="/url-config"               element={<Layout />}>
+          <Route index element={<UrlConfig />} />
         </Route>
       </Routes>
     </Router>

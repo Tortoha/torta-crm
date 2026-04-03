@@ -27,20 +27,23 @@ function Modal({ title, onClose, children }) {
 
 
 function CreateModal({ onClose, onCreated }) {
-  const [name, setName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [err, setErr] = useState('');
+  const [name, setName]           = useState('');
+  const [frontendUrl, setFrontendUrl] = useState('');
+  const [creating, setCreating]   = useState(false);
+  const [err, setErr]             = useState('');
 
   const handleCreate = async (e) => {
     e.preventDefault();
     const n = name.trim();
-    if (!n) return setErr('Enter a name');
+    const u = frontendUrl.trim();
+    if (!n) return setErr('Enter a project name');
+    if (!u) return setErr('Enter the frontend URL');
     setCreating(true); setErr('');
     try {
       const res = await fetch(`${API_BASE}/api/api-keys`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: n }),
+        body: JSON.stringify({ name: n, frontend_url: u }),
       });
       const data = await res.json();
       if (!res.ok) return setErr(data.detail || 'Error');
@@ -52,14 +55,27 @@ function CreateModal({ onClose, onCreated }) {
   return (
     <Modal title="New API Key" onClose={onClose}>
       <form className="api-modal-form" onSubmit={handleCreate}>
-        <div className="api-modal-row">
-          <input className="api-modal-input" placeholder="Key name, e.g. My Store"
-            value={name} onChange={e => setName(e.target.value)} maxLength={100} autoFocus />
-          <button className="api-modal-btn" type="submit" disabled={creating}>
+        <div className="api-modal-col">
+          <input
+            className="api-modal-input"
+            placeholder="Project name, e.g. My Store"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            maxLength={100}
+            autoFocus
+          />
+          <input
+            className="api-modal-input"
+            placeholder="Frontend URL, e.g. http://localhost:3001"
+            value={frontendUrl}
+            onChange={e => setFrontendUrl(e.target.value)}
+            autoComplete="off"
+          />
+          {err && <span className="crm-form-error">{err}</span>}
+          <button className="api-modal-btn api-modal-btn--full" type="submit" disabled={creating}>
             {creating ? 'Creating…' : 'Create'}
           </button>
         </div>
-        {err && <span className="crm-form-error" style={{ padding: '0 4px' }}>{err}</span>}
       </form>
     </Modal>
   );

@@ -4,7 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-import mysql.connector, hashlib, secrets, jwt, random, os, io, smtplib
+from contextlib import contextmanager
+from mysql.connector.pooling import MySQLConnectionPool
+import hashlib, secrets, jwt, random, os, io, smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -26,11 +28,12 @@ except ImportError:
 # КОНФИГ
 # ════════════════════════════════════════════
 
-SECRET_KEY   = "crm_u7b3f9e2d8c1a4f6e0b5d3a7c9f2e8d4b1c6a0e9f7d3b5c8a2e4d0f6b9c3e7a1"
-ALGORITHM    = "HS256"
-JWT_HOURS    = 24 * 7
-FRONTEND_URL = "http://localhost:5174"
-DB_CONFIG    = {"host": "localhost", "user": "root", "password": "root", "database": "crmdb"}
+SECRET_KEY       = "crm_u7b3f9e2d8c1a4f6e0b5d3a7c9f2e8d4b1c6a0e9f7d3b5c8a2e4d0f6b9c3e7a1"
+ALGORITHM        = "HS256"
+JWT_HOURS        = 24 * 7
+CRM_FRONTEND_URL = "http://localhost:5174"
+CRM_BACKEND_URL  = "http://localhost:8001"
+DB_CONFIG        = {"host": "localhost", "user": "root", "password": "root", "database": "crmdb"}
 
 SMTP_HOST               = "email-smtp.eu-north-1.amazonaws.com"
 SMTP_PORT               = 587
@@ -46,6 +49,7 @@ UPLOADS_DIR             = "uploads"
 GOOGLE_CLIENT_ID        = "507611541846-pcl6rqv08gc54021vq4tctca9pnntj0e.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET    = "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"
 GOOGLE_REDIRECT_URI     = "http://localhost:8001/api/auth/google/callback"
+MAGAZ_BACKEND_URL       = "http://localhost:8000"
 CLOUDINARY_CLOUD_NAME   = "due5yumdr"
 CLOUDINARY_API_KEY      = "513475749664165"
 CLOUDINARY_API_SECRET   = "I35G6txxRQ5A8QKkHh76TzlVDnU"
@@ -53,6 +57,40 @@ CLOUDINARY_API_SECRET   = "I35G6txxRQ5A8QKkHh76TzlVDnU"
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 app = FastAPI()
+
+# ════════════════════════════════════════════
+# DB POOL
+# ════════════════════════════════════════════
+
+_pool = MySQLConnectionPool(pool_name="crm", pool_size=10, pool_reset_session=True, **DB_CONFIG)
+
+def get_db():
+    return _pool.get_connection()
+
+@contextmanager
+def db_cursor(dictionary=True):
+    conn = get_db()
+    cursor = conn.cursor(dictionary=dictionary)
+    try:
+        yield conn, cursor
+    finally:
+        cursor.close()
+        conn.close()
+
+def db_one(sql: str, params: tuple = ()):
+    with db_cursor() as (_, cur):
+        cur.execute(sql, params)
+        return cur.fetchone()
+
+def db_all(sql: str, params: tuple = ()):
+    with db_cursor() as (_, cur):
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+# ════════════════════════════════════════════
+# EMAIL
+# ════════════════════════════════════════════
+
 def send_email(to: str, subject: str, html: str) -> bool:
     try:
         msg = MIMEMultipart("alternative")
@@ -67,6 +105,7 @@ def send_email(to: str, subject: str, html: str) -> bool:
         return True
     except Exception as e:
         print(f"Email error: {e}"); return False
+
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 if CLOUDINARY_AVAILABLE:
@@ -109,6 +148,7 @@ class ResetPasswordRequest(BaseModel):
 
 class CreateApiKeyRequest(BaseModel):
     name: str
+    frontend_url: str
 
 class SwitchApiKeyRequest(BaseModel):
     api_key_id: int
@@ -183,8 +223,19 @@ class SetPermissionsRequest(BaseModel):
 class GoogleAuthRequest(BaseModel):
     token: str
 
+class OAuthSettingsRequest(BaseModel):
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_enabled: bool = False
+
+class UrlConfigRequest(BaseModel):
+    frontend_url: str = ""
+
+class AddRedirectUrlRequest(BaseModel):
+    url: str
+
 # ════════════════════════════════════════════
-# ФУНКЦИИ
+# ХЕЛПЕРЫ
 # ════════════════════════════════════════════
 
 ROLE_PERMISSIONS = [
@@ -196,53 +247,47 @@ ROLE_PERMISSIONS = [
     ("manage_invites",   "Manage Invites",   "Create and revoke invite links"),
 ]
 
-
-def get_db():
-    return mysql.connector.connect(**DB_CONFIG)
-
-def db_one(sql: str, params: tuple = ()):
-    conn = get_db()
-    cur  = conn.cursor(dictionary=True)
-    cur.execute(sql, params)
-    row = cur.fetchone()
-    cur.close(); conn.close()
-    return row
-
-def db_all(sql: str, params: tuple = ()):
-    conn = get_db()
-    cur  = conn.cursor(dictionary=True)
-    cur.execute(sql, params)
-    rows = cur.fetchall()
-    cur.close(); conn.close()
-    return rows
-
 def run_migrations():
-    conn = get_db(); cur = conn.cursor()
-    for sql in [
-        "ALTER TABLE crm_users ADD COLUMN avatar_url varchar(500) DEFAULT NULL",
-        "ALTER TABLE product_custom_fields ADD COLUMN is_global tinyint(1) NOT NULL DEFAULT 0",
-        """CREATE TABLE IF NOT EXISTS crm_role_permissions (
-            id int(11) NOT NULL AUTO_INCREMENT,
-            role_id int(11) NOT NULL,
-            permission varchar(100) NOT NULL,
-            PRIMARY KEY (id),
-            UNIQUE KEY role_perm (role_id, permission)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
-        "ALTER TABLE crm_users ADD COLUMN google_id varchar(255) DEFAULT NULL",
-        "ALTER TABLE crm_users ADD COLUMN apple_id varchar(255) DEFAULT NULL",
-        """CREATE TABLE IF NOT EXISTS crm_oauth_settings (
-            id int(11) NOT NULL AUTO_INCREMENT,
-            api_key_id int(11) NOT NULL,
-            google_client_id varchar(500) DEFAULT NULL,
-            google_client_secret varchar(500) DEFAULT NULL,
-            google_enabled tinyint(1) DEFAULT 0,
-            PRIMARY KEY (id),
-            UNIQUE KEY uq_api_key_oauth (api_key_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
-    ]:
-        try: cur.execute(sql); conn.commit()
-        except: pass
-    cur.close(); conn.close()
+    with db_cursor(dictionary=False) as (conn, cur):
+        for sql in [
+            "ALTER TABLE crm_users ADD COLUMN avatar_url varchar(500) DEFAULT NULL",
+            "ALTER TABLE product_custom_fields ADD COLUMN is_global tinyint(1) NOT NULL DEFAULT 0",
+            """CREATE TABLE IF NOT EXISTS crm_role_permissions (
+                id int(11) NOT NULL AUTO_INCREMENT,
+                role_id int(11) NOT NULL,
+                permission varchar(100) NOT NULL,
+                PRIMARY KEY (id),
+                UNIQUE KEY role_perm (role_id, permission)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
+            "ALTER TABLE crm_users ADD COLUMN google_id varchar(255) DEFAULT NULL",
+            "ALTER TABLE crm_users ADD COLUMN apple_id varchar(255) DEFAULT NULL",
+            """CREATE TABLE IF NOT EXISTS crm_oauth_settings (
+                id int(11) NOT NULL AUTO_INCREMENT,
+                api_key_id int(11) NOT NULL,
+                google_client_id varchar(500) DEFAULT NULL,
+                google_client_secret varchar(500) DEFAULT NULL,
+                google_enabled tinyint(1) DEFAULT 0,
+                PRIMARY KEY (id),
+                UNIQUE KEY uq_api_key_oauth (api_key_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
+            """CREATE TABLE IF NOT EXISTS crm_url_config (
+                id int(11) NOT NULL AUTO_INCREMENT,
+                api_key_id int(11) NOT NULL,
+                frontend_url varchar(500) DEFAULT NULL,
+                PRIMARY KEY (id),
+                UNIQUE KEY uq_api_key_url (api_key_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
+            """CREATE TABLE IF NOT EXISTS crm_redirect_urls (
+                id int(11) NOT NULL AUTO_INCREMENT,
+                api_key_id int(11) NOT NULL,
+                url varchar(500) NOT NULL,
+                created_at datetime DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                UNIQUE KEY uq_api_key_redirect (api_key_id, url)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
+        ]:
+            try: cur.execute(sql); conn.commit()
+            except: pass
 
 run_migrations()
 
@@ -255,7 +300,6 @@ def sanitize(v: str) -> str:
     return v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;").replace("'","&#x27;")
 
 def validate_password(pwd: str):
-    """Server-side password rules — applied at registration and reset."""
     if not pwd or " " in pwd:
         raise HTTPException(400, "Password must not contain spaces")
     if len(pwd) < 8 or len(pwd) > 24:
@@ -331,8 +375,38 @@ def gen_api_key() -> str:
     ts  = str(datetime.utcnow().timestamp()).encode()
     return hashlib.sha256(raw + ts).hexdigest()
 
+def require_team_member_or_owner(user: dict, api_key_id: int):
+    key_row = db_one("SELECT crm_user_id FROM crm_api_keys WHERE id=%s AND is_active=1", (api_key_id,))
+    if not key_row:
+        raise HTTPException(404, "Project not found")
+    if key_row["crm_user_id"] == user["id"]:
+        return
+    if not db_one("SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s",
+                  (api_key_id, user["id"])):
+        raise HTTPException(403, "Not a member of this project")
+
+def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
+    """Upsert CRM user by Google ID. Returns user_id."""
+    user = db_one("SELECT id FROM crm_users WHERE google_id=%s OR (email=%s AND google_id IS NULL)", (g_id, email))
+    if user:
+        user_id = user["id"]
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_users SET google_id=%s, last_login_at=NOW() WHERE id=%s", (g_id, user_id))
+            conn.commit()
+    else:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'','owner',%s,%s)",
+                (sanitize(name), email, g_id, picture)
+            )
+            conn.commit()
+            user_id = cur.lastrowid
+            cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES(%s)", (user_id,))
+            conn.commit()
+    return user_id
+
 # ════════════════════════════════════════════
-# Email
+# EMAIL HELPERS
 # ════════════════════════════════════════════
 
 def send_code_email(email: str, code: int) -> bool:
@@ -344,7 +418,7 @@ def send_code_email(email: str, code: int) -> bool:
     return send_email(email, "Verification Code", html)
 
 def send_reset_email(email: str, token: str) -> bool:
-    url = f"{FRONTEND_URL}/reset-password/{token}"
+    url = f"{CRM_FRONTEND_URL}/reset-password/{token}"
     html = f"""<div style="font-family:Arial;text-align:center;padding:40px">
                 <h1>Reset your password</h1>
                 <a href="{url}" style="display:inline-block;margin-top:24px;padding:14px 32px;
@@ -413,8 +487,7 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
     if code != pending["code"]:
         record_fail(keys, now); raise HTTPException(400, "Invalid code")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         if pending["type"] == "register":
             cur.execute(
                 "INSERT INTO crm_users (name, email, password, role) VALUES (%s,%s,%s,'owner')",
@@ -429,8 +502,6 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
             user_id = row["id"]
             cur.execute("UPDATE crm_users SET last_login_at = NOW() WHERE id = %s", (user_id,))
             conn.commit()
-    finally:
-        cur.close(); conn.close()
 
     set_cookie(response, make_token(user_id))
     del pending_verifications[email]
@@ -479,9 +550,8 @@ def logout(response: Response):
 def forgot_password(request: ForgotPasswordRequest):
     email = request.email.lower().strip()
     if not db_one("SELECT id FROM crm_users WHERE email = %s", (email,)):
-        return {"success": True}  # Не раскрываем что email не существует
+        return {"success": True}
 
-    # Удаляем старые токены этого email
     for t in [t for t, d in password_reset_tokens.items() if d["email"] == email]:
         del password_reset_tokens[t]
 
@@ -512,13 +582,10 @@ def reset_password(request: ResetPasswordRequest):
     if not data or datetime.utcnow() > data["expires"]:
         raise HTTPException(400, "Invalid or expired reset link")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_users SET password = %s WHERE email = %s",
                     (hash_pw(request.password), data["email"]))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     del password_reset_tokens[h]
     return {"success": True}
 
@@ -555,10 +622,15 @@ def create_api_key(request: CreateApiKeyRequest, req: Request, user: dict = Depe
         raise HTTPException(403, "Only owner can create API keys")
 
     name = request.name.strip()
-    if not name:               raise HTTPException(400, "Name is required")
-    if len(name) > 100:        raise HTTPException(400, "Name too long (max 100)")
+    if not name:              raise HTTPException(400, "Name is required")
+    if len(name) > 100:       raise HTTPException(400, "Name too long (max 100)")
 
-    # Генерируем уникальный ключ
+    frontend_url = request.frontend_url.strip()
+    if not frontend_url:      raise HTTPException(400, "Frontend URL is required")
+    if not frontend_url.startswith(("http://", "https://")):
+        raise HTTPException(400, "Frontend URL must start with http:// or https://")
+    if len(frontend_url) > 500: raise HTTPException(400, "Frontend URL too long")
+
     new_key = next(
         (c for _ in range(5)
          if not db_one("SELECT id FROM crm_api_keys WHERE api_key = %s", (c := gen_api_key(),))),
@@ -566,37 +638,32 @@ def create_api_key(request: CreateApiKeyRequest, req: Request, user: dict = Depe
     )
     if not new_key: raise HTTPException(500, "Failed to generate unique key")
 
-    conn = get_db(); cur = conn.cursor(dictionary=True)
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute(
             "INSERT INTO crm_api_keys (crm_user_id, name, api_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,1)",
             (user["id"], sanitize(name), new_key, get_ip(req))
         )
         conn.commit()
-        new_id = cur.lastrowid  # ← получаем ID сразу после INSERT
+        new_id = cur.lastrowid
 
-        # Системная роль Owner для нового проекта
         cur.execute("INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,'Owner',1)", (new_id,))
         conn.commit()
         owner_role_id = cur.lastrowid
 
-        # Добавляем создателя как участника (IGNORE — на случай если запись уже есть)
         cur.execute(
             "INSERT IGNORE INTO crm_team_members (api_key_id, crm_user_id, crm_role_id) VALUES (%s,%s,%s)",
             (new_id, user["id"], owner_role_id)
         )
+        cur.execute("INSERT INTO crm_url_config (api_key_id, frontend_url) VALUES (%s,%s)", (new_id, frontend_url))
+        cur.execute("INSERT IGNORE INTO crm_redirect_urls (api_key_id, url) VALUES (%s,%s)", (new_id, frontend_url))
 
-        # Если первый ключ — делаем активным
         cur.execute("SELECT COUNT(*) AS cnt FROM crm_api_keys WHERE crm_user_id = %s", (user["id"],))
         count = cur.fetchone()["cnt"]
         if count == 1:
             cur.execute("UPDATE crm_users SET active_api_key_id = %s WHERE id = %s", (new_id, user["id"]))
         conn.commit()
 
-        return {"id": new_id, "name": name, "api_key": new_key,
-                "is_active": True, "is_selected": count == 1}
-    finally:
-        cur.close(); conn.close()
+    return {"id": new_id, "name": name, "api_key": new_key, "is_active": True, "is_selected": count == 1}
 
 
 @app.put("/api/api-keys/switch")
@@ -610,13 +677,9 @@ def switch_api_key(request: SwitchApiKeyRequest, user: dict = Depends(get_curren
     if not key:
         raise HTTPException(404, "API key not found or access denied")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crm_users SET active_api_key_id=%s WHERE id=%s",
-                    (request.api_key_id, user["id"]))
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_users SET active_api_key_id=%s WHERE id=%s", (request.api_key_id, user["id"]))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True, "active_key": key}
 
 
@@ -629,11 +692,10 @@ def delete_api_key(key_id: int, user: dict = Depends(get_current_user)):
     cnt = db_one("SELECT COUNT(*) AS c FROM crm_api_keys WHERE crm_user_id = %s", (user["id"],))["c"]
     if cnt <= 1: raise HTTPException(400, "Cannot delete the last API key")
 
-    conn = get_db(); cur = conn.cursor(dictionary=True)
-    try:
-        # Если удаляем активный — переключаем на другой
+    with db_cursor() as (conn, cur):
         cur.execute("SELECT active_api_key_id FROM crm_users WHERE id = %s", (user["id"],))
-        if cur.fetchone()["active_api_key_id"] == key_id:
+        row = cur.fetchone()
+        if row and row["active_api_key_id"] == key_id:
             cur.execute(
                 "SELECT id FROM crm_api_keys WHERE crm_user_id=%s AND id!=%s AND is_active=1 LIMIT 1",
                 (user["id"], key_id)
@@ -641,11 +703,8 @@ def delete_api_key(key_id: int, user: dict = Depends(get_current_user)):
             fb = cur.fetchone()
             if fb:
                 cur.execute("UPDATE crm_users SET active_api_key_id=%s WHERE id=%s", (fb["id"], user["id"]))
-
         cur.execute("DELETE FROM crm_api_keys WHERE id = %s", (key_id,))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -682,13 +741,10 @@ def create_role(request: CreateRoleRequest, user: dict = Depends(get_current_use
     if db_one("SELECT id FROM crm_roles WHERE api_key_id=%s AND name=%s", (kid, name)):
         raise HTTPException(400, "Role already exists")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,%s,0)", (kid, sanitize(name)))
         conn.commit()
         return {"id": cur.lastrowid, "name": sanitize(name), "is_system": False}
-    finally:
-        cur.close(); conn.close()
 
 
 @app.delete("/api/roles/{role_id}")
@@ -702,12 +758,9 @@ def delete_role(role_id: int, user: dict = Depends(get_current_user)):
     used = db_one("SELECT COUNT(*) AS c FROM crm_team_members WHERE crm_role_id=%s", (role_id,))["c"]
     if used > 0: raise HTTPException(400, "Role is in use, reassign members first")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_roles WHERE id=%s", (role_id,))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -717,69 +770,47 @@ def delete_role(role_id: int, user: dict = Depends(get_current_user)):
 
 @app.get("/api/team")
 def get_team(user: dict = Depends(get_current_user)):
-    conn = get_db(); cur = conn.cursor(dictionary=True)
-    try:
-        kid = active_key_id(user["id"])
-        key_row = db_one("SELECT crm_user_id FROM crm_api_keys WHERE id = %s", (kid,))
-        is_owner = key_row and key_row["crm_user_id"] == user["id"]
+    kid      = active_key_id(user["id"])
+    key_row  = db_one("SELECT crm_user_id FROM crm_api_keys WHERE id = %s", (kid,))
+    is_owner = key_row and key_row["crm_user_id"] == user["id"]
 
-        if not is_owner:
-            if not db_one(
-                "SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s",
-                (kid, user["id"])
-            ):
-                raise HTTPException(403, "You are not a member of this project")
+    if not is_owner:
+        if not db_one("SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s", (kid, user["id"])):
+            raise HTTPException(403, "You are not a member of this project")
 
-        if is_owner:
-            existing = db_one(
-                "SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s",
-                (kid, user["id"])
-            )
-            if not existing:
-                owner_role = db_one(
-                    "SELECT id FROM crm_roles WHERE api_key_id=%s AND is_system=1",
-                    (kid,)
-                )
-                if not owner_role:
-                    c2 = conn.cursor()
-                    c2.execute(
-                        "INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,'Owner',1)",
-                        (kid,)
-                    )
-                    conn.commit()
-                    owner_role_id = c2.lastrowid
-                    c2.close()
-                else:
-                    owner_role_id = owner_role["id"]
-
-                c2 = conn.cursor()
-                c2.execute(
-                    "INSERT INTO crm_team_members (api_key_id, crm_user_id, crm_role_id) VALUES(%s,%s,%s)",
-                    (kid, user["id"], owner_role_id)
-                )
+    if is_owner and not db_one("SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s", (kid, user["id"])):
+        owner_role = db_one("SELECT id FROM crm_roles WHERE api_key_id=%s AND is_system=1", (kid,))
+        with db_cursor() as (conn, cur):
+            if not owner_role:
+                cur.execute("INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,'Owner',1)", (kid,))
                 conn.commit()
-                c2.close()
+                owner_role_id = cur.lastrowid
+            else:
+                owner_role_id = owner_role["id"]
+            cur.execute(
+                "INSERT INTO crm_team_members (api_key_id, crm_user_id, crm_role_id) VALUES(%s,%s,%s)",
+                (kid, user["id"], owner_role_id)
+            )
+            conn.commit()
 
-        members = db_all("""
-            SELECT u.id, u.name, u.email,
-                   r.id AS role_id, r.name AS role_name, r.is_system,
-                   tm.joined_at, (k.crm_user_id = u.id) AS is_owner
-            FROM crm_team_members tm
-            JOIN crm_users u    ON u.id = tm.crm_user_id
-            JOIN crm_roles r    ON r.id = tm.crm_role_id
-            JOIN crm_api_keys k ON k.id = %s
-            WHERE tm.api_key_id = %s
-            ORDER BY is_owner DESC, tm.joined_at ASC
-        """, (kid, kid))
+    members = db_all("""
+        SELECT u.id, u.name, u.email,
+               r.id AS role_id, r.name AS role_name, r.is_system,
+               tm.joined_at, (k.crm_user_id = u.id) AS is_owner
+        FROM crm_team_members tm
+        JOIN crm_users u    ON u.id = tm.crm_user_id
+        JOIN crm_roles r    ON r.id = tm.crm_role_id
+        JOIN crm_api_keys k ON k.id = %s
+        WHERE tm.api_key_id = %s
+        ORDER BY is_owner DESC, tm.joined_at ASC
+    """, (kid, kid))
 
-        for m in members:
-            m["joined_at"] = str(m["joined_at"])
-            m["is_owner"]  = bool(m["is_owner"])
-            m["is_system"] = bool(m["is_system"])
-            m["is_me"]     = (m["id"] == user["id"])
-        return members
-    finally:
-        cur.close(); conn.close()
+    for m in members:
+        m["joined_at"] = str(m["joined_at"])
+        m["is_owner"]  = bool(m["is_owner"])
+        m["is_system"] = bool(m["is_system"])
+        m["is_me"]     = (m["id"] == user["id"])
+    return members
 
 
 @app.put("/api/team/role")
@@ -790,16 +821,13 @@ def update_member_role(request: UpdateMemberRoleRequest, user: dict = Depends(ge
     if not db_one("SELECT id FROM crm_roles WHERE id=%s AND api_key_id=%s", (request.crm_role_id, kid)):
         raise HTTPException(404, "Role not found in this project")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute(
             "UPDATE crm_team_members SET crm_role_id=%s WHERE api_key_id=%s AND crm_user_id=%s",
             (request.crm_role_id, kid, request.crm_user_id)
         )
         conn.commit()
         if cur.rowcount == 0: raise HTTPException(404, "Member not found")
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -809,13 +837,10 @@ def remove_member(member_user_id: int, user: dict = Depends(get_current_user)):
     require_owner(user, kid)
     if member_user_id == user["id"]: raise HTTPException(400, "Cannot remove yourself")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s", (kid, member_user_id))
         conn.commit()
         if cur.rowcount == 0: raise HTTPException(404, "Member not found")
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -833,8 +858,7 @@ def create_invite(request: CreateInviteRequest, user: dict = Depends(get_current
     token      = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(hours=request.expires_hours) if request.expires_hours else None
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute(
             "INSERT INTO crm_invites (api_key_id,crm_role_id,token,created_by,expires_at,max_uses) VALUES(%s,%s,%s,%s,%s,%s)",
             (kid, request.crm_role_id, token, user["id"], expires_at, request.max_uses)
@@ -842,12 +866,10 @@ def create_invite(request: CreateInviteRequest, user: dict = Depends(get_current
         conn.commit()
         return {
             "id": cur.lastrowid, "token": token,
-            "invite_url": f"{FRONTEND_URL}/invite/{token}",
+            "invite_url": f"{CRM_FRONTEND_URL}/invite/{token}",
             "expires_at": expires_at.isoformat() if expires_at else None,
             "max_uses": request.max_uses,
         }
-    finally:
-        cur.close(); conn.close()
 
 
 @app.get("/api/invites")
@@ -862,7 +884,7 @@ def get_invites(user: dict = Depends(get_current_user)):
     for i in rows:
         i["created_at"] = str(i["created_at"])
         i["expires_at"] = i["expires_at"].isoformat() if i["expires_at"] else None
-        i["invite_url"] = f"{FRONTEND_URL}/invite/{i['token']}"
+        i["invite_url"] = f"{CRM_FRONTEND_URL}/invite/{i['token']}"
     return rows
 
 
@@ -870,12 +892,9 @@ def get_invites(user: dict = Depends(get_current_user)):
 def revoke_invite(invite_id: int, user: dict = Depends(get_current_user)):
     kid = active_key_id(user["id"])
     require_owner(user, kid)
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_invites SET is_active=0 WHERE id=%s AND api_key_id=%s", (invite_id, kid))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -908,8 +927,7 @@ def accept_invite(token: str, user: dict = Depends(get_current_user)):
     if inv["expires_at"] and datetime.utcnow() > inv["expires_at"]: raise HTTPException(400, "Invite expired")
     if inv["max_uses"] and inv["uses"] >= inv["max_uses"]:           raise HTTPException(400, "Invite limit reached")
 
-    conn = get_db(); cur = conn.cursor(dictionary=True)
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s",
                     (inv["api_key_id"], user["id"]))
         if cur.fetchone():
@@ -926,8 +944,6 @@ def accept_invite(token: str, user: dict = Depends(get_current_user)):
         if inv["max_uses"] and (inv["uses"] + 1) >= inv["max_uses"]:
             cur.execute("UPDATE crm_invites SET is_active=0 WHERE id=%s", (inv["id"],))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True, "project_name": inv["project_name"], "role": inv["role_name"]}
 
 
@@ -943,12 +959,9 @@ def rename_api_key(key_id: int, request: RenameApiKeyRequest, user: dict = Depen
     if user["role"] != "owner": raise HTTPException(403, "Only owner can rename API keys")
     if not db_one("SELECT id FROM crm_api_keys WHERE id=%s AND crm_user_id=%s", (key_id, user["id"])):
         raise HTTPException(404, "API key not found")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_api_keys SET name=%s WHERE id=%s", (sanitize(name), key_id))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True, "name": name}
 
 
@@ -956,36 +969,18 @@ def rename_api_key(key_id: int, request: RenameApiKeyRequest, user: dict = Depen
 # CHAT
 # ════════════════════════════════════════════
 
-def require_team_member_or_owner(user: dict, api_key_id: int):
-    key_row = db_one("SELECT crm_user_id FROM crm_api_keys WHERE id=%s AND is_active=1", (api_key_id,))
-    if not key_row:
-        raise HTTPException(404, "Project not found")
-    if key_row["crm_user_id"] == user["id"]:
-        return  # owner — доступ есть
-    if not db_one(
-        "SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s",
-        (api_key_id, user["id"])
-    ):
-        raise HTTPException(403, "Not a member of this project")
-
-
 @app.get("/api/chat/channels")
 def get_channels(user: dict = Depends(get_current_user)):
     kid = active_key_id(user["id"])
     require_team_member_or_owner(user, kid)
 
-    # Авто-создаём #general если каналов ещё нет
-    cnt = db_one("SELECT COUNT(*) AS c FROM crm_chat_channels WHERE api_key_id=%s", (kid,))["c"]
-    if cnt == 0:
-        conn = get_db(); cur = conn.cursor()
-        try:
+    if db_one("SELECT COUNT(*) AS c FROM crm_chat_channels WHERE api_key_id=%s", (kid,))["c"] == 0:
+        with db_cursor() as (conn, cur):
             cur.execute(
                 "INSERT INTO crm_chat_channels (api_key_id, name, is_general, created_by) VALUES(%s,'general',1,%s)",
                 (kid, user["id"])
             )
             conn.commit()
-        finally:
-            cur.close(); conn.close()
 
     rows = db_all(
         "SELECT id, name, is_general, created_at FROM crm_chat_channels WHERE api_key_id=%s ORDER BY is_general DESC, created_at ASC",
@@ -998,25 +993,21 @@ def get_channels(user: dict = Depends(get_current_user)):
 
 @app.post("/api/chat/channels")
 def create_channel(request: CreateChannelRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
+    kid  = active_key_id(user["id"])
     require_owner(user, kid)
-
     name = request.name.strip().lower().replace(" ", "-")
     if not name:        raise HTTPException(400, "Channel name is required")
     if len(name) > 50:  raise HTTPException(400, "Channel name too long (max 50)")
     if db_one("SELECT id FROM crm_chat_channels WHERE api_key_id=%s AND name=%s", (kid, name)):
         raise HTTPException(400, "Channel already exists")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute(
             "INSERT INTO crm_chat_channels (api_key_id, name, is_general, created_by) VALUES(%s,%s,0,%s)",
             (kid, sanitize(name), user["id"])
         )
         conn.commit()
         return {"id": cur.lastrowid, "name": sanitize(name), "is_general": False, "created_at": str(datetime.utcnow())}
-    finally:
-        cur.close(); conn.close()
 
 
 @app.delete("/api/chat/channels/{channel_id}")
@@ -1024,14 +1015,11 @@ def delete_channel(channel_id: int, user: dict = Depends(get_current_user)):
     kid = active_key_id(user["id"])
     require_owner(user, kid)
     ch = db_one("SELECT id, is_general FROM crm_chat_channels WHERE id=%s AND api_key_id=%s", (channel_id, kid))
-    if not ch:          raise HTTPException(404, "Channel not found")
+    if not ch:           raise HTTPException(404, "Channel not found")
     if ch["is_general"]: raise HTTPException(400, "Cannot delete the general channel")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_chat_channels WHERE id=%s", (channel_id,))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -1045,20 +1033,15 @@ def get_messages(channel_id: int, after_id: int = None, user: dict = Depends(get
     if after_id:
         rows = db_all("""
             SELECT m.id, m.message, m.created_at, u.id AS user_id, u.name AS user_name
-            FROM crm_chat_messages m
-            JOIN crm_users u ON u.id = m.user_id
-            WHERE m.channel_id=%s AND m.id > %s
-            ORDER BY m.created_at ASC
+            FROM crm_chat_messages m JOIN crm_users u ON u.id = m.user_id
+            WHERE m.channel_id=%s AND m.id > %s ORDER BY m.created_at ASC
         """, (channel_id, after_id))
     else:
-        rows = db_all("""
+        rows = list(reversed(db_all("""
             SELECT m.id, m.message, m.created_at, u.id AS user_id, u.name AS user_name
-            FROM crm_chat_messages m
-            JOIN crm_users u ON u.id = m.user_id
-            WHERE m.channel_id=%s
-            ORDER BY m.created_at DESC LIMIT 50
-        """, (channel_id,))
-        rows = list(reversed(rows))
+            FROM crm_chat_messages m JOIN crm_users u ON u.id = m.user_id
+            WHERE m.channel_id=%s ORDER BY m.created_at DESC LIMIT 50
+        """, (channel_id,))))
 
     for r in rows:
         r["created_at"] = str(r["created_at"])
@@ -1077,8 +1060,7 @@ def send_message(channel_id: int, request: SendMessageRequest, user: dict = Depe
     if not msg:         raise HTTPException(400, "Message cannot be empty")
     if len(msg) > 2000: raise HTTPException(400, "Message too long (max 2000)")
 
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute(
             "INSERT INTO crm_chat_messages (channel_id, user_id, message) VALUES(%s,%s,%s)",
             (channel_id, user["id"], sanitize(msg))
@@ -1089,8 +1071,7 @@ def send_message(channel_id: int, request: SendMessageRequest, user: dict = Depe
             "user_id": user["id"], "user_name": user["name"],
             "is_me": True, "created_at": str(datetime.utcnow()),
         }
-    finally:
-        cur.close(); conn.close()
+
 
 # ════════════════════════════════════════════
 # PRODUCTS
@@ -1098,7 +1079,7 @@ def send_message(channel_id: int, request: SendMessageRequest, user: dict = Depe
 
 @app.get("/api/products")
 def list_products(user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
+    kid  = active_key_id(user["id"])
     rows = db_all(
         "SELECT p.id, p.title,"
         " COUNT(DISTINCT v.id) AS variations_count,"
@@ -1127,8 +1108,7 @@ def create_product(request: CreateProductRequest, user: dict = Depends(get_curre
     kid  = active_key_id(user["id"])
     name = request.title.strip()
     if not name: raise HTTPException(400, "Title is required")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute(
             "INSERT INTO products (api_key_id,title,description,characteristics,seo_title,seo_description,seo_keywords) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (kid, sanitize(name), sanitize(request.description), sanitize(request.characteristics),
@@ -1136,8 +1116,6 @@ def create_product(request: CreateProductRequest, user: dict = Depends(get_curre
         )
         conn.commit()
         return {"id": cur.lastrowid, "title": name}
-    finally:
-        cur.close(); conn.close()
 
 
 @app.get("/api/products/{product_id}")
@@ -1145,12 +1123,13 @@ def get_product(product_id: int, user: dict = Depends(get_current_user)):
     kid = active_key_id(user["id"])
     p   = db_one("SELECT * FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid))
     if not p: raise HTTPException(404, "Product not found")
+
     variations = db_all(
         "SELECT id, variation_name, image_url FROM product_variations WHERE product_id=%s ORDER BY id ASC",
         (product_id,)
     )
     var_ids = [v["id"] for v in variations]
-    sizes = []
+    sizes   = []
     if var_ids:
         fmt   = ",".join(["%s"] * len(var_ids))
         sizes = db_all(
@@ -1164,6 +1143,7 @@ def get_product(product_id: int, user: dict = Depends(get_current_user)):
         sizes_by_var.setdefault(s["variation_id"], []).append(s)
     for v in variations:
         v["sizes"] = sizes_by_var.get(v["id"], [])
+
     custom_fields = db_all(
         "SELECT field_key,field_value,field_type,is_global FROM product_custom_fields"
         " WHERE product_id=%s AND api_key_id=%s ORDER BY created_at ASC",
@@ -1171,6 +1151,7 @@ def get_product(product_id: int, user: dict = Depends(get_current_user)):
     )
     for cf in custom_fields:
         cf["is_global"] = bool(cf.get("is_global", 0))
+
     reviews = db_all(
         "SELECT pr.id,pr.rating,pr.comment,pr.created_at,u.name AS user_name"
         " FROM product_reviews pr JOIN users u ON u.id=pr.user_id"
@@ -1179,6 +1160,7 @@ def get_product(product_id: int, user: dict = Depends(get_current_user)):
     )
     for r in reviews:
         r["created_at"] = str(r["created_at"])
+
     return {
         "id": p["id"], "title": p["title"],
         "description":    p["description"]     or "",
@@ -1204,12 +1186,9 @@ def update_product(product_id: int, request: UpdateProductRequest, user: dict = 
     if request.seo_keywords    is not None: fields.append("seo_keywords=%s");    vals.append(request.seo_keywords)
     if not fields: return {"ok": True}
     vals.append(product_id)
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("UPDATE products SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -1218,20 +1197,18 @@ def delete_product(product_id: int, user: dict = Depends(get_current_user)):
     kid = active_key_id(user["id"])
     if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
         raise HTTPException(404, "Product not found")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE ps FROM product_sizes ps JOIN product_variations v ON ps.variation_id=v.id WHERE v.product_id=%s", (product_id,))
         cur.execute("DELETE FROM product_variations WHERE product_id=%s",    (product_id,))
         cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s", (product_id,))
         cur.execute("DELETE FROM product_reviews WHERE product_id=%s",       (product_id,))
         cur.execute("DELETE FROM products WHERE id=%s",                      (product_id,))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
+
 # ════════════════════════════════════════════
-# Variations
+# VARIATIONS
 # ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/variations")
@@ -1241,14 +1218,11 @@ def create_variation(product_id: int, request: CreateVariationRequest, user: dic
         raise HTTPException(404, "Product not found")
     name = request.variation_name.strip()
     if not name: raise HTTPException(400, "Variation name is required")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("INSERT INTO product_variations (product_id,variation_name,image_url) VALUES(%s,%s,%s)",
                     (product_id, sanitize(name), request.image_url))
         conn.commit()
         return {"id": cur.lastrowid, "variation_name": name, "image_url": request.image_url, "sizes": []}
-    finally:
-        cur.close(); conn.close()
 
 
 @app.put("/api/products/{product_id}/variations/{var_id}")
@@ -1263,12 +1237,9 @@ def update_variation(product_id: int, var_id: int, request: UpdateVariationReque
     if request.image_url      is not None: fields.append("image_url=%s");      vals.append(request.image_url)
     if not fields: return {"ok": True}
     vals.append(var_id)
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("UPDATE product_variations SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -1277,18 +1248,15 @@ def delete_variation(product_id: int, var_id: int, user: dict = Depends(get_curr
     kid = active_key_id(user["id"])
     if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
         raise HTTPException(404, "Product not found")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_sizes WHERE variation_id=%s", (var_id,))
         cur.execute("DELETE FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
 # ════════════════════════════════════════════
-# Sizes
+# SIZES
 # ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/variations/{var_id}/sizes")
@@ -1300,8 +1268,7 @@ def create_size(product_id: int, var_id: int, request: CreateSizeRequest, user: 
         raise HTTPException(404, "Variation not found")
     name = request.size_name.strip()
     if not name: raise HTTPException(400, "Size name is required")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute(
             "INSERT INTO product_sizes (product_id,variation_id,size_name,price,stock_quantity) VALUES(%s,%s,%s,%s,%s)",
             (product_id, var_id, name, request.price, request.stock_quantity)
@@ -1309,8 +1276,6 @@ def create_size(product_id: int, var_id: int, request: CreateSizeRequest, user: 
         conn.commit()
         return {"id": cur.lastrowid, "variation_id": var_id, "size_name": name,
                 "price": request.price, "stock_quantity": request.stock_quantity, "sold_quantity": 0}
-    finally:
-        cur.close(); conn.close()
 
 
 @app.put("/api/products/{product_id}/variations/{var_id}/sizes/{size_id}")
@@ -1324,12 +1289,9 @@ def update_size(product_id: int, var_id: int, size_id: int, request: UpdateSizeR
     if request.stock_quantity is not None: fields.append("stock_quantity=%s"); vals.append(request.stock_quantity)
     if not fields: return {"ok": True}
     vals.append(size_id)
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("UPDATE product_sizes SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -1338,17 +1300,14 @@ def delete_size(product_id: int, var_id: int, size_id: int, user: dict = Depends
     kid = active_key_id(user["id"])
     if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
         raise HTTPException(404, "Product not found")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_sizes WHERE id=%s AND variation_id=%s", (size_id, var_id))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
 # ════════════════════════════════════════════
-# Custom Fields
+# CUSTOM FIELDS
 # ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/custom-fields")
@@ -1358,10 +1317,10 @@ def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, user
         raise HTTPException(404, "Product not found")
     key = request.field_key.strip().lower().replace(" ", "_")
     if not key: raise HTTPException(400, "Field key is required")
-    conn = get_db(); cur = conn.cursor()
-    try:
-        ex = db_one("SELECT id FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
-                    (product_id, kid, key))
+
+    ex = db_one("SELECT id FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
+                (product_id, kid, key))
+    with db_cursor() as (conn, cur):
         if ex:
             cur.execute("UPDATE product_custom_fields SET field_value=%s,field_type=%s,is_global=%s WHERE id=%s",
                         (request.field_value, request.field_type, int(request.is_global), ex["id"]))
@@ -1369,9 +1328,7 @@ def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, user
             cur.execute("INSERT INTO product_custom_fields (api_key_id,product_id,field_key,field_value,field_type,is_global) VALUES(%s,%s,%s,%s,%s,%s)",
                         (kid, product_id, key, request.field_value, request.field_type, int(request.is_global)))
         conn.commit()
-        return {"ok": True, "field_key": key, "is_global": request.is_global}
-    finally:
-        cur.close(); conn.close()
+    return {"ok": True, "field_key": key, "is_global": request.is_global}
 
 
 @app.delete("/api/products/{product_id}/custom-fields/{field_key}")
@@ -1379,13 +1336,10 @@ def delete_custom_field(product_id: int, field_key: str, user: dict = Depends(ge
     kid = active_key_id(user["id"])
     if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
         raise HTTPException(404, "Product not found")
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
                     (product_id, kid, field_key))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -1396,12 +1350,9 @@ def toggle_custom_field_global(product_id: int, field_key: str, user: dict = Dep
                  (product_id, kid, field_key))
     if not row: raise HTTPException(404, "Field not found")
     new_val = 0 if row["is_global"] else 1
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("UPDATE product_custom_fields SET is_global=%s WHERE id=%s", (new_val, row["id"]))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True, "is_global": bool(new_val)}
 
 
@@ -1427,13 +1378,8 @@ async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_cu
         raise HTTPException(400, "Invalid image file")
     if CLOUDINARY_AVAILABLE:
         try:
-            result = cloudinary.uploader.upload(
-                out,
-                folder="crm/products",
-                format="webp",
-                quality="auto:good",
-                resource_type="image"
-            )
+            result = cloudinary.uploader.upload(out, folder="crm/products", format="webp",
+                                                quality="auto:good", resource_type="image")
             return {"url": result["secure_url"]}
         except Exception as e:
             raise HTTPException(500, f"Cloudinary upload failed: {e}")
@@ -1442,7 +1388,7 @@ async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_cu
         path = os.path.join(UPLOADS_DIR, filename)
         with open(path, "wb") as f:
             f.write(out.read())
-        return {"url": f"http://localhost:8001/uploads/{filename}"}
+        return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}"}
 
 
 @app.post("/api/upload/avatar")
@@ -1462,17 +1408,12 @@ async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_c
         out.seek(0)
     except Exception:
         raise HTTPException(400, "Invalid image file")
+
     if CLOUDINARY_AVAILABLE:
         try:
-            result = cloudinary.uploader.upload(
-                out,
-                folder="crm/avatars",
-                public_id=f"avatar_{user['id']}",
-                overwrite=True,
-                format="webp",
-                quality="auto:good",
-                resource_type="image"
-            )
+            result = cloudinary.uploader.upload(out, folder="crm/avatars",
+                                                public_id=f"avatar_{user['id']}", overwrite=True,
+                                                format="webp", quality="auto:good", resource_type="image")
             url = result["secure_url"]
         except Exception as e:
             raise HTTPException(500, f"Cloudinary upload failed: {e}")
@@ -1481,13 +1422,11 @@ async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_c
         path = os.path.join(UPLOADS_DIR, filename)
         with open(path, "wb") as f:
             f.write(out.read())
-        url = f"http://localhost:8001/uploads/{filename}"
-    conn = get_db(); cur = conn.cursor()
-    try:
+        url = f"{CRM_BACKEND_URL}/uploads/{filename}"
+
+    with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_users SET avatar_url=%s WHERE id=%s", (url, user["id"]))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"url": url}
 
 
@@ -1513,12 +1452,11 @@ def get_settings(user: dict = Depends(get_current_user)):
 
 @app.put("/api/settings")
 def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_current_user)):
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         if request.name is not None:
             name = request.name.strip()
-            if not name: raise HTTPException(400, "Name cannot be empty")
-            if len(name) > 80: raise HTTPException(400, "Name too long (max 80)")
+            if not name:        raise HTTPException(400, "Name cannot be empty")
+            if len(name) > 80:  raise HTTPException(400, "Name too long (max 80)")
             cur.execute("UPDATE crm_users SET name=%s WHERE id=%s", (sanitize(name), user["id"]))
         upd = {}
         if request.language is not None: upd["language"] = request.language
@@ -1529,8 +1467,6 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
             cur.execute(f"UPDATE crm_settings SET {sets} WHERE crm_user_id=%s",
                         list(upd.values()) + [user["id"]])
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
 
 
@@ -1560,17 +1496,12 @@ def set_role_permissions(role_id: int, request: SetPermissionsRequest, user: dic
     if role["is_system"]: raise HTTPException(400, "Cannot edit system role permissions")
     valid = {p[0] for p in ROLE_PERMISSIONS}
     perms = [p for p in request.permissions if p in valid]
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_role_permissions WHERE role_id=%s", (role_id,))
         if perms:
-            cur.executemany(
-                "INSERT INTO crm_role_permissions (role_id, permission) VALUES (%s,%s)",
-                [(role_id, p) for p in perms]
-            )
+            cur.executemany("INSERT INTO crm_role_permissions (role_id, permission) VALUES (%s,%s)",
+                            [(role_id, p) for p in perms])
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True, "permissions": perms}
 
 
@@ -1580,7 +1511,6 @@ def set_role_permissions(role_id: int, request: SetPermissionsRequest, user: dic
 
 @app.get("/api/auth/google/login")
 def google_login():
-    """Redirect browser to Google sign-in page."""
     import urllib.parse
     params = {
         "client_id":     GOOGLE_CLIENT_ID,
@@ -1588,99 +1518,61 @@ def google_login():
         "response_type": "code",
         "scope":         "openid email profile",
         "access_type":   "offline",
-        "prompt":        "select_account",   # always show account picker
+        "prompt":        "select_account",
     }
-    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
-    return RedirectResponse(url)
+    return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params))
 
 
 @app.get("/api/auth/google/callback")
 def google_callback(code: str = None, error: str = None):
-    """Google redirects here with ?code=... after sign-in."""
     if error or not code:
-        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_cancelled")
+        return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_cancelled")
 
     import urllib.request, urllib.parse, json as _json
-    # Exchange code → tokens
     data = urllib.parse.urlencode({
-        "code":          code,
-        "client_id":     GOOGLE_CLIENT_ID,
-        "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uri":  GOOGLE_REDIRECT_URI,
-        "grant_type":    "authorization_code",
+        "code": code, "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI, "grant_type": "authorization_code",
     }).encode()
     try:
         req = urllib.request.Request(
-            "https://oauth2.googleapis.com/token",
-            data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            method="POST",
+            "https://oauth2.googleapis.com/token", data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST",
         )
         with urllib.request.urlopen(req) as resp:
             tokens = _json.loads(resp.read())
-    except Exception as e:
-        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_token")
+    except Exception:
+        return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_token")
 
     id_token_str = tokens.get("id_token")
     if not id_token_str:
-        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_no_id_token")
+        return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_no_id_token")
 
-    # Verify id_token and extract user info
     try:
         from google.oauth2 import id_token as g_id_token
         from google.auth.transport import requests as g_requests
-        idinfo = g_id_token.verify_oauth2_token(
-            id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10
-        )
+        idinfo  = g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
         g_id    = idinfo["sub"]
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
         picture = idinfo.get("picture")
-    except Exception as e:
-        return RedirectResponse(f"{FRONTEND_URL}/login?error=google_verify")
+    except Exception:
+        return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_verify")
 
-    # Upsert user
-    user = db_one("SELECT id FROM crm_users WHERE google_id=%s OR (email=%s AND google_id IS NULL)", (g_id, email))
-    if user:
-        user_id = user["id"]
-        conn = get_db(); cur = conn.cursor()
-        try:
-            cur.execute("UPDATE crm_users SET google_id=%s, last_login_at=NOW() WHERE id=%s", (g_id, user_id))
-            conn.commit()
-        finally:
-            cur.close(); conn.close()
-    else:
-        conn = get_db(); cur = conn.cursor()
-        try:
-            cur.execute(
-                "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'','owner',%s,%s)",
-                (sanitize(name), email, g_id, picture)
-            )
-            conn.commit()
-            user_id = cur.lastrowid
-            cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES(%s)", (user_id,))
-            conn.commit()
-        finally:
-            cur.close(); conn.close()
-
-    # Set JWT cookie and redirect to dashboard
+    user_id   = _upsert_google_user(g_id, email, name, picture)
     jwt_token = make_token(user_id)
-    redirect = RedirectResponse(f"{FRONTEND_URL}/dashboard", status_code=302)
-    redirect.set_cookie(
-        key="crm_token", value=jwt_token,
-        httponly=True, samesite="lax", max_age=60 * 60 * 24 * 7,
-    )
+    redirect  = RedirectResponse(f"{CRM_FRONTEND_URL}/dashboard", status_code=302)
+    redirect.set_cookie(key="crm_token", value=jwt_token, httponly=True, samesite="lax", max_age=60*60*24*7)
     return redirect
 
 
 @app.post("/api/auth/google")
 def google_auth(request: GoogleAuthRequest, response: Response):
     if not GOOGLE_CLIENT_ID:
-        raise HTTPException(501, "Google OAuth not configured (set GOOGLE_CLIENT_ID)")
+        raise HTTPException(501, "Google OAuth not configured")
     try:
         from google.oauth2 import id_token
         from google.auth.transport import requests as g_requests
-        idinfo = id_token.verify_oauth2_token(request.token, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
+        idinfo  = id_token.verify_oauth2_token(request.token, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
         g_id    = idinfo["sub"]
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
@@ -1688,29 +1580,7 @@ def google_auth(request: GoogleAuthRequest, response: Response):
     except Exception as e:
         raise HTTPException(400, f"Invalid Google token: {e}")
 
-    user = db_one("SELECT id FROM crm_users WHERE google_id=%s OR (email=%s AND google_id IS NULL)", (g_id, email))
-    if user:
-        user_id = user["id"]
-        conn = get_db(); cur = conn.cursor()
-        try:
-            cur.execute("UPDATE crm_users SET google_id=%s, last_login_at=NOW() WHERE id=%s", (g_id, user_id))
-            conn.commit()
-        finally:
-            cur.close(); conn.close()
-    else:
-        conn = get_db(); cur = conn.cursor()
-        try:
-            cur.execute(
-                "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'',\'owner\',%s,%s)",
-                (sanitize(name), email, g_id, picture)
-            )
-            conn.commit()
-            user_id = cur.lastrowid
-            cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES(%s)", (user_id,))
-            conn.commit()
-        finally:
-            cur.close(); conn.close()
-
+    user_id = _upsert_google_user(g_id, email, name, picture)
     set_cookie(response, make_token(user_id))
     return {"success": True}
 
@@ -1730,7 +1600,6 @@ class EmailDomainRequest(BaseModel):
     from_email: str
 
 def _gen_dkim_keys():
-    """Generate RSA-2048 key pair for DKIM. Returns (private_pem, public_dns_value)."""
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_pem = key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -1741,17 +1610,13 @@ def _gen_dkim_keys():
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    pub_b64 = base64.b64encode(pub_der).decode()
-    dns_value = f"v=DKIM1; k=rsa; p={pub_b64}"
-    return private_pem, dns_value
+    return private_pem, f"v=DKIM1; k=rsa; p={base64.b64encode(pub_der).decode()}"
 
 def _check_txt(hostname: str, expected: str) -> bool:
-    """Return True if a TXT record containing expected string exists on hostname."""
     try:
         answers = dns.resolver.resolve(hostname, "TXT", lifetime=5)
         for r in answers:
-            txt = b"".join(r.strings).decode(errors="ignore")
-            if expected in txt:
+            if expected in b"".join(r.strings).decode(errors="ignore"):
                 return True
     except Exception:
         pass
@@ -1761,47 +1626,40 @@ def _check_txt(hostname: str, expected: str) -> bool:
 @app.get("/api/email-domain")
 def get_email_domain(user: dict = Depends(get_current_user)):
     key_id = active_key_id(user["id"])
-    row = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+    row    = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
     if not row:
         return {"configured": False}
     return {
-        "configured":   True,
-        "domain":       row["domain"],
-        "from_name":    row["from_name"],
-        "from_email":   row["from_email"],
-        "is_verified":  bool(row["is_verified"]),
-        "verified_at":  row["verified_at"].isoformat() if row["verified_at"] else None,
+        "configured":    True,
+        "domain":        row["domain"],
+        "from_name":     row["from_name"],
+        "from_email":    row["from_email"],
+        "is_verified":   bool(row["is_verified"]),
+        "verified_at":   row["verified_at"].isoformat() if row["verified_at"] else None,
         "dkim_selector": row["dkim_selector"],
-        "dkim_public":  row["dkim_public"],
-        "verify_token": row["verify_token"],
+        "dkim_public":   row["dkim_public"],
+        "verify_token":  row["verify_token"],
     }
 
 
 @app.post("/api/email-domain")
 def save_email_domain(req: EmailDomainRequest, user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
+    key_id     = active_key_id(user["id"])
     require_owner(user, key_id)
-
-    domain     = req.domain.lower().strip().rstrip("/")
-    domain     = domain.removeprefix("https://").removeprefix("http://")
+    domain     = req.domain.lower().strip().rstrip("/").removeprefix("https://").removeprefix("http://")
     from_name  = sanitize(req.from_name.strip())
     from_email = req.from_email.lower().strip()
 
-    if not domain or "." not in domain:
-        raise HTTPException(400, "Invalid domain")
-    if not from_email or "@" not in from_email:
-        raise HTTPException(400, "Invalid from email")
+    if not domain or "." not in domain: raise HTTPException(400, "Invalid domain")
+    if not from_email or "@" not in from_email: raise HTTPException(400, "Invalid from email")
 
-    existing = db_one("SELECT id FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+    existing = db_one("SELECT domain FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
 
-    if existing:
-        # Update — regenerate DKIM only if domain changed
-        old = db_one("SELECT domain, dkim_private, dkim_public, verify_token FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
-        if old["domain"] != domain:
-            private_pem, dns_value = _gen_dkim_keys()
-            token = secrets.token_hex(24)
-            conn = get_db(); cur = conn.cursor()
-            try:
+    with db_cursor() as (conn, cur):
+        if existing:
+            if existing["domain"] != domain:
+                private_pem, dns_value = _gen_dkim_keys()
+                token = secrets.token_hex(24)
                 cur.execute("""
                     UPDATE crm_email_domains
                     SET domain=%s, from_name=%s, from_email=%s,
@@ -1809,33 +1667,18 @@ def save_email_domain(req: EmailDomainRequest, user: dict = Depends(get_current_
                         dkim_private=%s, dkim_public=%s
                     WHERE api_key_id=%s
                 """, (domain, from_name, from_email, token, private_pem, dns_value, key_id))
-                conn.commit()
-            finally:
-                cur.close(); conn.close()
+            else:
+                cur.execute("UPDATE crm_email_domains SET from_name=%s, from_email=%s WHERE api_key_id=%s",
+                            (from_name, from_email, key_id))
         else:
-            conn = get_db(); cur = conn.cursor()
-            try:
-                cur.execute("""
-                    UPDATE crm_email_domains
-                    SET from_name=%s, from_email=%s
-                    WHERE api_key_id=%s
-                """, (from_name, from_email, key_id))
-                conn.commit()
-            finally:
-                cur.close(); conn.close()
-    else:
-        private_pem, dns_value = _gen_dkim_keys()
-        token = secrets.token_hex(24)
-        conn = get_db(); cur = conn.cursor()
-        try:
+            private_pem, dns_value = _gen_dkim_keys()
+            token = secrets.token_hex(24)
             cur.execute("""
                 INSERT INTO crm_email_domains
                     (api_key_id, domain, from_name, from_email, verify_token, dkim_private, dkim_public)
                 VALUES (%s,%s,%s,%s,%s,%s,%s)
             """, (key_id, domain, from_name, from_email, token, private_pem, dns_value))
-            conn.commit()
-        finally:
-            cur.close(); conn.close()
+        conn.commit()
 
     return get_email_domain(user)
 
@@ -1843,11 +1686,10 @@ def save_email_domain(req: EmailDomainRequest, user: dict = Depends(get_current_
 @app.post("/api/email-domain/verify")
 def verify_email_domain(user: dict = Depends(get_current_user)):
     key_id = active_key_id(user["id"])
-    row = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
-    if not row:
-        raise HTTPException(404, "No domain configured")
+    row    = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+    if not row: raise HTTPException(404, "No domain configured")
 
-    domain = row["domain"]
+    domain  = row["domain"]
     results = {
         "verification": _check_txt(f"_torta-verify.{domain}", row["verify_token"]),
         "dkim":         _check_txt(f"{row['dkim_selector']}._domainkey.{domain}", "DKIM1"),
@@ -1856,15 +1698,9 @@ def verify_email_domain(user: dict = Depends(get_current_user)):
     all_ok = results["verification"] and results["dkim"]
 
     if all_ok and not row["is_verified"]:
-        conn = get_db(); cur = conn.cursor()
-        try:
-            cur.execute(
-                "UPDATE crm_email_domains SET is_verified=1, verified_at=NOW() WHERE api_key_id=%s",
-                (key_id,)
-            )
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_email_domains SET is_verified=1, verified_at=NOW() WHERE api_key_id=%s", (key_id,))
             conn.commit()
-        finally:
-            cur.close(); conn.close()
 
     return {"results": results, "all_ok": all_ok}
 
@@ -1873,12 +1709,9 @@ def verify_email_domain(user: dict = Depends(get_current_user)):
 def delete_email_domain(user: dict = Depends(get_current_user)):
     key_id = active_key_id(user["id"])
     require_owner(user, key_id)
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_email_domains WHERE api_key_id=%s", (key_id,))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"success": True}
 
 
@@ -1886,44 +1719,32 @@ def delete_email_domain(user: dict = Depends(get_current_user)):
 # OAUTH SETTINGS
 # ════════════════════════════════════════════
 
-MAGAZ_BACKEND_URL = "http://localhost:8000"
-
-class OAuthSettingsRequest(BaseModel):
-    google_client_id: str = ""
-    google_client_secret: str = ""
-    google_enabled: bool = False
-
 @app.get("/api/oauth-settings")
 def get_oauth_settings(user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    key_row = db_one("SELECT api_key FROM crm_api_keys WHERE id=%s", (key_id,))
+    key_id      = active_key_id(user["id"])
+    key_row     = db_one("SELECT api_key FROM crm_api_keys WHERE id=%s", (key_id,))
     api_key_str = key_row["api_key"] if key_row else ""
     redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/api/auth/google/callback"
 
     row = db_one("SELECT * FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
     if not row:
-        return {
-            "configured": False,
-            "google_client_id": "",
-            "google_client_secret": "",
-            "google_enabled": False,
-            "redirect_uri": redirect_uri,
-        }
+        return {"configured": False, "google_client_id": "", "google_client_secret": "",
+                "google_enabled": False, "redirect_uri": redirect_uri}
     return {
-        "configured": True,
-        "google_client_id": row["google_client_id"] or "",
-        "google_client_secret": row["google_client_secret"] or "",
-        "google_enabled": bool(row["google_enabled"]),
-        "redirect_uri": redirect_uri,
+        "configured":          True,
+        "google_client_id":    row["google_client_id"] or "",
+        "google_client_secret":row["google_client_secret"] or "",
+        "google_enabled":      bool(row["google_enabled"]),
+        "redirect_uri":        redirect_uri,
     }
+
 
 @app.post("/api/oauth-settings")
 def save_oauth_settings(req: OAuthSettingsRequest, user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
+    key_id   = active_key_id(user["id"])
     require_owner(user, key_id)
     existing = db_one("SELECT id FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         if existing:
             cur.execute(
                 "UPDATE crm_oauth_settings SET google_client_id=%s, google_client_secret=%s, google_enabled=%s WHERE api_key_id=%s",
@@ -1935,18 +1756,81 @@ def save_oauth_settings(req: OAuthSettingsRequest, user: dict = Depends(get_curr
                 (key_id, req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled))
             )
         conn.commit()
-    finally:
-        cur.close(); conn.close()
     return {"ok": True}
+
 
 @app.delete("/api/oauth-settings")
 def delete_oauth_settings(user: dict = Depends(get_current_user)):
     key_id = active_key_id(user["id"])
     require_owner(user, key_id)
-    conn = get_db(); cur = conn.cursor()
-    try:
+    with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
         conn.commit()
-    finally:
-        cur.close(); conn.close()
+    return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# URL CONFIGURATION
+# ════════════════════════════════════════════
+
+@app.get("/api/url-config")
+def get_url_config(user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    row    = db_one("SELECT frontend_url FROM crm_url_config WHERE api_key_id=%s", (key_id,))
+    return {"frontend_url": row["frontend_url"] if row else ""}
+
+
+@app.put("/api/url-config")
+def save_url_config(req: UrlConfigRequest, user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    require_owner(user, key_id)
+    url = req.frontend_url.strip()
+    if url and not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "URL must start with http:// or https://")
+    existing = db_one("SELECT id FROM crm_url_config WHERE api_key_id=%s", (key_id,))
+    with db_cursor() as (conn, cur):
+        if existing:
+            cur.execute("UPDATE crm_url_config SET frontend_url=%s WHERE api_key_id=%s", (url or None, key_id))
+        else:
+            cur.execute("INSERT INTO crm_url_config (api_key_id, frontend_url) VALUES (%s,%s)", (key_id, url or None))
+        conn.commit()
+    return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# REDIRECT URLs
+# ════════════════════════════════════════════
+
+@app.get("/api/redirect-urls")
+def get_redirect_urls(user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    rows   = db_all("SELECT id, url FROM crm_redirect_urls WHERE api_key_id=%s ORDER BY id ASC", (key_id,))
+    return {"urls": rows}
+
+
+@app.post("/api/redirect-urls")
+def add_redirect_url(req: AddRedirectUrlRequest, user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    require_owner(user, key_id)
+    url = req.url.strip()
+    if not url:                                          raise HTTPException(400, "URL is required")
+    if not url.startswith(("http://", "https://")):      raise HTTPException(400, "URL must start with http:// or https://")
+    if len(url) > 500:                                   raise HTTPException(400, "URL too long")
+    if db_one("SELECT id FROM crm_redirect_urls WHERE api_key_id=%s AND url=%s", (key_id, url)):
+        raise HTTPException(400, "URL already in the list")
+    with db_cursor() as (conn, cur):
+        cur.execute("INSERT INTO crm_redirect_urls (api_key_id, url) VALUES (%s,%s)", (key_id, url))
+        conn.commit()
+        return {"ok": True, "id": cur.lastrowid, "url": url}
+
+
+@app.delete("/api/redirect-urls/{url_id}")
+def delete_redirect_url(url_id: int, user: dict = Depends(get_current_user)):
+    key_id = active_key_id(user["id"])
+    require_owner(user, key_id)
+    if not db_one("SELECT id FROM crm_redirect_urls WHERE id=%s AND api_key_id=%s", (url_id, key_id)):
+        raise HTTPException(404, "URL not found")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_redirect_urls WHERE id=%s", (url_id,))
+        conn.commit()
     return {"ok": True}

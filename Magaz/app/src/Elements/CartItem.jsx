@@ -46,7 +46,7 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
 
           <button
             className={`cart-fav-btn ${isFavorite ? "cart-fav-btn--active" : ""}`}
-            onClick={() => onToggleFavorite(item.product_hash, item.product_id)}
+            onClick={() => onToggleFavorite(item.product_id, item.product_hash)}
           >
             <img src={heartIcon} alt="Favorite" className="heart-icon" />
           </button>
