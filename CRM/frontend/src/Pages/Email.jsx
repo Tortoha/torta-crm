@@ -3,7 +3,7 @@ import { Copy, CheckCircle, Warning, ArrowClockwise, Trash } from '@phosphor-ico
 import { API_BASE } from '../api.js';
 import '../Style/Email.css';
 
-// ── DNS record row ────────────────────────────────────────────────────────────
+// ── DNS record row ───────────────────────────────────────────────────────────
 function DnsRow({ type, host, value, status }) {
   const [copied, setCopied] = useState(false);
   const copy = (text) => {
@@ -38,20 +38,37 @@ function DnsRow({ type, host, value, status }) {
   );
 }
 
+// ── Sandbox address row ───────────────────────────────────────────────────────
+function AddressRow({ email, status, onDelete }) {
+  const statusOk = status === 'Success';
+  return (
+    <div className="addr-row">
+      <span className="addr-email">{email}</span>
+      <span className={`addr-badge addr-badge--${statusOk ? 'ok' : 'pending'}`}>
+        {statusOk ? <><CheckCircle /> Verified</> : <><Warning /> Pending</>}
+      </span>
+      <button className="crm-icon-btn crm-icon-btn--danger" onClick={() => onDelete(email)} title="Remove">
+        <Trash className="crm-icon--sm" />
+      </button>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 function Email() {
-  const [data, setData]         = useState(null);   // null = loading
-  const [saving, setSaving]     = useState(false);
+  const [data, setData]           = useState(null);
+  const [saving, setSaving]       = useState(false);
   const [verifying, setVerifying] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [deleting, setDeleting]   = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
-  const [err, setErr]           = useState('');
-  const [success, setSuccess]   = useState('');
+  const [err, setErr]             = useState('');
+  const [success, setSuccess]     = useState('');
 
   // form state
   const [domain,    setDomain]    = useState('');
   const [fromName,  setFromName]  = useState('');
   const [fromEmail, setFromEmail] = useState('');
+
 
   const load = async () => {
     setData(null);
@@ -69,8 +86,9 @@ function Email() {
 
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    window.addEventListener('api-key-switched', load);
-    return () => window.removeEventListener('api-key-switched', load);
+    const h = () => { load(); };
+    window.addEventListener('api-key-switched', h);
+    return () => window.removeEventListener('api-key-switched', h);
   }, []);
 
   const handleSave = async (e) => {
@@ -87,7 +105,7 @@ function Email() {
       if (!res.ok) { setErr(json.detail || 'Error'); return; }
       setData(json);
       setVerifyResult(null);
-      setSuccess('Saved. Now add the DNS records below.');
+      setSuccess('Saved. Add the DNS records below to your domain.');
     } catch { setErr('Network error'); }
     finally { setSaving(false); }
   };
@@ -100,14 +118,14 @@ function Email() {
       });
       const json = await res.json();
       setVerifyResult(json.results);
-      if (json.all_ok) { setSuccess('Domain verified!'); load(); }
-      else setErr('Some records are missing. Add them and try again.');
+      if (json.all_ok) { setSuccess('Domain fully verified'); load(); }
+      else setErr(`Verification: ${json.ver_status} · DKIM: ${json.dkim_status}. Add records and try again.`);
     } catch { setErr('Network error'); }
     finally { setVerifying(false); }
   };
 
   const handleDelete = async () => {
-    if (!confirm('Remove this domain configuration?')) return;
+    if (!confirm('Remove this domain from SES?')) return;
     setDeleting(true);
     try {
       await fetch(`${API_BASE}/api/email-domain`, { method: 'DELETE', credentials: 'include' });
@@ -123,15 +141,12 @@ function Email() {
     return verifyResult[key] ? 'ok' : 'pending';
   };
 
-  if (data === null) return (
-    <div className="crm-page-title">Loading…</div>
-  );
+  if (data === null) return <div className="crm-page-title">Loading…</div>;
 
   return (
     <div className="email-page">
       <h1 className="crm-page-title">Email Domain</h1>
 
-      {/* ── Settings form ── */}
       <section className="crm-section">
         <h2 className="crm-section-title">Sending settings</h2>
         <form className="email-form" onSubmit={handleSave}>
@@ -181,7 +196,7 @@ function Email() {
                 className="crm-icon-btn crm-icon-btn--danger"
                 onClick={handleDelete}
                 disabled={deleting}
-                title="Remove domain"
+                title="Remove domain from SES"
               >
                 <Trash className="crm-icon" />
               </button>
@@ -190,7 +205,6 @@ function Email() {
         </form>
       </section>
 
-      {/* ── DNS records ── */}
       {data.configured && (
         <section className="crm-section">
           <div className="crm-section-row">
@@ -201,47 +215,43 @@ function Email() {
                 : <span className="email-pending-badge"><Warning /> Not verified</span>
               }
             </h2>
-            <button
-              className="crm-add-btn"
-              onClick={handleVerify}
-              disabled={verifying}
-            >
+            <button className="crm-add-btn" onClick={handleVerify} disabled={verifying}>
               <ArrowClockwise className="crm-icon--sm" />
-              {verifying ? 'Checking…' : 'Check DNS'}
+              {verifying ? 'Checking…' : 'Check'}
             </button>
           </div>
 
-          <p className="email-hint">
-            Add these records to your DNS provider, then click <strong>Check DNS</strong>.<br />
-            <strong>Important:</strong> in the <em>Host</em> field enter only the part shown in <strong>Enter in DNS</strong> — your provider adds the domain automatically.
-          </p>
 
           <div className="dns-table">
             <div className="dns-header">
               <span>Type</span><span>Enter in DNS</span><span>Value</span><span>Status</span>
             </div>
-
             <DnsRow
               type="TXT"
-              host={`_torta-verify`}
-              value={`torta-verify=${data.verify_token}`}
+              host={`_amazonses.${data.domain}`}
+              value={data.verify_token}
               status={dnsStatus('verification')}
             />
-            <DnsRow
-              type="TXT"
-              host={`${data.dkim_selector}._domainkey`}
-              value={data.dkim_public}
-              status={dnsStatus('dkim')}
-            />
+            {(data.dkim_tokens || []).map((token) => (
+              <DnsRow
+                key={token}
+                type="CNAME"
+                host={`${token}._domainkey.${data.domain}`}
+                value={`${token}.dkim.amazonses.com`}
+                status={dnsStatus('dkim')}
+              />
+            ))}
             <DnsRow
               type="TXT"
               host="@"
               value="v=spf1 include:amazonses.com ~all"
               status={dnsStatus('spf')}
             />
+
           </div>
         </section>
       )}
+
     </div>
   );
 }

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from mysql.connector.pooling import MySQLConnectionPool
-import hashlib, secrets, jwt, random, os, io, smtplib
+import hashlib, secrets, jwt, random, os, io, smtplib, json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -22,6 +22,13 @@ try:
     CLOUDINARY_AVAILABLE = True
 except ImportError:
     CLOUDINARY_AVAILABLE = False
+
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
 
 
 # ════════════════════════════════════════════
@@ -40,6 +47,9 @@ SMTP_PORT               = 587
 SMTP_USER               = "AKIASY5ETQGYQK5YLIM3"
 SMTP_PASS               = "BL6yBolOEm/aYUODmJ5M+G0AQi14nTd3M4rpnPZN7yI6"
 EMAIL_FROM              = "support@tortacrm.com"
+SES_REGION              = "eu-north-1"
+AWS_API_KEY_ID          = "AKIASY5ETQGY4O5WXK6X"
+AWS_API_SECRET          = "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"
 MAX_FAILED_ATTEMPTS     = 5
 BLOCK_MINUTES           = 10
 CODE_TTL_MINUTES        = 10
@@ -1599,19 +1609,6 @@ class EmailDomainRequest(BaseModel):
     from_name: str
     from_email: str
 
-def _gen_dkim_keys():
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_pem = key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.NoEncryption()
-    ).decode()
-    pub_der = key.public_key().public_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo
-    )
-    return private_pem, f"v=DKIM1; k=rsa; p={base64.b64encode(pub_der).decode()}"
-
 def _check_txt(hostname: str, expected: str) -> bool:
     try:
         answers = dns.resolver.resolve(hostname, "TXT", lifetime=5)
@@ -1623,12 +1620,30 @@ def _check_txt(hostname: str, expected: str) -> bool:
     return False
 
 
+def _get_ses():
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(503, "boto3 not installed. Run: pip install boto3")
+    if not AWS_API_KEY_ID or not AWS_API_SECRET:
+        raise HTTPException(503, "AWS_API_KEY_ID / AWS_API_SECRET env vars not set")
+    return boto3.client(
+        "ses",
+        region_name=SES_REGION,
+        aws_access_key_id=AWS_API_KEY_ID,
+        aws_secret_access_key=AWS_API_SECRET,
+    )
+
+
 @app.get("/api/email-domain")
 def get_email_domain(user: dict = Depends(get_current_user)):
     key_id = active_key_id(user["id"])
     row    = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
     if not row:
         return {"configured": False}
+    dkim_tokens = []
+    try:
+        dkim_tokens = json.loads(row["dkim_public"]) if row["dkim_public"] else []
+    except Exception:
+        pass
     return {
         "configured":    True,
         "domain":        row["domain"],
@@ -1636,9 +1651,8 @@ def get_email_domain(user: dict = Depends(get_current_user)):
         "from_email":    row["from_email"],
         "is_verified":   bool(row["is_verified"]),
         "verified_at":   row["verified_at"].isoformat() if row["verified_at"] else None,
-        "dkim_selector": row["dkim_selector"],
-        "dkim_public":   row["dkim_public"],
-        "verify_token":  row["verify_token"],
+        "verify_token":  row["verify_token"],   # SES TXT token → _amazonses.{domain}
+        "dkim_tokens":   dkim_tokens,           # 3 CNAME tokens от SES
     }
 
 
@@ -1653,31 +1667,35 @@ def save_email_domain(req: EmailDomainRequest, user: dict = Depends(get_current_
     if not domain or "." not in domain: raise HTTPException(400, "Invalid domain")
     if not from_email or "@" not in from_email: raise HTTPException(400, "Invalid from email")
 
+    ses = _get_ses()
+
+    # Регистрируем домен в SES → получаем TXT-токен верификации
+    ver_resp  = ses.verify_domain_identity(Domain=domain)
+    ses_token = ver_resp["VerificationToken"]
+
+    # Получаем 3 DKIM CNAME-токена от SES
+    dkim_resp   = ses.verify_domain_dkim(Domain=domain)
+    dkim_tokens = dkim_resp["DkimTokens"]   # list of 3 strings
+
     existing = db_one("SELECT domain FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
 
     with db_cursor() as (conn, cur):
         if existing:
-            if existing["domain"] != domain:
-                private_pem, dns_value = _gen_dkim_keys()
-                token = secrets.token_hex(24)
-                cur.execute("""
-                    UPDATE crm_email_domains
-                    SET domain=%s, from_name=%s, from_email=%s,
-                        verify_token=%s, is_verified=0, verified_at=NULL,
-                        dkim_private=%s, dkim_public=%s
-                    WHERE api_key_id=%s
-                """, (domain, from_name, from_email, token, private_pem, dns_value, key_id))
-            else:
-                cur.execute("UPDATE crm_email_domains SET from_name=%s, from_email=%s WHERE api_key_id=%s",
-                            (from_name, from_email, key_id))
+            cur.execute("""
+                UPDATE crm_email_domains
+                SET domain=%s, from_name=%s, from_email=%s,
+                    verify_token=%s, dkim_public=%s,
+                    is_verified=0, verified_at=NULL
+                WHERE api_key_id=%s
+            """, (domain, from_name, from_email,
+                  ses_token, json.dumps(dkim_tokens), key_id))
         else:
-            private_pem, dns_value = _gen_dkim_keys()
-            token = secrets.token_hex(24)
             cur.execute("""
                 INSERT INTO crm_email_domains
-                    (api_key_id, domain, from_name, from_email, verify_token, dkim_private, dkim_public)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-            """, (key_id, domain, from_name, from_email, token, private_pem, dns_value))
+                    (api_key_id, domain, from_name, from_email, verify_token, dkim_public)
+                VALUES (%s,%s,%s,%s,%s,%s)
+            """, (key_id, domain, from_name, from_email,
+                  ses_token, json.dumps(dkim_tokens)))
         conn.commit()
 
     return get_email_domain(user)
@@ -1689,30 +1707,88 @@ def verify_email_domain(user: dict = Depends(get_current_user)):
     row    = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
     if not row: raise HTTPException(404, "No domain configured")
 
-    domain  = row["domain"]
+    ses    = _get_ses()
+    domain = row["domain"]
+
+    # Статус верификации домена (TXT-запись)
+    ver_attrs = ses.get_identity_verification_attributes(Identities=[domain])
+    ver_status = (ver_attrs["VerificationAttributes"]
+                  .get(domain, {})
+                  .get("VerificationStatus", "NotStarted"))
+
+    # Статус DKIM (3 CNAME-записи)
+    dkim_attrs = ses.get_identity_dkim_attributes(Identities=[domain])
+    dkim_status = (dkim_attrs["DkimAttributes"]
+                   .get(domain, {})
+                   .get("DkimVerificationStatus", "NotStarted"))
+
     results = {
-        "verification": _check_txt(f"_torta-verify.{domain}", row["verify_token"]),
-        "dkim":         _check_txt(f"{row['dkim_selector']}._domainkey.{domain}", "DKIM1"),
-        "spf":          _check_txt(domain, "v=spf1"),
+        "verification": ver_status  == "Success",
+        "dkim":         dkim_status == "Success",
+        "spf":          _check_txt(domain, "v=spf1 include:amazonses.com"),
     }
     all_ok = results["verification"] and results["dkim"]
 
     if all_ok and not row["is_verified"]:
         with db_cursor() as (conn, cur):
-            cur.execute("UPDATE crm_email_domains SET is_verified=1, verified_at=NOW() WHERE api_key_id=%s", (key_id,))
+            cur.execute(
+                "UPDATE crm_email_domains SET is_verified=1, verified_at=NOW() WHERE api_key_id=%s",
+                (key_id,)
+            )
             conn.commit()
 
-    return {"results": results, "all_ok": all_ok}
+    return {"results": results, "all_ok": all_ok,
+            "ver_status": ver_status, "dkim_status": dkim_status}
 
 
 @app.delete("/api/email-domain")
 def delete_email_domain(user: dict = Depends(get_current_user)):
     key_id = active_key_id(user["id"])
     require_owner(user, key_id)
+    row = db_one("SELECT domain FROM crm_email_domains WHERE api_key_id=%s", (key_id,))
+    if row:
+        try:
+            _get_ses().delete_identity(Identity=row["domain"])
+        except Exception:
+            pass
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_email_domains WHERE api_key_id=%s", (key_id,))
         conn.commit()
     return {"success": True}
+
+
+# ── Sandbox: верификация email-адресов получателей ──────────────────────────
+
+class SesAddressRequest(BaseModel):
+    email: str
+
+@app.get("/api/ses/addresses")
+def ses_list_addresses(user: dict = Depends(get_current_user)):
+    ses = _get_ses()
+    identities = ses.list_identities(IdentityType="EmailAddress", MaxItems=100)["Identities"]
+    if not identities:
+        return []
+    attrs = ses.get_identity_verification_attributes(Identities=identities)["VerificationAttributes"]
+    return [
+        {"email": e, "status": attrs.get(e, {}).get("VerificationStatus", "NotStarted")}
+        for e in identities
+    ]
+
+@app.post("/api/ses/addresses")
+def ses_verify_address(req: SesAddressRequest, user: dict = Depends(get_current_user)):
+    email = req.email.lower().strip()
+    if "@" not in email:
+        raise HTTPException(400, "Invalid email")
+    _get_ses().verify_email_identity(EmailAddress=email)
+    return {"ok": True, "message": f"Verification email sent to {email}"}
+
+@app.delete("/api/ses/addresses/{email:path}")
+def ses_delete_address(email: str, user: dict = Depends(get_current_user)):
+    try:
+        _get_ses().delete_identity(Identity=email)
+    except ClientError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
 
 
 # ════════════════════════════════════════════

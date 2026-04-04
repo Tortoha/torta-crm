@@ -153,3 +153,67 @@
 .dns-status--ok      { color: #27ae60; }
 .dns-status--pending { color: #f39c12; }
 .dns-status--unknown { color: var(--muted); }
+
+/* ── Sandbox recipients ── */
+.email-hint-inline {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 6px;
+}
+
+.email-addr-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 520px;
+  margin-bottom: 12px;
+}
+.email-addr-form .crm-input {
+  flex: 1;
+  min-width: 0;
+}
+.email-addr-form .crm-submit-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 0 20px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.addr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.addr-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--card);
+  border-radius: var(--radius-item);
+  border: 1px solid transparent;
+}
+
+.addr-email {
+  flex: 1;
+  font-size: 14px;
+}
+
+.addr-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.addr-badge--ok      { background: #e8f8ee; color: #27ae60; }
+.addr-badge--pending { background: #fff8e1; color: #f39c12; }
