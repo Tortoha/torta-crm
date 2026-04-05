@@ -1,45 +1,39 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
-import { ChartBar, CurrencyDollar, ChartLineUp, Trophy, Tag, ShoppingCart, Users, Package, Receipt, ChatsCircle, CodeBlock, UsersThree, CreditCard, Envelope, GoogleLogo, Globe, CaretDown, List, X } from '@phosphor-icons/react';
+import { NavLink, useLocation, useParams } from 'react-router-dom';
+import { ChartBar, CurrencyDollar, Tag, CodeBlock, Envelope, GoogleLogo, Globe, CaretDown, List, X } from '@phosphor-icons/react';
 
-const SECTIONS = [
-  {
-    id: 'overview', label: 'Overview',
-    items: [
-      { to: '/dashboard',  label: 'Dashboard',          Icon: ChartBar },
-      { to: '/revenue',    label: 'Revenue',            Icon: CurrencyDollar },
-      { to: '/reports',    label: 'Reports',            Icon: ChartLineUp },
-      { to: '/targets',    label: 'Target',             Icon: Trophy },
-    ],
-  },
-  {
-    id: 'store', label: 'Store',
-    items: [
-      { to: '/products',  label: 'Products',            Icon: Tag },
-      { to: '/orders',    label: 'Orders',              Icon: ShoppingCart },
-      { to: '/customers', label: 'Customers',           Icon: Users },
-      { to: '/inventory', label: 'Inventory | Stock',   Icon: Package },
-      { to: '/discounts', label: 'Discounts',           Icon: Receipt },
-      { to: '/chat',      label: 'Chat with customers', Icon: ChatsCircle },
-    ],
-  },
-  {
-    id: 'account', label: 'Account',
-    items: [
-      { to: '/api',          label: 'API',          Icon: CodeBlock },
-      { to: '/team',         label: 'Team',         Icon: UsersThree },
-      { to: '/email',      label: 'Email',        Icon: Envelope },
-      { to: '/oauth',      label: 'OAuth',        Icon: GoogleLogo },
-      { to: '/url-config', label: 'URL Config',   Icon: Globe },
-      { to: '/subscription', label: 'Subscription', Icon: CreditCard },
-    ],
-  },
-];
+function buildSections(apiKey) {
+  const base = `/project/${apiKey}`;
+  return [
+    {
+      id: 'overview', label: 'Overview',
+      items: [
+        { to: `${base}/dashboard`, label: 'Dashboard', Icon: ChartBar },
+        { to: `${base}/revenue`,   label: 'Revenue',   Icon: CurrencyDollar },
+      ],
+    },
+    {
+      id: 'store', label: 'Store',
+      items: [
+        { to: `${base}/products`, label: 'Products', Icon: Tag },
+      ],
+    },
+    {
+      id: 'account', label: 'Account',
+      items: [
+        { to: `${base}/api`,        label: 'API',        Icon: CodeBlock },
+        { to: `${base}/email`,      label: 'Email',      Icon: Envelope },
+        { to: `${base}/oauth`,      label: 'OAuth',      Icon: GoogleLogo },
+        { to: `${base}/url-config`, label: 'URL Config', Icon: Globe },
+      ],
+    },
+  ];
+}
 
 const isActivePath = (p, to) => p === to || p.startsWith(to + '/');
 
-const getRouteState = (pathname) => {
-  for (const s of SECTIONS)
+const getRouteState = (pathname, sections) => {
+  for (const s of sections)
     for (const item of s.items)
       if (isActivePath(pathname, item.to))
         return { activeSectionId: s.id, activeItemKey: item.to };
@@ -112,7 +106,7 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname, onNavCli
 }
 
 
-function SidebarContent({ activeSectionId, activeItemKey, location, open, setOpen, onNavClick }) {
+function SidebarContent({ sections, activeSectionId, activeItemKey, location, open, setOpen, onNavClick }) {
   const toggleSection = id => setOpen(prev => {
     if (id === activeSectionId && prev[id]) return prev;
     return { ...prev, [id]: !prev[id] };
@@ -120,7 +114,7 @@ function SidebarContent({ activeSectionId, activeItemKey, location, open, setOpe
 
   return (
     <>
-      {SECTIONS.map(section => (
+      {sections.map(section => (
         <NavSection
           key={section.id}
           section={section}
@@ -137,11 +131,14 @@ function SidebarContent({ activeSectionId, activeItemKey, location, open, setOpe
 
 
 function Sidebar() {
-  const location = useLocation();
+  const location   = useLocation();
+  const { apiKey } = useParams();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const sections = useMemo(() => buildSections(apiKey), [apiKey]);
+
   const { activeSectionId, activeItemKey } = useMemo(
-    () => getRouteState(location.pathname), [location.pathname]
+    () => getRouteState(location.pathname, sections), [location.pathname, sections]
   );
 
   const [open, setOpen] = useState({ overview: true, store: true, account: true });
@@ -158,7 +155,7 @@ function Sidebar() {
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
-  const sharedProps = { activeSectionId, activeItemKey, location, open, setOpen };
+  const sharedProps = { sections, activeSectionId, activeItemKey, location, open, setOpen };
 
   return (
     <>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Copy, CheckCircle, ArrowSquareOut, Trash, Eye, EyeSlash } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
+import { useProject } from '../context/ProjectContext.jsx';
 import '../Style/OAuth.css';
 
 const GoogleIcon = () => (
@@ -13,6 +14,9 @@ const GoogleIcon = () => (
 );
 
 export default function OAuth() {
+  const { projectId } = useProject();
+  const pq = `?project_id=${projectId}`;
+
   const [data, setData]           = useState(null);
   const [saving, setSaving]       = useState(false);
   const [deleting, setDeleting]   = useState(false);
@@ -25,7 +29,7 @@ export default function OAuth() {
   const [success, setSuccess]     = useState('');
 
   const load = async () => {
-    const res  = await fetch(`${API_BASE}/api/oauth-settings`, { credentials: 'include' });
+    const res  = await fetch(`${API_BASE}/api/oauth-settings${pq}`, { credentials: 'include' });
     const json = await res.json();
     setData(json);
     setClientId(json.google_client_id || '');
@@ -33,7 +37,7 @@ export default function OAuth() {
     setEnabled(json.google_enabled || false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [projectId]);
 
   const copyUri = () => {
     if (!data?.redirect_uri) return;
@@ -45,7 +49,7 @@ export default function OAuth() {
   const save = async () => {
     setSaving(true); setErr(''); setSuccess('');
     try {
-      const res  = await fetch(`${API_BASE}/api/oauth-settings`, {
+      const res  = await fetch(`${API_BASE}/api/oauth-settings${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -64,7 +68,7 @@ export default function OAuth() {
   const del = async () => {
     if (!confirm('Remove Google OAuth settings?')) return;
     setDeleting(true);
-    await fetch(`${API_BASE}/api/oauth-settings`, { method: 'DELETE', credentials: 'include' });
+    await fetch(`${API_BASE}/api/oauth-settings${pq}`, { method: 'DELETE', credentials: 'include' });
     setDeleting(false);
     setSuccess('');
     await load();

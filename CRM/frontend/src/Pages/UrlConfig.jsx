@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Globe, Trash } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
+import { useProject } from '../context/ProjectContext.jsx';
 import '../Style/UrlConfig.css';
 
 export default function UrlConfig() {
+  const { projectId } = useProject();
+  const pq = `?project_id=${projectId}`;
+
   // ── Site URL ──
   const [siteUrl, setSiteUrl]       = useState('');
   const [original, setOriginal]     = useState('');
@@ -19,30 +23,27 @@ export default function UrlConfig() {
   const [deletingId, setDeletingId]     = useState(null);
 
   const loadSite = async () => {
-    const res  = await fetch(`${API_BASE}/api/url-config`, { credentials: 'include' });
+    const res  = await fetch(`${API_BASE}/api/url-config${pq}`, { credentials: 'include' });
     const json = await res.json();
     setSiteUrl(json.frontend_url || '');
     setOriginal(json.frontend_url || '');
   };
 
   const loadRedirects = async () => {
-    const res  = await fetch(`${API_BASE}/api/redirect-urls`, { credentials: 'include' });
+    const res  = await fetch(`${API_BASE}/api/redirect-urls${pq}`, { credentials: 'include' });
     const json = await res.json();
     setRedirectUrls(json.urls || []);
   };
 
   useEffect(() => {
     loadSite(); loadRedirects();
-    const refresh = () => { loadSite(); loadRedirects(); };
-    window.addEventListener('api-key-switched', refresh);
-    return () => window.removeEventListener('api-key-switched', refresh);
-  }, []);
+  }, [projectId]);
 
   // ── Save Site URL ──
   const saveSite = async () => {
     setSaving(true); setSiteErr(''); setSiteOk('');
     try {
-      const res  = await fetch(`${API_BASE}/api/url-config`, {
+      const res  = await fetch(`${API_BASE}/api/url-config${pq}`, {
         method: 'PUT', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ frontend_url: siteUrl.trim() }),
@@ -60,7 +61,7 @@ export default function UrlConfig() {
     if (!url) return;
     setAdding(true); setAddErr('');
     try {
-      const res  = await fetch(`${API_BASE}/api/redirect-urls`, {
+      const res  = await fetch(`${API_BASE}/api/redirect-urls${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
@@ -76,7 +77,7 @@ export default function UrlConfig() {
   const deleteUrl = async (id) => {
     setDeletingId(id);
     try {
-      await fetch(`${API_BASE}/api/redirect-urls/${id}`, {
+      await fetch(`${API_BASE}/api/redirect-urls/${id}${pq}`, {
         method: 'DELETE', credentials: 'include',
       });
       await loadRedirects();

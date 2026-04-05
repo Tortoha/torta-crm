@@ -71,42 +71,42 @@ app = FastAPI()
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (PER-PROJECT)
 # ============================================
 
-def get_project_email(api_key_id: int) -> tuple:
+def get_project_email(project_id: int) -> tuple:
     row = db_one(
-        "SELECT from_name, from_email FROM crm_email_domains WHERE api_key_id = %s AND is_verified = 1",
-        (api_key_id,)
+        "SELECT from_name, from_email FROM crm_email_domains WHERE project_id = %s AND is_verified = 1",
+        (project_id,)
     )
     return (row["from_name"], row["from_email"]) if row else ("Torta Store", EMAIL_FROM)
 
-def get_project_frontend_url(api_key_id: int) -> str | None:
-    row = db_one("SELECT frontend_url FROM crm_url_config WHERE api_key_id = %s", (api_key_id,))
+def get_project_frontend_url(project_id: int) -> str | None:
+    row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id = %s", (project_id,))
     return row["frontend_url"].rstrip("/") if row and row["frontend_url"] else None
 
-def get_allowed_redirect_urls(api_key_id: int) -> list:
-    rows    = db_all("SELECT url FROM crm_redirect_urls WHERE api_key_id = %s", (api_key_id,))
+def get_allowed_redirect_urls(project_id: int) -> list:
+    rows    = db_all("SELECT url FROM crm_redirect_urls WHERE project_id = %s", (project_id,))
     allowed = [r["url"].rstrip("/") for r in rows if r["url"]]
-    site    = db_one("SELECT frontend_url FROM crm_url_config WHERE api_key_id = %s", (api_key_id,))
+    site    = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id = %s", (project_id,))
     if site and site["frontend_url"]:
         url = site["frontend_url"].rstrip("/")
         if url not in allowed:
             allowed.append(url)
     return allowed
 
-def get_google_credentials(api_key_id: int):
+def get_google_credentials(project_id: int):
     row = db_one(
         "SELECT google_client_id, google_client_secret FROM crm_oauth_settings "
-        "WHERE api_key_id = %s AND google_enabled = 1",
-        (api_key_id,)
+        "WHERE project_id = %s AND google_enabled = 1",
+        (project_id,)
     )
     if row and row["google_client_id"] and row["google_client_secret"]:
         return row["google_client_id"], row["google_client_secret"]
     return None, None
 
-def get_user_by_email(email: str, api_key_id: int):
-    return db_one("SELECT * FROM users WHERE email = %s AND api_key_id = %s", (email, api_key_id))
+def get_user_by_email(email: str, project_id: int):
+    return db_one("SELECT * FROM users WHERE email = %s AND project_id = %s", (email, project_id))
 
-def get_user_by_id(user_id: int, api_key_id: int):
-    return db_one("SELECT id, name, email FROM users WHERE id = %s AND api_key_id = %s", (user_id, api_key_id))
+def get_user_by_id(user_id: int, project_id: int):
+    return db_one("SELECT id, name, email FROM users WHERE id = %s AND project_id = %s", (user_id, project_id))
 
 
 # ============================================
@@ -117,8 +117,8 @@ def run_migrations():
     with db_cursor() as (conn, cur):
         for sql in [
             "ALTER TABLE users ADD COLUMN google_id varchar(255) DEFAULT NULL",
-            "ALTER TABLE favorites ADD COLUMN api_key_id int(11) DEFAULT NULL",
-            "ALTER TABLE product_reviews ADD COLUMN api_key_id int(11) DEFAULT NULL",
+            "ALTER TABLE favorites ADD COLUMN project_id int(11) DEFAULT NULL",
+            "ALTER TABLE product_reviews ADD COLUMN project_id int(11) DEFAULT NULL",
         ]:
             try: cur.execute(sql); conn.commit()
             except: pass
@@ -173,12 +173,12 @@ def get_client_ip(request: Request) -> str:
     return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
 
 def resolve_api_key(api_key: str, request: Request) -> dict:
-    record = db_one("SELECT * FROM crm_api_keys WHERE api_key = %s AND is_active = 1", (api_key,))
+    record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = 1", (api_key,))
     if not record:
         raise HTTPException(401, "Invalid or inactive API key")
     with db_cursor() as (conn, cur):
         cur.execute(
-            "UPDATE crm_api_keys SET last_used_ip = %s, last_used_at = NOW() WHERE id = %s",
+            "UPDATE crm_projects SET last_used_ip = %s, last_used_at = NOW() WHERE id = %s",
             (get_client_ip(request), record["id"])
         )
         conn.commit()
@@ -191,11 +191,11 @@ def resolve_api_key(api_key: str, request: Request) -> dict:
 
 _LOCALHOST_RE = _re.compile(r'^https?://localhost(:\d+)?$')
 
-def _get_api_key_id_from_path(path: str):
+def _get_project_id_from_path(path: str):
     parts = path.strip("/").split("/")
     if not parts or not parts[0]: return None
     try:
-        row = db_one("SELECT id FROM crm_api_keys WHERE api_key = %s AND is_active = 1", (parts[0],))
+        row = db_one("SELECT id FROM crm_projects WHERE api_key = %s AND is_active = 1", (parts[0],))
         return row["id"] if row else None
     except Exception:
         return None
@@ -209,9 +209,9 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         if _LOCALHOST_RE.match(origin):
             allow_origin = origin
         else:
-            api_key_id = _get_api_key_id_from_path(request.url.path)
-            if api_key_id:
-                allowed = get_allowed_redirect_urls(api_key_id)
+            project_id = _get_project_id_from_path(request.url.path)
+            if project_id:
+                allowed = get_allowed_redirect_urls(project_id)
                 allow_origin = origin if origin in allowed else (allowed[0] if allowed else origin)
             else:
                 allow_origin = origin
@@ -330,19 +330,19 @@ def send_email(to: str, subject: str, html: str,
     except Exception as e:
         print(f"Email error: {e}"); return False
 
-def send_code_email(email: str, code: int, api_key_id: int = None) -> bool:
-    from_name, from_email = get_project_email(api_key_id) if api_key_id else ("Torta Store", EMAIL_FROM)
+def send_code_email(email: str, code: int, project_id: int = None) -> bool:
+    from_name, from_email = get_project_email(project_id) if project_id else ("Torta Store", EMAIL_FROM)
     html = f"""<div style="font-family:Arial,sans-serif;text-align:center;padding:40px">
         <h1 style="color:#333">Your verification code</h1>
         <p style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#000">{str(code)[:3]} {str(code)[3:]}</p>
         <p style="color:#666">This code expires in 10 minutes.</p></div>"""
     return send_email(email, "Verification Code", html, from_name, from_email)
 
-def send_reset_email(email: str, token: str, api_key_id: int = None) -> bool:
-    from_name, from_email = get_project_email(api_key_id) if api_key_id else ("Torta Store", EMAIL_FROM)
-    frontend = get_project_frontend_url(api_key_id) if api_key_id else None
+def send_reset_email(email: str, token: str, project_id: int = None) -> bool:
+    from_name, from_email = get_project_email(project_id) if project_id else ("Torta Store", EMAIL_FROM)
+    frontend = get_project_frontend_url(project_id) if project_id else None
     if not frontend:
-        print(f"send_reset_email: Site URL not configured for api_key_id={api_key_id}"); return False
+        print(f"send_reset_email: Site URL not configured for project_id={project_id}"); return False
     reset_url = f"{frontend}/reset-password/{token}"
     html = f"""<div style="font-family:Arial,sans-serif;text-align:center;padding:40px">
         <h1 style="color:#333">Reset your password</h1>
@@ -370,7 +370,7 @@ password_reset_tokens = {}
 @app.post("/{api_key}/api/send-code")
 def send_code(request: SendCodeRequest, req: Request,
               api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     email = request.email.lower().strip()
     ip    = get_client_ip(req)
     now   = datetime.utcnow()
@@ -393,25 +393,25 @@ def send_code(request: SendCodeRequest, req: Request,
         raise HTTPException(400, detail)
 
     if request.type == "register":
-        if get_user_by_email(email, api_key_id): fail("Email already exists")
+        if get_user_by_email(email, project_id): fail("Email already exists")
         if not request.name or not request.password: fail("Name and password required")
         validate_password(request.password)
     elif request.type == "login":
-        db_user = get_user_by_email(email, api_key_id)
+        db_user = get_user_by_email(email, project_id)
         if not db_user: fail("Invalid email or password")
         if hash_password(request.password or "") != db_user["password_hash"]: fail("Invalid email or password")
     else:
         raise HTTPException(400, "Invalid type")
 
     code   = random.randint(100000, 999999)
-    pv_key = f"{api_key_id}:{email}"
+    pv_key = f"{project_id}:{email}"
     pending_verifications[pv_key] = {
         "code": str(code), "type": request.type, "name": request.name,
-        "password": request.password, "api_key_id": api_key_id,
+        "password": request.password, "project_id": project_id,
         "expires": now + timedelta(minutes=CODE_TTL_MINUTES),
         "next_resend_at": now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
     }
-    if not send_code_email(email, code, api_key_id):
+    if not send_code_email(email, code, project_id):
         del pending_verifications[pv_key]
         raise HTTPException(500, "Failed to send email")
 
@@ -422,12 +422,12 @@ def send_code(request: SendCodeRequest, req: Request,
 @app.post("/{api_key}/api/verify-code")
 def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
                 api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     email  = request.email.lower().strip()
     code   = (request.code or "").replace(" ", "").strip()
     ip     = get_client_ip(req)
     now    = datetime.utcnow()
-    pv_key = f"{api_key_id}:{email}"
+    pv_key = f"{project_id}:{email}"
 
     for key in [f"ip:{ip}", f"email:{email}"]:
         s = login_attempts.get(key)
@@ -456,13 +456,13 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
     with db_cursor() as (conn, cursor):
         if pending["type"] == "register":
             cursor.execute(
-                "INSERT INTO users (name, email, password_hash, api_key_id) VALUES (%s,%s,%s,%s)",
-                (sanitize(pending["name"]), email, hash_password(pending["password"]), api_key_id)
+                "INSERT INTO users (name, email, password_hash, project_id) VALUES (%s,%s,%s,%s)",
+                (sanitize(pending["name"]), email, hash_password(pending["password"]), project_id)
             )
             conn.commit()
             user_id = cursor.lastrowid
         else:
-            user_id = get_user_by_email(email, api_key_id)["id"]
+            user_id = get_user_by_email(email, project_id)["id"]
 
     token = create_token(user_id)
     set_auth_cookie(response, token)
@@ -473,10 +473,10 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
 
 @app.post("/{api_key}/api/resend-code")
 def resend_code(request: ResendCodeRequest, api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     email  = request.email.lower().strip()
     now    = datetime.utcnow()
-    pv_key = f"{api_key_id}:{email}"
+    pv_key = f"{project_id}:{email}"
 
     if pv_key not in pending_verifications:
         raise HTTPException(400, "No pending verification")
@@ -493,7 +493,7 @@ def resend_code(request: ResendCodeRequest, api_key_record: dict = Depends(resol
         "expires": now + timedelta(minutes=CODE_TTL_MINUTES),
         "next_resend_at": now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
     })
-    if not send_code_email(email, code, pending["api_key_id"]):
+    if not send_code_email(email, code, pending["project_id"]):
         raise HTTPException(500, "Failed to send email")
     return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
 
@@ -517,22 +517,22 @@ def logout(response: Response, api_key_record: dict = Depends(resolve_api_key)):
 
 @app.post("/{api_key}/api/forgot-password")
 def forgot_password(request: ForgotPasswordRequest, api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     email = request.email.lower().strip()
-    if not get_user_by_email(email, api_key_id):
+    if not get_user_by_email(email, project_id):
         return {"success": True, "message": "If the account exists, a reset email has been sent."}
 
     for t in [t for t, d in password_reset_tokens.items()
-              if d["email"] == email and d["api_key_id"] == api_key_id]:
+              if d["email"] == email and d["project_id"] == project_id]:
         del password_reset_tokens[t]
 
     raw_token  = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     password_reset_tokens[token_hash] = {
-        "email": email, "api_key_id": api_key_id,
+        "email": email, "project_id": project_id,
         "expires": datetime.utcnow() + timedelta(minutes=RESET_TTL_MINUTES),
     }
-    if not send_reset_email(email, raw_token, api_key_id):
+    if not send_reset_email(email, raw_token, project_id):
         del password_reset_tokens[token_hash]
         raise HTTPException(500, "Failed to send email")
     return {"success": True, "message": "If the account exists, a reset email has been sent."}
@@ -541,27 +541,27 @@ def forgot_password(request: ForgotPasswordRequest, api_key_record: dict = Depen
 @app.get("/{api_key}/api/reset-password/validate/{token}")
 def validate_reset_token(token: str, api_key_record: dict = Depends(resolve_api_key)):
     data = password_reset_tokens.get(hashlib.sha256(token.encode()).hexdigest())
-    if not data or datetime.utcnow() > data["expires"] or data["api_key_id"] != api_key_record["id"]:
+    if not data or datetime.utcnow() > data["expires"] or data["project_id"] != api_key_record["id"]:
         raise HTTPException(400, "Invalid or expired reset link")
     return {"valid": True, "email": data["email"]}
 
 
 @app.post("/{api_key}/api/reset-password")
 def reset_password(request: ResetPasswordRequest, api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     if request.password != (request.repeat_password or ""):
         raise HTTPException(400, "Passwords do not match")
     validate_password(request.password)
 
     token_hash = hashlib.sha256((request.token or "").strip().encode()).hexdigest()
     token_data = password_reset_tokens.get(token_hash)
-    if not token_data or datetime.utcnow() > token_data["expires"] or token_data["api_key_id"] != api_key_id:
+    if not token_data or datetime.utcnow() > token_data["expires"] or token_data["project_id"] != project_id:
         raise HTTPException(400, "Invalid or expired reset link")
 
     with db_cursor() as (conn, cursor):
         cursor.execute(
-            "UPDATE users SET password_hash = %s WHERE email = %s AND api_key_id = %s",
-            (hash_password(request.password), token_data["email"], api_key_id)
+            "UPDATE users SET password_hash = %s WHERE email = %s AND project_id = %s",
+            (hash_password(request.password), token_data["email"], project_id)
         )
         conn.commit()
     del password_reset_tokens[token_hash]
@@ -574,11 +574,11 @@ def reset_password(request: ResetPasswordRequest, api_key_record: dict = Depends
 
 @app.get("/{api_key}/api-products")
 def get_products(api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     with db_cursor() as (_, cursor):
         cursor.execute(
-            "SELECT id, title, seo_title, seo_description, seo_keywords FROM products WHERE api_key_id = %s",
-            (api_key_id,)
+            "SELECT id, title, seo_title, seo_description, seo_keywords FROM products WHERE project_id = %s",
+            (project_id,)
         )
         products = cursor.fetchall()
         if not products: return []
@@ -606,8 +606,8 @@ def get_products(api_key_record: dict = Depends(resolve_api_key)):
         prices = {r["product_id"]: float(r["price"]) for r in cursor.fetchall()}
 
         cursor.execute(
-            f"SELECT product_id, field_key, field_value FROM product_custom_fields WHERE api_key_id = %s AND product_id IN ({fmt})",
-            [api_key_id] + product_ids
+            f"SELECT product_id, field_key, field_value FROM product_custom_fields WHERE project_id = %s AND product_id IN ({fmt})",
+            [project_id] + product_ids
         )
         cf_map = {}
         for r in cursor.fetchall():
@@ -631,14 +631,14 @@ def get_product_page(product_hash: str, request: Request,
     decoded = hashids.decode(product_hash)
     if not decoded: raise HTTPException(404, "Product not found")
     product_id = decoded[0]
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
 
     with db_cursor() as (_, cursor):
         cursor.execute(
             "SELECT id, title, description, characteristics, seo_title, seo_description, seo_keywords "
-            "FROM products WHERE id = %s AND api_key_id = %s",
-            (product_id, api_key_id)
+            "FROM products WHERE id = %s AND project_id = %s",
+            (product_id, project_id)
         )
         product = cursor.fetchone()
         if not product: raise HTTPException(404, "Product not found")
@@ -669,8 +669,8 @@ def get_product_page(product_hash: str, request: Request,
         reviews_raw = cursor.fetchall()
 
         cursor.execute(
-            "SELECT field_key, field_value FROM product_custom_fields WHERE api_key_id = %s AND product_id = %s",
-            (api_key_id, product_id)
+            "SELECT field_key, field_value FROM product_custom_fields WHERE project_id = %s AND product_id = %s",
+            (project_id, product_id)
         )
         custom_fields = {r["field_key"]: r["field_value"] for r in cursor.fetchall()}
 
@@ -680,30 +680,30 @@ def get_product_page(product_hash: str, request: Request,
 
         if user_id:
             cursor.execute(
-                "SELECT 1 FROM favorites WHERE user_id = %s AND product_id = %s AND api_key_id = %s LIMIT 1",
-                (user_id, product_id, api_key_id)
+                "SELECT 1 FROM favorites WHERE user_id = %s AND product_id = %s AND project_id = %s LIMIT 1",
+                (user_id, product_id, project_id)
             )
             is_favorite = cursor.fetchone() is not None
 
             cursor.execute(
                 "SELECT ci.id AS cart_item_id, ci.variation_id, ci.size_id, ci.quantity "
                 "FROM cart_items ci JOIN carts c ON ci.cart_id = c.id "
-                "WHERE c.user_id = %s AND ci.product_id = %s AND c.api_key_id = %s",
-                (user_id, product_id, api_key_id)
+                "WHERE c.user_id = %s AND ci.product_id = %s AND c.project_id = %s",
+                (user_id, product_id, project_id)
             )
             for row in cursor.fetchall():
                 cart_map[(row["variation_id"], row["size_id"])] = row
 
             cursor.execute(
-                "SELECT id FROM product_reviews WHERE product_id = %s AND user_id = %s AND api_key_id = %s LIMIT 1",
-                (product_id, user_id, api_key_id)
+                "SELECT id FROM product_reviews WHERE product_id = %s AND user_id = %s AND project_id = %s LIMIT 1",
+                (product_id, user_id, project_id)
             )
             if not cursor.fetchone():
                 cursor.execute(
                     "SELECT DISTINCT oh.id FROM order_history oh JOIN order_items oi ON oh.id = oi.order_id "
-                    "WHERE oh.user_id = %s AND oi.product_id = %s AND oh.api_key_id = %s "
+                    "WHERE oh.user_id = %s AND oi.product_id = %s AND oh.project_id = %s "
                     "AND oh.status IN ('delivered','returned') LIMIT 1",
-                    (user_id, product_id, api_key_id)
+                    (user_id, product_id, project_id)
                 )
                 can_review = cursor.fetchone() is not None
 
@@ -761,18 +761,18 @@ def get_product_page(product_hash: str, request: Request,
 @app.post("/{api_key}/api/cart/add")
 def add_to_cart(item: AddToCart, request: Request,
                 api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
     with db_cursor() as (conn, cursor):
-        cursor.execute("SELECT id FROM carts WHERE user_id = %s AND api_key_id = %s", (user_id, api_key_id))
+        cursor.execute("SELECT id FROM carts WHERE user_id = %s AND project_id = %s", (user_id, project_id))
         cart = cursor.fetchone()
         if not cart:
-            cursor.execute("INSERT INTO carts (user_id, api_key_id) VALUES (%s,%s)", (user_id, api_key_id))
+            cursor.execute("INSERT INTO carts (user_id, project_id) VALUES (%s,%s)", (user_id, project_id))
             conn.commit(); cart_id = cursor.lastrowid
         else:
             cart_id = cart["id"]
 
-        cursor.execute("SELECT id FROM products WHERE id = %s AND api_key_id = %s", (item.product_id, api_key_id))
+        cursor.execute("SELECT id FROM products WHERE id = %s AND project_id = %s", (item.product_id, project_id))
         if not cursor.fetchone(): raise HTTPException(403, "Product not in this store")
 
         cursor.execute(
@@ -796,7 +796,7 @@ def add_to_cart(item: AddToCart, request: Request,
 def clear_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     user_id = get_current_user_id(request)
     with db_cursor() as (conn, cursor):
-        cursor.execute("SELECT id FROM carts WHERE user_id=%s AND api_key_id=%s", (user_id, api_key_record["id"]))
+        cursor.execute("SELECT id FROM carts WHERE user_id=%s AND project_id=%s", (user_id, api_key_record["id"]))
         cart = cursor.fetchone()
         if cart:
             cursor.execute("DELETE FROM cart_items WHERE cart_id=%s", (cart["id"],))
@@ -811,7 +811,7 @@ def remove_from_cart(cart_item_id: int, request: Request,
     with db_cursor() as (conn, cursor):
         cursor.execute(
             "SELECT ci.id FROM cart_items ci JOIN carts c ON ci.cart_id=c.id "
-            "WHERE ci.id=%s AND c.user_id=%s AND c.api_key_id=%s",
+            "WHERE ci.id=%s AND c.user_id=%s AND c.project_id=%s",
             (cart_item_id, user_id, api_key_record["id"])
         )
         if not cursor.fetchone(): raise HTTPException(404, "Cart item not found")
@@ -828,7 +828,7 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
     with db_cursor() as (conn, cursor):
         cursor.execute(
             "SELECT ci.id, ci.size_id FROM cart_items ci JOIN carts c ON ci.cart_id=c.id "
-            "WHERE ci.id=%s AND c.user_id=%s AND c.api_key_id=%s",
+            "WHERE ci.id=%s AND c.user_id=%s AND c.project_id=%s",
             (cart_item_id, user_id, api_key_record["id"])
         )
         item = cursor.fetchone()
@@ -844,26 +844,26 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
 
 @app.get("/{api_key}/api/cart", response_model=CartPageResponse)
 def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
 
     with db_cursor() as (_, cursor):
         cursor.execute(
-            "SELECT shipping_cost, free_shipping_threshold FROM shipping_settings WHERE api_key_id=%s LIMIT 1",
-            (api_key_id,)
+            "SELECT shipping_cost, free_shipping_threshold FROM shipping_settings WHERE project_id=%s LIMIT 1",
+            (project_id,)
         )
         settings       = cursor.fetchone()
         shipping_cost  = float(settings["shipping_cost"])           if settings else 10.0
         free_threshold = float(settings["free_shipping_threshold"]) if settings else 2000.0
 
         cursor.execute(
-            "SELECT product_id FROM favorites WHERE user_id=%s AND api_key_id=%s",
-            (user_id, api_key_id)
+            "SELECT product_id FROM favorites WHERE user_id=%s AND project_id=%s",
+            (user_id, project_id)
         )
         favorites_ids = [r["product_id"] for r in cursor.fetchall()]
         favorites_set = set(favorites_ids)
 
-        cursor.execute("SELECT id FROM carts WHERE user_id=%s AND api_key_id=%s", (user_id, api_key_id))
+        cursor.execute("SELECT id FROM carts WHERE user_id=%s AND project_id=%s", (user_id, project_id))
         cart = cursor.fetchone()
         if not cart:
             return {
@@ -910,15 +910,15 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
 @app.post("/{api_key}/api/favorites/add")
 def add_to_favorites(item: AddToFavorites, request: Request,
                      api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (item.product_id, api_key_id)):
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (item.product_id, project_id)):
         raise HTTPException(403, "Product not in this store")
     try:
         with db_cursor() as (conn, cursor):
             cursor.execute(
-                "INSERT INTO favorites (user_id, product_id, api_key_id) VALUES (%s,%s,%s)",
-                (user_id, item.product_id, api_key_id)
+                "INSERT INTO favorites (user_id, product_id, project_id) VALUES (%s,%s,%s)",
+                (user_id, item.product_id, project_id)
             )
             conn.commit()
     except mysql.connector.IntegrityError:
@@ -931,7 +931,7 @@ def get_favorites(request: Request, api_key_record: dict = Depends(resolve_api_k
     user_id = get_current_user_id(request)
     rows = db_all(
         "SELECT f.product_id, p.title FROM favorites f JOIN products p ON f.product_id=p.id "
-        "WHERE f.user_id=%s AND p.api_key_id=%s",
+        "WHERE f.user_id=%s AND p.project_id=%s",
         (user_id, api_key_record["id"])
     )
     return [{**r, "hash": hashids.encode(r["product_id"])} for r in rows]
@@ -945,7 +945,7 @@ def remove_from_favorites(product_hash: str, request: Request,
     user_id = get_current_user_id(request)
     with db_cursor() as (conn, cursor):
         cursor.execute(
-            "DELETE FROM favorites WHERE product_id=%s AND user_id=%s AND api_key_id=%s",
+            "DELETE FROM favorites WHERE product_id=%s AND user_id=%s AND project_id=%s",
             (decoded[0], user_id, api_key_record["id"])
         )
         conn.commit()
@@ -959,17 +959,17 @@ def remove_from_favorites(product_hash: str, request: Request,
 @app.post("/{api_key}/api/reviews/add")
 def add_review(review: AddReview, request: Request,
                api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
     if not 1 <= review.rating <= 5: raise HTTPException(400, "Rating must be between 1 and 5")
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (review.product_id, api_key_id)):
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (review.product_id, project_id)):
         raise HTTPException(403, "Product not in this store")
     try:
         with db_cursor() as (conn, cursor):
             cursor.execute(
-                "INSERT INTO product_reviews (product_id, user_id, rating, comment, created_at, api_key_id) "
+                "INSERT INTO product_reviews (product_id, user_id, rating, comment, created_at, project_id) "
                 "VALUES (%s,%s,%s,%s,NOW(),%s)",
-                (review.product_id, user_id, review.rating, sanitize(review.comment), api_key_id)
+                (review.product_id, user_id, review.rating, sanitize(review.comment), project_id)
             )
             conn.commit()
     except mysql.connector.IntegrityError:
@@ -980,21 +980,21 @@ def add_review(review: AddReview, request: Request,
 @app.get("/{api_key}/api/reviews/can-review/{product_id}")
 def can_user_review(product_id: int, request: Request,
                     api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     try:
         user_id = get_current_user_id(request)
     except Exception:
         return {"can_review": False, "reason": "not_authenticated"}
 
-    if db_one("SELECT id FROM product_reviews WHERE product_id=%s AND user_id=%s AND api_key_id=%s",
-              (product_id, user_id, api_key_id)):
+    if db_one("SELECT id FROM product_reviews WHERE product_id=%s AND user_id=%s AND project_id=%s",
+              (product_id, user_id, project_id)):
         return {"can_review": False, "reason": "already_reviewed"}
 
     can = bool(db_one(
         "SELECT DISTINCT oh.id FROM order_history oh JOIN order_items oi ON oh.id=oi.order_id "
-        "WHERE oh.user_id=%s AND oi.product_id=%s AND oh.api_key_id=%s "
+        "WHERE oh.user_id=%s AND oi.product_id=%s AND oh.project_id=%s "
         "AND oh.status IN ('delivered','returned') LIMIT 1",
-        (user_id, product_id, api_key_id)
+        (user_id, product_id, project_id)
     ))
     return {"can_review": can} if can else {"can_review": False, "reason": "not_purchased"}
 
@@ -1002,13 +1002,13 @@ def can_user_review(product_id: int, request: Request,
 @app.delete("/{api_key}/api/reviews/{review_id}")
 def delete_review(review_id: int, request: Request,
                   api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
-    review = db_one("SELECT user_id FROM product_reviews WHERE id=%s AND api_key_id=%s", (review_id, api_key_id))
+    review = db_one("SELECT user_id FROM product_reviews WHERE id=%s AND project_id=%s", (review_id, project_id))
     if not review:  raise HTTPException(404, "Review not found")
     if review["user_id"] != user_id: raise HTTPException(403, "Not authorized")
     with db_cursor() as (conn, cursor):
-        cursor.execute("DELETE FROM product_reviews WHERE id=%s AND api_key_id=%s", (review_id, api_key_id))
+        cursor.execute("DELETE FROM product_reviews WHERE id=%s AND project_id=%s", (review_id, project_id))
         conn.commit()
     return {"success": True}
 
@@ -1020,12 +1020,12 @@ def delete_review(review_id: int, request: Request,
 @app.post("/{api_key}/api/promo-code/apply")
 def apply_promo_code(data: ApplyPromoCode, request: Request,
                      api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
     now        = datetime.utcnow()
 
     with db_cursor() as (_, cursor):
-        cursor.execute("SELECT id FROM carts WHERE user_id=%s AND api_key_id=%s", (user_id, api_key_id))
+        cursor.execute("SELECT id FROM carts WHERE user_id=%s AND project_id=%s", (user_id, project_id))
         cart = cursor.fetchone()
         if not cart: raise HTTPException(400, "Cart is empty")
 
@@ -1038,8 +1038,8 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
         if subtotal == 0: raise HTTPException(400, "Cart is empty")
 
         cursor.execute(
-            "SELECT * FROM promo_codes WHERE code=%s AND api_key_id=%s AND is_active=TRUE",
-            (data.code.strip().upper(), api_key_id)
+            "SELECT * FROM promo_codes WHERE code=%s AND project_id=%s AND is_active=TRUE",
+            (data.code.strip().upper(), project_id)
         )
         promo = cursor.fetchone()
         if not promo: raise HTTPException(404, "Promo code not found")
@@ -1059,8 +1059,8 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
             discount = dv
 
         cursor.execute(
-            "SELECT shipping_cost, free_shipping_threshold FROM shipping_settings WHERE api_key_id=%s LIMIT 1",
-            (api_key_id,)
+            "SELECT shipping_cost, free_shipping_threshold FROM shipping_settings WHERE project_id=%s LIMIT 1",
+            (project_id,)
         )
         settings       = cursor.fetchone()
         shipping_cost  = float(settings["shipping_cost"])           if settings else 10.0
@@ -1082,16 +1082,16 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
 
 @app.post("/{api_key}/api/track/visit")
 def track_visit(request: Request, api_key_record: dict = Depends(resolve_api_key)):
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
     ip         = get_client_ip(request)
     with db_cursor(buffered=True) as (conn, cursor):
         cursor.execute(
-            "SELECT id FROM site_visits WHERE ip=%s AND api_key_id=%s AND created_at >= NOW() - INTERVAL 30 SECOND",
-            (ip, api_key_id)
+            "SELECT id FROM site_visits WHERE ip=%s AND project_id=%s AND created_at >= NOW() - INTERVAL 30 SECOND",
+            (ip, project_id)
         )
         if cursor.fetchone(): return {"success": True, "skipped": True}
-        cursor.execute("INSERT INTO site_visits (user_id, ip, api_key_id) VALUES (%s,%s,%s)", (user_id, ip, api_key_id))
+        cursor.execute("INSERT INTO site_visits (user_id, ip, project_id) VALUES (%s,%s,%s)", (user_id, ip, project_id))
         conn.commit()
     return {"success": True}
 
@@ -1100,18 +1100,18 @@ def track_visit(request: Request, api_key_record: dict = Depends(resolve_api_key
 def track_product_view(data: TrackProductView, request: Request,
                        api_key_record: dict = Depends(resolve_api_key)):
     """Один человек (по IP) = одна запись в сутки для воронки продаж."""
-    api_key_id = api_key_record["id"]
+    project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
     ip         = get_client_ip(request)
     with db_cursor(buffered=True) as (conn, cursor):
         cursor.execute(
-            "SELECT id FROM product_page_views WHERE ip=%s AND api_key_id=%s AND DATE(created_at)=CURDATE()",
-            (ip, api_key_id)
+            "SELECT id FROM product_page_views WHERE ip=%s AND project_id=%s AND DATE(created_at)=CURDATE()",
+            (ip, project_id)
         )
         if cursor.fetchone(): return {"success": True, "skipped": True}
         cursor.execute(
-            "INSERT INTO product_page_views (product_id, user_id, ip, api_key_id) VALUES (%s,%s,%s,%s)",
-            (data.product_id, user_id, ip, api_key_id)
+            "INSERT INTO product_page_views (product_id, user_id, ip, project_id) VALUES (%s,%s,%s,%s)",
+            (data.product_id, user_id, ip, project_id)
         )
         conn.commit()
     return {"success": True}
@@ -1138,24 +1138,24 @@ def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_
 @app.get("/{api_key}/api/auth/google/callback")
 def magaz_google_callback(api_key: str, api_key_record: dict = Depends(resolve_api_key),
                            code: str = None, error: str = None):
-    api_key_id = api_key_record["id"]
-    frontend   = get_project_frontend_url(api_key_id)
+    project_id = api_key_record["id"]
+    frontend   = get_project_frontend_url(project_id)
     if not frontend:
         return RedirectResponse("/?error=site_url_not_configured")
     try:
-        return _magaz_google_callback_inner(api_key, api_key_id, code, error, frontend)
+        return _magaz_google_callback_inner(api_key, project_id, code, error, frontend)
     except Exception:
         traceback.print_exc()
         return RedirectResponse(f"{frontend}/login?error=server_error")
 
 
-def _magaz_google_callback_inner(api_key, api_key_id, code, error, frontend):
+def _magaz_google_callback_inner(api_key, project_id, code, error, frontend):
     import urllib.request, urllib.parse, json as _json
 
     if error or not code:
         return RedirectResponse(f"{frontend}/login?error=google_cancelled")
 
-    client_id, client_secret = get_google_credentials(api_key_id)
+    client_id, client_secret = get_google_credentials(project_id)
     if not client_id:
         return RedirectResponse(f"{frontend}/login?error=google_not_configured")
 
@@ -1192,19 +1192,19 @@ def _magaz_google_callback_inner(api_key, api_key_id, code, error, frontend):
         return RedirectResponse(f"{frontend}/login?error=google_verify")
 
     with db_cursor() as (conn, cursor):
-        cursor.execute("SELECT id FROM users WHERE google_id=%s AND api_key_id=%s", (g_id, api_key_id))
+        cursor.execute("SELECT id FROM users WHERE google_id=%s AND project_id=%s", (g_id, project_id))
         user = cursor.fetchone()
         if not user:
-            cursor.execute("SELECT id FROM users WHERE email=%s AND api_key_id=%s AND google_id IS NULL",
-                           (email, api_key_id))
+            cursor.execute("SELECT id FROM users WHERE email=%s AND project_id=%s AND google_id IS NULL",
+                           (email, project_id))
             user = cursor.fetchone()
             if user:
                 cursor.execute("UPDATE users SET google_id=%s WHERE id=%s", (g_id, user["id"]))
                 conn.commit()
         if not user:
             cursor.execute(
-                "INSERT INTO users (name, email, password_hash, api_key_id, google_id) VALUES(%s,%s,'',%s,%s)",
-                (sanitize(name), email, api_key_id, g_id)
+                "INSERT INTO users (name, email, password_hash, project_id, google_id) VALUES(%s,%s,'',%s,%s)",
+                (sanitize(name), email, project_id, g_id)
             )
             conn.commit()
             user_id = cursor.lastrowid

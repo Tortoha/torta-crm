@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Plus, Trash, PencilSimple, DotsThreeVertical, MagnifyingGlass, X, Check, CaretDown, CaretRight, Image, UploadSimple } from '@phosphor-icons/react';
 import { Star } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
+import { useProject } from '../context/ProjectContext.jsx';
 import '../Style/Products.css';
 
 // ── helpers ────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ function TextareaField({ label, value, onChange, placeholder = '', rows = 4 }) {
 
 // ── InfoTab ────────────────────────────────────────────────────
 
-function InfoTab({ product, productId, onSaved }) {
+function InfoTab({ product, productId, pq, onSaved }) {
   const [title,  setTitle]  = useState(product.title           || '');
   const [desc,   setDesc]   = useState(product.description     || '');
   const [chars,  setChars]  = useState(product.characteristics || '');
@@ -55,7 +56,7 @@ function InfoTab({ product, productId, onSaved }) {
 
   const save = async () => {
     setSaving(true);
-    const res = await fetch(`${API_BASE}/api/products/${productId}`, {
+    const res = await fetch(`${API_BASE}/api/products/${productId}${pq}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, description: desc, characteristics: chars }),
@@ -82,7 +83,7 @@ function InfoTab({ product, productId, onSaved }) {
 
 // ── SeoTab ─────────────────────────────────────────────────────
 
-function SeoTab({ product, productId, onSaved }) {
+function SeoTab({ product, productId, pq, onSaved }) {
   const [seoTitle, setSeoTitle]   = useState(product.seo_title       || '');
   const [seoDesc,  setSeoDesc]    = useState(product.seo_description  || '');
   const [seoKw,    setSeoKw]      = useState(product.seo_keywords     || '');
@@ -91,7 +92,7 @@ function SeoTab({ product, productId, onSaved }) {
 
   const save = async () => {
     setSaving(true);
-    const res = await fetch(`${API_BASE}/api/products/${productId}`, {
+    const res = await fetch(`${API_BASE}/api/products/${productId}${pq}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ seo_title: seoTitle, seo_description: seoDesc, seo_keywords: seoKw }),
@@ -126,7 +127,7 @@ function SeoTab({ product, productId, onSaved }) {
 
 // ── SizeRow ────────────────────────────────────────────────────
 
-function SizeRow({ size, productId, varId, onDeleted, onUpdated }) {
+function SizeRow({ size, productId, varId, pq, onDeleted, onUpdated }) {
   const [name,  setName]  = useState(size.size_name);
   const [price, setPrice] = useState(String(size.price));
   const [stock, setStock] = useState(String(size.stock_quantity));
@@ -135,7 +136,7 @@ function SizeRow({ size, productId, varId, onDeleted, onUpdated }) {
 
   const save = async () => {
     setSaving(true);
-    await fetch(`${API_BASE}/api/products/${productId}/variations/${varId}/sizes/${size.id}`, {
+    await fetch(`${API_BASE}/api/products/${productId}/variations/${varId}/sizes/${size.id}${pq}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ size_name: name, price: parseFloat(price) || 0, stock_quantity: parseInt(stock) || 0 }),
@@ -146,7 +147,7 @@ function SizeRow({ size, productId, varId, onDeleted, onUpdated }) {
 
   const del = async () => {
     if (!confirm('Delete this size?')) return;
-    await fetch(`${API_BASE}/api/products/${productId}/variations/${varId}/sizes/${size.id}`,
+    await fetch(`${API_BASE}/api/products/${productId}/variations/${varId}/sizes/${size.id}${pq}`,
       { method: 'DELETE', credentials: 'include' });
     onDeleted(size.id);
   };
@@ -184,7 +185,7 @@ function SizeRow({ size, productId, varId, onDeleted, onUpdated }) {
 
 // ── VariationCard ──────────────────────────────────────────────
 
-function VariationCard({ variation, productId, onDeleted, onUpdated }) {
+function VariationCard({ variation, productId, pq, onDeleted, onUpdated }) {
   const [open,       setOpen]       = useState(true);
   const [name,       setName]       = useState(variation.variation_name);
   const [imgUrl,     setImgUrl]     = useState(variation.image_url || '');
@@ -228,7 +229,7 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
 
   const saveVariation = async () => {
     setSaving(true);
-    await fetch(`${API_BASE}/api/products/${productId}/variations/${variation.id}`, {
+    await fetch(`${API_BASE}/api/products/${productId}/variations/${variation.id}${pq}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ variation_name: name, image_url: imgUrl || null }),
@@ -239,7 +240,7 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
 
   const deleteVariation = async () => {
     if (!confirm(`Delete variation "${name}" and all its sizes?`)) return;
-    await fetch(`${API_BASE}/api/products/${productId}/variations/${variation.id}`,
+    await fetch(`${API_BASE}/api/products/${productId}/variations/${variation.id}${pq}`,
       { method: 'DELETE', credentials: 'include' });
     onDeleted(variation.id);
   };
@@ -248,7 +249,7 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
     e.preventDefault();
     if (!newSizeName.trim()) return;
     setAddingSize(true);
-    const res = await fetch(`${API_BASE}/api/products/${productId}/variations/${variation.id}/sizes`, {
+    const res = await fetch(`${API_BASE}/api/products/${productId}/variations/${variation.id}/sizes${pq}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -355,6 +356,7 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
                       size={s}
                       productId={productId}
                       varId={variation.id}
+                      pq={pq}
                       onDeleted={sid => setSizes(prev => prev.filter(x => x.id !== sid))}
                       onUpdated={upd => setSizes(prev => prev.map(x => x.id === upd.id ? upd : x))}
                     />
@@ -392,7 +394,7 @@ function VariationCard({ variation, productId, onDeleted, onUpdated }) {
 
 // ── VariationsTab ──────────────────────────────────────────────
 
-function VariationsTab({ product, productId, onSaved }) {
+function VariationsTab({ product, productId, pq, onSaved }) {
   const [variations,    setVariations]    = useState(product.variations || []);
   const [showVarForm,   setShowVarForm]   = useState(false);
   const [varName,       setVarName]       = useState('');
@@ -421,7 +423,7 @@ function VariationsTab({ product, productId, onSaved }) {
     e.preventDefault();
     if (!varName.trim()) return setVarErr('Enter variation name');
     setAdding(true); setVarErr('');
-    const res = await fetch(`${API_BASE}/api/products/${productId}/variations`, {
+    const res = await fetch(`${API_BASE}/api/products/${productId}/variations${pq}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ variation_name: varName.trim(), image_url: varImg || null }),
@@ -444,6 +446,7 @@ function VariationsTab({ product, productId, onSaved }) {
           key={v.id}
           variation={v}
           productId={productId}
+          pq={pq}
           onDeleted={id => setVariations(prev => prev.filter(x => x.id !== id))}
           onUpdated={upd => setVariations(prev => prev.map(x => x.id === upd.id ? upd : x))}
         />
@@ -504,7 +507,7 @@ function VariationsTab({ product, productId, onSaved }) {
 
 // ── CustomFieldsTab ────────────────────────────────────────────
 
-function CustomFieldsTab({ product, productId }) {
+function CustomFieldsTab({ product, productId, pq }) {
   const [fields,   setFields]   = useState(product.custom_fields || []);
   const [showForm, setShowForm] = useState(false);
   const [newKey,   setNewKey]   = useState('');
@@ -518,7 +521,7 @@ function CustomFieldsTab({ product, productId }) {
     e.preventDefault();
     if (!newKey.trim()) return setErr('Key is required');
     setAdding(true); setErr('');
-    const res = await fetch(`${API_BASE}/api/products/${productId}/custom-fields`, {
+    const res = await fetch(`${API_BASE}/api/products/${productId}/custom-fields${pq}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ field_key: newKey.trim(), field_value: newVal, field_type: newType, is_global: newGlobal }),
@@ -536,13 +539,13 @@ function CustomFieldsTab({ product, productId }) {
 
   const deleteField = async (key) => {
     if (!confirm(`Delete field "${key}"?`)) return;
-    await fetch(`${API_BASE}/api/products/${productId}/custom-fields/${encodeURIComponent(key)}`,
+    await fetch(`${API_BASE}/api/products/${productId}/custom-fields/${encodeURIComponent(key)}${pq}`,
       { method: 'DELETE', credentials: 'include' });
     setFields(prev => prev.filter(f => f.field_key !== key));
   };
 
   const toggleGlobal = async (key) => {
-    const res  = await fetch(`${API_BASE}/api/products/${productId}/custom-fields/${encodeURIComponent(key)}/global`,
+    const res  = await fetch(`${API_BASE}/api/products/${productId}/custom-fields/${encodeURIComponent(key)}/global${pq}`,
       { method: 'PATCH', credentials: 'include' });
     const data = await res.json();
     if (res.ok) setFields(prev => prev.map(f => f.field_key === key ? { ...f, is_global: data.is_global } : f));
@@ -751,7 +754,7 @@ function ApiPreviewTab({ product }) {
 
 const TABS = ['Info', 'Variations', 'SEO', 'Custom Fields', 'API Preview', 'Reviews'];
 
-function ProductDrawer({ open, loading, product, onClose, onSaved, onCreated }) {
+function ProductDrawer({ open, loading, product, pq, onClose, onSaved, onCreated }) {
   const [activeTab, setActiveTab] = useState('Info');
   const [localTitle, setLocalTitle] = useState('');
 
@@ -769,7 +772,7 @@ function ProductDrawer({ open, loading, product, onClose, onSaved, onCreated }) 
     e.preventDefault();
     if (!newTitle.trim()) return setCreateErr('Title is required');
     setCreating(true); setCreateErr('');
-    const res = await fetch(`${API_BASE}/api/products`, {
+    const res = await fetch(`${API_BASE}/api/products${pq}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: newTitle.trim() }),
@@ -838,10 +841,10 @@ function ProductDrawer({ open, loading, product, onClose, onSaved, onCreated }) 
           </div>
 
           <div className="prod-drawer-body">
-            {activeTab === 'Info'          && <InfoTab         product={product} productId={product.id} onSaved={u => { if (u.title) setLocalTitle(u.title); onSaved({ ...product, ...u }); }} />}
-            {activeTab === 'Variations'    && <VariationsTab   product={product} productId={product.id} onSaved={onSaved} />}
-            {activeTab === 'SEO'           && <SeoTab          product={product} productId={product.id} onSaved={u => onSaved({ ...product, ...u })} />}
-            {activeTab === 'Custom Fields' && <CustomFieldsTab product={product} productId={product.id} />}
+            {activeTab === 'Info'          && <InfoTab         product={product} productId={product.id} pq={pq} onSaved={u => { if (u.title) setLocalTitle(u.title); onSaved({ ...product, ...u }); }} />}
+            {activeTab === 'Variations'    && <VariationsTab   product={product} productId={product.id} pq={pq} onSaved={onSaved} />}
+            {activeTab === 'SEO'           && <SeoTab          product={product} productId={product.id} pq={pq} onSaved={u => onSaved({ ...product, ...u })} />}
+            {activeTab === 'Custom Fields' && <CustomFieldsTab product={product} productId={product.id} pq={pq} />}
             {activeTab === 'API Preview'   && <ApiPreviewTab   product={product} />}
             {activeTab === 'Reviews'       && <ReviewsTab      product={product} />}
           </div>
@@ -899,6 +902,9 @@ function ProductRow({ p, selected, menuId, setMenuId, menuRef, onOpen, onDelete 
 // ── Products (main page) ───────────────────────────────────────
 
 function Products() {
+  const { projectId } = useProject();
+  const pq = `?project_id=${projectId}`;
+
   const [products,     setProducts]     = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [search,       setSearch]       = useState('');
@@ -912,18 +918,14 @@ function Products() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res  = await fetch(`${API_BASE}/api/products`, { credentials: 'include' });
+      const res  = await fetch(`${API_BASE}/api/products${pq}`, { credentials: 'include' });
       const data = await res.json();
       setProducts(Array.isArray(data) ? data : []);
     } catch { setProducts([]); }
     setLoading(false);
-  }, []);
+  }, [projectId]);
 
-  useEffect(() => {
-    load();
-    window.addEventListener('api-key-switched', load);
-    return () => window.removeEventListener('api-key-switched', load);
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -937,7 +939,7 @@ function Products() {
     setShowDrawer(true);
     setDrawerLoading(true);
     try {
-      const res  = await fetch(`${API_BASE}/api/products/${id}`, { credentials: 'include' });
+      const res  = await fetch(`${API_BASE}/api/products/${id}${pq}`, { credentials: 'include' });
       const data = await res.json();
       setDrawerProduct(res.ok ? data : null);
     } catch { setDrawerProduct(null); }
@@ -960,7 +962,7 @@ function Products() {
 
   const deleteProduct = async (id) => {
     if (!confirm('Delete this product? All variations, sizes and reviews will also be deleted.')) return;
-    await fetch(`${API_BASE}/api/products/${id}`, { method: 'DELETE', credentials: 'include' });
+    await fetch(`${API_BASE}/api/products/${id}${pq}`, { method: 'DELETE', credentials: 'include' });
     if (selectedId === id) closeDrawer();
     load();
   };
@@ -1049,6 +1051,7 @@ function Products() {
         open={showDrawer}
         loading={drawerLoading}
         product={drawerProduct}
+        pq={pq}
         onClose={closeDrawer}
         onSaved={(updated) => {
           setDrawerProduct(updated);

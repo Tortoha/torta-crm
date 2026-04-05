@@ -1,15 +1,57 @@
 /* ══════════════════════════════════════════
-   HEADER — fixed top-right bar
+   HEADER — sticky top bar with breadcrumb
    ══════════════════════════════════════════ */
 
 .crm-header {
-  position: fixed;
-  top: 32px;
-  right: max(20px, calc((100vw - 1560px) / 2 + 20px));
+  position: sticky;
+  top: 0;
   z-index: 200;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px 0 28px;
+  height: 56px;
+  background: var(--bg);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* ── Breadcrumb ── */
+
+.hdr-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.hdr-breadcrumb-link {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.18s ease;
+}
+
+.hdr-breadcrumb-link:hover {
+  color: var(--text);
+}
+
+.hdr-breadcrumb-sep {
+  font-size: 13px;
+  color: #ccc;
+  flex-shrink: 0;
+}
+
+.hdr-breadcrumb-current {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ══════════════════════════════════════════
@@ -17,20 +59,17 @@
    ══════════════════════════════════════════ */
 
 .hdr-combo-block {
-  background: var(--card);
+  background: transparent;
   border-radius: var(--radius-card);
-  box-shadow: var(--shadow-sidebar);
-  padding: 8px;
+  padding: 0;
   width: max-content;
   max-width: 256px;
-  min-width: 140px;
+  min-width: 120px;
   box-sizing: border-box;
-  transition: box-shadow 0.25s ease;
+  position: relative;
 }
 
-.hdr-combo-block--open {
-  box-shadow: var(--shadow-card);
-}
+.hdr-combo-block--open {}
 
 /* ── Trigger (project switcher) ── */
 
@@ -91,9 +130,19 @@
 /* ── Animated list wrapper ── */
 
 .hdr-combo-list-wrap {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  background: var(--card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: 8px;
+  box-sizing: border-box;
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
+  pointer-events: none;
   transition:
     grid-template-rows 0.68s var(--ease-soft),
     opacity 0.28s ease;
@@ -101,6 +150,7 @@
 .hdr-combo-list-wrap--open {
   grid-template-rows: 1fr;
   opacity: 1;
+  pointer-events: all;
 }
 
 /* ── Project list (with scroll) ── */
@@ -284,7 +334,6 @@
 
 @media (max-width: 1240px) {
   .crm-header {
-    top: 16px;
-    right: 16px;
+    padding: 0 16px;
   }
 }

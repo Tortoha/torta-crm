@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File
+from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File, Query
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from mysql.connector.pooling import MySQLConnectionPool
-import hashlib, secrets, jwt, random, os, io, smtplib, json
+import hashlib, secrets, jwt, random, os, io, smtplib, json, re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -156,30 +156,18 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str; password: str; repeat_password: str
 
-class CreateApiKeyRequest(BaseModel):
+class CreateOrgRequest(BaseModel):
+    name: str
+
+class RenameOrgRequest(BaseModel):
+    name: str
+
+class CreateProjectRequest(BaseModel):
     name: str
     frontend_url: str
 
-class SwitchApiKeyRequest(BaseModel):
-    api_key_id: int
-
-class CreateRoleRequest(BaseModel):
+class RenameProjectRequest(BaseModel):
     name: str
-
-class UpdateMemberRoleRequest(BaseModel):
-    crm_user_id: int; crm_role_id: int
-
-class CreateInviteRequest(BaseModel):
-    crm_role_id: int; expires_hours: int = None; max_uses: int = None
-
-class RenameApiKeyRequest(BaseModel):
-    name: str
-
-class CreateChannelRequest(BaseModel):
-    name: str
-
-class SendMessageRequest(BaseModel):
-    message: str
 
 class CreateProductRequest(BaseModel):
     title: str
@@ -227,9 +215,6 @@ class UpdateSettingsRequest(BaseModel):
     currency: str = None
     theme: str = None
 
-class SetPermissionsRequest(BaseModel):
-    permissions: list
-
 class GoogleAuthRequest(BaseModel):
     token: str
 
@@ -247,60 +232,6 @@ class AddRedirectUrlRequest(BaseModel):
 # ════════════════════════════════════════════
 # ХЕЛПЕРЫ
 # ════════════════════════════════════════════
-
-ROLE_PERMISSIONS = [
-    ("manage_products",  "Manage Products",  "Add, edit and delete products"),
-    ("view_orders",      "View Orders",      "View all orders and their status"),
-    ("manage_orders",    "Manage Orders",    "Update order status and details"),
-    ("view_analytics",   "View Analytics",   "Access revenue and analytics data"),
-    ("manage_discounts", "Manage Discounts", "Create and edit promo codes"),
-    ("manage_invites",   "Manage Invites",   "Create and revoke invite links"),
-]
-
-def run_migrations():
-    with db_cursor(dictionary=False) as (conn, cur):
-        for sql in [
-            "ALTER TABLE crm_users ADD COLUMN avatar_url varchar(500) DEFAULT NULL",
-            "ALTER TABLE product_custom_fields ADD COLUMN is_global tinyint(1) NOT NULL DEFAULT 0",
-            """CREATE TABLE IF NOT EXISTS crm_role_permissions (
-                id int(11) NOT NULL AUTO_INCREMENT,
-                role_id int(11) NOT NULL,
-                permission varchar(100) NOT NULL,
-                PRIMARY KEY (id),
-                UNIQUE KEY role_perm (role_id, permission)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
-            "ALTER TABLE crm_users ADD COLUMN google_id varchar(255) DEFAULT NULL",
-            "ALTER TABLE crm_users ADD COLUMN apple_id varchar(255) DEFAULT NULL",
-            """CREATE TABLE IF NOT EXISTS crm_oauth_settings (
-                id int(11) NOT NULL AUTO_INCREMENT,
-                api_key_id int(11) NOT NULL,
-                google_client_id varchar(500) DEFAULT NULL,
-                google_client_secret varchar(500) DEFAULT NULL,
-                google_enabled tinyint(1) DEFAULT 0,
-                PRIMARY KEY (id),
-                UNIQUE KEY uq_api_key_oauth (api_key_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
-            """CREATE TABLE IF NOT EXISTS crm_url_config (
-                id int(11) NOT NULL AUTO_INCREMENT,
-                api_key_id int(11) NOT NULL,
-                frontend_url varchar(500) DEFAULT NULL,
-                PRIMARY KEY (id),
-                UNIQUE KEY uq_api_key_url (api_key_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
-            """CREATE TABLE IF NOT EXISTS crm_redirect_urls (
-                id int(11) NOT NULL AUTO_INCREMENT,
-                api_key_id int(11) NOT NULL,
-                url varchar(500) NOT NULL,
-                created_at datetime DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (id),
-                UNIQUE KEY uq_api_key_redirect (api_key_id, url)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8""",
-        ]:
-            try: cur.execute(sql); conn.commit()
-            except: pass
-
-run_migrations()
-
 
 def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -369,31 +300,34 @@ def record_fail(keys: list, now: datetime):
             raise HTTPException(429, f"Too many attempts. Retry in {left}s.")
         login_attempts[key] = s
 
-def require_owner(user: dict, api_key_id: int):
-    if not db_one("SELECT id FROM crm_api_keys WHERE id = %s AND crm_user_id = %s",
-                  (api_key_id, user["id"])):
+def require_owner(user: dict, project_id: int):
+    if not db_one("SELECT id FROM crm_projects WHERE id = %s AND crm_user_id = %s",
+                  (project_id, user["id"])):
         raise HTTPException(403, "Only project owner can do this")
 
-def active_key_id(user_id: int) -> int:
-    row = db_one("SELECT active_api_key_id FROM crm_users WHERE id = %s", (user_id,))
-    if not row or not row["active_api_key_id"]:
-        raise HTTPException(400, "No active API key selected")
-    return row["active_api_key_id"]
+def require_org_owner(user: dict, org_id: int):
+    if not db_one("SELECT id FROM crm_organizations WHERE id = %s AND owner_id = %s",
+                  (org_id, user["id"])):
+        raise HTTPException(403, "Only organization owner can do this")
+
+def require_team_member_or_owner(user: dict, project_id: int):
+    key_row = db_one("SELECT crm_user_id FROM crm_projects WHERE id=%s AND is_active=1", (project_id,))
+    if not key_row:
+        raise HTTPException(404, "Project not found")
+    if key_row["crm_user_id"] == user["id"]:
+        return
+    if not db_one("SELECT id FROM crm_team_members WHERE project_id=%s AND crm_user_id=%s",
+                  (project_id, user["id"])):
+        raise HTTPException(403, "Not a member of this project")
 
 def gen_api_key() -> str:
     raw = secrets.token_bytes(32)
     ts  = str(datetime.utcnow().timestamp()).encode()
     return hashlib.sha256(raw + ts).hexdigest()
 
-def require_team_member_or_owner(user: dict, api_key_id: int):
-    key_row = db_one("SELECT crm_user_id FROM crm_api_keys WHERE id=%s AND is_active=1", (api_key_id,))
-    if not key_row:
-        raise HTTPException(404, "Project not found")
-    if key_row["crm_user_id"] == user["id"]:
-        return
-    if not db_one("SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s",
-                  (api_key_id, user["id"])):
-        raise HTTPException(403, "Not a member of this project")
+def make_slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")
+    return slug or "org"
 
 def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
     """Upsert CRM user by Google ID. Returns user_id."""
@@ -541,7 +475,7 @@ def resend_code_endpoint(request: ResendCodeRequest):
 @app.get("/api/me")
 def get_me(user: dict = Depends(get_current_user)):
     return db_one(
-        "SELECT id, name, email, role, active_api_key_id FROM crm_users WHERE id = %s AND is_active = 1",
+        "SELECT id, name, email, role FROM crm_users WHERE id = %s AND is_active = 1",
         (user["id"],)
     ) or HTTPException(401, "User not found")
 
@@ -601,486 +535,215 @@ def reset_password(request: ResetPasswordRequest):
 
 
 # ════════════════════════════════════════════
-# API KEYS
+# ORGANIZATIONS
 # ════════════════════════════════════════════
 
-@app.get("/api/api-keys")
-def get_api_keys(user: dict = Depends(get_current_user)):
+@app.get("/api/orgs")
+def get_orgs(user: dict = Depends(get_current_user)):
     rows = db_all("""
-        SELECT k.id, k.name, k.api_key, k.is_active,
-               k.last_used_at, k.last_used_ip, k.created_at,
-               (u.active_api_key_id = k.id) AS is_selected,
-               r.name AS user_role
-        FROM crm_api_keys k
-        JOIN crm_users u ON u.id = %s
-        LEFT JOIN crm_team_members tm ON tm.api_key_id = k.id AND tm.crm_user_id = %s
-        LEFT JOIN crm_roles r ON r.id = tm.crm_role_id
-        WHERE k.crm_user_id = %s OR tm.crm_user_id = %s
-        GROUP BY k.id ORDER BY k.created_at DESC
-    """, (user["id"], user["id"], user["id"], user["id"]))
-
-    for k in rows:
-        k["is_selected"]  = bool(k["is_selected"])
-        k["last_used_at"] = k["last_used_at"].isoformat() if k.get("last_used_at") else None
-        k["created_at"]   = str(k["created_at"])
+        SELECT o.id, o.name, o.slug, o.created_at,
+               COUNT(DISTINCT p.id) AS projects_count,
+               (o.owner_id = %s) AS is_owner
+        FROM crm_organizations o
+        LEFT JOIN crm_projects p ON p.org_id = o.id
+        WHERE o.owner_id = %s
+        GROUP BY o.id ORDER BY o.created_at DESC
+    """, (user["id"], user["id"]))
+    for r in rows:
+        r["created_at"]     = str(r["created_at"])
+        r["is_owner"]       = bool(r["is_owner"])
+        r["projects_count"] = int(r["projects_count"] or 0)
     return rows
 
 
-@app.post("/api/api-keys")
-def create_api_key(request: CreateApiKeyRequest, req: Request, user: dict = Depends(get_current_user)):
-    if user["role"] != "owner":
-        raise HTTPException(403, "Only owner can create API keys")
+@app.post("/api/orgs")
+def create_org(request: CreateOrgRequest, user: dict = Depends(get_current_user)):
+    name = request.name.strip()
+    if not name:        raise HTTPException(400, "Organization name is required")
+    if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
+
+    base_slug = make_slug(name)
+    slug      = base_slug
+    suffix    = 1
+    while db_one("SELECT id FROM crm_organizations WHERE slug = %s", (slug,)):
+        slug = f"{base_slug}-{suffix}"; suffix += 1
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_organizations (name, slug, owner_id) VALUES (%s,%s,%s)",
+            (sanitize(name), slug, user["id"])
+        )
+        conn.commit()
+        return {"id": cur.lastrowid, "name": name, "slug": slug, "is_owner": True, "projects_count": 0}
+
+
+@app.get("/api/orgs/by-slug/{slug}")
+def get_org_by_slug(slug: str, user: dict = Depends(get_current_user)):
+    org = db_one("""
+        SELECT o.id, o.name, o.slug, o.created_at, (o.owner_id = %s) AS is_owner
+        FROM crm_organizations o
+        WHERE o.slug = %s AND o.owner_id = %s
+    """, (user["id"], slug, user["id"]))
+    if not org: raise HTTPException(404, "Organization not found")
+    org["created_at"] = str(org["created_at"])
+    org["is_owner"]   = bool(org["is_owner"])
+    return org
+
+
+@app.get("/api/orgs/{org_id}")
+def get_org(org_id: int, user: dict = Depends(get_current_user)):
+    org = db_one("""
+        SELECT o.id, o.name, o.slug, o.created_at, (o.owner_id = %s) AS is_owner
+        FROM crm_organizations o
+        WHERE o.id = %s AND o.owner_id = %s
+    """, (user["id"], org_id, user["id"]))
+    if not org: raise HTTPException(404, "Organization not found")
+    org["created_at"] = str(org["created_at"])
+    org["is_owner"]   = bool(org["is_owner"])
+    return org
+
+
+@app.patch("/api/orgs/{org_id}")
+def rename_org(org_id: int, request: RenameOrgRequest, user: dict = Depends(get_current_user)):
+    name = request.name.strip()
+    if not name:        raise HTTPException(400, "Name is required")
+    if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
+    require_org_owner(user, org_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_organizations SET name=%s WHERE id=%s", (sanitize(name), org_id))
+        conn.commit()
+    return {"ok": True, "name": name}
+
+
+@app.delete("/api/orgs/{org_id}")
+def delete_org(org_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    count = db_one("SELECT COUNT(*) AS c FROM crm_projects WHERE org_id=%s", (org_id,))["c"]
+    if count > 0: raise HTTPException(400, "Delete all projects in this organization first")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_organizations WHERE id=%s", (org_id,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# PROJECTS
+# ════════════════════════════════════════════
+
+@app.get("/api/orgs/{org_id}/projects")
+def get_projects(org_id: int, user: dict = Depends(get_current_user)):
+    if not db_one("SELECT id FROM crm_organizations WHERE id=%s AND owner_id=%s", (org_id, user["id"])):
+        raise HTTPException(404, "Organization not found")
+    rows = db_all("""
+        SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at
+        FROM crm_projects p
+        WHERE p.org_id = %s
+        ORDER BY p.created_at DESC
+    """, (org_id,))
+    for p in rows:
+        p["last_used_at"] = p["last_used_at"].isoformat() if p.get("last_used_at") else None
+        p["created_at"]   = str(p["created_at"])
+    return rows
+
+
+@app.post("/api/orgs/{org_id}/projects")
+def create_project(org_id: int, request: CreateProjectRequest, req: Request, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
 
     name = request.name.strip()
-    if not name:              raise HTTPException(400, "Name is required")
-    if len(name) > 100:       raise HTTPException(400, "Name too long (max 100)")
+    if not name:          raise HTTPException(400, "Name is required")
+    if len(name) > 100:   raise HTTPException(400, "Name too long (max 100)")
 
     frontend_url = request.frontend_url.strip()
-    if not frontend_url:      raise HTTPException(400, "Frontend URL is required")
+    if not frontend_url:  raise HTTPException(400, "Frontend URL is required")
     if not frontend_url.startswith(("http://", "https://")):
         raise HTTPException(400, "Frontend URL must start with http:// or https://")
     if len(frontend_url) > 500: raise HTTPException(400, "Frontend URL too long")
 
     new_key = next(
         (c for _ in range(5)
-         if not db_one("SELECT id FROM crm_api_keys WHERE api_key = %s", (c := gen_api_key(),))),
+         if not db_one("SELECT id FROM crm_projects WHERE api_key = %s", (c := gen_api_key(),))),
         None
     )
     if not new_key: raise HTTPException(500, "Failed to generate unique key")
 
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO crm_api_keys (crm_user_id, name, api_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,1)",
-            (user["id"], sanitize(name), new_key, get_ip(req))
+            "INSERT INTO crm_projects (org_id, crm_user_id, name, api_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,%s,1)",
+            (org_id, user["id"], sanitize(name), new_key, get_ip(req))
         )
         conn.commit()
         new_id = cur.lastrowid
 
-        cur.execute("INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,'Owner',1)", (new_id,))
+        cur.execute("INSERT INTO crm_roles (project_id, name, is_system) VALUES (%s,'Owner',1)", (new_id,))
         conn.commit()
         owner_role_id = cur.lastrowid
 
         cur.execute(
-            "INSERT IGNORE INTO crm_team_members (api_key_id, crm_user_id, crm_role_id) VALUES (%s,%s,%s)",
+            "INSERT IGNORE INTO crm_team_members (project_id, crm_user_id, crm_role_id) VALUES (%s,%s,%s)",
             (new_id, user["id"], owner_role_id)
         )
-        cur.execute("INSERT INTO crm_url_config (api_key_id, frontend_url) VALUES (%s,%s)", (new_id, frontend_url))
-        cur.execute("INSERT IGNORE INTO crm_redirect_urls (api_key_id, url) VALUES (%s,%s)", (new_id, frontend_url))
-
-        cur.execute("SELECT COUNT(*) AS cnt FROM crm_api_keys WHERE crm_user_id = %s", (user["id"],))
-        count = cur.fetchone()["cnt"]
-        if count == 1:
-            cur.execute("UPDATE crm_users SET active_api_key_id = %s WHERE id = %s", (new_id, user["id"]))
+        cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (new_id, frontend_url))
+        cur.execute("INSERT IGNORE INTO crm_redirect_urls (project_id, url) VALUES (%s,%s)", (new_id, frontend_url))
         conn.commit()
 
-    return {"id": new_id, "name": name, "api_key": new_key, "is_active": True, "is_selected": count == 1}
+    return {"id": new_id, "name": name, "api_key": new_key, "is_active": True}
 
 
-@app.put("/api/api-keys/switch")
-def switch_api_key(request: SwitchApiKeyRequest, user: dict = Depends(get_current_user)):
-    key = db_one("""
-        SELECT k.id, k.name FROM crm_api_keys k
-        LEFT JOIN crm_team_members tm ON tm.api_key_id = k.id AND tm.crm_user_id = %s
-        WHERE k.id = %s AND k.is_active = 1
-          AND (k.crm_user_id = %s OR tm.crm_user_id IS NOT NULL)
-    """, (user["id"], request.api_key_id, user["id"]))
-    if not key:
-        raise HTTPException(404, "API key not found or access denied")
-
-    with db_cursor() as (conn, cur):
-        cur.execute("UPDATE crm_users SET active_api_key_id=%s WHERE id=%s", (request.api_key_id, user["id"]))
-        conn.commit()
-    return {"ok": True, "active_key": key}
-
-
-@app.delete("/api/api-keys/{key_id}")
-def delete_api_key(key_id: int, user: dict = Depends(get_current_user)):
-    if user["role"] != "owner": raise HTTPException(403, "Only owner can delete API keys")
-    if not db_one("SELECT id FROM crm_api_keys WHERE id = %s AND crm_user_id = %s", (key_id, user["id"])):
-        raise HTTPException(404, "API key not found")
-
-    cnt = db_one("SELECT COUNT(*) AS c FROM crm_api_keys WHERE crm_user_id = %s", (user["id"],))["c"]
-    if cnt <= 1: raise HTTPException(400, "Cannot delete the last API key")
-
-    with db_cursor() as (conn, cur):
-        cur.execute("SELECT active_api_key_id FROM crm_users WHERE id = %s", (user["id"],))
-        row = cur.fetchone()
-        if row and row["active_api_key_id"] == key_id:
-            cur.execute(
-                "SELECT id FROM crm_api_keys WHERE crm_user_id=%s AND id!=%s AND is_active=1 LIMIT 1",
-                (user["id"], key_id)
-            )
-            fb = cur.fetchone()
-            if fb:
-                cur.execute("UPDATE crm_users SET active_api_key_id=%s WHERE id=%s", (fb["id"], user["id"]))
-        cur.execute("DELETE FROM crm_api_keys WHERE id = %s", (key_id,))
-        conn.commit()
-    return {"ok": True}
+@app.get("/api/projects/by-key/{api_key}")
+def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
+    p = db_one("""
+        SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at,
+               o.id AS org_id, o.name AS org_name, o.slug AS org_slug
+        FROM crm_projects p
+        JOIN crm_organizations o ON o.id = p.org_id
+        WHERE p.api_key = %s
+    """, (api_key,))
+    if not p: raise HTTPException(404, "Project not found")
+    require_team_member_or_owner(user, p["id"])
+    p["last_used_at"] = p["last_used_at"].isoformat() if p.get("last_used_at") else None
+    p["created_at"]   = str(p["created_at"])
+    return p
 
 
-@app.get("/api/me/active-key")
-def get_active_key(user: dict = Depends(get_current_user)):
-    return db_one("""
-        SELECT k.id, k.name, k.api_key FROM crm_users u
-        JOIN crm_api_keys k ON k.id = u.active_api_key_id WHERE u.id = %s
-    """, (user["id"],)) or {}
+@app.get("/api/projects/{project_id}")
+def get_project(project_id: int, user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    p = db_one("""
+        SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at,
+               o.id AS org_id, o.name AS org_name, o.slug AS org_slug
+        FROM crm_projects p
+        JOIN crm_organizations o ON o.id = p.org_id
+        WHERE p.id = %s
+    """, (project_id,))
+    if not p: raise HTTPException(404, "Project not found")
+    p["last_used_at"] = p["last_used_at"].isoformat() if p.get("last_used_at") else None
+    p["created_at"]   = str(p["created_at"])
+    return p
 
 
-# ════════════════════════════════════════════
-# ROLES
-# ════════════════════════════════════════════
-
-@app.get("/api/roles")
-def get_roles(user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    return db_all(
-        "SELECT id, name, is_system FROM crm_roles WHERE api_key_id=%s ORDER BY is_system DESC, id ASC",
-        (kid,)
-    )
-
-
-@app.post("/api/roles")
-def create_role(request: CreateRoleRequest, user: dict = Depends(get_current_user)):
+@app.patch("/api/projects/{project_id}")
+def rename_project(project_id: int, request: RenameProjectRequest, user: dict = Depends(get_current_user)):
     name = request.name.strip()
-    if not name:        raise HTTPException(400, "Role name is required")
-    if len(name) > 50:  raise HTTPException(400, "Role name too long (max 50)")
-
-    kid = active_key_id(user["id"])
-    require_owner(user, kid)
-
-    if db_one("SELECT id FROM crm_roles WHERE api_key_id=%s AND name=%s", (kid, name)):
-        raise HTTPException(400, "Role already exists")
-
+    if not name:        raise HTTPException(400, "Name is required")
+    if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
+    require_owner(user, project_id)
     with db_cursor() as (conn, cur):
-        cur.execute("INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,%s,0)", (kid, sanitize(name)))
-        conn.commit()
-        return {"id": cur.lastrowid, "name": sanitize(name), "is_system": False}
-
-
-@app.delete("/api/roles/{role_id}")
-def delete_role(role_id: int, user: dict = Depends(get_current_user)):
-    kid  = active_key_id(user["id"])
-    require_owner(user, kid)
-    role = db_one("SELECT id, is_system FROM crm_roles WHERE id=%s AND api_key_id=%s", (role_id, kid))
-    if not role:            raise HTTPException(404, "Role not found")
-    if role["is_system"]:   raise HTTPException(400, "Cannot delete system role")
-
-    used = db_one("SELECT COUNT(*) AS c FROM crm_team_members WHERE crm_role_id=%s", (role_id,))["c"]
-    if used > 0: raise HTTPException(400, "Role is in use, reassign members first")
-
-    with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_roles WHERE id=%s", (role_id,))
-        conn.commit()
-    return {"ok": True}
-
-
-# ════════════════════════════════════════════
-# TEAM
-# ════════════════════════════════════════════
-
-@app.get("/api/team")
-def get_team(user: dict = Depends(get_current_user)):
-    kid      = active_key_id(user["id"])
-    key_row  = db_one("SELECT crm_user_id FROM crm_api_keys WHERE id = %s", (kid,))
-    is_owner = key_row and key_row["crm_user_id"] == user["id"]
-
-    if not is_owner:
-        if not db_one("SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s", (kid, user["id"])):
-            raise HTTPException(403, "You are not a member of this project")
-
-    if is_owner and not db_one("SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s", (kid, user["id"])):
-        owner_role = db_one("SELECT id FROM crm_roles WHERE api_key_id=%s AND is_system=1", (kid,))
-        with db_cursor() as (conn, cur):
-            if not owner_role:
-                cur.execute("INSERT INTO crm_roles (api_key_id, name, is_system) VALUES (%s,'Owner',1)", (kid,))
-                conn.commit()
-                owner_role_id = cur.lastrowid
-            else:
-                owner_role_id = owner_role["id"]
-            cur.execute(
-                "INSERT INTO crm_team_members (api_key_id, crm_user_id, crm_role_id) VALUES(%s,%s,%s)",
-                (kid, user["id"], owner_role_id)
-            )
-            conn.commit()
-
-    members = db_all("""
-        SELECT u.id, u.name, u.email,
-               r.id AS role_id, r.name AS role_name, r.is_system,
-               tm.joined_at, (k.crm_user_id = u.id) AS is_owner
-        FROM crm_team_members tm
-        JOIN crm_users u    ON u.id = tm.crm_user_id
-        JOIN crm_roles r    ON r.id = tm.crm_role_id
-        JOIN crm_api_keys k ON k.id = %s
-        WHERE tm.api_key_id = %s
-        ORDER BY is_owner DESC, tm.joined_at ASC
-    """, (kid, kid))
-
-    for m in members:
-        m["joined_at"] = str(m["joined_at"])
-        m["is_owner"]  = bool(m["is_owner"])
-        m["is_system"] = bool(m["is_system"])
-        m["is_me"]     = (m["id"] == user["id"])
-    return members
-
-
-@app.put("/api/team/role")
-def update_member_role(request: UpdateMemberRoleRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_owner(user, kid)
-    if request.crm_user_id == user["id"]: raise HTTPException(400, "Cannot change your own role")
-    if not db_one("SELECT id FROM crm_roles WHERE id=%s AND api_key_id=%s", (request.crm_role_id, kid)):
-        raise HTTPException(404, "Role not found in this project")
-
-    with db_cursor() as (conn, cur):
-        cur.execute(
-            "UPDATE crm_team_members SET crm_role_id=%s WHERE api_key_id=%s AND crm_user_id=%s",
-            (request.crm_role_id, kid, request.crm_user_id)
-        )
-        conn.commit()
-        if cur.rowcount == 0: raise HTTPException(404, "Member not found")
-    return {"ok": True}
-
-
-@app.delete("/api/team/{member_user_id}")
-def remove_member(member_user_id: int, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_owner(user, kid)
-    if member_user_id == user["id"]: raise HTTPException(400, "Cannot remove yourself")
-
-    with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s", (kid, member_user_id))
-        conn.commit()
-        if cur.rowcount == 0: raise HTTPException(404, "Member not found")
-    return {"ok": True}
-
-
-# ════════════════════════════════════════════
-# INVITES
-# ════════════════════════════════════════════
-
-@app.post("/api/invites")
-def create_invite(request: CreateInviteRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_owner(user, kid)
-    if not db_one("SELECT id FROM crm_roles WHERE id=%s AND api_key_id=%s", (request.crm_role_id, kid)):
-        raise HTTPException(404, "Role not found")
-
-    token      = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(hours=request.expires_hours) if request.expires_hours else None
-
-    with db_cursor() as (conn, cur):
-        cur.execute(
-            "INSERT INTO crm_invites (api_key_id,crm_role_id,token,created_by,expires_at,max_uses) VALUES(%s,%s,%s,%s,%s,%s)",
-            (kid, request.crm_role_id, token, user["id"], expires_at, request.max_uses)
-        )
-        conn.commit()
-        return {
-            "id": cur.lastrowid, "token": token,
-            "invite_url": f"{CRM_FRONTEND_URL}/invite/{token}",
-            "expires_at": expires_at.isoformat() if expires_at else None,
-            "max_uses": request.max_uses,
-        }
-
-
-@app.get("/api/invites")
-def get_invites(user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_owner(user, kid)
-    rows = db_all("""
-        SELECT i.id, i.token, i.uses, i.max_uses, i.expires_at, i.created_at, r.name AS role_name
-        FROM crm_invites i JOIN crm_roles r ON r.id = i.crm_role_id
-        WHERE i.api_key_id=%s AND i.is_active=1 ORDER BY i.created_at DESC
-    """, (kid,))
-    for i in rows:
-        i["created_at"] = str(i["created_at"])
-        i["expires_at"] = i["expires_at"].isoformat() if i["expires_at"] else None
-        i["invite_url"] = f"{CRM_FRONTEND_URL}/invite/{i['token']}"
-    return rows
-
-
-@app.delete("/api/invites/{invite_id}")
-def revoke_invite(invite_id: int, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_owner(user, kid)
-    with db_cursor() as (conn, cur):
-        cur.execute("UPDATE crm_invites SET is_active=0 WHERE id=%s AND api_key_id=%s", (invite_id, kid))
-        conn.commit()
-    return {"ok": True}
-
-
-@app.get("/api/invites/validate/{token}")
-def validate_invite(token: str):
-    inv = db_one("""
-        SELECT i.id, i.api_key_id, i.crm_role_id, i.uses, i.max_uses,
-               i.expires_at, i.is_active, r.name AS role_name, k.name AS project_name
-        FROM crm_invites i
-        JOIN crm_roles r ON r.id = i.crm_role_id
-        JOIN crm_api_keys k ON k.id = i.api_key_id
-        WHERE i.token = %s
-    """, (token,))
-    if not inv:                 raise HTTPException(404, "Invite not found")
-    if not inv["is_active"]:    raise HTTPException(400, "Invite revoked")
-    if inv["expires_at"] and datetime.utcnow() > inv["expires_at"]: raise HTTPException(400, "Invite expired")
-    if inv["max_uses"] and inv["uses"] >= inv["max_uses"]:          raise HTTPException(400, "Invite limit reached")
-    inv["expires_at"] = inv["expires_at"].isoformat() if inv["expires_at"] else None
-    return inv
-
-
-@app.post("/api/invites/accept/{token}")
-def accept_invite(token: str, user: dict = Depends(get_current_user)):
-    inv = db_one("""
-        SELECT i.*, r.name AS role_name, k.name AS project_name
-        FROM crm_invites i JOIN crm_roles r ON r.id=i.crm_role_id JOIN crm_api_keys k ON k.id=i.api_key_id
-        WHERE i.token=%s AND i.is_active=1
-    """, (token,))
-    if not inv: raise HTTPException(404, "Invalid or expired invite")
-    if inv["expires_at"] and datetime.utcnow() > inv["expires_at"]: raise HTTPException(400, "Invite expired")
-    if inv["max_uses"] and inv["uses"] >= inv["max_uses"]:           raise HTTPException(400, "Invite limit reached")
-
-    with db_cursor() as (conn, cur):
-        cur.execute("SELECT id FROM crm_team_members WHERE api_key_id=%s AND crm_user_id=%s",
-                    (inv["api_key_id"], user["id"]))
-        if cur.fetchone():
-            cur.execute("UPDATE crm_users SET active_api_key_id=%s WHERE id=%s", (inv["api_key_id"], user["id"]))
-            conn.commit()
-            return {"ok": True, "message": "Already a member"}
-
-        cur.execute(
-            "INSERT INTO crm_team_members (api_key_id,crm_user_id,crm_role_id) VALUES(%s,%s,%s)",
-            (inv["api_key_id"], user["id"], inv["crm_role_id"])
-        )
-        cur.execute("UPDATE crm_users SET active_api_key_id=%s WHERE id=%s", (inv["api_key_id"], user["id"]))
-        cur.execute("UPDATE crm_invites SET uses=uses+1 WHERE id=%s", (inv["id"],))
-        if inv["max_uses"] and (inv["uses"] + 1) >= inv["max_uses"]:
-            cur.execute("UPDATE crm_invites SET is_active=0 WHERE id=%s", (inv["id"],))
-        conn.commit()
-    return {"ok": True, "project_name": inv["project_name"], "role": inv["role_name"]}
-
-
-# ════════════════════════════════════════════
-# RENAME API KEY
-# ════════════════════════════════════════════
-
-@app.put("/api/api-keys/{key_id}/rename")
-def rename_api_key(key_id: int, request: RenameApiKeyRequest, user: dict = Depends(get_current_user)):
-    name = request.name.strip()
-    if not name:         raise HTTPException(400, "Name is required")
-    if len(name) > 100:  raise HTTPException(400, "Name too long (max 100)")
-    if user["role"] != "owner": raise HTTPException(403, "Only owner can rename API keys")
-    if not db_one("SELECT id FROM crm_api_keys WHERE id=%s AND crm_user_id=%s", (key_id, user["id"])):
-        raise HTTPException(404, "API key not found")
-    with db_cursor() as (conn, cur):
-        cur.execute("UPDATE crm_api_keys SET name=%s WHERE id=%s", (sanitize(name), key_id))
+        cur.execute("UPDATE crm_projects SET name=%s WHERE id=%s", (sanitize(name), project_id))
         conn.commit()
     return {"ok": True, "name": name}
 
 
-# ════════════════════════════════════════════
-# CHAT
-# ════════════════════════════════════════════
-
-@app.get("/api/chat/channels")
-def get_channels(user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_team_member_or_owner(user, kid)
-
-    if db_one("SELECT COUNT(*) AS c FROM crm_chat_channels WHERE api_key_id=%s", (kid,))["c"] == 0:
-        with db_cursor() as (conn, cur):
-            cur.execute(
-                "INSERT INTO crm_chat_channels (api_key_id, name, is_general, created_by) VALUES(%s,'general',1,%s)",
-                (kid, user["id"])
-            )
-            conn.commit()
-
-    rows = db_all(
-        "SELECT id, name, is_general, created_at FROM crm_chat_channels WHERE api_key_id=%s ORDER BY is_general DESC, created_at ASC",
-        (kid,)
-    )
-    for r in rows:
-        r["created_at"] = str(r["created_at"])
-    return rows
-
-
-@app.post("/api/chat/channels")
-def create_channel(request: CreateChannelRequest, user: dict = Depends(get_current_user)):
-    kid  = active_key_id(user["id"])
-    require_owner(user, kid)
-    name = request.name.strip().lower().replace(" ", "-")
-    if not name:        raise HTTPException(400, "Channel name is required")
-    if len(name) > 50:  raise HTTPException(400, "Channel name too long (max 50)")
-    if db_one("SELECT id FROM crm_chat_channels WHERE api_key_id=%s AND name=%s", (kid, name)):
-        raise HTTPException(400, "Channel already exists")
-
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: int, user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    org = db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,))
+    count = db_one("SELECT COUNT(*) AS c FROM crm_projects WHERE org_id=%s", (org["org_id"],))["c"]
+    if count <= 1: raise HTTPException(400, "Cannot delete the last project in an organization")
     with db_cursor() as (conn, cur):
-        cur.execute(
-            "INSERT INTO crm_chat_channels (api_key_id, name, is_general, created_by) VALUES(%s,%s,0,%s)",
-            (kid, sanitize(name), user["id"])
-        )
-        conn.commit()
-        return {"id": cur.lastrowid, "name": sanitize(name), "is_general": False, "created_at": str(datetime.utcnow())}
-
-
-@app.delete("/api/chat/channels/{channel_id}")
-def delete_channel(channel_id: int, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_owner(user, kid)
-    ch = db_one("SELECT id, is_general FROM crm_chat_channels WHERE id=%s AND api_key_id=%s", (channel_id, kid))
-    if not ch:           raise HTTPException(404, "Channel not found")
-    if ch["is_general"]: raise HTTPException(400, "Cannot delete the general channel")
-    with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_chat_channels WHERE id=%s", (channel_id,))
+        cur.execute("DELETE FROM crm_projects WHERE id=%s", (project_id,))
         conn.commit()
     return {"ok": True}
-
-
-@app.get("/api/chat/channels/{channel_id}/messages")
-def get_messages(channel_id: int, after_id: int = None, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_team_member_or_owner(user, kid)
-    if not db_one("SELECT id FROM crm_chat_channels WHERE id=%s AND api_key_id=%s", (channel_id, kid)):
-        raise HTTPException(404, "Channel not found")
-
-    if after_id:
-        rows = db_all("""
-            SELECT m.id, m.message, m.created_at, u.id AS user_id, u.name AS user_name
-            FROM crm_chat_messages m JOIN crm_users u ON u.id = m.user_id
-            WHERE m.channel_id=%s AND m.id > %s ORDER BY m.created_at ASC
-        """, (channel_id, after_id))
-    else:
-        rows = list(reversed(db_all("""
-            SELECT m.id, m.message, m.created_at, u.id AS user_id, u.name AS user_name
-            FROM crm_chat_messages m JOIN crm_users u ON u.id = m.user_id
-            WHERE m.channel_id=%s ORDER BY m.created_at DESC LIMIT 50
-        """, (channel_id,))))
-
-    for r in rows:
-        r["created_at"] = str(r["created_at"])
-        r["is_me"] = (r["user_id"] == user["id"])
-    return rows
-
-
-@app.post("/api/chat/channels/{channel_id}/messages")
-def send_message(channel_id: int, request: SendMessageRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    require_team_member_or_owner(user, kid)
-    if not db_one("SELECT id FROM crm_chat_channels WHERE id=%s AND api_key_id=%s", (channel_id, kid)):
-        raise HTTPException(404, "Channel not found")
-
-    msg = request.message.strip()
-    if not msg:         raise HTTPException(400, "Message cannot be empty")
-    if len(msg) > 2000: raise HTTPException(400, "Message too long (max 2000)")
-
-    with db_cursor() as (conn, cur):
-        cur.execute(
-            "INSERT INTO crm_chat_messages (channel_id, user_id, message) VALUES(%s,%s,%s)",
-            (channel_id, user["id"], sanitize(msg))
-        )
-        conn.commit()
-        return {
-            "id": cur.lastrowid, "message": msg,
-            "user_id": user["id"], "user_name": user["name"],
-            "is_me": True, "created_at": str(datetime.utcnow()),
-        }
 
 
 # ════════════════════════════════════════════
@@ -1088,8 +751,8 @@ def send_message(channel_id: int, request: SendMessageRequest, user: dict = Depe
 # ════════════════════════════════════════════
 
 @app.get("/api/products")
-def list_products(user: dict = Depends(get_current_user)):
-    kid  = active_key_id(user["id"])
+def list_products(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
     rows = db_all(
         "SELECT p.id, p.title,"
         " COUNT(DISTINCT v.id) AS variations_count,"
@@ -1102,8 +765,8 @@ def list_products(user: dict = Depends(get_current_user)):
         " LEFT JOIN product_variations v ON v.product_id=p.id"
         " LEFT JOIN product_sizes ps ON ps.product_id=p.id"
         " LEFT JOIN product_reviews pr ON pr.product_id=p.id"
-        " WHERE p.api_key_id=%s GROUP BY p.id ORDER BY p.id DESC",
-        (kid,)
+        " WHERE p.project_id=%s GROUP BY p.id ORDER BY p.id DESC",
+        (project_id,)
     )
     for r in rows:
         r["avg_rating"]  = round(float(r["avg_rating"] or 0), 1)
@@ -1114,14 +777,14 @@ def list_products(user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/products")
-def create_product(request: CreateProductRequest, user: dict = Depends(get_current_user)):
-    kid  = active_key_id(user["id"])
+def create_product(request: CreateProductRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
     name = request.title.strip()
     if not name: raise HTTPException(400, "Title is required")
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO products (api_key_id,title,description,characteristics,seo_title,seo_description,seo_keywords) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (kid, sanitize(name), sanitize(request.description), sanitize(request.characteristics),
+            "INSERT INTO products (project_id,title,description,characteristics,seo_title,seo_description,seo_keywords) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (project_id, sanitize(name), sanitize(request.description), sanitize(request.characteristics),
              sanitize(request.seo_title), sanitize(request.seo_description), sanitize(request.seo_keywords))
         )
         conn.commit()
@@ -1129,9 +792,9 @@ def create_product(request: CreateProductRequest, user: dict = Depends(get_curre
 
 
 @app.get("/api/products/{product_id}")
-def get_product(product_id: int, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    p   = db_one("SELECT * FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid))
+def get_product(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    p = db_one("SELECT * FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
     if not p: raise HTTPException(404, "Product not found")
 
     variations = db_all(
@@ -1156,8 +819,8 @@ def get_product(product_id: int, user: dict = Depends(get_current_user)):
 
     custom_fields = db_all(
         "SELECT field_key,field_value,field_type,is_global FROM product_custom_fields"
-        " WHERE product_id=%s AND api_key_id=%s ORDER BY created_at ASC",
-        (product_id, kid)
+        " WHERE product_id=%s AND project_id=%s ORDER BY created_at ASC",
+        (product_id, project_id)
     )
     for cf in custom_fields:
         cf["is_global"] = bool(cf.get("is_global", 0))
@@ -1183,9 +846,9 @@ def get_product(product_id: int, user: dict = Depends(get_current_user)):
 
 
 @app.put("/api/products/{product_id}")
-def update_product(product_id: int, request: UpdateProductRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def update_product(product_id: int, request: UpdateProductRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     fields = []; vals = []
     if request.title           is not None: fields.append("title=%s");           vals.append(request.title.strip())
@@ -1203,9 +866,9 @@ def update_product(product_id: int, request: UpdateProductRequest, user: dict = 
 
 
 @app.delete("/api/products/{product_id}")
-def delete_product(product_id: int, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def delete_product(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE ps FROM product_sizes ps JOIN product_variations v ON ps.variation_id=v.id WHERE v.product_id=%s", (product_id,))
@@ -1222,9 +885,9 @@ def delete_product(product_id: int, user: dict = Depends(get_current_user)):
 # ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/variations")
-def create_variation(product_id: int, request: CreateVariationRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def create_variation(product_id: int, request: CreateVariationRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     name = request.variation_name.strip()
     if not name: raise HTTPException(400, "Variation name is required")
@@ -1236,9 +899,9 @@ def create_variation(product_id: int, request: CreateVariationRequest, user: dic
 
 
 @app.put("/api/products/{product_id}/variations/{var_id}")
-def update_variation(product_id: int, var_id: int, request: UpdateVariationRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def update_variation(product_id: int, var_id: int, request: UpdateVariationRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     if not db_one("SELECT id FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id)):
         raise HTTPException(404, "Variation not found")
@@ -1254,9 +917,9 @@ def update_variation(product_id: int, var_id: int, request: UpdateVariationReque
 
 
 @app.delete("/api/products/{product_id}/variations/{var_id}")
-def delete_variation(product_id: int, var_id: int, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def delete_variation(product_id: int, var_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_sizes WHERE variation_id=%s", (var_id,))
@@ -1270,9 +933,9 @@ def delete_variation(product_id: int, var_id: int, user: dict = Depends(get_curr
 # ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/variations/{var_id}/sizes")
-def create_size(product_id: int, var_id: int, request: CreateSizeRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def create_size(product_id: int, var_id: int, request: CreateSizeRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     if not db_one("SELECT id FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id)):
         raise HTTPException(404, "Variation not found")
@@ -1289,9 +952,9 @@ def create_size(product_id: int, var_id: int, request: CreateSizeRequest, user: 
 
 
 @app.put("/api/products/{product_id}/variations/{var_id}/sizes/{size_id}")
-def update_size(product_id: int, var_id: int, size_id: int, request: UpdateSizeRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def update_size(product_id: int, var_id: int, size_id: int, request: UpdateSizeRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     fields = []; vals = []
     if request.size_name      is not None: fields.append("size_name=%s");      vals.append(request.size_name.strip())
@@ -1306,9 +969,9 @@ def update_size(product_id: int, var_id: int, size_id: int, request: UpdateSizeR
 
 
 @app.delete("/api/products/{product_id}/variations/{var_id}/sizes/{size_id}")
-def delete_size(product_id: int, var_id: int, size_id: int, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def delete_size(product_id: int, var_id: int, size_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_sizes WHERE id=%s AND variation_id=%s", (size_id, var_id))
@@ -1321,43 +984,43 @@ def delete_size(product_id: int, var_id: int, size_id: int, user: dict = Depends
 # ════════════════════════════════════════════
 
 @app.post("/api/products/{product_id}/custom-fields")
-def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     key = request.field_key.strip().lower().replace(" ", "_")
     if not key: raise HTTPException(400, "Field key is required")
 
-    ex = db_one("SELECT id FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
-                (product_id, kid, key))
+    ex = db_one("SELECT id FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
+                (product_id, project_id, key))
     with db_cursor() as (conn, cur):
         if ex:
             cur.execute("UPDATE product_custom_fields SET field_value=%s,field_type=%s,is_global=%s WHERE id=%s",
                         (request.field_value, request.field_type, int(request.is_global), ex["id"]))
         else:
-            cur.execute("INSERT INTO product_custom_fields (api_key_id,product_id,field_key,field_value,field_type,is_global) VALUES(%s,%s,%s,%s,%s,%s)",
-                        (kid, product_id, key, request.field_value, request.field_type, int(request.is_global)))
+            cur.execute("INSERT INTO product_custom_fields (project_id,product_id,field_key,field_value,field_type,is_global) VALUES(%s,%s,%s,%s,%s,%s)",
+                        (project_id, product_id, key, request.field_value, request.field_type, int(request.is_global)))
         conn.commit()
     return {"ok": True, "field_key": key, "is_global": request.is_global}
 
 
 @app.delete("/api/products/{product_id}/custom-fields/{field_key}")
-def delete_custom_field(product_id: int, field_key: str, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    if not db_one("SELECT id FROM products WHERE id=%s AND api_key_id=%s", (product_id, kid)):
+def delete_custom_field(product_id: int, field_key: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
-                    (product_id, kid, field_key))
+        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
+                    (product_id, project_id, field_key))
         conn.commit()
     return {"ok": True}
 
 
 @app.patch("/api/products/{product_id}/custom-fields/{field_key}/global")
-def toggle_custom_field_global(product_id: int, field_key: str, user: dict = Depends(get_current_user)):
-    kid = active_key_id(user["id"])
-    row = db_one("SELECT id, is_global FROM product_custom_fields WHERE product_id=%s AND api_key_id=%s AND field_key=%s",
-                 (product_id, kid, field_key))
+def toggle_custom_field_global(product_id: int, field_key: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT id, is_global FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
+                 (product_id, project_id, field_key))
     if not row: raise HTTPException(404, "Field not found")
     new_val = 0 if row["is_global"] else 1
     with db_cursor() as (conn, cur):
@@ -1481,42 +1144,7 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
 
 
 # ════════════════════════════════════════════
-# ROLE PERMISSIONS
-# ════════════════════════════════════════════
-
-@app.get("/api/roles/{role_id}/permissions")
-def get_role_permissions(role_id: int, user: dict = Depends(get_current_user)):
-    kid  = active_key_id(user["id"])
-    role = db_one("SELECT id, name, is_system FROM crm_roles WHERE id=%s AND api_key_id=%s", (role_id, kid))
-    if not role: raise HTTPException(404, "Role not found")
-    perms = db_all("SELECT permission FROM crm_role_permissions WHERE role_id=%s", (role_id,))
-    return {
-        "role":            role,
-        "permissions":     [p["permission"] for p in perms],
-        "all_permissions": [{"key": k, "label": l, "desc": d} for k, l, d in ROLE_PERMISSIONS],
-    }
-
-
-@app.put("/api/roles/{role_id}/permissions")
-def set_role_permissions(role_id: int, request: SetPermissionsRequest, user: dict = Depends(get_current_user)):
-    kid  = active_key_id(user["id"])
-    require_owner(user, kid)
-    role = db_one("SELECT id, is_system FROM crm_roles WHERE id=%s AND api_key_id=%s", (role_id, kid))
-    if not role:          raise HTTPException(404, "Role not found")
-    if role["is_system"]: raise HTTPException(400, "Cannot edit system role permissions")
-    valid = {p[0] for p in ROLE_PERMISSIONS}
-    perms = [p for p in request.permissions if p in valid]
-    with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_role_permissions WHERE role_id=%s", (role_id,))
-        if perms:
-            cur.executemany("INSERT INTO crm_role_permissions (role_id, permission) VALUES (%s,%s)",
-                            [(role_id, p) for p in perms])
-        conn.commit()
-    return {"ok": True, "permissions": perms}
-
-
-# ════════════════════════════════════════════
-# GOOGLE OAUTH
+# GOOGLE OAUTH (CRM login)
 # ════════════════════════════════════════════
 
 @app.get("/api/auth/google/login")
@@ -1634,9 +1262,9 @@ def _get_ses():
 
 
 @app.get("/api/email-domain")
-def get_email_domain(user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    row    = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+def get_email_domain(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT * FROM crm_email_domains WHERE project_id = %s", (project_id,))
     if not row:
         return {"configured": False}
     dkim_tokens = []
@@ -1651,15 +1279,14 @@ def get_email_domain(user: dict = Depends(get_current_user)):
         "from_email":    row["from_email"],
         "is_verified":   bool(row["is_verified"]),
         "verified_at":   row["verified_at"].isoformat() if row["verified_at"] else None,
-        "verify_token":  row["verify_token"],   # SES TXT token → _amazonses.{domain}
-        "dkim_tokens":   dkim_tokens,           # 3 CNAME tokens от SES
+        "verify_token":  row["verify_token"],
+        "dkim_tokens":   dkim_tokens,
     }
 
 
 @app.post("/api/email-domain")
-def save_email_domain(req: EmailDomainRequest, user: dict = Depends(get_current_user)):
-    key_id     = active_key_id(user["id"])
-    require_owner(user, key_id)
+def save_email_domain(req: EmailDomainRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
     domain     = req.domain.lower().strip().rstrip("/").removeprefix("https://").removeprefix("http://")
     from_name  = sanitize(req.from_name.strip())
     from_email = req.from_email.lower().strip()
@@ -1668,16 +1295,12 @@ def save_email_domain(req: EmailDomainRequest, user: dict = Depends(get_current_
     if not from_email or "@" not in from_email: raise HTTPException(400, "Invalid from email")
 
     ses = _get_ses()
-
-    # Регистрируем домен в SES → получаем TXT-токен верификации
-    ver_resp  = ses.verify_domain_identity(Domain=domain)
-    ses_token = ver_resp["VerificationToken"]
-
-    # Получаем 3 DKIM CNAME-токена от SES
+    ver_resp    = ses.verify_domain_identity(Domain=domain)
+    ses_token   = ver_resp["VerificationToken"]
     dkim_resp   = ses.verify_domain_dkim(Domain=domain)
-    dkim_tokens = dkim_resp["DkimTokens"]   # list of 3 strings
+    dkim_tokens = dkim_resp["DkimTokens"]
 
-    existing = db_one("SELECT domain FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+    existing = db_one("SELECT domain FROM crm_email_domains WHERE project_id = %s", (project_id,))
 
     with db_cursor() as (conn, cur):
         if existing:
@@ -1686,41 +1309,33 @@ def save_email_domain(req: EmailDomainRequest, user: dict = Depends(get_current_
                 SET domain=%s, from_name=%s, from_email=%s,
                     verify_token=%s, dkim_public=%s,
                     is_verified=0, verified_at=NULL
-                WHERE api_key_id=%s
-            """, (domain, from_name, from_email,
-                  ses_token, json.dumps(dkim_tokens), key_id))
+                WHERE project_id=%s
+            """, (domain, from_name, from_email, ses_token, json.dumps(dkim_tokens), project_id))
         else:
             cur.execute("""
                 INSERT INTO crm_email_domains
-                    (api_key_id, domain, from_name, from_email, verify_token, dkim_public)
+                    (project_id, domain, from_name, from_email, verify_token, dkim_public)
                 VALUES (%s,%s,%s,%s,%s,%s)
-            """, (key_id, domain, from_name, from_email,
-                  ses_token, json.dumps(dkim_tokens)))
+            """, (project_id, domain, from_name, from_email, ses_token, json.dumps(dkim_tokens)))
         conn.commit()
 
-    return get_email_domain(user)
+    return get_email_domain(project_id=project_id, user=user)
 
 
 @app.post("/api/email-domain/verify")
-def verify_email_domain(user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    row    = db_one("SELECT * FROM crm_email_domains WHERE api_key_id = %s", (key_id,))
+def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT * FROM crm_email_domains WHERE project_id = %s", (project_id,))
     if not row: raise HTTPException(404, "No domain configured")
 
     ses    = _get_ses()
     domain = row["domain"]
 
-    # Статус верификации домена (TXT-запись)
-    ver_attrs = ses.get_identity_verification_attributes(Identities=[domain])
-    ver_status = (ver_attrs["VerificationAttributes"]
-                  .get(domain, {})
-                  .get("VerificationStatus", "NotStarted"))
+    ver_attrs  = ses.get_identity_verification_attributes(Identities=[domain])
+    ver_status = ver_attrs["VerificationAttributes"].get(domain, {}).get("VerificationStatus", "NotStarted")
 
-    # Статус DKIM (3 CNAME-записи)
-    dkim_attrs = ses.get_identity_dkim_attributes(Identities=[domain])
-    dkim_status = (dkim_attrs["DkimAttributes"]
-                   .get(domain, {})
-                   .get("DkimVerificationStatus", "NotStarted"))
+    dkim_attrs  = ses.get_identity_dkim_attributes(Identities=[domain])
+    dkim_status = dkim_attrs["DkimAttributes"].get(domain, {}).get("DkimVerificationStatus", "NotStarted")
 
     results = {
         "verification": ver_status  == "Success",
@@ -1732,8 +1347,8 @@ def verify_email_domain(user: dict = Depends(get_current_user)):
     if all_ok and not row["is_verified"]:
         with db_cursor() as (conn, cur):
             cur.execute(
-                "UPDATE crm_email_domains SET is_verified=1, verified_at=NOW() WHERE api_key_id=%s",
-                (key_id,)
+                "UPDATE crm_email_domains SET is_verified=1, verified_at=NOW() WHERE project_id=%s",
+                (project_id,)
             )
             conn.commit()
 
@@ -1742,17 +1357,16 @@ def verify_email_domain(user: dict = Depends(get_current_user)):
 
 
 @app.delete("/api/email-domain")
-def delete_email_domain(user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    require_owner(user, key_id)
-    row = db_one("SELECT domain FROM crm_email_domains WHERE api_key_id=%s", (key_id,))
+def delete_email_domain(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    row = db_one("SELECT domain FROM crm_email_domains WHERE project_id=%s", (project_id,))
     if row:
         try:
             _get_ses().delete_identity(Identity=row["domain"])
         except Exception:
             pass
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_email_domains WHERE api_key_id=%s", (key_id,))
+        cur.execute("DELETE FROM crm_email_domains WHERE project_id=%s", (project_id,))
         conn.commit()
     return {"success": True}
 
@@ -1796,51 +1410,49 @@ def ses_delete_address(email: str, user: dict = Depends(get_current_user)):
 # ════════════════════════════════════════════
 
 @app.get("/api/oauth-settings")
-def get_oauth_settings(user: dict = Depends(get_current_user)):
-    key_id      = active_key_id(user["id"])
-    key_row     = db_one("SELECT api_key FROM crm_api_keys WHERE id=%s", (key_id,))
-    api_key_str = key_row["api_key"] if key_row else ""
+def get_oauth_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    key_row      = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
+    api_key_str  = key_row["api_key"] if key_row else ""
     redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/api/auth/google/callback"
 
-    row = db_one("SELECT * FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
+    row = db_one("SELECT * FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
     if not row:
         return {"configured": False, "google_client_id": "", "google_client_secret": "",
                 "google_enabled": False, "redirect_uri": redirect_uri}
     return {
-        "configured":          True,
-        "google_client_id":    row["google_client_id"] or "",
-        "google_client_secret":row["google_client_secret"] or "",
-        "google_enabled":      bool(row["google_enabled"]),
-        "redirect_uri":        redirect_uri,
+        "configured":           True,
+        "google_client_id":     row["google_client_id"] or "",
+        "google_client_secret": row["google_client_secret"] or "",
+        "google_enabled":       bool(row["google_enabled"]),
+        "redirect_uri":         redirect_uri,
     }
 
 
 @app.post("/api/oauth-settings")
-def save_oauth_settings(req: OAuthSettingsRequest, user: dict = Depends(get_current_user)):
-    key_id   = active_key_id(user["id"])
-    require_owner(user, key_id)
-    existing = db_one("SELECT id FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
+def save_oauth_settings(req: OAuthSettingsRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    existing = db_one("SELECT id FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
     with db_cursor() as (conn, cur):
         if existing:
             cur.execute(
-                "UPDATE crm_oauth_settings SET google_client_id=%s, google_client_secret=%s, google_enabled=%s WHERE api_key_id=%s",
-                (req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled), key_id)
+                "UPDATE crm_oauth_settings SET google_client_id=%s, google_client_secret=%s, google_enabled=%s WHERE project_id=%s",
+                (req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled), project_id)
             )
         else:
             cur.execute(
-                "INSERT INTO crm_oauth_settings (api_key_id, google_client_id, google_client_secret, google_enabled) VALUES(%s,%s,%s,%s)",
-                (key_id, req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled))
+                "INSERT INTO crm_oauth_settings (project_id, google_client_id, google_client_secret, google_enabled) VALUES(%s,%s,%s,%s)",
+                (project_id, req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled))
             )
         conn.commit()
     return {"ok": True}
 
 
 @app.delete("/api/oauth-settings")
-def delete_oauth_settings(user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    require_owner(user, key_id)
+def delete_oauth_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_oauth_settings WHERE api_key_id=%s", (key_id,))
+        cur.execute("DELETE FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
         conn.commit()
     return {"ok": True}
 
@@ -1850,25 +1462,24 @@ def delete_oauth_settings(user: dict = Depends(get_current_user)):
 # ════════════════════════════════════════════
 
 @app.get("/api/url-config")
-def get_url_config(user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    row    = db_one("SELECT frontend_url FROM crm_url_config WHERE api_key_id=%s", (key_id,))
+def get_url_config(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id=%s", (project_id,))
     return {"frontend_url": row["frontend_url"] if row else ""}
 
 
 @app.put("/api/url-config")
-def save_url_config(req: UrlConfigRequest, user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    require_owner(user, key_id)
+def save_url_config(req: UrlConfigRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
     url = req.frontend_url.strip()
     if url and not url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
-    existing = db_one("SELECT id FROM crm_url_config WHERE api_key_id=%s", (key_id,))
+    existing = db_one("SELECT id FROM crm_url_config WHERE project_id=%s", (project_id,))
     with db_cursor() as (conn, cur):
         if existing:
-            cur.execute("UPDATE crm_url_config SET frontend_url=%s WHERE api_key_id=%s", (url or None, key_id))
+            cur.execute("UPDATE crm_url_config SET frontend_url=%s WHERE project_id=%s", (url or None, project_id))
         else:
-            cur.execute("INSERT INTO crm_url_config (api_key_id, frontend_url) VALUES (%s,%s)", (key_id, url or None))
+            cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (project_id, url or None))
         conn.commit()
     return {"ok": True}
 
@@ -1878,33 +1489,31 @@ def save_url_config(req: UrlConfigRequest, user: dict = Depends(get_current_user
 # ════════════════════════════════════════════
 
 @app.get("/api/redirect-urls")
-def get_redirect_urls(user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    rows   = db_all("SELECT id, url FROM crm_redirect_urls WHERE api_key_id=%s ORDER BY id ASC", (key_id,))
+def get_redirect_urls(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all("SELECT id, url FROM crm_redirect_urls WHERE project_id=%s ORDER BY id ASC", (project_id,))
     return {"urls": rows}
 
 
 @app.post("/api/redirect-urls")
-def add_redirect_url(req: AddRedirectUrlRequest, user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    require_owner(user, key_id)
+def add_redirect_url(req: AddRedirectUrlRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
     url = req.url.strip()
     if not url:                                          raise HTTPException(400, "URL is required")
     if not url.startswith(("http://", "https://")):      raise HTTPException(400, "URL must start with http:// or https://")
     if len(url) > 500:                                   raise HTTPException(400, "URL too long")
-    if db_one("SELECT id FROM crm_redirect_urls WHERE api_key_id=%s AND url=%s", (key_id, url)):
+    if db_one("SELECT id FROM crm_redirect_urls WHERE project_id=%s AND url=%s", (project_id, url)):
         raise HTTPException(400, "URL already in the list")
     with db_cursor() as (conn, cur):
-        cur.execute("INSERT INTO crm_redirect_urls (api_key_id, url) VALUES (%s,%s)", (key_id, url))
+        cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s)", (project_id, url))
         conn.commit()
         return {"ok": True, "id": cur.lastrowid, "url": url}
 
 
 @app.delete("/api/redirect-urls/{url_id}")
-def delete_redirect_url(url_id: int, user: dict = Depends(get_current_user)):
-    key_id = active_key_id(user["id"])
-    require_owner(user, key_id)
-    if not db_one("SELECT id FROM crm_redirect_urls WHERE id=%s AND api_key_id=%s", (url_id, key_id)):
+def delete_redirect_url(url_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if not db_one("SELECT id FROM crm_redirect_urls WHERE id=%s AND project_id=%s", (url_id, project_id)):
         raise HTTPException(404, "URL not found")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_redirect_urls WHERE id=%s", (url_id,))

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Copy, CheckCircle, Warning, ArrowClockwise, Trash } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
+import { useProject } from '../context/ProjectContext.jsx';
 import '../Style/Email.css';
 
 // ── DNS record row ───────────────────────────────────────────────────────────
@@ -56,6 +57,9 @@ function AddressRow({ email, status, onDelete }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 function Email() {
+  const { projectId } = useProject();
+  const pq = `?project_id=${projectId}`;
+
   const [data, setData]           = useState(null);
   const [saving, setSaving]       = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -73,7 +77,7 @@ function Email() {
   const load = async () => {
     setData(null);
     try {
-      const res  = await fetch(`${API_BASE}/api/email-domain`, { credentials: 'include' });
+      const res  = await fetch(`${API_BASE}/api/email-domain${pq}`, { credentials: 'include' });
       const json = await res.json();
       setData(json);
       if (json.configured) {
@@ -84,19 +88,14 @@ function Email() {
     } catch { setData({ configured: false }); }
   };
 
-  useEffect(() => { load(); }, []);
-  useEffect(() => {
-    const h = () => { load(); };
-    window.addEventListener('api-key-switched', h);
-    return () => window.removeEventListener('api-key-switched', h);
-  }, []);
+  useEffect(() => { load(); }, [projectId]);
 
   const handleSave = async (e) => {
     e.preventDefault();
     setErr(''); setSuccess('');
     setSaving(true);
     try {
-      const res  = await fetch(`${API_BASE}/api/email-domain`, {
+      const res  = await fetch(`${API_BASE}/api/email-domain${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain, from_name: fromName, from_email: fromEmail }),
@@ -113,7 +112,7 @@ function Email() {
   const handleVerify = async () => {
     setVerifying(true); setErr(''); setSuccess('');
     try {
-      const res  = await fetch(`${API_BASE}/api/email-domain/verify`, {
+      const res  = await fetch(`${API_BASE}/api/email-domain/verify${pq}`, {
         method: 'POST', credentials: 'include',
       });
       const json = await res.json();
@@ -128,7 +127,7 @@ function Email() {
     if (!confirm('Remove this domain from SES?')) return;
     setDeleting(true);
     try {
-      await fetch(`${API_BASE}/api/email-domain`, { method: 'DELETE', credentials: 'include' });
+      await fetch(`${API_BASE}/api/email-domain${pq}`, { method: 'DELETE', credentials: 'include' });
       setData({ configured: false });
       setDomain(''); setFromName(''); setFromEmail('');
       setVerifyResult(null); setSuccess(''); setErr('');
