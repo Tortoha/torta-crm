@@ -3,14 +3,20 @@
  *
  * Usage:
  *   import { createClient } from 'torta-js';
- *   const client = createClient('http://localhost:8000', 'your-api-key');
+ *
+ *   const client = createClient(
+ *     'http://localhost:8000/SHORT_KEY',   // base URL with short public key
+ *     'pk_PUBLISHABLE_KEY'                 // publishable key — sent as X-Publishable-Key header
+ *   );
  *
  * After publish, from CDN:
  *   import { createClient } from 'https://cdn.jsdelivr.net/npm/torta-js/+esm';
  */
 
-export function createClient(baseUrl, apiKey) {
-  const base = `${baseUrl}/${apiKey}`;
+export function createClient(baseUrl, publishableKey) {
+  // baseUrl already contains the short public key in the path,
+  // e.g. "http://localhost:8000/0c39355b5b6b5ac05bbc"
+  const base = baseUrl.replace(/\/$/, '');
 
   // ─── User cache ───────────────────────────────────────────────────────────
   let _user = undefined;    // undefined = never fetched, null = not logged in
@@ -21,7 +27,9 @@ export function createClient(baseUrl, apiKey) {
     const options = {
       method,
       credentials: "include",
-      headers: {},
+      headers: {
+        "X-Publishable-Key": publishableKey,
+      },
     };
     if (body !== undefined) {
       options.headers["Content-Type"] = "application/json";

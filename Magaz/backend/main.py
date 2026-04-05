@@ -176,6 +176,9 @@ def resolve_api_key(api_key: str, request: Request) -> dict:
     record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = 1", (api_key,))
     if not record:
         raise HTTPException(401, "Invalid or inactive API key")
+    pk_header = request.headers.get("x-publishable-key")
+    if not pk_header or pk_header != record.get("publishable_key"):
+        raise HTTPException(401, "Invalid publishable key")
     with db_cursor() as (conn, cur):
         cur.execute(
             "UPDATE crm_projects SET last_used_ip = %s, last_used_at = NOW() WHERE id = %s",
@@ -222,7 +225,7 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
             resp.headers["Access-Control-Allow-Origin"]      = allow_origin
             resp.headers["Access-Control-Allow-Credentials"] = "true"
             resp.headers["Access-Control-Allow-Methods"]     = "GET, POST, PUT, DELETE, OPTIONS"
-            resp.headers["Access-Control-Allow-Headers"]     = "Content-Type, Authorization"
+            resp.headers["Access-Control-Allow-Headers"]     = "Content-Type, Authorization, X-Publishable-Key"
             resp.headers["Access-Control-Max-Age"]           = "600"
             return resp
 

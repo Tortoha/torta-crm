@@ -321,9 +321,10 @@ def require_team_member_or_owner(user: dict, project_id: int):
         raise HTTPException(403, "Not a member of this project")
 
 def gen_api_key() -> str:
-    raw = secrets.token_bytes(32)
-    ts  = str(datetime.utcnow().timestamp()).encode()
-    return hashlib.sha256(raw + ts).hexdigest()
+    return secrets.token_hex(10)   # 20 chars, URL-safe
+
+def gen_publishable_key() -> str:
+    return "pk_" + secrets.token_hex(24)  # pk_ + 48 chars
 
 def make_slug(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")
@@ -666,11 +667,12 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
         None
     )
     if not new_key: raise HTTPException(500, "Failed to generate unique key")
+    new_pk = gen_publishable_key()
 
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO crm_projects (org_id, crm_user_id, name, api_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,%s,1)",
-            (org_id, user["id"], sanitize(name), new_key, get_ip(req))
+            "INSERT INTO crm_projects (org_id, crm_user_id, name, api_key, publishable_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,%s,%s,1)",
+            (org_id, user["id"], sanitize(name), new_key, new_pk, get_ip(req))
         )
         conn.commit()
         new_id = cur.lastrowid
@@ -687,13 +689,13 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
         cur.execute("INSERT IGNORE INTO crm_redirect_urls (project_id, url) VALUES (%s,%s)", (new_id, frontend_url))
         conn.commit()
 
-    return {"id": new_id, "name": name, "api_key": new_key, "is_active": True}
+    return {"id": new_id, "name": name, "api_key": new_key, "publishable_key": new_pk, "is_active": True}
 
 
 @app.get("/api/projects/by-key/{api_key}")
 def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
     p = db_one("""
-        SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at,
+        SELECT p.id, p.name, p.api_key, p.publishable_key, p.is_active, p.last_used_at, p.created_at,
                o.id AS org_id, o.name AS org_name, o.slug AS org_slug
         FROM crm_projects p
         JOIN crm_organizations o ON o.id = p.org_id
@@ -710,7 +712,7 @@ def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
 def get_project(project_id: int, user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     p = db_one("""
-        SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at,
+        SELECT p.id, p.name, p.api_key, p.publishable_key, p.is_active, p.last_used_at, p.created_at,
                o.id AS org_id, o.name AS org_name, o.slug AS org_slug
         FROM crm_projects p
         JOIN crm_organizations o ON o.id = p.org_id

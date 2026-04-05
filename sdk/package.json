@@ -1,6 +1,6 @@
 {
   "name": "torta-js",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "JavaScript client SDK for Torta CRM — connect your storefront to the API in one line",
   "type": "module",
   "main": "index.js",

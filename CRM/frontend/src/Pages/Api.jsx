@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { Copy, Check, PencilSimple, X } from '@phosphor-icons/react';
+import { useState, useEffect } from 'react';
+import { Copy, Check, PencilSimple, X, Eye, EyeSlash } from '@phosphor-icons/react';
 import { useProject } from '../context/ProjectContext.jsx';
 import { API_BASE } from '../api.js';
 import '../Style/Api.css';
@@ -75,10 +75,38 @@ function CopyButton({ text }) {
   );
 }
 
+function KeyRow({ label, badge, value, masked, actions, hint }) {
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{label}</span>
+        {badge && (
+          <span style={{
+            fontSize: 11, fontWeight: 500, padding: '2px 8px',
+            borderRadius: 999, background: 'var(--bg)', color: 'var(--muted)',
+          }}>{badge}</span>
+        )}
+      </div>
+      <div className="api-row api-row--active" style={{ cursor: 'default' }}>
+        <div className="api-row-key-col" style={{ flex: 1 }}>
+          <span className="api-key-badge" style={{ fontFamily: 'monospace', fontSize: 13 }}>
+            {masked ? '•'.repeat(16) + value.slice(-6) : value}
+          </span>
+        </div>
+        <div className="api-row-actions" onClick={e => e.stopPropagation()}>
+          {actions}
+        </div>
+      </div>
+      {hint && <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--muted)' }}>{hint}</p>}
+    </div>
+  );
+}
+
 function Api() {
-  const { projectId, project: ctxProject } = useProject();
-  const [project, setProject] = useState(ctxProject);
+  const { project: ctxProject } = useProject();
+  const [project, setProject]   = useState(ctxProject);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [showPk, setShowPk]     = useState(false);
 
   return (
     <>
@@ -92,30 +120,62 @@ function Api() {
 
       <div className="api-page">
         <div className="api-center">
-          <h1 className="api-title">API Key</h1>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
+            <h1 className="api-title" style={{ margin: 0 }}>API Keys</h1>
+            <button className="crm-icon-btn" onClick={() => setRenameOpen(true)} title="Rename project">
+              <PencilSimple className="crm-icon" />
+            </button>
+          </div>
 
           <div className="api-list-wrapper">
-            <div className="api-list-card">
-              <div className="api-list-scroll">
-                <div className="api-row api-row--active">
-                  <span className="api-row-name">{project.name}</span>
-                  <div className="api-row-key-col">
-                    <span className="api-key-badge">{project.api_key}</span>
-                  </div>
-                  <div className="api-row-actions" onClick={e => e.stopPropagation()}>
-                    <CopyButton text={project.api_key} />
-                    <button className="crm-icon-btn" onClick={() => setRenameOpen(true)} title="Rename project">
-                      <PencilSimple className="crm-icon" />
+            <div className="api-list-card" style={{ padding: '20px 24px' }}>
+
+              <KeyRow
+                label="Public Key"
+                badge="in URL"
+                value={project.api_key}
+                masked={false}
+                hint="Appears in the storefront URL. Safe to expose — identifies your store."
+                actions={<CopyButton text={project.api_key} />}
+              />
+
+              <div style={{ height: 1, background: 'var(--bg)', margin: '4px 0 20px' }} />
+
+              <KeyRow
+                label="Publishable Key"
+                badge="header"
+                value={project.publishable_key || '—'}
+                masked={!showPk}
+                hint="Sent as X-Publishable-Key header by torta-js on every request. Prevents direct URL access."
+                actions={
+                  <>
+                    <button
+                      className="crm-icon-btn"
+                      onClick={() => setShowPk(v => !v)}
+                      title={showPk ? 'Hide' : 'Reveal'}
+                    >
+                      {showPk ? <EyeSlash className="crm-icon" /> : <Eye className="crm-icon" />}
                     </button>
-                  </div>
-                </div>
-              </div>
+                    <CopyButton text={project.publishable_key || ''} />
+                  </>
+                }
+              />
+
             </div>
           </div>
 
-          <p style={{ marginTop: 16, fontSize: 13, color: '#888' }}>
-            Use this key in your storefront with the <code>torta-js</code> SDK.
-          </p>
+          <div style={{ marginTop: 24, background: 'var(--card)', borderRadius: 16, padding: '16px 20px' }}>
+            <p style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 600 }}>Usage in api.js</p>
+            <pre style={{ margin: 0, fontSize: 12, color: '#555', overflowX: 'auto', lineHeight: 1.6 }}>{
+`import { createClient } from "torta-js";
+
+const API_URL = "http://localhost:8000/${project.api_key}";
+const API_PK  = "${project.publishable_key || 'pk_...'}";
+
+export const client = createClient(API_URL, API_PK);`
+            }</pre>
+          </div>
+
         </div>
 
         <div className="api-right">
