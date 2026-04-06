@@ -1187,22 +1187,25 @@ def google_callback(code: str = None, error: str = None):
         )
         with urllib.request.urlopen(req) as resp:
             tokens = _json.loads(resp.read())
-    except Exception:
+    except Exception as e:
+        import traceback; traceback.print_exc()
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_token")
 
     id_token_str = tokens.get("id_token")
     if not id_token_str:
+        print(f"[google_callback] no id_token in response: {tokens}")
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_no_id_token")
 
     try:
         from google.oauth2 import id_token as g_id_token
         from google.auth.transport import requests as g_requests
-        idinfo  = g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
+        idinfo  = g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=60)
         g_id    = idinfo["sub"]
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
         picture = idinfo.get("picture")
-    except Exception:
+    except Exception as e:
+        import traceback; traceback.print_exc()
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_verify")
 
     user_id   = _upsert_google_user(g_id, email, name, picture)

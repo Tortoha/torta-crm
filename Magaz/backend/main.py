@@ -183,6 +183,12 @@ def resolve_api_key(api_key: str, request: Request) -> dict:
         conn.commit()
     return record
 
+def resolve_api_key_public(api_key: str) -> dict:
+    record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = 1", (api_key,))
+    if not record:
+        raise HTTPException(401, "Invalid or inactive API key")
+    return record
+
 
 # ============================================
 # CORS MIDDLEWARE
@@ -1123,7 +1129,7 @@ def track_product_view(data: TrackProductView, request: Request,
 # ============================================
 
 @app.get("/{api_key}/api/auth/google/login")
-def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_key)):
+def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_key_public)):
     import urllib.parse
     client_id, _ = get_google_credentials(api_key_record["id"])
     if not client_id: raise HTTPException(404, "Google OAuth not configured for this store")
@@ -1137,7 +1143,7 @@ def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_
 
 
 @app.get("/{api_key}/api/auth/google/callback")
-def magaz_google_callback(api_key: str, api_key_record: dict = Depends(resolve_api_key),
+def magaz_google_callback(api_key: str, api_key_record: dict = Depends(resolve_api_key_public),
                            code: str = None, error: str = None):
     project_id = api_key_record["id"]
     frontend   = get_project_frontend_url(project_id)
@@ -1151,7 +1157,7 @@ def magaz_google_callback(api_key: str, api_key_record: dict = Depends(resolve_a
 
 
 def _magaz_google_callback_inner(api_key, project_id, code, error, frontend):
-    import urllib.request, urllib.parse, json as _json
+    import urllib.parse, json as _json
 
     if error or not code:
         return RedirectResponse(f"{frontend}/login?error=google_cancelled")
