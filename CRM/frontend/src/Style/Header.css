@@ -1,262 +1,212 @@
-/* ══════════════════════════════════════════
-   HEADER — sticky top bar with breadcrumb
-   ══════════════════════════════════════════ */
+/* ══════════════════════════════
+   HEADER — fixed top bar 48px
+   ══════════════════════════════ */
 
 .crm-header {
-  position: sticky;
-  top: 0;
-  z-index: 200;
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 300;
+  height: var(--header-h);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 20px 0 28px;
-  height: 56px;
-  background: var(--bg);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 0 12px 0 8px;
+  background: var(--card);
+  border-bottom: none;
+  box-sizing: border-box;
 }
 
-/* ── Breadcrumb ── */
-
-.hdr-breadcrumb {
+.hdr-left {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
   flex: 1;
 }
 
-.hdr-breadcrumb-link {
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--muted);
-  text-decoration: none;
-  white-space: nowrap;
-  transition: color 0.18s ease;
-}
-
-.hdr-breadcrumb-link:hover {
-  color: var(--text);
-}
-
-.hdr-breadcrumb-sep {
-  font-size: 13px;
-  color: #ccc;
+.hdr-right {
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
 }
 
-.hdr-breadcrumb-current {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* ── Toggle button ── */
+.hdr-toggle-btn {
+  width: 32px; height: 32px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.hdr-toggle-btn:hover { background: var(--bg); color: var(--text); }
+.hdr-toggle-icon { width: 18px; height: 18px; }
+
+/* ── Separator ── */
+.hdr-sep {
+  font-size: 16px;
+  color: #d0d0d0;
+  padding: 0 2px;
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1;
 }
 
-/* ══════════════════════════════════════════
-   COMBO BLOCK (shared by project switcher + user menu)
-   ══════════════════════════════════════════ */
+/* ══════════════════════════════
+   SWITCHER (Org + Project)
+   ══════════════════════════════ */
 
-.hdr-combo-block {
-  background: transparent;
-  border-radius: var(--radius-card);
-  padding: 0;
-  width: max-content;
-  max-width: 256px;
-  min-width: 120px;
-  box-sizing: border-box;
+.hdr-switcher {
   position: relative;
 }
 
-.hdr-combo-block--open {}
-
-/* ── Trigger (project switcher) ── */
-
-.hdr-combo-trigger {
-  width: 100%;
+.hdr-switcher-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
-  height: 38px;
+  height: 32px;
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 200px;
+}
+
+.hdr-switcher-name {
+  height: 100%;
+  padding: 0 6px 0 8px;
   background: none;
   border: none;
   cursor: pointer;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text);
-  border-radius: var(--radius-item);
-  transition: opacity 0.18s ease;
-  box-sizing: border-box;
-  min-width: 0;
-}
-.hdr-combo-trigger:hover { opacity: 0.78; }
-
-.hdr-combo-icon {
-  width: 16px; height: 16px;
-  color: var(--icon);
-  flex-shrink: 0;
-}
-
-.hdr-combo-label {
-  flex: 1;
-  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 160px;
+  transition: background 0.15s ease;
+  border-radius: 8px;
 }
+.hdr-switcher-name:hover { background: var(--bg); }
 
-.hdr-combo-role {
-  font-size: 11px;
-  font-weight: 400;
+.hdr-switcher-arrow {
+  height: 100%;
+  padding: 0 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: background 0.15s ease;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.hdr-switcher-arrow:hover { background: var(--bg); }
+
+.hdr-switcher-chevron {
+  width: 12px; height: 12px;
   color: var(--muted);
-  background: var(--bg);
-  padding: 2px 8px;
-  border-radius: 999px;
   flex-shrink: 0;
-  white-space: nowrap;
+  transition: transform 0.4s var(--ease-smooth);
 }
+.hdr-switcher-chevron--open { transform: rotate(180deg); }
 
-.hdr-combo-chevron {
-  width: 13px; height: 13px;
-  color: #7a7a7a;
-  flex-shrink: 0;
-  transition: transform 0.62s var(--ease-smooth);
-}
-.hdr-combo-chevron--open { transform: rotate(180deg); }
-
-/* ── Animated list wrapper ── */
-
-.hdr-combo-list-wrap {
+/* ── Dropdown ── */
+.hdr-switcher-drop {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   min-width: 200px;
   background: var(--card);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card);
-  padding: 8px;
-  box-sizing: border-box;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  padding: 6px;
+  z-index: 500;
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
   pointer-events: none;
   transition:
-    grid-template-rows 0.68s var(--ease-soft),
-    opacity 0.28s ease;
+    grid-template-rows 0.38s var(--ease-soft),
+    opacity 0.2s ease;
 }
-.hdr-combo-list-wrap--open {
+.hdr-switcher-drop--open {
   grid-template-rows: 1fr;
   opacity: 1;
   pointer-events: all;
 }
 
-/* ── Project list (with scroll) ── */
-
-.hdr-combo-list {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-top: 4px;
+.hdr-switcher-list {
   min-height: 0;
   overflow: hidden;
-}
-
-/* When open — allow scroll up to 512px */
-.hdr-combo-list-wrap--open > .hdr-combo-list {
-  overflow-y: auto;
-  overflow-x: hidden;
-  max-height: 480px;
-}
-
-.hdr-combo-indicator {
-  position: absolute;
-  left: 0; right: 0; top: 0;
-  border-radius: var(--radius-item);
-  background: #000;
-  pointer-events: none;
-  z-index: 1;
-  will-change: transform, height, opacity;
-  transition:
-    transform 0.72s var(--ease-smooth),
-    height    0.72s var(--ease-smooth),
-    opacity   0.24s ease;
-}
-
-/* ── Project items ── */
-
-.hdr-combo-item-wrap { position: relative; z-index: 2; }
-
-.hdr-combo-item {
-  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 14px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-item);
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-  box-sizing: border-box;
+  padding-top: 2px;
 }
 
-.hdr-combo-item-name {
-  font-size: 14px;
-  font-weight: 500;
+.hdr-switcher-item {
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
   color: var(--text);
-  transition: color 0.2s ease;
+  text-align: left;
+  transition: background 0.15s ease;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  box-sizing: border-box;
 }
+.hdr-switcher-item:hover { background: var(--bg); }
 
-.hdr-combo-item-key {
-  font-family: monospace;
-  font-size: 11px;
+.hdr-switcher-item--active {
+  background: #000;
+  color: #fff;
+  font-weight: 500;
+}
+.hdr-switcher-item--active:hover { background: #111; }
+
+.hdr-switcher-item--muted {
   color: var(--muted);
-  transition: color 0.2s ease;
+  font-size: 12px;
 }
 
-.hdr-combo-item-wrap--current .hdr-combo-item-name,
-.hdr-combo-item-wrap--current .hdr-combo-item-key { color: #fff; }
+.hdr-switcher-sep {
+  height: 1px;
+  background: var(--bg);
+  margin: 4px 8px;
+  flex-shrink: 0;
+}
 
-/* ══════════════════════════════════════════
+/* ══════════════════════════════
    USER MENU
-   ══════════════════════════════════════════ */
+   ══════════════════════════════ */
 
-.hdr-user-block {
-  min-width: 120px;
-}
+.hdr-user { position: relative; }
 
-/* ── User trigger button ── */
-
-.hdr-user-trigger {
-  width: 100%;
+.hdr-avatar-btn {
+  width: 32px; height: 32px;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px 5px 6px;
-  height: 38px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-  border-radius: var(--radius-item);
-  transition: opacity 0.18s ease;
-  box-sizing: border-box;
-  min-width: 0;
+  justify-content: center;
+  transition: opacity 0.15s ease;
 }
-.hdr-user-trigger:hover { opacity: 0.78; }
-
-/* ── Initials circle ── */
+.hdr-avatar-btn:hover { opacity: 0.8; }
 
 .hdr-avatar {
   border-radius: 50%;
@@ -270,31 +220,45 @@
   line-height: 1;
 }
 
-.hdr-user-name {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Dropdown */
+.hdr-user-drop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: var(--card);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  padding: 6px;
+  z-index: 500;
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    grid-template-rows 0.38s var(--ease-soft),
+    opacity 0.2s ease;
 }
-
-/* ── Dropdown user menu panel ── */
+.hdr-user-drop--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: all;
+}
 
 .hdr-user-menu {
   min-height: 0;
   overflow: hidden;
-  padding-top: 4px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding-top: 2px;
 }
 
-/* User info block at top of dropdown */
 .hdr-user-info {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px 8px;
+  padding: 8px 12px 6px;
 }
 
 .hdr-user-details {
@@ -321,19 +285,36 @@
   text-overflow: ellipsis;
 }
 
-.hdr-user-divider {
+.hdr-user-sep {
   height: 1px;
   background: var(--bg);
   margin: 4px 8px;
   flex-shrink: 0;
 }
 
-/* ══════════════════════════════════════════
-   RESPONSIVE
-   ══════════════════════════════════════════ */
+.hdr-drop-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.15s ease;
+  box-sizing: border-box;
+}
+.hdr-drop-item:hover { background: var(--bg); }
+.hdr-drop-item--danger { color: #ef4444; }
+.hdr-drop-item--danger:hover { background: #fff1f2; }
 
-@media (max-width: 1240px) {
-  .crm-header {
-    padding: 0 16px;
-  }
+.hdr-drop-icon {
+  width: 15px; height: 15px;
+  flex-shrink: 0;
 }

@@ -18,14 +18,14 @@
   font-size: 64px;
   font-weight: 700;
   margin: 0;
-  font-family: "Parkinsans", sans-serif;
+  font-family: "Wix Madefor Text", sans-serif;
 }
 
 .home-sub {
   font-size: 20px;
   color: #666;
   margin: 0;
-  font-family: "Parkinsans", sans-serif;
+  font-family: "Wix Madefor Text", sans-serif;
   font-weight: 300;
 }
 
@@ -38,7 +38,7 @@
   padding: 16px 40px;
   border-radius: 20px;
   text-decoration: none;
-  font-family: "Parkinsans", sans-serif;
+  font-family: "Wix Madefor Text", sans-serif;
   transition: background 0.2s, box-shadow 0.2s;
 }
 

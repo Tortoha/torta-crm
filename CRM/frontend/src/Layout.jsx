@@ -14,6 +14,17 @@ function Layout() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) return false;
+    try { return localStorage.getItem('crm_sidebar') !== 'closed'; } catch { return true; }
+  });
+
+  const toggleSidebar = () => setSidebarOpen(v => {
+    const next = !v;
+    try { localStorage.setItem('crm_sidebar', next ? 'open' : 'closed'); } catch {}
+    return next;
+  });
+
   useEffect(() => {
     Promise.all([
       fetch(`${API_BASE}/api/me`, { credentials: 'include' })
@@ -35,19 +46,23 @@ function Layout() {
     </div>
   );
 
+  const sidebarVar = sidebarOpen ? 'var(--sidebar-w)' : 'var(--sidebar-w-collapsed)';
+
   return (
     <ProjectContext.Provider value={{ projectId: project.id, project }}>
-      <div className="crm-layout">
-        <Sidebar />
-        <main className="crm-main">
-          <Header user={user} project={project} />
-          <div className="crm-content">
-            <Outlet />
-          </div>
-        </main>
+      <div className="crm-root" style={{ '--current-sidebar-w': sidebarVar }}>
+        <Header user={user} project={project} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} />
+        <div className="crm-body">
+          <Sidebar collapsed={!sidebarOpen} />
+          <main className="crm-main">
+            <div className="crm-content">
+              <Outlet />
+            </div>
+          </main>
+        </div>
       </div>
     </ProjectContext.Provider>
   );
 }
 
-export default Layout
+export default Layout;

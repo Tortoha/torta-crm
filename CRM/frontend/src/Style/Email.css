@@ -1,5 +1,4 @@
 .email-page {
-  padding: 32px;
   max-width: 860px;
 }
 
@@ -113,7 +112,7 @@
 
 .dns-cell code {
   font-size: 12px;
-  font-family: 'Courier New', monospace;
+  font-family: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

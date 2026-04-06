@@ -1,7 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Parkinsans:wght@498&display=swap');
-
 body {
-    font-family: "Parkinsans", sans-serif;
+    font-family: "Wix Madefor Text", sans-serif;
     font-optical-sizing: auto;
 }
 
@@ -89,7 +87,7 @@ input {
     font-size: 24px;
     font-weight: 100;
     padding: 2px 16px;
-    font-family: "Parkinsans", sans-serif;
+    font-family: "Wix Madefor Text", sans-serif;
     font-weight: 300;
     outline: none;
 }
@@ -629,7 +627,7 @@ input {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  font-family: "Parkinsans", sans-serif;
+  font-family: "Wix Madefor Text", sans-serif;
   font-size: 18px;
   font-weight: 400;
   color: #333;

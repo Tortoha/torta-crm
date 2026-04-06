@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation, useParams } from 'react-router-dom';
-import { ChartBar, CurrencyDollar, Tag, CodeBlock, Envelope, GoogleLogo, Globe, CaretDown, List, X } from '@phosphor-icons/react';
+import { ChartBar, CurrencyDollar, Tag, CodeBlock, Envelope, GoogleLogo, Globe, CaretDown } from '@phosphor-icons/react';
 
 function buildSections(apiKey) {
   const base = `/project/${apiKey}`;
@@ -70,7 +70,7 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname, onNavCli
   return (
     <div className="sb-block sb-section-block">
       <button type="button" className="sb-section-header" onClick={onToggle}>
-        <span>{section.label}</span>
+        <span className="sb-section-label">{section.label}</span>
         <CaretDown className={`sb-chevron${open ? ' sb-chevron--open' : ''}`} />
       </button>
 
@@ -95,7 +95,7 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname, onNavCli
             >
               <NavLink to={to} className="sb-item" onClick={onNavClick}>
                 <Icon className="sb-icon" />
-                <span>{label}</span>
+                <span className="sb-item-label">{label}</span>
               </NavLink>
             </div>
           ))}
@@ -129,11 +129,55 @@ function SidebarContent({ sections, activeSectionId, activeItemKey, location, op
   );
 }
 
+function CollapsedNav({ sections, activeItemKey, pathname, onNavClick }) {
+  const allItems = sections.flatMap(s => s.items);
+  const itemsEl  = useRef(null);
+  const itemEls  = useRef({});
+  const [hoveredKey, setHoveredKey] = useState(null);
 
-function Sidebar() {
+  const activeInAll = allItems.find(i => isActivePath(pathname, i.to))?.to ?? null;
+  const currentKey  = hoveredKey ?? activeInAll;
+
+  const [ind, setInd] = useState({ opacity: 0, y: 0, h: 0 });
+
+  useLayoutEffect(() => {
+    const container = itemsEl.current;
+    const el = currentKey ? itemEls.current[currentKey] : null;
+    if (!container || !el) { setInd(p => ({ ...p, opacity: 0 })); return; }
+    const cr = container.getBoundingClientRect();
+    const ir = el.getBoundingClientRect();
+    setInd({ opacity: 1, y: ir.top - cr.top, h: ir.height });
+  }, [currentKey, pathname]);
+
+  return (
+    <div className="sb-block sb-collapsed-block">
+      <div className="sb-items" ref={itemsEl}>
+        <div
+          className="sb-indicator"
+          style={{ opacity: ind.opacity, height: `${ind.h}px`, transform: `translateY(${ind.y}px)` }}
+        />
+        {allItems.map(({ to, Icon }) => (
+          <div
+            key={to}
+            ref={el => { if (el) itemEls.current[to] = el; else delete itemEls.current[to]; }}
+            className={`sb-item-wrap${currentKey === to ? ' sb-item-wrap--current' : ''}`}
+            onMouseEnter={() => setHoveredKey(to)}
+            onMouseLeave={() => setHoveredKey(null)}
+          >
+            <NavLink to={to} className="sb-item" onClick={onNavClick}>
+              <Icon className="sb-icon" />
+            </NavLink>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+function Sidebar({ collapsed }) {
   const location   = useLocation();
   const { apiKey } = useParams();
-  const [mobileOpen, setMobileOpen] = useState(false);
 
   const sections = useMemo(() => buildSections(apiKey), [apiKey]);
 
@@ -148,55 +192,17 @@ function Sidebar() {
     setOpen(prev => prev[activeSectionId] ? prev : { ...prev, [activeSectionId]: true });
   }, [activeSectionId]);
 
-  useEffect(() => {
-    document.body.style.overflow = mobileOpen ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [mobileOpen]);
-
-  useEffect(() => { setMobileOpen(false); }, [location.pathname]);
-
   const sharedProps = { sections, activeSectionId, activeItemKey, location, open, setOpen };
 
   return (
-    <>
-      <aside className="sidebar">
-        <div className="sidebar-scroll">
-          <SidebarContent {...sharedProps} onNavClick={undefined} />
-        </div>
-      </aside>
-
-      <button
-        type="button"
-        className={`sb-burger${mobileOpen ? ' sb-burger--open' : ''}`}
-        onClick={() => setMobileOpen(v => !v)}
-        aria-label="Toggle menu"
-      >
-        {mobileOpen
-          ? <X className="sb-burger-icon" />
-          : <List className="sb-burger-icon" />
+    <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}>
+      <div className="sidebar-scroll">
+        {collapsed
+          ? <CollapsedNav sections={sections} activeItemKey={activeItemKey} pathname={location.pathname} onNavClick={undefined} />
+          : <SidebarContent {...sharedProps} onNavClick={undefined} />
         }
-      </button>
-
-      <div
-        className={`sb-mobile-backdrop${mobileOpen ? ' sb-mobile-backdrop--visible' : ''}`}
-        onClick={() => setMobileOpen(false)}
-      />
-
-      <div
-        className={`sb-mobile-drawer${mobileOpen ? ' sb-mobile-drawer--open' : ''}`}
-        onClick={() => setMobileOpen(false)}
-      >
-        <div
-          className="sb-mobile-scroll"
-          onClick={e => e.stopPropagation()}
-        >
-          <SidebarContent
-            {...sharedProps}
-            onNavClick={() => setMobileOpen(false)}
-          />
-        </div>
       </div>
-    </>
+    </aside>
   );
 }
 
