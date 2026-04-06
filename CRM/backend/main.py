@@ -6,9 +6,8 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from mysql.connector.pooling import MySQLConnectionPool
-import hashlib, secrets, jwt, random, os, io, smtplib, json, re
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import hashlib, secrets, jwt, random, os, io, json, re
+import urllib.request, urllib.error
 
 try:
     from PIL import Image as PilImage
@@ -23,12 +22,6 @@ try:
 except ImportError:
     CLOUDINARY_AVAILABLE = False
 
-try:
-    import boto3
-    from botocore.exceptions import ClientError
-    BOTO3_AVAILABLE = True
-except ImportError:
-    BOTO3_AVAILABLE = False
 
 
 # ════════════════════════════════════════════
@@ -42,14 +35,9 @@ CRM_FRONTEND_URL = "http://localhost:5174"
 CRM_BACKEND_URL  = "http://localhost:8001"
 DB_CONFIG        = {"host": "localhost", "user": "root", "password": "root", "database": "crmdb"}
 
-SMTP_HOST               = "email-smtp.eu-north-1.amazonaws.com"
-SMTP_PORT               = 587
-SMTP_USER               = "AKIASY5ETQGYQK5YLIM3"
-SMTP_PASS               = "BL6yBolOEm/aYUODmJ5M+G0AQi14nTd3M4rpnPZN7yI6"
-EMAIL_FROM              = "support@tortacrm.com"
-SES_REGION              = "eu-north-1"
-AWS_API_KEY_ID          = "AKIASY5ETQGY4O5WXK6X"
-AWS_API_SECRET          = "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"
+SES_API_URL      = "https://ses.tortacrm.com"
+SES_INTERNAL_KEY = "821ba4c3ac76f3206f20d338c642bccfb2782e8c986627e81a1aff8d23a13a5d"
+EMAIL_FROM       = "support@tortacrm.com"
 MAX_FAILED_ATTEMPTS     = 5
 BLOCK_MINUTES           = 10
 CODE_TTL_MINUTES        = 10
@@ -101,20 +89,39 @@ def db_all(sql: str, params: tuple = ()):
 # EMAIL
 # ════════════════════════════════════════════
 
-def send_email(to: str, subject: str, html: str) -> bool:
+def _ses(method: str, path: str, data: dict | None = None) -> dict:
+    """Call self-hosted SES API."""
+    body = json.dumps(data).encode() if data is not None else None
+    req  = urllib.request.Request(
+        f"{SES_API_URL}{path}",
+        data=body,
+        headers={"Content-Type": "application/json", "X-API-Key": SES_INTERNAL_KEY},
+        method=method,
+    )
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = f"Torta CRM <{EMAIL_FROM}>"
-        msg["To"]      = to
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASS)
-            s.sendmail(EMAIL_FROM, to, msg.as_string())
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read()).get("detail", str(e))
+        except Exception:
+            detail = str(e)
+        raise HTTPException(e.code, detail)
+    except Exception as e:
+        raise HTTPException(503, f"SES API unavailable: {e}")
+
+def send_email(to: str, subject: str, html: str,
+               from_email: str = EMAIL_FROM,
+               from_name: str = "Torta CRM") -> bool:
+    try:
+        _ses("POST", "/send", {
+            "to": to, "subject": subject, "html": html,
+            "from_email": from_email, "from_name": from_name,
+        })
         return True
     except Exception as e:
-        print(f"Email error: {e}"); return False
+        print(f"Email error: {e}")
+        return False
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
@@ -1229,38 +1236,10 @@ def google_auth(request: GoogleAuthRequest, response: Response):
 # EMAIL DOMAIN
 # ════════════════════════════════════════════
 
-import dns.resolver
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-import base64
-
 class EmailDomainRequest(BaseModel):
     domain: str
     from_name: str
     from_email: str
-
-def _check_txt(hostname: str, expected: str) -> bool:
-    try:
-        answers = dns.resolver.resolve(hostname, "TXT", lifetime=5)
-        for r in answers:
-            if expected in b"".join(r.strings).decode(errors="ignore"):
-                return True
-    except Exception:
-        pass
-    return False
-
-
-def _get_ses():
-    if not BOTO3_AVAILABLE:
-        raise HTTPException(503, "boto3 not installed. Run: pip install boto3")
-    if not AWS_API_KEY_ID or not AWS_API_SECRET:
-        raise HTTPException(503, "AWS_API_KEY_ID / AWS_API_SECRET env vars not set")
-    return boto3.client(
-        "ses",
-        region_name=SES_REGION,
-        aws_access_key_id=AWS_API_KEY_ID,
-        aws_secret_access_key=AWS_API_SECRET,
-    )
 
 
 @app.get("/api/email-domain")
@@ -1269,20 +1248,21 @@ def get_email_domain(project_id: int = Query(...), user: dict = Depends(get_curr
     row = db_one("SELECT * FROM crm_email_domains WHERE project_id = %s", (project_id,))
     if not row:
         return {"configured": False}
-    dkim_tokens = []
+    dns_records = []
     try:
-        dkim_tokens = json.loads(row["dkim_public"]) if row["dkim_public"] else []
+        dns_records = json.loads(row["dkim_public"]) if row["dkim_public"] else []
     except Exception:
         pass
     return {
-        "configured":    True,
-        "domain":        row["domain"],
-        "from_name":     row["from_name"],
-        "from_email":    row["from_email"],
-        "is_verified":   bool(row["is_verified"]),
-        "verified_at":   row["verified_at"].isoformat() if row["verified_at"] else None,
-        "verify_token":  row["verify_token"],
-        "dkim_tokens":   dkim_tokens,
+        "configured":  True,
+        "domain":      row["domain"],
+        "from_name":   row["from_name"],
+        "from_email":  row["from_email"],
+        "dkim_ok":     bool(row["is_verified"]),
+        "spf_ok":      row["verify_token"] in ("spf_ok", "all_ok"),
+        "dmarc_ok":    row["verify_token"] == "all_ok",
+        "verified_at": row["verified_at"].isoformat() if row["verified_at"] else None,
+        "dns_records": dns_records,
     }
 
 
@@ -1293,32 +1273,43 @@ def save_email_domain(req: EmailDomainRequest, project_id: int = Query(...), use
     from_name  = sanitize(req.from_name.strip())
     from_email = req.from_email.lower().strip()
 
-    if not domain or "." not in domain: raise HTTPException(400, "Invalid domain")
+    if not domain or "." not in domain:  raise HTTPException(400, "Invalid domain")
     if not from_email or "@" not in from_email: raise HTTPException(400, "Invalid from email")
 
-    ses = _get_ses()
-    ver_resp    = ses.verify_domain_identity(Domain=domain)
-    ses_token   = ver_resp["VerificationToken"]
-    dkim_resp   = ses.verify_domain_dkim(Domain=domain)
-    dkim_tokens = dkim_resp["DkimTokens"]
+    # Register domain in SES API (generates DKIM keys, returns DNS records to add)
+    try:
+        ses_data = _ses("POST", "/domains", {"domain": domain})
+    except HTTPException as e:
+        if e.status_code == 409:
+            ses_data = _ses("GET", f"/domains/{domain}")
+        else:
+            raise
 
-    existing = db_one("SELECT domain FROM crm_email_domains WHERE project_id = %s", (project_id,))
+    dns_records = ses_data.get("dns_records", [])
+
+    existing_db = db_one("SELECT domain FROM crm_email_domains WHERE project_id = %s", (project_id,))
+
+    # If domain changed — delete old one from SES API
+    if existing_db and existing_db["domain"] != domain:
+        try:
+            _ses("DELETE", f"/domains/{existing_db['domain']}")
+        except Exception:
+            pass
 
     with db_cursor() as (conn, cur):
-        if existing:
+        if existing_db:
             cur.execute("""
                 UPDATE crm_email_domains
                 SET domain=%s, from_name=%s, from_email=%s,
-                    verify_token=%s, dkim_public=%s,
-                    is_verified=0, verified_at=NULL
+                    dkim_public=%s, is_verified=0, verify_token=NULL, verified_at=NULL
                 WHERE project_id=%s
-            """, (domain, from_name, from_email, ses_token, json.dumps(dkim_tokens), project_id))
+            """, (domain, from_name, from_email, json.dumps(dns_records), project_id))
         else:
             cur.execute("""
                 INSERT INTO crm_email_domains
-                    (project_id, domain, from_name, from_email, verify_token, dkim_public)
+                    (project_id, domain, from_name, from_email, dkim_public, verify_token)
                 VALUES (%s,%s,%s,%s,%s,%s)
-            """, (project_id, domain, from_name, from_email, ses_token, json.dumps(dkim_tokens)))
+            """, (project_id, domain, from_name, from_email, json.dumps(dns_records), ''))
         conn.commit()
 
     return get_email_domain(project_id=project_id, user=user)
@@ -1330,32 +1321,24 @@ def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
     row = db_one("SELECT * FROM crm_email_domains WHERE project_id = %s", (project_id,))
     if not row: raise HTTPException(404, "No domain configured")
 
-    ses    = _get_ses()
-    domain = row["domain"]
+    domain  = row["domain"]
+    result  = _ses("POST", f"/domains/{domain}/verify")
+    dkim_ok  = result.get("dkim_ok", False)
+    spf_ok   = result.get("spf_ok", False)
+    dmarc_ok = result.get("dmarc_ok", False)
+    all_ok   = dkim_ok and spf_ok
 
-    ver_attrs  = ses.get_identity_verification_attributes(Identities=[domain])
-    ver_status = ver_attrs["VerificationAttributes"].get(domain, {}).get("VerificationStatus", "NotStarted")
+    with db_cursor() as (conn, cur):
+        cur.execute("""
+            UPDATE crm_email_domains
+            SET is_verified=%s,
+                verify_token=%s,
+                verified_at=IF(%s=1 AND verified_at IS NULL, NOW(), verified_at)
+            WHERE project_id=%s
+        """, (int(dkim_ok), "all_ok" if (spf_ok and dmarc_ok) else ("spf_ok" if spf_ok else None), int(all_ok), project_id))
+        conn.commit()
 
-    dkim_attrs  = ses.get_identity_dkim_attributes(Identities=[domain])
-    dkim_status = dkim_attrs["DkimAttributes"].get(domain, {}).get("DkimVerificationStatus", "NotStarted")
-
-    results = {
-        "verification": ver_status  == "Success",
-        "dkim":         dkim_status == "Success",
-        "spf":          _check_txt(domain, "v=spf1 include:amazonses.com"),
-    }
-    all_ok = results["verification"] and results["dkim"]
-
-    if all_ok and not row["is_verified"]:
-        with db_cursor() as (conn, cur):
-            cur.execute(
-                "UPDATE crm_email_domains SET is_verified=1, verified_at=NOW() WHERE project_id=%s",
-                (project_id,)
-            )
-            conn.commit()
-
-    return {"results": results, "all_ok": all_ok,
-            "ver_status": ver_status, "dkim_status": dkim_status}
+    return {"dkim_ok": dkim_ok, "spf_ok": spf_ok, "dmarc_ok": dmarc_ok, "all_ok": all_ok}
 
 
 @app.delete("/api/email-domain")
@@ -1364,47 +1347,13 @@ def delete_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
     row = db_one("SELECT domain FROM crm_email_domains WHERE project_id=%s", (project_id,))
     if row:
         try:
-            _get_ses().delete_identity(Identity=row["domain"])
+            _ses("DELETE", f"/domains/{row['domain']}")
         except Exception:
             pass
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_email_domains WHERE project_id=%s", (project_id,))
         conn.commit()
     return {"success": True}
-
-
-# ── Sandbox: верификация email-адресов получателей ──────────────────────────
-
-class SesAddressRequest(BaseModel):
-    email: str
-
-@app.get("/api/ses/addresses")
-def ses_list_addresses(user: dict = Depends(get_current_user)):
-    ses = _get_ses()
-    identities = ses.list_identities(IdentityType="EmailAddress", MaxItems=100)["Identities"]
-    if not identities:
-        return []
-    attrs = ses.get_identity_verification_attributes(Identities=identities)["VerificationAttributes"]
-    return [
-        {"email": e, "status": attrs.get(e, {}).get("VerificationStatus", "NotStarted")}
-        for e in identities
-    ]
-
-@app.post("/api/ses/addresses")
-def ses_verify_address(req: SesAddressRequest, user: dict = Depends(get_current_user)):
-    email = req.email.lower().strip()
-    if "@" not in email:
-        raise HTTPException(400, "Invalid email")
-    _get_ses().verify_email_identity(EmailAddress=email)
-    return {"ok": True, "message": f"Verification email sent to {email}"}
-
-@app.delete("/api/ses/addresses/{email:path}")
-def ses_delete_address(email: str, user: dict = Depends(get_current_user)):
-    try:
-        _get_ses().delete_identity(Identity=email)
-    except ClientError as e:
-        raise HTTPException(400, str(e))
-    return {"ok": True}
 
 
 # ════════════════════════════════════════════

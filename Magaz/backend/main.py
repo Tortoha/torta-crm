@@ -6,9 +6,7 @@ from datetime import datetime, timedelta
 from contextlib import contextmanager
 import mysql.connector
 from mysql.connector.pooling import MySQLConnectionPool
-import hashlib, secrets, jwt, random, smtplib, re as _re, traceback
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import hashlib, secrets, jwt, random, re as _re, traceback, json, urllib.request, urllib.error
 from hashids import Hashids
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -21,10 +19,8 @@ SECRET_KEY            = "d2a9c8f0e5b741a39f6c8d2e1b5a9c3f8e7d6c5b4a3928173645e5f
 JWT_ALGORITHM         = "HS256"
 JWT_HOURS             = 24 * 7
 MAGAZ_BACKEND_URL     = "http://localhost:8000"
-SMTP_HOST             = "email-smtp.eu-north-1.amazonaws.com"
-SMTP_PORT             = 587
-SMTP_USER             = "AKIASY5ETQGYQK5YLIM3"
-SMTP_PASS             = "BL6yBolOEm/aYUODmJ5M+G0AQi14nTd3M4rpnPZN7yI6"
+SES_API_URL           = "https://ses.tortacrm.com"
+SES_INTERNAL_KEY      = "821ba4c3ac76f3206f20d338c642bccfb2782e8c986627e81a1aff8d23a13a5d"
 EMAIL_FROM            = "support@tortacrm.com"
 MAX_FAILED_ATTEMPTS   = 5
 BLOCK_MINUTES         = 10
@@ -321,15 +317,17 @@ class CartPageResponse(BaseModel):
 def send_email(to: str, subject: str, html: str,
                from_name: str = "Torta Store", from_email: str = EMAIL_FROM) -> bool:
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = f"{from_name} <{from_email}>"
-        msg["To"]      = to
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.starttls(); s.login(SMTP_USER, SMTP_PASS)
-            s.sendmail(from_email, to, msg.as_string())
-        return True
+        body = json.dumps({
+            "to": to, "subject": subject, "html": html,
+            "from_name": from_name, "from_email": from_email,
+        }).encode()
+        req = urllib.request.Request(
+            f"{SES_API_URL}/send", data=body,
+            headers={"Content-Type": "application/json", "X-API-Key": SES_INTERNAL_KEY},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read()).get("ok", False)
     except Exception as e:
         print(f"Email error: {e}"); return False
 

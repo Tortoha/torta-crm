@@ -1,0 +1,17 @@
+[Unit]
+Description=SES — self-hosted email API
+After=network.target postfix.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ses
+ExecStart=/opt/ses/venv/bin/uvicorn main:app --host 127.0.0.1 --port 2525 --log-level info
+Restart=always
+RestartSec=5
+
+# Required — generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
+Environment=SES_API_KEY=REPLACE_WITH_YOUR_KEY
+
+[Install]
+WantedBy=multi-user.target

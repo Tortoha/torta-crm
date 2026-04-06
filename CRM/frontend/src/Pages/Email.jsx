@@ -4,53 +4,37 @@ import { API_BASE } from '../api.js';
 import { useProject } from '../context/ProjectContext.jsx';
 import '../Style/Email.css';
 
-// ── DNS record row ───────────────────────────────────────────────────────────
+// ── DNS record row ────────────────────────────────────────────────────────────
 function DnsRow({ type, host, value, status }) {
-  const [copied, setCopied] = useState(false);
-  const copy = (text) => {
+  const [copied, setCopied] = useState(null);
+  const copy = (field, text) => {
     navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    setCopied(field);
+    setTimeout(() => setCopied(null), 1500);
   };
 
   return (
     <div className={`dns-row dns-row--${status}`}>
-      <div className="dns-cell dns-cell--type">
+      <div className="dns-cell">
         <span className="dns-badge">{type}</span>
       </div>
-      <div className="dns-cell dns-cell--host">
+      <div className="dns-cell">
         <code>{host}</code>
-        <button className="dns-copy-btn" onClick={() => copy(host)} title="Copy">
-          <Copy className="crm-icon--sm" />
+        <button className="dns-copy-btn" onClick={() => copy('host', host)} title="Copy">
+          {copied === 'host' ? <CheckCircle className="crm-icon--sm" /> : <Copy className="crm-icon--sm" />}
         </button>
       </div>
-      <div className="dns-cell dns-cell--value">
-        <code className="dns-value-text">{value}</code>
-        <button className="dns-copy-btn" onClick={() => copy(value)} title="Copy">
-          {copied ? <CheckCircle className="crm-icon--sm" /> : <Copy className="crm-icon--sm" />}
+      <div className="dns-cell">
+        <span className="dns-value-text">{value}</span>
+        <button className="dns-copy-btn" onClick={() => copy('value', value)} title="Copy">
+          {copied === 'value' ? <CheckCircle className="crm-icon--sm" /> : <Copy className="crm-icon--sm" />}
         </button>
       </div>
-      <div className="dns-cell dns-cell--status">
+      <div className="dns-cell">
         {status === 'ok'      && <span className="dns-status dns-status--ok"><CheckCircle /> Verified</span>}
         {status === 'pending' && <span className="dns-status dns-status--pending"><Warning /> Pending</span>}
         {status === 'unknown' && <span className="dns-status dns-status--unknown">—</span>}
       </div>
-    </div>
-  );
-}
-
-// ── Sandbox address row ───────────────────────────────────────────────────────
-function AddressRow({ email, status, onDelete }) {
-  const statusOk = status === 'Success';
-  return (
-    <div className="addr-row">
-      <span className="addr-email">{email}</span>
-      <span className={`addr-badge addr-badge--${statusOk ? 'ok' : 'pending'}`}>
-        {statusOk ? <><CheckCircle /> Verified</> : <><Warning /> Pending</>}
-      </span>
-      <button className="crm-icon-btn crm-icon-btn--danger" onClick={() => onDelete(email)} title="Remove">
-        <Trash className="crm-icon--sm" />
-      </button>
     </div>
   );
 }
@@ -68,11 +52,9 @@ function Email() {
   const [err, setErr]             = useState('');
   const [success, setSuccess]     = useState('');
 
-  // form state
   const [domain,    setDomain]    = useState('');
   const [fromName,  setFromName]  = useState('');
   const [fromEmail, setFromEmail] = useState('');
-
 
   const load = async () => {
     setData(null);
@@ -104,7 +86,7 @@ function Email() {
       if (!res.ok) { setErr(json.detail || 'Error'); return; }
       setData(json);
       setVerifyResult(null);
-      setSuccess('Saved. Add the DNS records below to your domain.');
+      setSuccess('Saved. Add the DNS records below to your domain registrar, then click Check.');
     } catch { setErr('Network error'); }
     finally { setSaving(false); }
   };
@@ -116,15 +98,20 @@ function Email() {
         method: 'POST', credentials: 'include',
       });
       const json = await res.json();
-      setVerifyResult(json.results);
-      if (json.all_ok) { setSuccess('Domain fully verified'); load(); }
-      else setErr(`Verification: ${json.ver_status} · DKIM: ${json.dkim_status}. Add records and try again.`);
+      setVerifyResult({ dkim: json.dkim_ok, spf: json.spf_ok, dmarc: json.dmarc_ok });
+      if (json.all_ok) { setSuccess('Domain fully verified — DKIM and SPF are active.'); load(); }
+      else {
+        const parts = [];
+        if (!json.dkim_ok) parts.push('DKIM not found');
+        if (!json.spf_ok)  parts.push('SPF not found');
+        setErr(parts.join(' · ') + '. Add the records and try again (DNS may take up to 24h).');
+      }
     } catch { setErr('Network error'); }
     finally { setVerifying(false); }
   };
 
   const handleDelete = async () => {
-    if (!confirm('Remove this domain from SES?')) return;
+    if (!confirm('Remove this email domain? DKIM keys will be deleted.')) return;
     setDeleting(true);
     try {
       await fetch(`${API_BASE}/api/email-domain${pq}`, { method: 'DELETE', credentials: 'include' });
@@ -135,12 +122,23 @@ function Email() {
     finally { setDeleting(false); }
   };
 
-  const dnsStatus = (key) => {
-    if (!verifyResult) return 'unknown';
-    return verifyResult[key] ? 'ok' : 'pending';
+  // Map label → verification status
+  const recordStatus = (label) => {
+    if (!verifyResult) {
+      if (label === 'DKIM')  return data?.dkim_ok  ? 'ok' : 'unknown';
+      if (label === 'SPF')   return data?.spf_ok   ? 'ok' : 'unknown';
+      if (label === 'DMARC') return data?.dmarc_ok ? 'ok' : 'unknown';
+      return 'unknown';
+    }
+    if (label === 'DKIM')  return verifyResult.dkim  ? 'ok' : 'pending';
+    if (label === 'SPF')   return verifyResult.spf   ? 'ok' : 'pending';
+    if (label === 'DMARC') return verifyResult.dmarc ? 'ok' : 'pending';
+    return 'unknown';
   };
 
   if (data === null) return <div className="crm-page-title">Loading…</div>;
+
+  const isVerified = data.dkim_ok && data.spf_ok;
 
   return (
     <div className="email-page">
@@ -148,6 +146,9 @@ function Email() {
 
       <section className="crm-section">
         <h2 className="crm-section-title">Sending settings</h2>
+        <p className="email-hint">
+          Configure your own domain so your store sends emails from your address instead of support@tortacrm.com.
+        </p>
         <form className="email-form" onSubmit={handleSave}>
           <div className="email-form-row">
             <label className="email-label">Domain</label>
@@ -195,7 +196,7 @@ function Email() {
                 className="crm-icon-btn crm-icon-btn--danger"
                 onClick={handleDelete}
                 disabled={deleting}
-                title="Remove domain from SES"
+                title="Remove domain"
               >
                 <Trash className="crm-icon" />
               </button>
@@ -205,54 +206,44 @@ function Email() {
       </section>
 
       {data.configured && (
-        <section className="crm-section">
+        <section className="crm-section2">
           <div className="crm-section-row">
             <h2 className="crm-section-title">
               DNS records
-              {data.is_verified
+              {isVerified
                 ? <span className="email-verified-badge"><CheckCircle /> Verified</span>
                 : <span className="email-pending-badge"><Warning /> Not verified</span>
               }
             </h2>
             <button className="crm-add-btn" onClick={handleVerify} disabled={verifying}>
               <ArrowClockwise className="crm-icon--sm" />
-              {verifying ? 'Checking…' : 'Check'}
+              {verifying ? 'Checking…' : 'Check DNS'}
             </button>
           </div>
 
+          <p className="email-hint">
+            Add these records to your domain registrar (Namecheap, GoDaddy, Cloudflare, etc.).
+            DNS propagation can take up to 24 hours.
+          </p>
 
           <div className="dns-table">
             <div className="dns-header">
-              <span>Type</span><span>Enter in DNS</span><span>Value</span><span>Status</span>
+              <span>Type</span><span>Host</span><span>Value</span><span>Status</span>
             </div>
-            <DnsRow
-              type="TXT"
-              host={`_amazonses.${data.domain}`}
-              value={data.verify_token}
-              status={dnsStatus('verification')}
-            />
-            {(data.dkim_tokens || []).map((token) => (
+            {(data.dns_records || []).map((rec, i) => (
               <DnsRow
-                key={token}
-                type="CNAME"
-                host={`${token}._domainkey.${data.domain}`}
-                value={`${token}.dkim.amazonses.com`}
-                status={dnsStatus('dkim')}
+                key={i}
+                type={rec.type}
+                host={rec.host}
+                value={rec.value}
+                status={recordStatus(rec.label)}
               />
             ))}
-            <DnsRow
-              type="TXT"
-              host="@"
-              value="v=spf1 include:amazonses.com ~all"
-              status={dnsStatus('spf')}
-            />
-
           </div>
         </section>
       )}
-
     </div>
   );
 }
 
-export default Email
+export default Email;
