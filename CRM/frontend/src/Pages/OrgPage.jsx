@@ -127,7 +127,7 @@ function OrgPage() {
                 key={p.id}
                 className="crm-section-row"
                 style={{ cursor: 'pointer' }}
-                onClick={() => navigate(`/project/${p.api_key}/dashboard`)}
+                onClick={() => navigate(`/project/${p.api_key}`)}
               >
                 <FolderSimple size={20} style={{ color: '#555', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>

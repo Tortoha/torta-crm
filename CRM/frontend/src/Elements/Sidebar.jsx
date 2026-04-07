@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation, useParams } from 'react-router-dom';
-import { ChartBar, CurrencyDollar, Tag, CodeBlock, Envelope, GoogleLogo, Globe, CaretDown } from '@phosphor-icons/react';
+import { House, CurrencyDollar, Tag, CodeBlock, Envelope, GoogleLogo, Globe, CaretDown, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
 
 function buildSections(apiKey) {
   const base = `/project/${apiKey}`;
@@ -8,7 +8,7 @@ function buildSections(apiKey) {
     {
       id: 'overview', label: 'Overview',
       items: [
-        { to: `${base}/dashboard`, label: 'Dashboard', Icon: ChartBar },
+        { to: `${base}`,           label: 'Project Overview', Icon: House, exact: true },
         { to: `${base}/revenue`,   label: 'Revenue',   Icon: CurrencyDollar },
       ],
     },
@@ -30,12 +30,12 @@ function buildSections(apiKey) {
   ];
 }
 
-const isActivePath = (p, to) => p === to || p.startsWith(to + '/');
+const isActivePath = (p, to, exact = false) => exact ? p === to : (p === to || p.startsWith(to + '/'));
 
 const getRouteState = (pathname, sections) => {
   for (const s of sections)
     for (const item of s.items)
-      if (isActivePath(pathname, item.to))
+      if (isActivePath(pathname, item.to, item.exact))
         return { activeSectionId: s.id, activeItemKey: item.to };
   return { activeSectionId: null, activeItemKey: null };
 };
@@ -46,8 +46,7 @@ function NavSection({ section, open, onToggle, activeItemKey, pathname, onNavCli
   const itemEls = useRef({});
   const [hoveredKey, setHoveredKey] = useState(null);
 
-  const sectionKeys = section.items.map(i => i.to);
-  const activeInSection = sectionKeys.find(k => isActivePath(pathname, k)) ?? null;
+  const activeInSection = section.items.find(i => isActivePath(pathname, i.to, i.exact))?.to ?? null;
   const currentKey = hoveredKey ?? activeInSection;
 
   const [ind, setInd] = useState({ opacity: 0, y: 0, h: 0 });
@@ -135,7 +134,7 @@ function CollapsedNav({ sections, activeItemKey, pathname, onNavClick }) {
   const itemEls  = useRef({});
   const [hoveredKey, setHoveredKey] = useState(null);
 
-  const activeInAll = allItems.find(i => isActivePath(pathname, i.to))?.to ?? null;
+  const activeInAll = allItems.find(i => isActivePath(pathname, i.to, i.exact))?.to ?? null;
   const currentKey  = hoveredKey ?? activeInAll;
 
   const [ind, setInd] = useState({ opacity: 0, y: 0, h: 0 });
@@ -175,7 +174,7 @@ function CollapsedNav({ sections, activeItemKey, pathname, onNavClick }) {
 }
 
 
-function Sidebar({ collapsed }) {
+function Sidebar({ collapsed, onToggle }) {
   const location   = useLocation();
   const { apiKey } = useParams();
 
@@ -197,10 +196,20 @@ function Sidebar({ collapsed }) {
   return (
     <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}>
       <div className="sidebar-scroll">
-        {collapsed
-          ? <CollapsedNav sections={sections} activeItemKey={activeItemKey} pathname={location.pathname} onNavClick={undefined} />
-          : <SidebarContent {...sharedProps} onNavClick={undefined} />
-        }
+        <div className="sb-nav-area">
+          {collapsed
+            ? <CollapsedNav sections={sections} activeItemKey={activeItemKey} pathname={location.pathname} onNavClick={undefined} />
+            : <SidebarContent {...sharedProps} onNavClick={undefined} />
+          }
+        </div>
+        <div className="sb-bottom">
+          <button className="sb-toggle-btn" onClick={onToggle} type="button" aria-label="Toggle sidebar">
+            {collapsed
+              ? <ArrowLineRight className="sb-toggle-icon" />
+              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">Collapse</span></>
+            }
+          </button>
+        </div>
       </div>
     </aside>
   );

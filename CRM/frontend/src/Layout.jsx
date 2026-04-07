@@ -51,9 +51,9 @@ function Layout() {
   return (
     <ProjectContext.Provider value={{ projectId: project.id, project }}>
       <div className="crm-root" style={{ '--current-sidebar-w': sidebarVar }}>
-        <Header user={user} project={project} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} />
+        <Header user={user} project={project} />
         <div className="crm-body">
-          <Sidebar collapsed={!sidebarOpen} />
+          <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} />
           <main className="crm-main">
             <div className="crm-content">
               <Outlet />

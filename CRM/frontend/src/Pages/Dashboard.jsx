@@ -1,7 +1,7 @@
 function Dashboard() {
   return (
     <>
-      <h1 className="crm-page-title">Dashboard</h1>
+      <h1 className="crm-page-title">Project Overview</h1>
 
       <div className="crm-section">
         <h2 className="crm-section-title">Revenue</h2>

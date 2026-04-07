@@ -33,8 +33,8 @@ function App() {
         <Route path="/dashboard"                 element={<OrgList />} />
         <Route path="/org/:orgSlug"              element={<OrgPage />} />
         <Route path="/project/:apiKey"           element={<Layout />}>
-          <Route index element={<Navigate to="dashboard" replace />} />
-          <Route path="dashboard"  element={<Dashboard />} />
+          <Route index            element={<Dashboard />} />
+          <Route path="dashboard" element={<Navigate to=".." relative="path" replace />} />
           <Route path="products"   element={<Products />} />
           <Route path="revenue"    element={<Revenue />} />
           <Route path="api"        element={<Api />} />
