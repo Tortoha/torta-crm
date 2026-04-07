@@ -118,6 +118,20 @@ def run_migrations():
         ]:
             try: cur.execute(sql); conn.commit()
             except: pass
+        # Remove duplicate users, keeping the row with the lowest id per (email, project_id)
+        try:
+            cur.execute("""
+                DELETE u1 FROM users u1
+                INNER JOIN users u2
+                ON u1.email = u2.email AND u1.project_id = u2.project_id AND u1.id > u2.id
+            """)
+            conn.commit()
+        except: pass
+        # Enforce uniqueness so duplicates can never form again
+        try:
+            cur.execute("ALTER TABLE users ADD UNIQUE KEY uq_email_project (email, project_id)")
+            conn.commit()
+        except: pass
 
 run_migrations()
 
