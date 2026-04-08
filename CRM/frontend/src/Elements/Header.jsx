@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, X } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
@@ -24,7 +25,7 @@ function CreateModal({ title, onClose, onSubmit, submitting, canSubmit, children
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div className="hdr-modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="hdr-modal">
         <div className="hdr-modal-head">
@@ -40,12 +41,13 @@ function CreateModal({ title, onClose, onSubmit, submitting, canSubmit, children
           </button>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
 /* ── Org switcher ── */
-function OrgSwitcher({ project }) {
+function OrgSwitcher({ project, org: orgProp }) {
   const navigate  = useNavigate();
   const [open,    setOpen]    = useState(false);
   const [orgs,    setOrgs]    = useState([]);
@@ -64,7 +66,12 @@ function OrgSwitcher({ project }) {
   const [hovId,   setHovId]   = useState(null);
   const [ind,     setInd]     = useState({ opacity: 0, y: 0, h: 0 });
 
-  const activeId = project?.org_id ?? null;
+  // Normalise: accept either a direct org object or derive from project
+  const orgId   = orgProp?.id   ?? project?.org_id   ?? null;
+  const orgName = orgProp?.name ?? project?.org_name ?? '…';
+  const orgSlug = orgProp?.slug ?? project?.org_slug ?? '';
+
+  const activeId = orgId;
   const curId    = hovId ?? activeId;
 
   const filtered = useMemo(
@@ -128,8 +135,8 @@ function OrgSwitcher({ project }) {
     <>
       <div className="hdr-switcher" ref={wrapRef}>
         <div className="hdr-switcher-btn">
-          <button className="hdr-switcher-name" onClick={() => navigate(`/org/${project?.org_slug}`)} type="button">
-            {project?.org_name || '…'}
+          <button className="hdr-switcher-name" onClick={() => navigate(`/org/${orgSlug}`)} type="button">
+            {orgName}
           </button>
           <button className="hdr-switcher-arrow" onClick={handleOpen} type="button" aria-label="Show organizations">
             <CaretDown className={`hdr-switcher-chevron${open ? ' hdr-switcher-chevron--open' : ''}`} />
@@ -173,6 +180,12 @@ function OrgSwitcher({ project }) {
 
             <div className="hdr-switcher-sep" />
 
+            <button className="hdr-switcher-new" onClick={() => { setOpen(false); navigate('/dashboard'); }} type="button">
+              All Organizations
+            </button>
+
+            <div className="hdr-switcher-sep" />
+
             <button className="hdr-switcher-new" onClick={openModal} type="button">
               <Plus className="hdr-switcher-new-icon" />
               New organization
@@ -183,14 +196,17 @@ function OrgSwitcher({ project }) {
 
       {modal && (
         <CreateModal title="New organization" onClose={closeModal} onSubmit={createOrg} submitting={saving} canSubmit={!!newName.trim()}>
-          <input
-            className="hdr-modal-input"
-            placeholder="Organization name"
-            value={newName}
-            onChange={e => { setNewName(e.target.value); setErr(''); }}
-            autoFocus
-            maxLength={100}
-          />
+          <div className="hdr-modal-field">
+            <h4 className="hdr-modal-label">Name</h4>
+            <input
+              className="hdr-modal-input"
+              placeholder="Organization name"
+              value={newName}
+              onChange={e => { setNewName(e.target.value); setErr(''); }}
+              autoFocus
+              maxLength={100}
+            />
+          </div>
           {err && <span className="hdr-modal-err">{err}</span>}
         </CreateModal>
       )}
@@ -346,21 +362,27 @@ function ProjectSwitcher({ project }) {
 
       {modal && (
         <CreateModal title="New project" onClose={closeModal} onSubmit={createProject} submitting={saving} canSubmit={!!newName.trim() && isValidUrl(newUrl.trim())}>
-          <input
-            className="hdr-modal-input"
-            placeholder="Project name"
-            value={newName}
-            onChange={e => { setNewName(e.target.value); setErr(''); }}
-            autoFocus
-            maxLength={100}
-          />
-          <input
-            className="hdr-modal-input"
-            placeholder="Frontend URL, e.g. http://localhost:5173"
-            value={newUrl}
-            onChange={e => { setNewUrl(e.target.value); setErr(''); }}
-            autoComplete="off"
-          />
+          <div className="hdr-modal-field">
+            <h4 className="hdr-modal-label">Name</h4>
+            <input
+              className="hdr-modal-input"
+              placeholder="Project name"
+              value={newName}
+              onChange={e => { setNewName(e.target.value); setErr(''); }}
+              autoFocus
+              maxLength={100}
+            />
+          </div>
+          <div className="hdr-modal-field">
+            <h4 className="hdr-modal-label">URL</h4>
+            <input
+              className="hdr-modal-input"
+              placeholder="The URL of your website, e.g. https://shop.com"
+              value={newUrl}
+              onChange={e => { setNewUrl(e.target.value); setErr(''); }}
+              autoComplete="off"
+            />
+          </div>
           {err && <span className="hdr-modal-err">{err}</span>}
         </CreateModal>
       )}
@@ -413,7 +435,7 @@ function UserMenu({ user, project }) {
 }
 
 /* ── Header ── */
-function Header({ user, project }) {
+function Header({ user, project, org }) {
   const navigate = useNavigate();
   return (
     <header className="crm-header">
@@ -421,6 +443,14 @@ function Header({ user, project }) {
         <button className="hdr-brand" onClick={() => navigate('/dashboard')} type="button">
           Torta CRM
         </button>
+        {/* Org-level pages: show org switcher */}
+        {org && !project && (
+          <>
+            <span className="hdr-sep">/</span>
+            <OrgSwitcher org={org} />
+          </>
+        )}
+        {/* Project-level pages: show org switcher + project switcher */}
         {project && (
           <>
             <span className="hdr-sep">/</span>

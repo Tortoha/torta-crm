@@ -352,6 +352,11 @@ body {
   border-radius: 48px 0 0 0;
 }
 
+/* No sidebar — no rounded corner */
+.crm-main--flat {
+  border-radius: 0;
+}
+
 .crm-content {
   padding: 0 28px 48px 24px;
   max-width: 1200px;

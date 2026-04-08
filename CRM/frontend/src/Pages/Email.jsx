@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Copy, CheckCircle, Warning, ArrowClockwise, Trash } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
-import { useProject } from '../context/ProjectContext.jsx';
+import { useOutletContext } from 'react-router-dom';
 import '../Style/Email.css';
 
 // ── DNS record row ────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ function DnsRow({ type, host, value, status }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 function Email() {
-  const { projectId } = useProject();
+  const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
 
   const [data, setData]           = useState(null);

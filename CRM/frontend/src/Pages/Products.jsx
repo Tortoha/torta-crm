@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Plus, Trash, PencilSimple, DotsThreeVertical, MagnifyingGlass, X, Check, CaretDown, CaretRight, Image, UploadSimple } from '@phosphor-icons/react';
 import { Star } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
-import { useProject } from '../context/ProjectContext.jsx';
+import { useOutletContext } from 'react-router-dom';
 import '../Style/Products.css';
 
 // ── helpers ────────────────────────────────────────────────────
@@ -902,7 +902,7 @@ function ProductRow({ p, selected, menuId, setMenuId, menuRef, onOpen, onDelete 
 // ── Products (main page) ───────────────────────────────────────
 
 function Products() {
-  const { projectId } = useProject();
+  const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
 
   const [products,     setProducts]     = useState([]);

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Copy, Check, PencilSimple, X, Eye, EyeSlash } from '@phosphor-icons/react';
-import { useProject } from '../context/ProjectContext.jsx';
+import { useOutletContext } from 'react-router-dom';
 import { API_BASE } from '../api.js';
 import '../Style/Api.css';
 
@@ -103,7 +103,7 @@ function KeyRow({ label, badge, value, masked, actions, hint }) {
 }
 
 function Api() {
-  const { project: ctxProject } = useProject();
+  const { project: ctxProject } = useOutletContext();
   const [project, setProject]   = useState(ctxProject);
   const [renameOpen, setRenameOpen] = useState(false);
   const [showPk, setShowPk]     = useState(false);

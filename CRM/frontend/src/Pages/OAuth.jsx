@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Copy, CheckCircle, ArrowSquareOut, Trash, Eye, EyeSlash } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
-import { useProject } from '../context/ProjectContext.jsx';
+import { useOutletContext } from 'react-router-dom';
 import '../Style/OAuth.css';
 
 const GoogleIcon = () => (
@@ -14,7 +14,7 @@ const GoogleIcon = () => (
 );
 
 export default function OAuth() {
-  const { projectId } = useProject();
+  const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
 
   const [data, setData]           = useState(null);

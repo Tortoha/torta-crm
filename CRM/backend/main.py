@@ -57,6 +57,33 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 app = FastAPI()
 
 # ════════════════════════════════════════════
+# STARTUP MIGRATIONS
+# ════════════════════════════════════════════
+
+@app.on_event("startup")
+def run_migrations():
+    """Migrate legacy name-based org slugs to random 20-char hex slugs."""
+    import re as _re
+    hex20 = _re.compile(r'^[0-9a-f]{20}$')
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("SELECT id, slug FROM crm_organizations")
+            rows = cur.fetchall()
+            for row in rows:
+                if not hex20.match(row["slug"]):
+                    # Generate a unique new slug
+                    new_slug = secrets.token_hex(10)
+                    while True:
+                        cur.execute("SELECT id FROM crm_organizations WHERE slug = %s AND id != %s", (new_slug, row["id"]))
+                        if not cur.fetchone():
+                            break
+                        new_slug = secrets.token_hex(10)
+                    cur.execute("UPDATE crm_organizations SET slug = %s WHERE id = %s", (new_slug, row["id"]))
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] org slug migration failed: {e}")
+
+# ════════════════════════════════════════════
 # DB POOL
 # ════════════════════════════════════════════
 
@@ -570,11 +597,11 @@ def create_org(request: CreateOrgRequest, user: dict = Depends(get_current_user)
     if not name:        raise HTTPException(400, "Organization name is required")
     if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
 
-    base_slug = make_slug(name)
-    slug      = base_slug
-    suffix    = 1
-    while db_one("SELECT id FROM crm_organizations WHERE slug = %s", (slug,)):
-        slug = f"{base_slug}-{suffix}"; suffix += 1
+    # Generate unique random slug (20 hex chars, same scheme as project api_key)
+    slug = next(
+        c for _ in iter(int, 1)
+        if not db_one("SELECT id FROM crm_organizations WHERE slug = %s", (c := secrets.token_hex(10),))
+    )
 
     with db_cursor() as (conn, cur):
         cur.execute(

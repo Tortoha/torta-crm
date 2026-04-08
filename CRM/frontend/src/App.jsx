@@ -8,9 +8,11 @@ import Verification  from './Verification.jsx';
 import Forgot        from './Forgot.jsx';
 import Reset         from './Reset.jsx';
 import Layout        from './Layout.jsx';
-import OrgList       from './Pages/OrgList.jsx';
-import OrgPage       from './Pages/OrgPage.jsx';
+import OrgLayout     from './OrgLayout.jsx';
 import Dashboard     from './Pages/Dashboard.jsx';
+import Organizations from './Pages/Organizations.jsx';
+import OrgAnalytics  from './Pages/OrgAnalytics.jsx';
+import Projects      from './Pages/Projects.jsx';
 import Revenue       from './Pages/Revenue.jsx';
 import Api           from './Pages/Api.jsx';
 import Products      from './Pages/Products.jsx';
@@ -30,10 +32,13 @@ function App() {
         <Route path="/registration/verification" element={<Verification />} />
         <Route path="/forgot-password"           element={<Forgot />} />
         <Route path="/reset-password/:token"     element={<Reset />} />
-        <Route path="/dashboard"                 element={<OrgList />} />
-        <Route path="/org/:orgSlug"              element={<OrgPage />} />
+        <Route path="/dashboard"                 element={<Dashboard />} />
+        <Route path="/org/:orgSlug"              element={<OrgLayout />}>
+          <Route index                           element={<Organizations />} />
+          <Route path="analytics"               element={<OrgAnalytics />} />
+        </Route>
         <Route path="/project/:apiKey"           element={<Layout />}>
-          <Route index            element={<Dashboard />} />
+          <Route index            element={<Projects />} />
           <Route path="dashboard" element={<Navigate to=".." relative="path" replace />} />
           <Route path="products"   element={<Products />} />
           <Route path="revenue"    element={<Revenue />} />

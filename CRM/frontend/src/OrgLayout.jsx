@@ -1,20 +1,19 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useNavigate, useParams } from 'react-router-dom';
-import Sidebar from './Elements/Sidebar.jsx';
+import OrgSidebar from './Elements/OrgSidebar.jsx';
 import Header from './Elements/Header.jsx';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
 
-function Layout() {
-  const { apiKey } = useParams();
+function OrgLayout() {
+  const { orgSlug } = useParams();
   const [user,    setUser]    = useState(null);
-  const [project, setProject] = useState(null);
+  const [org,     setOrg]     = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) return false;
     try { return localStorage.getItem('crm_sidebar') !== 'closed'; } catch { return true; }
   });
 
@@ -28,16 +27,13 @@ function Layout() {
     Promise.all([
       fetch(`${API_BASE}/api/me`, { credentials: 'include' })
         .then(r => { if (!r.ok) throw new Error('auth'); return r.json(); }),
-      fetch(`${API_BASE}/api/projects/by-key/${apiKey}`, { credentials: 'include' })
-        .then(r => { if (!r.ok) throw new Error('project'); return r.json(); }),
+      fetch(`${API_BASE}/api/orgs/by-slug/${orgSlug}`, { credentials: 'include' })
+        .then(r => { if (!r.ok) throw new Error('org'); return r.json(); }),
     ])
-    .then(([userData, projectData]) => {
-      setUser(userData);
-      setProject(projectData);
-    })
+    .then(([userData, orgData]) => { setUser(userData); setOrg(orgData); })
     .catch(() => navigate('/dashboard'))
     .finally(() => setLoading(false));
-  }, [apiKey, navigate]);
+  }, [orgSlug, navigate]);
 
   if (loading) return (
     <div id="mask" className="mask">
@@ -49,12 +45,12 @@ function Layout() {
 
   return (
     <div className="crm-root" style={{ '--current-sidebar-w': sidebarVar }}>
-      <Header user={user} project={project} />
+      <Header user={user} org={org} />
       <div className="crm-body">
-        <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} />
+        <OrgSidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} orgSlug={orgSlug} />
         <main className="crm-main">
           <div className="crm-content">
-            <Outlet context={{ projectId: project.id, project }} />
+            <Outlet context={{ org, user }} />
           </div>
         </main>
       </div>
@@ -62,4 +58,4 @@ function Layout() {
   );
 }
 
-export default Layout;
+export default OrgLayout;
