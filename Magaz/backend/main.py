@@ -63,6 +63,8 @@ def db_all(sql, params=()):
 app = FastAPI()
 
 
+
+
 # ============================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (PER-PROJECT)
 # ============================================
@@ -111,6 +113,7 @@ def get_user_by_id(user_id: int, project_id: int):
 
 def run_migrations():
     with db_cursor() as (conn, cur):
+        # Add missing columns
         for sql in [
             "ALTER TABLE users ADD COLUMN google_id varchar(255) DEFAULT NULL",
             "ALTER TABLE favorites ADD COLUMN project_id int(11) DEFAULT NULL",
@@ -130,6 +133,16 @@ def run_migrations():
         # Enforce uniqueness so duplicates can never form again
         try:
             cur.execute("ALTER TABLE users ADD UNIQUE KEY uq_email_project (email, project_id)")
+            conn.commit()
+        except: pass
+        # Fix reviews with NULL project_id — copy from their product
+        try:
+            cur.execute("""
+                UPDATE product_reviews pr
+                JOIN products p ON pr.product_id = p.id
+                SET pr.project_id = p.project_id
+                WHERE pr.project_id IS NULL
+            """)
             conn.commit()
         except: pass
 
@@ -683,9 +696,9 @@ def get_product_page(product_hash: str, request: Request,
 
         cursor.execute(
             "SELECT pr.id, pr.user_id, pr.rating, pr.comment, pr.created_at, u.name AS user_name "
-            "FROM product_reviews pr JOIN users u ON pr.user_id = u.id "
-            "WHERE pr.product_id = %s ORDER BY pr.created_at DESC",
-            (product_id,)
+            "FROM product_reviews pr JOIN users u ON pr.user_id = u.id AND u.project_id = %s "
+            "WHERE pr.product_id = %s AND pr.project_id = %s ORDER BY pr.created_at DESC",
+            (project_id, product_id, project_id)
         )
         reviews_raw = cursor.fetchall()
 
@@ -857,7 +870,7 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
         cursor.execute("SELECT stock_quantity FROM product_sizes WHERE id=%s", (item["size_id"],))
         size = cursor.fetchone()
         if size and data.quantity > size["stock_quantity"]:
-            raise HTTPException(400, f"Only {size['stock']} items in stock")
+            raise HTTPException(400, f"Only {size['stock_quantity']} items in stock")
         cursor.execute("UPDATE cart_items SET quantity=%s WHERE id=%s", (data.quantity, cart_item_id))
         conn.commit()
     return {"success": True}
@@ -952,7 +965,7 @@ def get_favorites(request: Request, api_key_record: dict = Depends(resolve_api_k
     user_id = get_current_user_id(request)
     rows = db_all(
         "SELECT f.product_id, p.title FROM favorites f JOIN products p ON f.product_id=p.id "
-        "WHERE f.user_id=%s AND p.project_id=%s",
+        "WHERE f.user_id=%s AND f.project_id=%s",
         (user_id, api_key_record["id"])
     )
     return [{**r, "hash": hashids.encode(r["product_id"])} for r in rows]

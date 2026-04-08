@@ -862,10 +862,10 @@ def get_product(product_id: int, project_id: int = Query(...), user: dict = Depe
         cf["is_global"] = bool(cf.get("is_global", 0))
 
     reviews = db_all(
-        "SELECT pr.id,pr.rating,pr.comment,pr.created_at,u.name AS user_name"
-        " FROM product_reviews pr JOIN users u ON u.id=pr.user_id"
-        " WHERE pr.product_id=%s ORDER BY pr.created_at DESC",
-        (product_id,)
+        "SELECT pr.id,pr.rating,pr.comment,pr.created_at,pr.user_id"
+        " FROM product_reviews pr"
+        " WHERE pr.product_id=%s AND pr.project_id=%s ORDER BY pr.created_at DESC",
+        (product_id, project_id)
     )
     for r in reviews:
         r["created_at"] = str(r["created_at"])
@@ -894,9 +894,9 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
     if request.seo_description is not None: fields.append("seo_description=%s"); vals.append(request.seo_description)
     if request.seo_keywords    is not None: fields.append("seo_keywords=%s");    vals.append(request.seo_keywords)
     if not fields: return {"ok": True}
-    vals.append(product_id)
+    vals.extend([product_id, project_id])
     with db_cursor() as (conn, cur):
-        cur.execute("UPDATE products SET " + ", ".join(fields) + " WHERE id=%s", vals)
+        cur.execute("UPDATE products SET " + ", ".join(fields) + " WHERE id=%s AND project_id=%s", vals)
         conn.commit()
     return {"ok": True}
 
@@ -908,10 +908,10 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE ps FROM product_sizes ps JOIN product_variations v ON ps.variation_id=v.id WHERE v.product_id=%s", (product_id,))
-        cur.execute("DELETE FROM product_variations WHERE product_id=%s",    (product_id,))
-        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s", (product_id,))
-        cur.execute("DELETE FROM product_reviews WHERE product_id=%s",       (product_id,))
-        cur.execute("DELETE FROM products WHERE id=%s",                      (product_id,))
+        cur.execute("DELETE FROM product_variations WHERE product_id=%s",              (product_id,))
+        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s",           (product_id,))
+        cur.execute("DELETE FROM product_reviews WHERE product_id=%s AND project_id=%s", (product_id, project_id))
+        cur.execute("DELETE FROM products WHERE id=%s AND project_id=%s",              (product_id, project_id))
         conn.commit()
     return {"ok": True}
 
@@ -997,9 +997,9 @@ def update_size(product_id: int, var_id: int, size_id: int, request: UpdateSizeR
     if request.price          is not None: fields.append("price=%s");          vals.append(request.price)
     if request.stock_quantity is not None: fields.append("stock_quantity=%s"); vals.append(request.stock_quantity)
     if not fields: return {"ok": True}
-    vals.append(size_id)
+    vals.extend([size_id, var_id])
     with db_cursor() as (conn, cur):
-        cur.execute("UPDATE product_sizes SET " + ", ".join(fields) + " WHERE id=%s", vals)
+        cur.execute("UPDATE product_sizes SET " + ", ".join(fields) + " WHERE id=%s AND variation_id=%s", vals)
         conn.commit()
     return {"ok": True}
 
