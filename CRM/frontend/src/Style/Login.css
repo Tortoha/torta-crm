@@ -150,6 +150,11 @@ input {
     margin: 2px 0;
 }
 
+.oauth-wrap .error {
+    text-align: center;
+    margin-top: 6px;
+}
+
 .not-button {
     background-color: #E5E5E5;
     color: #ffffff;

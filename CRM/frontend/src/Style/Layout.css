@@ -1,3 +1,5 @@
+@import './shared.css';
+
 :root {
   --bg: #F4F4F6;
   --card: #ffffff;
@@ -350,6 +352,7 @@ body {
   overflow-x: hidden;
   background: var(--bg);
   border-radius: 48px 0 0 0;
+  padding: 0 24px;
 }
 
 /* No sidebar — no rounded corner */
@@ -358,8 +361,14 @@ body {
 }
 
 .crm-content {
-  padding: 0 28px 48px 24px;
   max-width: 1200px;
+  margin: 0 auto;
+  padding-bottom: 48px;
+}
+
+/* Project layout — wider canvas */
+.crm-content--wide {
+  max-width: 1520px;
 }
 
 /* ── PAGE TYPOGRAPHY ── */

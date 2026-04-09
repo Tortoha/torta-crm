@@ -298,7 +298,7 @@ function VariationCard({ variation, productId, pq, onDeleted, onUpdated }) {
             </div>
             <div className="prod-field">
               <label className="prod-field-label">Image</label>
-              <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImgUpload} />
+              <input ref={fileRef} type="file" accept="image/*" className="hidden-input" onChange={handleImgUpload} />
               <div
                 className={`prod-dropzone${dragging ? ' prod-dropzone--over' : ''}${uploading ? ' prod-dropzone--loading' : ''}`}
                 onClick={() => !uploading && fileRef.current.click()}
@@ -458,7 +458,7 @@ function VariationsTab({ product, productId, pq, onSaved }) {
           <input className="prod-field-input" placeholder="Variation name (e.g. Black)"
             value={varName} onChange={e => setVarName(e.target.value)} />
 
-          <input ref={varFileRef} type="file" accept="image/*" style={{ display: 'none' }}
+          <input ref={varFileRef} type="file" accept="image/*" className="hidden-input"
             onChange={e => uploadVarImg(e.target.files?.[0])} />
           <div
             className={`prod-dropzone${varDragging ? ' prod-dropzone--over' : ''}${varUploading ? ' prod-dropzone--loading' : ''}`}
@@ -496,7 +496,7 @@ function VariationsTab({ product, productId, pq, onSaved }) {
         </form>
       </div>
 
-      <button className="crm-add-btn" style={{ marginTop: 12 }}
+      <button className="crm-add-btn crm-add-btn--mt"
         onClick={() => { setShowVarForm(v => !v); setVarErr(''); }}>
         <Plus className="crm-add-btn-icon" />
         {showVarForm ? 'Cancel' : 'New Variation'}
@@ -625,7 +625,7 @@ function CustomFieldsTab({ product, productId, pq }) {
         </form>
       </div>
 
-      <button className="crm-add-btn" style={{ marginTop: 12 }}
+      <button className="crm-add-btn crm-add-btn--mt"
         onClick={() => { setShowForm(v => !v); setErr(''); }}>
         <Plus className="crm-add-btn-icon" />
         {showForm ? 'Cancel' : 'New Field'}
@@ -975,7 +975,7 @@ function Products() {
     <div className="prod-page">
       {/* Page header */}
       <div className="prod-page-head">
-        <h1 className="crm-page-title" style={{ paddingTop: 0 }}>Products</h1>
+        <h1 className="crm-page-title">Products</h1>
         <div className="prod-toolbar">
           <div className="prod-search-wrap">
             <MagnifyingGlass className="prod-search-icon" />

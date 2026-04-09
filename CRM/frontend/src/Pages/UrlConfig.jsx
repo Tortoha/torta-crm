@@ -154,7 +154,7 @@ export default function UrlConfig() {
             {adding ? 'Adding…' : 'Add URL'}
           </button>
         </div>
-        {addErr && <p className="urlcfg-msg urlcfg-msg--err" style={{ padding: '0 16px 12px' }}>{addErr}</p>}
+        {addErr && <p className="urlcfg-msg urlcfg-msg--err">{addErr}</p>}
 
         {/* List */}
         {redirectUrls.length > 0 && (

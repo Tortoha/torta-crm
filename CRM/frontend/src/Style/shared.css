@@ -1,3 +1,15 @@
+
+*,
+input,
+textarea {
+  caret-color: #0071E3;
+}
+
+::selection {
+  background: #0071E3;
+  color: #fff;
+}
+
 .crm-add-btn {
     display: flex;
     align-items: center;
@@ -5,17 +17,17 @@
     padding: 10px 20px;
     border: none;
     border-radius: var(--radius-item);
-    background: #000;
+    background: #0071E3;
     color: #fff;
     font-family: inherit;
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
-    transition: opacity 0.2s ease;
+    transition: background-color 0.15s ease;
 }
 
 .crm-add-btn:hover {
-    opacity: 0.75;
+    background-color: #007FFF;
 }
 
 .crm-add-btn-icon {
@@ -99,17 +111,17 @@
     padding: 10px 24px;
     border: none;
     border-radius: var(--radius-item);
-    background: #000;
+    background: #0071E3;
     color: #fff;
     font-family: inherit;
     font-size: 14px;
     cursor: pointer;
     flex-shrink: 0;
-    transition: opacity 0.2s ease;
+    transition: background-color 0.15s ease;
 }
 
 .crm-submit-btn:hover:not(:disabled) {
-    opacity: 0.75;
+    background-color: #007FFF;
 }
 
 .crm-submit-btn:disabled {
@@ -196,5 +208,4 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  padding-right: 20px;
 }

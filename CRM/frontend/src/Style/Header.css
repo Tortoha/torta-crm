@@ -429,7 +429,7 @@
 
 .hdr-modal-submit {
   height: 42px;
-  background: #000;
+  background: #0071E3;
   color: #fff;
   border: none;
   border-radius: 999px;
@@ -442,7 +442,7 @@
 }
 
 .hdr-modal-submit:hover:not(:disabled) {
-  background: #222;
+  background: #007FFF;
 }
 
 .hdr-modal-submit:disabled {

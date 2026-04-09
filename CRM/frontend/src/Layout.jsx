@@ -53,7 +53,7 @@ function Layout() {
       <div className="crm-body">
         <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} />
         <main className="crm-main">
-          <div className="crm-content">
+          <div className="crm-content crm-content--wide">
             <Outlet context={{ projectId: project.id, project }} />
           </div>
         </main>

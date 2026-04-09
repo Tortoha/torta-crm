@@ -121,7 +121,7 @@ function Settings() {
     finally { setAvatarUploading(false); e.target.value = ''; }
   };
 
-  if (loading) return <div className="crm-placeholder" style={{ marginTop: 80 }}>Loading…</div>;
+  if (loading) return <div className="crm-placeholder sett-loading">Loading…</div>;
 
   return (
     <>
@@ -160,7 +160,7 @@ function Settings() {
                   ref={avatarInputRef}
                   type="file"
                   accept="image/*"
-                  style={{ display: 'none' }}
+                  className="sett-hidden-input"
                   onChange={handleAvatarChange}
                 />
               </div>

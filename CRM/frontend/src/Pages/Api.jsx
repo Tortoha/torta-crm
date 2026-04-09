@@ -54,7 +54,7 @@ function RenameModal({ project, onClose, onRenamed }) {
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
-          {err && <span className="crm-form-error" style={{ padding: '0 4px' }}>{err}</span>}
+          {err && <span className="crm-form-error">{err}</span>}
         </form>
       </div>
     </div>
@@ -77,19 +77,16 @@ function CopyButton({ text }) {
 
 function KeyRow({ label, badge, value, masked, actions, hint }) {
   return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{label}</span>
+    <div className="api-key-row">
+      <div className="api-key-label-row">
+        <span className="api-key-label">{label}</span>
         {badge && (
-          <span style={{
-            fontSize: 11, fontWeight: 500, padding: '2px 8px',
-            borderRadius: 999, background: 'var(--bg)', color: 'var(--muted)',
-          }}>{badge}</span>
+          <span className="api-key-type-badge">{badge}</span>
         )}
       </div>
-      <div className="api-row api-row--active" style={{ cursor: 'default' }}>
-        <div className="api-row-key-col" style={{ flex: 1 }}>
-          <span className="api-key-badge" style={{ fontFamily: 'monospace', fontSize: 13 }}>
+      <div className="api-row api-row--active api-row--no-cursor">
+        <div className="api-row-key-col api-row-key-col--flex">
+          <span className="api-key-badge api-key-badge--mono">
             {masked ? '•'.repeat(16) + value.slice(-6) : value}
           </span>
         </div>
@@ -97,7 +94,7 @@ function KeyRow({ label, badge, value, masked, actions, hint }) {
           {actions}
         </div>
       </div>
-      {hint && <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--muted)' }}>{hint}</p>}
+      {hint && <p className="api-key-hint">{hint}</p>}
     </div>
   );
 }
@@ -120,15 +117,15 @@ function Api() {
 
       <div className="api-page">
         <div className="api-center">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
-            <h1 className="api-title" style={{ margin: 0 }}>API Keys</h1>
+          <div className="api-page-header">
+            <h1 className="api-title api-title--no-margin">API Keys</h1>
             <button className="crm-icon-btn" onClick={() => setRenameOpen(true)} title="Rename project">
               <PencilSimple className="crm-icon" />
             </button>
           </div>
 
           <div className="api-list-wrapper">
-            <div className="api-list-card" style={{ padding: '20px 24px' }}>
+            <div className="api-list-card api-list-card--padded">
 
               <KeyRow
                 label="Public Key"
@@ -139,7 +136,7 @@ function Api() {
                 actions={<CopyButton text={project.api_key} />}
               />
 
-              <div style={{ height: 1, background: 'var(--bg)', margin: '4px 0 20px' }} />
+              <div className="api-key-divider" />
 
               <KeyRow
                 label="Publishable Key"
@@ -164,9 +161,9 @@ function Api() {
             </div>
           </div>
 
-          <div style={{ marginTop: 24, background: 'var(--card)', borderRadius: 16, padding: '16px 20px' }}>
-            <p style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 600 }}>Usage in api.js</p>
-            <pre style={{ margin: 0, fontSize: 12, color: '#555', overflowX: 'auto', lineHeight: 1.6 }}>{
+          <div className="api-code-block">
+            <p className="api-code-block-title">Usage in api.js</p>
+            <pre className="api-code-pre">{
 `import { createClient } from "torta-js";
 
 const API_URL = "http://localhost:8000/${project.api_key}";

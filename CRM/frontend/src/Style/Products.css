@@ -1,5 +1,13 @@
 @import './shared.css';
 
+.hidden-input {
+  display: none;
+}
+
+.crm-add-btn--mt {
+  margin-top: 12px;
+}
+
 /* ══════════════════════════════════════════
    PAGE LAYOUT
    ══════════════════════════════════════════ */
@@ -478,17 +486,17 @@
   padding: 9px 20px;
   border: none;
   border-radius: var(--radius-item);
-  background: #000;
+  background: #0071E3;
   color: #fff;
   font-family: inherit;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.18s ease;
+  transition: background-color 0.15s ease;
   flex-shrink: 0;
 }
 
-.prod-save-btn:hover:not(:disabled) { opacity: 0.78; }
+.prod-save-btn:hover:not(:disabled) { background-color: #007FFF; }
 .prod-save-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .prod-save-btn--sm {

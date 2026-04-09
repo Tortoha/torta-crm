@@ -35,7 +35,7 @@ function GoogleAuthButton() {
         </svg>
         Continue with Google
       </button>
-      {error && <p className="error" style={{ textAlign: 'center', marginTop: 6 }}>{error}</p>}
+      {error && <p className="error">{error}</p>}
     </div>
   );
 }

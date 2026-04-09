@@ -77,7 +77,7 @@
   margin: 0;
   padding: 0 24px 10px;
 }
-.urlcfg-msg--err { color: #e74c3c; }
+.urlcfg-msg--err { color: #e74c3c; padding: 0 16px 12px; }
 .urlcfg-msg--ok  { color: #27ae60; }
 
 /* ── Add URL row ── */

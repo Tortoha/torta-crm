@@ -232,8 +232,8 @@
 }
 
 .sett-theme-btn--active {
-  border-color: #000;
-  background: #000;
+  border-color: #0071E3;
+  background: #0071E3;
   color: #fff;
 }
 
@@ -242,6 +242,18 @@
   border-top: 1.5px solid var(--bg);
   display: flex;
   justify-content: flex-end;
+}
+
+/* ══════════════════════════════════════
+   UTILITIES
+══════════════════════════════════════ */
+
+.sett-loading {
+  margin-top: 80px;
+}
+
+.sett-hidden-input {
+  display: none;
 }
 
 /* ══════════════════════════════════════

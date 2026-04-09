@@ -1,0 +1,359 @@
+/* ══════════════════════════════
+   DASHBOARD TOOLBAR
+   ══════════════════════════════ */
+
+.db-page-title {
+  font-size: 24px;
+  padding-top: 176px;
+}
+
+.db-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 24px;
+  padding-bottom: 16px;
+}
+
+.db-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--card);
+  border-radius: 999px;
+  flex: 1;
+  max-width: 268px;
+}
+
+.db-search-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.db-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.db-search-input::placeholder {
+  color: #bbb;
+}
+
+.db-view-toggle {
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border: 1.5px solid #e5e5e5;
+  border-radius: 16px;
+  height: 32px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.db-view-btn {
+  height: 100%;
+  padding: 0 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #aaa;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.db-view-btn:first-child {
+  border-right: 1.5px solid #e5e5e5;
+}
+
+.db-view-btn:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.db-view-btn--active {
+  color: var(--text) !important;
+  background: var(--bg) !important;
+}
+
+.db-view-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.db-new-btn {
+  padding: 8px 16px;
+  background: #0071E3;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease;
+  margin-left: auto;
+}
+
+.db-new-btn:hover {
+  background-color: #007FFF;
+}
+
+.db-new-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* ══════════════════════════════
+   GRID VIEW
+   ══════════════════════════════ */
+
+.db-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 1100px) { .db-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 780px)  { .db-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px)  { .db-grid { grid-template-columns: 1fr; } }
+
+.db-card {
+  background: var(--card);
+  border-radius: 24px;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  box-shadow: none;
+  /* JS controls transform/shadow on tilt cards */
+  will-change: transform;
+  transform-style: preserve-3d;
+  overflow: hidden; /* clip the gloss overlay */
+}
+
+/* Tilt variant — JS controls only transform, CSS controls shadow */
+.db-card--tilt {
+  transition: box-shadow 0.8s ease;
+}
+
+.db-card--tilt:hover {
+  box-shadow: 4px 8px 32px rgba(1, 3, 32, 0.08);
+}
+
+/* Fallback for non-tilt */
+.db-card:not(.db-card--tilt):hover {
+  transform: scale(1.025);
+  box-shadow: 4px 8px 32px rgba(1, 3, 32, 0.08);
+}
+
+/* Блик — абсолютный оверлей, не трогает контент */
+.db-card-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+}
+
+.db-card-inner {
+  position: relative;
+  padding: 16px;
+}
+
+/* Badge — абсолютно в правом верхнем углу */
+.db-card-badge {
+  position: absolute;
+  top: 13px;
+  right: 13px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  background: #0071E3;
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Иконка + текст в ряд */
+.db-card-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Круглая иконка 32×32 */
+.db-card-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(0, 113, 227, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
+.db-card-icon-svg {
+  width: 24px;
+  height: 24px;
+  color: #0071E3;
+}
+
+.db-card-text {
+  min-width: 0;
+}
+
+.db-card-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 1px;
+}
+
+.db-card-meta {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.64);
+}
+
+/* ══════════════════════════════
+   LIST VIEW
+   ══════════════════════════════ */
+
+.db-table {
+  background: var(--card);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.db-table-head {
+  display: grid;
+  grid-template-columns: 1fr 120px 160px 40px;
+  padding: 0 16px;
+  height: 36px;
+  border-bottom: 1.5px solid var(--bg);
+  align-items: center;
+}
+
+.db-table-th {
+  font-size: 11px;
+  font-weight: 600;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.db-table-row {
+  display: grid;
+  grid-template-columns: 1fr 120px 160px 40px;
+  padding: 0 16px;
+  height: 52px;
+  align-items: center;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.12s ease;
+  border-bottom: 1px solid var(--bg);
+}
+
+.db-table-row:last-child {
+  border-bottom: none;
+}
+
+.db-table-row:hover {
+  background: var(--bg);
+}
+
+.db-table-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.db-table-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.db-table-name {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-table-count {
+  font-size: 13px;
+  color: #888;
+}
+
+.db-table-date {
+  font-size: 13px;
+  color: #aaa;
+}
+
+.db-table-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: #ccc;
+}
+
+.db-table-arrow-icon {
+  width: 14px;
+  height: 14px;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.db-table-row:hover .db-table-arrow-icon {
+  color: var(--text);
+  transform: translateX(2px);
+}
+
+/* ══════════════════════════════
+   EMPTY STATE
+   ══════════════════════════════ */
+
+.db-empty {
+  text-align: center;
+  padding: 64px 24px;
+  color: #aaa;
+  font-size: 14px;
+}
+
+.db-empty-icon {
+  width: 40px;
+  height: 40px;
+  color: #ddd;
+  margin: 0 auto 12px;
+  display: block;
+}
