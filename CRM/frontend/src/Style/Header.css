@@ -46,12 +46,13 @@
   color: var(--text);
   white-space: nowrap;
   flex-shrink: 0;
-  transition: background 0.15s ease;
+  transition: 0.4s ease;
   letter-spacing: -0.01em;
 }
 
 .hdr-brand:hover {
-  background: var(--bg);
+  background: var(--accent-tint);
+  color: #0071E3;
 }
 
 /* ── Separator ── */
@@ -95,12 +96,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 160px;
-  transition: background 0.15s ease;
+  transition: 0.4s ease;
   border-radius: 8px;
 }
 
 .hdr-switcher-name:hover {
-  background: var(--bg);
+  background: var(--accent-tint);
+  color: #0071E3;
 }
 
 .hdr-switcher-arrow {
@@ -111,13 +113,13 @@
   cursor: pointer;
   display: flex;
   align-items: center;
-  transition: background 0.15s ease;
+  transition: 0.4s ease;
   border-radius: 8px;
   flex-shrink: 0;
 }
 
 .hdr-switcher-arrow:hover {
-  background: var(--bg);
+  background: var(--accent-tint);
 }
 
 .hdr-switcher-chevron {
@@ -125,8 +127,10 @@
   height: 12px;
   color: var(--muted);
   flex-shrink: 0;
-  transition: transform 0.4s var(--ease-smooth);
+  transition: transform 0.15s var(--ease-smooth), color 0.15s ease;
 }
+
+.hdr-switcher-arrow:hover .hdr-switcher-chevron { color: #0071E3; }
 
 .hdr-switcher-chevron--open {
   transform: rotate(180deg);
@@ -139,9 +143,9 @@
   left: 0;
   min-width: 220px;
   background: var(--card);
-  border-radius: 24px;
+  border-radius: 18px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  padding: 8px;
+  padding: 6px;
   z-index: 500;
   opacity: 0;
   pointer-events: none;
@@ -172,7 +176,7 @@
   height: 32px;
   padding: 0 10px;
   margin-bottom: 2px;
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--bg);
   flex-shrink: 0;
 }
@@ -224,8 +228,8 @@
   left: 0;
   right: 0;
   top: 0;
-  background: #000;
-  border-radius: 16px;
+  background: var(--accent-tint);
+  border-radius: 12px;
   pointer-events: none;
   z-index: 1;
   will-change: transform, height, opacity;
@@ -240,9 +244,9 @@
   z-index: 2;
 }
 
-/* Active / hovered item — white text over black indicator */
+/* Active / hovered item — blue text over blue indicator */
 .hdr-sw-item--current {
-  color: #fff !important;
+  color: #0071E3 !important;
 }
 
 .hdr-switcher-empty {
@@ -258,14 +262,14 @@
   padding: 8px 12px;
   background: none;
   border: none;
-  border-radius: 16px;
+  border-radius: 12px;
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
   font-weight: 400;
   color: var(--text);
   text-align: left;
-  transition: 0.15s ease;
+  transition: background 0.4s ease, color 0.4s ease;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -290,19 +294,20 @@
   padding: 8px 12px;
   background: none;
   border: none;
-  border-radius: 16px;
+  border-radius: 12px;
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
   text-align: left;
-  transition: background 0.15s ease;
+  transition: background 0.4s ease, color 0.4s ease;
   box-sizing: border-box;
 }
 
 .hdr-switcher-new:hover {
-  background: var(--bg);
+  background: var(--accent-tint);
+  color: #0071E3;
 }
 
 .hdr-switcher-new-icon {
@@ -310,7 +315,10 @@
   height: 15px;
   color: var(--muted);
   flex-shrink: 0;
+  transition: color 0.4s ease;
 }
+
+.hdr-switcher-new:hover .hdr-switcher-new-icon { color: #0071E3; }
 
 /* ══════════════════════════════
    MODAL
@@ -364,7 +372,7 @@
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: 0.15s ease, color 0.15s ease;
 }
 
 .hdr-modal-close:hover {
@@ -496,9 +504,9 @@
   right: 0;
   min-width: 220px;
   background: var(--card);
-  border-radius: 24px;
+  border-radius: 18px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  padding: 8px;
+  padding: 6px;
   z-index: 500;
   display: grid;
   grid-template-rows: 0fr;
@@ -570,31 +578,30 @@
   padding: 8px 12px;
   background: none;
   border: none;
-  border-radius: 16px;
+  border-radius: 12px;
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
   font-weight: 400;
   color: var(--text);
   text-align: left;
-  transition: background 0.15s ease;
+  transition: background 0.4s ease, color 0.4s ease;
   box-sizing: border-box;
 }
 
-.hdr-drop-item:hover {
-  background: var(--bg);
+.hdr-drop-item:not(.hdr-drop-item--danger):hover {
+  background: var(--accent-tint);
+  color: #0071E3;
 }
 
-.hdr-drop-item--danger {
-  color: #ef4444;
-}
-
-.hdr-drop-item--danger:hover {
-  background: #fff1f2;
-}
+.hdr-drop-item--danger       { color: #ef4444; }
+.hdr-drop-item--danger:hover { background: rgba(227, 52, 47, 0.07); color: #ef4444; }
 
 .hdr-drop-icon {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
+  transition: color 0.4s ease;
 }
+
+.hdr-drop-item:not(.hdr-drop-item--danger):hover .hdr-drop-icon { color: #0071E3; }

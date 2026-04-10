@@ -1,7 +1,7 @@
 @import './shared.css';
 
 :root {
-  --bg: #F4F4F6;
+  --bg: #F2F1F7;
   --card: #ffffff;
   --text: #000000;
   --muted: #000000;
@@ -10,12 +10,14 @@
   --sidebar-w: 200px;
   --sidebar-w-collapsed: 56px;
   --header-h: 48px;
-  --radius-card: 18px;
+  --radius-card: 24px;
   --radius-item: 10px;
   --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-soft: cubic-bezier(0.25, 0.9, 0.3, 1);
-  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.08);
+  --shadow-card: none;
   --shadow-sidebar: none;
+  --accent: #0071E3;
+  --accent-tint: rgba(0, 113, 227, 0.07);
 }
 
 html,
@@ -242,7 +244,7 @@ body {
   right: 0;
   top: 0;
   border-radius: 999px;
-  background: #000;
+  background: var(--accent-tint);
   pointer-events: none;
   z-index: 1;
   will-change: transform, height, opacity;
@@ -336,11 +338,11 @@ body {
 
 /* Active item colors */
 .sb-item-wrap--current .sb-item {
-  color: #fff;
+  color: #0071E3;
 }
 
 .sb-item-wrap--current .sb-icon {
-  color: #fff;
+  color: #0071E3;
 }
 
 /* ── MAIN ── */
