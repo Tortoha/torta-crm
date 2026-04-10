@@ -248,6 +248,7 @@ class UpdateSettingsRequest(BaseModel):
     language: str = None
     currency: str = None
     theme: str = None
+    org_view: str = None
 
 class GoogleAuthRequest(BaseModel):
     token: str
@@ -776,8 +777,40 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
     org = db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,))
     count = db_one("SELECT COUNT(*) AS c FROM crm_projects WHERE org_id=%s", (org["org_id"],))["c"]
     if count <= 1: raise HTTPException(400, "Cannot delete the last project in an organization")
+
+    # Удалить DKIM-ключи домена с SES если есть
+    email_row = db_one("SELECT domain FROM crm_email_domains WHERE project_id=%s", (project_id,))
+    if email_row:
+        try:
+            _ses("DELETE", f"/domains/{email_row['domain']}")
+        except Exception:
+            pass
+
+    pid = (project_id,)
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_projects WHERE id=%s", (project_id,))
+        # ── Magaz: порядок важен (FK: sizes → variations → products) ──
+        cur.execute("DELETE ps FROM product_sizes ps JOIN product_variations v ON ps.variation_id=v.id JOIN products p ON v.product_id=p.id WHERE p.project_id=%s", pid)
+        cur.execute("DELETE pv FROM product_variations pv JOIN products p ON pv.product_id=p.id WHERE p.project_id=%s", pid)
+        cur.execute("DELETE FROM product_custom_fields WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM product_reviews     WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM product_page_views  WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM products            WHERE project_id=%s", pid)
+        cur.execute("DELETE ci FROM cart_items ci JOIN carts c ON ci.cart_id=c.id WHERE c.project_id=%s", pid)
+        cur.execute("DELETE FROM carts          WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM favorites      WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM order_history  WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM promo_codes    WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM shipping_settings WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM site_visits    WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM users          WHERE project_id=%s", pid)
+        # ── CRM ──
+        cur.execute("DELETE FROM crm_team_members  WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM crm_roles         WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM crm_redirect_urls WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM crm_url_config    WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM crm_oauth_settings WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM crm_email_domains  WHERE project_id=%s", pid)
+        cur.execute("DELETE FROM crm_projects       WHERE id=%s",         pid)
         conn.commit()
     return {"ok": True}
 
@@ -1146,7 +1179,7 @@ async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_c
 @app.get("/api/settings")
 def get_settings(user: dict = Depends(get_current_user)):
     u = db_one("SELECT id, name, email, role, avatar_url FROM crm_users WHERE id=%s", (user["id"],))
-    s = db_one("SELECT language, currency, theme FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
+    s = db_one("SELECT language, currency, theme, org_view FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
     return {
         "id":         u["id"],
         "name":       u["name"],
@@ -1156,6 +1189,7 @@ def get_settings(user: dict = Depends(get_current_user)):
         "language":   (s or {}).get("language", "en"),
         "currency":   (s or {}).get("currency", "USD"),
         "theme":      (s or {}).get("theme", "light"),
+        "org_view":   (s or {}).get("org_view", "grid"),
     }
 
 
@@ -1171,6 +1205,7 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
         if request.language is not None: upd["language"] = request.language
         if request.currency is not None: upd["currency"] = request.currency
         if request.theme    is not None: upd["theme"]    = request.theme
+        if request.org_view is not None and request.org_view in ("grid", "list"): upd["org_view"] = request.org_view
         if upd:
             sets = ", ".join(f"{k}=%s" for k in upd)
             cur.execute(f"UPDATE crm_settings SET {sets} WHERE crm_user_id=%s",
@@ -1331,7 +1366,7 @@ def save_email_domain(req: EmailDomainRequest, project_id: int = Query(...), use
             cur.execute("""
                 UPDATE crm_email_domains
                 SET domain=%s, from_name=%s, from_email=%s,
-                    dkim_public=%s, is_verified=0, verify_token=NULL, verified_at=NULL
+                    dkim_public=%s, is_verified=0, verify_token='', verified_at=NULL
                 WHERE project_id=%s
             """, (domain, from_name, from_email, json.dumps(dns_records), project_id))
         else:
