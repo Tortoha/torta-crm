@@ -1,14 +1,17 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import {
   Plus, X, MagnifyingGlass, SquaresFour, List,
   DotsThreeOutline, PencilSimple, Copy, Gear, Trash,
+  ArrowDown, ArrowUp,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
+import { InteractiveSection } from '../Utils/InteractiveSection.js';
+import { DynamicBlock } from '../Utils/DynamicBlock.js';
 import '../Style/Organizations.css';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const isValidUrl = url => {
   try { const u = new URL(url); return u.protocol === 'http:' || u.protocol === 'https:'; }
@@ -19,7 +22,7 @@ const fmtDate = iso => iso
   ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   : '—';
 
-// ─── Tilt settings ──────────────────────────────────────────────────────────
+// ─── Tilt configs ─────────────────────────────────────────────────────────────
 
 const TILT = {
   maxAngle: 18, lerp: 0.05, lerpOut: 0.07,
@@ -27,90 +30,72 @@ const TILT = {
   gloss: { opacity: 0.18, spread: 60 },
 };
 
-// ─── TiltCard ────────────────────────────────────────────────────────────────
+const ROW_TILT = {
+  maxAngleX: 10, maxAngleY: 4, lerp: 0.05, lerpOut: 0.07,
+  scale: 1.052, perspective: 900,
+  gloss: { opacity: 0.14, spread: 40 },
+};
 
-function TiltCard({ project, frozen, children }) {
-  const ref      = useRef(null);
-  const glossRef = useRef(null);
-  const rafRef   = useRef(null);
-  const cur      = useRef({ rx: 0, ry: 0, x: 0, y: 0, scale: 1 });
-  const tgt      = useRef({ rx: 0, ry: 0, x: 0, y: 0, scale: 1, hovered: false });
-  const navigate = useNavigate();
+// ─── SortToggle ──────────────────────────────────────────────────────────────
 
-  // Sync frozen to ref so callbacks don't go stale
-  const frozenRef = useRef(frozen);
-  frozenRef.current = frozen;
+const SORT_OPTIONS = [
+  { field: 'name', label: 'Sort by name' },
+  { field: 'date', label: 'Sort by date' },
+];
 
-  const loop = useCallback(() => {
-    const c = cur.current, t = tgt.current;
-    const lf = t.hovered ? TILT.lerp : TILT.lerpOut;
-    c.rx    += (t.rx    - c.rx)    * lf;
-    c.ry    += (t.ry    - c.ry)    * lf;
-    c.x     += (t.x     - c.x)     * lf;
-    c.y     += (t.y     - c.y)     * lf;
-    c.scale += (t.scale - c.scale) * lf;
-    const el = ref.current;
-    if (!el) return;
-    el.style.transform = `perspective(${TILT.perspective}px) rotateX(${c.rx}deg) rotateY(${c.ry}deg) scale(${c.scale})`;
-    if (glossRef.current) {
-      glossRef.current.style.opacity = t.hovered ? '1' : '0';
-      glossRef.current.style.backgroundImage = `radial-gradient(circle at ${50 + c.x * TILT.gloss.spread}% ${50 + c.y * TILT.gloss.spread}%, rgba(255,255,255,${TILT.gloss.opacity}) 0%, transparent 70%)`;
-    }
-    if (!t.hovered && Math.abs(c.rx) + Math.abs(c.ry) + Math.abs(c.scale - 1) * 20 < 0.05) {
-      el.style.transform = '';
-      cur.current = { rx: 0, ry: 0, x: 0, y: 0, scale: 1 };
-      rafRef.current = null;
-      return;
-    }
-    rafRef.current = requestAnimationFrame(loop);
-  }, []);
+function SortToggle({ sort, onSort }) {
+  const indRef       = useRef(null);
+  const btnRefs      = useRef({});
+  const [hovered, setHovered] = useState(null);
 
-  // Плавно возвращаем карточку в нейтраль когда открывается меню
+  const curField = hovered ?? sort.field;
+
+  // Indicator follows hover, falls back to active. Re-measure when sort.field changes
+  // (active button gains/loses arrow → width changes)
   useEffect(() => {
-    if (!frozen) return;
-    Object.assign(tgt.current, { hovered: false, rx: 0, ry: 0, x: 0, y: 0, scale: 1 });
-    if (!rafRef.current) rafRef.current = requestAnimationFrame(loop);
-  }, [frozen, loop]);
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = btnRefs.current[curField];
+      if (!ind || !el) return;
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [curField, sort.field]);
 
-  const onMouseEnter = useCallback(() => {
-    if (frozenRef.current) return;
-    tgt.current.hovered = true;
-    tgt.current.scale   = TILT.scale;
-    if (!rafRef.current) rafRef.current = requestAnimationFrame(loop);
-  }, [loop]);
-
-  const onMouseMove = useCallback(e => {
-    if (frozenRef.current) return;
-    const el = ref.current;
-    if (!el) return;
-    const { left, top, width, height } = el.getBoundingClientRect();
-    const x = (e.clientX - left) / width  - 0.5;
-    const y = (e.clientY - top)  / height - 0.5;
-    tgt.current.rx = -y * TILT.maxAngle;
-    tgt.current.ry =  x * TILT.maxAngle;
-    tgt.current.x  = x; tgt.current.y = y;
-  }, []);
-
-  const onMouseLeave = useCallback(() => {
-    Object.assign(tgt.current, { hovered: false, rx: 0, ry: 0, x: 0, y: 0, scale: 1 });
-  }, []);
+  const handleClick = field => {
+    onSort(prev => ({
+      field,
+      dir: field === prev.field ? (prev.dir === 'asc' ? 'desc' : 'asc') : 'desc',
+    }));
+  };
 
   return (
-    <div
-      ref={ref}
-      className="org-card org-card--tilt"
-      onClick={() => navigate(`/project/${project.api_key}`)}
-      onMouseEnter={onMouseEnter}
-      onMouseMove={onMouseMove}
-      onMouseLeave={onMouseLeave}
-    >
-      <div ref={glossRef} className="org-card-gloss" />
-      {children}
+    <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
+      <div ref={indRef} className="org-sort-indicator" />
+      {SORT_OPTIONS.map(({ field, label }) => {
+        const active = sort.field === field;
+        const isCur  = curField === field;
+        return (
+          <button key={field} ref={el => { btnRefs.current[field] = el; }}
+            className={`org-sort-btn${isCur ? ' org-sort-btn--current' : ''}`}
+            style={active ? { paddingLeft: '6px' } : undefined}
+            onMouseEnter={() => setHovered(field)}
+            onClick={() => handleClick(field)} type="button">
+            {active && (
+              <ArrowDown className="org-sort-icon"
+                style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
+            )}
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-// ─── CardMenu ────────────────────────────────────────────────────────────────
+// ─── Menu items ───────────────────────────────────────────────────────────────
 
 const MENU_ITEMS = [
   { key: 'rename',   Icon: PencilSimple, label: 'Rename' },
@@ -118,12 +103,13 @@ const MENU_ITEMS = [
   { key: 'settings', Icon: Gear,         label: 'Settings' },
 ];
 
+// ─── CardMenu ─────────────────────────────────────────────────────────────────
+
 function CardMenu({ project, btnRef, onClose, onRename, onDelete }) {
-  const navigate     = useNavigate();
+  const navigate = useNavigate();
   const [pos, setPos]         = useState(null);
   const [hovered, setHovered] = useState(null);
-  const indicatorRef = useRef(null);
-  const itemRefs     = useRef({});
+  const { indRef, setItemRef } = DynamicBlock(hovered);
 
   useEffect(() => {
     if (btnRef.current) {
@@ -135,21 +121,7 @@ function CardMenu({ project, btnRef, onClose, onRename, onDelete }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [btnRef, onClose]);
 
-  // Двигаем индикатор
-  useEffect(() => {
-    const ind = indicatorRef.current;
-    if (!ind) return;
-    const el = hovered ? itemRefs.current[hovered] : null;
-    if (!el) { ind.style.opacity = '0'; return; }
-    requestAnimationFrame(() => {
-      ind.style.transform = `translateY(${el.offsetTop}px)`;
-      ind.style.height    = `${el.offsetHeight}px`;
-      ind.style.opacity   = '1';
-    });
-  }, [hovered]);
-
   if (!pos) return null;
-  const stop = e => e.stopPropagation();
 
   const actions = {
     rename:   onRename,
@@ -159,18 +131,14 @@ function CardMenu({ project, btnRef, onClose, onRename, onDelete }) {
 
   return createPortal(
     <div className="org-card-dropdown" style={{ top: pos.top, left: pos.left }}
-      onPointerDown={stop} onClick={stop}>
+      onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
 
       <div className="org-menu-block" onMouseLeave={() => setHovered(null)}>
-        <div ref={indicatorRef} className="org-menu-indicator" />
+        <div ref={indRef} className="org-menu-indicator" />
         {MENU_ITEMS.map(({ key, Icon, label }) => (
-          <button
-            key={key}
-            ref={el => { itemRefs.current[key] = el; }}
+          <button key={key} ref={setItemRef(key)}
             className={`org-card-dropdown-item org-menu-item${hovered === key ? ' org-menu-item--current' : ''}`}
-            onMouseEnter={() => setHovered(key)}
-            onClick={actions[key]}
-          >
+            onMouseEnter={() => setHovered(key)} onClick={actions[key]}>
             <Icon className="org-card-dropdown-icon" /> {label}
           </button>
         ))}
@@ -185,11 +153,13 @@ function CardMenu({ project, btnRef, onClose, onRename, onDelete }) {
   );
 }
 
-// ─── ProjectCard ─────────────────────────────────────────────────────────────
+// ─── ProjectCard ──────────────────────────────────────────────────────────────
 
 function ProjectCard({ p, onRename, onDelete }) {
   const menuBtnRef = useRef(null);
+  const navigate   = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { ref, glossRef, handlers } = InteractiveSection(TILT, menuOpen);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -201,13 +171,13 @@ function ProjectCard({ p, onRename, onDelete }) {
     return () => document.removeEventListener('pointerdown', handler);
   }, [menuOpen]);
 
-  const toggleMenu = e => { e.stopPropagation(); setMenuOpen(v => !v); };
-
   return (
-    <TiltCard project={p} frozen={menuOpen}>
+    <div ref={ref} className="org-card org-card--tilt"
+      onClick={() => navigate(`/project/${p.api_key}`)} {...handlers}>
+      <div ref={glossRef} className="org-card-gloss" />
       <div className="org-card-inner">
-        <button ref={menuBtnRef} className="org-card-menu-btn" onClick={toggleMenu}
-          type="button" aria-label="Options">
+        <button ref={menuBtnRef} className="org-card-menu-btn" type="button" aria-label="Options"
+          onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
           <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
         </button>
         <div className="org-card-name">{p.name}</div>
@@ -217,90 +187,21 @@ function ProjectCard({ p, onRename, onDelete }) {
         </span>
       </div>
       {menuOpen && (
-        <CardMenu
-          project={p}
-          btnRef={menuBtnRef}
-          onClose={() => setMenuOpen(false)}
+        <CardMenu project={p} btnRef={menuBtnRef} onClose={() => setMenuOpen(false)}
           onRename={() => { setMenuOpen(false); onRename(p); }}
-          onDelete={() => { setMenuOpen(false); onDelete(p.id); }}
-        />
+          onDelete={() => { setMenuOpen(false); onDelete(p.id); }} />
       )}
-    </TiltCard>
+    </div>
   );
 }
 
-// ─── ListRow ─────────────────────────────────────────────────────────────────
-
-const ROW_TILT = {
-  maxAngleX: 10, maxAngleY: 4, lerp: 0.05, lerpOut: 0.07,
-  scale: 1.052, perspective: 900,
-  gloss: { opacity: 0.14, spread: 40 },
-};
+// ─── ListRow ──────────────────────────────────────────────────────────────────
 
 function ListRow({ p, onRename, onDelete }) {
-  const ref        = useRef(null);
-  const glossRef   = useRef(null);
-  const rafRef     = useRef(null);
-  const cur        = useRef({ rx: 0, ry: 0, x: 0, y: 0, scale: 1 });
-  const tgt        = useRef({ rx: 0, ry: 0, x: 0, y: 0, scale: 1, hovered: false });
   const menuBtnRef = useRef(null);
   const navigate   = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
-  const frozenRef  = useRef(false);
-  frozenRef.current = menuOpen;
-
-  const loop = useCallback(() => {
-    const c = cur.current, t = tgt.current;
-    const lf = t.hovered ? ROW_TILT.lerp : ROW_TILT.lerpOut;
-    c.rx    += (t.rx    - c.rx)    * lf;
-    c.ry    += (t.ry    - c.ry)    * lf;
-    c.x     += (t.x     - c.x)     * lf;
-    c.y     += (t.y     - c.y)     * lf;
-    c.scale += (t.scale - c.scale) * lf;
-    const el = ref.current;
-    if (!el) return;
-    el.style.transform = `perspective(${ROW_TILT.perspective}px) rotateX(${c.rx}deg) rotateY(${c.ry}deg) scale(${c.scale})`;
-    if (glossRef.current) {
-      glossRef.current.style.opacity = t.hovered ? '1' : '0';
-      glossRef.current.style.backgroundImage = `radial-gradient(circle at ${50 + c.x * ROW_TILT.gloss.spread}% ${50 + c.y * ROW_TILT.gloss.spread}%, rgba(255,255,255,${ROW_TILT.gloss.opacity}) 0%, transparent 70%)`;
-    }
-    if (!t.hovered && Math.abs(c.rx) + Math.abs(c.ry) + Math.abs(c.scale - 1) * 20 < 0.05) {
-      el.style.transform = '';
-      cur.current = { rx: 0, ry: 0, x: 0, y: 0, scale: 1 };
-      rafRef.current = null;
-      return;
-    }
-    rafRef.current = requestAnimationFrame(loop);
-  }, []);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    Object.assign(tgt.current, { hovered: false, rx: 0, ry: 0, x: 0, y: 0, scale: 1 });
-    if (!rafRef.current) rafRef.current = requestAnimationFrame(loop);
-  }, [menuOpen, loop]);
-
-  const onMouseEnter = useCallback(() => {
-    if (frozenRef.current) return;
-    tgt.current.hovered = true;
-    tgt.current.scale   = ROW_TILT.scale;
-    if (!rafRef.current) rafRef.current = requestAnimationFrame(loop);
-  }, [loop]);
-
-  const onMouseMove = useCallback(e => {
-    if (frozenRef.current) return;
-    const el = ref.current;
-    if (!el) return;
-    const { left, top, width, height } = el.getBoundingClientRect();
-    const x = (e.clientX - left) / width  - 0.5;
-    const y = (e.clientY - top)  / height - 0.5;
-    tgt.current.rx = -y * ROW_TILT.maxAngleX;
-    tgt.current.ry =  x * ROW_TILT.maxAngleY;
-    tgt.current.x  = x; tgt.current.y = y;
-  }, []);
-
-  const onMouseLeave = useCallback(() => {
-    Object.assign(tgt.current, { hovered: false, rx: 0, ry: 0, x: 0, y: 0, scale: 1 });
-  }, []);
+  const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, menuOpen);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -313,14 +214,8 @@ function ListRow({ p, onRename, onDelete }) {
   }, [menuOpen]);
 
   return (
-    <div
-      ref={ref}
-      className={`org-list-row${menuOpen ? ' org-list-row--frozen' : ''}`}
-      onClick={() => navigate(`/project/${p.api_key}`)}
-      onMouseEnter={onMouseEnter}
-      onMouseMove={onMouseMove}
-      onMouseLeave={onMouseLeave}
-    >
+    <div ref={ref} className={`org-list-row${menuOpen ? ' org-list-row--frozen' : ''}`}
+      onClick={() => navigate(`/project/${p.api_key}`)} {...handlers}>
       <div ref={glossRef} className="org-list-gloss" />
       <span className="org-list-name">{p.name}</span>
       <span className="org-list-key">{p.api_key.slice(0, 16)}…</span>
@@ -330,28 +225,20 @@ function ListRow({ p, onRename, onDelete }) {
         </span>
       </span>
       <span className="org-list-created">{fmtDate(p.created_at)}</span>
-      <button
-        ref={menuBtnRef}
-        className="org-list-menu-btn"
-        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}
-        type="button" aria-label="Options"
-      >
+      <button ref={menuBtnRef} className="org-list-menu-btn" type="button" aria-label="Options"
+        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
         <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
       </button>
       {menuOpen && (
-        <CardMenu
-          project={p}
-          btnRef={menuBtnRef}
-          onClose={() => setMenuOpen(false)}
+        <CardMenu project={p} btnRef={menuBtnRef} onClose={() => setMenuOpen(false)}
           onRename={() => { setMenuOpen(false); onRename(p); }}
-          onDelete={() => { setMenuOpen(false); onDelete(p.id); }}
-        />
+          onDelete={() => { setMenuOpen(false); onDelete(p.id); }} />
       )}
     </div>
   );
 }
 
-// ─── Modal ───────────────────────────────────────────────────────────────────
+// ─── Modal ────────────────────────────────────────────────────────────────────
 
 function Modal({ title, onClose, children }) {
   useEffect(() => {
@@ -376,7 +263,7 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-// ─── RenameModal ─────────────────────────────────────────────────────────────
+// ─── RenameModal ──────────────────────────────────────────────────────────────
 
 function RenameModal({ project, onClose, onSaved }) {
   const [name,   setName]   = useState(project.name);
@@ -396,8 +283,7 @@ function RenameModal({ project, onClose, onSaved }) {
       });
       const data = await res.json();
       if (!res.ok) return setErr(data.detail || 'Error');
-      onSaved({ ...project, name: trimmed });
-      onClose();
+      onSaved({ ...project, name: trimmed }); onClose();
     } catch { setErr('Network error'); }
     finally   { setSaving(false); }
   };
@@ -419,7 +305,7 @@ function RenameModal({ project, onClose, onSaved }) {
   );
 }
 
-// ─── CreateProjectModal ──────────────────────────────────────────────────────
+// ─── CreateProjectModal ───────────────────────────────────────────────────────
 
 function CreateProjectModal({ orgId, onClose, onCreated }) {
   const [name,   setName]   = useState('');
@@ -430,7 +316,7 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
   const handleSubmit = async e => {
     e.preventDefault();
     const trimName = name.trim(), trimUrl = url.trim();
-    if (!trimName)           return setErr('Name is required');
+    if (!trimName)            return setErr('Name is required');
     if (!isValidUrl(trimUrl)) return setErr('Enter a valid URL: http://... or https://...');
     setSaving(true); setErr('');
     try {
@@ -441,8 +327,7 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
       });
       const data = await res.json();
       if (!res.ok) return setErr(data.detail || 'Error');
-      onCreated(data);
-      onClose();
+      onCreated(data); onClose();
     } catch { setErr('Network error'); }
     finally   { setSaving(false); }
   };
@@ -461,7 +346,8 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
             value={url} onChange={e => { setUrl(e.target.value); setErr(''); }} />
         </div>
         {err && <span className="hdr-modal-err">{err}</span>}
-        <button className="hdr-modal-submit" type="submit" disabled={saving || !name.trim() || !isValidUrl(url.trim())}>
+        <button className="hdr-modal-submit" type="submit"
+          disabled={saving || !name.trim() || !isValidUrl(url.trim())}>
           {saving ? 'Creating…' : 'Create'}
         </button>
       </form>
@@ -469,41 +355,58 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
   );
 }
 
-// ─── Organizations ───────────────────────────────────────────────────────────
+// ─── Organizations ────────────────────────────────────────────────────────────
 
 function Organizations() {
-  const { org }  = useOutletContext();
+  const { org } = useOutletContext();
   const navigate = useNavigate();
 
-  const [projects, setProjects] = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [modal,    setModal]    = useState(false);
-  const [renaming, setRenaming] = useState(null);
-  const [search,   setSearch]   = useState('');
-  const [view,     setView]     = useState('grid');
+  const [projects,  setProjects]  = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [modal,     setModal]     = useState(false);
+  const [renaming,  setRenaming]  = useState(null);
+  const [search,    setSearch]    = useState('');
+  const [view,      setView]      = useState('grid');
   const [viewHover, setViewHover] = useState(null);
+  const [sort,      setSort]      = useState({ field: 'date', dir: 'desc' });
   const settingsLoadedRef = useRef(false);
 
-  // Load view preference from DB on mount
+  // Load preferences from DB
   useEffect(() => {
     fetch(`${API_BASE}/api/settings`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data?.org_view === 'list' || data?.org_view === 'grid') setView(data.org_view);
+        if (data?.org_sort) {
+          const [field, dir] = data.org_sort.split('_');
+          if (field && dir) setSort({ field, dir });
+        }
         settingsLoadedRef.current = true;
       })
       .catch(() => { settingsLoadedRef.current = true; });
   }, []);
 
-  // Save view preference to DB when it changes
-  const handleSetView = v => {
-    setView(v);
+  // Save preference to DB
+  const saveSettings = patch => {
     if (!settingsLoadedRef.current) return;
     fetch(`${API_BASE}/api/settings`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ org_view: v }),
+      body: JSON.stringify(patch),
     }).catch(() => {});
+  };
+
+  const handleSetView = v => {
+    setView(v);
+    saveSettings({ org_view: v });
+  };
+
+  const handleSetSort = updater => {
+    setSort(prev => {
+      const next = updater(prev);
+      saveSettings({ org_sort: `${next.field}_${next.dir}` });
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -530,6 +433,17 @@ function Organizations() {
 
   const filtered = projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
 
+  const sorted = [...filtered].sort((a, b) => {
+    if (sort.field === 'name') {
+      const cmp = a.name.localeCompare(b.name);
+      return sort.dir === 'asc' ? cmp : -cmp;
+    }
+    const da = new Date(a.created_at || 0), db = new Date(b.created_at || 0);
+    return sort.dir === 'asc' ? da - db : db - da;
+  });
+
+  const curView  = viewHover ?? view;
+
   return (
     <>
       <h1 className="crm-page-title org-page-title">Projects</h1>
@@ -541,38 +455,37 @@ function Organizations() {
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
-        {(() => {
-          const cur = viewHover ?? view;
-          return (
-            <div className="org-view-toggle" onMouseLeave={() => setViewHover(null)}>
-              <div className="org-view-indicator"
-                style={{ transform: `translateX(${cur === 'list' ? 30 : 0}px)` }} />
-              <button className={`org-view-btn${cur === 'grid' ? ' org-view-btn--current' : ''}`}
-                onClick={() => handleSetView('grid')} onMouseEnter={() => setViewHover('grid')}
-                title="Grid view" type="button">
-                <SquaresFour className="org-view-icon" />
-              </button>
-              <button className={`org-view-btn${cur === 'list' ? ' org-view-btn--current' : ''}`}
-                onClick={() => handleSetView('list')} onMouseEnter={() => setViewHover('list')}
-                title="List view" type="button">
-                <List className="org-view-icon" />
-              </button>
-            </div>
-          );
-        })()}
+        <SortToggle sort={sort} onSort={handleSetSort} />
+
+        <div className="org-view-toggle" onMouseLeave={() => setViewHover(null)}>
+          <div className="org-view-indicator"
+            style={{ transform: `translateX(${curView === 'list' ? 30 : 0}px)` }} />
+          <button className={`org-view-btn${curView === 'grid' ? ' org-view-btn--current' : ''}`}
+            onClick={() => handleSetView('grid')} onMouseEnter={() => setViewHover('grid')}
+            title="Grid view" type="button">
+            <SquaresFour className="org-view-icon" />
+          </button>
+          <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
+            onClick={() => handleSetView('list')} onMouseEnter={() => setViewHover('list')}
+            title="List view" type="button">
+            <List className="org-view-icon" />
+          </button>
+        </div>
 
         <button className="org-new-btn" onClick={() => setModal(true)} type="button">
           <Plus className="org-new-icon" /> New project
         </button>
       </div>
 
-      {filtered.length === 0 ? (
+      {sorted.length === 0 ? (
         <div className="crm-placeholder">
-          {projects.length === 0 ? 'No projects yet. Create one to get started.' : 'No projects match your search.'}
+          {projects.length === 0
+            ? 'No projects yet. Create one to get started.'
+            : 'No projects match your search.'}
         </div>
       ) : view === 'grid' ? (
         <div className="org-grid">
-          {filtered.map(p => (
+          {sorted.map(p => (
             <ProjectCard key={p.id} p={p} onRename={setRenaming} onDelete={handleDelete} />
           ))}
         </div>
@@ -586,15 +499,17 @@ function Organizations() {
             <span />
           </div>
           <div className="org-list-block">
-            {filtered.map(p => (
+            {sorted.map(p => (
               <ListRow key={p.id} p={p} onRename={setRenaming} onDelete={handleDelete} />
             ))}
           </div>
         </div>
       )}
 
-      {modal    && <CreateProjectModal orgId={org.id} onClose={() => setModal(false)}    onCreated={data => setProjects(prev => [data, ...prev])} />}
-      {renaming && <RenameModal project={renaming}    onClose={() => setRenaming(null)}   onSaved={u => setProjects(prev => prev.map(p => p.id === u.id ? u : p))} />}
+      {modal    && <CreateProjectModal orgId={org.id} onClose={() => setModal(false)}
+                     onCreated={data => setProjects(prev => [data, ...prev])} />}
+      {renaming && <RenameModal project={renaming} onClose={() => setRenaming(null)}
+                     onSaved={u => setProjects(prev => prev.map(p => p.id === u.id ? u : p))} />}
     </>
   );
 }

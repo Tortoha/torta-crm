@@ -54,6 +54,70 @@
   color: #bbb;
 }
 
+/* ── Sort toggle ── */
+.org-sort-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.org-sort-indicator {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.org-sort-btn {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 1);
+  white-space: nowrap;
+  transition: color 0.4s ease;
+}
+
+.org-sort-btn--current {
+  color: var(--accent);
+}
+
+.org-sort-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  transition: transform 0.4s var(--ease-smooth);
+}
+
+/* ── View toggle ── */
 .org-view-toggle {
   position: relative;
   display: flex;
@@ -65,7 +129,6 @@
   padding: 2px;
   box-sizing: border-box;
   flex-shrink: 0;
-  margin-left: auto;
 }
 
 .org-view-indicator {

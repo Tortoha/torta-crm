@@ -249,6 +249,7 @@ class UpdateSettingsRequest(BaseModel):
     currency: str = None
     theme: str = None
     org_view: str = None
+    org_sort: str = None
 
 class GoogleAuthRequest(BaseModel):
     token: str
@@ -1179,7 +1180,7 @@ async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_c
 @app.get("/api/settings")
 def get_settings(user: dict = Depends(get_current_user)):
     u = db_one("SELECT id, name, email, role, avatar_url FROM crm_users WHERE id=%s", (user["id"],))
-    s = db_one("SELECT language, currency, theme, org_view FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
+    s = db_one("SELECT language, currency, theme, org_view, org_sort FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
     return {
         "id":         u["id"],
         "name":       u["name"],
@@ -1190,6 +1191,7 @@ def get_settings(user: dict = Depends(get_current_user)):
         "currency":   (s or {}).get("currency", "USD"),
         "theme":      (s or {}).get("theme", "light"),
         "org_view":   (s or {}).get("org_view", "grid"),
+        "org_sort":   (s or {}).get("org_sort", "date_desc"),
     }
 
 
@@ -1206,6 +1208,8 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
         if request.currency is not None: upd["currency"] = request.currency
         if request.theme    is not None: upd["theme"]    = request.theme
         if request.org_view is not None and request.org_view in ("grid", "list"): upd["org_view"] = request.org_view
+        VALID_SORTS = ("name_asc", "name_desc", "date_asc", "date_desc")
+        if request.org_sort is not None and request.org_sort in VALID_SORTS: upd["org_sort"] = request.org_sort
         if upd:
             sets = ", ".join(f"{k}=%s" for k in upd)
             cur.execute(f"UPDATE crm_settings SET {sets} WHERE crm_user_id=%s",
