@@ -14,9 +14,9 @@ const Verification  = lazy(() => import('./Verification.jsx'));
 const Forgot        = lazy(() => import('./Forgot.jsx'));
 const Reset         = lazy(() => import('./Reset.jsx'));
 const Dashboard     = lazy(() => import('./Pages/Dashboard.jsx'));
-const Organizations = lazy(() => import('./Pages/Organizations.jsx'));
+const Organization  = lazy(() => import('./Pages/Organization.jsx'));
 const OrgAnalytics  = lazy(() => import('./Pages/OrgAnalytics.jsx'));
-const Projects      = lazy(() => import('./Pages/Projects.jsx'));
+const Project       = lazy(() => import('./Pages/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Revenue.jsx'));
 const Api           = lazy(() => import('./Pages/Api.jsx'));
 const Products      = lazy(() => import('./Pages/Products.jsx'));
@@ -48,11 +48,11 @@ function App() {
           <Route path="/reset-password/:token"     element={<Reset />} />
           <Route path="/dashboard"                 element={<Dashboard />} />
           <Route path="/org/:orgSlug"              element={<OrgLayout />}>
-            <Route index                           element={<Organizations />} />
+            <Route index                           element={<Organization />} />
             <Route path="analytics"               element={<OrgAnalytics />} />
           </Route>
           <Route path="/project/:apiKey"           element={<Layout />}>
-            <Route index            element={<Projects />} />
+            <Route index            element={<Project />} />
             <Route path="dashboard" element={<Navigate to=".." relative="path" replace />} />
             <Route path="products"   element={<Products />} />
             <Route path="revenue"    element={<Revenue />} />

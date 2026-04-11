@@ -760,6 +760,65 @@ def get_project(project_id: int, user: dict = Depends(get_current_user)):
     return p
 
 
+@app.get("/api/projects/{project_id}/overview")
+def get_project_overview(
+    project_id: int,
+    days: int = Query(30, ge=1, le=365),
+    user: dict = Depends(get_current_user)
+):
+    require_team_member_or_owner(user, project_id)
+    pid = (project_id,)
+
+    # Revenue + orders in period (non-cancelled/returned)
+    rev = db_one("""
+        SELECT COALESCE(SUM(total_amount), 0) AS revenue, COUNT(*) AS orders
+        FROM order_history
+        WHERE project_id = %s
+          AND status NOT IN ('cancelled','returned')
+          AND created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+    """, (project_id, days))
+
+    # Customers total
+    cust = db_one("SELECT COUNT(*) AS cnt FROM users WHERE project_id = %s", pid)
+
+    # Products total
+    prod = db_one("SELECT COUNT(*) AS cnt FROM products WHERE project_id = %s", pid)
+
+    # Visits in period
+    vis = db_one("""
+        SELECT COUNT(*) AS cnt FROM site_visits
+        WHERE project_id = %s AND created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+    """, (project_id, days))
+
+    # Reviews total
+    rev_cnt = db_one("SELECT COUNT(*) AS cnt FROM product_reviews WHERE project_id = %s", pid)
+
+    # Recent orders (last 8)
+    recent = db_all("""
+        SELECT o.id, o.total_amount, o.status, o.created_at, u.name AS customer_name
+        FROM order_history o
+        LEFT JOIN users u ON o.user_id = u.id AND u.project_id = %s
+        WHERE o.project_id = %s
+        ORDER BY o.created_at DESC
+        LIMIT 8
+    """, (project_id, project_id))
+
+    for r in (recent or []):
+        r["created_at"] = str(r["created_at"])
+
+    return {
+        "stats": {
+            "revenue":   int(rev["revenue"]) if rev else 0,
+            "orders":    int(rev["orders"])  if rev else 0,
+            "customers": int(cust["cnt"])    if cust else 0,
+            "products":  int(prod["cnt"])    if prod else 0,
+            "visits":    int(vis["cnt"])     if vis else 0,
+            "reviews":   int(rev_cnt["cnt"]) if rev_cnt else 0,
+        },
+        "recent_orders": recent or [],
+    }
+
+
 @app.patch("/api/projects/{project_id}")
 def rename_project(project_id: int, request: RenameProjectRequest, user: dict = Depends(get_current_user)):
     name = request.name.strip()

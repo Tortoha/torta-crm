@@ -1,0 +1,207 @@
+/* ══════════════════════════════
+   PROJECT OVERVIEW
+   ══════════════════════════════ */
+
+.pov-root {
+  padding-top: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── Project name ── */
+.pov-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+/* ── URL row ── */
+.pov-url-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+
+.pov-url-text {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+/* ── Copy pill button ── */
+.pov-copy-pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 30px;
+  overflow: visible;
+  flex-shrink: 0;
+}
+
+.pov-copy-pill-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 14px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 999px 0 0 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.pov-copy-pill-left:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.pov-pill-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.pov-copy-pill-sep {
+  width: 1px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.pov-copy-pill-right {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 0 999px 999px 0;
+  cursor: pointer;
+  color: rgba(0, 0, 0, 0.4);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.pov-copy-pill-right:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.pov-caret {
+  width: 11px;
+  height: 11px;
+  transition: transform 0.25s var(--ease-smooth);
+}
+
+.pov-caret--open {
+  transform: rotate(180deg);
+}
+
+/* ── Dropdown ── */
+.pov-drop {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  padding: 6px;
+  z-index: 100;
+  min-width: 300px;
+  animation: pov-drop-in 0.18s var(--ease-soft);
+}
+
+@keyframes pov-drop-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.pov-drop-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  transition: background 0.15s ease;
+}
+
+.pov-drop-item:hover {
+  background: var(--bg);
+}
+
+.pov-drop-icon-wrap {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 0, 0, 0.4);
+  flex-shrink: 0;
+}
+
+.pov-drop-icon-wrap svg {
+  width: 15px;
+  height: 15px;
+}
+
+.pov-drop-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.pov-drop-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.pov-drop-value {
+  font-size: 11px;
+  font-family: monospace;
+  color: rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pov-drop-copy {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 0, 0, 0.3);
+  flex-shrink: 0;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.pov-drop-copy:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.pov-drop-copy--ok {
+  color: #059669 !important;
+  background: rgba(16, 185, 129, 0.08) !important;
+}
+
+.pov-drop-copy svg {
+  width: 13px;
+  height: 13px;
+}

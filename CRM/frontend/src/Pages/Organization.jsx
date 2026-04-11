@@ -9,7 +9,7 @@ import {
 import { API_BASE } from '../api.js';
 import { InteractiveSection } from '../Utils/InteractiveSection.js';
 import { DynamicBlock } from '../Utils/DynamicBlock.js';
-import '../Style/Organizations.css';
+import '../Style/Organization.css';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -355,9 +355,9 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
   );
 }
 
-// ─── Organizations ────────────────────────────────────────────────────────────
+// ─── Organization ─────────────────────────────────────────────────────────────
 
-function Organizations() {
+function Organization() {
   const { org } = useOutletContext();
   const navigate = useNavigate();
 
@@ -514,4 +514,4 @@ function Organizations() {
   );
 }
 
-export default Organizations
+export default Organization

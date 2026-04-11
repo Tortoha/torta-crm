@@ -1,4 +1,4 @@
-function Projects() {
+function Project() {
   return (
     <>
       <h1 className="crm-page-title">Project Overview</h1>
@@ -16,4 +16,4 @@ function Projects() {
   );
 }
 
-export default Projects;
+export default Project;
