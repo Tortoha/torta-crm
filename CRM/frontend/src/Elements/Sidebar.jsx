@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation, useParams } from 'react-router-dom';
-import { House, CurrencyDollar, Tag, CodeBlock, Envelope, GoogleLogo, Globe, CaretDown, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
+import { House, CurrencyDollar, Tag, CodeBlock, LockKey, CaretDown, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
 
 function buildSections(apiKey) {
   const base = `/project/${apiKey}`;
@@ -21,10 +21,8 @@ function buildSections(apiKey) {
     {
       id: 'account', label: 'Account',
       items: [
-        { to: `${base}/api`,        label: 'API',        Icon: CodeBlock },
-        { to: `${base}/email`,      label: 'Email',      Icon: Envelope },
-        { to: `${base}/oauth`,      label: 'OAuth',      Icon: GoogleLogo },
-        { to: `${base}/url-config`, label: 'URL Config', Icon: Globe },
+        { to: `${base}/api`,            label: 'API',            Icon: CodeBlock   },
+        { to: `${base}/authentication`, label: 'Authentication', Icon: LockKey },
       ],
     },
   ];

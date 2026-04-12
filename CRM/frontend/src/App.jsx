@@ -20,10 +20,8 @@ const Project       = lazy(() => import('./Pages/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Revenue.jsx'));
 const Api           = lazy(() => import('./Pages/Api.jsx'));
 const Products      = lazy(() => import('./Pages/Products.jsx'));
-const Settings      = lazy(() => import('./Pages/Settings.jsx'));
-const Email         = lazy(() => import('./Pages/Email.jsx'));
-const OAuth         = lazy(() => import('./Pages/OAuth.jsx'));
-const UrlConfig     = lazy(() => import('./Pages/UrlConfig.jsx'));
+const Settings        = lazy(() => import('./Pages/Settings.jsx'));
+const Authentication  = lazy(() => import('./Pages/Authentication.jsx'));
 
 // ── Fallback пока chunk грузится ──
 function PageLoader() {
@@ -56,10 +54,11 @@ function App() {
             <Route path="dashboard" element={<Navigate to=".." relative="path" replace />} />
             <Route path="products"   element={<Products />} />
             <Route path="revenue"    element={<Revenue />} />
-            <Route path="api"        element={<Api />} />
-            <Route path="email"      element={<Email />} />
-            <Route path="oauth"      element={<OAuth />} />
-            <Route path="url-config" element={<UrlConfig />} />
+            <Route path="api"            element={<Api />} />
+            <Route path="authentication" element={<Authentication />} />
+            <Route path="email"      element={<Navigate to="../authentication" relative="path" replace />} />
+            <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />
+            <Route path="url-config" element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="settings"   element={<Settings />} />
           </Route>
         </Routes>

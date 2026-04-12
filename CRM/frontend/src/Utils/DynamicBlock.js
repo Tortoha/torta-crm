@@ -1,21 +1,3 @@
-/**
- * DynamicBlock — sliding indicator that follows the active/hovered item.
- *
- * Usage:
- *   const { indRef, setItemRef } = DynamicBlock(hoveredKey ?? activeKey);
- *
- *   <div ref={indRef} className="my-indicator" />
- *   {items.map(item => (
- *     <button key={item.key} ref={setItemRef(item.key)}>...</button>
- *   ))}
- *
- * The indicator div must be position:absolute inside a position:relative container.
- * Its height and translateY are set directly via style — no state updates, zero re-renders.
- *
- * Uses offsetTop + offsetHeight (layout-relative, safe inside animated containers).
- * Never uses getBoundingClientRect() which breaks inside grid/clip transitions.
- */
-
 import { useRef, useEffect } from 'react';
 
 export function DynamicBlock(currentKey) {
