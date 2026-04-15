@@ -434,8 +434,175 @@ function UserMenu({ user, project }) {
   );
 }
 
+/* ── Product breadcrumb with dropdown ── */
+function ProductSwitcherCrumb({ project, productContext }) {
+  const navigate  = useNavigate();
+  const [open,     setOpen]    = useState(false);
+  const [products, setProducts] = useState([]);
+  const [loaded,   setLoaded]  = useState(false);
+  const [query,    setQuery]   = useState('');
+  const [modal,    setModal]   = useState(false);
+  const [title,    setTitle]   = useState('');
+  const [saving,   setSaving]  = useState(false);
+  const [err,      setErr]     = useState('');
+  const wrapRef   = useRef(null);
+  const searchRef = useRef(null);
+  const itemsEl   = useRef(null);
+  const itemEls   = useRef({});
+
+  // Dynamic indicator — tracks hovered id vs active id (matched by title)
+  const [hovId, setHovId] = useState(null);
+  const [ind,   setInd]   = useState({ opacity: 0, y: 0, h: 0 });
+
+  const filtered = useMemo(
+    () => products.filter(p => p.title.toLowerCase().includes(query.toLowerCase())),
+    [products, query]
+  );
+
+  const activeId = useMemo(
+    () => products.find(p => p.title === productContext?.name)?.id ?? null,
+    [products, productContext?.name]
+  );
+  const curId = hovId ?? activeId;
+
+  useEffect(() => {
+    if (!open) { setInd(p => ({ ...p, opacity: 0 })); return; }
+    const raf = requestAnimationFrame(() => {
+      const el = curId != null ? itemEls.current[curId] : null;
+      if (!el) { setInd(p => ({ ...p, opacity: 0 })); return; }
+      setInd({ opacity: 1, y: el.offsetTop, h: el.offsetHeight });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [curId, open, filtered]);
+
+  useEffect(() => {
+    const h = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  const handleOpen = async () => {
+    if (!loaded) {
+      const r = await fetch(`${API_BASE}/api/products?project_id=${project.id}`, { credentials: 'include' });
+      if (r.ok) setProducts(await r.json());
+      setLoaded(true);
+    }
+    setOpen(v => {
+      if (!v) setTimeout(() => searchRef.current?.focus(), 50);
+      return !v;
+    });
+    setQuery('');
+  };
+
+  const openModal  = () => { setOpen(false); setModal(true); setTitle(''); setErr(''); };
+  const closeModal = () => { setModal(false); setTitle(''); setErr(''); };
+
+  const createProduct = async e => {
+    e.preventDefault();
+    if (!title.trim()) return setErr('Title is required');
+    setSaving(true); setErr('');
+    try {
+      const res  = await fetch(`${API_BASE}/api/products?project_id=${project.id}`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.detail || 'Error'); return; }
+      closeModal();
+      setLoaded(false); // force reload next open
+      import('../Utils/hashids.js').then(({ encodeId }) => {
+        navigate(`/product/${encodeId(data.id)}`);
+      });
+    } catch { setErr('Network error'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      <div className="hdr-switcher" ref={wrapRef}>
+        <div className="hdr-switcher-btn">
+          <button className="hdr-switcher-name hdr-product-crumb" type="button"
+            onClick={() => navigate(`/product/${productContext.hash}`)}>
+            {productContext.name || 'Product'}
+          </button>
+          <button className="hdr-switcher-arrow" type="button" aria-label="Show products"
+            onClick={handleOpen}>
+            <CaretDown className={`hdr-switcher-chevron${open ? ' hdr-switcher-chevron--open' : ''}`} />
+          </button>
+        </div>
+
+        <div className={`hdr-switcher-drop${open ? ' hdr-switcher-drop--open' : ''}`}>
+          <div className="hdr-switcher-list">
+
+            <div className="hdr-search-wrap">
+              <MagnifyingGlass className="hdr-search-icon" />
+              <input
+                ref={searchRef}
+                className="hdr-search-input"
+                placeholder="Search products…"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+              />
+            </div>
+
+            <div className="hdr-sw-items" ref={itemsEl}>
+              <div className="hdr-sw-indicator"
+                style={{ opacity: ind.opacity, height: `${ind.h}px`, transform: `translateY(${ind.y}px)` }} />
+              {filtered.length === 0
+                ? <span className="hdr-switcher-empty">No results</span>
+                : filtered.map(p => (
+                    <button
+                      key={p.id}
+                      ref={el => { if (el) itemEls.current[p.id] = el; else delete itemEls.current[p.id]; }}
+                      className={`hdr-switcher-item${curId === p.id ? ' hdr-sw-item--current' : ''}`}
+                      onMouseEnter={() => setHovId(p.id)}
+                      onMouseLeave={() => setHovId(null)}
+                      onClick={async () => {
+                        setOpen(false);
+                        const { encodeId } = await import('../Utils/hashids.js');
+                        navigate(`/product/${encodeId(p.id)}`);
+                      }}
+                      type="button"
+                    >{p.title}</button>
+                  ))
+              }
+            </div>
+
+            <div className="hdr-switcher-sep" />
+
+            <button className="hdr-switcher-new" type="button"
+              onClick={() => { setOpen(false); navigate(`/project/${project.api_key}/products`); }}>
+              All Products
+            </button>
+
+            <div className="hdr-switcher-sep" />
+
+            <button className="hdr-switcher-new" type="button" onClick={openModal}>
+              <Plus className="hdr-switcher-new-icon" />
+              New product
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {modal && (
+        <CreateModal title="New product" onClose={closeModal} onSubmit={createProduct}
+          submitting={saving} canSubmit={!!title.trim()}>
+          <div className="hdr-modal-field">
+            <h4 className="hdr-modal-label">Title</h4>
+            <input className="hdr-modal-input" placeholder="Product name" value={title} autoFocus
+              onChange={e => { setTitle(e.target.value); setErr(''); }} maxLength={200} />
+          </div>
+          {err && <span className="hdr-modal-err">{err}</span>}
+        </CreateModal>
+      )}
+    </>
+  );
+}
+
 /* ── Header ── */
-function Header({ user, project, org }) {
+function Header({ user, project, org, productContext }) {
   const navigate = useNavigate();
   return (
     <header className="crm-header">
@@ -459,6 +626,13 @@ function Header({ user, project, org }) {
             <OrgSwitcher project={project} />
             <span className="hdr-sep">/</span>
             <ProjectSwitcher project={project} />
+          </>
+        )}
+        {/* Product page: show product switcher as 4th breadcrumb level */}
+        {project && productContext && (
+          <>
+            <span className="hdr-sep">/</span>
+            <ProductSwitcherCrumb project={project} productContext={productContext} />
           </>
         )}
       </div>

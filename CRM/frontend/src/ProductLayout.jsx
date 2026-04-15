@@ -5,16 +5,16 @@ import Header from './Elements/Header.jsx';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
+import { decodeHash } from './Utils/hashids.js';
 
-function Layout() {
-  const { apiKey } = useParams();
+function ProductLayout() {
+  const { productHash } = useParams();
   const [user,    setUser]    = useState(null);
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   const [productContext, setProductContext] = useState(null);
-
   const handleSetProductContext = useCallback((ctx) => setProductContext(ctx), []);
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -28,20 +28,30 @@ function Layout() {
     return next;
   });
 
+  const productId = decodeHash(productHash);
+
   useEffect(() => {
+    if (!productId) { navigate('/dashboard'); return; }
     Promise.all([
       fetch(`${API_BASE}/api/me`, { credentials: 'include' })
         .then(r => { if (!r.ok) throw new Error('auth'); return r.json(); }),
-      fetch(`${API_BASE}/api/projects/by-key/${apiKey}`, { credentials: 'include' })
-        .then(r => { if (!r.ok) throw new Error('project'); return r.json(); }),
+      fetch(`${API_BASE}/api/products/${productId}/project-context`, { credentials: 'include' })
+        .then(r => { if (!r.ok) throw new Error('product'); return r.json(); }),
     ])
-    .then(([userData, projectData]) => {
+    .then(([userData, ctx]) => {
       setUser(userData);
-      setProject(projectData);
+      setProject({
+        id:       ctx.project_id,
+        name:     ctx.project_name,
+        api_key:  ctx.api_key,
+        org_id:   ctx.org_id,
+        org_name: ctx.org_name,
+        org_slug: ctx.org_slug,
+      });
     })
     .catch(() => navigate('/dashboard'))
     .finally(() => setLoading(false));
-  }, [apiKey, navigate]);
+  }, [productId, navigate]);
 
   if (loading) return (
     <div id="mask" className="mask">
@@ -66,4 +76,4 @@ function Layout() {
   );
 }
 
-export default Layout;
+export default ProductLayout;

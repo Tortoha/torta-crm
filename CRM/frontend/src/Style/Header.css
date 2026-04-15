@@ -110,6 +110,13 @@
   color: #0071E3;
 }
 
+.hdr-product-crumb {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .hdr-switcher-arrow {
   height: 100%;
   padding: 0 6px;

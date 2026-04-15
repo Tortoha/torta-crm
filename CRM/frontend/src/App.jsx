@@ -3,8 +3,9 @@ import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-d
 import './Style/App.css';
 
 // ── Layouts (загружаются сразу — нужны как обёртки) ──
-import Layout    from './Layout.jsx';
-import OrgLayout from './OrgLayout.jsx';
+import Layout        from './Layout.jsx';
+import OrgLayout     from './OrgLayout.jsx';
+import ProductLayout from './ProductLayout.jsx';
 
 // ── Страницы — lazy (каждая в отдельном chunk) ──
 const Home          = lazy(() => import('./Home.jsx'));
@@ -20,6 +21,7 @@ const Project       = lazy(() => import('./Pages/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Revenue.jsx'));
 const Api           = lazy(() => import('./Pages/Api.jsx'));
 const Products      = lazy(() => import('./Pages/Products.jsx'));
+const ProductPage   = lazy(() => import('./Pages/ProductPage.jsx'));
 const Settings        = lazy(() => import('./Pages/Settings.jsx'));
 const Authentication  = lazy(() => import('./Pages/Authentication.jsx'));
 
@@ -60,6 +62,14 @@ function App() {
             <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="url-config" element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="settings"   element={<Settings />} />
+          </Route>
+          <Route path="/product/:productHash" element={<ProductLayout />}>
+            <Route index                      element={<ProductPage />} />
+            <Route path="variations"          element={<ProductPage />} />
+            <Route path="seo"                 element={<ProductPage />} />
+            <Route path="custom-fields"       element={<ProductPage />} />
+            <Route path="reviews"             element={<ProductPage />} />
+            <Route path="api-preview"         element={<ProductPage />} />
           </Route>
         </Routes>
       </Suspense>

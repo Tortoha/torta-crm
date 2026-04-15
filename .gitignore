@@ -1,4 +1,47 @@
+# ── Dependencies ──────────────────────────────────────────
 node_modules/
+
+# ── Build output ──────────────────────────────────────────
 dist/
+build/
+
+# ── Environment & secrets ─────────────────────────────────
 .env
+.env.*
 *.local
+!*.local.example
+
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+*.egg-info/
+
+# ── Uploads (user-generated files, served locally) ────────
+uploads/
+
+# ── Obsidian ──────────────────────────────────────────────
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+.obsidian/plugins/claude-code-mcp/
+.obsidian/plugins/terminal/
+
+# ── Claude Code (local session state, not project config) ─
+.claude/settings.local.json
+.claude/worktrees/
+
+# ── OS & editor ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# ── Logs ──────────────────────────────────────────────────
+*.log
+npm-debug.log*

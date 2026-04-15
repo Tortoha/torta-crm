@@ -3,6 +3,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from mysql.connector.pooling import MySQLConnectionPool
@@ -889,7 +890,8 @@ def list_products(project_id: int = Query(...), user: dict = Depends(get_current
         " COALESCE(MIN(ps.price),0) AS min_price,"
         " COALESCE(MAX(ps.price),0) AS max_price,"
         " COALESCE(AVG(pr.rating),0) AS avg_rating,"
-        " COUNT(DISTINCT pr.id) AS reviews_count"
+        " COUNT(DISTINCT pr.id) AS reviews_count,"
+        " (SELECT image_url FROM product_variations WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image"
         " FROM products p"
         " LEFT JOIN product_variations v ON v.product_id=p.id"
         " LEFT JOIN product_sizes ps ON ps.product_id=p.id"
@@ -920,8 +922,35 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
         return {"id": cur.lastrowid, "title": name}
 
 
+@app.get("/api/products/{product_id}/project-context")
+def get_product_project_context(product_id: int, user: dict = Depends(get_current_user)):
+    row = db_one(
+        "SELECT p.project_id, pr.name AS project_name, pr.api_key, pr.org_id,"
+        " o.name AS org_name, o.slug AS org_slug"
+        " FROM products p"
+        " JOIN crm_projects pr ON p.project_id = pr.id"
+        " JOIN crm_organizations o ON pr.org_id = o.id"
+        " WHERE p.id = %s",
+        (product_id,)
+    )
+    if not row: raise HTTPException(404, "Product not found")
+    require_team_member_or_owner(user, row["project_id"])
+    return {
+        "project_id":   row["project_id"],
+        "project_name": row["project_name"],
+        "api_key":      row["api_key"],
+        "org_id":       row["org_id"],
+        "org_name":     row["org_name"],
+        "org_slug":     row["org_slug"],
+    }
+
+
 @app.get("/api/products/{product_id}")
-def get_product(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+def get_product(product_id: int, project_id: Optional[int] = Query(None), user: dict = Depends(get_current_user)):
+    if project_id is None:
+        row = db_one("SELECT project_id FROM products WHERE id=%s", (product_id,))
+        if not row: raise HTTPException(404, "Product not found")
+        project_id = row["project_id"]
     require_team_member_or_owner(user, project_id)
     p = db_one("SELECT * FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
     if not p: raise HTTPException(404, "Product not found")

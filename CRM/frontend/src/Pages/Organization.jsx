@@ -64,10 +64,12 @@ function SortToggle({ sort, onSort }) {
     return () => cancelAnimationFrame(raf);
   }, [curField, sort.field]);
 
+  const DEFAULT_DIR = { name: 'asc', date: 'desc' };
+
   const handleClick = field => {
     onSort(prev => ({
       field,
-      dir: field === prev.field ? (prev.dir === 'asc' ? 'desc' : 'asc') : 'desc',
+      dir: field === prev.field ? (prev.dir === 'asc' ? 'desc' : 'asc') : DEFAULT_DIR[field] ?? 'asc',
     }));
   };
 
@@ -368,25 +370,21 @@ function Organization() {
   const [search,    setSearch]    = useState('');
   const [view,      setView]      = useState('grid');
   const [viewHover, setViewHover] = useState(null);
-  const [sort,      setSort]      = useState({ field: 'date', dir: 'desc' });
+  const [sort,      setSort]      = useState({ field: 'name', dir: 'asc' });
   const settingsLoadedRef = useRef(false);
 
-  // Load preferences from DB
+  // Load preferences from DB (only view, not sort — sort always starts at name_asc)
   useEffect(() => {
     fetch(`${API_BASE}/api/settings`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data?.org_view === 'list' || data?.org_view === 'grid') setView(data.org_view);
-        if (data?.org_sort) {
-          const [field, dir] = data.org_sort.split('_');
-          if (field && dir) setSort({ field, dir });
-        }
         settingsLoadedRef.current = true;
       })
       .catch(() => { settingsLoadedRef.current = true; });
   }, []);
 
-  // Save preference to DB
+  // Save preference to DB (only view)
   const saveSettings = patch => {
     if (!settingsLoadedRef.current) return;
     fetch(`${API_BASE}/api/settings`, {
@@ -402,11 +400,7 @@ function Organization() {
   };
 
   const handleSetSort = updater => {
-    setSort(prev => {
-      const next = updater(prev);
-      saveSettings({ org_sort: `${next.field}_${next.dir}` });
-      return next;
-    });
+    setSort(prev => updater(prev));
   };
 
   useEffect(() => {
