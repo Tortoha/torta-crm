@@ -19,7 +19,7 @@ export default function VariationsTab({ product, productId, pq }) {
     setVarUploading(true);
     const fd = new FormData(); fd.append('file', file);
     try {
-      const res  = await fetch(`${API_BASE}/api/upload/image`, { method: 'POST', credentials: 'include', body: fd });
+      const res  = await fetch(`${API_BASE}/api/upload/image${pq}`, { method: 'POST', credentials: 'include', body: fd });
       const data = await res.json();
       if (res.ok) setVarImg(data.url); else alert(data.detail || 'Upload failed');
     } catch { alert('Upload failed'); }

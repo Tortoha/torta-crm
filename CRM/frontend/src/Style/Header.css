@@ -70,6 +70,15 @@
   line-height: 1;
 }
 
+/* ── Settings breadcrumb ── */
+.hdr-settings-crumb {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  padding: 0 6px;
+  user-select: none;
+}
+
 /* ══════════════════════════════
    SWITCHER (Org + Project)
    ══════════════════════════════ */
@@ -507,6 +516,13 @@
   flex-shrink: 0;
   letter-spacing: 0.02em;
   line-height: 1;
+}
+
+.hdr-avatar-photo {
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
 }
 
 /* Dropdown */

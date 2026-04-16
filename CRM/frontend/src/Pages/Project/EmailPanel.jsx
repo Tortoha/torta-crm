@@ -1,8 +1,8 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, CheckCircle, Warning, ArrowClockwise, Trash } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
-import { InteractiveSection } from '../Utils/InteractiveSection.js';
+import { API_BASE } from '../../api.js';
+import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 
 const DOMAIN_RE = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 

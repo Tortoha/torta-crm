@@ -5,11 +5,11 @@ import {
   Envelope, GoogleLogo, PhoneCall, AppleLogo, GithubLogo,
   CaretRight, X, CheckCircle, Globe, ShieldCheck, Trash,
 } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
-import { InteractiveSection } from '../Utils/InteractiveSection.js';
+import { API_BASE } from '../../api.js';
+import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import EmailPanel from './EmailPanel.jsx';
 import GooglePanel from './GooglePanel.jsx';
-import '../Style/Authentication.css';
+import '../../Style/Authentication.css';
 
 // ─── Google coloured SVG ──────────────────────────────────────────────────────
 

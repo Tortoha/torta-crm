@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation, useParams } from 'react-router-dom';
 import {
-  House, CurrencyDollar, Tag, CodeBlock, LockKey,
+  House, CurrencyDollar, Tag, CodeBlock, LockKey, GearSix,
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Info, ArrowsLeftRight, MagnifyingGlass, SlidersHorizontal, Star, Code,
 } from '@phosphor-icons/react';
@@ -29,6 +29,7 @@ function buildSections(apiKey) {
       items: [
         { to: `${base}/api`,            label: 'API',            Icon: CodeBlock },
         { to: `${base}/authentication`, label: 'Authentication', Icon: LockKey   },
+        { to: `${base}/settings`,       label: 'Settings',       Icon: GearSix   },
       ],
     },
   ];

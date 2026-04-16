@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Check, UserCircle } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
-import '../Style/Settings.css';
+import { Camera, Check } from '@phosphor-icons/react';
+import { API_BASE } from '../../api.js';
+import AvatarCropModal from '../../Elements/AvatarCropModal.jsx';
+import '../../Style/Settings.css';
 
 const LANGUAGES = [
   { value: 'en', label: 'English' },
@@ -51,6 +52,7 @@ function Settings() {
   // Avatar
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError]         = useState('');
+  const [cropFile, setCropFile]               = useState(null);
   const avatarInputRef = useRef();
 
   const load = async () => {
@@ -103,13 +105,19 @@ function Settings() {
     setTimeout(() => setPrefSaved(false), 2000);
   };
 
-  const handleAvatarChange = async (e) => {
+  const handleAvatarChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setAvatarError('');
+    setCropFile(file);
+    e.target.value = '';
+  };
+
+  const uploadCroppedBlob = async (blob) => {
+    setCropFile(null);
     setAvatarUploading(true);
     const form = new FormData();
-    form.append('file', file);
+    form.append('file', blob, 'avatar.webp');
     try {
       const res  = await fetch(`${API_BASE}/api/upload/avatar`, {
         method: 'POST', credentials: 'include', body: form,
@@ -118,7 +126,7 @@ function Settings() {
       if (!res.ok) return setAvatarError(json.detail || 'Upload failed');
       setData(prev => ({ ...prev, avatar_url: json.url }));
     } catch { setAvatarError('Network error'); }
-    finally { setAvatarUploading(false); e.target.value = ''; }
+    finally { setAvatarUploading(false); }
   };
 
   if (loading) return <div className="crm-placeholder sett-loading">Loading…</div>;
@@ -140,7 +148,7 @@ function Settings() {
               <div className="sett-avatar-wrap">
                 {data?.avatar_url ? (
                   <img
-                    src={`${API_BASE}${data.avatar_url}`}
+                    src={data.avatar_url}
                     alt="avatar"
                     className="sett-avatar-img"
                   />
@@ -288,6 +296,14 @@ function Settings() {
         </section>
 
       </div>
+
+      {cropFile && (
+        <AvatarCropModal
+          file={cropFile}
+          onSave={uploadCroppedBlob}
+          onClose={() => setCropFile(null)}
+        />
+      )}
     </>
   );
 }

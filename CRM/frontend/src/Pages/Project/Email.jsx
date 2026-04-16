@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Copy, CheckCircle, Warning, ArrowClockwise, Trash } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
+import { API_BASE } from '../../api.js';
 import { useOutletContext } from 'react-router-dom';
-import '../Style/Email.css';
+import '../../Style/Email.css';
 
 // ── DNS record row ────────────────────────────────────────────────────────────
 function DnsRow({ type, host, value, status }) {

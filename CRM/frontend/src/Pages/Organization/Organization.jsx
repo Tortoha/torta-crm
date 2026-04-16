@@ -6,10 +6,10 @@ import {
   DotsThreeOutline, PencilSimple, Copy, Gear, Trash,
   ArrowDown, ArrowUp,
 } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
-import { InteractiveSection } from '../Utils/InteractiveSection.js';
-import { DynamicBlock } from '../Utils/DynamicBlock.js';
-import '../Style/Organization.css';
+import { API_BASE } from '../../api.js';
+import { InteractiveSection } from '../../Utils/InteractiveSection.js';
+import { DynamicBlock } from '../../Utils/DynamicBlock.js';
+import '../../Style/Organization.css';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -373,18 +373,22 @@ function Organization() {
   const [sort,      setSort]      = useState({ field: 'name', dir: 'asc' });
   const settingsLoadedRef = useRef(false);
 
-  // Load preferences from DB (only view, not sort — sort always starts at name_asc)
+  // Load preferences from DB (view + sort)
   useEffect(() => {
     fetch(`${API_BASE}/api/settings`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data?.org_view === 'list' || data?.org_view === 'grid') setView(data.org_view);
+        if (data?.org_sort) {
+          const [field, dir] = data.org_sort.split('_');
+          if (field && dir) setSort({ field, dir });
+        }
         settingsLoadedRef.current = true;
       })
       .catch(() => { settingsLoadedRef.current = true; });
   }, []);
 
-  // Save preference to DB (only view)
+  // Save preference to DB
   const saveSettings = patch => {
     if (!settingsLoadedRef.current) return;
     fetch(`${API_BASE}/api/settings`, {
@@ -400,7 +404,11 @@ function Organization() {
   };
 
   const handleSetSort = updater => {
-    setSort(prev => updater(prev));
+    setSort(prev => {
+      const next = updater(prev);
+      saveSettings({ org_sort: `${next.field}_${next.dir}` });
+      return next;
+    });
   };
 
   useEffect(() => {

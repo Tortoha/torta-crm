@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Copy, CheckCircle, ArrowSquareOut, Trash, Eye, EyeSlash } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
+import { API_BASE } from '../../api.js';
 import { useOutletContext } from 'react-router-dom';
-import '../Style/OAuth.css';
+import '../../Style/OAuth.css';
 
 const GoogleIcon = () => (
   <svg width="22" height="22" viewBox="0 0 48 48">

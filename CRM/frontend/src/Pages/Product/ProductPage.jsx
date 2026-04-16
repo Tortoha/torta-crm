@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, useLocation, useOutletContext, NavLink } from 'react-router-dom';
-import { API_BASE } from '../api.js';
-import { decodeHash } from '../Utils/hashids.js';
-import InfoTab        from './Product/InfoTab.jsx';
-import VariationsTab  from './Product/VariationsTab.jsx';
-import SeoTab         from './Product/SeoTab.jsx';
-import CustomFieldsTab from './Product/CustomFieldsTab.jsx';
-import ReviewsTab     from './Product/ReviewsTab.jsx';
-import ApiPreviewTab  from './Product/ApiPreviewTab.jsx';
-import '../Style/Products.css';
+import { API_BASE } from '../../api.js';
+import { decodeHash } from '../../Utils/hashids.js';
+import InfoTab        from './InfoTab.jsx';
+import VariationsTab  from './VariationsTab.jsx';
+import SeoTab         from './SeoTab.jsx';
+import CustomFieldsTab from './CustomFieldsTab.jsx';
+import ReviewsTab     from './ReviewsTab.jsx';
+import ApiPreviewTab  from './ApiPreviewTab.jsx';
+import '../../Style/Products.css';
 
 // ── Tab map: URL key → label + component ──────────────────────
 

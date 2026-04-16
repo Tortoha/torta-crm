@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Trash, Link, Copy, CheckCircle, Plus, X, Hash, PaperPlaneTilt, DotsThreeVertical, ShieldCheck, CaretLeft, NotePencil } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
-import '../Style/Team.css';
+import { API_BASE } from '../../api.js';
+import '../../Style/Team.css';
 
 // ── Helpers ────────────────────────────────────────────────────
 

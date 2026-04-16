@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Copy, Check, PencilSimple, X, Eye, EyeSlash } from '@phosphor-icons/react';
 import { useOutletContext } from 'react-router-dom';
-import { API_BASE } from '../api.js';
-import '../Style/Api.css';
+import { API_BASE } from '../../api.js';
+import '../../Style/Api.css';
 
 function RenameModal({ project, onClose, onRenamed }) {
   const [name, setName]     = useState(project.name);

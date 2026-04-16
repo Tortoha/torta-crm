@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from mysql.connector.pooling import MySQLConnectionPool
 import hashlib, secrets, jwt, random, os, io, json, re
 import urllib.request, urllib.error
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 try:
     from PIL import Image as PilImage
@@ -17,11 +19,11 @@ except ImportError:
     PIL_AVAILABLE = False
 
 try:
-    import cloudinary
-    import cloudinary.uploader
-    CLOUDINARY_AVAILABLE = True
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError
+    S3_AVAILABLE = True
 except ImportError:
-    CLOUDINARY_AVAILABLE = False
+    S3_AVAILABLE = False
 
 
 
@@ -29,31 +31,56 @@ except ImportError:
 # КОНФИГ
 # ════════════════════════════════════════════
 
-SECRET_KEY       = "crm_u7b3f9e2d8c1a4f6e0b5d3a7c9f2e8d4b1c6a0e9f7d3b5c8a2e4d0f6b9c3e7a1"
+SECRET_KEY       = os.getenv("SECRET_KEY", "")
 ALGORITHM        = "HS256"
 JWT_HOURS        = 24 * 7
-CRM_FRONTEND_URL = "http://localhost:5174"
-CRM_BACKEND_URL  = "http://localhost:8001"
-DB_CONFIG        = {"host": "localhost", "user": "root", "password": "root", "database": "crmdb"}
+CRM_FRONTEND_URL = os.getenv("CRM_FRONTEND_URL", "http://localhost:5174")
+CRM_BACKEND_URL  = os.getenv("CRM_BACKEND_URL",  "http://localhost:8001")
+MAGAZ_BACKEND_URL= os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
+DB_CONFIG        = {
+    "host":     os.getenv("DB_HOST",     "localhost"),
+    "user":     os.getenv("DB_USER",     "root"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "database": os.getenv("DB_NAME",     "crmdb"),
+}
 
-SES_API_URL      = "https://ses.tortacrm.com"
-SES_INTERNAL_KEY = "821ba4c3ac76f3206f20d338c642bccfb2782e8c986627e81a1aff8d23a13a5d"
-EMAIL_FROM       = "support@tortacrm.com"
+SES_API_URL      = os.getenv("SES_API_URL",      "https://ses.tortacrm.com")
+SES_INTERNAL_KEY = os.getenv("SES_INTERNAL_KEY", "")
+EMAIL_FROM       = os.getenv("EMAIL_FROM",       "support@tortacrm.com")
 MAX_FAILED_ATTEMPTS     = 5
 BLOCK_MINUTES           = 10
 CODE_TTL_MINUTES        = 10
 RESEND_COOLDOWN_SECONDS = 60
 RESET_TTL_MINUTES       = 30
 UPLOADS_DIR             = "uploads"
-GOOGLE_CLIENT_ID        = "507611541846-pcl6rqv08gc54021vq4tctca9pnntj0e.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET    = "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"
-GOOGLE_REDIRECT_URI     = "http://localhost:8001/api/auth/google/callback"
-MAGAZ_BACKEND_URL       = "http://localhost:8000"
-CLOUDINARY_CLOUD_NAME   = "due5yumdr"
-CLOUDINARY_API_KEY      = "513475749664165"
-CLOUDINARY_API_SECRET   = "I35G6txxRQ5A8QKkHh76TzlVDnU"
+GOOGLE_CLIENT_ID        = os.getenv("GOOGLE_CLIENT_ID",     "")
+GOOGLE_CLIENT_SECRET    = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI     = os.getenv("GOOGLE_REDIRECT_URI",  "http://localhost:8001/api/auth/google/callback")
+
+# ── AWS S3 ──────────────────────────────────────────────────────
+AWS_ACCESS_KEY_ID     = os.getenv("AWS_ACCESS_KEY_ID",     "")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+AWS_S3_BUCKET         = os.getenv("AWS_S3_BUCKET",         "torta-crm")
+AWS_S3_REGION         = os.getenv("AWS_S3_REGION",         "eu-central-1")
+AWS_CLOUDFRONT_URL    = os.getenv("AWS_CLOUDFRONT_URL",    "")
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+def _s3_client():
+    return boto3.client(
+        "s3",
+        region_name=AWS_S3_REGION,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    )
+
+def s3_upload(data: io.BytesIO, key: str, content_type: str = "image/webp") -> str:
+    s3 = _s3_client()
+    s3.upload_fileobj(data, AWS_S3_BUCKET, key,
+                      ExtraArgs={"ContentType": content_type, "CacheControl": "max-age=31536000"})
+    if AWS_CLOUDFRONT_URL:
+        return f"{AWS_CLOUDFRONT_URL.rstrip('/')}/{key}"
+    return f"https://{AWS_S3_BUCKET}.s3.{AWS_S3_REGION}.amazonaws.com/{key}"
 
 app = FastAPI()
 
@@ -153,13 +180,6 @@ def send_email(to: str, subject: str, html: str,
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
-if CLOUDINARY_AVAILABLE:
-    cloudinary.config(
-        cloud_name = CLOUDINARY_CLOUD_NAME,
-        api_key    = CLOUDINARY_API_KEY,
-        api_secret = CLOUDINARY_API_SECRET,
-        secure     = True
-    )
 
 # In-memory хранилища
 pending_verifications = {}
@@ -513,7 +533,7 @@ def resend_code_endpoint(request: ResendCodeRequest):
 @app.get("/api/me")
 def get_me(user: dict = Depends(get_current_user)):
     return db_one(
-        "SELECT id, name, email, role FROM crm_users WHERE id = %s AND is_active = 1",
+        "SELECT id, name, email, role, avatar_url FROM crm_users WHERE id = %s AND is_active = 1",
         (user["id"],)
     ) or HTTPException(401, "User not found")
 
@@ -1192,7 +1212,11 @@ def toggle_custom_field_global(product_id: int, field_key: str, project_id: int 
 # ════════════════════════════════════════════
 
 @app.post("/api/upload/image")
-async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+async def upload_image(
+    file: UploadFile = File(...),
+    project_id: Optional[int] = Query(None),
+    user: dict = Depends(get_current_user),
+):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "Only image files are allowed")
     contents = await file.read()
@@ -1207,15 +1231,18 @@ async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_cu
         out.seek(0)
     except Exception:
         raise HTTPException(400, "Invalid image file")
-    if CLOUDINARY_AVAILABLE:
+
+    filename = f"{secrets.token_hex(16)}.webp"
+
+    if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
+        folder = f"projects/{project_id}/products" if project_id else "products"
+        key = f"{folder}/{filename}"
         try:
-            result = cloudinary.uploader.upload(out, folder="crm/products", format="webp",
-                                                quality="auto:good", resource_type="image")
-            return {"url": result["secure_url"]}
-        except Exception as e:
-            raise HTTPException(500, f"Cloudinary upload failed: {e}")
+            url = s3_upload(out, key)
+            return {"url": url}
+        except (BotoCoreError, ClientError) as e:
+            raise HTTPException(500, f"S3 upload failed: {e}")
     else:
-        filename = f"{secrets.token_hex(16)}.webp"
         path = os.path.join(UPLOADS_DIR, filename)
         with open(path, "wb") as f:
             f.write(out.read())
@@ -1240,14 +1267,12 @@ async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_c
     except Exception:
         raise HTTPException(400, "Invalid image file")
 
-    if CLOUDINARY_AVAILABLE:
+    if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
+        key = f"avatars/{user['id']}/avatar.webp"
         try:
-            result = cloudinary.uploader.upload(out, folder="crm/avatars",
-                                                public_id=f"avatar_{user['id']}", overwrite=True,
-                                                format="webp", quality="auto:good", resource_type="image")
-            url = result["secure_url"]
-        except Exception as e:
-            raise HTTPException(500, f"Cloudinary upload failed: {e}")
+            url = s3_upload(out, key)
+        except (BotoCoreError, ClientError) as e:
+            raise HTTPException(500, f"S3 upload failed: {e}")
     else:
         filename = f"avatar_{user['id']}_{secrets.token_hex(8)}.webp"
         path = os.path.join(UPLOADS_DIR, filename)

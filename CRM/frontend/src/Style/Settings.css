@@ -149,7 +149,7 @@
 }
 
 .sett-save-btn--saved {
-  background: #10b981 !important;
+  background: var(--accent) !important;
 }
 
 .sett-check-icon {

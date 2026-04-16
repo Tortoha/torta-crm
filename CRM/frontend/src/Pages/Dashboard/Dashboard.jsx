@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, Link } from 'react-router-dom';
 import { MagnifyingGlass, Plus, X, FolderSimple } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
-import { InteractiveSection } from '../Utils/InteractiveSection.js';
-import Header from '../Elements/Header.jsx';
-import '../Style/Layout.css';
-import '../Style/Dashboard.css';
+import { API_BASE } from '../../api.js';
+import { InteractiveSection } from '../../Utils/InteractiveSection.js';
+import Header from '../../Elements/Header.jsx';
+import '../../Style/Layout.css';
+import '../../Style/Dashboard.css';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

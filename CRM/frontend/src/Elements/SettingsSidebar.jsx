@@ -1,29 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { FolderSimple, ChartBar, GearSix, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
+import { UserCircle, Lock, SlidersHorizontal, Bell, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
 
-function buildItems(orgSlug) {
-  const base = `/org/${orgSlug}`;
-  return [
-    { to: base,                  label: 'Projects',  Icon: FolderSimple, exact: true },
-    { to: `${base}/analytics`,   label: 'Analytics', Icon: ChartBar },
-    { to: `${base}/settings`,    label: 'Settings',  Icon: GearSix  },
-  ];
-}
+const items = [
+  { to: '/settings/account',       label: 'Profile',       Icon: UserCircle },
+  { to: '/settings/security',      label: 'Security',       Icon: Lock },
+  { to: '/settings/preferences',   label: 'Preferences',    Icon: SlidersHorizontal },
+  { to: '/settings/notifications',  label: 'Notifications',  Icon: Bell },
+];
 
-const isActive = (pathname, to, exact) =>
-  exact ? pathname === to : (pathname === to || pathname.startsWith(to + '/'));
-
-function OrgSidebar({ collapsed, onToggle, orgSlug }) {
+function SettingsSidebar({ collapsed, onToggle }) {
   const location = useLocation();
-  const items    = buildItems(orgSlug);
 
-  const itemsEl  = useRef(null);
-  const itemEls  = useRef({});
+  const itemsEl = useRef(null);
+  const itemEls = useRef({});
   const [hovKey, setHovKey] = useState(null);
   const [ind,    setInd]    = useState({ opacity: 0, y: 0, h: 0 });
 
-  const activeKey = items.find(i => isActive(location.pathname, i.to, i.exact))?.to ?? null;
+  const activeKey = items.find(i => location.pathname === i.to || location.pathname.startsWith(i.to + '/'))?.to ?? null;
   const curKey    = hovKey ?? activeKey;
 
   useEffect(() => {
@@ -40,7 +34,7 @@ function OrgSidebar({ collapsed, onToggle, orgSlug }) {
       <div className="sidebar-scroll">
         <div className="sb-nav-area">
           <div className="sb-block">
-            <div className="sb-items" ref={itemsEl}>
+            <div className="sb-items" ref={itemsEl} onMouseLeave={() => setHovKey(null)}>
               <div
                 className="sb-indicator"
                 style={{ opacity: ind.opacity, height: `${ind.h}px`, transform: `translateY(${ind.y}px)` }}
@@ -51,9 +45,8 @@ function OrgSidebar({ collapsed, onToggle, orgSlug }) {
                   ref={el => { if (el) itemEls.current[to] = el; else delete itemEls.current[to]; }}
                   className={`sb-item-wrap${curKey === to ? ' sb-item-wrap--current' : ''}`}
                   onMouseEnter={() => setHovKey(to)}
-                  onMouseLeave={() => setHovKey(null)}
                 >
-                  <NavLink to={to} end={!!items.find(i => i.to === to)?.exact} className="sb-item">
+                  <NavLink to={to} end className="sb-item">
                     <Icon className="sb-icon" />
                     <span className="sb-item-label">{label}</span>
                   </NavLink>
@@ -76,4 +69,4 @@ function OrgSidebar({ collapsed, onToggle, orgSlug }) {
   );
 }
 
-export default OrgSidebar;
+export default SettingsSidebar;

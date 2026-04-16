@@ -17,6 +17,21 @@ function InitialsAvatar({ name, size = 28 }) {
   );
 }
 
+/* ── Avatar with photo fallback ── */
+function UserAvatar({ user, size = 28 }) {
+  if (user?.avatar_url) {
+    return (
+      <img
+        src={user.avatar_url}
+        alt=""
+        className="hdr-avatar-photo"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return <InitialsAvatar name={user?.name} size={size} />;
+}
+
 /* ── Modal overlay for create forms ── */
 function CreateModal({ title, onClose, onSubmit, submitting, canSubmit, children }) {
   useEffect(() => {
@@ -410,19 +425,19 @@ function UserMenu({ user, project }) {
   return (
     <div className="hdr-user" ref={wrapRef}>
       <button className="hdr-avatar-btn" onClick={() => setOpen(v => !v)} type="button" aria-label="User menu">
-        <InitialsAvatar name={user?.name} size={28} />
+        <UserAvatar user={user} size={28} />
       </button>
       <div className={`hdr-user-drop${open ? ' hdr-user-drop--open' : ''}`}>
         <div className="hdr-user-menu">
           <div className="hdr-user-info">
-            <InitialsAvatar name={user?.name} size={34} />
+            <UserAvatar user={user} size={34} />
             <div className="hdr-user-details">
               <span className="hdr-user-fullname">{user?.name}</span>
               <span className="hdr-user-email">{user?.email}</span>
             </div>
           </div>
           <div className="hdr-user-sep" />
-          <button className="hdr-drop-item" onClick={() => { setOpen(false); navigate(project ? `/project/${project.api_key}/settings` : '/dashboard'); }} type="button">
+          <button className="hdr-drop-item" onClick={() => { setOpen(false); navigate('/settings/account'); }} type="button">
             <GearSix className="hdr-drop-icon" /> Settings
           </button>
           <button className="hdr-drop-item hdr-drop-item--danger" onClick={logout} type="button">
@@ -602,7 +617,7 @@ function ProductSwitcherCrumb({ project, productContext }) {
 }
 
 /* ── Header ── */
-function Header({ user, project, org, productContext }) {
+function Header({ user, project, org, productContext, settingsMode }) {
   const navigate = useNavigate();
   return (
     <header className="crm-header">
@@ -612,15 +627,22 @@ function Header({ user, project, org, productContext }) {
             <path d="M3061.91 1516.01C3065.95 1523.01 3067.97 1526.51 3068.76 1530.22C3069.46 1533.51 3069.46 1536.91 3068.76 1540.2C3067.97 1543.92 3065.95 1547.42 3061.91 1554.41L2316.09 2846.23C2312.05 2853.22 2310.03 2856.72 2307.2 2859.27C2304.7 2861.52 2301.76 2863.22 2298.56 2864.26C2294.94 2865.43 2290.91 2865.43 2282.83 2865.43H769.002C769.001 2865.43 768.999 2865.43 768.999 2865.43C768.998 2865.43 768.997 2865.42 768.998 2865.42L1503.75 1592.81C1514.66 1573.91 1520.12 1564.46 1519.3 1556.7C1518.59 1549.94 1515.04 1543.79 1509.54 1539.8C1503.23 1535.21 1492.32 1535.21 1470.49 1535.21H1.00289C1.00227 1535.21 1.00179 1535.21 1.00179 1535.21V1535.21C1.00179 1535.22 1.00064 1535.22 1.00015 1535.22C0.999961 1535.22 0.99995 1535.21 1.00012 1535.21L757.915 224.2C761.953 217.205 763.972 213.708 766.797 211.165C769.297 208.914 772.241 207.214 775.44 206.175C779.055 205 783.093 205 791.17 205H2282.83C2290.91 205 2294.94 205 2298.56 206.175C2301.76 207.214 2304.7 208.914 2307.2 211.165C2310.03 213.708 2312.05 217.205 2316.08 224.2L3061.91 1516.01Z" fill="currentColor"/>
           </svg>
         </button>
+        {/* Settings pages: show static "Settings" breadcrumb */}
+        {settingsMode && (
+          <>
+            <span className="hdr-sep">/</span>
+            <span className="hdr-settings-crumb">Settings</span>
+          </>
+        )}
         {/* Org-level pages: show org switcher */}
-        {org && !project && (
+        {!settingsMode && org && !project && (
           <>
             <span className="hdr-sep">/</span>
             <OrgSwitcher org={org} />
           </>
         )}
         {/* Project-level pages: show org switcher + project switcher */}
-        {project && (
+        {!settingsMode && project && (
           <>
             <span className="hdr-sep">/</span>
             <OrgSwitcher project={project} />
@@ -629,7 +651,7 @@ function Header({ user, project, org, productContext }) {
           </>
         )}
         {/* Product page: show product switcher as 4th breadcrumb level */}
-        {project && productContext && (
+        {!settingsMode && project && productContext && (
           <>
             <span className="hdr-sep">/</span>
             <ProductSwitcherCrumb project={project} productContext={productContext} />

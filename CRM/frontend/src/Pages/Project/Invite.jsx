@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { API_BASE } from '../api.js';
+import { API_BASE } from '../../api.js';
 
 function Invite() {
   const { token }    = useParams();

@@ -2,12 +2,12 @@ import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Plus, Trash, PencilSimple, DotsThreeOutline, MagnifyingGlass, X, Image, List, SquaresFour, ArrowDown } from '@phosphor-icons/react';
 import { Star } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
+import { API_BASE } from '../../api.js';
 import { useOutletContext, useNavigate } from 'react-router-dom';
-import { InteractiveSection } from '../Utils/InteractiveSection.js';
-import { encodeId } from '../Utils/hashids.js';
-import '../Style/Organization.css';
-import '../Style/Products.css';
+import { InteractiveSection } from '../../Utils/InteractiveSection.js';
+import { encodeId } from '../../Utils/hashids.js';
+import '../../Style/Organization.css';
+import '../../Style/Products.css';
 
 // ── Tilt configs ───────────────────────────────────────────────
 

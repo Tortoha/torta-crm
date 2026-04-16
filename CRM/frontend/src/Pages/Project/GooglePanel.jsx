@@ -1,7 +1,7 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle, Copy, Eye, EyeSlash, ArrowSquareOut, Trash } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
+import { API_BASE } from '../../api.js';
 
 function GooglePanel({ projectId, onSaved }) {
   const pq = `?project_id=${projectId}`;

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Globe, Trash } from '@phosphor-icons/react';
-import { API_BASE } from '../api.js';
+import { API_BASE } from '../../api.js';
 import { useOutletContext } from 'react-router-dom';
-import '../Style/UrlConfig.css';
+import '../../Style/UrlConfig.css';
 
 export default function UrlConfig() {
   const { projectId } = useOutletContext();
