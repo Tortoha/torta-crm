@@ -19,13 +19,15 @@ function InitialsAvatar({ name, size = 28 }) {
 
 /* ── Avatar with photo fallback ── */
 function UserAvatar({ user, size = 28 }) {
-  if (user?.avatar_url) {
+  const [imgFailed, setImgFailed] = useState(false);
+  if (user?.avatar_url && !imgFailed) {
     return (
       <img
         src={user.avatar_url}
         alt=""
         className="hdr-avatar-photo"
         style={{ width: size, height: size }}
+        onError={() => setImgFailed(true)}
       />
     );
   }

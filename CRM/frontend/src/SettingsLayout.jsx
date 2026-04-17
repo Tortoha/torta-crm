@@ -35,6 +35,8 @@ function SettingsLayout() {
     </div>
   );
 
+  const updateUser = (patch) => setUser(prev => ({ ...prev, ...patch }));
+
   const sidebarVar = sidebarOpen ? 'var(--sidebar-w)' : 'var(--sidebar-w-collapsed)';
 
   return (
@@ -44,7 +46,7 @@ function SettingsLayout() {
         <SettingsSidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} />
         <main className="crm-main">
           <div className="crm-content">
-            <Outlet context={{ user }} />
+            <Outlet context={{ user, updateUser }} />
           </div>
         </main>
       </div>

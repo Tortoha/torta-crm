@@ -4,8 +4,11 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
 from contextlib import contextmanager
-import mysql.connector
-from mysql.connector.pooling import MySQLConnectionPool
+import sys
+import psycopg2
+import psycopg2.errors
+from psycopg2.pool import ThreadedConnectionPool
+from psycopg2.extras import RealDictCursor
 import hashlib, secrets, jwt, random, re as _re, traceback, json, urllib.request, urllib.error
 from hashids import Hashids
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -28,26 +31,35 @@ CODE_TTL_MINUTES      = 10
 RESEND_COOLDOWN_SECONDS = 60
 RESET_TTL_MINUTES     = 30
 
-DB_CONFIG = {"host": "localhost", "user": "root", "password": "root", "database": "crmdb"}
+DB_CONFIG = {
+    "host":     "localhost",
+    "port":     5432,
+    "user":     "postgres",
+    "password": "REDACTED",
+    "dbname":   "crmdb",
+}
 
 hashids = Hashids(salt="qpzmrld10vsljklfgdnsdsafjkhfl526742228666777mzpqnxowhgf", min_length=6)
 
 # Пул соединений: переиспользуем до 10 соединений вместо нового TCP-handshake на каждый запрос
-_pool = MySQLConnectionPool(pool_name="magaz", pool_size=10, pool_reset_session=True, **DB_CONFIG)
+_pool = ThreadedConnectionPool(1, 10, **DB_CONFIG)
 
 def get_db():
-    return _pool.get_connection()
+    return _pool.getconn()
 
 @contextmanager
-def db_cursor(dictionary=True, buffered=False):
+def db_cursor():
     """Context manager: автоматически закрывает cursor и возвращает соединение в пул."""
     conn   = get_db()
-    cursor = conn.cursor(dictionary=dictionary, buffered=buffered)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         yield conn, cursor
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
-        conn.close()
+        _pool.putconn(conn)
 
 def db_one(sql, params=()):
     with db_cursor() as (_, cur):
@@ -71,7 +83,7 @@ app = FastAPI()
 
 def get_project_email(project_id: int) -> tuple:
     row = db_one(
-        "SELECT from_name, from_email FROM crm_email_domains WHERE project_id = %s AND is_verified = 1",
+        "SELECT from_name, from_email FROM crm_email_domains WHERE project_id = %s AND is_verified = TRUE",
         (project_id,)
     )
     return (row["from_name"], row["from_email"]) if row else ("Torta Store", EMAIL_FROM)
@@ -93,7 +105,7 @@ def get_allowed_redirect_urls(project_id: int) -> list:
 def get_google_credentials(project_id: int):
     row = db_one(
         "SELECT google_client_id, google_client_secret FROM crm_oauth_settings "
-        "WHERE project_id = %s AND google_enabled = 1",
+        "WHERE project_id = %s AND google_enabled = TRUE",
         (project_id,)
     )
     if row and row["google_client_id"] and row["google_client_secret"]:
@@ -113,40 +125,46 @@ def get_user_by_id(user_id: int, project_id: int):
 
 def run_migrations():
     with db_cursor() as (conn, cur):
-        # Add missing columns
-        for sql in [
-            "ALTER TABLE users ADD COLUMN google_id varchar(255) DEFAULT NULL",
-            "ALTER TABLE favorites ADD COLUMN project_id int(11) DEFAULT NULL",
-            "ALTER TABLE product_reviews ADD COLUMN project_id int(11) DEFAULT NULL",
+        # Add missing columns (PostgreSQL syntax)
+        for col_sql in [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id varchar(255) DEFAULT NULL",
+            "ALTER TABLE favorites ADD COLUMN IF NOT EXISTS project_id int DEFAULT NULL",
+            "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS project_id int DEFAULT NULL",
         ]:
-            try: cur.execute(sql); conn.commit()
-            except: pass
+            try: cur.execute(col_sql); conn.commit()
+            except Exception: conn.rollback()
         # Remove duplicate users, keeping the row with the lowest id per (email, project_id)
         try:
             cur.execute("""
-                DELETE u1 FROM users u1
-                INNER JOIN users u2
-                ON u1.email = u2.email AND u1.project_id = u2.project_id AND u1.id > u2.id
+                DELETE FROM users
+                WHERE id IN (
+                    SELECT u1.id FROM users u1
+                    JOIN users u2 ON u1.email = u2.email AND u1.project_id = u2.project_id AND u1.id > u2.id
+                )
             """)
             conn.commit()
-        except: pass
+        except Exception: conn.rollback()
         # Enforce uniqueness so duplicates can never form again
         try:
-            cur.execute("ALTER TABLE users ADD UNIQUE KEY uq_email_project (email, project_id)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_email_project ON users(email, project_id)")
             conn.commit()
-        except: pass
+        except Exception: conn.rollback()
         # Fix reviews with NULL project_id — copy from their product
         try:
             cur.execute("""
-                UPDATE product_reviews pr
-                JOIN products p ON pr.product_id = p.id
-                SET pr.project_id = p.project_id
-                WHERE pr.project_id IS NULL
+                UPDATE product_reviews
+                SET project_id = p.project_id
+                FROM products p
+                WHERE product_reviews.product_id = p.id
+                  AND product_reviews.project_id IS NULL
             """)
             conn.commit()
-        except: pass
+        except Exception: conn.rollback()
 
-run_migrations()
+try:
+    run_migrations()
+except Exception as _e:
+    print(f"[migration] failed (non-fatal): {_e}")
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -196,7 +214,7 @@ def get_client_ip(request: Request) -> str:
     return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
 
 def resolve_api_key(api_key: str, request: Request) -> dict:
-    record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = 1", (api_key,))
+    record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = TRUE", (api_key,))
     if not record:
         raise HTTPException(401, "Invalid or inactive API key")
     pk_header = request.headers.get("x-publishable-key")
@@ -211,7 +229,7 @@ def resolve_api_key(api_key: str, request: Request) -> dict:
     return record
 
 def resolve_api_key_public(api_key: str) -> dict:
-    record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = 1", (api_key,))
+    record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = TRUE", (api_key,))
     if not record:
         raise HTTPException(401, "Invalid or inactive API key")
     return record
@@ -227,7 +245,7 @@ def _get_project_id_from_path(path: str):
     parts = path.strip("/").split("/")
     if not parts or not parts[0]: return None
     try:
-        row = db_one("SELECT id FROM crm_projects WHERE api_key = %s AND is_active = 1", (parts[0],))
+        row = db_one("SELECT id FROM crm_projects WHERE api_key = %s AND is_active = TRUE", (parts[0],))
         return row["id"] if row else None
     except Exception:
         return None
@@ -490,11 +508,11 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
     with db_cursor() as (conn, cursor):
         if pending["type"] == "register":
             cursor.execute(
-                "INSERT INTO users (name, email, password_hash, project_id) VALUES (%s,%s,%s,%s)",
+                "INSERT INTO users (name, email, password_hash, project_id) VALUES (%s,%s,%s,%s) RETURNING id",
                 (sanitize(pending["name"]), email, hash_password(pending["password"]), project_id)
             )
+            user_id = cursor.fetchone()["id"]
             conn.commit()
-            user_id = cursor.lastrowid
         else:
             user_id = get_user_by_email(email, project_id)["id"]
 
@@ -801,8 +819,9 @@ def add_to_cart(item: AddToCart, request: Request,
         cursor.execute("SELECT id FROM carts WHERE user_id = %s AND project_id = %s", (user_id, project_id))
         cart = cursor.fetchone()
         if not cart:
-            cursor.execute("INSERT INTO carts (user_id, project_id) VALUES (%s,%s)", (user_id, project_id))
-            conn.commit(); cart_id = cursor.lastrowid
+            cursor.execute("INSERT INTO carts (user_id, project_id) VALUES (%s,%s) RETURNING id", (user_id, project_id))
+            cart_id = cursor.fetchone()["id"]
+            conn.commit()
         else:
             cart_id = cart["id"]
 
@@ -955,7 +974,7 @@ def add_to_favorites(item: AddToFavorites, request: Request,
                 (user_id, item.product_id, project_id)
             )
             conn.commit()
-    except mysql.connector.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
         pass
     return {"success": True}
 
@@ -1006,7 +1025,7 @@ def add_review(review: AddReview, request: Request,
                 (review.product_id, user_id, review.rating, sanitize(review.comment), project_id)
             )
             conn.commit()
-    except mysql.connector.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
         raise HTTPException(400, "You have already reviewed this product")
     return {"success": True}
 
@@ -1119,9 +1138,9 @@ def track_visit(request: Request, api_key_record: dict = Depends(resolve_api_key
     project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
     ip         = get_client_ip(request)
-    with db_cursor(buffered=True) as (conn, cursor):
+    with db_cursor() as (conn, cursor):
         cursor.execute(
-            "SELECT id FROM site_visits WHERE ip=%s AND project_id=%s AND created_at >= NOW() - INTERVAL 30 SECOND",
+            "SELECT id FROM site_visits WHERE ip=%s AND project_id=%s AND created_at >= NOW() - INTERVAL '30 seconds'",
             (ip, project_id)
         )
         if cursor.fetchone(): return {"success": True, "skipped": True}
@@ -1137,9 +1156,9 @@ def track_product_view(data: TrackProductView, request: Request,
     project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
     ip         = get_client_ip(request)
-    with db_cursor(buffered=True) as (conn, cursor):
+    with db_cursor() as (conn, cursor):
         cursor.execute(
-            "SELECT id FROM product_page_views WHERE ip=%s AND project_id=%s AND DATE(created_at)=CURDATE()",
+            "SELECT id FROM product_page_views WHERE ip=%s AND project_id=%s AND DATE(created_at)=CURRENT_DATE",
             (ip, project_id)
         )
         if cursor.fetchone(): return {"success": True, "skipped": True}
@@ -1237,11 +1256,11 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend):
                 conn.commit()
         if not user:
             cursor.execute(
-                "INSERT INTO users (name, email, password_hash, project_id, google_id) VALUES(%s,%s,'',%s,%s)",
+                "INSERT INTO users (name, email, password_hash, project_id, google_id) VALUES(%s,%s,'',%s,%s) RETURNING id",
                 (sanitize(name), email, project_id, g_id)
             )
+            user_id = cursor.fetchone()["id"]
             conn.commit()
-            user_id = cursor.lastrowid
         else:
             user_id = user["id"]
 

@@ -6,8 +6,11 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
 from contextlib import contextmanager
-from mysql.connector.pooling import MySQLConnectionPool
-import hashlib, secrets, jwt, random, os, io, json, re
+import sys, os
+import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
+from psycopg2.extras import RealDictCursor
+import hashlib, secrets, jwt, random, io, json, re, time
 import urllib.request, urllib.error
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -38,10 +41,11 @@ CRM_FRONTEND_URL = os.getenv("CRM_FRONTEND_URL", "http://localhost:5174")
 CRM_BACKEND_URL  = os.getenv("CRM_BACKEND_URL",  "http://localhost:8001")
 MAGAZ_BACKEND_URL= os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
 DB_CONFIG        = {
-    "host":     os.getenv("DB_HOST",     "localhost"),
-    "user":     os.getenv("DB_USER",     "root"),
-    "password": os.getenv("DB_PASSWORD", ""),
-    "database": os.getenv("DB_NAME",     "crmdb"),
+    "host":     "localhost",
+    "port":     5432,
+    "user":     "postgres",
+    "password": "REDACTED",
+    "dbname":   "crmdb",
 }
 
 SES_API_URL      = os.getenv("SES_API_URL",      "https://ses.tortacrm.com")
@@ -74,13 +78,35 @@ def _s3_client():
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     )
 
-def s3_upload(data: io.BytesIO, key: str, content_type: str = "image/webp") -> str:
+def s3_upload(data: io.BytesIO, key: str, content_type: str = "image/webp",
+              cache_control: str = "max-age=31536000") -> str:
     s3 = _s3_client()
     s3.upload_fileobj(data, AWS_S3_BUCKET, key,
-                      ExtraArgs={"ContentType": content_type, "CacheControl": "max-age=31536000"})
+                      ExtraArgs={"ContentType": content_type, "CacheControl": cache_control})
     if AWS_CLOUDFRONT_URL:
         return f"{AWS_CLOUDFRONT_URL.rstrip('/')}/{key}"
     return f"https://{AWS_S3_BUCKET}.s3.{AWS_S3_REGION}.amazonaws.com/{key}"
+
+def s3_delete(key: str) -> None:
+    try:
+        _s3_client().delete_object(Bucket=AWS_S3_BUCKET, Key=key)
+    except Exception:
+        pass
+
+def s3_key_from_url(url: str) -> str | None:
+    if not url:
+        return None
+    try:
+        from urllib.parse import urlparse
+        path = urlparse(url.split("?")[0]).path.lstrip("/")
+        return path or None
+    except Exception:
+        return None
+
+def s3_delete_url(url: str, prefix: str) -> None:
+    key = s3_key_from_url(url)
+    if key and key.startswith(prefix):
+        s3_delete(key)
 
 app = FastAPI()
 
@@ -111,24 +137,35 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] org slug migration failed: {e}")
 
+    # Add sender_avatar column to crm_email_domains if not exists
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_email_domains ADD COLUMN IF NOT EXISTS sender_avatar VARCHAR(1000) DEFAULT NULL")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] sender_avatar column migration failed: {e}")
+
 # ════════════════════════════════════════════
 # DB POOL
 # ════════════════════════════════════════════
 
-_pool = MySQLConnectionPool(pool_name="crm", pool_size=10, pool_reset_session=True, **DB_CONFIG)
+_pool = ThreadedConnectionPool(1, 10, **DB_CONFIG)
 
 def get_db():
-    return _pool.get_connection()
+    return _pool.getconn()
 
 @contextmanager
-def db_cursor(dictionary=True):
+def db_cursor():
     conn = get_db()
-    cursor = conn.cursor(dictionary=dictionary)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         yield conn, cursor
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
-        conn.close()
+        _pool.putconn(conn)
 
 def db_one(sql: str, params: tuple = ()):
     with db_cursor() as (_, cur):
@@ -334,7 +371,7 @@ def get_current_user(request: Request) -> dict:
         raise HTTPException(401, "Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Invalid token")
-    user = db_one("SELECT id, name, email, role FROM crm_users WHERE id = %s AND is_active = 1", (user_id,))
+    user = db_one("SELECT id, name, email, role FROM crm_users WHERE id = %s AND is_active = TRUE", (user_id,))
     if not user:
         raise HTTPException(401, "User not found")
     return user
@@ -368,7 +405,7 @@ def require_org_owner(user: dict, org_id: int):
         raise HTTPException(403, "Only organization owner can do this")
 
 def require_team_member_or_owner(user: dict, project_id: int):
-    key_row = db_one("SELECT crm_user_id FROM crm_projects WHERE id=%s AND is_active=1", (project_id,))
+    key_row = db_one("SELECT crm_user_id FROM crm_projects WHERE id=%s AND is_active=TRUE", (project_id,))
     if not key_row:
         raise HTTPException(404, "Project not found")
     if key_row["crm_user_id"] == user["id"]:
@@ -388,21 +425,23 @@ def make_slug(name: str) -> str:
     return slug or "org"
 
 def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
-    """Upsert CRM user by Google ID. Returns user_id."""
     user = db_one("SELECT id FROM crm_users WHERE google_id=%s OR (email=%s AND google_id IS NULL)", (g_id, email))
     if user:
         user_id = user["id"]
         with db_cursor() as (conn, cur):
-            cur.execute("UPDATE crm_users SET google_id=%s, last_login_at=NOW() WHERE id=%s", (g_id, user_id))
+            cur.execute(
+                "UPDATE crm_users SET google_id=%s, avatar_url=%s, last_login_at=NOW() WHERE id=%s",
+                (g_id, picture, user_id)
+            )
             conn.commit()
     else:
         with db_cursor() as (conn, cur):
             cur.execute(
-                "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'','owner',%s,%s)",
+                "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'','owner',%s,%s) RETURNING id",
                 (sanitize(name), email, g_id, picture)
             )
+            user_id = cur.fetchone()["id"]
             conn.commit()
-            user_id = cur.lastrowid
             cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES(%s)", (user_id,))
             conn.commit()
     return user_id
@@ -492,11 +531,11 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
     with db_cursor() as (conn, cur):
         if pending["type"] == "register":
             cur.execute(
-                "INSERT INTO crm_users (name, email, password, role) VALUES (%s,%s,%s,'owner')",
+                "INSERT INTO crm_users (name, email, password, role) VALUES (%s,%s,%s,'owner') RETURNING id",
                 (sanitize(pending["name"]), email, hash_pw(pending["password"]))
             )
+            user_id = cur.fetchone()["id"]
             conn.commit()
-            user_id = cur.lastrowid
             cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES (%s)", (user_id,))
             conn.commit()
         else:
@@ -533,7 +572,7 @@ def resend_code_endpoint(request: ResendCodeRequest):
 @app.get("/api/me")
 def get_me(user: dict = Depends(get_current_user)):
     return db_one(
-        "SELECT id, name, email, role, avatar_url FROM crm_users WHERE id = %s AND is_active = 1",
+        "SELECT id, name, email, role, avatar_url FROM crm_users WHERE id = %s AND is_active = TRUE",
         (user["id"],)
     ) or HTTPException(401, "User not found")
 
@@ -628,11 +667,12 @@ def create_org(request: CreateOrgRequest, user: dict = Depends(get_current_user)
 
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO crm_organizations (name, slug, owner_id) VALUES (%s,%s,%s)",
+            "INSERT INTO crm_organizations (name, slug, owner_id) VALUES (%s,%s,%s) RETURNING id",
             (sanitize(name), slug, user["id"])
         )
+        new_id = cur.fetchone()["id"]
         conn.commit()
-        return {"id": cur.lastrowid, "name": name, "slug": slug, "is_owner": True, "projects_count": 0}
+        return {"id": new_id, "name": name, "slug": slug, "is_owner": True, "projects_count": 0}
 
 
 @app.get("/api/orgs/by-slug/{slug}")
@@ -728,22 +768,22 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
 
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO crm_projects (org_id, crm_user_id, name, api_key, publishable_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,%s,%s,1)",
+            "INSERT INTO crm_projects (org_id, crm_user_id, name, api_key, publishable_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,%s,%s,TRUE) RETURNING id",
             (org_id, user["id"], sanitize(name), new_key, new_pk, get_ip(req))
         )
+        new_id = cur.fetchone()["id"]
         conn.commit()
-        new_id = cur.lastrowid
 
-        cur.execute("INSERT INTO crm_roles (project_id, name, is_system) VALUES (%s,'Owner',1)", (new_id,))
+        cur.execute("INSERT INTO crm_roles (project_id, name, is_system) VALUES (%s,'Owner',TRUE) RETURNING id", (new_id,))
+        owner_role_id = cur.fetchone()["id"]
         conn.commit()
-        owner_role_id = cur.lastrowid
 
         cur.execute(
-            "INSERT IGNORE INTO crm_team_members (project_id, crm_user_id, crm_role_id) VALUES (%s,%s,%s)",
+            "INSERT INTO crm_team_members (project_id, crm_user_id, crm_role_id) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
             (new_id, user["id"], owner_role_id)
         )
         cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (new_id, frontend_url))
-        cur.execute("INSERT IGNORE INTO crm_redirect_urls (project_id, url) VALUES (%s,%s)", (new_id, frontend_url))
+        cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s) ON CONFLICT DO NOTHING", (new_id, frontend_url))
         conn.commit()
 
     return {"id": new_id, "name": name, "api_key": new_key, "publishable_key": new_pk, "is_active": True}
@@ -796,7 +836,7 @@ def get_project_overview(
         FROM order_history
         WHERE project_id = %s
           AND status NOT IN ('cancelled','returned')
-          AND created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+          AND created_at >= NOW() - %s * INTERVAL '1 day'
     """, (project_id, days))
 
     # Customers total
@@ -808,7 +848,7 @@ def get_project_overview(
     # Visits in period
     vis = db_one("""
         SELECT COUNT(*) AS cnt FROM site_visits
-        WHERE project_id = %s AND created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+        WHERE project_id = %s AND created_at >= NOW() - %s * INTERVAL '1 day'
     """, (project_id, days))
 
     # Reviews total
@@ -870,13 +910,13 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
     pid = (project_id,)
     with db_cursor() as (conn, cur):
         # ── Magaz: порядок важен (FK: sizes → variations → products) ──
-        cur.execute("DELETE ps FROM product_sizes ps JOIN product_variations v ON ps.variation_id=v.id JOIN products p ON v.product_id=p.id WHERE p.project_id=%s", pid)
-        cur.execute("DELETE pv FROM product_variations pv JOIN products p ON pv.product_id=p.id WHERE p.project_id=%s", pid)
+        cur.execute("DELETE FROM product_sizes WHERE variation_id IN (SELECT v.id FROM product_variations v JOIN products p ON v.product_id=p.id WHERE p.project_id=%s)", pid)
+        cur.execute("DELETE FROM product_variations WHERE product_id IN (SELECT id FROM products WHERE project_id=%s)", pid)
         cur.execute("DELETE FROM product_custom_fields WHERE project_id=%s", pid)
         cur.execute("DELETE FROM product_reviews     WHERE project_id=%s", pid)
         cur.execute("DELETE FROM product_page_views  WHERE project_id=%s", pid)
         cur.execute("DELETE FROM products            WHERE project_id=%s", pid)
-        cur.execute("DELETE ci FROM cart_items ci JOIN carts c ON ci.cart_id=c.id WHERE c.project_id=%s", pid)
+        cur.execute("DELETE FROM cart_items WHERE cart_id IN (SELECT id FROM carts WHERE project_id=%s)", pid)
         cur.execute("DELETE FROM carts          WHERE project_id=%s", pid)
         cur.execute("DELETE FROM favorites      WHERE project_id=%s", pid)
         cur.execute("DELETE FROM order_history  WHERE project_id=%s", pid)
@@ -934,12 +974,13 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
     if not name: raise HTTPException(400, "Title is required")
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO products (project_id,title,description,characteristics,seo_title,seo_description,seo_keywords) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO products (project_id,title,description,characteristics,seo_title,seo_description,seo_keywords) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (project_id, sanitize(name), sanitize(request.description), sanitize(request.characteristics),
              sanitize(request.seo_title), sanitize(request.seo_description), sanitize(request.seo_keywords))
         )
+        new_id = cur.fetchone()["id"]
         conn.commit()
-        return {"id": cur.lastrowid, "title": name}
+        return {"id": new_id, "title": name}
 
 
 @app.get("/api/products/{product_id}/project-context")
@@ -1049,7 +1090,7 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE ps FROM product_sizes ps JOIN product_variations v ON ps.variation_id=v.id WHERE v.product_id=%s", (product_id,))
+        cur.execute("DELETE FROM product_sizes WHERE variation_id IN (SELECT id FROM product_variations WHERE product_id=%s)", (product_id,))
         cur.execute("DELETE FROM product_variations WHERE product_id=%s",              (product_id,))
         cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s",           (product_id,))
         cur.execute("DELETE FROM product_reviews WHERE product_id=%s AND project_id=%s", (product_id, project_id))
@@ -1070,10 +1111,11 @@ def create_variation(product_id: int, request: CreateVariationRequest, project_i
     name = request.variation_name.strip()
     if not name: raise HTTPException(400, "Variation name is required")
     with db_cursor() as (conn, cur):
-        cur.execute("INSERT INTO product_variations (product_id,variation_name,image_url) VALUES(%s,%s,%s)",
+        cur.execute("INSERT INTO product_variations (product_id,variation_name,image_url) VALUES(%s,%s,%s) RETURNING id",
                     (product_id, sanitize(name), request.image_url))
+        new_id = cur.fetchone()["id"]
         conn.commit()
-        return {"id": cur.lastrowid, "variation_name": name, "image_url": request.image_url, "sizes": []}
+        return {"id": new_id, "variation_name": name, "image_url": request.image_url, "sizes": []}
 
 
 @app.put("/api/products/{product_id}/variations/{var_id}")
@@ -1121,11 +1163,12 @@ def create_size(product_id: int, var_id: int, request: CreateSizeRequest, projec
     if not name: raise HTTPException(400, "Size name is required")
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO product_sizes (product_id,variation_id,size_name,price,stock_quantity) VALUES(%s,%s,%s,%s,%s)",
+            "INSERT INTO product_sizes (product_id,variation_id,size_name,price,stock_quantity) VALUES(%s,%s,%s,%s,%s) RETURNING id",
             (product_id, var_id, name, request.price, request.stock_quantity)
         )
+        new_id = cur.fetchone()["id"]
         conn.commit()
-        return {"id": cur.lastrowid, "variation_id": var_id, "size_name": name,
+        return {"id": new_id, "variation_id": var_id, "size_name": name,
                 "price": request.price, "stock_quantity": request.stock_quantity, "sold_quantity": 0}
 
 
@@ -1174,10 +1217,10 @@ def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, proj
     with db_cursor() as (conn, cur):
         if ex:
             cur.execute("UPDATE product_custom_fields SET field_value=%s,field_type=%s,is_global=%s WHERE id=%s",
-                        (request.field_value, request.field_type, int(request.is_global), ex["id"]))
+                        (request.field_value, request.field_type, request.is_global, ex["id"]))
         else:
             cur.execute("INSERT INTO product_custom_fields (project_id,product_id,field_key,field_value,field_type,is_global) VALUES(%s,%s,%s,%s,%s,%s)",
-                        (project_id, product_id, key, request.field_value, request.field_type, int(request.is_global)))
+                        (project_id, product_id, key, request.field_value, request.field_type, request.is_global))
         conn.commit()
     return {"ok": True, "field_key": key, "is_global": request.is_global}
 
@@ -1200,11 +1243,11 @@ def toggle_custom_field_global(product_id: int, field_key: str, project_id: int 
     row = db_one("SELECT id, is_global FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
                  (product_id, project_id, field_key))
     if not row: raise HTTPException(404, "Field not found")
-    new_val = 0 if row["is_global"] else 1
+    new_val = not row["is_global"]
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE product_custom_fields SET is_global=%s WHERE id=%s", (new_val, row["id"]))
         conn.commit()
-    return {"ok": True, "is_global": bool(new_val)}
+    return {"ok": True, "is_global": new_val}
 
 
 # ════════════════════════════════════════════
@@ -1268,9 +1311,13 @@ async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_c
         raise HTTPException(400, "Invalid image file")
 
     if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
-        key = f"avatars/{user['id']}/avatar.webp"
+        # Уникальный ключ с меткой времени — новый URL каждый раз, никакого кеша
+        ts  = int(time.time())
+        key = f"avatars/{user['id']}/avatar_{ts}.webp"
         try:
-            url = s3_upload(out, key)
+            old_url = (db_one("SELECT avatar_url FROM crm_users WHERE id=%s", (user["id"],)) or {}).get("avatar_url") or ""
+            url = s3_upload(out, key, cache_control="no-cache, must-revalidate")
+            s3_delete_url(old_url, f"avatars/{user['id']}/")
         except (BotoCoreError, ClientError) as e:
             raise HTTPException(500, f"S3 upload failed: {e}")
     else:
@@ -1436,15 +1483,16 @@ def get_email_domain(project_id: int = Query(...), user: dict = Depends(get_curr
     except Exception:
         pass
     return {
-        "configured":  True,
-        "domain":      row["domain"],
-        "from_name":   row["from_name"],
-        "from_email":  row["from_email"],
-        "dkim_ok":     bool(row["is_verified"]),
-        "spf_ok":      row["verify_token"] in ("spf_ok", "all_ok"),
-        "dmarc_ok":    row["verify_token"] == "all_ok",
-        "verified_at": row["verified_at"].isoformat() if row["verified_at"] else None,
-        "dns_records": dns_records,
+        "configured":     True,
+        "domain":         row["domain"],
+        "from_name":      row["from_name"],
+        "from_email":     row["from_email"],
+        "sender_avatar":  row.get("sender_avatar"),
+        "dkim_ok":        bool(row["is_verified"]),
+        "spf_ok":         row["verify_token"] in ("spf_ok", "all_ok"),
+        "dmarc_ok":       row["verify_token"] == "all_ok",
+        "verified_at":    row["verified_at"].isoformat() if row["verified_at"] else None,
+        "dns_records":    dns_records,
     }
 
 
@@ -1483,7 +1531,7 @@ def save_email_domain(req: EmailDomainRequest, project_id: int = Query(...), use
             cur.execute("""
                 UPDATE crm_email_domains
                 SET domain=%s, from_name=%s, from_email=%s,
-                    dkim_public=%s, is_verified=0, verify_token='', verified_at=NULL
+                    dkim_public=%s, is_verified=FALSE, verify_token='', verified_at=NULL
                 WHERE project_id=%s
             """, (domain, from_name, from_email, json.dumps(dns_records), project_id))
         else:
@@ -1515,9 +1563,9 @@ def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
             UPDATE crm_email_domains
             SET is_verified=%s,
                 verify_token=%s,
-                verified_at=IF(%s=1 AND verified_at IS NULL, NOW(), verified_at)
+                verified_at=CASE WHEN %s AND verified_at IS NULL THEN NOW() ELSE verified_at END
             WHERE project_id=%s
-        """, (int(dkim_ok), "all_ok" if (spf_ok and dmarc_ok) else ("spf_ok" if spf_ok else None), int(all_ok), project_id))
+        """, (dkim_ok, "all_ok" if (spf_ok and dmarc_ok) else ("spf_ok" if spf_ok else None), all_ok, project_id))
         conn.commit()
 
     return {"dkim_ok": dkim_ok, "spf_ok": spf_ok, "dmarc_ok": dmarc_ok, "all_ok": all_ok}
@@ -1570,12 +1618,12 @@ def save_oauth_settings(req: OAuthSettingsRequest, project_id: int = Query(...),
         if existing:
             cur.execute(
                 "UPDATE crm_oauth_settings SET google_client_id=%s, google_client_secret=%s, google_enabled=%s WHERE project_id=%s",
-                (req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled), project_id)
+                (req.google_client_id or None, req.google_client_secret or None, req.google_enabled, project_id)
             )
         else:
             cur.execute(
                 "INSERT INTO crm_oauth_settings (project_id, google_client_id, google_client_secret, google_enabled) VALUES(%s,%s,%s,%s)",
-                (project_id, req.google_client_id or None, req.google_client_secret or None, int(req.google_enabled))
+                (project_id, req.google_client_id or None, req.google_client_secret or None, req.google_enabled)
             )
         conn.commit()
     return {"ok": True}
@@ -1638,9 +1686,10 @@ def add_redirect_url(req: AddRedirectUrlRequest, project_id: int = Query(...), u
     if db_one("SELECT id FROM crm_redirect_urls WHERE project_id=%s AND url=%s", (project_id, url)):
         raise HTTPException(400, "URL already in the list")
     with db_cursor() as (conn, cur):
-        cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s)", (project_id, url))
+        cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s) RETURNING id", (project_id, url))
+        new_id = cur.fetchone()["id"]
         conn.commit()
-        return {"ok": True, "id": cur.lastrowid, "url": url}
+        return {"ok": True, "id": new_id, "url": url}
 
 
 @app.delete("/api/redirect-urls/{url_id}")

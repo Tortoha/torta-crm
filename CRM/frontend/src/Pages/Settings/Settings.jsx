@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { Camera, Check } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import AvatarCropModal from '../../Elements/AvatarCropModal.jsx';
@@ -34,6 +35,7 @@ function InitialsAvatar({ name, size = 80 }) {
 }
 
 function Settings() {
+  const { updateUser } = useOutletContext() || {};
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -124,7 +126,9 @@ function Settings() {
       });
       const json = await res.json();
       if (!res.ok) return setAvatarError(json.detail || 'Upload failed');
-      setData(prev => ({ ...prev, avatar_url: json.url }));
+      const bustedUrl = json.url + '?v=' + Date.now();
+      setData(prev => ({ ...prev, avatar_url: bustedUrl }));
+      updateUser?.({ avatar_url: bustedUrl });
     } catch { setAvatarError('Network error'); }
     finally { setAvatarUploading(false); }
   };

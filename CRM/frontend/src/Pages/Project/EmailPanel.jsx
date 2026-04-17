@@ -37,9 +37,7 @@ function AuthDnsRow({ type, host, value, status, first, last }) {
   return (
     <div ref={ref} className={cls} {...handlers}>
       <div ref={glossRef} className="auth-dns-gloss" />
-
       <span className="auth-dns-type">{type}</span>
-
       <div className="auth-dns-cell">
         <button className="auth-dns-copy" onClick={e => copy('host', host, e)} type="button">
           {copied === 'host'
@@ -48,7 +46,6 @@ function AuthDnsRow({ type, host, value, status, first, last }) {
         </button>
         <code className="auth-dns-code" title={host}>{host}</code>
       </div>
-
       <div className="auth-dns-cell">
         <button className="auth-dns-copy" onClick={e => copy('value', value, e)} type="button">
           {copied === 'value'
@@ -57,7 +54,6 @@ function AuthDnsRow({ type, host, value, status, first, last }) {
         </button>
         <span className="auth-dns-value" title={value}>{value}</span>
       </div>
-
       <div className={`auth-dns-status auth-dns-status--${status}`}>
         {status === 'ok'      && <><span className="auth-dns-dot auth-dns-dot--ok" /> OK</>}
         {status === 'pending' && <><Warning size={11} weight="fill" /> Pending</>}
@@ -238,7 +234,6 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
 
           {err && <p className="auth-msg auth-msg--err">{err}</p>}
 
-          {/* Actions: Save + Delete */}
           <div className="auth-actions">
             <button className="crm-submit-btn" type="submit" disabled={saving || !canSave}>
               {saving ? 'Saving…' : 'Save'}
@@ -253,13 +248,15 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
           </div>
         </form>
 
-        {/* RIGHT — preview */}
+        {/* RIGHT — email preview */}
         <div className="auth-preview-wrap">
           <div ref={prevRef} className="auth-preview-card" {...prevHandlers}>
             <div ref={prevGlossRef} className="auth-preview-gloss" />
             <div className="auth-preview-inner">
               <div className="auth-preview-header">
-                <div className="auth-preview-avatar">{initials}</div>
+                <div className="auth-preview-avatar-wrap">
+                  <div className="auth-preview-avatar--initials">{initials}</div>
+                </div>
                 <div className="auth-preview-meta">
                   <div className="auth-preview-from">
                     <span className="auth-preview-name">{fromName || 'Your Name'}</span>
@@ -282,10 +279,9 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
         </div>
       </div>
 
-      {/* ── DNS section — three separate blocks ── */}
+      {/* ── DNS section ── */}
       {data.configured && (
         <>
-          {/* Block 1 — Header */}
           <div className="auth-dns-header-block">
             <div>
               <h3 className="auth-dns-card-title">DNS Records</h3>
@@ -305,14 +301,12 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
             </div>
           </div>
 
-          {/* Block 2 — Column headers */}
           <div className="auth-dns-thead-block">
             <div className="auth-dns-thead">
               <span>Type</span><span>Host</span><span>Value</span><span>Status</span>
             </div>
           </div>
 
-          {/* Block 3 — Rows */}
           <div className="auth-dns-rows-block">
             <div className="auth-dns-rows">
               {visibleRecs.map((rec, i) => (
@@ -323,7 +317,6 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
                   last={i === visibleRecs.length - 1} />
               ))}
             </div>
-
             {records.length > 3 && (
               <button className="auth-dns-show-all" type="button"
                 onClick={() => setShowAll(v => !v)}>
@@ -334,7 +327,6 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
         </>
       )}
 
-      {/* ── Bottom toast ── */}
       {toast && createPortal(
         <div className="auth-toast">{toast}</div>,
         document.body,
