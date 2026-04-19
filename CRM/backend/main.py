@@ -13,7 +13,7 @@ from psycopg2.extras import RealDictCursor
 import hashlib, secrets, jwt, random, io, json, re, time
 import urllib.request, urllib.error
 from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 try:
     from PIL import Image as PilImage
@@ -41,11 +41,11 @@ CRM_FRONTEND_URL = os.getenv("CRM_FRONTEND_URL", "http://localhost:5174")
 CRM_BACKEND_URL  = os.getenv("CRM_BACKEND_URL",  "http://localhost:8001")
 MAGAZ_BACKEND_URL= os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
 DB_CONFIG        = {
-    "host":     "localhost",
-    "port":     5432,
-    "user":     "postgres",
-    "password": "REDACTED",
-    "dbname":   "crmdb",
+    "host":     os.getenv("DB_HOST",     "localhost"),
+    "port":     int(os.getenv("DB_PORT", "5432")),
+    "user":     os.getenv("DB_USER",     "postgres"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "dbname":   os.getenv("DB_NAME",     "crmdb"),
 }
 
 SES_API_URL      = os.getenv("SES_API_URL",      "https://ses.tortacrm.com")

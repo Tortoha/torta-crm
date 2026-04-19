@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
 from contextlib import contextmanager
-import sys
+import sys, os
 import psycopg2
 import psycopg2.errors
 from psycopg2.pool import ThreadedConnectionPool
@@ -12,19 +12,21 @@ from psycopg2.extras import RealDictCursor
 import hashlib, secrets, jwt, random, re as _re, traceback, json, urllib.request, urllib.error
 from hashids import Hashids
 from starlette.middleware.base import BaseHTTPMiddleware
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 
 # ============================================
 # НАСТРОЙКИ
 # ============================================
 
-SECRET_KEY            = "d2a9c8f0e5b741a39f6c8d2e1b5a9c3f8e7d6c5b4a3928173645e5f6a7b8c9d0"
+SECRET_KEY            = os.getenv("SECRET_KEY",        "")
 JWT_ALGORITHM         = "HS256"
 JWT_HOURS             = 24 * 7
-MAGAZ_BACKEND_URL     = "http://localhost:8000"
-SES_API_URL           = "https://ses.tortacrm.com"
-SES_INTERNAL_KEY      = "821ba4c3ac76f3206f20d338c642bccfb2782e8c986627e81a1aff8d23a13a5d"
-EMAIL_FROM            = "support@tortacrm.com"
+MAGAZ_BACKEND_URL     = os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
+SES_API_URL           = os.getenv("SES_API_URL",       "https://ses.tortacrm.com")
+SES_INTERNAL_KEY      = os.getenv("SES_INTERNAL_KEY",  "")
+EMAIL_FROM            = os.getenv("EMAIL_FROM",        "support@tortacrm.com")
 MAX_FAILED_ATTEMPTS   = 5
 BLOCK_MINUTES         = 10
 CODE_TTL_MINUTES      = 10
@@ -32,11 +34,11 @@ RESEND_COOLDOWN_SECONDS = 60
 RESET_TTL_MINUTES     = 30
 
 DB_CONFIG = {
-    "host":     "localhost",
-    "port":     5432,
-    "user":     "postgres",
-    "password": "REDACTED",
-    "dbname":   "crmdb",
+    "host":     os.getenv("DB_HOST",     "localhost"),
+    "port":     int(os.getenv("DB_PORT", "5432")),
+    "user":     os.getenv("DB_USER",     "postgres"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "dbname":   os.getenv("DB_NAME",     "crmdb"),
 }
 
 hashids = Hashids(salt="qpzmrld10vsljklfgdnsdsafjkhfl526742228666777mzpqnxowhgf", min_length=6)
@@ -49,7 +51,6 @@ def get_db():
 
 @contextmanager
 def db_cursor():
-    """Context manager: автоматически закрывает cursor и возвращает соединение в пул."""
     conn   = get_db()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
