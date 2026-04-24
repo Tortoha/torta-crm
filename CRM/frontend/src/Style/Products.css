@@ -58,12 +58,11 @@
 .pcard-inner {
   display: flex;
   align-items: stretch;
-  min-height: 132px;
 }
 
 .pcard-img-wrap {
   flex-shrink: 0;
-  width: 96px;
+  width: 70px;
   aspect-ratio: 3 / 4;
   margin: 4px 0 4px 4px;
   border-radius: 12px;
@@ -88,7 +87,7 @@
 .pcard-body {
   flex: 1;
   min-width: 0;
-  padding: 10px 32px 10px 8px;
+  padding: 16px 16px 16px 4px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -96,7 +95,7 @@
 }
 
 .pcard-title {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;

@@ -1,11 +1,12 @@
-from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File, Query
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
 from contextlib import contextmanager
+import asyncio
 import sys, os
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
@@ -144,6 +145,53 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] sender_avatar column migration failed: {e}")
+
+    # Chat with Customers tables
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_chat_integrations (
+                    id           SERIAL PRIMARY KEY,
+                    project_id   INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    channel      VARCHAR(32) NOT NULL,
+                    config       JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+                    bot_username VARCHAR(255) DEFAULT NULL,
+                    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(project_id, channel)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_chat_conversations (
+                    id               SERIAL PRIMARY KEY,
+                    project_id       INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    channel          VARCHAR(32) NOT NULL,
+                    external_chat_id VARCHAR(128) NOT NULL,
+                    contact_uid      VARCHAR(32) NOT NULL,
+                    is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+                    unread_count     INTEGER NOT NULL DEFAULT 0,
+                    last_message_at  TIMESTAMP DEFAULT NULL,
+                    last_message_preview TEXT DEFAULT '',
+                    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(project_id, channel, external_chat_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_chat_messages (
+                    id               SERIAL PRIMARY KEY,
+                    conversation_id  INTEGER NOT NULL REFERENCES crm_chat_conversations(id) ON DELETE CASCADE,
+                    direction        VARCHAR(8) NOT NULL,
+                    text             TEXT NOT NULL DEFAULT '',
+                    sender_user_id   INTEGER DEFAULT NULL REFERENCES crm_users(id) ON DELETE SET NULL,
+                    external_msg_id  VARCHAR(128) DEFAULT NULL,
+                    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_conv_project ON crm_chat_conversations(project_id, is_active, last_message_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON crm_chat_messages(conversation_id, created_at)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] chat tables migration failed: {e}")
 
 # ════════════════════════════════════════════
 # DB POOL
@@ -322,6 +370,14 @@ class UrlConfigRequest(BaseModel):
 
 class AddRedirectUrlRequest(BaseModel):
     url: str
+
+class ChatIntegrationRequest(BaseModel):
+    channel: str
+    bot_token: str = ""
+    is_active: bool = True
+
+class ChatSendRequest(BaseModel):
+    text: str
 
 # ════════════════════════════════════════════
 # ХЕЛПЕРЫ
@@ -1701,3 +1757,629 @@ def delete_redirect_url(url_id: int, project_id: int = Query(...), user: dict = 
         cur.execute("DELETE FROM crm_redirect_urls WHERE id=%s", (url_id,))
         conn.commit()
     return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# ЗАКАЗЫ
+# ════════════════════════════════════════════
+
+ORDER_STATUSES = ["new", "confirmed", "shipped", "delivered", "cancelled", "refunded"]
+
+class UpdateOrderStatus(BaseModel):
+    status: str
+
+@app.get("/api/orders")
+def get_orders(project_id: int = Query(...),
+               status: Optional[str] = Query(None),
+               user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    where = "WHERE oh.project_id=%s"
+    params: list = [project_id]
+    if status and status in ORDER_STATUSES:
+        where += " AND oh.status=%s"
+        params.append(status)
+
+    orders = db_all(
+        f"""SELECT oh.id, oh.total_amount, oh.status, oh.delivery_method,
+                   oh.recipient_name, oh.phone, oh.address, oh.comment,
+                   oh.payment_method, oh.created_at, oh.updated_at,
+                   u.name AS customer_name, u.email AS customer_email,
+                   (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id=oh.id) AS items_count
+            FROM order_history oh
+            LEFT JOIN users u ON oh.user_id=u.id
+            {where}
+            ORDER BY oh.created_at DESC
+            LIMIT 200""",
+        tuple(params)
+    )
+    return [
+        {
+            "id":              o["id"],
+            "total_amount":    o["total_amount"],
+            "status":          o["status"],
+            "delivery_method": o["delivery_method"],
+            "recipient_name":  o["recipient_name"],
+            "phone":           o["phone"],
+            "address":         o["address"],
+            "comment":         o["comment"],
+            "payment_method":  o["payment_method"],
+            "items_count":     o["items_count"],
+            "customer_name":   o["customer_name"],
+            "customer_email":  o["customer_email"],
+            "created_at":      o["created_at"].isoformat() if o["created_at"] else None,
+            "updated_at":      o["updated_at"].isoformat() if o["updated_at"] else None,
+        }
+        for o in orders
+    ]
+
+
+@app.get("/api/orders/stats")
+def get_orders_stats(project_id: int = Query(...),
+                     user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+
+    # One query for counters + revenue
+    summary = db_one(
+        """SELECT
+             COUNT(*) FILTER (WHERE status = 'new')              AS new_count,
+             COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)  AS today_orders,
+             COALESCE(SUM(total_amount) FILTER (WHERE created_at >= CURRENT_DATE), 0) AS today_revenue
+           FROM order_history
+           WHERE project_id = %s""",
+        (project_id,)
+    )
+    recent = db_all(
+        """SELECT oh.id, oh.total_amount, oh.status, oh.recipient_name, oh.created_at,
+                  u.name AS customer_name
+           FROM order_history oh
+           LEFT JOIN users u ON oh.user_id=u.id
+           WHERE oh.project_id=%s
+           ORDER BY oh.created_at DESC LIMIT 5""",
+        (project_id,)
+    )
+    return {
+        "new_count":     int(summary["new_count"])     if summary else 0,
+        "today_orders":  int(summary["today_orders"])  if summary else 0,
+        "today_revenue": float(summary["today_revenue"]) if summary else 0,
+        "recent":        [
+            {
+                "id":            r["id"],
+                "total_amount":  r["total_amount"],
+                "status":        r["status"],
+                "recipient_name": r["recipient_name"],
+                "customer_name": r["customer_name"],
+                "created_at":    r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in recent
+        ],
+    }
+
+
+@app.get("/api/orders/stream")
+async def stream_orders(project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    """SSE: 3-second poll. Fires when new_count OR max order id changes.
+    Tracks max id so a new order is always detected even if new_count stays equal."""
+    require_team_member_or_owner(user, project_id)
+
+    async def generator():
+        last_count   = -1
+        last_max_id  = -1
+        try:
+            while True:
+                row = db_one(
+                    """SELECT COUNT(*) FILTER (WHERE status='new') AS new_count,
+                              COALESCE(MAX(id), 0)                  AS max_id
+                       FROM order_history WHERE project_id=%s""",
+                    (project_id,)
+                )
+                count  = int(row["new_count"]) if row else 0
+                max_id = int(row["max_id"])     if row else 0
+                if count != last_count or max_id != last_max_id:
+                    last_count  = count
+                    last_max_id = max_id
+                    yield f"data: {json.dumps({'new_count': count, 'last_id': max_id})}\n\n"
+                await asyncio.sleep(3)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/orders/{order_id}")
+def get_order(order_id: int, project_id: int = Query(...),
+              user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    o = db_one(
+        """SELECT oh.*, u.name AS customer_name, u.email AS customer_email
+           FROM order_history oh
+           LEFT JOIN users u ON oh.user_id=u.id
+           WHERE oh.id=%s AND oh.project_id=%s""",
+        (order_id, project_id)
+    )
+    if not o:
+        raise HTTPException(404, "Order not found")
+
+    items = db_all(
+        """SELECT oi.quantity, oi.price,
+                  p.title, pv.variation_name, pv.image_url, ps.size_name
+           FROM order_items oi
+           JOIN products p ON oi.product_id=p.id
+           JOIN product_variations pv ON oi.variation_id=pv.id
+           JOIN product_sizes ps ON oi.size_id=ps.id
+           WHERE oi.order_id=%s""",
+        (order_id,)
+    )
+    return {
+        **{k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in dict(o).items()},
+        "items": [
+            {
+                "title":          it["title"],
+                "variation_name": it["variation_name"],
+                "size_name":      it["size_name"],
+                "image_url":      it["image_url"],
+                "quantity":       it["quantity"],
+                "price":          float(it["price"]),
+            }
+            for it in items
+        ],
+    }
+
+
+@app.patch("/api/orders/{order_id}")
+def update_order_status(order_id: int, body: UpdateOrderStatus,
+                        project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if body.status not in ORDER_STATUSES:
+        raise HTTPException(400, f"Invalid status. Allowed: {ORDER_STATUSES}")
+    o = db_one("SELECT id, status FROM order_history WHERE id=%s AND project_id=%s",
+               (order_id, project_id))
+    if not o:
+        raise HTTPException(404, "Order not found")
+
+    extra_sql = ""
+    if body.status == "delivered":
+        extra_sql = ", delivered_at = CURRENT_TIMESTAMP"
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            f"UPDATE order_history SET status=%s, updated_at=CURRENT_TIMESTAMP{extra_sql} "
+            "WHERE id=%s AND project_id=%s",
+            (body.status, order_id, project_id)
+        )
+        conn.commit()
+
+    return {"ok": True, "status": body.status}
+
+
+# ════════════════════════════════════════════
+# CHAT WITH CUSTOMERS
+# ════════════════════════════════════════════
+
+CHAT_CHANNELS = {"telegram", "whatsapp", "instagram"}
+
+def make_contact_uid(channel: str, external_chat_id: str, project_id: int) -> str:
+    """Stable, anonymous, project-scoped 10-hex public id (e.g. u_a8f3d2b14c)."""
+    raw = f"{project_id}|{channel}|{external_chat_id}".encode()
+    return "u_" + hashlib.sha256(raw).hexdigest()[:10]
+
+
+class ChatHub:
+    """Per-project WebSocket subscriber registry. Broadcasts chat events."""
+    def __init__(self):
+        self._subs: dict[int, set[WebSocket]] = {}
+        self._lock = asyncio.Lock()
+
+    async def connect(self, project_id: int, ws: WebSocket):
+        await ws.accept()
+        async with self._lock:
+            self._subs.setdefault(project_id, set()).add(ws)
+
+    async def disconnect(self, project_id: int, ws: WebSocket):
+        async with self._lock:
+            subs = self._subs.get(project_id)
+            if subs:
+                subs.discard(ws)
+                if not subs:
+                    self._subs.pop(project_id, None)
+
+    async def broadcast(self, project_id: int, event: dict):
+        subs = list(self._subs.get(project_id, ()))
+        payload = json.dumps(event)
+        dead = []
+        for ws in subs:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        if dead:
+            async with self._lock:
+                cur = self._subs.get(project_id)
+                if cur:
+                    for w in dead:
+                        cur.discard(w)
+
+
+chat_hub = ChatHub()
+
+
+def _user_from_token(token: str) -> dict | None:
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "crm":
+            return None
+        user_id = int(payload["sub"])
+    except Exception:
+        return None
+    return db_one("SELECT id, name, email, role FROM crm_users WHERE id = %s AND is_active = TRUE", (user_id,))
+
+
+def _telegram_call(token: str, method: str, payload: dict) -> dict:
+    """Synchronous Telegram Bot API call."""
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read())
+        except Exception:
+            detail = {"description": str(e)}
+        raise HTTPException(e.code, detail.get("description", "Telegram error"))
+    except Exception as e:
+        raise HTTPException(503, f"Telegram unreachable: {e}")
+
+
+def _serialize_conv(row: dict) -> dict:
+    return {
+        "id":               row["id"],
+        "channel":          row["channel"],
+        "contact_uid":      row["contact_uid"],
+        "external_chat_id": row["external_chat_id"],
+        "is_active":        row["is_active"],
+        "unread_count":     row["unread_count"],
+        "last_message_at":  row["last_message_at"].isoformat() if row.get("last_message_at") else None,
+        "last_message_preview": row.get("last_message_preview", ""),
+        "created_at":       row["created_at"].isoformat() if row.get("created_at") else None,
+    }
+
+
+def _serialize_msg(row: dict) -> dict:
+    return {
+        "id":              row["id"],
+        "conversation_id": row["conversation_id"],
+        "direction":       row["direction"],
+        "text":            row["text"],
+        "sender_user_id":  row.get("sender_user_id"),
+        "created_at":      row["created_at"].isoformat() if row.get("created_at") else None,
+    }
+
+
+# ── Integrations ──────────────────────────────────────────────────────────────
+
+@app.get("/api/chat/integrations")
+def list_chat_integrations(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT id, channel, is_active, bot_username, created_at FROM crm_chat_integrations WHERE project_id=%s",
+        (project_id,)
+    )
+    return {
+        "integrations": [{
+            "id":           r["id"],
+            "channel":      r["channel"],
+            "is_active":    r["is_active"],
+            "bot_username": r["bot_username"],
+            "created_at":   r["created_at"].isoformat() if r["created_at"] else None,
+        } for r in rows]
+    }
+
+
+@app.post("/api/chat/integrations")
+def save_chat_integration(req: ChatIntegrationRequest,
+                          project_id: int = Query(...),
+                          user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    channel = req.channel.lower().strip()
+    if channel not in CHAT_CHANNELS:
+        raise HTTPException(400, "Unsupported channel")
+
+    bot_username = None
+    config = {}
+
+    if channel == "telegram":
+        token = req.bot_token.strip()
+        if not token or ":" not in token:
+            raise HTTPException(400, "Invalid bot token")
+        info = _telegram_call(token, "getMe", {})
+        if not info.get("ok"):
+            raise HTTPException(400, "Telegram rejected the token")
+        bot_username = info["result"].get("username")
+        config = {"bot_token": token}
+        webhook_url = f"{CRM_BACKEND_URL}/api/chat/webhook/telegram/{project_id}"
+        try:
+            _telegram_call(token, "setWebhook", {
+                "url":             webhook_url,
+                "allowed_updates": ["message"],
+                "drop_pending_updates": True,
+            })
+        except HTTPException as e:
+            print(f"[chat] setWebhook failed (non-fatal): {e.detail}")
+
+    with db_cursor() as (conn, cur):
+        cur.execute("""
+            INSERT INTO crm_chat_integrations (project_id, channel, config, is_active, bot_username)
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (project_id, channel) DO UPDATE SET
+                config=EXCLUDED.config, is_active=EXCLUDED.is_active, bot_username=EXCLUDED.bot_username
+        """, (project_id, channel, json.dumps(config), req.is_active, bot_username))
+        conn.commit()
+    return {"ok": True, "bot_username": bot_username}
+
+
+@app.delete("/api/chat/integrations/{channel}")
+def delete_chat_integration(channel: str,
+                            project_id: int = Query(...),
+                            user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    channel = channel.lower().strip()
+    row = db_one("SELECT config FROM crm_chat_integrations WHERE project_id=%s AND channel=%s",
+                 (project_id, channel))
+    if row and channel == "telegram":
+        token = (row["config"] or {}).get("bot_token")
+        if token:
+            try:
+                _telegram_call(token, "deleteWebhook", {})
+            except Exception:
+                pass
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_chat_integrations WHERE project_id=%s AND channel=%s",
+                    (project_id, channel))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── Conversations ─────────────────────────────────────────────────────────────
+
+@app.get("/api/chat/conversations")
+def list_conversations(project_id: int = Query(...),
+                       user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        """SELECT id, channel, external_chat_id, contact_uid, is_active,
+                  unread_count, last_message_at, last_message_preview, created_at
+           FROM crm_chat_conversations
+           WHERE project_id=%s
+           ORDER BY (last_message_at IS NULL), last_message_at DESC, id DESC""",
+        (project_id,)
+    )
+    return {"conversations": [_serialize_conv(r) for r in rows]}
+
+
+@app.post("/api/chat/conversations/{conv_id}/close")
+async def close_conversation(conv_id: int,
+                             project_id: int = Query(...),
+                             user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_chat_conversations SET is_active=FALSE WHERE id=%s AND project_id=%s",
+                    (conv_id, project_id))
+        conn.commit()
+    await chat_hub.broadcast(project_id, {"type": "conversation.closed", "conversation_id": conv_id})
+    return {"ok": True}
+
+
+@app.post("/api/chat/conversations/{conv_id}/reopen")
+async def reopen_conversation(conv_id: int,
+                              project_id: int = Query(...),
+                              user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_chat_conversations SET is_active=TRUE WHERE id=%s AND project_id=%s",
+                    (conv_id, project_id))
+        conn.commit()
+    await chat_hub.broadcast(project_id, {"type": "conversation.reopened", "conversation_id": conv_id})
+    return {"ok": True}
+
+
+@app.post("/api/chat/conversations/{conv_id}/read")
+def mark_conversation_read(conv_id: int,
+                           project_id: int = Query(...),
+                           user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_chat_conversations SET unread_count=0 WHERE id=%s AND project_id=%s",
+                    (conv_id, project_id))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── Messages ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/chat/conversations/{conv_id}/messages")
+def list_messages(conv_id: int,
+                  project_id: int = Query(...),
+                  user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    conv = db_one("SELECT id FROM crm_chat_conversations WHERE id=%s AND project_id=%s",
+                  (conv_id, project_id))
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    rows = db_all(
+        """SELECT id, conversation_id, direction, text, sender_user_id, created_at
+           FROM crm_chat_messages
+           WHERE conversation_id=%s
+           ORDER BY id ASC""",
+        (conv_id,)
+    )
+    return {"messages": [_serialize_msg(r) for r in rows]}
+
+
+@app.post("/api/chat/conversations/{conv_id}/messages")
+async def send_message(conv_id: int,
+                       body: ChatSendRequest,
+                       project_id: int = Query(...),
+                       user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Empty message")
+    if len(text) > 4000:
+        raise HTTPException(400, "Message too long")
+
+    conv = db_one(
+        """SELECT id, channel, external_chat_id, is_active
+           FROM crm_chat_conversations WHERE id=%s AND project_id=%s""",
+        (conv_id, project_id)
+    )
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    if not conv["is_active"]:
+        raise HTTPException(400, "Conversation is closed")
+
+    integ = db_one(
+        "SELECT config FROM crm_chat_integrations WHERE project_id=%s AND channel=%s AND is_active=TRUE",
+        (project_id, conv["channel"])
+    )
+    if not integ:
+        raise HTTPException(400, "Channel not configured")
+
+    external_msg_id = None
+    if conv["channel"] == "telegram":
+        token = (integ["config"] or {}).get("bot_token")
+        if not token:
+            raise HTTPException(400, "Telegram token missing")
+        result = _telegram_call(token, "sendMessage", {
+            "chat_id": conv["external_chat_id"],
+            "text":    text,
+        })
+        if result.get("ok") and result.get("result"):
+            external_msg_id = str(result["result"].get("message_id", ""))
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO crm_chat_messages (conversation_id, direction, text, sender_user_id, external_msg_id)
+               VALUES (%s, 'out', %s, %s, %s)
+               RETURNING id, conversation_id, direction, text, sender_user_id, created_at""",
+            (conv_id, text, user["id"], external_msg_id)
+        )
+        msg = cur.fetchone()
+        cur.execute(
+            """UPDATE crm_chat_conversations
+               SET last_message_at=CURRENT_TIMESTAMP, last_message_preview=%s
+               WHERE id=%s""",
+            (text[:200], conv_id)
+        )
+        conn.commit()
+
+    payload = _serialize_msg(msg)
+    await chat_hub.broadcast(project_id, {
+        "type":            "message.created",
+        "conversation_id": conv_id,
+        "message":         payload,
+    })
+    return {"ok": True, "message": payload}
+
+
+# ── Telegram inbound webhook ──────────────────────────────────────────────────
+
+@app.post("/api/chat/webhook/telegram/{project_id}")
+async def telegram_webhook(project_id: int, request: Request):
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": True}
+
+    msg = update.get("message") or update.get("edited_message")
+    if not msg:
+        return {"ok": True}
+
+    chat = msg.get("chat") or {}
+    external_chat_id = str(chat.get("id", ""))
+    text = (msg.get("text") or msg.get("caption") or "").strip()
+    if not external_chat_id or not text:
+        return {"ok": True}
+
+    integ = db_one(
+        "SELECT id FROM crm_chat_integrations WHERE project_id=%s AND channel='telegram' AND is_active=TRUE",
+        (project_id,)
+    )
+    if not integ:
+        return {"ok": True}
+
+    contact_uid = make_contact_uid("telegram", external_chat_id, project_id)
+    preview = sanitize(text[:200])
+    safe_text = sanitize(text[:4000])
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO crm_chat_conversations
+                   (project_id, channel, external_chat_id, contact_uid,
+                    is_active, unread_count, last_message_at, last_message_preview)
+               VALUES (%s, 'telegram', %s, %s, TRUE, 1, CURRENT_TIMESTAMP, %s)
+               ON CONFLICT (project_id, channel, external_chat_id) DO UPDATE SET
+                   is_active = TRUE,
+                   unread_count = crm_chat_conversations.unread_count + 1,
+                   last_message_at = CURRENT_TIMESTAMP,
+                   last_message_preview = EXCLUDED.last_message_preview
+               RETURNING id, channel, external_chat_id, contact_uid, is_active,
+                         unread_count, last_message_at, last_message_preview, created_at""",
+            (project_id, external_chat_id, contact_uid, preview)
+        )
+        conv = cur.fetchone()
+        cur.execute(
+            """INSERT INTO crm_chat_messages (conversation_id, direction, text, external_msg_id)
+               VALUES (%s, 'in', %s, %s)
+               RETURNING id, conversation_id, direction, text, sender_user_id, created_at""",
+            (conv["id"], safe_text, str(msg.get("message_id", "")))
+        )
+        message = cur.fetchone()
+        conn.commit()
+
+    await chat_hub.broadcast(project_id, {
+        "type":         "message.created",
+        "conversation": _serialize_conv(conv),
+        "message":      _serialize_msg(message),
+    })
+    return {"ok": True}
+
+
+# ── WebSocket ─────────────────────────────────────────────────────────────────
+
+@app.websocket("/api/chat/ws")
+async def chat_ws(ws: WebSocket, project_id: int):
+    token = ws.cookies.get("crm_token")
+    user = _user_from_token(token)
+    if not user:
+        await ws.close(code=4401)
+        return
+    proj = db_one("SELECT crm_user_id FROM crm_projects WHERE id=%s AND is_active=TRUE", (project_id,))
+    if not proj:
+        await ws.close(code=4404)
+        return
+    if proj["crm_user_id"] != user["id"]:
+        member = db_one("SELECT id FROM crm_team_members WHERE project_id=%s AND crm_user_id=%s",
+                        (project_id, user["id"]))
+        if not member:
+            await ws.close(code=4403)
+            return
+
+    await chat_hub.connect(project_id, ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await chat_hub.disconnect(project_id, ws)

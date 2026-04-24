@@ -1,0 +1,132 @@
+@import url("https://fonts.googleapis.com/css2?family=Parkinsans:wght@400;500;600;700&display=swap");
+
+* { box-sizing: border-box; }
+
+.success-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  font-family: "Parkinsans", sans-serif;
+  background: #f8f8f8;
+}
+
+.success-card {
+  background: #fff;
+  border-radius: 32px;
+  padding: 56px 48px;
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 8px 24px 64px rgba(0, 6, 74, 0.12);
+  animation: success-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes success-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Check icon ──────────────────────────────────────────────── */
+
+.success-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: #000;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 28px;
+  animation: success-icon-in 0.5s 0.1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes success-icon-in {
+  from { transform: scale(0.5); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+/* ── Text ────────────────────────────────────────────────────── */
+
+.success-title {
+  font-size: 36px;
+  font-weight: 700;
+  margin: 0 0 10px;
+  color: #000;
+}
+
+.success-order-num {
+  font-size: 16px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.4);
+  margin: 0 0 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.success-desc {
+  font-size: 16px;
+  color: rgba(0, 0, 0, 0.55);
+  line-height: 1.6;
+  margin: 0 0 36px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+
+.success-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.success-btn {
+  padding: 14px 28px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: "Parkinsans", sans-serif;
+  text-decoration: none;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+}
+
+.success-btn--primary {
+  background: #000;
+  color: #fff;
+}
+
+.success-btn--primary:hover {
+  background: #0071e3;
+  box-shadow: 0 8px 24px rgba(0, 113, 227, 0.4);
+  transform: translateY(-1px);
+}
+
+.success-btn--secondary {
+  background: #f3f3f3;
+  color: #000;
+}
+
+.success-btn--secondary:hover {
+  background: #e5e5e5;
+}
+
+@media (max-width: 480px) {
+  .success-card {
+    padding: 40px 24px;
+    border-radius: 24px;
+  }
+
+  .success-title {
+    font-size: 28px;
+  }
+
+  .success-btn {
+    padding: 12px 22px;
+    font-size: 15px;
+  }
+}

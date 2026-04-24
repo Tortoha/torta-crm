@@ -1,0 +1,405 @@
+@import url("https://fonts.googleapis.com/css2?family=Parkinsans:wght@400;500;600;700&display=swap");
+
+* { box-sizing: border-box; }
+
+/* ── Page layout ─────────────────────────────────────────────── */
+
+.checkout-page {
+  max-width: 1264px;
+  margin: 164px auto 80px;
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 24px;
+  font-family: "Parkinsans", sans-serif;
+  align-items: start;
+}
+
+.checkout-title {
+  font-size: 48px;
+  font-weight: 600;
+  margin: 0 0 32px 0;
+}
+
+/* ── Form sections ───────────────────────────────────────────── */
+
+.checkout-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.checkout-section {
+  background: #fff;
+  border-radius: 24px;
+  padding: 24px;
+  margin-bottom: 16px;
+  box-shadow: 8px 16px 48px rgba(0, 6, 74, 0.08);
+}
+
+.checkout-section-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 20px 0;
+  color: #000;
+}
+
+/* ── Fields ──────────────────────────────────────────────────── */
+
+.checkout-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.checkout-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkout-field--mt {
+  margin-top: 16px;
+}
+
+.checkout-field label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #000;
+}
+
+.req {
+  color: #ef4444;
+  margin-left: 2px;
+}
+
+.optional {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.4);
+  margin-left: 6px;
+}
+
+.checkout-input {
+  width: 100%;
+  padding: 14px 18px;
+  border: 1.5px solid rgba(0, 0, 0, 0.1);
+  border-radius: 999px;
+  font-size: 15px;
+  font-family: "Parkinsans", sans-serif;
+  font-weight: 400;
+  color: #000;
+  background: #fafafa;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.checkout-input:focus {
+  border-color: #0071e3;
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12);
+  background: #fff;
+}
+
+.checkout-input--error {
+  border-color: #ef4444 !important;
+}
+
+.checkout-textarea {
+  border-radius: 16px;
+  resize: none;
+  line-height: 1.5;
+}
+
+/* ── Delivery / Payment toggle ───────────────────────────────── */
+
+.checkout-toggle {
+  display: inline-flex;
+  background: #f3f3f3;
+  border-radius: 999px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.checkout-toggle-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: "Parkinsans", sans-serif;
+  color: rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  transition: background 0.22s ease, color 0.22s ease, box-shadow 0.22s ease;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.checkout-toggle-btn svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+.checkout-toggle-btn--active {
+  background: #fff;
+  color: #000;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* ── Payment note ────────────────────────────────────────────── */
+
+.checkout-note {
+  margin: 16px 0 0;
+  padding: 12px 16px;
+  background: rgba(0, 113, 227, 0.06);
+  border-radius: 12px;
+  font-size: 13px;
+  color: #0071e3;
+  line-height: 1.5;
+}
+
+/* ── Promo ───────────────────────────────────────────────────── */
+
+.checkout-promo-row {
+  display: flex;
+  gap: 10px;
+}
+
+.checkout-promo-input {
+  flex: 1;
+  letter-spacing: 0.04em;
+}
+
+.checkout-promo-btn {
+  padding: 0 22px;
+  height: 50px;
+  border: none;
+  border-radius: 999px;
+  background: #000;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: "Parkinsans", sans-serif;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
+.checkout-promo-btn:hover { background: #0071e3; }
+.checkout-promo-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.checkout-promo-error {
+  font-size: 13px;
+  color: #ef4444;
+  margin: 4px 0 0;
+}
+
+.checkout-promo-ok {
+  font-size: 13px;
+  color: #0071e3;
+  font-weight: 500;
+  margin: 4px 0 0;
+}
+
+/* ── Error ───────────────────────────────────────────────────── */
+
+.checkout-error {
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  color: #ef4444;
+  margin-bottom: 8px;
+}
+
+/* ── Actions ─────────────────────────────────────────────────── */
+
+.checkout-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.checkout-back-btn {
+  font-size: 15px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.5);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.checkout-back-btn:hover { color: #000; }
+
+.checkout-submit-btn {
+  padding: 16px 40px;
+  background: #000;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  font-size: 17px;
+  font-weight: 600;
+  font-family: "Parkinsans", sans-serif;
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.checkout-submit-btn:hover {
+  background: #0071e3;
+  box-shadow: 0 8px 24px rgba(0, 113, 227, 0.4);
+  transform: translateY(-1px);
+}
+
+.checkout-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* ── Right: Summary card ─────────────────────────────────────── */
+
+.checkout-summary-card {
+  background: #fff;
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: 8px 16px 48px rgba(0, 6, 74, 0.1);
+  position: sticky;
+  top: 100px;
+}
+
+.checkout-summary-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 20px 0;
+}
+
+/* ── Summary items ───────────────────────────────────────────── */
+
+.checkout-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1.5px solid rgba(0, 0, 0, 0.07);
+}
+
+.checkout-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.checkout-item-img {
+  width: 60px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.checkout-item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.checkout-item-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.checkout-item-meta {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.checkout-item-qty {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.4);
+}
+
+.checkout-item-price {
+  font-size: 15px;
+  font-weight: 600;
+  color: #000;
+  flex-shrink: 0;
+}
+
+/* ── Totals ──────────────────────────────────────────────────── */
+
+.checkout-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.checkout-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 15px;
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.checkout-total-row--discount {
+  color: #0071e3;
+}
+
+.checkout-total-row--total {
+  font-size: 20px;
+  font-weight: 700;
+  color: #000;
+  padding-top: 10px;
+  border-top: 1.5px solid rgba(0, 0, 0, 0.07);
+  margin-top: 4px;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .checkout-page {
+    grid-template-columns: 1fr;
+    margin-top: 120px;
+  }
+
+  .checkout-right {
+    order: -1;
+  }
+
+  .checkout-summary-card {
+    position: static;
+  }
+
+  .checkout-title {
+    font-size: 36px;
+  }
+}
+
+@media (max-width: 480px) {
+  .checkout-page {
+    margin-top: 100px;
+    padding: 0 16px;
+  }
+
+  .checkout-title {
+    font-size: 28px;
+    margin-bottom: 20px;
+  }
+
+  .checkout-toggle-btn {
+    padding: 9px 14px;
+    font-size: 14px;
+  }
+}

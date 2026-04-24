@@ -67,7 +67,7 @@ function Header() {
               <Link to={"/"}>Home</Link>
               <Link to={"/cart"}>Cart</Link>
               <Link to={"/favorites"}>Favorites</Link>
-              <Link to={"/history"}>History</Link>
+              <Link to={"/orders"}>My Orders</Link>
               <button className="logout" onClick={handleLogout}>Sign Out</button>
             </div>
           )}

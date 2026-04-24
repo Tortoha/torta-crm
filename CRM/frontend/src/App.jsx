@@ -24,10 +24,11 @@ const OrgSettings   = lazy(() => import('./Pages/Organization/OrgSettings.jsx'))
 // Project
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Project/Revenue.jsx'));
-const Api           = lazy(() => import('./Pages/Project/Api.jsx'));
 const Products      = lazy(() => import('./Pages/Project/Products.jsx'));
 const Authentication   = lazy(() => import('./Pages/Project/Authentication.jsx'));
 const ProjectSettings  = lazy(() => import('./Pages/Project/ProjectSettings.jsx'));
+const Orders           = lazy(() => import('./Pages/Project/Orders.jsx'));
+const Chat             = lazy(() => import('./Pages/Project/Chat.jsx'));
 // Product
 const ProductPage   = lazy(() => import('./Pages/Product/ProductPage.jsx'));
 // Settings
@@ -65,11 +66,12 @@ function App() {
             <Route path="dashboard" element={<Navigate to=".." relative="path" replace />} />
             <Route path="products"   element={<Products />} />
             <Route path="revenue"    element={<Revenue />} />
-            <Route path="api"            element={<Api />} />
             <Route path="authentication" element={<Authentication />} />
             <Route path="email"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="url-config" element={<Navigate to="../authentication" relative="path" replace />} />
+            <Route path="orders"     element={<Orders />} />
+            <Route path="chat"       element={<Chat />} />
             <Route path="settings"   element={<ProjectSettings />} />
           </Route>
           <Route path="/settings" element={<SettingsLayout />}>

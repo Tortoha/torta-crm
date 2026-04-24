@@ -2,206 +2,486 @@
    PROJECT OVERVIEW
    ══════════════════════════════ */
 
-.pov-root {
-  padding-top: 40px;
+/* ── Two-column body (carries the 128px top offset) ── */
+
+.pov-body {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 24px;
+  align-items: start;
+  padding-top: 128px; /* same visual position as crm-page-title default */
+}
+
+.pov-left {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
-/* ── Project name ── */
-.pov-title {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--text);
-  margin: 0;
-  letter-spacing: -0.02em;
+/* Override crm-page-title padding — it lives inside the grid now */
+.pov-body .crm-page-title {
+  padding-top: 0;
+  margin-bottom: 0;
 }
 
-/* ── URL row ── */
-.pov-url-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+/* ══════════════════════════════
+   COPY KEYS DROPDOWN
+   (mirrors Header switcher style)
+   ══════════════════════════════ */
+
+.pov-copykeys {
   position: relative;
+  display: inline-block;
 }
 
-.pov-url-text {
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.45);
-}
-
-/* ── Copy pill button ── */
-.pov-copy-pill {
-  position: relative;
-  display: flex;
+/* Trigger button */
+.pov-copykeys-btn {
+  display: inline-flex;
   align-items: center;
-  background: var(--card);
-  border-radius: 999px;
-  height: 30px;
-  overflow: visible;
-  flex-shrink: 0;
-}
-
-.pov-copy-pill-left {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 14px;
-  height: 100%;
+  height: 32px;
+  padding: 0 12px;
   border: none;
-  background: transparent;
-  border-radius: 999px 0 0 999px;
-  cursor: pointer;
-  font-size: 12px;
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 13px;
   font-weight: 500;
   font-family: inherit;
   color: var(--text);
-  transition: background 0.2s ease, color 0.2s ease;
+  cursor: pointer;
+  /* tilt */
+  position: relative;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  transition: background 0.4s ease, color 0.4s ease, box-shadow 0.8s ease;
 }
 
-.pov-copy-pill-left:hover {
-  background: var(--accent-tint);
-  color: var(--accent);
+.pov-copykeys-btn:hover {
+  box-shadow: var(--box-shadow);
 }
 
-.pov-pill-icon {
+/* Gloss overlay (filled by InteractiveSection) */
+.pov-copykeys-btn-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+}
+
+/* Content sits above gloss */
+.pov-copykeys-btn-content {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pov-copykeys-btn-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.pov-copykeys-caret {
   width: 12px;
   height: 12px;
-}
-
-.pov-copy-pill-sep {
-  width: 1px;
-  height: 16px;
-  background: rgba(0, 0, 0, 0.1);
+  color: var(--muted);
   flex-shrink: 0;
+  transition: transform 0.15s var(--ease-smooth), color 0.15s ease;
 }
 
-.pov-copy-pill-right {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 10px;
-  height: 100%;
-  border: none;
-  background: transparent;
-  border-radius: 0 999px 999px 0;
-  cursor: pointer;
-  color: rgba(0, 0, 0, 0.4);
-  transition: background 0.2s ease, color 0.2s ease;
-}
-
-.pov-copy-pill-right:hover {
-  background: var(--accent-tint);
-  color: var(--accent);
-}
-
-.pov-caret {
-  width: 11px;
-  height: 11px;
-  transition: transform 0.25s var(--ease-smooth);
-}
-
-.pov-caret--open {
+.pov-copykeys-caret--open {
   transform: rotate(180deg);
 }
 
-/* ── Dropdown ── */
-.pov-drop {
+/* ── Dropdown panel — CSS transition, same as .hdr-switcher-drop ── */
+
+.pov-copykeys-drop {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   left: 0;
+  min-width: 240px;
   background: var(--card);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   padding: 6px;
-  z-index: 100;
-  min-width: 300px;
-  animation: pov-drop-in 0.18s var(--ease-soft);
+  z-index: 500;
+  /* hidden state */
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.97);
+  transform-origin: top left;
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s var(--ease-smooth);
 }
 
-@keyframes pov-drop-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
+.pov-copykeys-drop--open {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateY(0) scale(1);
 }
 
-.pov-drop-item {
+/* Items wrapper — position:relative so indicator offsets are correct */
+.pov-ck-items {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Dynamic Block indicator — same as .hdr-sw-indicator */
+.pov-ck-ind {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  background: var(--accent-tint);
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 1;
+  will-change: transform, height, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    height 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+/* Item button — same feel as .hdr-switcher-item */
+.pov-ck-item {
+  position: relative;
+  z-index: 2;
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  transition: background 0.15s ease;
+  gap: 10px;
+  padding: 9px 12px;
+  background: none;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  box-sizing: border-box;
+  transition: color 0.4s ease;
 }
 
-.pov-drop-item:hover {
-  background: var(--bg);
-}
+.pov-ck-item--hov .pov-ck-label { color: var(--accent); }
+.pov-ck-item--hov .pov-ck-icon  { color: var(--accent); }
 
-.pov-drop-icon-wrap {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--bg);
+/* Copy / Check icon */
+.pov-ck-icon {
+  width: 15px;
+  height: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(0, 0, 0, 0.4);
   flex-shrink: 0;
+  color: var(--muted);
+  transition: color 0.55s var(--ease-smooth);
 }
 
-.pov-drop-icon-wrap svg {
+.pov-ck-icon svg {
   width: 15px;
   height: 15px;
 }
 
-.pov-drop-info {
+/* Text block */
+.pov-ck-info {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
-.pov-drop-label {
-  font-size: 12px;
+.pov-ck-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text);
-  margin-bottom: 2px;
+  transition: color 0.55s var(--ease-smooth);
 }
 
-.pov-drop-value {
+.pov-ck-hint {
   font-size: 11px;
-  font-family: monospace;
+  font-weight: 500;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.pov-ck-value {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
   color: rgba(0, 0, 0, 0.35);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.pov-drop-copy {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+/* ── Bottom toast (same pill as .auth-toast) ── */
+
+.pov-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  padding: 10px 22px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 9999;
+  animation: pov-toast-in 0.22s var(--ease-soft);
+}
+
+@keyframes pov-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ══════════════════════════════
+   WIDGET GRID
+   ══════════════════════════════ */
+
+.pov-widget-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.pov-widget {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
   border: none;
-  background: transparent;
+  border-radius: 16px;
+  padding: 14px 16px;
   cursor: pointer;
+  text-align: left;
+  transition: background 0.18s ease;
+  font-family: inherit;
+}
+
+.pov-widget:hover {
+  background: color-mix(in srgb, var(--card) 85%, var(--bg));
+}
+
+.pov-widget-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(0, 0, 0, 0.3);
   flex-shrink: 0;
-  transition: background 0.2s ease, color 0.2s ease;
 }
 
-.pov-drop-copy:hover {
+.pov-widget-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pov-widget-icon--ok {
   background: var(--accent-tint);
   color: var(--accent);
 }
 
-.pov-drop-copy--ok {
-  color: #059669 !important;
-  background: rgba(16, 185, 129, 0.08) !important;
+.pov-widget-icon--neutral {
+  background: rgba(0, 0, 0, 0.05);
+  color: rgba(0, 0, 0, 0.4);
 }
 
-.pov-drop-copy svg {
-  width: 13px;
-  height: 13px;
+.pov-widget-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
+
+.pov-widget-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.pov-widget-status {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pov-widget-status--ok   { color: var(--accent); }
+.pov-widget-status--warn { color: #d97706; }
+.pov-widget-status--none { color: var(--text); }
+
+.pov-widget-arrow {
+  width: 14px;
+  height: 14px;
+  color: rgba(0, 0, 0, 0.25);
+  flex-shrink: 0;
+}
+
+.pov-new-pill {
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ══════════════════════════════
+   RIGHT: RECENT ORDERS
+   ══════════════════════════════ */
+
+.pov-right {
+  position: sticky;
+  top: 16px;
+}
+
+.pov-recent {
+  background: var(--card);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.pov-recent-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.pov-recent-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.pov-recent-new {
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.pov-recent-all {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  transition: opacity 0.15s;
+}
+
+.pov-recent-all:hover { opacity: 0.7; }
+
+.pov-recent-all svg {
+  width: 12px;
+  height: 12px;
+}
+
+.pov-recent-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.pov-recent-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pov-recent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  gap: 12px;
+}
+
+.pov-recent-item:last-child { border-bottom: none; }
+.pov-recent-item:hover      { background: var(--bg); }
+
+.pov-recent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.pov-recent-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pov-recent-date {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pov-recent-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.pov-recent-amount {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── Order status badges ── */
+
+.pov-order-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pov-order-badge--new       { background: var(--accent-tint);    color: var(--accent); }
+.pov-order-badge--confirmed { background: rgba(0,0,0,0.06);      color: var(--text);   }
+.pov-order-badge--shipped   { background: rgba(107,114,128,0.1); color: #6b7280;       }
+.pov-order-badge--delivered { background: rgba(8,145,178,0.1);   color: #0891b2;       }
+.pov-order-badge--cancelled { background: rgba(239,68,68,0.1);   color: #ef4444;       }
+.pov-order-badge--refunded  { background: rgba(217,119,6,0.1);   color: #d97706;       }

@@ -1,0 +1,399 @@
+/* ══════════════════════════════
+   CRM ORDERS PAGE
+   ══════════════════════════════ */
+
+/* ── Toolbar right group ── */
+
+.ord-toolbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Sort toggle (same as org-sort-toggle but no margin-left: auto) ── */
+
+.ord-sort-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+/* ── Status filter — Dynamic Block pill bar ── */
+
+.ord-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.ord-filter-ind {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.ord-filter-btn {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  font-family: inherit;
+  transition: color 0.4s ease;
+}
+
+.ord-filter-btn--current { color: var(--accent); }
+
+.ord-filter-badge {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  padding: 1px 5px;
+  min-width: 14px;
+  text-align: center;
+}
+
+/* ── Table list head ── */
+
+/* columns: customer | items | amount | date | status */
+.ord-list-head {
+  display: grid;
+  grid-template-columns: 1fr 70px 100px 140px 148px;
+  height: 36px;
+  background: var(--card);
+  border-radius: 18px;
+  padding: 0 16px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Row grid override (prow base + ord-prow columns) ── */
+
+.prow.ord-prow {
+  grid-template-columns: 1fr 70px 100px 140px 148px;
+  min-height: 60px;
+}
+
+/* Customer cell */
+.ord-prow-customer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  position: relative;
+  z-index: 2;
+  padding-right: 12px;
+}
+
+.ord-prow-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ord-prow-email {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Status badge ── */
+
+.ord-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: none;
+  font-family: inherit;
+}
+
+.ord-badge--btn {
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.ord-badge--btn:hover    { opacity: 0.8; }
+.ord-badge--btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.ord-badge--sm { font-size: 11px; padding: 3px 8px; }
+
+.ord-badge-caret { width: 10px; height: 10px; }
+
+.ord-badge--new       { background: var(--accent-tint);    color: var(--accent); }
+.ord-badge--confirmed { background: rgba(0,0,0,0.07);      color: var(--text);   }
+.ord-badge--shipped   { background: rgba(107,114,128,0.1); color: #6b7280;       }
+.ord-badge--delivered { background: rgba(8,145,178,0.1);   color: #0891b2;       }
+.ord-badge--cancelled { background: rgba(239,68,68,0.1);   color: #ef4444;       }
+.ord-badge--refunded  { background: rgba(217,119,6,0.1);   color: #d97706;       }
+
+/* ── Status dropdown — header-switcher style ── */
+
+.ord-status-drop {
+  position: fixed;
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  padding: 6px;
+  z-index: 200;
+  min-width: 148px;
+  animation: ord-drop-in 0.18s var(--ease-smooth);
+}
+
+@keyframes ord-drop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+.ord-status-items {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ord-status-ind {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  background: var(--accent-tint);
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, height, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    height 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.ord-status-item {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  transition: color 0.4s ease;
+  box-sizing: border-box;
+}
+
+.ord-status-item--active { color: var(--accent); }
+
+/* ══════════════════════════════
+   CARDS VIEW
+   ══════════════════════════════ */
+
+.ord-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.ord-card {
+  position: relative;
+  background: var(--card);
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+  will-change: transform;
+  transform-style: preserve-3d;
+  transition: border-radius 0.3s ease, box-shadow 0.8s ease;
+}
+
+.ord-card:not(.ord-card--frozen):hover {
+  box-shadow: var(--box-shadow);
+}
+
+.ord-card-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+}
+
+.ord-card-main {
+  position: relative;
+  z-index: 2;
+  padding: 16px;
+}
+
+.ord-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.ord-card-id {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  padding-right: 10px;
+}
+
+.ord-card-email {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ord-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ord-card-amount {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ord-card-dot { color: rgba(0,0,0,0.2); }
+
+/* ── Empty state ── */
+
+.ord-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 64px 20px;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.ord-empty-icon {
+  width: 40px;
+  height: 40px;
+  opacity: 0.4;
+}
+
+.ord-empty p {
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ══════════════════════════════
+   ORDER MODAL ITEMS
+   (modal shell → Modal.jsx / Modal.css)
+   ══════════════════════════════ */
+
+.ord-modal-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ord-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.ord-modal-img {
+  width: 36px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.ord-modal-item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ord-modal-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ord-modal-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ord-modal-item-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}

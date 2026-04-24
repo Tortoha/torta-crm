@@ -1,0 +1,635 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { useOutletContext } from 'react-router-dom';
+import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown } from '@phosphor-icons/react';
+import { API_BASE } from '../../api.js';
+import { InteractiveSection } from '../../Utils/InteractiveSection.js';
+import Modal from '../../Elements/Modal.jsx';
+import '../../Style/Organization.css';
+import '../../Style/Products.css';
+import '../../Style/Orders.css';
+
+// ── Constants ──────────────────────────────────────────────────
+
+const ALL_STATUSES = ['new', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded'];
+
+const STATUS_META = {
+  new:       { label: 'New',       cls: 'ord-badge--new'       },
+  confirmed: { label: 'Confirmed', cls: 'ord-badge--confirmed'  },
+  shipped:   { label: 'Shipped',   cls: 'ord-badge--shipped'    },
+  delivered: { label: 'Delivered', cls: 'ord-badge--delivered'  },
+  cancelled: { label: 'Cancelled', cls: 'ord-badge--cancelled'  },
+  refunded:  { label: 'Refunded',  cls: 'ord-badge--refunded'   },
+};
+
+const STATUS_TABS = [
+  { key: 'all', label: 'All' },
+  ...ALL_STATUSES.map(s => ({ key: s, label: STATUS_META[s].label })),
+];
+
+const SORT_OPTIONS = [
+  { field: 'date',   label: 'Sort by date'   },
+  { field: 'amount', label: 'Sort by amount' },
+  { field: 'name',   label: 'Sort by name'   },
+];
+const DEFAULT_DIR = { date: 'desc', amount: 'desc', name: 'asc' };
+
+// ── Tilt configs ───────────────────────────────────────────────
+
+const ROW_TILT = {
+  maxAngleX: 10, maxAngleY: 4, lerp: 0.05, lerpOut: 0.07,
+  scale: 1.052, perspective: 900,
+  gloss: { opacity: 0.14, spread: 40 },
+};
+
+const CARD_TILT = {
+  maxAngle: 8, lerp: 0.05, lerpOut: 0.07,
+  scale: 1.02, perspective: 800,
+  gloss: { opacity: 0.12, spread: 50 },
+};
+
+// ── Helpers ────────────────────────────────────────────────────
+
+const fmt     = n  => (+n).toFixed(2);
+const fmtDate = ts => ts
+  ? new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  : '';
+const fmtDateLong = ts => ts
+  ? new Date(ts).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  : '';
+
+// ── Status selector ────────────────────────────────────────────
+// Uses createPortal so the dropdown escapes overflow:hidden on prow rows.
+
+function StatusSelect({ orderId, currentStatus, pq, onUpdated, onOpenChange }) {
+  const [open,    setOpen]    = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [pos,     setPos]     = useState(null);
+  const [hovered, setHovered] = useState(null);
+  const btnRef      = useRef(null);
+  const indRef      = useRef(null);
+  const itemRefs    = useRef({});
+  const snapOnOpen = useRef(false);
+
+  const openMenu = () => {
+    snapOnOpen.current = true;
+    setHovered(null);
+    setOpen(true);
+    onOpenChange?.(true);
+  };
+  const closeMenu = () => {
+    setOpen(false);
+    onOpenChange?.(false);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: r.left });
+    }
+    const handler = e => {
+      if (btnRef.current && !btnRef.current.contains(e.target)) closeMenu();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  // Dynamic Block — tracks hovered ?? currentStatus; re-runs when portal mounts (pos changes)
+  const cur = hovered ?? currentStatus;
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = itemRefs.current[cur];
+      if (!ind) return;
+      if (!el) { ind.style.opacity = '0'; return; }
+      if (snapOnOpen.current) {
+        snapOnOpen.current = false;
+        ind.style.transition = 'none';
+        requestAnimationFrame(() => { if (indRef.current) indRef.current.style.transition = ''; });
+      }
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateY(${el.offsetTop}px)`;
+      ind.style.height    = `${el.offsetHeight}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [cur, currentStatus, pos]);
+
+  const select = async status => {
+    if (status === currentStatus) { setOpen(false); return; }
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/orders/${orderId}${pq}`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (res.ok) onUpdated(orderId, status);
+    } finally { setLoading(false); closeMenu(); }
+  };
+
+  const m = STATUS_META[currentStatus] ?? { label: currentStatus, cls: '' };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        className={`ord-badge ord-badge--btn ${m.cls}`}
+        onClick={e => { e.stopPropagation(); open ? closeMenu() : openMenu(); }}
+        disabled={loading}
+        type="button"
+      >
+        {loading ? '…' : m.label}
+        <CaretDown className="ord-badge-caret" />
+      </button>
+
+      {open && pos && createPortal(
+        <div
+          className="ord-status-drop"
+          style={{ top: pos.top, left: pos.left }}
+          onMouseDown={e => e.stopPropagation()}
+          onMouseLeave={() => setHovered(null)}
+        >
+          <div className="ord-status-items">
+            <div className="ord-status-ind" ref={indRef} />
+            {ALL_STATUSES.map(s => (
+              <button
+                key={s}
+                ref={el => { if (el) itemRefs.current[s] = el; else delete itemRefs.current[s]; }}
+                className={`ord-status-item${s === cur ? ' ord-status-item--active' : ''}`}
+                onClick={e => { e.stopPropagation(); select(s); }}
+                onMouseEnter={() => setHovered(s)}
+                type="button"
+              >
+                {STATUS_META[s].label}
+              </button>
+            ))}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+// ── Sort toggle ────────────────────────────────────────────────
+
+function OrdSortToggle({ sort, onSort }) {
+  const indRef  = useRef(null);
+  const btnRefs = useRef({});
+  const [hovered, setHovered] = useState(null);
+  const curField = hovered ?? sort.field;
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = btnRefs.current[curField];
+      if (!ind || !el) return;
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [curField, sort.field]);
+
+  const handleClick = field => {
+    onSort(prev => ({
+      field,
+      dir: field === prev.field
+        ? (prev.dir === 'asc' ? 'desc' : 'asc')
+        : DEFAULT_DIR[field] ?? 'asc',
+    }));
+  };
+
+  return (
+    <div className="ord-sort-toggle" onMouseLeave={() => setHovered(null)}>
+      <div ref={indRef} className="org-sort-indicator" />
+      {SORT_OPTIONS.map(({ field, label }) => {
+        const active = sort.field === field;
+        const isCur  = curField === field;
+        return (
+          <button
+            key={field}
+            ref={el => { btnRefs.current[field] = el; }}
+            className={`org-sort-btn${isCur ? ' org-sort-btn--current' : ''}`}
+            style={active ? { paddingLeft: '6px' } : undefined}
+            onMouseEnter={() => setHovered(field)}
+            onClick={() => handleClick(field)}
+            type="button"
+          >
+            {active && (
+              <ArrowDown
+                className="org-sort-icon"
+                style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }}
+              />
+            )}
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Status filter — Dynamic Block pill bar ────────────────────
+
+function OrdStatusFilter({ active, counts, onChange }) {
+  const indRef  = useRef(null);
+  const btnRefs = useRef({});
+  const [hovered, setHovered] = useState(null);
+  const cur = hovered ?? active;
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = btnRefs.current[cur];
+      if (!ind || !el) return;
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [cur, active]);
+
+  return (
+    <div className="ord-filter" onMouseLeave={() => setHovered(null)}>
+      <div className="ord-filter-ind" ref={indRef} />
+      {STATUS_TABS.map(({ key, label }) => (
+        <button
+          key={key}
+          ref={el => { if (el) btnRefs.current[key] = el; else delete btnRefs.current[key]; }}
+          className={`ord-filter-btn${cur === key ? ' ord-filter-btn--current' : ''}`}
+          onClick={() => onChange(key)}
+          onMouseEnter={() => setHovered(key)}
+          type="button"
+        >
+          {label}
+          {key === 'new' && counts.new > 0 && (
+            <span className="ord-filter-badge">{counts.new}</span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Order row (table view) — InteractiveSection tilt ──────────
+
+function OrderRow({ order, pq, onUpdated, onOpen }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, menuOpen);
+
+  return (
+    <div
+      ref={ref}
+      className={`prow ord-prow${menuOpen ? ' org-list-row--frozen' : ''}`}
+      onClick={() => onOpen(order)}
+      {...handlers}
+    >
+      <div ref={glossRef} className="org-list-gloss" />
+
+      <span className="ord-prow-customer">
+        <span className="ord-prow-name">{order.customer_name || order.recipient_name}</span>
+        {order.customer_email && (
+          <span className="ord-prow-email">{order.customer_email}</span>
+        )}
+      </span>
+
+      <span className="prow-cell">{order.items_count} item{order.items_count !== 1 ? 's' : ''}</span>
+      <span className="prow-cell" style={{ fontWeight: 600, color: 'var(--text)' }}>${fmt(order.total_amount)}</span>
+      <span className="prow-cell">{fmtDate(order.created_at)}</span>
+
+      {/* Status — stopPropagation so row click doesn't fire */}
+      <span className="prow-cell" onClick={e => e.stopPropagation()}>
+        <StatusSelect orderId={order.id} currentStatus={order.status} pq={pq} onUpdated={onUpdated} onOpenChange={setMenuOpen} />
+      </span>
+    </div>
+  );
+}
+
+// ── Order card (cards view) — InteractiveSection tilt ─────────
+
+function OrderCard({ order, pq, onUpdated, onOpen }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, menuOpen);
+
+  return (
+    <div ref={ref} className={`ord-card${menuOpen ? ' ord-card--frozen' : ''}`} onClick={() => onOpen(order)} {...handlers}>
+      <div ref={glossRef} className="ord-card-gloss" />
+      <div className="ord-card-main">
+        <div className="ord-card-top">
+          <span className="ord-card-id">
+            {order.customer_name || order.recipient_name}
+          </span>
+          <span onClick={e => e.stopPropagation()}>
+            <StatusSelect orderId={order.id} currentStatus={order.status} pq={pq} onUpdated={onUpdated} onOpenChange={setMenuOpen} />
+          </span>
+        </div>
+        {order.customer_email && (
+          <div className="ord-card-email">{order.customer_email}</div>
+        )}
+        <div className="ord-card-meta">
+          <span className="ord-card-amount">${fmt(order.total_amount)}</span>
+          <span className="ord-card-dot">·</span>
+          <span>{order.items_count} item{order.items_count !== 1 ? 's' : ''}</span>
+          <span className="ord-card-dot">·</span>
+          <span>{fmtDate(order.created_at)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Order modal — uses shared Modal component ──────────────────
+
+function OrderModal({ order, pq, onClose, onUpdated }) {
+  const [detail,  setDetail]  = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/orders/${order.id}${pq}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setDetail(d); })
+      .finally(() => setLoading(false));
+  }, [order.id]);
+
+  return (
+    <Modal
+      onClose={onClose}
+      title={`Order #${order.id}`}
+      subtitle={fmtDateLong(order.created_at)}
+      extra={
+        <StatusSelect
+          orderId={order.id}
+          currentStatus={order.status}
+          pq={pq}
+          onUpdated={onUpdated}
+        />
+      }
+    >
+      {loading && <div className="modal-loading">Loading…</div>}
+
+      {!loading && !detail && (
+        <div className="modal-loading">Failed to load order details.</div>
+      )}
+
+      {!loading && detail && (
+        <>
+          {/* Customer */}
+          <div className="modal-section">
+            <div className="modal-section-label">Customer</div>
+            <div className="modal-section-value">{order.customer_name || order.recipient_name}</div>
+            {order.customer_email && <div className="modal-section-sub">{order.customer_email}</div>}
+            {detail.phone && <div className="modal-section-sub">{detail.phone}</div>}
+          </div>
+
+          {/* Delivery & Payment */}
+          <div className="modal-section">
+            <div className="modal-section-label">Delivery & Payment</div>
+            <div className="modal-section-value">
+              {detail.delivery_method === 'courier' ? 'Courier' : 'Postal'}
+              {detail.address ? ` — ${detail.address}` : ''}
+            </div>
+            <div className="modal-section-sub">
+              {detail.payment_method === 'card' ? 'Card payment' : 'Pay on Delivery'}
+            </div>
+            {detail.comment && (
+              <div className="modal-section-sub" style={{ fontStyle: 'italic' }}>"{detail.comment}"</div>
+            )}
+          </div>
+
+          {/* Items */}
+          {detail.items?.length > 0 && (
+            <div className="modal-section">
+              <div className="modal-section-label">Items</div>
+              <div className="ord-modal-items">
+                {detail.items.map((item, i) => (
+                  <div key={i} className="ord-modal-item">
+                    {item.image_url && (
+                      <img src={item.image_url} alt={item.title} className="ord-modal-img" />
+                    )}
+                    <div className="ord-modal-item-info">
+                      <span className="ord-modal-item-name">{item.title}</span>
+                      <span className="ord-modal-item-meta">
+                        {item.variation_name} · {item.size_name} · ×{item.quantity}
+                      </span>
+                    </div>
+                    <span className="ord-modal-item-price">${fmt(item.price)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Total */}
+          <div className="modal-footer-row">
+            <span className="modal-footer-label">Total</span>
+            <span className="modal-footer-value">${fmt(order.total_amount)}</span>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// ── Orders page ────────────────────────────────────────────────
+
+function Orders() {
+  const { projectId } = useOutletContext();
+  const pq = `?project_id=${projectId}`;
+
+  const [orders,    setOrders]    = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [tab,       setTab]       = useState('all');
+  const [search,    setSearch]    = useState('');
+  const [view,      setView]      = useState('table');
+  const [viewHover, setViewHover] = useState(null);
+  const [sort,      setSort]      = useState({ field: 'date', dir: 'desc' });
+  const [openOrder, setOpenOrder] = useState(null);
+
+  const fetchOrders = useCallback(async () => {
+    try {
+      const res  = await fetch(`${API_BASE}/api/orders${pq}`, { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok) setOrders(data);
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, [projectId]);
+
+  useEffect(() => { fetchOrders(); }, [fetchOrders]);
+
+  // SSE — refetch when a new order arrives (last_id increases = new row in DB)
+  useEffect(() => {
+    const prev = { lastId: -1 };
+    const es = new EventSource(`${API_BASE}/api/orders/stream${pq}`, { withCredentials: true });
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        if (prev.lastId !== -1 && d.last_id > prev.lastId) fetchOrders();
+        prev.lastId = d.last_id ?? 0;
+      } catch { /* ignore */ }
+    };
+    return () => es.close();
+  }, [projectId, fetchOrders]);
+
+  const handleUpdated = useCallback((orderId, newStatus) => {
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    setOpenOrder(prev => prev?.id === orderId ? { ...prev, status: newStatus } : prev);
+  }, []);
+
+  // Counts
+  const counts = { all: orders.length };
+  for (const s of ALL_STATUSES) counts[s] = 0;
+  for (const o of orders) { if (counts[o.status] !== undefined) counts[o.status]++; }
+
+  // Filter
+  const q = search.toLowerCase();
+  const filtered = orders.filter(o => {
+    if (tab !== 'all' && o.status !== tab) return false;
+    if (q) {
+      const name  = (o.customer_name || o.recipient_name || '').toLowerCase();
+      const email = (o.customer_email || '').toLowerCase();
+      if (!name.includes(q) && !email.includes(q)) return false;
+    }
+    return true;
+  });
+
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    if (sort.field === 'name') {
+      const na = (a.customer_name || a.recipient_name || '').toLowerCase();
+      const nb = (b.customer_name || b.recipient_name || '').toLowerCase();
+      const c  = na.localeCompare(nb);
+      return sort.dir === 'asc' ? c : -c;
+    }
+    if (sort.field === 'amount') {
+      return sort.dir === 'asc'
+        ? a.total_amount - b.total_amount
+        : b.total_amount - a.total_amount;
+    }
+    const da = new Date(a.created_at).getTime();
+    const db = new Date(b.created_at).getTime();
+    return sort.dir === 'asc' ? da - db : db - da;
+  });
+
+  const curView = viewHover ?? view;
+  const isEmpty = !loading && sorted.length === 0;
+  const emptyMsg = tab === 'all' && !search ? 'No orders yet' : 'No orders match your filter';
+
+  return (
+    <>
+      <h1 className="crm-page-title">Orders</h1>
+
+      {/* ── Toolbar ── */}
+      <div className="org-toolbar">
+        <div className="org-search-wrap">
+          <MagnifyingGlass className="org-search-icon" />
+          <input
+            className="org-search-input"
+            placeholder="Search orders…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+
+        <div className="ord-toolbar-right">
+          <OrdSortToggle sort={sort} onSort={setSort} />
+          <OrdStatusFilter active={tab} counts={counts} onChange={setTab} />
+
+          <div className="org-view-toggle" onMouseLeave={() => setViewHover(null)}>
+            <div
+              className="org-view-indicator"
+              style={{ transform: `translateX(${curView === 'cards' ? 30 : 0}px)` }}
+            />
+            <button
+              className={`org-view-btn${curView === 'table' ? ' org-view-btn--current' : ''}`}
+              onClick={() => setView('table')}
+              onMouseEnter={() => setViewHover('table')}
+              title="Table view" type="button"
+            >
+              <List className="org-view-icon" />
+            </button>
+            <button
+              className={`org-view-btn${curView === 'cards' ? ' org-view-btn--current' : ''}`}
+              onClick={() => setView('cards')}
+              onMouseEnter={() => setViewHover('cards')}
+              title="Cards view" type="button"
+            >
+              <SquaresFour className="org-view-icon" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Table view ── */}
+      {view === 'table' && (
+        <div className="prod-list">
+          <div className="ord-list-head">
+            <span className="org-list-th">Customer</span>
+            <span className="org-list-th">Items</span>
+            <span className="org-list-th">Amount</span>
+            <span className="org-list-th">Date</span>
+            <span className="org-list-th">Status</span>
+          </div>
+
+          {loading ? (
+            <div className="crm-placeholder">Loading orders…</div>
+          ) : isEmpty ? (
+            <div className="ord-empty">
+              <Package className="ord-empty-icon" weight="duotone" />
+              <p>{emptyMsg}</p>
+            </div>
+          ) : (
+            <div className="prod-list-block">
+              {sorted.map(order => (
+                <OrderRow
+                  key={order.id}
+                  order={order}
+                  pq={pq}
+                  onUpdated={handleUpdated}
+                  onOpen={setOpenOrder}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Cards view ── */}
+      {view === 'cards' && (
+        loading ? (
+          <p className="crm-placeholder">Loading orders…</p>
+        ) : isEmpty ? (
+          <div className="ord-empty">
+            <Package className="ord-empty-icon" weight="duotone" />
+            <p>{emptyMsg}</p>
+          </div>
+        ) : (
+          <div className="ord-cards">
+            {sorted.map(order => (
+              <OrderCard
+                key={order.id}
+                order={order}
+                pq={pq}
+                onUpdated={handleUpdated}
+                onOpen={setOpenOrder}
+              />
+            ))}
+          </div>
+        )
+      )}
+
+      {/* ── Order detail modal ── */}
+      {openOrder && (
+        <OrderModal
+          order={openOrder}
+          pq={pq}
+          onClose={() => setOpenOrder(null)}
+          onUpdated={handleUpdated}
+        />
+      )}
+    </>
+  );
+}
+
+export default Orders;

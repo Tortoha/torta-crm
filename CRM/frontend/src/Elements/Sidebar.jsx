@@ -1,9 +1,10 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation, useParams } from 'react-router-dom';
 import {
-  House, CurrencyDollar, Tag, CodeBlock, LockKey, GearSix,
+  House, CurrencyDollar, Tag, LockKey, GearSix,
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Info, ArrowsLeftRight, MagnifyingGlass, SlidersHorizontal, Star, Code,
+  Package, ChatCircleDots,
 } from '@phosphor-icons/react';
 
 // ── Nav configs ────────────────────────────────────────────────
@@ -21,13 +22,19 @@ function buildSections(apiKey) {
     {
       id: 'store', label: 'Store',
       items: [
-        { to: `${base}/products`,  label: 'Products',         Icon: Tag },
+        { to: `${base}/products`, label: 'Products', Icon: Tag     },
+        { to: `${base}/orders`,   label: 'Orders',   Icon: Package },
+      ],
+    },
+    {
+      id: 'communication', label: 'Communication',
+      items: [
+        { to: `${base}/chat`, label: 'Chat with Customers', Icon: ChatCircleDots },
       ],
     },
     {
       id: 'account', label: 'Account',
       items: [
-        { to: `${base}/api`,            label: 'API',            Icon: CodeBlock },
         { to: `${base}/authentication`, label: 'Authentication', Icon: LockKey   },
         { to: `${base}/settings`,       label: 'Settings',       Icon: GearSix   },
       ],
@@ -216,7 +223,7 @@ export default function Sidebar({ collapsed, onToggle }) {
     return null;
   }, [location.pathname, sections, productHash]);
 
-  const [open, setOpen] = useState({ overview: true, store: true, account: true });
+  const [open, setOpen] = useState({ overview: true, store: true, communication: true, account: true });
 
   useEffect(() => {
     if (activeSectionId) setOpen(prev => prev[activeSectionId] ? prev : { ...prev, [activeSectionId]: true });

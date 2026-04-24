@@ -277,7 +277,11 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
             resp.headers["Access-Control-Max-Age"]           = "600"
             return resp
 
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            from starlette.responses import Response as StarResponse
+            response = StarResponse(status_code=500)
         response.headers["Access-Control-Allow-Origin"]      = allow_origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
@@ -324,6 +328,15 @@ class ApplyPromoCode(BaseModel):
 
 class TrackProductView(BaseModel):
     product_id: int
+
+class PlaceOrderRequest(BaseModel):
+    recipient_name: str
+    phone: Optional[str] = None
+    delivery_method: str = "courier"   # courier | postal
+    address: Optional[str] = None
+    comment: Optional[str] = None
+    payment_method: str = "card"       # card | cash
+    promo_code: Optional[str] = None
 
 class FrontReview(BaseModel):
     id: int; user_id: int; user_name: str; rating: int
@@ -1128,6 +1141,212 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
         "subtotal": round(subtotal, 2), "shipping_cost": final_shipping,
         "total": round(subtotal + final_shipping - discount, 2),
     }
+
+
+# ============================================
+# ЗАКАЗЫ
+# ============================================
+
+@app.post("/{api_key}/api/orders")
+def place_order(data: PlaceOrderRequest, request: Request,
+                api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+
+    rn = sanitize(data.recipient_name.strip())
+    if not rn:
+        raise HTTPException(400, "Recipient name is required")
+    if data.delivery_method == "courier" and not (data.address or "").strip():
+        raise HTTPException(400, "Address is required for courier delivery")
+
+    with db_cursor() as (conn, cursor):
+        # Корзина
+        cursor.execute("SELECT id FROM carts WHERE user_id=%s AND project_id=%s", (user_id, project_id))
+        cart = cursor.fetchone()
+        if not cart:
+            raise HTTPException(400, "Cart is empty")
+
+        cursor.execute(
+            "SELECT ci.id, ci.product_id, ci.variation_id, ci.size_id, ci.quantity, "
+            "ps.price, ps.stock_quantity, p.title, pv.variation_name "
+            "FROM cart_items ci "
+            "JOIN product_sizes ps ON ci.size_id = ps.id "
+            "JOIN products p ON ci.product_id = p.id "
+            "JOIN product_variations pv ON ci.variation_id = pv.id "
+            "WHERE ci.cart_id = %s",
+            (cart["id"],)
+        )
+        items = cursor.fetchall()
+        if not items:
+            raise HTTPException(400, "Cart is empty")
+
+        # Проверяем наличие
+        for it in items:
+            if it["stock_quantity"] < it["quantity"]:
+                raise HTTPException(400, f"Not enough stock for {it['title']}")
+
+        subtotal = sum(float(it["price"]) * it["quantity"] for it in items)
+
+        # Промокод
+        discount = 0.0
+        if data.promo_code:
+            cursor.execute(
+                "SELECT * FROM promo_codes WHERE code=%s AND project_id=%s AND is_active=TRUE",
+                (data.promo_code.strip().upper(), project_id)
+            )
+            promo = cursor.fetchone()
+            if promo:
+                now = datetime.utcnow()
+                if (not promo["valid_from"] or promo["valid_from"] <= now) and \
+                   (not promo["valid_until"] or promo["valid_until"] >= now) and \
+                   subtotal >= float(promo["min_order_amount"]) and \
+                   (not promo["usage_limit"] or promo["times_used"] < promo["usage_limit"]):
+                    dv = float(promo["discount_value"])
+                    if promo["discount_type"] == "percentage":
+                        discount = subtotal * (dv / 100)
+                        if promo["max_discount"]: discount = min(discount, float(promo["max_discount"]))
+                    else:
+                        discount = dv
+                    cursor.execute(
+                        "UPDATE promo_codes SET times_used = times_used + 1 WHERE id=%s", (promo["id"],)
+                    )
+
+        # Стоимость доставки
+        cursor.execute(
+            "SELECT shipping_cost, free_shipping_threshold FROM shipping_settings WHERE project_id=%s LIMIT 1",
+            (project_id,)
+        )
+        ship_settings  = cursor.fetchone()
+        shipping_cost  = float(ship_settings["shipping_cost"])           if ship_settings else 0.0
+        free_threshold = float(ship_settings["free_shipping_threshold"]) if ship_settings else 0.0
+        final_shipping = 0.0 if (data.delivery_method == "postal" or subtotal >= free_threshold) else shipping_cost
+
+        total = round(subtotal + final_shipping - discount, 2)
+
+        # Создаём заказ
+        cursor.execute(
+            """INSERT INTO order_history
+               (project_id, user_id, total_amount, status,
+                delivery_method, recipient_name, phone, address, comment, payment_method)
+               VALUES (%s,%s,%s,'new',%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (project_id, user_id, round(float(total), 2),
+             data.delivery_method, rn,
+             sanitize(data.phone or ""), sanitize(data.address or ""),
+             sanitize(data.comment or ""), data.payment_method)
+        )
+        order_id = cursor.fetchone()["id"]
+
+        # Позиции заказа
+        for it in items:
+            cursor.execute(
+                "INSERT INTO order_items (order_id, product_id, variation_id, size_id, quantity, price) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (order_id, it["product_id"], it["variation_id"], it["size_id"], it["quantity"], it["price"])
+            )
+            # Уменьшаем остаток
+            cursor.execute(
+                "UPDATE product_sizes SET stock_quantity = stock_quantity - %s WHERE id=%s",
+                (it["quantity"], it["size_id"])
+            )
+
+        # Очищаем корзину
+        cursor.execute("DELETE FROM cart_items WHERE cart_id=%s", (cart["id"],))
+        conn.commit()
+
+    # Email to customer
+    user = db_one("SELECT name, email FROM users WHERE id=%s", (user_id,))
+    from_name, from_email = get_project_email(project_id)
+    if user and user.get("email"):
+        items_html = "".join(
+            "<tr>"
+            "<td style='padding:6px 0;color:#333'>" + it["title"] + " &mdash; " + it["variation_name"] + "</td>"
+            "<td style='padding:6px 0;text-align:right;color:#333'>" + str(it["quantity"]) + " &times; " + str(int(float(it["price"]))) + "</td>"
+            "</tr>"
+            for it in items
+        )
+        shipping_row = (
+            "<tr><td style='padding:6px 0;color:#888'>Shipping</td>"
+            "<td style='padding:6px 0;text-align:right;color:#888'>" + str(int(final_shipping)) + "</td></tr>"
+        ) if final_shipping else ""
+        customer_name = user["name"] or "Customer"
+        send_email(
+            to=user["email"],
+            subject="Order #" + str(order_id) + " confirmed",
+            html=(
+                "<div style='font-family:sans-serif;max-width:520px;margin:auto'>"
+                "<h2 style='color:#0071E3'>Order #" + str(order_id) + " confirmed!</h2>"
+                "<p>Hi " + customer_name + ", your order has been placed and is being processed.</p>"
+                "<table style='width:100%;border-collapse:collapse'>" + items_html + shipping_row + "</table>"
+                "<hr style='margin:16px 0'>"
+                "<p><b>Total: $" + f"{float(total):.2f}" + "</b></p>"
+                "<p>We will notify you when the status changes.</p>"
+                "</div>"
+            ),
+            from_name=from_name,
+            from_email=from_email,
+        )
+
+    return {"success": True, "order_id": order_id}
+
+
+@app.get("/{api_key}/api/orders")
+def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    # Optional auth — return 401 if not logged in
+    token = request.cookies.get("authx_token")
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
+    except Exception:
+        raise HTTPException(401, "Invalid or expired token")
+
+    orders = db_all(
+        """SELECT oh.id, oh.total_amount, oh.status, oh.delivery_method,
+                  oh.recipient_name, oh.address, oh.payment_method, oh.comment,
+                  oh.created_at, oh.updated_at
+           FROM order_history oh
+           WHERE oh.user_id=%s AND oh.project_id=%s
+           ORDER BY oh.created_at DESC""",
+        (user_id, project_id)
+    )
+
+    result = []
+    for o in orders:
+        items = db_all(
+            """SELECT oi.quantity, oi.price,
+                      p.title, pv.variation_name, pv.image_url, ps.size_name
+               FROM order_items oi
+               JOIN products p ON oi.product_id=p.id
+               JOIN product_variations pv ON oi.variation_id=pv.id
+               JOIN product_sizes ps ON oi.size_id=ps.id
+               WHERE oi.order_id=%s""",
+            (o["id"],)
+        )
+        result.append({
+            "id":              o["id"],
+            "total_amount":    o["total_amount"],
+            "status":          o["status"],
+            "delivery_method": o["delivery_method"],
+            "recipient_name":  o["recipient_name"],
+            "address":         o["address"],
+            "payment_method":  o["payment_method"],
+            "comment":         o["comment"],
+            "created_at":      o["created_at"].isoformat() if o["created_at"] else None,
+            "updated_at":      o["updated_at"].isoformat() if o["updated_at"] else None,
+            "items": [
+                {
+                    "title":          it["title"],
+                    "variation_name": it["variation_name"],
+                    "size_name":      it["size_name"],
+                    "image_url":      it["image_url"],
+                    "quantity":       it["quantity"],
+                    "price":          float(it["price"]),
+                }
+                for it in items
+            ],
+        })
+    return result
 
 
 # ============================================

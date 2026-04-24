@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, Link } from 'react-router-dom';
-import { MagnifyingGlass, Plus, X, FolderSimple } from '@phosphor-icons/react';
+import { MagnifyingGlass, Plus, FolderSimple } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import Header from '../../Elements/Header.jsx';
+import Modal from '../../Elements/Modal.jsx';
 import '../../Style/Layout.css';
 import '../../Style/Dashboard.css';
 
@@ -47,63 +47,6 @@ function OrgCard({ org }) {
   );
 }
 
-// ─── CreateOrgModal ───────────────────────────────────────────────────────────
-
-function CreateOrgModal({ onClose, onCreated }) {
-  const [name,   setName]   = useState('');
-  const [saving, setSaving] = useState(false);
-  const [err,    setErr]    = useState('');
-
-  useEffect(() => {
-    const handler = e => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
-
-  const handleSubmit = async e => {
-    e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) return setErr('Name is required');
-    setSaving(true); setErr('');
-    try {
-      const res  = await fetch(`${API_BASE}/api/orgs`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmed }),
-      });
-      const data = await res.json();
-      if (!res.ok) return setErr(data.detail || 'Error');
-      onCreated(data); onClose();
-    } catch { setErr('Network error'); }
-    finally   { setSaving(false); }
-  };
-
-  return createPortal(
-    <div className="hdr-modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className="hdr-modal">
-        <div className="hdr-modal-head">
-          <span className="hdr-modal-title">New organization</span>
-          <button className="hdr-modal-close" onClick={onClose} type="button" aria-label="Close">
-            <X className="hdr-modal-close-icon" />
-          </button>
-        </div>
-        <form className="hdr-modal-body" onSubmit={handleSubmit}>
-          <div className="hdr-modal-field">
-            <h4 className="hdr-modal-label">Name</h4>
-            <input className="hdr-modal-input" placeholder="Organization name" autoFocus maxLength={100}
-              value={name} onChange={e => { setName(e.target.value); setErr(''); }} />
-          </div>
-          {err && <span className="hdr-modal-err">{err}</span>}
-          <button className="hdr-modal-submit" type="submit" disabled={saving || !name.trim()}>
-            {saving ? 'Creating…' : 'Create'}
-          </button>
-        </form>
-      </div>
-    </div>,
-    document.body
-  );
-}
-
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 function Dashboard() {
@@ -112,7 +55,31 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(false);
   const [search,  setSearch]  = useState('');
+  const [orgName, setOrgName] = useState('');
+  const [orgSaving, setOrgSaving] = useState(false);
+  const [orgErr,  setOrgErr]  = useState('');
   const navigate = useNavigate();
+
+  const closeOrgModal = () => { setModal(false); setOrgName(''); setOrgErr(''); };
+
+  const createOrg = async e => {
+    e.preventDefault();
+    const trimmed = orgName.trim();
+    if (!trimmed) return setOrgErr('Name is required');
+    setOrgSaving(true); setOrgErr('');
+    try {
+      const res  = await fetch(`${API_BASE}/api/orgs`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) return setOrgErr(data.detail || 'Error');
+      setOrgs(prev => [data, ...prev]);
+      closeOrgModal();
+    } catch { setOrgErr('Network error'); }
+    finally   { setOrgSaving(false); }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -165,10 +132,19 @@ function Dashboard() {
       </main>
 
       {modal && (
-        <CreateOrgModal
-          onClose={() => setModal(false)}
-          onCreated={org => setOrgs(prev => [org, ...prev])}
-        />
+        <Modal title="New organization" onClose={closeOrgModal} maxWidth={400}>
+          <form onSubmit={createOrg}>
+            <div className="hdr-modal-field">
+              <h4 className="hdr-modal-label">Name</h4>
+              <input className="hdr-modal-input" placeholder="Organization name" autoFocus maxLength={100}
+                value={orgName} onChange={e => { setOrgName(e.target.value); setOrgErr(''); }} />
+            </div>
+            {orgErr && <span className="hdr-modal-err">{orgErr}</span>}
+            <button className="hdr-modal-submit" type="submit" disabled={orgSaving || !orgName.trim()}>
+              {orgSaving ? 'Creating…' : 'Create'}
+            </button>
+          </form>
+        </Modal>
       )}
     </div>
   );

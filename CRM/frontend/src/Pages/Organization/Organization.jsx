@@ -2,13 +2,14 @@ import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import {
-  Plus, X, MagnifyingGlass, SquaresFour, List,
+  Plus, MagnifyingGlass, SquaresFour, List,
   DotsThreeOutline, PencilSimple, Copy, Gear, Trash,
-  ArrowDown, ArrowUp,
+  ArrowDown,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
+import Modal from '../../Elements/Modal.jsx';
 import '../../Style/Organization.css';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -240,31 +241,6 @@ function ListRow({ p, onRename, onDelete }) {
   );
 }
 
-// ─── Modal ────────────────────────────────────────────────────────────────────
-
-function Modal({ title, onClose, children }) {
-  useEffect(() => {
-    const handler = e => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
-
-  return createPortal(
-    <div className="hdr-modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className="hdr-modal">
-        <div className="hdr-modal-head">
-          <span className="hdr-modal-title">{title}</span>
-          <button className="hdr-modal-close" onClick={onClose} type="button" aria-label="Close">
-            <X className="hdr-modal-close-icon" />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
 // ─── RenameModal ──────────────────────────────────────────────────────────────
 
 function RenameModal({ project, onClose, onSaved }) {
@@ -291,8 +267,8 @@ function RenameModal({ project, onClose, onSaved }) {
   };
 
   return (
-    <Modal title="Rename project" onClose={onClose}>
-      <form className="hdr-modal-body" onSubmit={handleSubmit}>
+    <Modal title="Rename project" onClose={onClose} maxWidth={400}>
+      <form onSubmit={handleSubmit}>
         <div className="hdr-modal-field">
           <h4 className="hdr-modal-label">Name</h4>
           <input className="hdr-modal-input" value={name} autoFocus maxLength={100}
@@ -335,8 +311,8 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
   };
 
   return (
-    <Modal title="New project" onClose={onClose}>
-      <form className="hdr-modal-body" onSubmit={handleSubmit}>
+    <Modal title="New project" onClose={onClose} maxWidth={400}>
+      <form onSubmit={handleSubmit}>
         <div className="hdr-modal-field">
           <h4 className="hdr-modal-label">Name</h4>
           <input className="hdr-modal-input" placeholder="Project name" autoFocus maxLength={100}

@@ -11,6 +11,9 @@ import ForgotPassword from './ForgotPassword';
 import ResetPassword from './ResetPassword';
 import Favorites from './Favorites';
 import Cart from './Cart';
+import Checkout from './Checkout';
+import OrderSuccess from './OrderSuccess';
+import Orders from './Orders';
 import { client } from "./api.js"
 
 function App() {
@@ -32,6 +35,9 @@ function App() {
           <Route path='/reset-password/:token' element={<ResetPassword />} />
           <Route path='/favorites' element={<Favorites />} />
           <Route path='/cart' element={<Cart />} />
+          <Route path='/checkout' element={<Checkout />} />
+          <Route path='/order-success' element={<OrderSuccess />} />
+          <Route path='/orders' element={<Orders />} />
         </Routes>
       </Router>
     </>

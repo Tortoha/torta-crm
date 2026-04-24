@@ -202,6 +202,29 @@ export function createClient(baseUrl, publishableKey) {
       },
     },
 
+    // ── Orders ───────────────────────────────────────────────────────────────
+    orders: {
+      /**
+       * Place an order from the current cart.
+       * @param {object} payload
+       * @param {string} payload.recipient_name   - Required
+       * @param {string} [payload.phone]
+       * @param {string} [payload.delivery_method] - "courier" | "postal" (default: "courier")
+       * @param {string} [payload.address]         - Required when delivery_method = "courier"
+       * @param {string} [payload.comment]
+       * @param {string} [payload.payment_method]  - "card" | "cash" (default: "card")
+       * @param {string} [payload.promo_code]
+       */
+      async place(payload) {
+        return req("POST", "/api/orders", payload);
+      },
+
+      /** Get order history for the logged-in customer. */
+      async list() {
+        return req("GET", "/api/orders");
+      },
+    },
+
     // ── Track ────────────────────────────────────────────────────────────────
     track: {
       /** Record a site visit (fire-and-forget). */

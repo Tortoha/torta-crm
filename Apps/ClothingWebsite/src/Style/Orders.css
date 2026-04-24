@@ -1,0 +1,266 @@
+@import url("https://fonts.googleapis.com/css2?family=Parkinsans:wght@400;500;600;700&display=swap");
+
+* { box-sizing: border-box; }
+
+/* ── Page ────────────────────────────────────────────────────── */
+
+.os-page {
+  max-width: 860px;
+  margin: 164px auto 80px;
+  padding: 0 20px;
+  font-family: "Parkinsans", sans-serif;
+}
+
+.os-title {
+  font-size: 48px;
+  font-weight: 600;
+  margin: 0 0 32px;
+}
+
+/* ── Empty ───────────────────────────────────────────────────── */
+
+.os-empty {
+  text-align: center;
+  padding: 80px 20px;
+}
+
+.os-empty p {
+  font-size: 20px;
+  color: rgba(0, 0, 0, 0.5);
+  margin: 0 0 24px;
+}
+
+.os-empty-btn {
+  display: inline-block;
+  padding: 14px 32px;
+  background: #000;
+  color: #fff;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.os-empty-btn:hover {
+  background: #0071e3;
+  box-shadow: 0 8px 24px rgba(0, 113, 227, 0.4);
+}
+
+/* ── Orders list ─────────────────────────────────────────────── */
+
+.os-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── Single order card ───────────────────────────────────────── */
+
+.os-order {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 4px 8px 32px rgba(0, 6, 74, 0.08);
+  overflow: hidden;
+}
+
+.os-order-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.os-order-header:hover { background: rgba(0, 0, 0, 0.02); }
+
+.os-order-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.os-order-num {
+  font-size: 16px;
+  font-weight: 600;
+  color: #000;
+}
+
+.os-order-date {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.os-order-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.os-order-total {
+  font-size: 18px;
+  font-weight: 700;
+  color: #000;
+}
+
+.os-chevron {
+  width: 16px;
+  height: 16px;
+  color: rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+}
+
+/* ── Status badge ────────────────────────────────────────────── */
+
+.os-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.os-badge--new       { background: rgba(0, 113, 227, 0.1);  color: #0071e3; }
+.os-badge--confirmed { background: rgba(0, 0, 0, 0.07);     color: #000; }
+.os-badge--shipped   { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
+.os-badge--delivered { background: rgba(8, 145, 178, 0.1);  color: #0891b2; }
+.os-badge--cancelled { background: rgba(239, 68, 68, 0.1);  color: #ef4444; }
+.os-badge--refunded  { background: rgba(217, 119, 6, 0.1);  color: #d97706; }
+
+/* ── Expanded body ───────────────────────────────────────────── */
+
+.os-order-body {
+  border-top: 1.5px solid rgba(0, 0, 0, 0.06);
+  padding: 20px 24px;
+  animation: os-expand 0.22s ease;
+}
+
+@keyframes os-expand {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.os-order-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  margin-bottom: 20px;
+}
+
+.os-order-info span {
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.os-info-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.os-info-row svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+/* ── Items in expanded order ─────────────────────────────────── */
+
+.os-items {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.os-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.os-item-img {
+  width: 56px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.os-item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.os-item-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.os-item-meta {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.4);
+}
+
+.os-item-qty {
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+
+.os-item-price {
+  font-size: 15px;
+  font-weight: 600;
+  color: #000;
+  flex-shrink: 0;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .os-page {
+    margin-top: 120px;
+  }
+
+  .os-title {
+    font-size: 36px;
+  }
+
+  .os-order-header {
+    padding: 16px 18px;
+  }
+
+  .os-order-body {
+    padding: 16px 18px;
+  }
+
+  .os-order-right {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .os-page {
+    margin-top: 100px;
+    padding: 0 16px;
+  }
+
+  .os-title {
+    font-size: 28px;
+    margin-bottom: 20px;
+  }
+
+  .os-order-total {
+    font-size: 15px;
+  }
+}

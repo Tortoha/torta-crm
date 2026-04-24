@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, X } from '@phosphor-icons/react';
+import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
+import Modal from './Modal.jsx';
 import '../Style/Header.css';
 
 /* ── Initials avatar ── */
@@ -32,35 +32,6 @@ function UserAvatar({ user, size = 28 }) {
     );
   }
   return <InitialsAvatar name={user?.name} size={size} />;
-}
-
-/* ── Modal overlay for create forms ── */
-function CreateModal({ title, onClose, onSubmit, submitting, canSubmit, children }) {
-  useEffect(() => {
-    const onKey = e => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return createPortal(
-    <div className="hdr-modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="hdr-modal">
-        <div className="hdr-modal-head">
-          <span className="hdr-modal-title">{title}</span>
-          <button className="hdr-modal-close" onClick={onClose} type="button" aria-label="Close">
-            <X className="hdr-modal-close-icon" />
-          </button>
-        </div>
-        <form className="hdr-modal-body" onSubmit={onSubmit}>
-          {children}
-          <button className="hdr-modal-submit" type="submit" disabled={submitting || !canSubmit}>
-            {submitting ? 'Creating…' : 'Create'}
-          </button>
-        </form>
-      </div>
-    </div>,
-    document.body
-  );
 }
 
 /* ── Org switcher ── */
@@ -212,20 +183,25 @@ function OrgSwitcher({ project, org: orgProp }) {
       </div>
 
       {modal && (
-        <CreateModal title="New organization" onClose={closeModal} onSubmit={createOrg} submitting={saving} canSubmit={!!newName.trim()}>
-          <div className="hdr-modal-field">
-            <h4 className="hdr-modal-label">Name</h4>
-            <input
-              className="hdr-modal-input"
-              placeholder="Organization name"
-              value={newName}
-              onChange={e => { setNewName(e.target.value); setErr(''); }}
-              autoFocus
-              maxLength={100}
-            />
-          </div>
-          {err && <span className="hdr-modal-err">{err}</span>}
-        </CreateModal>
+        <Modal title="New organization" onClose={closeModal} maxWidth={400}>
+          <form onSubmit={createOrg}>
+            <div className="hdr-modal-field">
+              <h4 className="hdr-modal-label">Name</h4>
+              <input
+                className="hdr-modal-input"
+                placeholder="Organization name"
+                value={newName}
+                onChange={e => { setNewName(e.target.value); setErr(''); }}
+                autoFocus
+                maxLength={100}
+              />
+            </div>
+            {err && <span className="hdr-modal-err">{err}</span>}
+            <button className="hdr-modal-submit" type="submit" disabled={saving || !newName.trim()}>
+              {saving ? 'Creating…' : 'Create'}
+            </button>
+          </form>
+        </Modal>
       )}
     </>
   );
@@ -378,30 +354,35 @@ function ProjectSwitcher({ project }) {
       </div>
 
       {modal && (
-        <CreateModal title="New project" onClose={closeModal} onSubmit={createProject} submitting={saving} canSubmit={!!newName.trim() && isValidUrl(newUrl.trim())}>
-          <div className="hdr-modal-field">
-            <h4 className="hdr-modal-label">Name</h4>
-            <input
-              className="hdr-modal-input"
-              placeholder="Project name"
-              value={newName}
-              onChange={e => { setNewName(e.target.value); setErr(''); }}
-              autoFocus
-              maxLength={100}
-            />
-          </div>
-          <div className="hdr-modal-field">
-            <h4 className="hdr-modal-label">URL</h4>
-            <input
-              className="hdr-modal-input"
-              placeholder="The URL of your website, e.g. https://shop.com"
-              value={newUrl}
-              onChange={e => { setNewUrl(e.target.value); setErr(''); }}
-              autoComplete="off"
-            />
-          </div>
-          {err && <span className="hdr-modal-err">{err}</span>}
-        </CreateModal>
+        <Modal title="New project" onClose={closeModal} maxWidth={400}>
+          <form onSubmit={createProject}>
+            <div className="hdr-modal-field">
+              <h4 className="hdr-modal-label">Name</h4>
+              <input
+                className="hdr-modal-input"
+                placeholder="Project name"
+                value={newName}
+                onChange={e => { setNewName(e.target.value); setErr(''); }}
+                autoFocus
+                maxLength={100}
+              />
+            </div>
+            <div className="hdr-modal-field">
+              <h4 className="hdr-modal-label">URL</h4>
+              <input
+                className="hdr-modal-input"
+                placeholder="The URL of your website, e.g. https://shop.com"
+                value={newUrl}
+                onChange={e => { setNewUrl(e.target.value); setErr(''); }}
+                autoComplete="off"
+              />
+            </div>
+            {err && <span className="hdr-modal-err">{err}</span>}
+            <button className="hdr-modal-submit" type="submit" disabled={saving || !newName.trim() || !isValidUrl(newUrl.trim())}>
+              {saving ? 'Creating…' : 'Create'}
+            </button>
+          </form>
+        </Modal>
       )}
     </>
   );
@@ -604,15 +585,19 @@ function ProductSwitcherCrumb({ project, productContext }) {
       </div>
 
       {modal && (
-        <CreateModal title="New product" onClose={closeModal} onSubmit={createProduct}
-          submitting={saving} canSubmit={!!title.trim()}>
-          <div className="hdr-modal-field">
-            <h4 className="hdr-modal-label">Title</h4>
-            <input className="hdr-modal-input" placeholder="Product name" value={title} autoFocus
-              onChange={e => { setTitle(e.target.value); setErr(''); }} maxLength={200} />
-          </div>
-          {err && <span className="hdr-modal-err">{err}</span>}
-        </CreateModal>
+        <Modal title="New product" onClose={closeModal} maxWidth={400}>
+          <form onSubmit={createProduct}>
+            <div className="hdr-modal-field">
+              <h4 className="hdr-modal-label">Title</h4>
+              <input className="hdr-modal-input" placeholder="Product name" value={title} autoFocus
+                onChange={e => { setTitle(e.target.value); setErr(''); }} maxLength={200} />
+            </div>
+            {err && <span className="hdr-modal-err">{err}</span>}
+            <button className="hdr-modal-submit" type="submit" disabled={saving || !title.trim()}>
+              {saving ? 'Creating…' : 'Create'}
+            </button>
+          </form>
+        </Modal>
       )}
     </>
   );

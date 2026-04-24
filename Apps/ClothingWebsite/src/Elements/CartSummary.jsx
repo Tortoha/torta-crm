@@ -1,6 +1,9 @@
+import { useNavigate } from 'react-router-dom';
+
 const fmt = (n) => (+n % 1 === 0) ? +n : (+n).toFixed(2);
 
 function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onApplyPromo, cartData }) {
+  const navigate = useNavigate();
   const subtotal       = appliedPromo ? appliedPromo.subtotal      : cartData.subtotal;
   const shippingCost   = appliedPromo ? appliedPromo.shipping_cost : cartData.shipping_cost;
   const discount       = appliedPromo ? appliedPromo.discount      : 0;
@@ -55,7 +58,12 @@ function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onAppl
           <span>Total</span>
           <span>${fmt(total)}</span>
         </div>
-        <button className="checkout-btn">Checkout</button>
+        <button
+          className="checkout-btn"
+          onClick={() => navigate('/checkout', { state: { promoCode: promoCode || '' } })}
+        >
+          Checkout
+        </button>
       </div>
     </div>
   );
