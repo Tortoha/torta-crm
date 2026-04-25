@@ -1,11 +1,14 @@
 import { Link } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
-import { client } from "./api.js"
+import { client } from "./api.js";
+import SupportWidget from "./Elements/SupportWidget";
 
 function Header() {
-  const [username, setUsername] = useState(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuClosing, setMenuClosing] = useState(false);
+  const [username, setUsername]         = useState(null);
+  const [menuOpen, setMenuOpen]         = useState(false);
+  const [menuClosing, setMenuClosing]   = useState(false);
+  const [supportEnabled, setSupportEnabled] = useState(false);
+  const [supportOpen, setSupportOpen]   = useState(false);
   const menuRef = useRef();
 
   useEffect(() => {
@@ -13,6 +16,14 @@ function Header() {
       if (user) setUsername(user.name);
     });
   }, []);
+
+  // Check whether Web Chat is enabled for this project.
+  useEffect(() => {
+    client.chat.bootstrap().then(res => {
+      setSupportEnabled(!!res.data?.enabled);
+    }).catch(() => {});
+  }, []);
+
 
   const handleCloseMenu = () => {
     setMenuClosing(true);
@@ -39,49 +50,66 @@ function Header() {
   };
 
   const truncateName = (name) => {
-    if (name && name.length > 8) {
-      return name.substring(0, 7) + "...";
-    }
+    if (name && name.length > 8) return name.substring(0, 7) + "...";
     return name;
   };
 
+  const handleSupportClick = () => {
+    handleCloseMenu();
+    setSupportOpen(true);
+  };
+
   return (
-    <header>
-      {username ? (
-        <div className="header-container" ref={menuRef}>
-          <div className="a" onClick={() => menuOpen ? handleCloseMenu() : setMenuOpen(true)}>
+    <>
+      <header>
+        {username ? (
+          <div className="header-container" ref={menuRef}>
+            <div className="a" onClick={() => menuOpen ? handleCloseMenu() : setMenuOpen(true)}>
+              <div className="head">
+                <img src="https://cdn-icons-png.flaticon.com/512/266/266033.png" alt="" />
+                <h5>{truncateName(username)}</h5>
+              </div>
+            </div>
+
+            {menuOpen && (
+              <div className={`menu ${menuClosing ? 'menu-closing' : ''}`}>
+                <div className="menu-header" onClick={handleCloseMenu}>
+                  <div className="menu-head">
+                    <img src="https://cdn-icons-png.flaticon.com/512/266/266033.png" alt="" />
+                    <h5>{truncateName(username)}</h5>
+                  </div>
+                </div>
+                <Link to={"/"}>Home</Link>
+                <Link to={"/cart"}>Cart</Link>
+                <Link to={"/favorites"}>Favorites</Link>
+                <Link to={"/orders"}>My Orders</Link>
+                {supportEnabled && (
+                  <button className="support-menu-btn" onClick={handleSupportClick} type="button">
+                    Support
+                  </button>
+                )}
+                <button className="logout" onClick={handleLogout}>Sign Out</button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <Link to={"/login"}>
             <div className="head">
               <img src="https://cdn-icons-png.flaticon.com/512/266/266033.png" alt="" />
-              <h5>{truncateName(username)}</h5>
+              <h5>Sign In</h5>
             </div>
-          </div>
+          </Link>
+        )}
+      </header>
 
-          {menuOpen && (
-            <div className={`menu ${menuClosing ? 'menu-closing' : ''}`}>
-              <div className="menu-header" onClick={handleCloseMenu}>
-                <div className="menu-head">
-                  <img src="https://cdn-icons-png.flaticon.com/512/266/266033.png" alt="" />
-                  <h5>{truncateName(username)}</h5>
-                </div>
-              </div>
-              <Link to={"/"}>Home</Link>
-              <Link to={"/cart"}>Cart</Link>
-              <Link to={"/favorites"}>Favorites</Link>
-              <Link to={"/orders"}>My Orders</Link>
-              <button className="logout" onClick={handleLogout}>Sign Out</button>
-            </div>
-          )}
-        </div>
-      ) : (
-        <Link to={"/login"}>
-          <div className="head">
-            <img src="https://cdn-icons-png.flaticon.com/512/266/266033.png" alt="" />
-            <h5>Sign In</h5>
-          </div>
-        </Link>
+      {supportEnabled && (
+        <SupportWidget
+          isOpen={supportOpen}
+          onClose={() => setSupportOpen(false)}
+        />
       )}
-    </header>
-  )
+    </>
+  );
 }
 
-export default Header
+export default Header;

@@ -2,35 +2,55 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import {
-  Envelope, GoogleLogo, PhoneCall, AppleLogo, GithubLogo,
+  Envelope, PhoneCall, Wallet,
   CaretRight, X, CheckCircle, Globe, ShieldCheck, Trash,
 } from '@phosphor-icons/react';
+import { Icon } from '@iconify/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import EmailPanel from './EmailPanel.jsx';
 import GooglePanel from './GooglePanel.jsx';
+import OAuthProviderPanel from './OAuthProviderPanel.jsx';
 import '../../Style/Authentication.css';
 
-// ─── Google coloured SVG ──────────────────────────────────────────────────────
-
-const GoogleSvg = ({ size = 20 }) => (
-  <svg width={size} height={size} viewBox="0 0 48 48">
-    <path fill="#0071E3" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-    <path fill="#0071E3" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-    <path fill="#0071E3" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-    <path fill="#0071E3" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.29-8.16 2.29-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-  </svg>
-);
-
-// ─── Provider definitions ─────────────────────────────────────────────────────
 
 const PROVIDERS = [
-  { id: 'email',  label: 'Email',  desc: 'Code-based login via email OTP', Icon: Envelope,   configurable: true },
-  { id: 'google', label: 'Google', desc: 'Sign in with Google account',    Icon: GoogleLogo, configurable: true, googleSvg: true },
-  { id: 'phone',  label: 'Phone',  desc: 'Code-based login via SMS',       Icon: PhoneCall,  configurable: false },
-  { id: 'apple',  label: 'Apple',  desc: 'Sign in with Apple ID',          Icon: AppleLogo,  configurable: false },
-  { id: 'github', label: 'GitHub', desc: 'Sign in with GitHub',            Icon: GithubLogo, configurable: false },
+  // Email — special, custom panel (DKIM/SPF/DMARC, etc.)
+  { id: 'email',  label: 'Email',  desc: 'Code-based login via email OTP', configurable: true, phosphor: Envelope },
+  // Google — special, kept as a separate panel (uses its own DB columns + token format)
+  { id: 'google', label: 'Google', desc: 'Sign in with Google account',    configurable: true, iconify: 'logos:google-icon' },
+
+  // Generic OAuth providers (real, working — share OAuthProviderPanel)
+  { id: 'github',    label: 'GitHub',          desc: 'Sign in with GitHub',         configurable: true, iconify: 'simple-icons:github',    color: '#181717' },
+  { id: 'discord',   label: 'Discord',         desc: 'Sign in with Discord',        configurable: true, iconify: 'logos:discord-icon' },
+  { id: 'facebook',  label: 'Facebook',        desc: 'Sign in with Facebook',       configurable: true, iconify: 'logos:facebook' },
+  { id: 'gitlab',    label: 'GitLab',          desc: 'Sign in with GitLab',         configurable: true, iconify: 'simple-icons:gitlab',    color: '#FC6D26' },
+  { id: 'bitbucket', label: 'Bitbucket',       desc: 'Sign in with Bitbucket',      configurable: true, iconify: 'simple-icons:bitbucket', color: '#0052CC' },
+  { id: 'linkedin',  label: 'LinkedIn (OIDC)', desc: 'Sign in with LinkedIn',       configurable: true, iconify: 'simple-icons:linkedin',  color: '#0A66C2' },
+  { id: 'twitch',    label: 'Twitch',          desc: 'Sign in with Twitch',         configurable: true, iconify: 'simple-icons:twitch',    color: '#9146FF' },
+  { id: 'spotify',   label: 'Spotify',         desc: 'Sign in with Spotify',        configurable: true, iconify: 'simple-icons:spotify',   color: '#1DB954' },
+  { id: 'slack',     label: 'Slack (OIDC)',    desc: 'Sign in with Slack',          configurable: true, iconify: 'logos:slack-icon' },
+  { id: 'notion',    label: 'Notion',          desc: 'Sign in with Notion',         configurable: true, iconify: 'simple-icons:notion',    color: '#000000' },
+  { id: 'figma',     label: 'Figma',           desc: 'Sign in with Figma',          configurable: true, iconify: 'logos:figma' },
+  { id: 'zoom',      label: 'Zoom',            desc: 'Sign in with Zoom',           configurable: true, iconify: 'simple-icons:zoom',      color: '#2D8CFF' },
+  { id: 'azure',     label: 'Azure',           desc: 'Microsoft Entra ID (Azure AD)', configurable: true, iconify: 'logos:microsoft-azure' },
+  { id: 'apple',     label: 'Apple',           desc: 'Sign in with Apple ID',       configurable: true, iconify: 'simple-icons:apple',     color: '#000000' },
+  { id: 'x',         label: 'X / Twitter (OAuth 2.0)', desc: 'Sign in with X',      configurable: true, iconify: 'simple-icons:x',         color: '#000000' },
+  { id: 'vk',        label: 'VK',              desc: 'Sign in with VK',             configurable: true, iconify: 'simple-icons:vk',        color: '#0077FF' },
+  { id: 'kakao',     label: 'Kakao',           desc: 'Sign in with Kakao',          configurable: true, iconify: 'simple-icons:kakaotalk', color: '#3C1E1E' },
+  { id: 'keycloak',  label: 'KeyCloak',        desc: 'Sign in with KeyCloak',       configurable: true, iconify: 'simple-icons:keycloak',  color: '#4D4D4D' },
+
+  // Visual-only placeholders (no OAuth flow yet)
+  { id: 'phone', label: 'Phone',       desc: 'Code-based login via SMS',     configurable: false, phosphor: PhoneCall },
+  { id: 'saml',  label: 'SAML 2.0',    desc: 'Enterprise SSO via SAML',      configurable: false, phosphor: ShieldCheck },
+  { id: 'web3',  label: 'Web3 Wallet', desc: 'Sign in with a crypto wallet', configurable: false, phosphor: Wallet },
 ];
+
+
+const ProviderIcon = ({ provider, size = 24 }) =>
+  provider.iconify
+    ? <Icon icon={provider.iconify} width={size} height={size} style={provider.color ? { color: provider.color } : undefined} />
+    : <provider.phosphor className="auth-provider-icon" />;
 
 const ROW_TILT = {
   maxAngleX: 8, maxAngleY: 3, lerp: 0.05, lerpOut: 0.07,
@@ -96,7 +116,7 @@ function ProviderRow({ provider, enabled, onClick, first, last }) {
       <div ref={glossRef} className="auth-provider-gloss" />
 
       <div className="auth-provider-icon-wrap">
-        {provider.googleSvg ? <GoogleSvg size={20} /> : <provider.Icon className="auth-provider-icon" />}
+        <ProviderIcon provider={provider} size={24} />
       </div>
 
       <span className="auth-provider-name">{provider.label}</span>
@@ -122,7 +142,7 @@ function DisabledProviderRow({ provider, first, last }) {
   return (
     <div className={cls}>
       <div className="auth-provider-icon-wrap auth-provider-icon-wrap--dim">
-        <provider.Icon className="auth-provider-icon" />
+        <ProviderIcon provider={provider} size={24} />
       </div>
       <span className="auth-provider-name">{provider.label}</span>
       <span className="auth-provider-desc">{provider.desc}</span>
@@ -330,10 +350,25 @@ function UrlConfigPanel({ projectId }) {
 function Authentication() {
   const { projectId } = useOutletContext();
   const [tab,             setTab]             = useState('providers');
-  const [modal,           setModal]           = useState(null); // null | 'email' | 'google'
+  const [modal,           setModal]           = useState(null); // null | provider.id
   const [googleEnabled,   setGoogleEnabled]   = useState(false);
   const [emailConfigured, setEmailConfigured] = useState(false);
   const [emailVerified,   setEmailVerified]   = useState(false);
+  // Map of generic provider.id → bool (is_enabled)
+  const [providerEnabled, setProviderEnabled] = useState({});
+
+  const reloadProviders = () => {
+    fetch(`${API_BASE}/api/auth-providers?project_id=${projectId}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => {
+        const map = {};
+        for (const p of (d.providers || [])) {
+          map[p.provider] = !!p.is_enabled && !!p.configured;
+        }
+        setProviderEnabled(map);
+      })
+      .catch(() => {});
+  };
 
   useEffect(() => {
     fetch(`${API_BASE}/api/oauth-settings?project_id=${projectId}`, { credentials: 'include' })
@@ -348,13 +383,24 @@ function Authentication() {
         setEmailVerified(!!d.configured && !!d.dkim_ok && !!d.spf_ok);
       })
       .catch(() => {});
+
+    reloadProviders();
   }, [projectId]);
 
   const configurable = PROVIDERS.filter(p => p.configurable);
   const disabled     = PROVIDERS.filter(p => !p.configurable);
   const allRows      = [...configurable, ...disabled];
 
-  const isEnabled = id => id === 'email' ? emailConfigured : (id === 'google' ? googleEnabled : false);
+  const isEnabled = id => {
+    if (id === 'email')  return emailConfigured;
+    if (id === 'google') return googleEnabled;
+    return !!providerEnabled[id];
+  };
+
+  // Look up the provider object the modal is showing (if it's a generic OAuth one)
+  const modalProvider = modal && modal !== 'email' && modal !== 'google'
+    ? PROVIDERS.find(p => p.id === modal)
+    : null;
 
   return (
     <>
@@ -401,7 +447,7 @@ function Authentication() {
       {/* ── Modals ── */}
       {modal === 'email' && (
         <AuthModal title="Email" subtitle="Code-based login via email OTP"
-          iconEl={<Envelope size={22} className="auth-modal-icon-svg" />}
+          iconEl={<Envelope size={24} className="auth-modal-icon-svg" />}
           onClose={() => setModal(null)}>
           <EmailPanel projectId={projectId} onVerifiedChange={(verified) => {
             setEmailVerified(verified);
@@ -411,9 +457,25 @@ function Authentication() {
 
       {modal === 'google' && (
         <AuthModal title="Google" subtitle="Sign in with Google account"
-          iconEl={<GoogleSvg size={22} />}
+          iconEl={<Icon icon="logos:google-icon" width={24} height={24} />}
           onClose={() => setModal(null)}>
           <GooglePanel projectId={projectId} onSaved={setGoogleEnabled} />
+        </AuthModal>
+      )}
+
+      {modalProvider && (
+        <AuthModal
+          title={modalProvider.label}
+          subtitle={modalProvider.desc}
+          iconEl={<ProviderIcon provider={modalProvider} size={24} />}
+          onClose={() => setModal(null)}>
+          <OAuthProviderPanel
+            provider={modalProvider}
+            projectId={projectId}
+            onSaved={(en) => {
+              setProviderEnabled(prev => ({ ...prev, [modalProvider.id]: !!en }));
+            }}
+          />
         </AuthModal>
       )}
     </>

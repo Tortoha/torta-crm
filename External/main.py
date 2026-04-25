@@ -24,6 +24,8 @@ SECRET_KEY            = os.getenv("SECRET_KEY",        "")
 JWT_ALGORITHM         = "HS256"
 JWT_HOURS             = 24 * 7
 MAGAZ_BACKEND_URL     = os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
+CRM_BACKEND_URL       = os.getenv("CRM_BACKEND_URL",   "http://localhost:8001")
+INTERNAL_API_KEY      = os.getenv("INTERNAL_API_KEY",  "torta-internal-dev-key")
 SES_API_URL           = os.getenv("SES_API_URL",       "https://ses.tortacrm.com")
 SES_INTERNAL_KEY      = os.getenv("SES_INTERNAL_KEY",  "")
 EMAIL_FROM            = os.getenv("EMAIL_FROM",        "support@tortacrm.com")
@@ -129,6 +131,8 @@ def run_migrations():
         # Add missing columns (PostgreSQL syntax)
         for col_sql in [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id varchar(255) DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider varchar(40) DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider_id varchar(255) DEFAULT NULL",
             "ALTER TABLE favorites ADD COLUMN IF NOT EXISTS project_id int DEFAULT NULL",
             "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS project_id int DEFAULT NULL",
         ]:
@@ -273,7 +277,7 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
             resp.headers["Access-Control-Allow-Origin"]      = allow_origin
             resp.headers["Access-Control-Allow-Credentials"] = "true"
             resp.headers["Access-Control-Allow-Methods"]     = "GET, POST, PUT, DELETE, OPTIONS"
-            resp.headers["Access-Control-Allow-Headers"]     = "Content-Type, Authorization, X-Publishable-Key"
+            resp.headers["Access-Control-Allow-Headers"]     = "Content-Type, Authorization, X-Publishable-Key, X-Web-Chat-Id"
             resp.headers["Access-Control-Max-Age"]           = "600"
             return resp
 
@@ -1489,3 +1493,530 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend):
     redirect.set_cookie(key="authx_token", value=token, httponly=True,
                         max_age=60*60*24*7, samesite="lax", secure=False, path="/")
     return redirect
+
+
+# ============================================
+# GENERIC OAUTH PROVIDERS (per-project credentials)
+# ============================================
+
+def _basic_extract(id_field, email_field=None, name_field=None):
+    """Most providers return a flat JSON. Some need different keys."""
+    def _do(info: dict) -> dict:
+        return {
+            "id":    str(info.get(id_field) or ""),
+            "email": (info.get(email_field) if email_field else None),
+            "name":  (info.get(name_field)  if name_field  else None),
+        }
+    return _do
+
+OAUTH_PROVIDERS = {
+    "github": {
+        "authorize_url": "https://github.com/login/oauth/authorize",
+        "token_url":     "https://github.com/login/oauth/access_token",
+        "user_info_url": "https://api.github.com/user",
+        "scope":         "read:user user:email",
+        "extract":       _basic_extract("id", "email", "name"),
+    },
+    "discord": {
+        "authorize_url": "https://discord.com/api/oauth2/authorize",
+        "token_url":     "https://discord.com/api/oauth2/token",
+        "user_info_url": "https://discord.com/api/users/@me",
+        "scope":         "identify email",
+        "extract":       _basic_extract("id", "email", "global_name"),
+    },
+    "facebook": {
+        "authorize_url": "https://www.facebook.com/v18.0/dialog/oauth",
+        "token_url":     "https://graph.facebook.com/v18.0/oauth/access_token",
+        "user_info_url": "https://graph.facebook.com/me?fields=id,name,email",
+        "scope":         "email,public_profile",
+        "extract":       _basic_extract("id", "email", "name"),
+    },
+    "gitlab": {
+        "authorize_url": "https://gitlab.com/oauth/authorize",
+        "token_url":     "https://gitlab.com/oauth/token",
+        "user_info_url": "https://gitlab.com/api/v4/user",
+        "scope":         "read_user",
+        "extract":       _basic_extract("id", "email", "name"),
+    },
+    "bitbucket": {
+        "authorize_url": "https://bitbucket.org/site/oauth2/authorize",
+        "token_url":     "https://bitbucket.org/site/oauth2/access_token",
+        "user_info_url": "https://api.bitbucket.org/2.0/user",
+        "scope":         "account email",
+        "extract":       _basic_extract("uuid", None, "display_name"),
+    },
+    "linkedin": {
+        "authorize_url": "https://www.linkedin.com/oauth/v2/authorization",
+        "token_url":     "https://www.linkedin.com/oauth/v2/accessToken",
+        "user_info_url": "https://api.linkedin.com/v2/userinfo",
+        "scope":         "openid profile email",
+        "extract":       _basic_extract("sub", "email", "name"),
+    },
+    "twitch": {
+        "authorize_url": "https://id.twitch.tv/oauth2/authorize",
+        "token_url":     "https://id.twitch.tv/oauth2/token",
+        "user_info_url": "https://api.twitch.tv/helix/users",
+        "scope":         "user:read:email",
+        # Twitch returns { "data": [ { id, email, display_name } ] }
+        "extract":       lambda info: (lambda d: {
+            "id":    str(d.get("id") or ""),
+            "email": d.get("email"),
+            "name":  d.get("display_name"),
+        })((info.get("data") or [{}])[0]),
+        "extra_headers": lambda client_id: {"Client-Id": client_id},
+    },
+    "spotify": {
+        "authorize_url": "https://accounts.spotify.com/authorize",
+        "token_url":     "https://accounts.spotify.com/api/token",
+        "user_info_url": "https://api.spotify.com/v1/me",
+        "scope":         "user-read-email user-read-private",
+        "extract":       _basic_extract("id", "email", "display_name"),
+    },
+    "slack": {
+        "authorize_url": "https://slack.com/openid/connect/authorize",
+        "token_url":     "https://slack.com/api/openid.connect.token",
+        "user_info_url": "https://slack.com/api/openid.connect.userInfo",
+        "scope":         "openid profile email",
+        "extract":       _basic_extract("sub", "email", "name"),
+    },
+    "notion": {
+        "authorize_url": "https://api.notion.com/v1/oauth/authorize",
+        "token_url":     "https://api.notion.com/v1/oauth/token",
+        "user_info_url": "https://api.notion.com/v1/users/me",
+        "scope":         "",
+        "extra_query":   {"owner": "user"},
+        # Notion returns { bot: { owner: { user: { id, name, person: { email } } } } }
+        "extract":       lambda info: (lambda u: {
+            "id":    str(u.get("id") or ""),
+            "email": ((u.get("person") or {}).get("email")),
+            "name":  u.get("name"),
+        })(((info.get("bot") or {}).get("owner") or {}).get("user") or info),
+    },
+    "figma": {
+        "authorize_url": "https://www.figma.com/oauth",
+        "token_url":     "https://api.figma.com/v1/oauth/token",
+        "user_info_url": "https://api.figma.com/v1/me",
+        "scope":         "files:read",
+        "extract":       _basic_extract("id", "email", "handle"),
+    },
+    "zoom": {
+        "authorize_url": "https://zoom.us/oauth/authorize",
+        "token_url":     "https://zoom.us/oauth/token",
+        "user_info_url": "https://api.zoom.us/v2/users/me",
+        "scope":         "user:read",
+        "extract":       _basic_extract("id", "email", "first_name"),
+    },
+    "azure": {
+        "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url":     "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "user_info_url": "https://graph.microsoft.com/oidc/userinfo",
+        "scope":         "openid profile email",
+        "extract":       _basic_extract("sub", "email", "name"),
+    },
+    "apple": {
+        "authorize_url": "https://appleid.apple.com/auth/authorize",
+        "token_url":     "https://appleid.apple.com/auth/token",
+        "user_info_url": None,  # Apple returns user info inline in id_token
+        "scope":         "name email",
+        "extra_query":   {"response_mode": "form_post"},
+        "extract":       _basic_extract("sub", "email", "email"),
+    },
+    "x": {
+        "authorize_url": "https://twitter.com/i/oauth2/authorize",
+        "token_url":     "https://api.twitter.com/2/oauth2/token",
+        "user_info_url": "https://api.twitter.com/2/users/me",
+        "scope":         "tweet.read users.read offline.access",
+        # X returns { "data": { id, username, name } } — no email by default
+        "extract":       lambda info: (lambda d: {
+            "id":    str(d.get("id") or ""),
+            "email": None,
+            "name":  d.get("username") or d.get("name"),
+        })(info.get("data") or {}),
+        "pkce":          True,
+    },
+    "vk": {
+        "authorize_url": "https://oauth.vk.com/authorize",
+        "token_url":     "https://oauth.vk.com/access_token",
+        "user_info_url": "https://api.vk.com/method/users.get?fields=email&v=5.131",
+        "scope":         "email",
+        # VK returns { response: [ { id, first_name, last_name } ] } and email via token resp
+        "extract":       lambda info: (lambda u: {
+            "id":    str(u.get("id") or ""),
+            "email": None,
+            "name":  f"{u.get('first_name','')} {u.get('last_name','')}".strip(),
+        })((info.get("response") or [{}])[0]),
+    },
+    "kakao": {
+        "authorize_url": "https://kauth.kakao.com/oauth/authorize",
+        "token_url":     "https://kauth.kakao.com/oauth/token",
+        "user_info_url": "https://kapi.kakao.com/v2/user/me",
+        "scope":         "account_email profile_nickname",
+        "extract":       lambda info: {
+            "id":    str(info.get("id") or ""),
+            "email": (info.get("kakao_account") or {}).get("email"),
+            "name":  ((info.get("kakao_account") or {}).get("profile") or {}).get("nickname"),
+        },
+    },
+    "keycloak": {
+        # KeyCloak is self-hosted — admins must override authorize_url/token_url/user_info_url
+        # via env (KEYCLOAK_BASE_URL).  Defaults assume Bitnami demo.
+        "authorize_url": os.getenv("KEYCLOAK_BASE_URL", "http://localhost:8080") +
+                         "/realms/master/protocol/openid-connect/auth",
+        "token_url":     os.getenv("KEYCLOAK_BASE_URL", "http://localhost:8080") +
+                         "/realms/master/protocol/openid-connect/token",
+        "user_info_url": os.getenv("KEYCLOAK_BASE_URL", "http://localhost:8080") +
+                         "/realms/master/protocol/openid-connect/userinfo",
+        "scope":         "openid profile email",
+        "extract":       _basic_extract("sub", "email", "preferred_username"),
+    },
+}
+
+
+def _get_oauth_credentials(project_id: int, provider: str):
+    row = db_one(
+        "SELECT client_id, client_secret FROM crm_auth_providers "
+        "WHERE project_id=%s AND provider=%s AND is_enabled=TRUE",
+        (project_id, provider),
+    )
+    if row and row["client_id"] and row["client_secret"]:
+        return row["client_id"], row["client_secret"]
+    return None, None
+
+
+@app.get("/{api_key}/api/auth/oauth/{provider}/login")
+def oauth_login(api_key: str, provider: str,
+                api_key_record: dict = Depends(resolve_api_key_public)):
+    import urllib.parse
+    cfg = OAUTH_PROVIDERS.get(provider)
+    if not cfg:
+        raise HTTPException(404, f"Unknown provider: {provider}")
+    client_id, _ = _get_oauth_credentials(api_key_record["id"], provider)
+    if not client_id:
+        raise HTTPException(404, f"{provider} OAuth not configured for this store")
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/api/auth/oauth/{provider}/callback"
+    params = {
+        "client_id":     client_id,
+        "redirect_uri":  redirect_uri,
+        "response_type": "code",
+        "scope":         cfg.get("scope", ""),
+    }
+    if cfg.get("extra_query"):
+        params.update(cfg["extra_query"])
+    if cfg.get("pkce"):
+        import base64, hashlib as _h
+        verifier = secrets.token_urlsafe(48)
+        challenge = base64.urlsafe_b64encode(_h.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        params["code_challenge"] = challenge
+        params["code_challenge_method"] = "S256"
+        # NOTE: stash the verifier in a short-lived cookie so callback can read it
+        resp = RedirectResponse(cfg["authorize_url"] + "?" + urllib.parse.urlencode(params))
+        resp.set_cookie(key=f"oa_pkce_{provider}", value=verifier,
+                        max_age=600, httponly=True, samesite="lax", path="/")
+        return resp
+    return RedirectResponse(cfg["authorize_url"] + "?" + urllib.parse.urlencode(params))
+
+
+@app.get("/{api_key}/api/auth/oauth/{provider}/callback")
+def oauth_callback(api_key: str, provider: str, request: Request,
+                   api_key_record: dict = Depends(resolve_api_key_public),
+                   code: str = None, error: str = None):
+    project_id = api_key_record["id"]
+    frontend   = get_project_frontend_url(project_id)
+    if not frontend:
+        return RedirectResponse("/?error=site_url_not_configured")
+
+    cfg = OAUTH_PROVIDERS.get(provider)
+    if not cfg:
+        return RedirectResponse(f"{frontend}/login?error=unknown_provider")
+
+    if error or not code:
+        return RedirectResponse(f"{frontend}/login?error={provider}_cancelled")
+
+    client_id, client_secret = _get_oauth_credentials(project_id, provider)
+    if not client_id:
+        return RedirectResponse(f"{frontend}/login?error={provider}_not_configured")
+
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/api/auth/oauth/{provider}/callback"
+
+    try:
+        return _oauth_finish(provider, cfg, code, client_id, client_secret,
+                             redirect_uri, project_id, frontend, request)
+    except Exception:
+        traceback.print_exc()
+        return RedirectResponse(f"{frontend}/login?error={provider}_server_error")
+
+
+def _oauth_finish(provider, cfg, code, client_id, client_secret,
+                  redirect_uri, project_id, frontend, request):
+    import urllib.parse, json as _json, base64
+
+    # ── 1. Exchange code → access_token ──────────────────────────────────
+    post_fields = {
+        "code":          code,
+        "client_id":     client_id,
+        "client_secret": client_secret,
+        "redirect_uri":  redirect_uri,
+        "grant_type":    "authorization_code",
+    }
+    if cfg.get("pkce"):
+        verifier = request.cookies.get(f"oa_pkce_{provider}", "")
+        if verifier:
+            post_fields["code_verifier"] = verifier
+
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept":       "application/json",
+        "User-Agent":   "torta-crm/1.0",
+    }
+    # Some providers want HTTP Basic auth instead of body params
+    if provider in ("x", "spotify", "notion"):
+        basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        headers["Authorization"] = f"Basic {basic}"
+        post_fields.pop("client_id",     None)
+        post_fields.pop("client_secret", None)
+
+    try:
+        req = urllib.request.Request(
+            cfg["token_url"], data=urllib.parse.urlencode(post_fields).encode(),
+            headers=headers, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            tokens = _json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        print(f"[{provider}] token error: {e.read().decode(errors='replace')}")
+        return RedirectResponse(f"{frontend}/login?error={provider}_token")
+    except Exception as e:
+        print(f"[{provider}] token error: {e}")
+        return RedirectResponse(f"{frontend}/login?error={provider}_token")
+
+    access_token = tokens.get("access_token")
+    if not access_token:
+        return RedirectResponse(f"{frontend}/login?error={provider}_no_token")
+
+    # VK returns email in token response
+    vk_token_email = tokens.get("email") if provider == "vk" else None
+
+    # ── 2. Fetch user info ───────────────────────────────────────────────
+    if cfg.get("user_info_url"):
+        ui_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept":        "application/json",
+            "User-Agent":    "torta-crm/1.0",
+        }
+        if cfg.get("extra_headers"):
+            ui_headers.update(cfg["extra_headers"](client_id))
+        # Notion needs special version header
+        if provider == "notion":
+            ui_headers["Notion-Version"] = "2022-06-28"
+        # VK requires access_token in query string, not bearer header
+        url = cfg["user_info_url"]
+        if provider == "vk":
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}access_token={access_token}"
+        try:
+            ui_req = urllib.request.Request(url, headers=ui_headers, method="GET")
+            with urllib.request.urlopen(ui_req, timeout=15) as resp:
+                user_info = _json.loads(resp.read())
+        except Exception as e:
+            print(f"[{provider}] user_info error: {e}")
+            return RedirectResponse(f"{frontend}/login?error={provider}_user_info")
+    else:
+        # Apple: parse id_token JWT (no signature check for demo — production must verify)
+        id_token_str = tokens.get("id_token", "")
+        try:
+            payload = id_token_str.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            user_info = _json.loads(base64.urlsafe_b64decode(payload))
+        except Exception as e:
+            print(f"[{provider}] id_token decode error: {e}")
+            return RedirectResponse(f"{frontend}/login?error={provider}_id_token")
+
+    # ── 3. Extract canonical { id, email, name } ─────────────────────────
+    extracted = cfg["extract"](user_info)
+    oid   = extracted["id"]
+    email = (extracted.get("email") or vk_token_email or "").strip().lower() or None
+    name  = (extracted.get("name") or (email.split("@")[0] if email else f"{provider}_user_{oid[:8]}"))
+
+    if not oid:
+        return RedirectResponse(f"{frontend}/login?error={provider}_no_id")
+
+    # GitHub may not return email if user has it private — fetch /user/emails
+    if provider == "github" and not email:
+        try:
+            req2 = urllib.request.Request(
+                "https://api.github.com/user/emails",
+                headers={"Authorization": f"Bearer {access_token}",
+                         "Accept": "application/json", "User-Agent": "torta-crm/1.0"},
+            )
+            with urllib.request.urlopen(req2, timeout=10) as r2:
+                emails = _json.loads(r2.read())
+            primary = next((e for e in emails if e.get("primary") and e.get("verified")), None)
+            if primary:
+                email = primary["email"].lower()
+        except Exception:
+            pass
+
+    # ── 4. Find or create user ───────────────────────────────────────────
+    with db_cursor() as (conn, cursor):
+        # 4a. Try by (provider, oauth_provider_id)
+        cursor.execute(
+            "SELECT id FROM users WHERE oauth_provider=%s AND oauth_provider_id=%s AND project_id=%s",
+            (provider, oid, project_id),
+        )
+        user = cursor.fetchone()
+        # 4b. Try linking by email if user already registered
+        if not user and email:
+            cursor.execute(
+                "SELECT id FROM users WHERE email=%s AND project_id=%s "
+                "AND oauth_provider IS NULL AND google_id IS NULL",
+                (email, project_id),
+            )
+            user = cursor.fetchone()
+            if user:
+                cursor.execute(
+                    "UPDATE users SET oauth_provider=%s, oauth_provider_id=%s WHERE id=%s",
+                    (provider, oid, user["id"]),
+                )
+                conn.commit()
+        # 4c. Create new user
+        if not user:
+            # Email may be missing (X, VK without scope) — generate a stable placeholder
+            email_to_use = email or f"{provider}_{oid}@oauth.local"
+            try:
+                cursor.execute(
+                    "INSERT INTO users (name, email, password_hash, project_id, "
+                    "oauth_provider, oauth_provider_id) "
+                    "VALUES (%s,%s,'',%s,%s,%s) RETURNING id",
+                    (sanitize(name), email_to_use, project_id, provider, oid),
+                )
+                user_id = cursor.fetchone()["id"]
+                conn.commit()
+            except psycopg2.errors.UniqueViolation:
+                conn.rollback()
+                # Race: user got created between our SELECT and INSERT — re-fetch
+                cursor.execute(
+                    "SELECT id FROM users WHERE oauth_provider=%s AND oauth_provider_id=%s AND project_id=%s",
+                    (provider, oid, project_id),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise
+                user_id = row["id"]
+        else:
+            user_id = user["id"]
+
+    token    = create_token(user_id)
+    redirect = RedirectResponse(f"{frontend}", status_code=302)
+    redirect.set_cookie(key="authx_token", value=token, httponly=True,
+                        max_age=60*60*24*7, samesite="lax", secure=False, path="/")
+    # Clean up any PKCE cookie
+    if cfg.get("pkce"):
+        redirect.delete_cookie(key=f"oa_pkce_{provider}", path="/")
+    return redirect
+
+
+# ============================================
+# WEB CHAT (support widget on the client's site)
+# ============================================
+#
+
+
+class WebChatMessageRequest(BaseModel):
+    text:        str
+    web_chat_id: str
+
+class WebChatBootstrapResponse(BaseModel):
+    enabled:     bool
+    project_id:  int
+    web_chat_id: str
+
+def _new_web_chat_id() -> str:
+    return secrets.token_hex(12)
+
+def _is_webchat_enabled(project_id: int) -> bool:
+    row = db_one(
+        "SELECT 1 FROM crm_chat_integrations WHERE project_id=%s AND channel='webchat' AND is_active=TRUE",
+        (project_id,)
+    )
+    return bool(row)
+
+
+@app.get("/{api_key}/api/chat/bootstrap")
+def webchat_bootstrap(request: Request,
+                      api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    incoming   = request.headers.get("x-web-chat-id", "").strip()
+    return {
+        "enabled":     _is_webchat_enabled(project_id),
+        "project_id":  project_id,
+        "web_chat_id": incoming or _new_web_chat_id(),
+    }
+
+
+@app.post("/{api_key}/api/chat/messages")
+def webchat_send(body: WebChatMessageRequest, request: Request,
+                 api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    if not _is_webchat_enabled(project_id):
+        raise HTTPException(403, "Web chat is not enabled for this project")
+
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Empty message")
+    if len(text) > 4000:
+        raise HTTPException(400, "Message too long")
+    web_chat_id = (body.web_chat_id or "").strip() or _new_web_chat_id()
+
+    payload = json.dumps({
+        "project_id":  project_id,
+        "web_chat_id": web_chat_id,
+        "text":        text,
+    }).encode()
+    req = urllib.request.Request(
+        f"{CRM_BACKEND_URL}/api/chat/internal/inbound",
+        data=payload, method="POST", headers={
+            "Content-Type":   "application/json",
+            "X-Internal-Key": INTERNAL_API_KEY,
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception as e:
+        raise HTTPException(503, f"CRM unreachable: {e}")
+    return {"ok": True, "web_chat_id": web_chat_id}
+
+
+@app.get("/{api_key}/api/chat/messages")
+def webchat_list(request: Request, web_chat_id: str = "", since_id: int = 0,
+                 api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    web_chat_id = (web_chat_id or "").strip()
+    if not web_chat_id:
+        return {"messages": [], "web_chat_id": ""}
+
+    conv = db_one(
+        """SELECT id FROM crm_chat_conversations
+           WHERE project_id=%s AND channel='webchat' AND external_chat_id=%s""",
+        (project_id, web_chat_id)
+    )
+    if not conv:
+        return {"messages": [], "web_chat_id": web_chat_id, "conversation_id": None}
+
+    rows = db_all(
+        """SELECT id, direction, text, created_at
+           FROM crm_chat_messages
+           WHERE conversation_id=%s AND id > %s
+           ORDER BY id ASC""",
+        (conv["id"], int(since_id or 0))
+    )
+    return {
+        "messages": [{
+            "id":         r["id"],
+            "direction":  r["direction"],   # 'in' = visitor; 'out' = operator
+            "text":       r["text"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        } for r in rows],
+        "web_chat_id":     web_chat_id,
+        "conversation_id": conv["id"],
+    }

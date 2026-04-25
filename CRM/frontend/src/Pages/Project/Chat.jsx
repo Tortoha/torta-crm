@@ -2,21 +2,150 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import {
-  ChatCircleDots, Plug, X, CaretDown, CaretRight, CheckCircle,
-  TelegramLogo, WhatsappLogo, InstagramLogo, PaperPlaneRight, ChatsCircle,
-  XCircle, ArrowCounterClockwise, Copy, Trash, CircleNotch,
+  Plug, X, XCircle, CaretRight, CaretDown, CheckCircle, ChatCircleDots,
+  PaperPlaneRight, ChatsCircle, ArrowCounterClockwise,
+  Copy, Trash, CircleNotch,
 } from '@phosphor-icons/react';
+import { Icon as IconifyIcon } from '@iconify/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import '../../Style/Authentication.css';
 import '../../Style/Chat.css';
 
-// ─── Channels catalogue ───────────────────────────────────────────────────────
+// ─── Brand icons ──────────────────────────────────────────────────────────────
+//
+// Real multi-color brand SVGs from Iconify's `logos` collection. WebChat keeps
+// the generic Phosphor chat bubble since it isn't a brand.
 
+// Adapter: Iconify uses width/height; existing call sites pass `size` — convert.
+// `color` is applied for monochrome icons (simple-icons) so they render in brand colors,
+// not the inherited text color.
+const iconifyChannel = (name, color) => ({ size = 24, className, style }) => (
+  <IconifyIcon icon={name} width={size} height={size} className={className}
+    style={{ ...style, ...(color ? { color } : null) }} />
+);
+
+const TelegramIcon  = iconifyChannel('logos:telegram');
+const DiscordIcon   = iconifyChannel('logos:discord-icon');
+const WhatsAppIcon  = iconifyChannel('simple-icons:whatsapp', '#25D366');
+const InstagramIcon = iconifyChannel('simple-icons:instagram', '#E4405F');
+const FacebookIcon  = iconifyChannel('logos:facebook');
+const XIcon         = iconifyChannel('simple-icons:x',     '#000000');
+const VkIcon        = iconifyChannel('simple-icons:vk',    '#0077FF');
+const ViberIcon     = iconifyChannel('simple-icons:viber', '#7360F2');
+
+// WebChat — generic chat icon (Phosphor, blue accent).
+const WebChatIcon = props => <ChatCircleDots weight="fill" {...props} />;
+
+// ─── Channels catalogue ───────────────────────────────────────────────────────
+//
+// `realtime`   — works on localhost without HTTPS (poller-based)
+// `webhook`    — needs public HTTPS for inbound (Meta family + Viber + X)
+// `fields[]`   — config form schema. Each field is rendered in ChannelModal.
+//
 const CHANNELS = [
-  { id: 'telegram',  label: 'Telegram',  desc: 'Connect a Telegram bot to receive customer messages', Icon: TelegramLogo,  color: '#229ED9', configurable: true  },
-  { id: 'whatsapp',  label: 'WhatsApp',  desc: 'Coming soon — WhatsApp Business API integration',     Icon: WhatsappLogo,  color: '#25D366', configurable: false },
-  { id: 'instagram', label: 'Instagram', desc: 'Coming soon — Instagram Direct integration',          Icon: InstagramLogo, color: '#E1306C', configurable: false },
+  {
+    id: 'webchat', label: 'Web Chat', Icon: WebChatIcon,
+    desc: 'Embed a support widget on your website. Customers chat anonymously.',
+    realtime: true, configurable: true,
+    fields: [],
+  },
+  {
+    id: 'telegram', label: 'Telegram', Icon: TelegramIcon,
+    desc: 'Connect a Telegram bot to receive direct messages from customers.',
+    realtime: true, configurable: true,
+    fields: [
+      { key: 'bot_token', label: 'Bot token', placeholder: '123456789:AA…',
+        hint: 'Talk to @BotFather on Telegram, create a bot, then paste the token here.' },
+    ],
+  },
+  {
+    id: 'discord', label: 'Discord', Icon: DiscordIcon,
+    desc: 'Connect a Discord bot to receive direct messages from users.',
+    realtime: true, configurable: true,
+    fields: [
+      { key: 'bot_token', label: 'Bot token', placeholder: 'MTI3O…',
+        hint: 'Discord Developer Portal → Applications → New App → Bot → Reset Token. Enable Privileged Gateway Intent: MESSAGE CONTENT.' },
+    ],
+  },
+  {
+    id: 'vk', label: 'VK', Icon: VkIcon,
+    desc: 'Connect a VK community to receive messages sent to the group.',
+    realtime: true, configurable: true,
+    fields: [
+      { key: 'group_id',     label: 'Community ID', placeholder: '123456789',
+        hint: 'Numeric ID of your VK community.' },
+      { key: 'access_token', label: 'Group access token', placeholder: 'vk1.a.…',
+        hint: 'Group → Settings → API usage → Create token (scopes: messages, manage). Then enable Long Poll API in Community settings.' },
+    ],
+  },
+  {
+    id: 'whatsapp', label: 'WhatsApp', Icon: WhatsAppIcon,
+    desc: 'Receive customer messages via the WhatsApp Cloud API.',
+    realtime: false, configurable: true, webhook: true,
+    fields: [
+      { key: 'phone_number_id', label: 'Phone number ID', placeholder: '123456789012345',
+        hint: 'From Meta for Developers → WhatsApp → API Setup.' },
+      { key: 'access_token', label: 'Permanent access token', placeholder: 'EAA…',
+        hint: 'System User token with whatsapp_business_messaging scope.' },
+      { key: 'verify_token', label: 'Webhook verify token', placeholder: 'pick-any-string',
+        hint: 'Make up any string. Paste the same string into Meta when subscribing the webhook.' },
+      { key: 'app_secret',   label: 'App secret', placeholder: 'optional but recommended',
+        hint: 'From your Meta App → Settings → Basic. Used to verify X-Hub-Signature-256.' },
+    ],
+  },
+  {
+    id: 'instagram', label: 'Instagram', Icon: InstagramIcon,
+    desc: 'Receive Instagram Direct messages from your business profile.',
+    realtime: false, configurable: true, webhook: true,
+    fields: [
+      { key: 'page_id', label: 'Instagram page ID', placeholder: '17841…',
+        hint: 'The IG Business Account ID linked to a Facebook Page.' },
+      { key: 'access_token', label: 'Page access token', placeholder: 'EAA…',
+        hint: 'Long-lived Page token with instagram_manage_messages scope.' },
+      { key: 'verify_token', label: 'Webhook verify token', placeholder: 'pick-any-string',
+        hint: 'Used during the Meta subscription handshake.' },
+      { key: 'app_secret',   label: 'App secret', placeholder: 'optional but recommended',
+        hint: 'From your Meta App → Settings → Basic.' },
+    ],
+  },
+  {
+    id: 'facebook', label: 'Facebook', Icon: FacebookIcon,
+    desc: 'Receive Facebook Messenger conversations from your Page.',
+    realtime: false, configurable: true, webhook: true,
+    fields: [
+      { key: 'page_id', label: 'Facebook Page ID', placeholder: '1234567890',
+        hint: 'Numeric ID of your Page.' },
+      { key: 'access_token', label: 'Page access token', placeholder: 'EAA…',
+        hint: 'Long-lived Page token with pages_messaging scope.' },
+      { key: 'verify_token', label: 'Webhook verify token', placeholder: 'pick-any-string',
+        hint: 'Used during the Meta subscription handshake.' },
+      { key: 'app_secret',   label: 'App secret', placeholder: 'optional but recommended',
+        hint: 'From your Meta App → Settings → Basic.' },
+    ],
+  },
+  {
+    id: 'viber', label: 'Viber', Icon: ViberIcon,
+    desc: 'Receive customer messages from your Viber bot.',
+    realtime: false, configurable: true, webhook: true,
+    fields: [
+      { key: 'auth_token', label: 'Auth token', placeholder: '4dd…',
+        hint: 'Viber Admin Panel → Account info → Authentication token. Webhook URL is registered automatically when you have HTTPS.' },
+    ],
+  },
+  {
+    id: 'x', label: 'X (Twitter)', Icon: XIcon,
+    desc: 'Receive Direct Messages from your X account.',
+    realtime: false, configurable: true, webhook: true,
+    fields: [
+      { key: 'bearer_token', label: 'OAuth 2.0 Bearer token', placeholder: 'AAAAAAAA…',
+        hint: 'X Developer Portal → Project → Keys and Tokens → Bearer Token. Requires Elevated access for DM endpoints.' },
+      { key: 'handle',       label: 'Account handle', placeholder: '@yourbrand',
+        hint: 'For display only — used to label this integration.' },
+      { key: 'app_secret',   label: 'App secret', placeholder: 'optional',
+        hint: 'Consumer secret used to verify webhook signatures.' },
+    ],
+  },
 ];
 
 const ROW_TILT = {
@@ -123,8 +252,8 @@ function ConvFolder({ title, count, conversations, selectedId, onSelect, open, o
                 onMouseEnter={() => setHovered(c.id)}
                 onClick={() => onSelect(c.id)}
               >
-                <div className="chat-conv-avatar" style={{ background: `${meta.color}1a`, color: meta.color }}>
-                  <ChannelIcon weight="fill" size={18} />
+                <div className="chat-conv-avatar">
+                  <ChannelIcon size={20} />
                 </div>
                 <div className="chat-conv-text">
                   <div className="chat-conv-top">
@@ -255,8 +384,8 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent }
   return (
     <div className="chat-thread">
       <div className="chat-thread-header">
-        <div className="chat-thread-avatar" style={{ background: `${meta.color}1a`, color: meta.color }}>
-          <ChannelIcon weight="fill" size={22} />
+        <div className="chat-thread-avatar">
+          <ChannelIcon size={20} />
         </div>
         <div className="chat-thread-id-block">
           <button type="button" className="chat-thread-uid" onClick={copyUid} title="Copy ID">
@@ -348,11 +477,14 @@ function ChatPanel({ projectId }) {
         if (data.type === 'message.created') {
           const incoming = data.conversation;
           const cid = data.conversation_id ?? incoming?.id;
+          if (cid == null) return;
           setConversations(prev => {
             const idx = prev.findIndex(c => c.id === cid);
-            if (idx === -1 && incoming) return [incoming, ...prev];
-            const updated = [...prev];
-            const existing = updated[idx];
+            // Brand-new conversation: prepend if we have its row, otherwise just skip
+            // (the next load() will pick it up).
+            if (idx === -1) return incoming ? [incoming, ...prev] : prev;
+            const existing = prev[idx];
+            const updated  = [...prev];
             updated[idx] = {
               ...existing,
               last_message_at:      data.message?.created_at || existing.last_message_at,
@@ -447,16 +579,22 @@ function ChatPanel({ projectId }) {
   );
 }
 
-// ─── Channel Modal (Telegram bot token form) ──────────────────────────────────
+// ─── Channel Modal — generic per-channel config form ──────────────────────────
 
 function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
-  const [token,   setToken]   = useState('');
-  const [saving,  setSaving]  = useState(false);
-  const [err,     setErr]     = useState('');
-  const [toast,   setToast]   = useState('');
-  const [removing, setRemoving] = useState(false);
   const meta = channelMeta(channel);
   const Icon = meta.Icon;
+  const fields = meta.fields || [];
+
+  // separate state object for the form values (one key per field)
+  const [values,   setValues]   = useState(() =>
+    Object.fromEntries(fields.map(f => [f.key, '']))
+  );
+  const [saving,   setSaving]   = useState(false);
+  const [err,      setErr]      = useState('');
+  const [toast,    setToast]    = useState('');
+  const [removing, setRemoving] = useState(false);
+  const [savedExtra, setSavedExtra] = useState(null);
 
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
@@ -469,18 +607,26 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
     setTimeout(() => setToast(''), 3200);
   };
 
+  const required = fields.filter(f => !f.key.endsWith('app_secret'));
+  const canSave  = required.every(f => (values[f.key] || '').trim());
+
   const save = async () => {
     setSaving(true); setErr('');
     try {
+      const config = Object.fromEntries(
+        Object.entries(values).map(([k, v]) => [k, (v || '').trim()])
+                              .filter(([, v]) => v)
+      );
       const res  = await fetch(`${API_BASE}/api/chat/integrations?project_id=${projectId}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel, bot_token: token.trim(), is_active: true }),
+        body: JSON.stringify({ channel, config, is_active: true }),
       });
       const json = await res.json();
       if (res.ok) {
         showToast('Connected.');
-        setToken('');
+        setValues(Object.fromEntries(fields.map(f => [f.key, ''])));
+        setSavedExtra(json);
         onSaved?.({ channel, bot_username: json.bot_username });
       } else {
         setErr(json.detail || 'Failed to save');
@@ -499,13 +645,18 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
     } finally { setRemoving(false); }
   };
 
+  // Resolve webhook hint: either freshly-returned from POST or computed from API_BASE
+  const webhookUrl = meta.webhook
+    ? (savedExtra?.webhook_url || `${API_BASE}/api/chat/webhook/${channel}/${projectId}`)
+    : null;
+
   return createPortal(
     <div className="auth-modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className="auth-modal">
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
-            <div className="auth-modal-icon-wrap" style={{ color: meta.color }}>
-              <Icon weight="fill" size={22} />
+            <div className="auth-modal-icon-wrap">
+              <Icon size={24} />
             </div>
             <div>
               <div className="auth-modal-title">{meta.label}</div>
@@ -523,39 +674,62 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
             <X className="auth-modal-close-icon" />
           </button>
         </div>
+
         <div className="auth-modal-body">
-          {channel === 'telegram' && (
-            <div className="chat-modal-form">
-              {integration?.bot_username && (
-                <div className="chat-modal-info">
-                  Bot connected: <strong>@{integration.bot_username}</strong>
-                </div>
-              )}
-              <label className="chat-modal-label">Bot token</label>
-              <input className="crm-input" placeholder="123456789:AA…"
-                value={token} onChange={e => { setToken(e.target.value); setErr(''); }}
-                autoComplete="off" />
-              <p className="chat-modal-hint">
-                Create a bot via <strong>@BotFather</strong> on Telegram, then paste the token here.
-                We will register a webhook automatically.
-              </p>
-
-              {err && <p className="auth-msg auth-msg--err">{err}</p>}
-
-              <div className="auth-actions">
-                <button className="crm-submit-btn" onClick={save}
-                  disabled={saving || !token.trim()} type="button">
-                  {saving ? 'Saving…' : (integration ? 'Update token' : 'Connect')}
-                </button>
-                {integration && (
-                  <button className="auth-btn-danger" onClick={remove}
-                    disabled={removing} type="button">
-                    <Trash size={13} /> {removing ? 'Removing…' : 'Disconnect'}
-                  </button>
-                )}
+          <div className="chat-modal-form">
+            {integration?.bot_username && (
+              <div className="chat-modal-info">
+                Connected as <strong>{integration.bot_username}</strong>
               </div>
+            )}
+
+            {webhookUrl && (
+              <div className="chat-modal-webhook">
+                <div className="chat-modal-webhook-title">Webhook URL</div>
+                <div className="chat-modal-webhook-url">{webhookUrl}</div>
+                <div className="chat-modal-webhook-hint">
+                  Paste this into the platform's webhook settings.
+                  Requires public HTTPS — works in production, not on localhost.
+                </div>
+              </div>
+            )}
+
+            {fields.length === 0 && !integration && (
+              <div className="chat-modal-empty">
+                <div className="chat-modal-empty-title">No setup required</div>
+                <div className="chat-modal-empty-desc">
+                  Web Chat uses your project's existing API credentials. Click Connect
+                  and the support widget will appear on every page of your storefront.
+                </div>
+              </div>
+            )}
+
+            {fields.map(f => (
+              <div key={f.key} className="chat-modal-field">
+                <label className="chat-modal-label">{f.label}</label>
+                <input className="crm-input" placeholder={f.placeholder || ''}
+                  value={values[f.key] || ''}
+                  onChange={e => { setValues(v => ({ ...v, [f.key]: e.target.value })); setErr(''); }}
+                  autoComplete="off" />
+                {f.hint && <p className="chat-modal-hint">{f.hint}</p>}
+              </div>
+            ))}
+
+            {err && <p className="auth-msg auth-msg--err">{err}</p>}
+
+            <div className="auth-actions">
+              <button className="crm-submit-btn" onClick={save}
+                disabled={saving || !canSave} type="button">
+                {saving ? 'Saving…' : (integration ? 'Update' : 'Connect')}
+              </button>
+              {integration && (
+                <button className="auth-btn-danger" onClick={remove}
+                  disabled={removing} type="button">
+                  <Trash size={13} /> {removing ? 'Removing…' : 'Disconnect'}
+                </button>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
       {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
@@ -575,40 +749,21 @@ function ChannelRow({ channel, integration, onClick, first, last }) {
     last  && 'auth-provider-row--last',
   ].filter(Boolean).join(' ');
 
+  const desc = integration?.bot_username
+    ? `Connected as ${integration.bot_username}`
+    : channel.desc;
+
   return (
     <div ref={ref} className={cls} onClick={onClick} {...handlers}>
       <div ref={glossRef} className="auth-provider-gloss" />
-      <div className="auth-provider-icon-wrap" style={{ color: channel.color }}>
-        <Icon weight="fill" className="auth-provider-icon" />
-      </div>
-      <span className="auth-provider-name">{channel.label}</span>
-      <span className="auth-provider-desc">
-        {integration?.bot_username ? `Connected as @${integration.bot_username}` : channel.desc}
-      </span>
-      {integration
-        ? <span className="auth-badge-enabled"><CheckCircle weight="fill" size={11} /> Connected</span>
-        : <span className="auth-badge-disabled">Not connected</span>}
-      <CaretRight className="auth-provider-chevron" />
-    </div>
-  );
-}
-
-function DisabledChannelRow({ channel, first, last }) {
-  const Icon = channel.Icon;
-  const cls = [
-    'auth-provider-row',
-    'auth-provider-row--disabled',
-    first && 'auth-provider-row--first',
-    last  && 'auth-provider-row--last',
-  ].filter(Boolean).join(' ');
-  return (
-    <div className={cls}>
-      <div className="auth-provider-icon-wrap auth-provider-icon-wrap--dim">
+      <div className="auth-provider-icon-wrap">
         <Icon className="auth-provider-icon" />
       </div>
       <span className="auth-provider-name">{channel.label}</span>
-      <span className="auth-provider-desc">{channel.desc}</span>
-      <span className="auth-badge-disabled">Coming soon</span>
+      <span className="auth-provider-desc">{desc}</span>
+      {integration
+        ? <span className="auth-badge-enabled"><CheckCircle weight="fill" size={11} /> Connected</span>
+        : <span className="auth-badge-disabled">{channel.realtime ? 'Real-time' : 'Webhook'}</span>}
       <CaretRight className="auth-provider-chevron" />
     </div>
   );
@@ -633,10 +788,6 @@ function ChannelsPanel({ projectId, onIntegrationsChange }) {
 
   const byChannel = id => integrations.find(i => i.channel === id) || null;
 
-  const configurable = CHANNELS.filter(c => c.configurable);
-  const disabled     = CHANNELS.filter(c => !c.configurable);
-  const all          = [...configurable, ...disabled];
-
   return (
     <>
       <h1 className="crm-page-title">Channels</h1>
@@ -645,16 +796,12 @@ function ChannelsPanel({ projectId, onIntegrationsChange }) {
       </p>
 
       <div className="auth-providers-list">
-        {all.map((channel, idx) => {
-          const first = idx === 0;
-          const last  = idx === all.length - 1;
-          return channel.configurable
-            ? <ChannelRow key={channel.id} channel={channel}
-                integration={byChannel(channel.id)}
-                first={first} last={last}
-                onClick={() => setModal(channel.id)} />
-            : <DisabledChannelRow key={channel.id} channel={channel} first={first} last={last} />;
-        })}
+        {CHANNELS.map((channel, idx) => (
+          <ChannelRow key={channel.id} channel={channel}
+            integration={byChannel(channel.id)}
+            first={idx === 0} last={idx === CHANNELS.length - 1}
+            onClick={() => setModal(channel.id)} />
+        ))}
       </div>
 
       {modal && (

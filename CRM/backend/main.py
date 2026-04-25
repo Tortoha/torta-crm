@@ -12,7 +12,8 @@ import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
 import hashlib, secrets, jwt, random, io, json, re, time
-import urllib.request, urllib.error
+import urllib.request, urllib.error, urllib.parse
+import hmac
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
@@ -41,6 +42,8 @@ JWT_HOURS        = 24 * 7
 CRM_FRONTEND_URL = os.getenv("CRM_FRONTEND_URL", "http://localhost:5174")
 CRM_BACKEND_URL  = os.getenv("CRM_BACKEND_URL",  "http://localhost:8001")
 MAGAZ_BACKEND_URL= os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
+# Shared secret for service-to-service calls (External API → CRM web-chat inbound)
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "torta-internal-dev-key")
 DB_CONFIG        = {
     "host":     os.getenv("DB_HOST",     "localhost"),
     "port":     int(os.getenv("DB_PORT", "5432")),
@@ -192,6 +195,27 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] chat tables migration failed: {e}")
+
+    # Generic OAuth providers table (GitHub, Discord, Facebook, GitLab, etc.)
+    # Google stays in crm_oauth_settings (legacy + uses ID token verification differently).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_auth_providers (
+                    id            SERIAL PRIMARY KEY,
+                    project_id    INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    provider      VARCHAR(40) NOT NULL,
+                    client_id     TEXT,
+                    client_secret TEXT,
+                    is_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(project_id, provider)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_prov_project ON crm_auth_providers(project_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_auth_providers migration failed: {e}")
 
 # ════════════════════════════════════════════
 # DB POOL
@@ -365,6 +389,11 @@ class OAuthSettingsRequest(BaseModel):
     google_client_secret: str = ""
     google_enabled: bool = False
 
+class AuthProviderRequest(BaseModel):
+    client_id: str = ""
+    client_secret: str = ""
+    is_enabled: bool = False
+
 class UrlConfigRequest(BaseModel):
     frontend_url: str = ""
 
@@ -373,7 +402,7 @@ class AddRedirectUrlRequest(BaseModel):
 
 class ChatIntegrationRequest(BaseModel):
     channel: str
-    bot_token: str = ""
+    config: dict = {}
     is_active: bool = True
 
 class ChatSendRequest(BaseModel):
@@ -1695,6 +1724,97 @@ def delete_oauth_settings(project_id: int = Query(...), user: dict = Depends(get
 
 
 # ════════════════════════════════════════════
+# GENERIC OAUTH PROVIDERS
+# (GitHub, Discord, Facebook, GitLab, Bitbucket, LinkedIn, Twitch,
+#  Spotify, Slack, Notion, Figma, Zoom, Azure, Apple, X, VK, Kakao, KeyCloak)
+# ════════════════════════════════════════════
+
+# Whitelist of providers we know how to handle in External.
+# Adding a new provider requires extending OAUTH_PROVIDERS in External/main.py too.
+ALLOWED_AUTH_PROVIDERS = {
+    "github", "discord", "facebook", "gitlab", "bitbucket", "linkedin",
+    "twitch", "spotify", "slack", "notion", "figma", "zoom",
+    "azure", "apple", "x", "vk", "kakao", "keycloak",
+}
+
+@app.get("/api/auth-providers")
+def list_auth_providers(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Return all configured providers for a project (id, enabled state — secrets stripped)."""
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT provider, is_enabled, (client_id IS NOT NULL AND client_id <> '') AS configured "
+        "FROM crm_auth_providers WHERE project_id=%s",
+        (project_id,),
+    )
+    return {"providers": rows or []}
+
+
+@app.get("/api/auth-providers/{provider}")
+def get_auth_provider(provider: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if provider not in ALLOWED_AUTH_PROVIDERS:
+        raise HTTPException(400, f"Unknown provider: {provider}")
+    key_row     = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
+    api_key_str = key_row["api_key"] if key_row else ""
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/api/auth/oauth/{provider}/callback"
+    row = db_one(
+        "SELECT client_id, client_secret, is_enabled FROM crm_auth_providers "
+        "WHERE project_id=%s AND provider=%s",
+        (project_id, provider),
+    )
+    if not row:
+        return {"configured": False, "client_id": "", "client_secret": "",
+                "is_enabled": False, "redirect_uri": redirect_uri}
+    return {
+        "configured":    True,
+        "client_id":     row["client_id"] or "",
+        "client_secret": row["client_secret"] or "",
+        "is_enabled":    bool(row["is_enabled"]),
+        "redirect_uri":  redirect_uri,
+    }
+
+
+@app.post("/api/auth-providers/{provider}")
+def save_auth_provider(provider: str, req: AuthProviderRequest,
+                       project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if provider not in ALLOWED_AUTH_PROVIDERS:
+        raise HTTPException(400, f"Unknown provider: {provider}")
+    existing = db_one(
+        "SELECT id FROM crm_auth_providers WHERE project_id=%s AND provider=%s",
+        (project_id, provider),
+    )
+    with db_cursor() as (conn, cur):
+        if existing:
+            cur.execute(
+                "UPDATE crm_auth_providers SET client_id=%s, client_secret=%s, is_enabled=%s "
+                "WHERE project_id=%s AND provider=%s",
+                (req.client_id or None, req.client_secret or None, req.is_enabled,
+                 project_id, provider),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO crm_auth_providers (project_id, provider, client_id, client_secret, is_enabled) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (project_id, provider, req.client_id or None, req.client_secret or None, req.is_enabled),
+            )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/auth-providers/{provider}")
+def delete_auth_provider(provider: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "DELETE FROM crm_auth_providers WHERE project_id=%s AND provider=%s",
+            (project_id, provider),
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+# ════════════════════════════════════════════
 # URL CONFIGURATION
 # ════════════════════════════════════════════
 
@@ -1961,7 +2081,36 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
 # CHAT WITH CUSTOMERS
 # ════════════════════════════════════════════
 
-CHAT_CHANNELS = {"telegram", "whatsapp", "instagram"}
+# Real-time channels (work on localhost without HTTPS):
+#   telegram — long-poll getUpdates
+#   discord  — Gateway WebSocket
+#   vk       — Long Poll for groups
+#   webchat  — embedded support widget on the client's own website
+#
+# Webhook channels (require public HTTPS, work in production):
+#   whatsapp / instagram / facebook — Meta Graph API webhooks
+#   viber                           — Viber Bot API webhook
+#   x                               — X (Twitter) Account Activity API webhook
+CHAT_CHANNELS = {
+    "telegram", "discord", "vk", "webchat",
+    "whatsapp", "instagram", "facebook", "viber", "x",
+}
+CHAT_REALTIME_CHANNELS = {"telegram", "discord", "vk", "webchat"}
+CHAT_WEBHOOK_CHANNELS  = {"whatsapp", "instagram", "facebook", "viber", "x"}
+
+# Per-channel required config keys for validation
+CHAT_REQUIRED_KEYS: dict[str, tuple] = {
+    "telegram":  ("bot_token",),
+    "discord":   ("bot_token",),
+    "vk":        ("group_id", "access_token"),
+    "webchat":   (),  # no credentials — uses project's existing api_key
+    "whatsapp":  ("phone_number_id", "access_token", "verify_token"),
+    "instagram": ("page_id", "access_token", "verify_token"),
+    "facebook":  ("page_id", "access_token", "verify_token"),
+    "viber":     ("auth_token",),
+    "x":         ("bearer_token",),
+}
+
 
 def make_contact_uid(channel: str, external_chat_id: str, project_id: int) -> str:
     """Stable, anonymous, project-scoped 10-hex public id (e.g. u_a8f3d2b14c)."""
@@ -2008,6 +2157,485 @@ class ChatHub:
 chat_hub = ChatHub()
 
 
+# ── Generic inbound-message handler (channel-agnostic) ────────────────────────
+
+async def _handle_inbound_message(project_id: int, channel: str,
+                                  external_chat_id: str, text: str,
+                                  external_msg_id: str = ""):
+    """Channel-agnostic inbound message handler.
+    Upserts conversation + inserts message + broadcasts via WebSocket."""
+    if not external_chat_id or not text:
+        return
+
+    contact_uid = make_contact_uid(channel, external_chat_id, project_id)
+    preview     = sanitize(text[:200])
+    safe_text   = sanitize(text[:4000])
+
+    loop = asyncio.get_event_loop()
+
+    def _upsert():
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                """INSERT INTO crm_chat_conversations
+                       (project_id, channel, external_chat_id, contact_uid,
+                        is_active, unread_count, last_message_at, last_message_preview)
+                   VALUES (%s, %s, %s, %s, TRUE, 1, CURRENT_TIMESTAMP, %s)
+                   ON CONFLICT (project_id, channel, external_chat_id) DO UPDATE SET
+                       is_active = TRUE,
+                       unread_count = crm_chat_conversations.unread_count + 1,
+                       last_message_at = CURRENT_TIMESTAMP,
+                       last_message_preview = EXCLUDED.last_message_preview
+                   RETURNING id, channel, external_chat_id, contact_uid, is_active,
+                             unread_count, last_message_at, last_message_preview, created_at""",
+                (project_id, channel, external_chat_id, contact_uid, preview)
+            )
+            conv = cur.fetchone()
+            cur.execute(
+                """INSERT INTO crm_chat_messages (conversation_id, direction, text, external_msg_id)
+                   VALUES (%s, 'in', %s, %s)
+                   RETURNING id, conversation_id, direction, text, sender_user_id, created_at""",
+                (conv["id"], safe_text, str(external_msg_id))
+            )
+            message = cur.fetchone()
+            conn.commit()
+        return conv, message
+
+    conv, message = await loop.run_in_executor(None, _upsert)
+    await chat_hub.broadcast(project_id, {
+        "type":         "message.created",
+        "conversation": _serialize_conv(conv),
+        "message":      _serialize_msg(message),
+    })
+
+
+# ── Telegram long-poll background poller (works on localhost without HTTPS) ───
+
+async def _process_telegram_update(project_id: int, update: dict):
+    """Handle one Telegram update: upsert conversation + message, broadcast."""
+    msg = update.get("message") or update.get("edited_message")
+    if not msg:
+        return
+    chat = msg.get("chat") or {}
+    external_chat_id = str(chat.get("id", ""))
+    text = (msg.get("text") or msg.get("caption") or "").strip()
+    await _handle_inbound_message(
+        project_id, "telegram", external_chat_id, text,
+        external_msg_id=str(msg.get("message_id", "")),
+    )
+
+
+class TelegramPoller:
+    """Long-poll getUpdates per project. Auto-started on bot connect."""
+
+    def __init__(self):
+        self._tasks: dict[int, asyncio.Task] = {}
+
+    async def start(self, project_id: int, token: str):
+        await self.stop(project_id)
+        task = asyncio.create_task(self._poll_loop(project_id, token))
+        self._tasks[project_id] = task
+        print(f"[telegram poller] started for project {project_id}")
+
+    async def stop(self, project_id: int):
+        task = self._tasks.pop(project_id, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            print(f"[telegram poller] stopped for project {project_id}")
+
+    async def start_all(self):
+        """Called on server startup — resumes polling for all active bots."""
+        loop = asyncio.get_event_loop()
+        rows = await loop.run_in_executor(
+            None,
+            lambda: db_all(
+                "SELECT project_id, config FROM crm_chat_integrations WHERE channel='telegram' AND is_active=TRUE",
+                ()
+            )
+        )
+        for row in rows:
+            token = (row["config"] or {}).get("bot_token")
+            if token:
+                await self.start(row["project_id"], token)
+
+    async def _poll_loop(self, project_id: int, token: str):
+        offset = 0
+        loop = asyncio.get_event_loop()
+        while True:
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: _telegram_call_timeout(token, "getUpdates", {
+                        "offset":          offset,
+                        "timeout":         25,
+                        "allowed_updates": ["message"],
+                    }, timeout=30)
+                )
+                if result.get("ok"):
+                    for upd in result.get("result", []):
+                        offset = upd["update_id"] + 1
+                        try:
+                            await _process_telegram_update(project_id, upd)
+                        except Exception as e:
+                            print(f"[telegram poller] process error: {e}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[telegram poller] poll error project={project_id}: {e}")
+                await asyncio.sleep(5)
+
+
+telegram_poller = TelegramPoller()
+
+
+# ── Discord Gateway WebSocket poller (works on localhost without HTTPS) ───────
+
+class DiscordPoller:
+    """Connects to Discord Gateway via WebSocket. Receives DMs in real-time.
+
+    Required intents: DIRECT_MESSAGES (4096) + MESSAGE_CONTENT (32768) = 36864.
+    For DMs the MESSAGE_CONTENT intent must be enabled in the bot's Developer Portal."""
+
+    GATEWAY_URL    = "wss://gateway.discord.gg/?v=10&encoding=json"
+    DM_INTENTS     = (1 << 12) | (1 << 15)  # DIRECT_MESSAGES + MESSAGE_CONTENT
+
+    def __init__(self):
+        self._tasks: dict[int, asyncio.Task] = {}
+        self._bot_ids: dict[int, str]        = {}
+
+    async def start(self, project_id: int, token: str):
+        await self.stop(project_id)
+        task = asyncio.create_task(self._run(project_id, token))
+        self._tasks[project_id] = task
+        print(f"[discord poller] started for project {project_id}")
+
+    async def stop(self, project_id: int):
+        task = self._tasks.pop(project_id, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            print(f"[discord poller] stopped for project {project_id}")
+        self._bot_ids.pop(project_id, None)
+
+    async def start_all(self):
+        loop = asyncio.get_event_loop()
+        rows = await loop.run_in_executor(
+            None,
+            lambda: db_all(
+                "SELECT project_id, config FROM crm_chat_integrations WHERE channel='discord' AND is_active=TRUE",
+                ()
+            )
+        )
+        for row in rows:
+            token = (row["config"] or {}).get("bot_token")
+            if token:
+                await self.start(row["project_id"], token)
+
+    async def _run(self, project_id: int, token: str):
+        try:
+            import websockets
+        except ImportError:
+            print("[discord poller] websockets library missing — install uvicorn[standard]")
+            return
+
+        try:
+            while True:
+                try:
+                    async with websockets.connect(self.GATEWAY_URL, max_size=10 * 1024 * 1024) as ws:
+                        hello = json.loads(await ws.recv())
+                        heartbeat_ms = hello["d"]["heartbeat_interval"]
+
+                        # IDENTIFY
+                        await ws.send(json.dumps({
+                            "op": 2,
+                            "d": {
+                                "token":   token,
+                                "intents": self.DM_INTENTS,
+                                "properties": {
+                                    "os": "linux", "browser": "torta-crm", "device": "torta-crm",
+                                },
+                            },
+                        }))
+
+                        # heartbeat task
+                        async def hb():
+                            while True:
+                                await asyncio.sleep(heartbeat_ms / 1000)
+                                await ws.send(json.dumps({"op": 1, "d": None}))
+
+                        hb_task = asyncio.create_task(hb())
+                        try:
+                            async for raw in ws:
+                                try:
+                                    evt = json.loads(raw)
+                                except Exception:
+                                    continue
+                                op = evt.get("op")
+                                if op == 0:
+                                    t = evt.get("t")
+                                    d = evt.get("d") or {}
+                                    if t == "READY":
+                                        bot_user = (d.get("user") or {}).get("id")
+                                        if bot_user:
+                                            self._bot_ids[project_id] = str(bot_user)
+                                    elif t == "MESSAGE_CREATE":
+                                        await self._on_message(project_id, d)
+                                elif op == 11:
+                                    pass  # heartbeat ack
+                                elif op == 7 or op == 9:
+                                    break  # need to reconnect
+                        finally:
+                            hb_task.cancel()
+                            try: await hb_task
+                            except asyncio.CancelledError: pass
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    print(f"[discord poller] WS error project={project_id}: {e}")
+                    await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            return
+
+    async def _on_message(self, project_id: int, msg: dict):
+        # Only handle DMs (no guild_id) to keep scope private/anonymous
+        if msg.get("guild_id"):
+            return
+        author = msg.get("author") or {}
+        if author.get("bot"):
+            return
+        bot_id = self._bot_ids.get(project_id)
+        if bot_id and str(author.get("id")) == bot_id:
+            return
+        external_chat_id = str(msg.get("channel_id", ""))
+        text = (msg.get("content") or "").strip()
+        await _handle_inbound_message(
+            project_id, "discord", external_chat_id, text,
+            external_msg_id=str(msg.get("id", "")),
+        )
+
+
+discord_poller = DiscordPoller()
+
+
+def _discord_call(token: str, method: str, path: str, payload: dict | None = None) -> dict:
+    """Synchronous Discord REST API call."""
+    url  = f"https://discord.com/api/v10{path}"
+    body = json.dumps(payload).encode() if payload is not None else None
+    req  = urllib.request.Request(url, data=body, method=method, headers={
+        "Authorization": f"Bot {token}",
+        "Content-Type":  "application/json",
+        "User-Agent":    "torta-crm (https://tortacrm.com, 1.0)",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = resp.read()
+            return json.loads(data) if data else {}
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read())
+        except Exception:
+            detail = {"message": str(e)}
+        raise HTTPException(e.code, detail.get("message", "Discord error"))
+    except Exception as e:
+        raise HTTPException(503, f"Discord unreachable: {e}")
+
+
+# ── VK Long Poll for groups (works on localhost without HTTPS) ────────────────
+
+class VKPoller:
+    """VK Bots Long Poll — receives messages sent to a community.
+
+    Requires:
+      - group_id      (numeric VK group/community id)
+      - access_token  (group token with `messages` scope, generated in group settings)
+    Group settings → API usage → Long Poll API → Enabled, version 5.131."""
+
+    API_BASE = "https://api.vk.com/method"
+    API_VER  = "5.131"
+
+    def __init__(self):
+        self._tasks: dict[int, asyncio.Task] = {}
+
+    async def start(self, project_id: int, group_id: str, token: str):
+        await self.stop(project_id)
+        task = asyncio.create_task(self._run(project_id, group_id, token))
+        self._tasks[project_id] = task
+        print(f"[vk poller] started for project {project_id}")
+
+    async def stop(self, project_id: int):
+        task = self._tasks.pop(project_id, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            print(f"[vk poller] stopped for project {project_id}")
+
+    async def start_all(self):
+        loop = asyncio.get_event_loop()
+        rows = await loop.run_in_executor(
+            None,
+            lambda: db_all(
+                "SELECT project_id, config FROM crm_chat_integrations WHERE channel='vk' AND is_active=TRUE",
+                ()
+            )
+        )
+        for row in rows:
+            cfg = row["config"] or {}
+            gid, tok = cfg.get("group_id"), cfg.get("access_token")
+            if gid and tok:
+                await self.start(row["project_id"], str(gid), tok)
+
+    def _api(self, token: str, method: str, params: dict) -> dict:
+        params = {**params, "access_token": token, "v": self.API_VER}
+        url = f"{self.API_BASE}/{method}"
+        body = urllib.parse.urlencode(params).encode()
+        req = urllib.request.Request(url, data=body, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+
+    async def _run(self, project_id: int, group_id: str, token: str):
+        loop = asyncio.get_event_loop()
+        try:
+            while True:
+                try:
+                    server_info = await loop.run_in_executor(
+                        None,
+                        lambda: self._api(token, "groups.getLongPollServer", {"group_id": group_id})
+                    )
+                    if "response" not in server_info:
+                        err = server_info.get("error", {}).get("error_msg", "unknown")
+                        print(f"[vk poller] cannot get LP server project={project_id}: {err}")
+                        await asyncio.sleep(15)
+                        continue
+
+                    lp     = server_info["response"]
+                    server = lp["server"]
+                    key    = lp["key"]
+                    ts     = lp["ts"]
+
+                    while True:
+                        url    = f"{server}?act=a_check&key={key}&ts={ts}&wait=25"
+                        result = await loop.run_in_executor(
+                            None,
+                            lambda u=url: json.loads(urllib.request.urlopen(u, timeout=30).read())
+                        )
+                        if "failed" in result:
+                            # 1: ts outdated → use new ts; 2/3: re-fetch server info
+                            if result["failed"] == 1 and "ts" in result:
+                                ts = result["ts"]; continue
+                            break  # break inner loop, refetch LP server
+                        ts = result.get("ts", ts)
+                        for upd in result.get("updates", []):
+                            if upd.get("type") != "message_new":
+                                continue
+                            msg = (upd.get("object") or {}).get("message") or {}
+                            external_chat_id = str(msg.get("peer_id", ""))
+                            text = (msg.get("text") or "").strip()
+                            try:
+                                await _handle_inbound_message(
+                                    project_id, "vk", external_chat_id, text,
+                                    external_msg_id=str(msg.get("id", "")),
+                                )
+                            except Exception as e:
+                                print(f"[vk poller] process error: {e}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    print(f"[vk poller] error project={project_id}: {e}")
+                    await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            return
+
+
+vk_poller = VKPoller()
+
+
+def _vk_call(token: str, method: str, params: dict) -> dict:
+    """Synchronous VK API call (validation, send, etc.)."""
+    full = {**params, "access_token": token, "v": VKPoller.API_VER}
+    url  = f"{VKPoller.API_BASE}/{method}"
+    body = urllib.parse.urlencode(full).encode()
+    req  = urllib.request.Request(url, data=body, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        raise HTTPException(503, f"VK unreachable: {e}")
+
+
+# ── Meta Graph API helpers (WhatsApp / Instagram / Facebook) ──────────────────
+
+def _meta_call(method: str, path: str, access_token: str,
+               payload: dict | None = None, params: dict | None = None) -> dict:
+    """Synchronous Meta Graph API call. Used to send messages."""
+    qs = urllib.parse.urlencode({**(params or {}), "access_token": access_token})
+    url = f"https://graph.facebook.com/v20.0{path}?{qs}"
+    body = json.dumps(payload).encode() if payload is not None else None
+    req  = urllib.request.Request(url, data=body, method=method, headers={
+        "Content-Type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read())
+        except Exception:
+            detail = {"error": {"message": str(e)}}
+        msg = ((detail.get("error") or {}).get("message")) or "Meta API error"
+        raise HTTPException(e.code, msg)
+    except Exception as e:
+        raise HTTPException(503, f"Meta unreachable: {e}")
+
+
+# ── Viber Bot API helpers ─────────────────────────────────────────────────────
+
+def _viber_call(method: str, auth_token: str, payload: dict) -> dict:
+    """Synchronous Viber Bot API call."""
+    url = f"https://chatapi.viber.com/pa/{method}"
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "Content-Type":         "application/json",
+        "X-Viber-Auth-Token":   auth_token,
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read())
+        except Exception:
+            detail = {"status_message": str(e)}
+        raise HTTPException(e.code, detail.get("status_message", "Viber error"))
+    except Exception as e:
+        raise HTTPException(503, f"Viber unreachable: {e}")
+
+
+# ── Startup: resume all real-time pollers ─────────────────────────────────────
+
+@app.on_event("startup")
+async def start_telegram_polling():
+    await telegram_poller.start_all()
+
+
+@app.on_event("startup")
+async def start_discord_polling():
+    await discord_poller.start_all()
+
+
+@app.on_event("startup")
+async def start_vk_polling():
+    await vk_poller.start_all()
+
+
 def _user_from_token(token: str) -> dict | None:
     if not token:
         return None
@@ -2021,13 +2649,13 @@ def _user_from_token(token: str) -> dict | None:
     return db_one("SELECT id, name, email, role FROM crm_users WHERE id = %s AND is_active = TRUE", (user_id,))
 
 
-def _telegram_call(token: str, method: str, payload: dict) -> dict:
-    """Synchronous Telegram Bot API call."""
+def _telegram_call_timeout(token: str, method: str, payload: dict, timeout: int = 15) -> dict:
+    """Synchronous Telegram Bot API call with configurable timeout."""
     url = f"https://api.telegram.org/bot{token}/{method}"
     body = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         try:
@@ -2037,6 +2665,10 @@ def _telegram_call(token: str, method: str, payload: dict) -> dict:
         raise HTTPException(e.code, detail.get("description", "Telegram error"))
     except Exception as e:
         raise HTTPException(503, f"Telegram unreachable: {e}")
+
+
+def _telegram_call(token: str, method: str, payload: dict) -> dict:
+    return _telegram_call_timeout(token, method, payload, timeout=15)
 
 
 def _serialize_conv(row: dict) -> dict:
@@ -2085,66 +2717,161 @@ def list_chat_integrations(project_id: int = Query(...), user: dict = Depends(ge
 
 
 @app.post("/api/chat/integrations")
-def save_chat_integration(req: ChatIntegrationRequest,
-                          project_id: int = Query(...),
-                          user: dict = Depends(get_current_user)):
+async def save_chat_integration(req: ChatIntegrationRequest,
+                                project_id: int = Query(...),
+                                user: dict = Depends(get_current_user)):
     require_owner(user, project_id)
     channel = req.channel.lower().strip()
     if channel not in CHAT_CHANNELS:
         raise HTTPException(400, "Unsupported channel")
 
-    bot_username = None
-    config = {}
+    raw = req.config or {}
+    required = CHAT_REQUIRED_KEYS.get(channel, ())
+    missing  = [k for k in required if not str(raw.get(k, "")).strip()]
+    if missing:
+        raise HTTPException(400, f"Missing fields: {', '.join(missing)}")
 
+    bot_username = None
+    config       = {k: str(v).strip() for k, v in raw.items() if isinstance(v, (str, int))}
+    loop         = asyncio.get_event_loop()
+
+    # ── Per-channel validation + setup ────────────────────────────────────────
     if channel == "telegram":
-        token = req.bot_token.strip()
-        if not token or ":" not in token:
-            raise HTTPException(400, "Invalid bot token")
-        info = _telegram_call(token, "getMe", {})
+        token = config["bot_token"]
+        if ":" not in token:
+            raise HTTPException(400, "Invalid bot token format")
+        info = await loop.run_in_executor(None, lambda: _telegram_call(token, "getMe", {}))
         if not info.get("ok"):
             raise HTTPException(400, "Telegram rejected the token")
         bot_username = info["result"].get("username")
-        config = {"bot_token": token}
-        webhook_url = f"{CRM_BACKEND_URL}/api/chat/webhook/telegram/{project_id}"
         try:
-            _telegram_call(token, "setWebhook", {
-                "url":             webhook_url,
-                "allowed_updates": ["message"],
-                "drop_pending_updates": True,
-            })
-        except HTTPException as e:
-            print(f"[chat] setWebhook failed (non-fatal): {e.detail}")
+            await loop.run_in_executor(None,
+                lambda: _telegram_call(token, "deleteWebhook", {"drop_pending_updates": True}))
+        except Exception:
+            pass
 
-    with db_cursor() as (conn, cur):
-        cur.execute("""
-            INSERT INTO crm_chat_integrations (project_id, channel, config, is_active, bot_username)
-            VALUES (%s, %s, %s::jsonb, %s, %s)
-            ON CONFLICT (project_id, channel) DO UPDATE SET
-                config=EXCLUDED.config, is_active=EXCLUDED.is_active, bot_username=EXCLUDED.bot_username
-        """, (project_id, channel, json.dumps(config), req.is_active, bot_username))
-        conn.commit()
-    return {"ok": True, "bot_username": bot_username}
+    elif channel == "discord":
+        token = config["bot_token"]
+        info = await loop.run_in_executor(None,
+            lambda: _discord_call(token, "GET", "/users/@me"))
+        username = info.get("username")
+        if not username:
+            raise HTTPException(400, "Discord rejected the token")
+        bot_username = username + (f"#{info['discriminator']}" if info.get("discriminator") and info["discriminator"] != "0" else "")
+
+    elif channel == "vk":
+        token   = config["access_token"]
+        gid     = config["group_id"]
+        info    = await loop.run_in_executor(None,
+            lambda: _vk_call(token, "groups.getById", {"group_id": gid}))
+        if "error" in info:
+            raise HTTPException(400, info["error"].get("error_msg", "VK rejected the token"))
+        groups = info.get("response") or []
+        if not groups:
+            raise HTTPException(400, "VK group not found")
+        bot_username = groups[0].get("name") or groups[0].get("screen_name")
+
+    elif channel in ("whatsapp", "instagram", "facebook"):
+        token = config["access_token"]
+        # Validate token by hitting /me
+        try:
+            info = await loop.run_in_executor(None,
+                lambda: _meta_call("GET", "/me", token, params={"fields": "id,name"}))
+            bot_username = info.get("name") or info.get("id")
+        except HTTPException as e:
+            raise HTTPException(400, f"Meta API rejected the token: {e.detail}")
+
+    elif channel == "viber":
+        token = config["auth_token"]
+        info  = await loop.run_in_executor(None,
+            lambda: _viber_call("get_account_info", token, {}))
+        if info.get("status") != 0:
+            raise HTTPException(400, info.get("status_message", "Viber rejected the token"))
+        bot_username = info.get("name") or info.get("uri")
+
+    elif channel == "webchat":
+        # No external credentials — the website widget uses the project's existing
+        # public api_key + publishable_key (already validated by External API).
+        proj = await loop.run_in_executor(
+            None, lambda: db_one("SELECT name FROM crm_projects WHERE id=%s", (project_id,))
+        )
+        bot_username = (proj or {}).get("name") or "Web chat"
+
+    elif channel == "x":
+        # X (Twitter) Account Activity API webhook — credentials are stored;
+        # actual subscription must be registered through dev portal manually.
+        bot_username = config.get("handle") or "X account"
+
+    # ── Persist ───────────────────────────────────────────────────────────────
+    def _save():
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                INSERT INTO crm_chat_integrations (project_id, channel, config, is_active, bot_username)
+                VALUES (%s, %s, %s::jsonb, %s, %s)
+                ON CONFLICT (project_id, channel) DO UPDATE SET
+                    config=EXCLUDED.config, is_active=EXCLUDED.is_active, bot_username=EXCLUDED.bot_username
+            """, (project_id, channel, json.dumps(config), req.is_active, bot_username))
+            conn.commit()
+
+    await loop.run_in_executor(None, _save)
+
+    # ── Start real-time pollers ───────────────────────────────────────────────
+    if req.is_active:
+        if channel == "telegram":
+            await telegram_poller.start(project_id, config["bot_token"])
+        elif channel == "discord":
+            await discord_poller.start(project_id, config["bot_token"])
+        elif channel == "vk":
+            await vk_poller.start(project_id, config["group_id"], config["access_token"])
+
+    # ── Return webhook URL hint for webhook-only channels ─────────────────────
+    extra: dict = {}
+    if channel in CHAT_WEBHOOK_CHANNELS:
+        extra["webhook_url"] = f"{CRM_BACKEND_URL}/api/chat/webhook/{channel}/{project_id}"
+        if channel in ("whatsapp", "instagram", "facebook"):
+            extra["verify_token"] = config.get("verify_token", "")
+
+    return {"ok": True, "bot_username": bot_username, **extra}
 
 
 @app.delete("/api/chat/integrations/{channel}")
-def delete_chat_integration(channel: str,
-                            project_id: int = Query(...),
-                            user: dict = Depends(get_current_user)):
+async def delete_chat_integration(channel: str,
+                                  project_id: int = Query(...),
+                                  user: dict = Depends(get_current_user)):
     require_owner(user, project_id)
     channel = channel.lower().strip()
-    row = db_one("SELECT config FROM crm_chat_integrations WHERE project_id=%s AND channel=%s",
-                 (project_id, channel))
-    if row and channel == "telegram":
-        token = (row["config"] or {}).get("bot_token")
-        if token:
-            try:
-                _telegram_call(token, "deleteWebhook", {})
-            except Exception:
-                pass
-    with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_chat_integrations WHERE project_id=%s AND channel=%s",
-                    (project_id, channel))
-        conn.commit()
+    if channel not in CHAT_CHANNELS:
+        raise HTTPException(400, "Unsupported channel")
+    loop = asyncio.get_event_loop()
+
+    row = await loop.run_in_executor(
+        None, lambda: db_one("SELECT config FROM crm_chat_integrations WHERE project_id=%s AND channel=%s",
+                              (project_id, channel))
+    )
+
+    # ── Stop real-time pollers ────────────────────────────────────────────────
+    if channel == "telegram":
+        await telegram_poller.stop(project_id)
+        if row:
+            token = (row["config"] or {}).get("bot_token")
+            if token:
+                try:
+                    await loop.run_in_executor(None, lambda: _telegram_call(token, "deleteWebhook", {}))
+                except Exception:
+                    pass
+    elif channel == "discord":
+        await discord_poller.stop(project_id)
+    elif channel == "vk":
+        await vk_poller.stop(project_id)
+
+    # ── Persist ───────────────────────────────────────────────────────────────
+    def _delete():
+        with db_cursor() as (conn, cur):
+            cur.execute("DELETE FROM crm_chat_integrations WHERE project_id=%s AND channel=%s",
+                        (project_id, channel))
+            conn.commit()
+
+    await loop.run_in_executor(None, _delete)
     return {"ok": True}
 
 
@@ -2254,16 +2981,104 @@ async def send_message(conv_id: int,
         raise HTTPException(400, "Channel not configured")
 
     external_msg_id = None
-    if conv["channel"] == "telegram":
-        token = (integ["config"] or {}).get("bot_token")
+    cfg = integ["config"] or {}
+    ch  = conv["channel"]
+    chat_id = conv["external_chat_id"]
+
+    if ch == "telegram":
+        token = cfg.get("bot_token")
         if not token:
             raise HTTPException(400, "Telegram token missing")
-        result = _telegram_call(token, "sendMessage", {
-            "chat_id": conv["external_chat_id"],
-            "text":    text,
-        })
+        result = _telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": text})
         if result.get("ok") and result.get("result"):
             external_msg_id = str(result["result"].get("message_id", ""))
+
+    elif ch == "discord":
+        token = cfg.get("bot_token")
+        if not token:
+            raise HTTPException(400, "Discord token missing")
+        result = _discord_call(token, "POST", f"/channels/{chat_id}/messages", {"content": text})
+        external_msg_id = str(result.get("id", ""))
+
+    elif ch == "vk":
+        token = cfg.get("access_token")
+        if not token:
+            raise HTTPException(400, "VK token missing")
+        result = _vk_call(token, "messages.send", {
+            "peer_id":   chat_id,
+            "message":   text,
+            "random_id": secrets.randbits(31),
+        })
+        if "error" in result:
+            raise HTTPException(400, result["error"].get("error_msg", "VK send failed"))
+        external_msg_id = str(result.get("response", ""))
+
+    elif ch == "whatsapp":
+        token = cfg.get("access_token")
+        phone = cfg.get("phone_number_id")
+        if not token or not phone:
+            raise HTTPException(400, "WhatsApp not configured")
+        result = _meta_call("POST", f"/{phone}/messages", token, payload={
+            "messaging_product": "whatsapp",
+            "to":                chat_id,
+            "type":              "text",
+            "text":              {"body": text},
+        })
+        msgs = result.get("messages") or []
+        if msgs:
+            external_msg_id = msgs[0].get("id", "")
+
+    elif ch in ("instagram", "facebook"):
+        token = cfg.get("access_token")
+        page  = cfg.get("page_id")
+        if not token or not page:
+            raise HTTPException(400, f"{ch.title()} not configured")
+        result = _meta_call("POST", f"/{page}/messages", token, payload={
+            "recipient": {"id": chat_id},
+            "message":   {"text": text},
+            "messaging_type": "RESPONSE",
+        })
+        external_msg_id = result.get("message_id", "")
+
+    elif ch == "viber":
+        token = cfg.get("auth_token")
+        if not token:
+            raise HTTPException(400, "Viber token missing")
+        result = _viber_call("send_message", token, {
+            "receiver":   chat_id,
+            "min_api_version": 1,
+            "type":       "text",
+            "text":       text,
+            "sender":     {"name": "Support"},
+        })
+        external_msg_id = str(result.get("message_token", ""))
+
+    elif ch == "webchat":
+        # Web-chat replies are stored only — the widget polls External API
+        # (GET /{api_key}/api/chat/messages?since_id=N) to display them.
+        external_msg_id = ""
+
+    elif ch == "x":
+        token = cfg.get("bearer_token")
+        if not token:
+            raise HTTPException(400, "X bearer token missing")
+        # X API v2 DM endpoint (requires elevated access). Best-effort send;
+        # full delivery is gated by X dev approval.
+        try:
+            url  = f"https://api.twitter.com/2/dm_conversations/with/{chat_id}/messages"
+            body = json.dumps({"text": text}).encode()
+            req  = urllib.request.Request(url, data=body, method="POST", headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type":  "application/json",
+            })
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read())
+            external_msg_id = str(((data.get("data") or {}).get("dm_event_id")) or "")
+        except Exception as e:
+            raise HTTPException(503, f"X send failed: {e}")
+
+    else:
+        raise HTTPException(400, f"Sending not implemented for {ch}")
 
     with db_cursor() as (conn, cur):
         cur.execute(
@@ -2290,23 +3105,19 @@ async def send_message(conv_id: int,
     return {"ok": True, "message": payload}
 
 
-# ── Telegram inbound webhook ──────────────────────────────────────────────────
+# ── Inbound webhooks ──────────────────────────────────────────────────────────
+#
+# Each external messenger that requires an HTTPS webhook (Meta family, Viber,
+# Telegram in production) hits one of these endpoints. The localhost-friendly
+# real-time channels (Telegram getUpdates, Discord Gateway, VK Long Poll) do
+# NOT use webhooks — pollers handle them.
 
 @app.post("/api/chat/webhook/telegram/{project_id}")
 async def telegram_webhook(project_id: int, request: Request):
+    """For production HTTPS deploys (setWebhook). On localhost we use long-poll instead."""
     try:
         update = await request.json()
     except Exception:
-        return {"ok": True}
-
-    msg = update.get("message") or update.get("edited_message")
-    if not msg:
-        return {"ok": True}
-
-    chat = msg.get("chat") or {}
-    external_chat_id = str(chat.get("id", ""))
-    text = (msg.get("text") or msg.get("caption") or "").strip()
-    if not external_chat_id or not text:
         return {"ok": True}
 
     integ = db_one(
@@ -2316,40 +3127,161 @@ async def telegram_webhook(project_id: int, request: Request):
     if not integ:
         return {"ok": True}
 
-    contact_uid = make_contact_uid("telegram", external_chat_id, project_id)
-    preview = sanitize(text[:200])
-    safe_text = sanitize(text[:4000])
+    msg = update.get("message") or update.get("edited_message")
+    if not msg:
+        return {"ok": True}
+    chat = msg.get("chat") or {}
+    await _handle_inbound_message(
+        project_id, "telegram",
+        str(chat.get("id", "")),
+        (msg.get("text") or msg.get("caption") or "").strip(),
+        external_msg_id=str(msg.get("message_id", "")),
+    )
+    return {"ok": True}
 
-    with db_cursor() as (conn, cur):
-        cur.execute(
-            """INSERT INTO crm_chat_conversations
-                   (project_id, channel, external_chat_id, contact_uid,
-                    is_active, unread_count, last_message_at, last_message_preview)
-               VALUES (%s, 'telegram', %s, %s, TRUE, 1, CURRENT_TIMESTAMP, %s)
-               ON CONFLICT (project_id, channel, external_chat_id) DO UPDATE SET
-                   is_active = TRUE,
-                   unread_count = crm_chat_conversations.unread_count + 1,
-                   last_message_at = CURRENT_TIMESTAMP,
-                   last_message_preview = EXCLUDED.last_message_preview
-               RETURNING id, channel, external_chat_id, contact_uid, is_active,
-                         unread_count, last_message_at, last_message_preview, created_at""",
-            (project_id, external_chat_id, contact_uid, preview)
-        )
-        conv = cur.fetchone()
-        cur.execute(
-            """INSERT INTO crm_chat_messages (conversation_id, direction, text, external_msg_id)
-               VALUES (%s, 'in', %s, %s)
-               RETURNING id, conversation_id, direction, text, sender_user_id, created_at""",
-            (conv["id"], safe_text, str(msg.get("message_id", "")))
-        )
-        message = cur.fetchone()
-        conn.commit()
 
-    await chat_hub.broadcast(project_id, {
-        "type":         "message.created",
-        "conversation": _serialize_conv(conv),
-        "message":      _serialize_msg(message),
-    })
+# ── Meta webhook (WhatsApp / Instagram / Facebook) ────────────────────────────
+#
+# Meta uses the same webhook contract for all three products:
+#   GET  → verification handshake (echoes hub.challenge if hub.verify_token matches)
+#   POST → JSON payload with `entry[].changes[].value.messages[]` (WhatsApp)
+#          or `entry[].messaging[]` (Instagram / Facebook Messenger)
+#
+# Optional: signature verification via X-Hub-Signature-256 + app_secret.
+
+def _verify_meta_signature(app_secret: str, signature_header: str, body: bytes) -> bool:
+    if not app_secret or not signature_header:
+        return True  # signature check disabled
+    if not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature_header.split("=", 1)[1], expected)
+
+
+@app.get("/api/chat/webhook/{channel}/{project_id}")
+async def meta_webhook_verify(channel: str, project_id: int, request: Request):
+    """Meta verification handshake. Echo hub.challenge when verify_token matches."""
+    if channel not in ("whatsapp", "instagram", "facebook"):
+        raise HTTPException(404, "Not found")
+    qp        = request.query_params
+    mode      = qp.get("hub.mode")
+    token     = qp.get("hub.verify_token", "")
+    challenge = qp.get("hub.challenge", "")
+
+    integ = db_one(
+        "SELECT config FROM crm_chat_integrations WHERE project_id=%s AND channel=%s AND is_active=TRUE",
+        (project_id, channel)
+    )
+    expected = (integ or {}).get("config", {}).get("verify_token", "")
+    if mode == "subscribe" and token and token == expected:
+        return Response(content=challenge, media_type="text/plain")
+    raise HTTPException(403, "Verification failed")
+
+
+@app.post("/api/chat/webhook/{channel}/{project_id}")
+async def channel_webhook_inbound(channel: str, project_id: int, request: Request):
+    """Inbound webhook for Meta family + Viber. Telegram has its own dedicated route above."""
+    if channel not in CHAT_WEBHOOK_CHANNELS:
+        raise HTTPException(404, "Not found")
+
+    integ = db_one(
+        "SELECT config FROM crm_chat_integrations WHERE project_id=%s AND channel=%s AND is_active=TRUE",
+        (project_id, channel)
+    )
+    if not integ:
+        return {"ok": True}
+    cfg = integ["config"] or {}
+
+    raw_body = await request.body()
+
+    # Optional signature verification for Meta family
+    if channel in ("whatsapp", "instagram", "facebook"):
+        sig = request.headers.get("X-Hub-Signature-256", "")
+        if not _verify_meta_signature(cfg.get("app_secret", ""), sig, raw_body):
+            raise HTTPException(403, "Bad signature")
+
+    try:
+        payload = json.loads(raw_body or b"{}")
+    except Exception:
+        return {"ok": True}
+
+    if channel == "whatsapp":
+        for entry in payload.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value") or {}
+                for msg in value.get("messages", []):
+                    text = ((msg.get("text") or {}).get("body") or "").strip()
+                    chat_id = str(msg.get("from", ""))
+                    await _handle_inbound_message(
+                        project_id, "whatsapp", chat_id, text,
+                        external_msg_id=str(msg.get("id", "")),
+                    )
+
+    elif channel in ("instagram", "facebook"):
+        for entry in payload.get("entry", []):
+            for evt in entry.get("messaging", []):
+                msg = evt.get("message") or {}
+                if msg.get("is_echo"):  # ignore our own outbound echo
+                    continue
+                text = (msg.get("text") or "").strip()
+                chat_id = str((evt.get("sender") or {}).get("id", ""))
+                await _handle_inbound_message(
+                    project_id, channel, chat_id, text,
+                    external_msg_id=str(msg.get("mid", "")),
+                )
+
+    elif channel == "viber":
+        event = payload.get("event")
+        if event == "message":
+            sender = payload.get("sender") or {}
+            msg    = payload.get("message") or {}
+            text   = (msg.get("text") or "").strip()
+            chat_id = str(sender.get("id", ""))
+            await _handle_inbound_message(
+                project_id, "viber", chat_id, text,
+                external_msg_id=str(payload.get("message_token", "")),
+            )
+        # `webhook`, `subscribed`, `delivered`, `seen` events are acknowledged silently
+
+    elif channel == "x":
+        # X (Twitter) Account Activity API delivers DMs as `direct_message_events[]`
+        for evt in payload.get("direct_message_events", []):
+            if evt.get("type") != "message_create":
+                continue
+            mc        = evt.get("message_create") or {}
+            sender_id = str((mc.get("sender_id") or ""))
+            msg_data  = mc.get("message_data") or {}
+            text      = (msg_data.get("text") or "").strip()
+            await _handle_inbound_message(
+                project_id, "x", sender_id, text,
+                external_msg_id=str(evt.get("id", "")),
+            )
+
+    return {"ok": True}
+
+
+# ── Internal endpoint: External API → CRM (web-chat inbound) ──────────────────
+#
+# The website widget (ClothingWebsite) sends a message via External API.
+# External API forwards it here so the CRM operator sees it instantly via
+# the in-process WebSocket hub.
+
+class WebChatInboundRequest(BaseModel):
+    project_id:  int
+    web_chat_id: str
+    text:        str
+
+
+@app.post("/api/chat/internal/inbound")
+async def internal_chat_inbound(req: WebChatInboundRequest, request: Request):
+    if request.headers.get("X-Internal-Key", "") != INTERNAL_API_KEY:
+        raise HTTPException(403, "Forbidden")
+    text = (req.text or "").strip()
+    if not text or not req.web_chat_id:
+        return {"ok": True}
+    await _handle_inbound_message(
+        req.project_id, "webchat", req.web_chat_id, text[:4000],
+    )
     return {"ok": True}
 
 

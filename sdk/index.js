@@ -23,12 +23,13 @@ export function createClient(baseUrl, publishableKey) {
   let _userPromise = null;  // deduplicates concurrent getUser() calls
 
   // ─── Core request helper ──────────────────────────────────────────────────
-  async function req(method, path, body) {
+  async function req(method, path, body, extraHeaders) {
     const options = {
       method,
       credentials: "include",
       headers: {
         "X-Publishable-Key": publishableKey,
+        ...(extraHeaders || {}),
       },
     };
     if (body !== undefined) {
@@ -43,6 +44,21 @@ export function createClient(baseUrl, publishableKey) {
       }
     } catch { /* ignore */ }
     return { ok: res.ok, status: res.status, data };
+  }
+
+  // ─── Web-chat identity (anonymous, persisted in localStorage) ─────────────
+  const WEB_CHAT_KEY = "torta_web_chat_id";
+  const _safeStorage = () => {
+    try { return typeof localStorage !== "undefined" ? localStorage : null; }
+    catch { return null; }
+  };
+  function _getWebChatId() {
+    const s = _safeStorage();
+    return s ? (s.getItem(WEB_CHAT_KEY) || "") : "";
+  }
+  function _setWebChatId(id) {
+    const s = _safeStorage();
+    if (s && id) s.setItem(WEB_CHAT_KEY, id);
   }
 
   // ─── Client ───────────────────────────────────────────────────────────────
@@ -124,6 +140,19 @@ export function createClient(baseUrl, publishableKey) {
       /** Redirect to Google OAuth login for this store (full page redirect). */
       googleLogin() {
         window.location.href = `${base}/api/auth/google/login`;
+      },
+
+      /**
+       * Redirect to a generic OAuth provider for this store (full page redirect).
+       * Provider must be one of: github, discord, facebook, gitlab, bitbucket,
+       * linkedin, twitch, spotify, slack, notion, figma, zoom, azure, apple,
+       * x, vk, kakao, keycloak.
+       *
+       * Example: client.auth.oauthLogin('github')
+       */
+      oauthLogin(provider) {
+        if (!provider) throw new Error("provider name required");
+        window.location.href = `${base}/api/auth/oauth/${provider}/login`;
       },
     },
 
@@ -235,6 +264,63 @@ export function createClient(baseUrl, publishableKey) {
       /** Record a product page view (fire-and-forget). */
       productView(product_id) {
         req("POST", "/api/track/product-view", { product_id }).catch(() => {});
+      },
+    },
+
+    // ── Web Chat (support widget) ────────────────────────────────────────────
+    //
+    // Anonymous customer chat with the store operators. The visitor identity
+    // is a random UUID stored in localStorage (`torta_web_chat_id`). No login
+    // required. The CRM operator sees the conversation in real time;
+    // the widget polls `list()` to receive replies.
+    //
+    chat: {
+      /** Returns the persisted anonymous web-chat id, or "" if not yet set. */
+      get id() { return _getWebChatId(); },
+
+      /**
+       * Verifies whether the support widget is enabled for this project and
+       * returns (or generates) the anonymous web_chat_id.
+       * Calls GET /api/chat/bootstrap.
+       */
+      async bootstrap() {
+        const existing = _getWebChatId();
+        const headers  = existing ? { "X-Web-Chat-Id": existing } : undefined;
+        const res = await req("GET", "/api/chat/bootstrap", undefined, headers);
+        if (res.ok && res.data?.web_chat_id) {
+          _setWebChatId(res.data.web_chat_id);
+        }
+        return res;
+      },
+
+      /** Send a message from the visitor to the CRM. */
+      async send(text) {
+        let web_chat_id = _getWebChatId();
+        if (!web_chat_id) {
+          const boot = await this.bootstrap();
+          web_chat_id = boot.data?.web_chat_id || "";
+        }
+        const res = await req("POST", "/api/chat/messages", { text, web_chat_id });
+        if (res.ok && res.data?.web_chat_id) _setWebChatId(res.data.web_chat_id);
+        return res;
+      },
+
+      /**
+       * Fetch messages newer than `since_id` for the current visitor.
+       * Returns { messages: [{ id, direction: 'in'|'out', text, created_at }] }.
+       * Use `direction === 'out'` to find new operator replies.
+       */
+      async list(since_id = 0) {
+        const web_chat_id = _getWebChatId();
+        if (!web_chat_id) return { ok: true, status: 200, data: { messages: [] } };
+        return req("GET",
+          `/api/chat/messages?web_chat_id=${encodeURIComponent(web_chat_id)}&since_id=${since_id}`);
+      },
+
+      /** Reset the local visitor identity (forgets past conversation). */
+      reset() {
+        const s = _safeStorage();
+        if (s) s.removeItem(WEB_CHAT_KEY);
       },
     },
   };

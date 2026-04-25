@@ -170,8 +170,6 @@
   z-index: 2;
   width: 36px;
   height: 36px;
-  border-radius: 11px;
-  background: var(--accent-tint);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -296,8 +294,6 @@
 .auth-modal-icon-wrap {
   width: 42px;
   height: 42px;
-  border-radius: 12px;
-  background: var(--accent-tint);
   display: flex;
   align-items: center;
   justify-content: center;
