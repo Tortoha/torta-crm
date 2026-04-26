@@ -1,0 +1,499 @@
+
+.bk-page .crm-page-title {
+  padding-top: 70px;
+  font-size: 24px;
+  margin: 0;
+}
+
+/* Toolbar: search stays left, everything else grouped right */
+.bk-toolbar { flex-wrap: wrap; }
+.bk-toolbar .ord-sort-toggle { margin-left: auto; }
+
+/* ── Bookings list (5 columns) ─────────────────────────────── */
+.bk-list-head {
+  display: grid;
+  grid-template-columns: 1.5fr 1.4fr 1fr 1fr 120px;
+  height: 36px;
+  background: var(--card);
+  border-radius: 18px;
+  padding: 0 16px;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  margin-bottom: 4px;
+}
+
+/* Override the .prow base 7-column grid for Booking rows */
+.prow.bk-prow {
+  grid-template-columns: 1.5fr 1.4fr 1fr 1fr 120px;
+  min-height: 60px;
+  gap: 12px;
+}
+
+/* Customer cell */
+.bk-prow-customer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  position: relative;
+  z-index: 2;
+  padding-right: 12px;
+}
+.bk-prow-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bk-prow-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Generic cell inside Booking row — same look as .prow-cell */
+.bk-prow-cell {
+  position: relative;
+  z-index: 2;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bk-prow-service {
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Three-button view toggle (List · Cards · Calendar) */
+.bk-view-toggle { width: 94px !important; }
+.bk-view-toggle .org-view-btn { width: 30px !important; }
+.bk-view-toggle .bk-view-ind { width: 30px !important; }
+
+/* Staff chip in row / card / settings */
+.bk-staff-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.bk-no-staff {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* When-cell (date over time) */
+.bk-when-cell { display: flex; flex-direction: column; line-height: 1.3; }
+.bk-when-date { font-weight: 500; color: var(--text); }
+.bk-when-time { font-size: 12px; color: var(--muted); }
+
+/* Card variant — service name visible */
+.bk-card-service {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  margin-top: 2px;
+  margin-bottom: 4px;
+}
+
+/* ════════════════════════════════════════════
+   SETTINGS TAB
+   ════════════════════════════════════════════ */
+
+.bk-section {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-card);
+}
+.bk-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.bk-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.bk-empty-block {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px 0;
+  font-style: italic;
+}
+
+/* List of service / staff cards inside Settings */
+.bk-cfg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+.bk-cfg-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 12px;
+  cursor: default;
+  overflow: hidden;
+  transition: background 0.18s ease;
+}
+.bk-cfg-row:hover { background: rgba(0, 0, 0, 0.045); }
+.bk-cfg-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 2;
+}
+.bk-cfg-img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.bk-cfg-img--round { border-radius: 50%; }
+.bk-cfg-img--empty {
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bk-cfg-info { min-width: 0; flex: 1; }
+.bk-cfg-name {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+.bk-cfg-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.bk-cfg-inactive { color: #d63031; }
+.bk-cfg-chiplist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.bk-cfg-actions {
+  display: flex;
+  gap: 4px;
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+}
+
+/* Working hours editor (project-wide and per-staff) */
+.bk-hours-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.02);
+  padding: 12px;
+  border-radius: 12px;
+}
+.bk-hours-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.bk-hours-day {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 70px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.bk-hours-day input { cursor: pointer; }
+.bk-hours-time {
+  width: 110px;
+  padding: 6px 12px !important;
+  font-size: 13px;
+  background: #fff !important;
+}
+.bk-hours-time:disabled { opacity: 0.4; cursor: not-allowed; }
+.bk-hours-dash { color: var(--muted); font-size: 16px; }
+
+/* Booking rules grid (2 columns) */
+.bk-rules-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+}
+@media (max-width: 720px) {
+  .bk-rules-grid { grid-template-columns: 1fr; }
+}
+
+/* ════════════════════════════════════════════
+   MODALS
+   ════════════════════════════════════════════ */
+
+.bk-modal {
+  width: 600px;
+  max-width: 90vw;
+}
+.bk-textarea {
+  resize: vertical;
+  min-height: 60px;
+  border-radius: 16px !important;
+  padding: 10px 14px !important;
+  font-family: inherit;
+  font-size: 13px;
+}
+.bk-modal-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/* Staff/service multi-pick chips inside modals */
+.bk-staff-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bk-staff-pick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.bk-staff-pick-btn:hover { background: rgba(0, 0, 0, 0.07); }
+.bk-staff-pick-btn--on {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.bk-staff-pick-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.bk-staff-pick-avatar--empty { background: rgba(0, 0, 0, 0.1); }
+
+/* ── Detail modal layout ─────────────────────────────────── */
+.bk-detail-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bk-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.bk-detail-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.bk-detail-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 1px;
+}
+.bk-detail-value {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+.bk-detail-value a { color: var(--accent); text-decoration: none; }
+.bk-detail-value a:hover { text-decoration: underline; }
+
+/* ════════════════════════════════════════════
+   CALENDAR VIEW
+   ════════════════════════════════════════════ */
+
+.bk-cal {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+}
+.bk-cal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.bk-cal-range {
+  margin-left: 12px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.bk-cal-grid {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* Hour gutter */
+.bk-cal-gutter {
+  background: rgba(0, 0, 0, 0.02);
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+}
+.bk-cal-gutter-spacer {
+  height: 44px;          /* matches .bk-cal-col-head */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.bk-cal-hour {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 6px;
+  text-align: right;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.05);
+  box-sizing: border-box;
+}
+
+/* 7 columns, one per weekday */
+.bk-cal-cols {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.bk-cal-col {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+}
+.bk-cal-col:last-child { border-right: none; }
+.bk-cal-col--today .bk-cal-col-head { background: var(--accent-tint); color: var(--accent); }
+
+.bk-cal-col-head {
+  height: 44px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.02);
+  font-weight: 500;
+  box-sizing: border-box;
+}
+.bk-cal-col-day  { color: var(--muted); }
+.bk-cal-col-date {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+}
+.bk-cal-col--today .bk-cal-col-day,
+.bk-cal-col--today .bk-cal-col-date { color: var(--accent); }
+
+/* Body of one day column — relative for absolute-positioned blocks */
+.bk-cal-col-body {
+  position: relative;
+  cursor: cell;
+}
+.bk-cal-hourline {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.05);
+  pointer-events: none;
+}
+
+/* Booking block (positioned absolutely inside its day column) */
+.bk-cal-block {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: filter 0.15s ease;
+}
+.bk-cal-block:hover { filter: brightness(0.96); }
+.bk-cal-block-time {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bk-cal-block-customer {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bk-cal-block-staff {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bk-cal-block--cancelled .bk-cal-block-time,
+.bk-cal-block--cancelled .bk-cal-block-customer { text-decoration: line-through; opacity: 0.7; }
+
+/* Select inputs inside booking modals — match crm-input look */
+.bk-modal select.crm-input {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--icon) 50%),
+    linear-gradient(135deg, var(--icon) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) center,
+    calc(100% - 13px) center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 34px !important;
+}

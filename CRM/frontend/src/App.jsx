@@ -29,6 +29,7 @@ const Authentication   = lazy(() => import('./Pages/Project/Authentication.jsx')
 const ProjectSettings  = lazy(() => import('./Pages/Project/ProjectSettings.jsx'));
 const Orders           = lazy(() => import('./Pages/Project/Orders.jsx'));
 const Chat             = lazy(() => import('./Pages/Project/Chat.jsx'));
+const Booking          = lazy(() => import('./Pages/Project/Booking/Booking.jsx'));
 // Product
 const ProductPage   = lazy(() => import('./Pages/Product/ProductPage.jsx'));
 // Settings
@@ -71,6 +72,7 @@ function App() {
             <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="url-config" element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="orders"     element={<Orders />} />
+            <Route path="booking"    element={<Booking />} />
             <Route path="chat"       element={<Chat />} />
             <Route path="settings"   element={<ProjectSettings />} />
           </Route>

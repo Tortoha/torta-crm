@@ -4,7 +4,7 @@ import {
   House, CurrencyDollar, Tag, LockKey, GearSix,
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Info, ArrowsLeftRight, MagnifyingGlass, SlidersHorizontal, Star, Code,
-  Package, ChatCircleDots,
+  Package, ChatCircleDots, CalendarBlank,
 } from '@phosphor-icons/react';
 
 // ── Nav configs ────────────────────────────────────────────────
@@ -20,16 +20,12 @@ function buildSections(apiKey) {
       ],
     },
     {
-      id: 'store', label: 'Store',
+      id: 'business', label: 'Business',
       items: [
         { to: `${base}/products`, label: 'Products', Icon: Tag     },
         { to: `${base}/orders`,   label: 'Orders',   Icon: Package },
-      ],
-    },
-    {
-      id: 'communication', label: 'Communication',
-      items: [
-        { to: `${base}/chat`, label: 'Chat with Customers', Icon: ChatCircleDots },
+        { to: `${base}/booking`,  label: 'Bookings', Icon: CalendarBlank },
+        { to: `${base}/chat`,     label: 'Chat with Customers', Icon: ChatCircleDots },
       ],
     },
     {
@@ -223,7 +219,7 @@ export default function Sidebar({ collapsed, onToggle }) {
     return null;
   }, [location.pathname, sections, productHash]);
 
-  const [open, setOpen] = useState({ overview: true, store: true, communication: true, account: true });
+  const [open, setOpen] = useState({ overview: true, store: true, booking: true, communication: true, account: true });
 
   useEffect(() => {
     if (activeSectionId) setOpen(prev => prev[activeSectionId] ? prev : { ...prev, [activeSectionId]: true });

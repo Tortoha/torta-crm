@@ -287,6 +287,63 @@ export function createClient(baseUrl, publishableKey) {
       },
     },
 
+    // ── Booking (services + appointments) ────────────────────────────────────
+    //
+    // Two namespaces under booking:
+    //   client.booking.services.list()
+    //   client.booking.services.get(id)
+    //   client.booking.services.getSlots(id, date, staffId?)
+    //   client.booking.bookings.create({ serviceId, staffId?, startsAt, … })
+    //   client.booking.bookings.list()        // current user's bookings
+    //   client.booking.bookings.cancel(id)
+    //
+    booking: {
+      services: {
+        /** List active services for this store. */
+        async list() {
+          return req("GET", "/api/booking/services");
+        },
+        /** Get one service with its eligible staff. */
+        async get(serviceId) {
+          return req("GET", `/api/booking/services/${serviceId}`);
+        },
+        /**
+         * Get available time slots for a service on a given date.
+         * @param {number} serviceId
+         * @param {string} date — "YYYY-MM-DD"
+         * @param {number} [staffId] — required for services with requires_staff=true
+         */
+        async getSlots(serviceId, date, staffId) {
+          const q = staffId ? `?date=${date}&staff_id=${staffId}` : `?date=${date}`;
+          return req("GET", `/api/booking/services/${serviceId}/slots${q}`);
+        },
+      },
+      bookings: {
+        /**
+         * Create a booking. starts_at must be ISO local ("YYYY-MM-DDTHH:MM").
+         * @param {object} payload
+         * @param {number} payload.service_id
+         * @param {number} [payload.staff_id]
+         * @param {string} payload.starts_at
+         * @param {string} [payload.customer_name]
+         * @param {string} [payload.customer_phone]
+         * @param {string} [payload.customer_email]
+         * @param {string} [payload.notes]
+         */
+        async create(payload) {
+          return req("POST", "/api/booking/bookings", payload);
+        },
+        /** List the current user's bookings. */
+        async list() {
+          return req("GET", "/api/booking/bookings/my");
+        },
+        /** Cancel one of the current user's bookings (subject to cancellation window). */
+        async cancel(bookingId) {
+          return req("DELETE", `/api/booking/bookings/${bookingId}`);
+        },
+      },
+    },
+
     // ── Web Chat (support widget) ────────────────────────────────────────────
     //
     // Anonymous customer chat with the store operators. The visitor identity

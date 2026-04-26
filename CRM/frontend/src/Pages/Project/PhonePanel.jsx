@@ -200,6 +200,7 @@ function PhonePanel({ projectId, onSaved }) {
   const [deleting, setDeleting] = useState(false);
   const [err,      setErr]      = useState('');
   const [toast,    setToast]    = useState('');
+  const [showTestCodes, setShowTestCodes] = useState(false);
   const toastTimer = useRef(null);
 
   const showToast = msg => {
@@ -207,6 +208,12 @@ function PhonePanel({ projectId, onSaved }) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(''), 3200);
   };
+
+  // Clean up pending toast timer on unmount so we don't setState on a dead
+  // component or leak a portal node briefly.
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
 
   const load = async () => {
     const res = await fetch(`${API_BASE}/api/sms-settings${pq}`, { credentials: 'include' });
@@ -343,11 +350,26 @@ function PhonePanel({ projectId, onSaved }) {
         <label className="auth-label">Test Phone Numbers and OTPs</label>
         <p className="auth-field-hint">
           Comma-separated <code>phone=otp</code> pairs that bypass the SMS provider for testing.
-          Example: <code>+18005550123=789012</code>
+          Example: <code>+18005550123=789012</code>. Codes are sensitive — keep them hidden when not editing.
         </p>
-        <input className="crm-input" placeholder="+18005550123=789012, +77071234567=000000"
-          value={form.test_phone_numbers}
-          onChange={e => update('test_phone_numbers', e.target.value)} />
+        <div style={{ position: 'relative' }}>
+          <input className="crm-input"
+            type={showTestCodes ? 'text' : 'password'}
+            placeholder="+18005550123=789012, +77071234567=000000"
+            value={form.test_phone_numbers}
+            onChange={e => update('test_phone_numbers', e.target.value)}
+            style={{ paddingRight: 44 }} />
+          <button type="button"
+            onClick={() => setShowTestCodes(v => !v)}
+            aria-label={showTestCodes ? 'Hide test codes' : 'Show test codes'}
+            style={{
+              position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--muted)', padding: 4, display: 'flex',
+            }}>
+            {showTestCodes ? <EyeSlash size={18} /> : <Eye size={18} />}
+          </button>
+        </div>
       </div>
 
       {err && <p className="auth-msg auth-msg--err">{err}</p>}

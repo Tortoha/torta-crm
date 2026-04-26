@@ -3,7 +3,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 import asyncio
@@ -42,7 +42,6 @@ JWT_HOURS        = 24 * 7
 CRM_FRONTEND_URL = os.getenv("CRM_FRONTEND_URL", "http://localhost:5174")
 CRM_BACKEND_URL  = os.getenv("CRM_BACKEND_URL",  "http://localhost:8001")
 MAGAZ_BACKEND_URL= os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
-# Shared secret for service-to-service calls (External API → CRM web-chat inbound)
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "torta-internal-dev-key")
 DB_CONFIG        = {
     "host":     os.getenv("DB_HOST",     "localhost"),
@@ -55,12 +54,16 @@ DB_CONFIG        = {
 SES_API_URL      = os.getenv("SES_API_URL",      "https://ses.tortacrm.com")
 SES_INTERNAL_KEY = os.getenv("SES_INTERNAL_KEY", "")
 EMAIL_FROM       = os.getenv("EMAIL_FROM",       "support@tortacrm.com")
+ENVIRONMENT             = os.getenv("ENVIRONMENT", "development").lower()
+IS_PRODUCTION           = ENVIRONMENT == "production"
+COOKIE_SECURE           = IS_PRODUCTION
 MAX_FAILED_ATTEMPTS     = 5
 BLOCK_MINUTES           = 10
 CODE_TTL_MINUTES        = 10
 RESEND_COOLDOWN_SECONDS = 60
 RESET_TTL_MINUTES       = 30
 UPLOADS_DIR             = "uploads"
+import hmac as _hmac, base64 as _b64
 GOOGLE_CLIENT_ID        = os.getenv("GOOGLE_CLIENT_ID",     "")
 GOOGLE_CLIENT_SECRET    = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI     = os.getenv("GOOGLE_REDIRECT_URI",  "http://localhost:8001/api/auth/google/callback")
@@ -310,6 +313,103 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] crm_sms_settings migration failed: {e}")
 
+    # Booking module (services, staff, working hours, bookings, settings).
+    # All keyed by project_id — each store/business has its own isolated set.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS booking_services (
+                    id               SERIAL PRIMARY KEY,
+                    project_id       INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    name             VARCHAR(200) NOT NULL,
+                    description      TEXT NOT NULL DEFAULT '',
+                    duration_minutes INTEGER NOT NULL DEFAULT 30,
+                    price            NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    image_url        VARCHAR(1000),
+                    is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+                    requires_staff   BOOLEAN NOT NULL DEFAULT FALSE,
+                    capacity         INTEGER NOT NULL DEFAULT 1,
+                    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_services_project ON booking_services(project_id)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS booking_staff (
+                    id          SERIAL PRIMARY KEY,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    name        VARCHAR(200) NOT NULL,
+                    avatar_url  VARCHAR(1000),
+                    bio         TEXT NOT NULL DEFAULT '',
+                    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_staff_project ON booking_staff(project_id)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS booking_staff_services (
+                    staff_id   INTEGER NOT NULL REFERENCES booking_staff(id) ON DELETE CASCADE,
+                    service_id INTEGER NOT NULL REFERENCES booking_services(id) ON DELETE CASCADE,
+                    PRIMARY KEY (staff_id, service_id)
+                )
+            """)
+
+            # Working hours: staff_id NULL → project-wide default schedule
+            # (used for services with requires_staff=false).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS booking_hours (
+                    id           SERIAL PRIMARY KEY,
+                    project_id   INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    staff_id     INTEGER REFERENCES booking_staff(id) ON DELETE CASCADE,
+                    day_of_week  SMALLINT NOT NULL,        -- 0=Mon … 6=Sun
+                    open_time    TIME NOT NULL,
+                    close_time   TIME NOT NULL
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_hours_project ON booking_hours(project_id, staff_id, day_of_week)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS booking_settings (
+                    id                          SERIAL PRIMARY KEY,
+                    project_id                  INTEGER NOT NULL UNIQUE REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    slot_interval_minutes       INTEGER NOT NULL DEFAULT 15,
+                    min_advance_minutes         INTEGER NOT NULL DEFAULT 60,
+                    max_advance_days            INTEGER NOT NULL DEFAULT 60,
+                    cancellation_window_minutes INTEGER NOT NULL DEFAULT 1440,
+                    auto_confirm                BOOLEAN NOT NULL DEFAULT TRUE,
+                    default_status              VARCHAR(20) NOT NULL DEFAULT 'confirmed',
+                    timezone                    VARCHAR(64) NOT NULL DEFAULT 'UTC',
+                    created_at                  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Customer bookings. user_id refers to the External-side `users.id`
+            # (not crm_users) — same pattern as orders / favorites / reviews.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS bookings (
+                    id              SERIAL PRIMARY KEY,
+                    project_id      INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    service_id      INTEGER NOT NULL REFERENCES booking_services(id) ON DELETE RESTRICT,
+                    staff_id        INTEGER REFERENCES booking_staff(id) ON DELETE SET NULL,
+                    user_id         INTEGER,
+                    starts_at       TIMESTAMP NOT NULL,
+                    ends_at         TIMESTAMP NOT NULL,
+                    status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    customer_name   VARCHAR(200) NOT NULL DEFAULT '',
+                    customer_phone  VARCHAR(64)  NOT NULL DEFAULT '',
+                    customer_email  VARCHAR(200) NOT NULL DEFAULT '',
+                    notes           TEXT NOT NULL DEFAULT '',
+                    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_bookings_project ON bookings(project_id, starts_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_bookings_staff ON bookings(staff_id, starts_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id, project_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] booking tables migration failed: {e}")
+
 # ════════════════════════════════════════════
 # DB POOL
 # ════════════════════════════════════════════
@@ -551,8 +651,46 @@ class ChatSendRequest(BaseModel):
 # ХЕЛПЕРЫ
 # ════════════════════════════════════════════
 
+# ── Password hashing (scrypt + legacy SHA-256 fallback) ────────────────
+# New format: "$scrypt$<base64-salt>$<base64-hash>"  (salt=16B, hash=32B).
+# Legacy 64-hex SHA-256 hashes still verify; on successful legacy login the
+# caller should re-hash with hash_pw() and write back, lazily migrating users.
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
+
 def hash_pw(pw: str) -> str:
-    return hashlib.sha256(pw.encode()).hexdigest()
+    salt = secrets.token_bytes(16)
+    h    = hashlib.scrypt(pw.encode(), salt=salt,
+                          n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32)
+    return f"$scrypt${_b64.b64encode(salt).decode()}${_b64.b64encode(h).decode()}"
+
+def verify_pw(pw: str, stored: str) -> bool:
+    if not stored: return False
+    try:
+        if stored.startswith("$scrypt$"):
+            _, _, salt_b64, hash_b64 = stored.split("$", 3)
+            salt = _b64.b64decode(salt_b64)
+            want = _b64.b64decode(hash_b64)
+            got  = hashlib.scrypt(pw.encode(), salt=salt,
+                                  n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32)
+            return _hmac.compare_digest(want, got)
+        # Legacy SHA-256, constant-time compare
+        return _hmac.compare_digest(hashlib.sha256(pw.encode()).hexdigest(), stored)
+    except Exception:
+        return False
+
+def is_legacy_hash(stored: str) -> bool:
+    return bool(stored) and not stored.startswith("$scrypt$")
+
+# ── OTP helpers (cryptographic + hashed at rest) ───────────────────────
+def gen_otp(length: int = 6) -> str:
+    return "".join(str(secrets.randbelow(10)) for _ in range(length))
+
+def hash_otp(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+def verify_otp(code: str, code_hash: str) -> bool:
+    if not code or not code_hash: return False
+    return _hmac.compare_digest(hash_otp(code), code_hash)
 
 def sanitize(v: str) -> str:
     if not isinstance(v, str): return v
@@ -580,7 +718,8 @@ def make_token(user_id: int) -> str:
 
 def set_cookie(response: Response, token: str):
     response.set_cookie("crm_token", token, httponly=True,
-                        max_age=60*60*24*7, samesite="lax", secure=False, path="/")
+                        max_age=60*60*24*7, samesite="lax",
+                        secure=COOKIE_SECURE, path="/")
 
 def get_current_user(request: Request) -> dict:
     token = request.cookies.get("crm_token")
@@ -715,17 +854,27 @@ def send_code(request: SendCodeRequest, req: Request):
     elif request.type == "login":
         if not existing or not existing.get("is_active"):
             record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
-        if hash_pw(request.password or "") != existing["password"]:
+        if not verify_pw(request.password or "", existing["password"]):
             record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
+        # Lazy migration of legacy SHA-256 hashes
+        if is_legacy_hash(existing["password"]):
+            try:
+                with db_cursor() as (conn2, cur2):
+                    cur2.execute("UPDATE crm_users SET password=%s WHERE id=%s",
+                                 (hash_pw(request.password), existing["id"]))
+                    conn2.commit()
+            except Exception:
+                pass
     else:
         raise HTTPException(400, "Invalid type")
 
-    code = random.randint(100000, 999999)
+    code = gen_otp(6)
     pending_verifications[email] = {
-        "code": str(code), "type": request.type,
+        "code_hash": hash_otp(code), "type": request.type,
         "name": request.name, "password": request.password,
         "expires": now + timedelta(minutes=CODE_TTL_MINUTES),
         "next_resend_at": now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
+        "attempts": 0,
     }
     if not send_code_email(email, code):
         del pending_verifications[email]
@@ -749,7 +898,11 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
         record_fail(keys, now); raise HTTPException(400, "Code not found or expired")
     if now > pending["expires"]:
         del pending_verifications[email]; raise HTTPException(400, "Code expired")
-    if code != pending["code"]:
+    pending["attempts"] = pending.get("attempts", 0) + 1
+    if pending["attempts"] > MAX_FAILED_ATTEMPTS:
+        del pending_verifications[email]
+        raise HTTPException(429, "Too many invalid attempts. Request a new code.")
+    if not verify_otp(code, pending.get("code_hash", "")):
         record_fail(keys, now); raise HTTPException(400, "Invalid code")
 
     with db_cursor() as (conn, cur):
@@ -785,10 +938,11 @@ def resend_code_endpoint(request: ResendCodeRequest):
         left = int((p["next_resend_at"] - now).total_seconds())
         raise HTTPException(429, f"Resend available in {left}s")
 
-    code = random.randint(100000, 999999)
-    p.update(code=str(code),
+    code = gen_otp(6)
+    p.update(code_hash=hash_otp(code),
              expires=now + timedelta(minutes=CODE_TTL_MINUTES),
-             next_resend_at=now + timedelta(seconds=RESEND_COOLDOWN_SECONDS))
+             next_resend_at=now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
+             attempts=0)
     if not send_code_email(email, code): raise HTTPException(500, "Failed to send email")
     return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
 
@@ -812,27 +966,45 @@ def logout(response: Response):
 # ════════════════════════════════════════════
 
 @app.post("/api/forgot-password")
-def forgot_password(request: ForgotPasswordRequest):
+def forgot_password(request: ForgotPasswordRequest, req: Request):
     email = request.email.lower().strip()
-    if not db_one("SELECT id FROM crm_users WHERE email = %s", (email,)):
-        return {"success": True}
+    ip    = get_ip(req)
+    now   = datetime.utcnow()
 
-    for t in [t for t, d in password_reset_tokens.items() if d["email"] == email]:
-        del password_reset_tokens[t]
+    # Per-IP and per-email rate limit (mitigate enumeration + email bombing)
+    for key in [f"reset:ip:{ip}", f"reset:email:{email}"]:
+        s = login_attempts.get(key)
+        if s and s.get("blocked_until") and now < s["blocked_until"]:
+            left = int((s["blocked_until"] - now).total_seconds())
+            raise HTTPException(429, f"Too many requests. Try again in {left} seconds.")
+        s = s or {"count": 0, "blocked_until": None}
+        s["count"] += 1
+        if s["count"] >= MAX_FAILED_ATTEMPTS:
+            s = {"count": 0, "blocked_until": now + timedelta(minutes=BLOCK_MINUTES)}
+        login_attempts[key] = s
 
-    raw   = secrets.token_urlsafe(32)
-    h     = hashlib.sha256(raw.encode()).hexdigest()
-    password_reset_tokens[h] = {"email": email, "expires": datetime.utcnow() + timedelta(minutes=RESET_TTL_MINUTES)}
-
-    if not send_reset_email(email, raw):
-        del password_reset_tokens[h]; raise HTTPException(500, "Failed to send email")
+    # Always return generic success — never differentiate existence.
+    if db_one("SELECT id FROM crm_users WHERE email = %s", (email,)):
+        for t in [t for t, d in password_reset_tokens.items() if d["email"] == email]:
+            del password_reset_tokens[t]
+        raw = secrets.token_urlsafe(32)
+        h   = hashlib.sha256(raw.encode()).hexdigest()
+        password_reset_tokens[h] = {
+            "email": email,
+            "expires": now + timedelta(minutes=RESET_TTL_MINUTES),
+            "used": False,
+        }
+        try:
+            send_reset_email(email, raw)
+        except Exception:
+            pass
     return {"success": True}
 
 
 @app.get("/api/reset-password/validate/{token}")
 def validate_reset_token(token: str):
     data = password_reset_tokens.get(hashlib.sha256(token.encode()).hexdigest())
-    if not data or datetime.utcnow() > data["expires"]:
+    if not data or data.get("used") or datetime.utcnow() > data["expires"]:
         raise HTTPException(400, "Invalid or expired reset link")
     return {"valid": True, "email": data["email"]}
 
@@ -844,14 +1016,16 @@ def reset_password(request: ResetPasswordRequest):
     validate_password(request.password)
     h    = hashlib.sha256(request.token.encode()).hexdigest()
     data = password_reset_tokens.get(h)
-    if not data or datetime.utcnow() > data["expires"]:
+    if not data or data.get("used") or datetime.utcnow() > data["expires"]:
         raise HTTPException(400, "Invalid or expired reset link")
 
+    # Mark used FIRST to defeat reset-token reuse races
+    data["used"] = True
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_users SET password = %s WHERE email = %s",
                     (hash_pw(request.password), data["email"]))
         conn.commit()
-    del password_reset_tokens[h]
+    password_reset_tokens.pop(h, None)
     return {"success": True}
 
 
@@ -1609,6 +1783,8 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
 @app.get("/api/auth/google/login")
 def google_login():
     import urllib.parse
+    # CSRF protection — random state stored in short-lived cookie
+    state = secrets.token_urlsafe(32)
     params = {
         "client_id":     GOOGLE_CLIENT_ID,
         "redirect_uri":  GOOGLE_REDIRECT_URI,
@@ -1616,12 +1792,24 @@ def google_login():
         "scope":         "openid email profile",
         "access_type":   "offline",
         "prompt":        "select_account",
+        "state":         state,
     }
-    return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params))
+    redirect = RedirectResponse(
+        "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    )
+    redirect.set_cookie(
+        key="crm_oa_state", value=state, httponly=True, max_age=600,
+        samesite="lax", secure=COOKIE_SECURE, path="/api/auth/google/",
+    )
+    return redirect
 
 
 @app.get("/api/auth/google/callback")
-def google_callback(code: str = None, error: str = None):
+def google_callback(request: Request, code: str = None, error: str = None, state: str = None):
+    # Validate CSRF state BEFORE doing anything with the code
+    cookie_state = request.cookies.get("crm_oa_state", "")
+    if not state or not cookie_state or not _hmac.compare_digest(state, cookie_state):
+        return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=oauth_state_mismatch")
     if error or not code:
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_cancelled")
 
@@ -1637,31 +1825,33 @@ def google_callback(code: str = None, error: str = None):
         )
         with urllib.request.urlopen(req) as resp:
             tokens = _json.loads(resp.read())
-    except Exception as e:
+    except Exception:
         import traceback; traceback.print_exc()
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_token")
 
     id_token_str = tokens.get("id_token")
     if not id_token_str:
-        print(f"[google_callback] no id_token in response: {tokens}")
+        # Don't log raw token contents
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_no_id_token")
 
     try:
         from google.oauth2 import id_token as g_id_token
         from google.auth.transport import requests as g_requests
-        idinfo  = g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=60)
+        idinfo  = g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
         g_id    = idinfo["sub"]
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
         picture = idinfo.get("picture")
-    except Exception as e:
+    except Exception:
         import traceback; traceback.print_exc()
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_verify")
 
     user_id   = _upsert_google_user(g_id, email, name, picture)
     jwt_token = make_token(user_id)
     redirect  = RedirectResponse(f"{CRM_FRONTEND_URL}/dashboard", status_code=302)
-    redirect.set_cookie(key="crm_token", value=jwt_token, httponly=True, samesite="lax", max_age=60*60*24*7)
+    redirect.set_cookie(key="crm_token", value=jwt_token, httponly=True,
+                        samesite="lax", secure=COOKIE_SECURE, max_age=60*60*24*7, path="/")
+    redirect.delete_cookie("crm_oa_state", path="/api/auth/google/")
     return redirect
 
 
@@ -1672,13 +1862,15 @@ def google_auth(request: GoogleAuthRequest, response: Response):
     try:
         from google.oauth2 import id_token
         from google.auth.transport import requests as g_requests
+        # Use same clock skew as callback (consistency)
         idinfo  = id_token.verify_oauth2_token(request.token, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
         g_id    = idinfo["sub"]
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
         picture = idinfo.get("picture")
-    except Exception as e:
-        raise HTTPException(400, f"Invalid Google token: {e}")
+    except Exception:
+        # Don't leak internal token-parsing details
+        raise HTTPException(400, "Invalid Google token")
 
     user_id = _upsert_google_user(g_id, email, name, picture)
     set_cookie(response, make_token(user_id))
@@ -3586,3 +3778,579 @@ async def chat_ws(ws: WebSocket, project_id: int):
         pass
     finally:
         await chat_hub.disconnect(project_id, ws)
+
+
+# ════════════════════════════════════════════
+# BOOKING — admin-side endpoints
+# ════════════════════════════════════════════
+#
+# Domain model:
+#   • booking_services       — what can be booked (haircut, yoga class, …)
+#   • booking_staff          — who delivers the service (optional per service)
+#   • booking_staff_services — many-to-many (which staff can do which service)
+#   • booking_hours          — weekly schedule (per-staff or project-wide)
+#   • booking_settings       — per-business rules (slot size, advance window…)
+#   • bookings               — actual appointments
+#
+# All routes require team-member-or-owner access; settings/staff require owner.
+
+BOOKING_STATUSES = ("pending", "confirmed", "cancelled", "completed", "no_show")
+
+# Allowed status transitions. Terminal states (cancelled / completed) cannot
+# be revived — admins must delete the booking and create a new one. This
+# protects against accidental "un-cancel" of a slot that's already been
+# rebooked, and stops "completed → pending" undo-of-record-keeping bugs.
+BOOKING_STATUS_TRANSITIONS = {
+    "pending":   {"confirmed", "cancelled", "no_show"},
+    "confirmed": {"completed", "cancelled", "no_show"},
+    "cancelled": set(),
+    "completed": set(),
+    "no_show":   set(),
+}
+
+# Email/phone format regex (best-effort, prevents obvious garbage)
+import re as _bk_re
+_BK_EMAIL_RE = _bk_re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_BK_PHONE_RE = _bk_re.compile(r"^[0-9+\s\-()]{4,32}$")
+
+class BookingServiceRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    duration_minutes: int = 30
+    price: float = 0
+    image_url: Optional[str] = None
+    is_active: bool = True
+    requires_staff: bool = False
+    capacity: int = 1
+    staff_ids: Optional[List[int]] = None        # M:N — overwrite link if provided
+
+class BookingStaffRequest(BaseModel):
+    name: str
+    avatar_url: Optional[str] = None
+    bio: Optional[str] = ""
+    is_active: bool = True
+    service_ids: Optional[List[int]] = None      # M:N — overwrite link if provided
+
+class BookingHourRow(BaseModel):
+    day_of_week: int                              # 0=Mon … 6=Sun
+    open_time: str                                # "HH:MM"
+    close_time: str                               # "HH:MM"
+
+class BookingHoursRequest(BaseModel):
+    staff_id: Optional[int] = None                # None → project-wide schedule
+    rows: List[BookingHourRow]
+
+class BookingSettingsRequest(BaseModel):
+    slot_interval_minutes: int = 15
+    min_advance_minutes: int = 60
+    max_advance_days: int = 60
+    cancellation_window_minutes: int = 1440
+    auto_confirm: bool = True
+    default_status: str = "confirmed"
+    timezone: str = "UTC"
+
+class CreateBookingRequest(BaseModel):
+    service_id: int
+    staff_id: Optional[int] = None
+    starts_at: str                                # ISO 8601, e.g. "2025-04-26T14:00"
+    customer_name: str = ""
+    customer_phone: str = ""
+    customer_email: str = ""
+    notes: str = ""
+    status: Optional[str] = None                  # admin override; default = pending/confirmed
+
+class UpdateBookingStatusRequest(BaseModel):
+    status: str
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
+def _service_with_staff(row: dict) -> dict:
+    if not row: return row
+    sids = db_all(
+        "SELECT staff_id FROM booking_staff_services WHERE service_id=%s",
+        (row["id"],)
+    )
+    row["staff_ids"] = [r["staff_id"] for r in sids]
+    return row
+
+@app.get("/api/booking/services")
+def booking_list_services(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT * FROM booking_services WHERE project_id=%s ORDER BY id ASC",
+        (project_id,)
+    )
+    # Bulk fetch staff links to avoid N+1
+    sids = db_all(
+        """SELECT bss.service_id, bss.staff_id
+           FROM booking_staff_services bss
+           JOIN booking_services s ON s.id = bss.service_id
+           WHERE s.project_id=%s""",
+        (project_id,)
+    )
+    by_service: dict = {}
+    for r in sids:
+        by_service.setdefault(r["service_id"], []).append(r["staff_id"])
+    for s in rows:
+        s["staff_ids"]   = by_service.get(s["id"], [])
+        s["price"]       = float(s["price"]) if s["price"] is not None else 0.0
+    return rows
+
+def _verify_staff_in_project(staff_ids, project_id):
+    """Ensure every staff_id belongs to this project (defence against IDOR
+    where a malicious owner links staff from another project to their own
+    service). Raises 400 if any id is foreign or unknown."""
+    if not staff_ids: return
+    rows = db_all(
+        "SELECT id FROM booking_staff WHERE id = ANY(%s) AND project_id = %s",
+        (list(set(staff_ids)), project_id),
+    )
+    found = {r["id"] for r in rows}
+    missing = [i for i in set(staff_ids) if i not in found]
+    if missing:
+        raise HTTPException(400, f"Staff not found in this project: {missing}")
+
+def _verify_services_in_project(service_ids, project_id):
+    if not service_ids: return
+    rows = db_all(
+        "SELECT id FROM booking_services WHERE id = ANY(%s) AND project_id = %s",
+        (list(set(service_ids)), project_id),
+    )
+    found = {r["id"] for r in rows}
+    missing = [i for i in set(service_ids) if i not in found]
+    if missing:
+        raise HTTPException(400, f"Service not found in this project: {missing}")
+
+@app.post("/api/booking/services")
+def booking_create_service(req: BookingServiceRequest,
+                           project_id: int = Query(...),
+                           user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if not req.name.strip():
+        raise HTTPException(400, "Name is required")
+    if req.duration_minutes < 5 or req.duration_minutes > 1440:
+        raise HTTPException(400, "Duration must be 5–1440 minutes")
+    if req.capacity < 1: raise HTTPException(400, "Capacity must be ≥ 1")
+    if req.price is not None and req.price < 0:
+        raise HTTPException(400, "Price must be ≥ 0")
+    _verify_staff_in_project(req.staff_ids or [], project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO booking_services
+                  (project_id, name, description, duration_minutes,
+                   price, image_url, is_active, requires_staff, capacity)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (project_id, sanitize(req.name)[:200], sanitize(req.description or "")[:5000],
+             req.duration_minutes, req.price, req.image_url,
+             req.is_active, req.requires_staff, req.capacity)
+        )
+        sid = cur.fetchone()["id"]
+        if req.staff_ids:
+            for st_id in req.staff_ids:
+                cur.execute(
+                    "INSERT INTO booking_staff_services (staff_id, service_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                    (st_id, sid)
+                )
+        conn.commit()
+    return {"id": sid}
+
+@app.put("/api/booking/services/{sid}")
+def booking_update_service(sid: int, req: BookingServiceRequest,
+                           project_id: int = Query(...),
+                           user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    existing = db_one("SELECT id FROM booking_services WHERE id=%s AND project_id=%s",
+                      (sid, project_id))
+    if not existing: raise HTTPException(404, "Service not found")
+    if req.duration_minutes < 5 or req.duration_minutes > 1440:
+        raise HTTPException(400, "Duration must be 5–1440 minutes")
+    if req.capacity < 1: raise HTTPException(400, "Capacity must be ≥ 1")
+    if req.price is not None and req.price < 0:
+        raise HTTPException(400, "Price must be ≥ 0")
+    if req.staff_ids is not None:
+        _verify_staff_in_project(req.staff_ids, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """UPDATE booking_services SET
+                  name=%s, description=%s, duration_minutes=%s,
+                  price=%s, image_url=%s, is_active=%s,
+                  requires_staff=%s, capacity=%s
+               WHERE id=%s""",
+            (sanitize(req.name)[:200], sanitize(req.description or "")[:5000],
+             req.duration_minutes, req.price, req.image_url,
+             req.is_active, req.requires_staff, req.capacity, sid)
+        )
+        if req.staff_ids is not None:
+            cur.execute("DELETE FROM booking_staff_services WHERE service_id=%s", (sid,))
+            for st_id in req.staff_ids:
+                cur.execute(
+                    "INSERT INTO booking_staff_services (staff_id, service_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                    (st_id, sid)
+                )
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/api/booking/services/{sid}")
+def booking_delete_service(sid: int, project_id: int = Query(...),
+                           force: bool = Query(False),
+                           user: dict = Depends(get_current_user)):
+    """Delete a service. Refuses if there are active (pending/confirmed)
+    bookings unless ?force=true is passed — frontend should re-prompt the
+    owner. Past bookings (completed/cancelled/no_show) are kept and the
+    service row deletion is allowed (FK should be ON DELETE SET NULL or
+    bookings will become orphaned: callers see service_name=None, which
+    _enrich_booking() handles gracefully)."""
+    require_owner(user, project_id)
+    existing = db_one("SELECT id FROM booking_services WHERE id=%s AND project_id=%s",
+                      (sid, project_id))
+    if not existing: raise HTTPException(404, "Service not found")
+    if not force:
+        active = db_one(
+            """SELECT COUNT(*) AS n FROM bookings
+               WHERE service_id=%s AND project_id=%s AND status = ANY(%s)""",
+            (sid, project_id, ["pending", "confirmed"])
+        )
+        if active and active["n"] > 0:
+            raise HTTPException(409,
+                f"Service has {active['n']} active booking(s). "
+                "Cancel them first, or pass ?force=true to delete anyway.")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM booking_services WHERE id=%s AND project_id=%s",
+                    (sid, project_id))
+        conn.commit()
+    return {"ok": True}
+
+# ── Staff ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/booking/staff")
+def booking_list_staff(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT * FROM booking_staff WHERE project_id=%s ORDER BY id ASC",
+        (project_id,)
+    )
+    sids = db_all(
+        """SELECT bss.staff_id, bss.service_id
+           FROM booking_staff_services bss
+           JOIN booking_staff st ON st.id = bss.staff_id
+           WHERE st.project_id=%s""",
+        (project_id,)
+    )
+    by_staff: dict = {}
+    for r in sids: by_staff.setdefault(r["staff_id"], []).append(r["service_id"])
+    for s in rows: s["service_ids"] = by_staff.get(s["id"], [])
+    return rows
+
+@app.post("/api/booking/staff")
+def booking_create_staff(req: BookingStaffRequest,
+                         project_id: int = Query(...),
+                         user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if not req.name.strip(): raise HTTPException(400, "Name is required")
+    _verify_services_in_project(req.service_ids or [], project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO booking_staff (project_id, name, avatar_url, bio, is_active)
+               VALUES (%s,%s,%s,%s,%s) RETURNING id""",
+            (project_id, sanitize(req.name)[:200], req.avatar_url,
+             sanitize(req.bio or "")[:5000], req.is_active)
+        )
+        st_id = cur.fetchone()["id"]
+        if req.service_ids:
+            for s_id in req.service_ids:
+                cur.execute(
+                    "INSERT INTO booking_staff_services (staff_id, service_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                    (st_id, s_id)
+                )
+        conn.commit()
+    return {"id": st_id}
+
+@app.put("/api/booking/staff/{st_id}")
+def booking_update_staff(st_id: int, req: BookingStaffRequest,
+                         project_id: int = Query(...),
+                         user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    existing = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s",
+                      (st_id, project_id))
+    if not existing: raise HTTPException(404, "Staff not found")
+    if req.service_ids is not None:
+        _verify_services_in_project(req.service_ids, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """UPDATE booking_staff SET name=%s, avatar_url=%s, bio=%s, is_active=%s
+               WHERE id=%s""",
+            (sanitize(req.name)[:200], req.avatar_url,
+             sanitize(req.bio or "")[:5000], req.is_active, st_id)
+        )
+        if req.service_ids is not None:
+            cur.execute("DELETE FROM booking_staff_services WHERE staff_id=%s", (st_id,))
+            for s_id in req.service_ids:
+                cur.execute(
+                    "INSERT INTO booking_staff_services (staff_id, service_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                    (st_id, s_id)
+                )
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/api/booking/staff/{st_id}")
+def booking_delete_staff(st_id: int, project_id: int = Query(...),
+                         force: bool = Query(False),
+                         user: dict = Depends(get_current_user)):
+    """Refuses if there are active (pending/confirmed) bookings unless
+    ?force=true. See booking_delete_service for rationale."""
+    require_owner(user, project_id)
+    existing = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s",
+                      (st_id, project_id))
+    if not existing: raise HTTPException(404, "Staff not found")
+    if not force:
+        active = db_one(
+            """SELECT COUNT(*) AS n FROM bookings
+               WHERE staff_id=%s AND project_id=%s AND status = ANY(%s)""",
+            (st_id, project_id, ["pending", "confirmed"])
+        )
+        if active and active["n"] > 0:
+            raise HTTPException(409,
+                f"Staff has {active['n']} active booking(s). "
+                "Cancel them first, or pass ?force=true to delete anyway.")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM booking_staff WHERE id=%s AND project_id=%s",
+                    (st_id, project_id))
+        conn.commit()
+    return {"ok": True}
+
+# ── Working hours ─────────────────────────────────────────────────────────────
+
+@app.get("/api/booking/hours")
+def booking_get_hours(project_id: int = Query(...),
+                      staff_id: Optional[int] = Query(None),
+                      user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if staff_id is None:
+        rows = db_all(
+            "SELECT * FROM booking_hours WHERE project_id=%s AND staff_id IS NULL ORDER BY day_of_week",
+            (project_id,)
+        )
+    else:
+        rows = db_all(
+            "SELECT * FROM booking_hours WHERE project_id=%s AND staff_id=%s ORDER BY day_of_week",
+            (project_id, staff_id)
+        )
+    return [{
+        "day_of_week": r["day_of_week"],
+        "open_time":   r["open_time"].strftime("%H:%M"),
+        "close_time":  r["close_time"].strftime("%H:%M"),
+    } for r in rows]
+
+@app.put("/api/booking/hours")
+def booking_set_hours(req: BookingHoursRequest,
+                      project_id: int = Query(...),
+                      user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if req.staff_id is not None:
+        st = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s",
+                    (req.staff_id, project_id))
+        if not st: raise HTTPException(404, "Staff not found")
+    with db_cursor() as (conn, cur):
+        if req.staff_id is None:
+            cur.execute(
+                "DELETE FROM booking_hours WHERE project_id=%s AND staff_id IS NULL",
+                (project_id,)
+            )
+        else:
+            cur.execute(
+                "DELETE FROM booking_hours WHERE project_id=%s AND staff_id=%s",
+                (project_id, req.staff_id)
+            )
+        for r in req.rows:
+            if not (0 <= r.day_of_week <= 6): continue
+            cur.execute(
+                """INSERT INTO booking_hours (project_id, staff_id, day_of_week, open_time, close_time)
+                   VALUES (%s,%s,%s,%s,%s)""",
+                (project_id, req.staff_id, r.day_of_week, r.open_time, r.close_time)
+            )
+        conn.commit()
+    return {"ok": True}
+
+# ── Booking-level settings ────────────────────────────────────────────────────
+
+_BOOKING_SETTINGS_DEFAULTS = {
+    "slot_interval_minutes":       15,
+    "min_advance_minutes":         60,
+    "max_advance_days":            60,
+    "cancellation_window_minutes": 1440,
+    "auto_confirm":                True,
+    "default_status":              "confirmed",
+    "timezone":                    "UTC",
+}
+
+@app.get("/api/booking/settings")
+def booking_get_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT * FROM booking_settings WHERE project_id=%s", (project_id,))
+    if not row: return {"configured": False, **_BOOKING_SETTINGS_DEFAULTS}
+    out = {k: v for k, v in row.items() if k not in ("id", "project_id", "created_at")}
+    out["configured"] = True
+    return out
+
+@app.put("/api/booking/settings")
+def booking_save_settings(req: BookingSettingsRequest,
+                          project_id: int = Query(...),
+                          user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if req.default_status not in ("pending", "confirmed"):
+        raise HTTPException(400, "default_status must be 'pending' or 'confirmed'")
+    if req.slot_interval_minutes < 5 or req.slot_interval_minutes > 240:
+        raise HTTPException(400, "slot_interval_minutes must be 5–240")
+    cols = ["slot_interval_minutes","min_advance_minutes","max_advance_days",
+            "cancellation_window_minutes","auto_confirm","default_status","timezone"]
+    vals = tuple(getattr(req, c) for c in cols)
+    existing = db_one("SELECT id FROM booking_settings WHERE project_id=%s", (project_id,))
+    with db_cursor() as (conn, cur):
+        if existing:
+            set_clause = ", ".join(f"{c}=%s" for c in cols)
+            cur.execute(f"UPDATE booking_settings SET {set_clause} WHERE project_id=%s",
+                        vals + (project_id,))
+        else:
+            placeholders = ",".join(["%s"] * (len(cols) + 1))
+            cur.execute(
+                f"INSERT INTO booking_settings ({', '.join(cols)}, project_id) VALUES ({placeholders})",
+                vals + (project_id,)
+            )
+        conn.commit()
+    return {"ok": True}
+
+# ── Bookings (the actual appointments) ────────────────────────────────────────
+
+def _enrich_booking(rows):
+    """Attach service / staff names so the front-end never has to join."""
+    if not rows: return rows
+    svc_ids   = {r["service_id"] for r in rows}
+    staff_ids = {r["staff_id"]   for r in rows if r["staff_id"]}
+    svcs  = {r["id"]: r for r in db_all(
+        "SELECT id, name, duration_minutes, price FROM booking_services WHERE id = ANY(%s)",
+        (list(svc_ids),)
+    )} if svc_ids else {}
+    stfs  = {r["id"]: r for r in db_all(
+        "SELECT id, name, avatar_url FROM booking_staff WHERE id = ANY(%s)",
+        (list(staff_ids),)
+    )} if staff_ids else {}
+    for r in rows:
+        s = svcs.get(r["service_id"])
+        st = stfs.get(r["staff_id"])
+        r["service_name"]     = s["name"] if s else None
+        r["service_duration"] = s["duration_minutes"] if s else None
+        r["service_price"]    = float(s["price"]) if (s and s["price"] is not None) else 0.0
+        r["staff_name"]       = st["name"] if st else None
+        r["staff_avatar"]     = st["avatar_url"] if st else None
+    return rows
+
+@app.get("/api/booking/bookings")
+def booking_list(project_id: int = Query(...),
+                 from_date: Optional[str] = Query(None),
+                 to_date:   Optional[str] = Query(None),
+                 status:    Optional[str] = Query(None),
+                 user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    where = ["project_id=%s"]; params: list = [project_id]
+    if from_date: where.append("starts_at >= %s"); params.append(from_date)
+    if to_date:   where.append("starts_at <  %s"); params.append(to_date)
+    if status and status != "all":
+        if status not in BOOKING_STATUSES:
+            raise HTTPException(400, "Unknown status")
+        where.append("status=%s"); params.append(status)
+    rows = db_all(
+        f"SELECT * FROM bookings WHERE {' AND '.join(where)} ORDER BY starts_at DESC",
+        tuple(params)
+    )
+    return _enrich_booking(rows)
+
+@app.post("/api/booking/bookings")
+def booking_create_admin(req: CreateBookingRequest,
+                         project_id: int = Query(...),
+                         user: dict = Depends(get_current_user)):
+    """Admin-side booking creation (staff manually adding an appointment).
+    Admins bypass min_advance/max_advance windows and the slot-availability
+    check (intentional — they may need to record walk-ins or move appointments)."""
+    require_team_member_or_owner(user, project_id)
+    svc = db_one("SELECT * FROM booking_services WHERE id=%s AND project_id=%s",
+                 (req.service_id, project_id))
+    if not svc: raise HTTPException(404, "Service not found")
+    if svc["requires_staff"] and not req.staff_id:
+        raise HTTPException(400, "This service requires selecting a staff member")
+    if req.staff_id:
+        st = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s",
+                    (req.staff_id, project_id))
+        if not st: raise HTTPException(404, "Staff not found")
+    try:
+        starts = datetime.fromisoformat(req.starts_at.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(400, "Invalid starts_at")
+    if starts.tzinfo is not None: starts = starts.replace(tzinfo=None)
+    ends = starts + timedelta(minutes=svc["duration_minutes"])
+    status = req.status or "confirmed"
+    if status not in BOOKING_STATUSES: raise HTTPException(400, "Unknown status")
+    # Best-effort customer contact validation
+    if req.customer_email and not _BK_EMAIL_RE.match(req.customer_email.strip()):
+        raise HTTPException(400, "Invalid customer email")
+    if req.customer_phone and not _BK_PHONE_RE.match(req.customer_phone.strip()):
+        raise HTTPException(400, "Invalid customer phone")
+    if not (req.customer_name or "").strip():
+        raise HTTPException(400, "Customer name is required")
+
+    with db_cursor() as (conn, cur):
+        # Same advisory lock key as the public endpoint to avoid race when
+        # an admin and a customer try to grab the same slot simultaneously
+        lock_key = (project_id * 10**12
+                    + (req.staff_id or 0) * 10**6
+                    + (req.service_id or 0))
+        cur.execute("SELECT pg_advisory_xact_lock(%s::bigint)", (lock_key,))
+        cur.execute(
+            """INSERT INTO bookings
+                  (project_id, service_id, staff_id, user_id, starts_at, ends_at,
+                   status, customer_name, customer_phone, customer_email, notes)
+               VALUES (%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (project_id, req.service_id, req.staff_id, starts, ends, status,
+             sanitize(req.customer_name)[:200], sanitize(req.customer_phone)[:64],
+             sanitize(req.customer_email)[:200], sanitize(req.notes)[:2000])
+        )
+        bid = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": bid}
+
+@app.patch("/api/booking/bookings/{bid}")
+def booking_update_status(bid: int, req: UpdateBookingStatusRequest,
+                          project_id: int = Query(...),
+                          user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if req.status not in BOOKING_STATUSES:
+        raise HTTPException(400, "Unknown status")
+    # Enforce a state machine — terminal statuses cannot be revived
+    cur_row = db_one(
+        "SELECT status FROM bookings WHERE id=%s AND project_id=%s",
+        (bid, project_id),
+    )
+    if not cur_row:
+        raise HTTPException(404, "Booking not found")
+    cur_status = cur_row["status"]
+    if cur_status == req.status:
+        return {"ok": True}  # idempotent
+    allowed = BOOKING_STATUS_TRANSITIONS.get(cur_status, set())
+    if req.status not in allowed:
+        raise HTTPException(409,
+            f"Cannot transition from '{cur_status}' to '{req.status}'. "
+            f"Allowed: {sorted(allowed) or 'none (terminal state)'}")
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE bookings SET status=%s WHERE id=%s AND project_id=%s",
+                    (req.status, bid, project_id))
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/api/booking/bookings/{bid}")
+def booking_delete(bid: int, project_id: int = Query(...),
+                   user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM bookings WHERE id=%s AND project_id=%s",
+                    (bid, project_id))
+        conn.commit()
+    return {"ok": True}
