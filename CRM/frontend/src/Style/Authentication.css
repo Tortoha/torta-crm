@@ -1440,3 +1440,148 @@
   from { opacity: 0; transform: translateX(-50%) translateY(10px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
+/* ══════════════════════════════════════════════════════
+   PHONE / SMS PROVIDER PANEL
+   ══════════════════════════════════════════════════════ */
+
+.phone-textarea {
+  border-radius: 16px !important;
+  padding: 10px 14px !important;
+  height: auto !important;
+  min-height: 70px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+/* Custom provider dropdown — matches CRM design system */
+.phone-dd {
+  position: relative;
+  width: 100%;
+}
+.phone-dd-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+.phone-dd-trigger:hover {
+  border-color: var(--accent);
+}
+.phone-dd-label {
+  flex: 1;
+  text-align: left;
+}
+.phone-dd-chev {
+  transition: transform 0.25s ease;
+  flex-shrink: 0;
+  color: rgba(0, 0, 0, 0.4);
+}
+.phone-dd-chev--open {
+  transform: rotate(180deg);
+}
+.phone-dd-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 10;
+  animation: phone-dd-in 0.18s ease;
+}
+@keyframes phone-dd-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.phone-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+.phone-dd-item:hover {
+  background: var(--accent-tint);
+}
+.phone-dd-item--active {
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+
+
+/* Dynamic Block sliding indicator (vertical, like Sidebar) */
+.phone-dd-indicator {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 0;
+  background: var(--accent-tint);
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  will-change: transform, height, opacity;
+  transition:
+    transform 0.45s var(--ease-smooth),
+    height 0.45s var(--ease-smooth),
+    opacity 0.18s ease;
+}
+
+/* Region groups in the menu */
+.phone-dd-group + .phone-dd-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+.phone-dd-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(0, 0, 0, 0.4);
+  padding: 6px 12px 4px;
+  user-select: none;
+}
+
+/* Items sit on top of the indicator */
+.phone-dd-item {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;  /* override the original solid bg */
+}
+.phone-dd-item:hover {
+  background: transparent !important;  /* indicator handles the hover background */
+}
+.phone-dd-item--active {
+  color: var(--accent);
+  font-weight: 500;
+}
+.phone-dd-item-label {
+  flex: 1;
+  text-align: left;
+}

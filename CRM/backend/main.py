@@ -217,6 +217,99 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] crm_auth_providers migration failed: {e}")
 
+    # Phone / SMS authentication settings (one row per project).
+    # Supports multiple SMS providers (Twilio, MessageBird, Textlocal, Vonage, Twilio Verify).
+    # Credentials stored per-provider so switching doesn't lose config.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_sms_settings (
+                    id                          SERIAL PRIMARY KEY,
+                    project_id                  INTEGER NOT NULL UNIQUE REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    is_enabled                  BOOLEAN NOT NULL DEFAULT FALSE,
+                    provider                    VARCHAR(40) NOT NULL DEFAULT 'twilio',
+
+                    -- Twilio (SMS API)
+                    twilio_account_sid          TEXT,
+                    twilio_auth_token           TEXT,
+                    twilio_message_service_sid  TEXT,
+                    twilio_content_sid          TEXT,
+                    -- Twilio Verify (separate API, returns SID per verification)
+                    twilio_verify_service_sid   TEXT,
+
+                    -- MessageBird
+                    messagebird_access_key      TEXT,
+                    messagebird_originator      TEXT,
+
+                    -- Textlocal
+                    textlocal_api_key           TEXT,
+                    textlocal_sender            TEXT,
+
+                    -- Vonage (formerly Nexmo)
+                    vonage_api_key              TEXT,
+                    vonage_api_secret           TEXT,
+                    vonage_from_number          TEXT,
+
+                    -- AWS SNS
+                    aws_access_key_id           TEXT,
+                    aws_secret_access_key       TEXT,
+                    aws_region                  TEXT,
+
+                    -- Plivo
+                    plivo_auth_id               TEXT,
+                    plivo_auth_token            TEXT,
+                    plivo_from_number           TEXT,
+
+                    -- SMSC.ru (Russia/CIS)
+                    smsc_login                  TEXT,
+                    smsc_password               TEXT,
+                    smsc_sender                 TEXT,
+
+                    -- SMS.ru (Russia)
+                    smsru_api_id                TEXT,
+                    smsru_from                  TEXT,
+
+                    -- Mobizon.kz (Kazakhstan)
+                    mobizon_api_key             TEXT,
+                    mobizon_alpha               TEXT,
+
+                    -- Telegram Gateway (free OTP via Telegram)
+                    telegram_gateway_token      TEXT,
+
+                    -- OTP behaviour
+                    enable_phone_confirmations  BOOLEAN NOT NULL DEFAULT TRUE,
+                    otp_expiry_seconds          INTEGER NOT NULL DEFAULT 60,
+                    otp_length                  INTEGER NOT NULL DEFAULT 6,
+                    message_template            TEXT NOT NULL DEFAULT 'Your code is {{ .Code }}',
+                    test_phone_numbers          TEXT NOT NULL DEFAULT '',
+
+                    created_at                  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Idempotent ALTER for existing installations — adds columns introduced
+            # after the initial table was created.
+            for col in [
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS aws_access_key_id TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS aws_secret_access_key TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS aws_region TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS plivo_auth_id TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS plivo_auth_token TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS plivo_from_number TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS smsc_login TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS smsc_password TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS smsc_sender TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS smsru_api_id TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS smsru_from TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS mobizon_api_key TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS mobizon_alpha TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS telegram_gateway_token TEXT",
+            ]:
+                try: cur.execute(col)
+                except Exception: pass
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_sms_settings migration failed: {e}")
+
 # ════════════════════════════════════════════
 # DB POOL
 # ════════════════════════════════════════════
@@ -393,6 +486,52 @@ class AuthProviderRequest(BaseModel):
     client_id: str = ""
     client_secret: str = ""
     is_enabled: bool = False
+
+class SmsSettingsRequest(BaseModel):
+    is_enabled: bool = False
+    provider: str = "twilio"
+
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_message_service_sid: str = ""
+    twilio_content_sid: str = ""
+    twilio_verify_service_sid: str = ""
+
+    messagebird_access_key: str = ""
+    messagebird_originator: str = ""
+
+    textlocal_api_key: str = ""
+    textlocal_sender: str = ""
+
+    vonage_api_key: str = ""
+    vonage_api_secret: str = ""
+    vonage_from_number: str = ""
+
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = ""
+
+    plivo_auth_id: str = ""
+    plivo_auth_token: str = ""
+    plivo_from_number: str = ""
+
+    smsc_login: str = ""
+    smsc_password: str = ""
+    smsc_sender: str = ""
+
+    smsru_api_id: str = ""
+    smsru_from: str = ""
+
+    mobizon_api_key: str = ""
+    mobizon_alpha: str = ""
+
+    telegram_gateway_token: str = ""
+
+    enable_phone_confirmations: bool = True
+    otp_expiry_seconds: int = 60
+    otp_length: int = 6
+    message_template: str = "Your code is {{ .Code }}"
+    test_phone_numbers: str = ""
 
 class UrlConfigRequest(BaseModel):
     frontend_url: str = ""
@@ -1810,6 +1949,138 @@ def delete_auth_provider(provider: str, project_id: int = Query(...), user: dict
             "DELETE FROM crm_auth_providers WHERE project_id=%s AND provider=%s",
             (project_id, provider),
         )
+        conn.commit()
+    return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# SMS / PHONE AUTHENTICATION
+# Customer brings their own SMS provider — Twilio, MessageBird, Textlocal, Vonage,
+# or Twilio Verify. Credentials stored per-provider so switching keeps history.
+# ════════════════════════════════════════════
+
+ALLOWED_SMS_PROVIDERS = {
+    "twilio", "twilio_verify", "messagebird", "textlocal", "vonage",
+    "aws_sns", "plivo",
+    "smsc", "sms_ru", "mobizon",
+    "telegram_gateway",
+}
+
+# Default row used when no settings exist yet — keeps frontend simple.
+_SMS_DEFAULTS = {
+    "is_enabled":                  False,
+    "provider":                    "twilio",
+    "twilio_account_sid":          "",
+    "twilio_auth_token":           "",
+    "twilio_message_service_sid":  "",
+    "twilio_content_sid":          "",
+    "twilio_verify_service_sid":   "",
+    "messagebird_access_key":      "",
+    "messagebird_originator":      "",
+    "textlocal_api_key":           "",
+    "textlocal_sender":            "",
+    "vonage_api_key":              "",
+    "vonage_api_secret":           "",
+    "vonage_from_number":          "",
+    "aws_access_key_id":           "",
+    "aws_secret_access_key":       "",
+    "aws_region":                  "",
+    "plivo_auth_id":               "",
+    "plivo_auth_token":            "",
+    "plivo_from_number":           "",
+    "smsc_login":                  "",
+    "smsc_password":               "",
+    "smsc_sender":                 "",
+    "smsru_api_id":                "",
+    "smsru_from":                  "",
+    "mobizon_api_key":             "",
+    "mobizon_alpha":               "",
+    "telegram_gateway_token":      "",
+    "enable_phone_confirmations":  True,
+    "otp_expiry_seconds":          60,
+    "otp_length":                  6,
+    "message_template":            "Your code is {{ .Code }}",
+    "test_phone_numbers":          "",
+}
+
+@app.get("/api/sms-settings")
+def get_sms_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT * FROM crm_sms_settings WHERE project_id=%s", (project_id,))
+    if not row:
+        return {"configured": False, **_SMS_DEFAULTS}
+    # Drop internal columns
+    out = {k: v for k, v in row.items() if k not in ("id", "project_id", "created_at")}
+    out["configured"] = True
+    return out
+
+
+@app.post("/api/sms-settings")
+def save_sms_settings(req: SmsSettingsRequest,
+                      project_id: int = Query(...),
+                      user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if req.provider not in ALLOWED_SMS_PROVIDERS:
+        raise HTTPException(400, f"Unknown SMS provider: {req.provider}")
+    if req.otp_length < 4 or req.otp_length > 10:
+        raise HTTPException(400, "OTP length must be 4–10")
+    if req.otp_expiry_seconds < 30 or req.otp_expiry_seconds > 600:
+        raise HTTPException(400, "OTP expiry must be 30–600 seconds")
+
+    # All credential / OTP columns in a single ordered list so UPDATE and INSERT stay in sync.
+    cols = [
+        "is_enabled", "provider",
+        "twilio_account_sid", "twilio_auth_token",
+        "twilio_message_service_sid", "twilio_content_sid",
+        "twilio_verify_service_sid",
+        "messagebird_access_key", "messagebird_originator",
+        "textlocal_api_key", "textlocal_sender",
+        "vonage_api_key", "vonage_api_secret", "vonage_from_number",
+        "aws_access_key_id", "aws_secret_access_key", "aws_region",
+        "plivo_auth_id", "plivo_auth_token", "plivo_from_number",
+        "smsc_login", "smsc_password", "smsc_sender",
+        "smsru_api_id", "smsru_from",
+        "mobizon_api_key", "mobizon_alpha",
+        "telegram_gateway_token",
+        "enable_phone_confirmations",
+        "otp_expiry_seconds", "otp_length",
+        "message_template", "test_phone_numbers",
+    ]
+
+    def _v(name):
+        v = getattr(req, name)
+        # Bool / int kept as-is, empty strings → NULL for credentials
+        if isinstance(v, bool) or isinstance(v, int) and not isinstance(v, bool):
+            return v
+        if name in ("message_template", "test_phone_numbers"):
+            return v or ""
+        return v or None
+
+    fields = tuple(_v(c) for c in cols)
+
+    existing = db_one("SELECT id FROM crm_sms_settings WHERE project_id=%s", (project_id,))
+    with db_cursor() as (conn, cur):
+        if existing:
+            set_clause = ", ".join(f"{c}=%s" for c in cols)
+            cur.execute(
+                f"UPDATE crm_sms_settings SET {set_clause} WHERE project_id=%s",
+                fields + (project_id,),
+            )
+        else:
+            placeholders = ",".join(["%s"] * (len(cols) + 1))
+            cur.execute(
+                f"INSERT INTO crm_sms_settings ({', '.join(cols)}, project_id) VALUES ({placeholders})",
+                fields + (project_id,),
+            )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/sms-settings")
+def delete_sms_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_sms_settings WHERE project_id=%s", (project_id,))
         conn.commit()
     return {"ok": True}
 

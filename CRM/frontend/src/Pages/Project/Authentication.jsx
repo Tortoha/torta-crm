@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import {
-  Envelope, PhoneCall, Wallet,
+  Envelope, PhoneCall,
   CaretRight, X, CheckCircle, Globe, ShieldCheck, Trash,
 } from '@phosphor-icons/react';
 import { Icon } from '@iconify/react';
@@ -11,15 +11,17 @@ import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import EmailPanel from './EmailPanel.jsx';
 import GooglePanel from './GooglePanel.jsx';
 import OAuthProviderPanel from './OAuthProviderPanel.jsx';
+import PhonePanel from './PhonePanel.jsx';
 import '../../Style/Authentication.css';
 
 
 const PROVIDERS = [
   // Email — special, custom panel (DKIM/SPF/DMARC, etc.)
   { id: 'email',  label: 'Email',  desc: 'Code-based login via email OTP', configurable: true, phosphor: Envelope },
+  // Phone — uses its own panel (PhonePanel) with SMS-provider configuration
+  { id: 'phone', label: 'Phone', desc: 'Code-based login via SMS', configurable: true, phosphor: PhoneCall },
   // Google — special, kept as a separate panel (uses its own DB columns + token format)
   { id: 'google', label: 'Google', desc: 'Sign in with Google account',    configurable: true, iconify: 'logos:google-icon' },
-
   // Generic OAuth providers (real, working — share OAuthProviderPanel)
   { id: 'github',    label: 'GitHub',          desc: 'Sign in with GitHub',         configurable: true, iconify: 'simple-icons:github',    color: '#181717' },
   { id: 'discord',   label: 'Discord',         desc: 'Sign in with Discord',        configurable: true, iconify: 'logos:discord-icon' },
@@ -39,11 +41,6 @@ const PROVIDERS = [
   { id: 'vk',        label: 'VK',              desc: 'Sign in with VK',             configurable: true, iconify: 'simple-icons:vk',        color: '#0077FF' },
   { id: 'kakao',     label: 'Kakao',           desc: 'Sign in with Kakao',          configurable: true, iconify: 'simple-icons:kakaotalk', color: '#3C1E1E' },
   { id: 'keycloak',  label: 'KeyCloak',        desc: 'Sign in with KeyCloak',       configurable: true, iconify: 'simple-icons:keycloak',  color: '#4D4D4D' },
-
-  // Visual-only placeholders (no OAuth flow yet)
-  { id: 'phone', label: 'Phone',       desc: 'Code-based login via SMS',     configurable: false, phosphor: PhoneCall },
-  { id: 'saml',  label: 'SAML 2.0',    desc: 'Enterprise SSO via SAML',      configurable: false, phosphor: ShieldCheck },
-  { id: 'web3',  label: 'Web3 Wallet', desc: 'Sign in with a crypto wallet', configurable: false, phosphor: Wallet },
 ];
 
 
@@ -352,6 +349,7 @@ function Authentication() {
   const [tab,             setTab]             = useState('providers');
   const [modal,           setModal]           = useState(null); // null | provider.id
   const [googleEnabled,   setGoogleEnabled]   = useState(false);
+  const [phoneEnabled,    setPhoneEnabled]    = useState(false);
   const [emailConfigured, setEmailConfigured] = useState(false);
   const [emailVerified,   setEmailVerified]   = useState(false);
   // Map of generic provider.id → bool (is_enabled)
@@ -384,6 +382,11 @@ function Authentication() {
       })
       .catch(() => {});
 
+    fetch(`${API_BASE}/api/sms-settings?project_id=${projectId}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setPhoneEnabled(!!d.is_enabled))
+      .catch(() => {});
+
     reloadProviders();
   }, [projectId]);
 
@@ -394,11 +397,11 @@ function Authentication() {
   const isEnabled = id => {
     if (id === 'email')  return emailConfigured;
     if (id === 'google') return googleEnabled;
+    if (id === 'phone')  return phoneEnabled;
     return !!providerEnabled[id];
   };
 
-  // Look up the provider object the modal is showing (if it's a generic OAuth one)
-  const modalProvider = modal && modal !== 'email' && modal !== 'google'
+  const modalProvider = modal && modal !== 'email' && modal !== 'google' && modal !== 'phone'
     ? PROVIDERS.find(p => p.id === modal)
     : null;
 
@@ -460,6 +463,14 @@ function Authentication() {
           iconEl={<Icon icon="logos:google-icon" width={24} height={24} />}
           onClose={() => setModal(null)}>
           <GooglePanel projectId={projectId} onSaved={setGoogleEnabled} />
+        </AuthModal>
+      )}
+
+      {modal === 'phone' && (
+        <AuthModal title="Phone" subtitle="Code-based login via SMS"
+          iconEl={<PhoneCall size={24} className="auth-modal-icon-svg" />}
+          onClose={() => setModal(null)}>
+          <PhonePanel projectId={projectId} onSaved={setPhoneEnabled} />
         </AuthModal>
       )}
 

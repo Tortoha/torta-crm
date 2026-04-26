@@ -133,6 +133,8 @@ def run_migrations():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id varchar(255) DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider varchar(40) DEFAULT NULL",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider_id varchar(255) DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone varchar(32) DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN DEFAULT FALSE",
             "ALTER TABLE favorites ADD COLUMN IF NOT EXISTS project_id int DEFAULT NULL",
             "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS project_id int DEFAULT NULL",
         ]:
@@ -1913,6 +1915,462 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
     if cfg.get("pkce"):
         redirect.delete_cookie(key=f"oa_pkce_{provider}", path="/")
     return redirect
+
+
+# ============================================
+# PHONE / SMS AUTHENTICATION
+# Customer brings their own SMS provider — Twilio, MessageBird, Textlocal,
+# Vonage, or Twilio Verify. We just route the OTP through them.
+# ============================================
+
+# In-memory OTP store: { (project_id, phone): { code, expires_at, sent_at } }
+# Restart-safe? No, but OTPs are short-lived (60-600s) so this is fine.
+_phone_otps = {}
+
+
+def _sms_settings(project_id: int):
+    return db_one("SELECT * FROM crm_sms_settings WHERE project_id=%s AND is_enabled=TRUE", (project_id,))
+
+
+def _normalize_phone(p: str) -> str:
+    """Strip spaces, hyphens, parentheses. Phone must be in E.164 (+...)."""
+    if not p: return ""
+    cleaned = "".join(ch for ch in p if ch.isdigit() or ch == "+")
+    if not cleaned.startswith("+"):
+        cleaned = "+" + cleaned
+    return cleaned
+
+
+def _gen_otp(length: int) -> str:
+    return "".join(str(random.randint(0, 9)) for _ in range(length))
+
+
+def _parse_test_numbers(s: str) -> dict:
+    """'+1=789012, +77071234567=000000' → {'+1': '789012', '+77071234567': '000000'}"""
+    out = {}
+    for pair in (s or "").split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            phone, code = pair.split("=", 1)
+            out[_normalize_phone(phone.strip())] = code.strip()
+    return out
+
+
+def _send_sms(settings: dict, phone: str, message: str) -> tuple[bool, str]:
+    """
+    Dispatch SMS via the configured provider.
+    Returns (ok, error_message).
+    """
+    import urllib.parse, base64, json as _json
+    provider = settings.get("provider", "twilio")
+
+    # ── Twilio (Programmable Messaging) ────────────────────────────────
+    if provider == "twilio":
+        sid   = settings.get("twilio_account_sid")
+        token = settings.get("twilio_auth_token")
+        msvc  = settings.get("twilio_message_service_sid")
+        if not (sid and token and msvc):
+            return False, "Twilio credentials incomplete"
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+        body = urllib.parse.urlencode({
+            "MessagingServiceSid": msvc,
+            "To":   phone,
+            "Body": message,
+        }).encode()
+        basic = base64.b64encode(f"{sid}:{token}".encode()).decode()
+        try:
+            req = urllib.request.Request(url, data=body, method="POST", headers={
+                "Authorization": f"Basic {basic}",
+                "Content-Type":  "application/x-www-form-urlencoded",
+            })
+            with urllib.request.urlopen(req, timeout=15) as r:
+                _ = r.read()
+            return True, ""
+        except urllib.error.HTTPError as e:
+            return False, f"Twilio error: {e.read().decode(errors='replace')[:200]}"
+        except Exception as e:
+            return False, f"Twilio error: {e}"
+
+    # ── Twilio Verify (handles its own OTP) ───────────────────────────
+    if provider == "twilio_verify":
+        sid     = settings.get("twilio_account_sid")
+        token   = settings.get("twilio_auth_token")
+        verify  = settings.get("twilio_verify_service_sid")
+        if not (sid and token and verify):
+            return False, "Twilio Verify credentials incomplete"
+        url = f"https://verify.twilio.com/v2/Services/{verify}/Verifications"
+        body = urllib.parse.urlencode({"To": phone, "Channel": "sms"}).encode()
+        basic = base64.b64encode(f"{sid}:{token}".encode()).decode()
+        try:
+            req = urllib.request.Request(url, data=body, method="POST", headers={
+                "Authorization": f"Basic {basic}",
+                "Content-Type":  "application/x-www-form-urlencoded",
+            })
+            with urllib.request.urlopen(req, timeout=15) as r:
+                _ = r.read()
+            return True, ""
+        except Exception as e:
+            return False, f"Twilio Verify error: {e}"
+
+    # ── MessageBird ───────────────────────────────────────────────────
+    if provider == "messagebird":
+        key = settings.get("messagebird_access_key")
+        org = settings.get("messagebird_originator")
+        if not (key and org):
+            return False, "MessageBird credentials incomplete"
+        url = "https://rest.messagebird.com/messages"
+        payload = {"recipients": phone, "originator": org, "body": message}
+        try:
+            req = urllib.request.Request(url,
+                data=urllib.parse.urlencode(payload).encode(),
+                method="POST",
+                headers={
+                    "Authorization": f"AccessKey {key}",
+                    "Content-Type":  "application/x-www-form-urlencoded",
+                })
+            with urllib.request.urlopen(req, timeout=15) as r:
+                _ = r.read()
+            return True, ""
+        except Exception as e:
+            return False, f"MessageBird error: {e}"
+
+    # ── Textlocal ─────────────────────────────────────────────────────
+    if provider == "textlocal":
+        key    = settings.get("textlocal_api_key")
+        sender = settings.get("textlocal_sender") or "TXTLCL"
+        if not key:
+            return False, "Textlocal API key required"
+        url = "https://api.textlocal.in/send/"
+        payload = {
+            "apikey":   key,
+            "numbers":  phone.lstrip("+"),
+            "message":  message,
+            "sender":   sender,
+        }
+        try:
+            req = urllib.request.Request(url,
+                data=urllib.parse.urlencode(payload).encode(),
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                resp = _json.loads(r.read())
+            if resp.get("status") == "success":
+                return True, ""
+            return False, f"Textlocal: {resp}"
+        except Exception as e:
+            return False, f"Textlocal error: {e}"
+
+    # ── Vonage ─────────────────────────────────────────────────────────
+    if provider == "vonage":
+        key    = settings.get("vonage_api_key")
+        secret = settings.get("vonage_api_secret")
+        sender = settings.get("vonage_from_number")
+        if not (key and secret and sender):
+            return False, "Vonage credentials incomplete"
+        url = "https://rest.nexmo.com/sms/json"
+        payload = {
+            "api_key":    key,
+            "api_secret": secret,
+            "from":       sender,
+            "to":         phone.lstrip("+"),
+            "text":       message,
+        }
+        try:
+            req = urllib.request.Request(url,
+                data=urllib.parse.urlencode(payload).encode(),
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                resp = _json.loads(r.read())
+            messages = resp.get("messages") or [{}]
+            if messages[0].get("status") == "0":
+                return True, ""
+            return False, f"Vonage: {messages[0].get('error-text', resp)}"
+        except Exception as e:
+            return False, f"Vonage error: {e}"
+
+    # ── AWS SNS ────────────────────────────────────────────────────────
+    if provider == "aws_sns":
+        akey   = settings.get("aws_access_key_id")
+        secret = settings.get("aws_secret_access_key")
+        region = settings.get("aws_region") or "us-east-1"
+        if not (akey and secret):
+            return False, "AWS credentials incomplete"
+        try:
+            import boto3
+        except ImportError:
+            return False, "boto3 not installed on the server"
+        try:
+            client = boto3.client("sns",
+                region_name=region,
+                aws_access_key_id=akey,
+                aws_secret_access_key=secret,
+            )
+            client.publish(
+                PhoneNumber=phone, Message=message,
+                MessageAttributes={
+                    "AWS.SNS.SMS.SMSType": {
+                        "DataType": "String", "StringValue": "Transactional",
+                    },
+                },
+            )
+            return True, ""
+        except Exception as e:
+            return False, f"AWS SNS error: {e}"
+
+    # ── Plivo ──────────────────────────────────────────────────────────
+    if provider == "plivo":
+        auth_id     = settings.get("plivo_auth_id")
+        auth_token  = settings.get("plivo_auth_token")
+        from_number = settings.get("plivo_from_number")
+        if not (auth_id and auth_token and from_number):
+            return False, "Plivo credentials incomplete"
+        url = f"https://api.plivo.com/v1/Account/{auth_id}/Message/"
+        body = _json.dumps({"src": from_number, "dst": phone, "text": message}).encode()
+        basic = base64.b64encode(f"{auth_id}:{auth_token}".encode()).decode()
+        try:
+            req = urllib.request.Request(url, data=body, method="POST", headers={
+                "Authorization": f"Basic {basic}",
+                "Content-Type":  "application/json",
+            })
+            with urllib.request.urlopen(req, timeout=15) as r:
+                _ = r.read()
+            return True, ""
+        except urllib.error.HTTPError as e:
+            return False, f"Plivo error: {e.read().decode(errors='replace')[:200]}"
+        except Exception as e:
+            return False, f"Plivo error: {e}"
+
+    # ── SMSC.ru (Russia / CIS) ─────────────────────────────────────────
+    if provider == "smsc":
+        login    = settings.get("smsc_login")
+        password = settings.get("smsc_password")
+        sender   = settings.get("smsc_sender") or ""
+        if not (login and password):
+            return False, "SMSC.ru credentials incomplete"
+        params = {
+            "login":   login,
+            "psw":     password,
+            "phones":  phone,
+            "mes":     message,
+            "fmt":     "3",   # JSON response
+            "charset": "utf-8",
+        }
+        if sender:
+            params["sender"] = sender
+        url = "https://smsc.ru/sys/send.php?" + urllib.parse.urlencode(params)
+        try:
+            with urllib.request.urlopen(url, timeout=15) as r:
+                resp = _json.loads(r.read())
+            if resp.get("error"):
+                return False, f"SMSC: {resp.get('error')}"
+            return True, ""
+        except Exception as e:
+            return False, f"SMSC error: {e}"
+
+    # ── SMS.ru (Russia) ────────────────────────────────────────────────
+    if provider == "sms_ru":
+        api_id = settings.get("smsru_api_id")
+        sender = settings.get("smsru_from") or ""
+        if not api_id:
+            return False, "SMS.ru API ID required"
+        params = {
+            "api_id": api_id,
+            "to":     phone.lstrip("+"),
+            "msg":    message,
+            "json":   "1",
+        }
+        if sender:
+            params["from"] = sender
+        url = "https://sms.ru/sms/send?" + urllib.parse.urlencode(params)
+        try:
+            with urllib.request.urlopen(url, timeout=15) as r:
+                resp = _json.loads(r.read())
+            if resp.get("status") == "OK":
+                return True, ""
+            return False, f"SMS.ru: {resp.get('status_text', resp)}"
+        except Exception as e:
+            return False, f"SMS.ru error: {e}"
+
+    # ── Mobizon.kz (Kazakhstan) ────────────────────────────────────────
+    if provider == "mobizon":
+        api_key = settings.get("mobizon_api_key")
+        alpha   = settings.get("mobizon_alpha") or ""
+        if not api_key:
+            return False, "Mobizon API key required"
+        params = {
+            "recipient": phone.lstrip("+"),
+            "text":      message,
+            "apiKey":    api_key,
+        }
+        if alpha:
+            params["from"] = alpha
+        url = "https://api.mobizon.kz/service/message/sendsmsmessage?" + urllib.parse.urlencode(params)
+        try:
+            with urllib.request.urlopen(url, timeout=15) as r:
+                resp = _json.loads(r.read())
+            if resp.get("code") == 0:
+                return True, ""
+            return False, f"Mobizon: {resp.get('message', resp)}"
+        except Exception as e:
+            return False, f"Mobizon error: {e}"
+
+    # ── Telegram Gateway (free OTP via Telegram) ───────────────────────
+    if provider == "telegram_gateway":
+        token = settings.get("telegram_gateway_token")
+        if not token:
+            return False, "Telegram Gateway token required"
+        # Telegram Gateway uses /sendVerificationMessage endpoint
+        url  = "https://gatewayapi.telegram.org/sendVerificationMessage"
+        body = _json.dumps({
+            "phone_number": phone,
+            "code":         message.strip().split()[-1] if message else "",
+            "ttl":          settings.get("otp_expiry_seconds", 60),
+        }).encode()
+        try:
+            req = urllib.request.Request(url, data=body, method="POST", headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type":  "application/json",
+            })
+            with urllib.request.urlopen(req, timeout=15) as r:
+                resp = _json.loads(r.read())
+            if resp.get("ok"):
+                return True, ""
+            return False, f"Telegram Gateway: {resp.get('error', resp)}"
+        except urllib.error.HTTPError as e:
+            return False, f"Telegram Gateway error: {e.read().decode(errors='replace')[:200]}"
+        except Exception as e:
+            return False, f"Telegram Gateway error: {e}"
+
+    return False, f"Unknown SMS provider: {provider}"
+
+
+class PhoneSendCodeRequest(BaseModel):
+    phone: str
+    name:  Optional[str] = None  # for new registrations
+
+
+class PhoneVerifyCodeRequest(BaseModel):
+    phone: str
+    code:  str
+
+
+@app.post("/{api_key}/api/auth/phone/send-code")
+def phone_send_code(req: PhoneSendCodeRequest, api_key: str,
+                    api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    settings   = _sms_settings(project_id)
+    if not settings:
+        raise HTTPException(404, "Phone authentication not enabled for this store")
+
+    phone = _normalize_phone(req.phone)
+    if not phone or len(phone) < 7:
+        raise HTTPException(400, "Invalid phone number")
+
+    otp_length = settings.get("otp_length", 6)
+    expiry     = settings.get("otp_expiry_seconds", 60)
+    template   = settings.get("message_template") or "Your code is {{ .Code }}"
+    test_map   = _parse_test_numbers(settings.get("test_phone_numbers", ""))
+
+    # Twilio Verify generates the code itself; for everyone else we generate it
+    if settings.get("provider") == "twilio_verify":
+        # We still call _send_sms (it kicks off the verification flow)
+        ok, err = _send_sms(settings, phone, "")
+        if not ok:
+            raise HTTPException(502, err or "SMS provider failed")
+        # Mark this phone as "pending verify" with a sentinel — the actual code
+        # check is delegated to Twilio in /verify-code below.
+        _phone_otps[(project_id, phone)] = {
+            "code":       "__twilio_verify__",
+            "expires_at": datetime.utcnow() + timedelta(seconds=expiry),
+            "name":       req.name,
+        }
+        return {"ok": True, "delivery": "twilio_verify"}
+
+    # Test numbers — bypass the SMS provider entirely
+    if phone in test_map:
+        code = test_map[phone]
+    else:
+        code = _gen_otp(otp_length)
+        msg  = template.replace("{{ .Code }}", code).replace("{{.Code}}", code)
+        ok, err = _send_sms(settings, phone, msg)
+        if not ok:
+            raise HTTPException(502, err or "SMS provider failed")
+
+    _phone_otps[(project_id, phone)] = {
+        "code":       code,
+        "expires_at": datetime.utcnow() + timedelta(seconds=expiry),
+        "name":       req.name,
+    }
+    return {"ok": True, "delivery": "sms"}
+
+
+@app.post("/{api_key}/api/auth/phone/verify-code")
+def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
+                      response: Response,
+                      api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    settings   = _sms_settings(project_id)
+    if not settings:
+        raise HTTPException(404, "Phone authentication not enabled for this store")
+
+    phone   = _normalize_phone(req.phone)
+    pending = _phone_otps.get((project_id, phone))
+    if not pending:
+        raise HTTPException(400, "No code requested for this number")
+    if datetime.utcnow() > pending["expires_at"]:
+        _phone_otps.pop((project_id, phone), None)
+        raise HTTPException(400, "Code expired")
+
+    # Twilio Verify — delegate validation to Twilio
+    if pending["code"] == "__twilio_verify__":
+        import urllib.parse, base64
+        sid    = settings.get("twilio_account_sid")
+        token  = settings.get("twilio_auth_token")
+        verify = settings.get("twilio_verify_service_sid")
+        url   = f"https://verify.twilio.com/v2/Services/{verify}/VerificationCheck"
+        body  = urllib.parse.urlencode({"To": phone, "Code": req.code}).encode()
+        basic = base64.b64encode(f"{sid}:{token}".encode()).decode()
+        try:
+            r = urllib.request.Request(url, data=body, method="POST", headers={
+                "Authorization": f"Basic {basic}",
+                "Content-Type":  "application/x-www-form-urlencoded",
+            })
+            with urllib.request.urlopen(r, timeout=15) as rr:
+                resp = json.loads(rr.read())
+            if resp.get("status") != "approved":
+                raise HTTPException(400, "Invalid code")
+        except urllib.error.HTTPError:
+            raise HTTPException(400, "Invalid code")
+    else:
+        if (req.code or "").strip() != pending["code"]:
+            raise HTTPException(400, "Invalid code")
+
+    # ── Find or create user ──────────────────────────────────────────
+    name = pending.get("name") or f"User {phone[-4:]}"
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "SELECT id FROM users WHERE phone=%s AND project_id=%s",
+            (phone, project_id),
+        )
+        user = cur.fetchone()
+        if not user:
+            cur.execute(
+                "INSERT INTO users (name, email, password_hash, project_id, phone, phone_verified) "
+                "VALUES (%s, %s, '', %s, %s, TRUE) RETURNING id",
+                (sanitize(name), f"phone_{phone}@phone.local", project_id, phone),
+            )
+            user_id = cur.fetchone()["id"]
+        else:
+            cur.execute("UPDATE users SET phone_verified=TRUE WHERE id=%s", (user["id"],))
+            user_id = user["id"]
+        conn.commit()
+
+    _phone_otps.pop((project_id, phone), None)
+
+    token = create_token(user_id)
+    set_auth_cookie(response, token)
+    return {"ok": True, "user_id": user_id}
 
 
 # ============================================

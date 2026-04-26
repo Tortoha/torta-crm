@@ -154,6 +154,26 @@ export function createClient(baseUrl, publishableKey) {
         if (!provider) throw new Error("provider name required");
         window.location.href = `${base}/api/auth/oauth/${provider}/login`;
       },
+
+      /**
+       * Send an SMS OTP to a phone number.
+       * @param {string} phone — E.164 format, e.g. "+77071234567"
+       * @param {string} [name] — optional, used when creating a new user
+       */
+      async sendPhoneCode(phone, name) {
+        return req("POST", "/api/auth/phone/send-code", { phone, name });
+      },
+
+      /**
+       * Verify an SMS OTP. On success, the auth cookie is set automatically.
+       * @param {string} phone
+       * @param {string} code
+       */
+      async verifyPhoneCode(phone, code) {
+        const result = await req("POST", "/api/auth/phone/verify-code", { phone, code });
+        if (result.ok) this.invalidateUser();
+        return result;
+      },
     },
 
     // ── Products ─────────────────────────────────────────────────────────────
