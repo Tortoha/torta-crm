@@ -34,6 +34,7 @@ const Booking          = lazy(() => import('./Pages/Project/Booking/Booking.jsx'
 const ProductPage   = lazy(() => import('./Pages/Product/ProductPage.jsx'));
 // Settings
 const AccountSettings  = lazy(() => import('./Pages/Settings/Settings.jsx'));
+const SecuritySettings = lazy(() => import('./Pages/Settings/Security.jsx'));
 const SettingsStub     = lazy(() => import('./Pages/Settings/SettingsStub.jsx'));
 
 function PageLoader() {
@@ -78,7 +79,7 @@ function App() {
           </Route>
           <Route path="/settings" element={<SettingsLayout />}>
             <Route path="account"       element={<AccountSettings />} />
-            <Route path="security"      element={<SettingsStub title="Security" />} />
+            <Route path="security"      element={<SecuritySettings />} />
             <Route path="preferences"   element={<SettingsStub title="Preferences" />} />
             <Route path="notifications" element={<SettingsStub title="Notifications" />} />
           </Route>

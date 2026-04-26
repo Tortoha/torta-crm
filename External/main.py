@@ -2,11 +2,37 @@ from fastapi import FastAPI, Response, HTTPException, Request, Depends
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, time as dt_time
 from contextlib import contextmanager
-import sys, os
+import sys, os, time
+
+# Ensure modules in the same directory (kvstore.py etc.) are importable
+# regardless of the working directory uvicorn was launched from.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import psycopg2
 import psycopg2.errors
+
+# Use stdlib zoneinfo (Python 3.9+) for IANA timezone support.
+# Fallback to UTC if a timezone string is invalid.
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:
+    ZoneInfo = None
+    class ZoneInfoNotFoundError(Exception): pass
+
+def _tz(name: str):
+    """Resolve an IANA timezone name (e.g. 'Asia/Almaty') to a tzinfo object,
+    falling back to UTC if invalid or unavailable."""
+    if not name or ZoneInfo is None:
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, Exception):
+        return timezone.utc
+
+def _utcnow():
+    """Timezone-aware UTC now."""
+    return datetime.now(timezone.utc)
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
 import hashlib, secrets, jwt, random, re as _re, traceback, json, urllib.request, urllib.error
@@ -17,12 +43,16 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 
 # ============================================
-# НАСТРОЙКИ
+# РќРђРЎРўР РћР™РљР
 # ============================================
 
 SECRET_KEY            = os.getenv("SECRET_KEY",        "")
 JWT_ALGORITHM         = "HS256"
-JWT_HOURS             = 24 * 7
+# Short-lived access JWT + long-lived rotated refresh token. See CRM backend
+# for the same pattern + extensive comments.
+ACCESS_TOKEN_MINUTES  = int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))
+REFRESH_TOKEN_DAYS    = int(os.getenv("REFRESH_TOKEN_DAYS",   "30"))
+JWT_HOURS             = ACCESS_TOKEN_MINUTES / 60   # legacy alias
 MAGAZ_BACKEND_URL     = os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
 CRM_BACKEND_URL       = os.getenv("CRM_BACKEND_URL",   "http://localhost:8001")
 INTERNAL_API_KEY      = os.getenv("INTERNAL_API_KEY",  "torta-internal-dev-key")
@@ -91,7 +121,7 @@ app = FastAPI()
 
 
 # ============================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (PER-PROJECT)
+# Р’РЎРџРћРњРћР“РђРўР•Р›Р¬РќР«Р• Р¤РЈРќРљР¦РР (PER-PROJECT)
 # ============================================
 
 def get_project_email(project_id: int) -> tuple:
@@ -103,7 +133,12 @@ def get_project_email(project_id: int) -> tuple:
 
 def get_project_frontend_url(project_id: int) -> str | None:
     row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id = %s", (project_id,))
-    return row["frontend_url"].rstrip("/") if row and row["frontend_url"] else None
+    url = row["frontend_url"].rstrip("/") if row and row["frontend_url"] else None
+    # Reject non-http(s) schemes (javascript:, data:, etc.) to prevent
+    # stored XSS via a malicious frontend_url in crm_url_config.
+    if url and not url.startswith(("http://", "https://")):
+        return None
+    return url
 
 def get_allowed_redirect_urls(project_id: int) -> list:
     rows    = db_all("SELECT url FROM crm_redirect_urls WHERE project_id = %s", (project_id,))
@@ -133,7 +168,7 @@ def get_user_by_id(user_id: int, project_id: int):
 
 
 # ============================================
-# УТИЛИТЫ
+# РЈРўРР›РРўР«
 # ============================================
 
 def run_migrations():
@@ -176,6 +211,34 @@ def run_migrations():
             )
             conn.commit()
         except Exception: conn.rollback()
+        # Refresh tokens (per-user sessions, rotated on use). project_id lets
+        # us scope sessions to a single store — same user logged into 2
+        # different stores has 2 independent sessions.
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                    id            SERIAL PRIMARY KEY,
+                    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    project_id    INTEGER NOT NULL,
+                    token_hash    VARCHAR(64) NOT NULL UNIQUE,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at    TIMESTAMPTZ NOT NULL,
+                    last_used_at  TIMESTAMPTZ,
+                    revoked_at    TIMESTAMPTZ,
+                    revoke_reason VARCHAR(40),
+                    rotated_to_id INTEGER REFERENCES refresh_tokens(id) ON DELETE SET NULL,
+                    parent_id     INTEGER REFERENCES refresh_tokens(id) ON DELETE SET NULL,
+                    user_agent    TEXT,
+                    ip            VARCHAR(64),
+                    label         VARCHAR(100)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user "
+                        "ON refresh_tokens(user_id, project_id, revoked_at, expires_at)")
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[migration] refresh_tokens table failed: {e}")
         # Fix reviews with NULL project_id — copy from their product
         try:
             cur.execute("""
@@ -250,15 +313,131 @@ def validate_password(pwd: str):
         raise HTTPException(400, "Password must contain at least 1 digit")
 
 def create_token(user_id: int) -> str:
-    payload = {"sub": str(user_id), "exp": datetime.utcnow() + timedelta(hours=JWT_HOURS)}
+    """Short-lived (15 min) access JWT. Refresh token does the long-lived part."""
+    payload = {"sub": str(user_id),
+               "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_MINUTES)}
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 def set_auth_cookie(response: Response, token: str):
     response.set_cookie(
         key="authx_token", value=token,
-        httponly=True, max_age=60*60*24*7,
+        httponly=True, max_age=ACCESS_TOKEN_MINUTES * 60,
         samesite="lax", secure=COOKIE_SECURE, path="/",
     )
+
+def set_refresh_cookie(response: Response, raw: str):
+    response.set_cookie(
+        key="authx_refresh", value=raw,
+        httponly=True, max_age=REFRESH_TOKEN_DAYS * 86400,
+        samesite="lax", secure=COOKIE_SECURE, path="/",
+    )
+
+def clear_auth_cookies(response: Response):
+    response.delete_cookie("authx_token",   path="/")
+    response.delete_cookie("authx_refresh", path="/")
+
+# ── Refresh token helpers (mirror CRM backend, scoped per project) ─────
+REVOKE_REASON_LOGOUT  = "logout"
+REVOKE_REASON_ROTATED = "rotated"
+REVOKE_REASON_REUSED  = "reuse_detected"
+REVOKE_REASON_MANUAL  = "manual_revoke"
+
+def _new_refresh_token() -> tuple:
+    raw  = "rt_" + secrets.token_hex(32)
+    return raw, hashlib.sha256(raw.encode()).hexdigest()
+
+def issue_refresh_token(user_id: int, project_id: int, request: Request,
+                        parent_id=None, label: str = None) -> str:
+    raw, h = _new_refresh_token()
+    ua = (request.headers.get("user-agent") or "")[:500] if request else ""
+    ip = get_client_ip(request) if request else ""
+    expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO refresh_tokens
+                  (user_id, project_id, token_hash, expires_at, parent_id, user_agent, ip, label)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (user_id, project_id, h, expires_at, parent_id, ua, ip, label),
+        )
+        cur.fetchone()
+        conn.commit()
+    return raw
+
+def _revoke_chain_from(cur, root_id: int, reason: str):
+    visited = set(); queue = [root_id]
+    while queue:
+        cid = queue.pop()
+        if cid in visited: continue
+        visited.add(cid)
+        cur.execute("""
+            UPDATE refresh_tokens
+               SET revoked_at = COALESCE(revoked_at, NOW()),
+                   revoke_reason = COALESCE(revoke_reason, %s)
+             WHERE id = %s
+        """, (reason, cid))
+        cur.execute(
+            "SELECT id FROM refresh_tokens WHERE parent_id=%s OR rotated_to_id=%s",
+            (cid, cid),
+        )
+        for r in cur.fetchall():
+            if r["id"] not in visited: queue.append(r["id"])
+
+def consume_refresh_token(raw: str, project_id: int, request: Request):
+    """Returns (user_id, new_raw) or None. Rotates the token; revokes the
+    whole chain if a previously-rotated token is presented (reuse attack)."""
+    if not raw: return None
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "SELECT * FROM refresh_tokens WHERE token_hash=%s AND project_id=%s FOR UPDATE",
+            (h, project_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.commit()
+            return None
+        now_utc = datetime.now(timezone.utc)
+        if row["revoked_at"] is not None:
+            _revoke_chain_from(cur, row["id"], REVOKE_REASON_REUSED)
+            conn.commit()
+            return None
+        if row["expires_at"] and row["expires_at"] < now_utc:
+            cur.execute(
+                "UPDATE refresh_tokens SET revoked_at=NOW(), revoke_reason='expired' WHERE id=%s",
+                (row["id"],),
+            )
+            conn.commit()
+            return None
+        new_raw, new_h = _new_refresh_token()
+        ua = (request.headers.get("user-agent") or "")[:500] if request else (row.get("user_agent") or "")
+        ip = get_client_ip(request) if request else (row.get("ip") or "")
+        new_expires = now_utc + timedelta(days=REFRESH_TOKEN_DAYS)
+        cur.execute(
+            """INSERT INTO refresh_tokens
+                  (user_id, project_id, token_hash, expires_at, parent_id, user_agent, ip, label)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (row["user_id"], project_id, new_h, new_expires, row["id"], ua, ip, row.get("label")),
+        )
+        new_id = cur.fetchone()["id"]
+        cur.execute("""
+            UPDATE refresh_tokens
+               SET revoked_at=NOW(), revoke_reason=%s,
+                   rotated_to_id=%s, last_used_at=NOW()
+             WHERE id=%s
+        """, (REVOKE_REASON_ROTATED, new_id, row["id"]))
+        conn.commit()
+        return row["user_id"], new_raw
+
+def revoke_refresh_by_raw(raw: str, project_id: int, reason: str = REVOKE_REASON_LOGOUT):
+    if not raw: return
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+            "WHERE token_hash=%s AND project_id=%s AND revoked_at IS NULL",
+            (reason, h, project_id),
+        )
+        conn.commit()
 
 def get_current_user_id(request: Request) -> int:
     token = request.cookies.get("authx_token")
@@ -344,7 +523,7 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
                 resp.headers["Access-Control-Allow-Credentials"] = "true"
                 resp.headers["Vary"]                             = "Origin"
             resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Publishable-Key, X-Web-Chat-Id"
+            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Publishable-Key, X-Web-Chat-Id, X-CSRF-Token"
             resp.headers["Access-Control-Max-Age"]       = "600"
             return resp
 
@@ -359,11 +538,44 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
             response.headers["Vary"]                             = "Origin"
         return response
 
+# ─── CSRF double-submit cookie ────────────────────────────────────────────
+# Exempt paths:
+#   /track/   — fire-and-forget analytics (visit, product-view). Anonymous
+#               counters only; no user data at risk. They fire on page load
+#               before the CSRF cookie is guaranteed to be set.
+#   /refresh  — token rotation; the refresh token itself is the credential.
+# Add webhook exemptions here when Twilio/Telegram inbound webhooks are added.
+_CSRF_SAFE_METHODS   = {"GET", "HEAD", "OPTIONS", "TRACE"}
+_CSRF_EXEMPT_SUFFIX  = ("/refresh",)
+_CSRF_EXEMPT_SEGMENT = ("/track/",)
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method in _CSRF_SAFE_METHODS:
+            return await call_next(request)
+        path = request.url.path
+        if (any(path.endswith(s) for s in _CSRF_EXEMPT_SUFFIX) or
+                any(s in path    for s in _CSRF_EXEMPT_SEGMENT)):
+            return await call_next(request)
+        cookie = request.cookies.get("csrf_token", "")
+        header = request.headers.get("x-csrf-token", "")
+        if not cookie or not secrets.compare_digest(
+            cookie.encode("utf-8"), header.encode("utf-8")
+        ):
+            from starlette.responses import Response as _R
+            return _R(
+                '{"detail":"CSRF token missing or invalid"}',
+                status_code=403, media_type="application/json",
+            )
+        return await call_next(request)
+
+# CSRF inner, CORS outer — 403 responses still carry CORS headers.
+app.add_middleware(CSRFMiddleware)
 app.add_middleware(DynamicCORSMiddleware)
 
 
 # ============================================
-# МОДЕЛИ
+# РњРћР”Р•Р›Р
 # ============================================
 
 class SendCodeRequest(BaseModel):
@@ -482,53 +694,115 @@ def send_reset_email(email: str, token: str, project_id: int = None) -> bool:
     frontend = get_project_frontend_url(project_id) if project_id else None
     if not frontend:
         print(f"send_reset_email: Site URL not configured for project_id={project_id}"); return False
-    reset_url = f"{frontend}/reset-password/{token}"
+    reset_url     = f"{frontend}/reset-password/{token}"
+    reset_url_esc = sanitize(reset_url)   # HTML-escapes " < > & ' — prevents href injection
     html = f"""<div style="font-family:Arial,sans-serif;text-align:center;padding:40px">
         <h1 style="color:#333">Reset your password</h1>
         <p style="font-size:16px;color:#666">Click the button below to set a new password. Link expires in 30 minutes.</p>
-        <a href="{reset_url}" style="display:inline-block;margin-top:24px;padding:14px 32px;
+        <a href="{reset_url_esc}" style="display:inline-block;margin-top:24px;padding:14px 32px;
             background:#0071e3;color:#fff;text-decoration:none;border-radius:16px;font-size:18px;font-weight:600">
             Reset password</a>
-        <p style="margin-top:24px;color:#999;font-size:12px;word-break:break-all">{reset_url}</p></div>"""
+        <p style="margin-top:24px;color:#999;font-size:12px;word-break:break-all">{reset_url_esc}</p></div>"""
     return send_email(email, "Password Reset", html, from_name, from_email)
 
 
 # ============================================
-# IN-MEMORY ХРАНИЛИЩА (rate-limit, верификации)
+# RATE-LIMIT / VERIFICATION STORAGE
+# Backed by Redis when REDIS_URL is set, falls back to in-memory dict for
+# single-worker dev. See kvstore.py.
 # ============================================
 
-pending_verifications = {}
-login_attempts        = {}
-password_reset_tokens = {}
+import kvstore
+
+# ── Email OTP (pending verifications) ──────────────────────────────────────
+# Key:  pv:<project_id>:<email>
+# TTL:  CODE_TTL_MINUTES * 60
+def _pv_key(project_id: int, email: str) -> str:
+    return f"pv:{project_id}:{email}"
+def _pv_get(project_id, email): return kvstore.get(_pv_key(project_id, email))
+def _pv_set(project_id, email, value, ttl=None):
+    kvstore.set(_pv_key(project_id, email), value, ttl=ttl or CODE_TTL_MINUTES * 60)
+def _pv_del(project_id, email): kvstore.delete(_pv_key(project_id, email))
+
+# ── Failed-attempt counters (logins, password reset, etc.) ────────────────
+# Key:  fail:<bucket>:<id>      e.g. fail:login:ip:1.2.3.4 / fail:reset:email:foo@bar
+# TTL:  BLOCK_MINUTES * 60      (auto-resets after the cool-down window)
+# Uses atomic INCR; >= MAX_FAILED_ATTEMPTS = blocked. ttl() reports time left.
+def _fail_key(bucket: str, ident: str) -> str:
+    return f"fail:{bucket}:{ident}"
+def _fail_check(bucket: str, ident: str):
+    """Returns (blocked: bool, seconds_left: int). Doesn't increment."""
+    key = _fail_key(bucket, ident)
+    count = int(kvstore.get(key) or 0)
+    if count >= MAX_FAILED_ATTEMPTS:
+        return True, max(kvstore.ttl(key), 1)
+    return False, 0
+def _fail_record(bucket: str, ident: str):
+    """Increment the failure counter. Sets TTL on first hit only."""
+    return kvstore.incr(_fail_key(bucket, ident), ttl=BLOCK_MINUTES * 60)
+def _fail_clear(bucket: str, ident: str):
+    kvstore.delete(_fail_key(bucket, ident))
+
+# ── Password reset tokens ──────────────────────────────────────────────────
+# Key:  pw_reset:<sha256(raw_token)>
+# TTL:  RESET_TTL_MINUTES * 60
+def _reset_key(token_hash: str) -> str:
+    return f"pw_reset:{token_hash}"
+def _reset_get(token_hash):    return kvstore.get(_reset_key(token_hash))
+def _reset_set(token_hash, v): kvstore.set(_reset_key(token_hash), v, ttl=RESET_TTL_MINUTES * 60)
+def _reset_del(token_hash):    kvstore.delete(_reset_key(token_hash))
+
 
 
 # ============================================
-# АУТЕНТИФИКАЦИЯ
+# CSRF TOKEN
 # ============================================
 
-@app.post("/{api_key}/api/send-code")
+@app.get("/{api_key}/csrf")
+def get_csrf_token(api_key: str, request: Request, response: Response,
+                   api_key_record: dict = Depends(resolve_api_key)):
+    """Issue (or reuse) a CSRF token cookie for the store frontend.
+    The SDK calls this once on init so that subsequent state-changing
+    requests can include X-CSRF-Token header.
+    """
+    token = request.cookies.get("csrf_token", "")
+    if not token:
+        token = secrets.token_hex(32)
+    response.set_cookie(
+        "csrf_token", token,
+        httponly=False,       # JS must read this to echo it as a header
+        samesite="strict",
+        secure=COOKIE_SECURE,
+        max_age=86400,
+        path="/",
+    )
+    return {"csrf_token": token}
+
+
+# ============================================
+# РђРЈРўР•РќРўРР¤РРљРђР¦РРЇ
+# ============================================
+
+@app.post("/{api_key}/send-code")
 def send_code(request: SendCodeRequest, req: Request,
               api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     email = request.email.lower().strip()
     ip    = get_client_ip(req)
-    now   = datetime.utcnow()
+    now_ts = time.time()
 
-    for key in [f"ip:{ip}", f"email:{email}"]:
-        s = login_attempts.get(key)
-        if s and s.get("blocked_until") and now < s["blocked_until"]:
-            left = int((s["blocked_until"] - now).total_seconds())
+    # Block check (per-IP and per-email windows are independent)
+    for bucket, ident in (("login", f"ip:{ip}"), ("login", f"email:{email}")):
+        blocked, left = _fail_check(bucket, ident)
+        if blocked:
             raise HTTPException(429, f"Too many failed attempts. Try again in {left} seconds.")
 
     def fail(detail: str):
-        for key in [f"ip:{ip}", f"email:{email}"]:
-            s = login_attempts.get(key, {"count": 0, "blocked_until": None})
-            s["count"] += 1
-            if s["count"] >= MAX_FAILED_ATTEMPTS:
-                s = {"count": 0, "blocked_until": now + timedelta(minutes=BLOCK_MINUTES)}
-                login_attempts[key] = s
-                raise HTTPException(429, f"Too many failed attempts. Try again in {int((s['blocked_until']-now).total_seconds())} seconds.")
-            login_attempts[key] = s
+        for bucket, ident in (("login", f"ip:{ip}"), ("login", f"email:{email}")):
+            cnt = _fail_record(bucket, ident)
+            if cnt >= MAX_FAILED_ATTEMPTS:
+                left = max(kvstore.ttl(_fail_key(bucket, ident)), 1)
+                raise HTTPException(429, f"Too many failed attempts. Try again in {left} seconds.")
         raise HTTPException(400, detail)
 
     if request.type == "register":
@@ -553,59 +827,56 @@ def send_code(request: SendCodeRequest, req: Request,
     else:
         raise HTTPException(400, "Invalid type")
 
-    code   = gen_otp(6)
-    pv_key = f"{project_id}:{email}"
-    pending_verifications[pv_key] = {
+    code = gen_otp(6)
+    _pv_set(project_id, email, {
         "code_hash": hash_otp(code), "type": request.type, "name": request.name,
         "password": request.password, "project_id": project_id,
-        "expires": now + timedelta(minutes=CODE_TTL_MINUTES),
-        "next_resend_at": now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
+        "expires_ts":        now_ts + CODE_TTL_MINUTES * 60,
+        "next_resend_at_ts": now_ts + RESEND_COOLDOWN_SECONDS,
         "attempts": 0,
-    }
+    })
     if not send_code_email(email, code, project_id):
-        del pending_verifications[pv_key]
+        _pv_del(project_id, email)
         raise HTTPException(500, "Failed to send email")
 
-    for key in [f"ip:{ip}", f"email:{email}"]: login_attempts.pop(key, None)
+    _fail_clear("login", f"ip:{ip}")
+    _fail_clear("login", f"email:{email}")
     return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
 
 
-@app.post("/{api_key}/api/verify-code")
+@app.post("/{api_key}/verify-code")
 def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
                 api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     email  = request.email.lower().strip()
     code   = (request.code or "").replace(" ", "").strip()
     ip     = get_client_ip(req)
-    now    = datetime.utcnow()
-    pv_key = f"{project_id}:{email}"
+    now_ts = time.time()
 
-    for key in [f"ip:{ip}", f"email:{email}"]:
-        s = login_attempts.get(key)
-        if s and s.get("blocked_until") and now < s["blocked_until"]:
-            left = int((s["blocked_until"] - now).total_seconds())
+    for bucket, ident in (("login", f"ip:{ip}"), ("login", f"email:{email}")):
+        blocked, left = _fail_check(bucket, ident)
+        if blocked:
             raise HTTPException(429, f"Too many failed attempts. Try again in {left} seconds.")
 
     def fail(detail: str):
-        for key in [f"ip:{ip}", f"email:{email}"]:
-            s = login_attempts.get(key, {"count": 0, "blocked_until": None})
-            s["count"] += 1
-            if s["count"] >= MAX_FAILED_ATTEMPTS:
-                s = {"count": 0, "blocked_until": now + timedelta(minutes=BLOCK_MINUTES)}
-                login_attempts[key] = s
-                raise HTTPException(429, f"Too many failed attempts. Try again in {int((s['blocked_until']-now).total_seconds())} seconds.")
-            login_attempts[key] = s
+        for bucket, ident in (("login", f"ip:{ip}"), ("login", f"email:{email}")):
+            cnt = _fail_record(bucket, ident)
+            if cnt >= MAX_FAILED_ATTEMPTS:
+                left = max(kvstore.ttl(_fail_key(bucket, ident)), 1)
+                raise HTTPException(429, f"Too many failed attempts. Try again in {left} seconds.")
         raise HTTPException(400, detail)
 
-    if pv_key not in pending_verifications: fail("Code not found or expired")
-    pending = pending_verifications[pv_key]
-    if now > pending["expires"]:
-        del pending_verifications[pv_key]
+    pending = _pv_get(project_id, email)
+    if not pending: fail("Code not found or expired")
+    if now_ts > float(pending.get("expires_ts", 0)):
+        _pv_del(project_id, email)
         raise HTTPException(400, "Code expired")
     # Per-OTP brute-force counter — invalidate the code after too many tries
-    pending["attempts"] = pending.get("attempts", 0) + 1
+    pending["attempts"] = int(pending.get("attempts", 0)) + 1
+    _pv_set(project_id, email, pending,
+            ttl=int(max(float(pending["expires_ts"]) - now_ts, 1)))
     if pending["attempts"] > MAX_FAILED_ATTEMPTS:
-        del pending_verifications[pv_key]
+        _pv_del(project_id, email)
         raise HTTPException(429, "Too many invalid attempts. Request a new code.")
     if not verify_otp(code, pending.get("code_hash", "")): fail("Invalid code")
 
@@ -630,91 +901,166 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
 
     token = create_token(user_id)
     set_auth_cookie(response, token)
-    del pending_verifications[pv_key]
-    for key in [f"ip:{ip}", f"email:{email}"]: login_attempts.pop(key, None)
+    set_refresh_cookie(response, issue_refresh_token(user_id, project_id, req, label="Email login"))
+    _pv_del(project_id, email)
+    _fail_clear("login", f"ip:{ip}")
+    _fail_clear("login", f"email:{email}")
     return {"success": True}
 
 
-@app.post("/{api_key}/api/resend-code")
+@app.post("/{api_key}/resend-code")
 def resend_code(request: ResendCodeRequest, api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     email  = request.email.lower().strip()
-    now    = datetime.utcnow()
-    pv_key = f"{project_id}:{email}"
+    now_ts = time.time()
 
-    if pv_key not in pending_verifications:
+    pending = _pv_get(project_id, email)
+    if not pending:
         raise HTTPException(400, "No pending verification")
-    pending = pending_verifications[pv_key]
-    if now > pending["expires"]:
-        del pending_verifications[pv_key]; raise HTTPException(400, "Code expired. Start again.")
-    if now < pending["next_resend_at"]:
-        left = int((pending["next_resend_at"] - now).total_seconds())
+    if now_ts > float(pending.get("expires_ts", 0)):
+        _pv_del(project_id, email); raise HTTPException(400, "Code expired. Start again.")
+    if now_ts < float(pending.get("next_resend_at_ts", 0)):
+        left = int(float(pending["next_resend_at_ts"]) - now_ts)
         raise HTTPException(429, f"Resend available in {left} seconds")
 
     code = gen_otp(6)
-    pending_verifications[pv_key].update({
-        "code_hash": hash_otp(code),
-        "expires": now + timedelta(minutes=CODE_TTL_MINUTES),
-        "next_resend_at": now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
+    pending.update({
+        "code_hash":         hash_otp(code),
+        "expires_ts":        now_ts + CODE_TTL_MINUTES * 60,
+        "next_resend_at_ts": now_ts + RESEND_COOLDOWN_SECONDS,
         "attempts": 0,
     })
+    _pv_set(project_id, email, pending)
     if not send_code_email(email, code, pending["project_id"]):
         raise HTTPException(500, "Failed to send email")
     return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
 
 
-@app.get("/{api_key}/api/me")
+@app.get("/{api_key}/me")
 def get_me(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     user = get_user_by_id(get_current_user_id(request), api_key_record["id"])
     if not user: raise HTTPException(401, "User not found")
     return {"id": user["id"], "name": user["name"], "email": user["email"]}
 
 
-@app.post("/{api_key}/api/logout")
-def logout(response: Response, api_key_record: dict = Depends(resolve_api_key)):
-    response.delete_cookie("authx_token", path="/")
+@app.post("/{api_key}/logout")
+def logout(response: Response, request: Request,
+           api_key_record: dict = Depends(resolve_api_key)):
+    revoke_refresh_by_raw(request.cookies.get("authx_refresh", ""), api_key_record["id"])
+    clear_auth_cookies(response)
     return {"success": True}
 
 
 # ============================================
-# ВОССТАНОВЛЕНИЕ ПАРОЛЯ
+# REFRESH TOKEN / SESSIONS
 # ============================================
 
-@app.post("/{api_key}/api/forgot-password")
+@app.post("/{api_key}/refresh")
+def refresh_session(response: Response, request: Request,
+                    api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    raw = request.cookies.get("authx_refresh", "")
+    result = consume_refresh_token(raw, project_id, request)
+    if not result:
+        clear_auth_cookies(response)
+        raise HTTPException(401, "Invalid or expired refresh token")
+    user_id, new_raw = result
+    if not db_one("SELECT 1 FROM users WHERE id=%s AND project_id=%s", (user_id, project_id)):
+        clear_auth_cookies(response)
+        raise HTTPException(401, "Account not found")
+    set_auth_cookie(response, create_token(user_id))
+    set_refresh_cookie(response, new_raw)
+    return {"success": True}
+
+
+@app.get("/{api_key}/sessions")
+def list_sessions(request: Request, api_key_record: dict = Depends(resolve_api_key)):
+    """List active sessions for the current authenticated user."""
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    cur_hash = ""
+    raw = request.cookies.get("authx_refresh", "")
+    if raw:
+        cur_hash = hashlib.sha256(raw.encode()).hexdigest()
+    rows = db_all(
+        """SELECT id, created_at, last_used_at, expires_at, user_agent, ip, label, token_hash
+           FROM refresh_tokens
+           WHERE user_id=%s AND project_id=%s
+             AND revoked_at IS NULL AND expires_at > NOW()
+           ORDER BY COALESCE(last_used_at, created_at) DESC""",
+        (user_id, project_id),
+    )
+    return [{
+        "id":         r["id"],
+        "is_current": r["token_hash"] == cur_hash,
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "last_used_at": r["last_used_at"].isoformat() if r["last_used_at"] else None,
+        "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
+        "user_agent": r.get("user_agent"),
+        "ip":         r.get("ip"),
+        "label":      r.get("label"),
+    } for r in rows]
+
+
+@app.delete("/{api_key}/sessions/{session_id}")
+def revoke_session(session_id: int, request: Request,
+                   api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+            "WHERE id=%s AND user_id=%s AND project_id=%s AND revoked_at IS NULL",
+            (REVOKE_REASON_MANUAL, session_id, user_id, project_id),
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/{api_key}/logout-all")
+def logout_all(response: Response, request: Request,
+               api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+            "WHERE user_id=%s AND project_id=%s AND revoked_at IS NULL",
+            (REVOKE_REASON_MANUAL, user_id, project_id),
+        )
+        conn.commit()
+    clear_auth_cookies(response)
+    return {"ok": True}
+
+
+# ============================================
+# Р’РћРЎРЎРўРђРќРћР’Р›Р•РќРР• РџРђР РћР›РЇ
+# ============================================
+
+@app.post("/{api_key}/forgot-password")
 def forgot_password(request: ForgotPasswordRequest, req: Request,
                     api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     email = request.email.lower().strip()
     ip    = get_client_ip(req)
-    now   = datetime.utcnow()
 
-    # Per-IP and per-email rate limit (mitigate enumeration + email bombing)
-    for key in [f"reset:ip:{ip}", f"reset:email:{email}"]:
-        s = login_attempts.get(key)
-        if s and s.get("blocked_until") and now < s["blocked_until"]:
-            left = int((s["blocked_until"] - now).total_seconds())
+    for ident in (f"ip:{ip}", f"email:{email}"):
+        blocked, left = _fail_check("reset", ident)
+        if blocked:
             raise HTTPException(429, f"Too many requests. Try again in {left} seconds.")
-        s = s or {"count": 0, "blocked_until": None}
-        s["count"] += 1
-        if s["count"] >= MAX_FAILED_ATTEMPTS:
-            s = {"count": 0, "blocked_until": now + timedelta(minutes=BLOCK_MINUTES)}
-        login_attempts[key] = s
+        _fail_record("reset", ident)
 
-    # Always return the same generic response, regardless of whether the
-    # email exists. Send the email only if it does, but never differentiate.
     user = get_user_by_email(email, project_id)
     if user:
-        for t in [t for t, d in password_reset_tokens.items()
-                  if d["email"] == email and d["project_id"] == project_id]:
-            del password_reset_tokens[t]
+        for k in kvstore.keys_matching("pw_reset:*"):
+            d = kvstore.get(k)
+            if d and d.get("email") == email and d.get("project_id") == project_id:
+                kvstore.delete(k)
         raw_token  = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-        password_reset_tokens[token_hash] = {
-            "email": email, "project_id": project_id,
-            "expires": now + timedelta(minutes=RESET_TTL_MINUTES),
-            "used": False,
-        }
-        # Swallow email errors so timing doesn't leak account existence
+        _reset_set(token_hash, {
+            "email": email, "project_id": project_id, "used": False,
+        })
         try:
             send_reset_email(email, raw_token, project_id)
         except Exception:
@@ -722,16 +1068,15 @@ def forgot_password(request: ForgotPasswordRequest, req: Request,
     return {"success": True, "message": "If the account exists, a reset email has been sent."}
 
 
-@app.get("/{api_key}/api/reset-password/validate/{token}")
+@app.get("/{api_key}/reset-password/validate/{token}")
 def validate_reset_token(token: str, api_key_record: dict = Depends(resolve_api_key)):
-    data = password_reset_tokens.get(hashlib.sha256(token.encode()).hexdigest())
-    if (not data or data.get("used") or datetime.utcnow() > data["expires"]
-        or data["project_id"] != api_key_record["id"]):
+    data = _reset_get(hashlib.sha256(token.encode()).hexdigest())
+    if (not data or data.get("used") or data.get("project_id") != api_key_record["id"]):
         raise HTTPException(400, "Invalid or expired reset link")
     return {"valid": True, "email": data["email"]}
 
 
-@app.post("/{api_key}/api/reset-password")
+@app.post("/{api_key}/reset-password")
 def reset_password(request: ResetPasswordRequest, api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     if request.password != (request.repeat_password or ""):
@@ -739,29 +1084,28 @@ def reset_password(request: ResetPasswordRequest, api_key_record: dict = Depends
     validate_password(request.password)
 
     token_hash = hashlib.sha256((request.token or "").strip().encode()).hexdigest()
-    token_data = password_reset_tokens.get(token_hash)
+    token_data = _reset_get(token_hash)
     if (not token_data or token_data.get("used")
-        or datetime.utcnow() > token_data["expires"]
-        or token_data["project_id"] != project_id):
+        or token_data.get("project_id") != project_id):
         raise HTTPException(400, "Invalid or expired reset link")
 
-    # Mark used FIRST to prevent reuse races, then update DB
     token_data["used"] = True
+    _reset_set(token_hash, token_data)
     with db_cursor() as (conn, cursor):
         cursor.execute(
             "UPDATE users SET password_hash = %s WHERE email = %s AND project_id = %s",
             (hash_password(request.password), token_data["email"], project_id)
         )
         conn.commit()
-    password_reset_tokens.pop(token_hash, None)
+    _reset_del(token_hash)
     return {"success": True}
 
 
 # ============================================
-# ПРОДУКТЫ
+# РџР РћР”РЈРљРўР«
 # ============================================
 
-@app.get("/{api_key}/api-products")
+@app.get("/{api_key}/products")
 def get_products(api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     with db_cursor() as (_, cursor):
@@ -814,7 +1158,7 @@ def get_products(api_key_record: dict = Depends(resolve_api_key)):
     ]
 
 
-@app.get("/{api_key}/api/product/{product_hash}", response_model=ProductPageResponse)
+@app.get("/{api_key}/product/{product_hash}", response_model=ProductPageResponse)
 def get_product_page(product_hash: str, request: Request,
                      api_key_record: dict = Depends(resolve_api_key)):
     decoded = hashids.decode(product_hash)
@@ -944,10 +1288,10 @@ def get_product_page(product_hash: str, request: Request,
 
 
 # ============================================
-# КОРЗИНА
+# РљРћР Р—РРќРђ
 # ============================================
 
-@app.post("/{api_key}/api/cart/add")
+@app.post("/{api_key}/cart/add")
 def add_to_cart(item: AddToCart, request: Request,
                 api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -982,7 +1326,7 @@ def add_to_cart(item: AddToCart, request: Request,
     return {"success": True}
 
 
-@app.delete("/{api_key}/api/cart/clear")
+@app.delete("/{api_key}/cart/clear")
 def clear_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     user_id = get_current_user_id(request)
     with db_cursor() as (conn, cursor):
@@ -994,7 +1338,7 @@ def clear_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)
     return {"success": True}
 
 
-@app.delete("/{api_key}/api/cart/{cart_item_id}")
+@app.delete("/{api_key}/cart/{cart_item_id}")
 def remove_from_cart(cart_item_id: int, request: Request,
                      api_key_record: dict = Depends(resolve_api_key)):
     user_id = get_current_user_id(request)
@@ -1010,7 +1354,7 @@ def remove_from_cart(cart_item_id: int, request: Request,
     return {"success": True}
 
 
-@app.put("/{api_key}/api/cart/{cart_item_id}")
+@app.put("/{api_key}/cart/{cart_item_id}")
 def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: Request,
                          api_key_record: dict = Depends(resolve_api_key)):
     if data.quantity < 1: raise HTTPException(400, "Quantity must be at least 1")
@@ -1032,7 +1376,7 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
     return {"success": True}
 
 
-@app.get("/{api_key}/api/cart", response_model=CartPageResponse)
+@app.get("/{api_key}/cart", response_model=CartPageResponse)
 def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
@@ -1094,10 +1438,10 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
 
 
 # ============================================
-# ИЗБРАННОЕ
+# РР—Р‘Р РђРќРќРћР•
 # ============================================
 
-@app.post("/{api_key}/api/favorites/add")
+@app.post("/{api_key}/favorites/add")
 def add_to_favorites(item: AddToFavorites, request: Request,
                      api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -1116,7 +1460,7 @@ def add_to_favorites(item: AddToFavorites, request: Request,
     return {"success": True}
 
 
-@app.get("/{api_key}/api/favorites")
+@app.get("/{api_key}/favorites")
 def get_favorites(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     user_id = get_current_user_id(request)
     rows = db_all(
@@ -1127,7 +1471,7 @@ def get_favorites(request: Request, api_key_record: dict = Depends(resolve_api_k
     return [{**r, "hash": hashids.encode(r["product_id"])} for r in rows]
 
 
-@app.delete("/{api_key}/api/favorites/{product_hash}")
+@app.delete("/{api_key}/favorites/{product_hash}")
 def remove_from_favorites(product_hash: str, request: Request,
                            api_key_record: dict = Depends(resolve_api_key)):
     decoded = hashids.decode(product_hash)
@@ -1143,10 +1487,10 @@ def remove_from_favorites(product_hash: str, request: Request,
 
 
 # ============================================
-# ОТЗЫВЫ
+# РћРўР—Р«Р’Р«
 # ============================================
 
-@app.post("/{api_key}/api/reviews/add")
+@app.post("/{api_key}/reviews/add")
 def add_review(review: AddReview, request: Request,
                api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -1167,7 +1511,7 @@ def add_review(review: AddReview, request: Request,
     return {"success": True}
 
 
-@app.get("/{api_key}/api/reviews/can-review/{product_id}")
+@app.get("/{api_key}/reviews/can-review/{product_id}")
 def can_user_review(product_id: int, request: Request,
                     api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -1189,7 +1533,7 @@ def can_user_review(product_id: int, request: Request,
     return {"can_review": can} if can else {"can_review": False, "reason": "not_purchased"}
 
 
-@app.delete("/{api_key}/api/reviews/{review_id}")
+@app.delete("/{api_key}/reviews/{review_id}")
 def delete_review(review_id: int, request: Request,
                   api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -1204,10 +1548,10 @@ def delete_review(review_id: int, request: Request,
 
 
 # ============================================
-# ПРОМОКОДЫ
+# РџР РћРњРћРљРћР”Р«
 # ============================================
 
-@app.post("/{api_key}/api/promo-code/apply")
+@app.post("/{api_key}/promo-code/apply")
 def apply_promo_code(data: ApplyPromoCode, request: Request,
                      api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -1267,10 +1611,10 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
 
 
 # ============================================
-# ЗАКАЗЫ
+# Р—РђРљРђР—Р«
 # ============================================
 
-@app.post("/{api_key}/api/orders")
+@app.post("/{api_key}/orders")
 def place_order(data: PlaceOrderRequest, request: Request,
                 api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -1310,7 +1654,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
 
         subtotal = sum(float(it["price"]) * it["quantity"] for it in items)
 
-        # Промокод
+        # РџСЂРѕРјРѕРєРѕРґ
         discount = 0.0
         if data.promo_code:
             cursor.execute(
@@ -1380,9 +1724,10 @@ def place_order(data: PlaceOrderRequest, request: Request,
     user = db_one("SELECT name, email FROM users WHERE id=%s", (user_id,))
     from_name, from_email = get_project_email(project_id)
     if user and user.get("email"):
+        customer_name = sanitize(user["name"] or "Customer")
         items_html = "".join(
             "<tr>"
-            "<td style='padding:6px 0;color:#333'>" + it["title"] + " &mdash; " + it["variation_name"] + "</td>"
+            "<td style='padding:6px 0;color:#333'>" + sanitize(it["title"]) + " &mdash; " + sanitize(it["variation_name"]) + "</td>"
             "<td style='padding:6px 0;text-align:right;color:#333'>" + str(it["quantity"]) + " &times; " + str(int(float(it["price"]))) + "</td>"
             "</tr>"
             for it in items
@@ -1391,7 +1736,6 @@ def place_order(data: PlaceOrderRequest, request: Request,
             "<tr><td style='padding:6px 0;color:#888'>Shipping</td>"
             "<td style='padding:6px 0;text-align:right;color:#888'>" + str(int(final_shipping)) + "</td></tr>"
         ) if final_shipping else ""
-        customer_name = user["name"] or "Customer"
         send_email(
             to=user["email"],
             subject="Order #" + str(order_id) + " confirmed",
@@ -1412,7 +1756,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
     return {"success": True, "order_id": order_id}
 
 
-@app.get("/{api_key}/api/orders")
+@app.get("/{api_key}/orders")
 def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     # Optional auth — return 401 if not logged in
@@ -1473,10 +1817,10 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
 
 
 # ============================================
-# ТРЕКИНГ (воронка продаж)
+# РўР Р•РљРРќР“ (РІРѕСЂРѕРЅРєР° РїСЂРѕРґР°Р¶)
 # ============================================
 
-@app.post("/{api_key}/api/track/visit")
+@app.post("/{api_key}/track/visit")
 def track_visit(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
@@ -1492,7 +1836,7 @@ def track_visit(request: Request, api_key_record: dict = Depends(resolve_api_key
     return {"success": True}
 
 
-@app.post("/{api_key}/api/track/product-view")
+@app.post("/{api_key}/track/product-view")
 def track_product_view(data: TrackProductView, request: Request,
                        api_key_record: dict = Depends(resolve_api_key)):
     """Один человек (по IP) = одна запись в сутки для воронки продаж."""
@@ -1517,12 +1861,12 @@ def track_product_view(data: TrackProductView, request: Request,
 # GOOGLE OAUTH (per-project credentials)
 # ============================================
 
-@app.get("/{api_key}/api/auth/google/login")
+@app.get("/{api_key}/auth/google/login")
 def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_key_public)):
     import urllib.parse
     client_id, _ = get_google_credentials(api_key_record["id"])
     if not client_id: raise HTTPException(404, "Google OAuth not configured for this store")
-    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/api/auth/google/callback"
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/auth/google/callback"
     # CSRF protection — random state stored in short-lived cookie, validated
     # on callback. Without this an attacker can trick a victim into logging
     # into the attacker's account.
@@ -1536,14 +1880,15 @@ def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_
     redirect = RedirectResponse(
         "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     )
+    # path="/" so cookie reliably survives the cross-origin redirect from Google
     redirect.set_cookie(
         key="oa_state_google", value=state, httponly=True, max_age=600,
-        samesite="lax", secure=COOKIE_SECURE, path=f"/{api_key}/api/auth/google/",
+        samesite="lax", secure=COOKIE_SECURE, path="/",
     )
     return redirect
 
 
-@app.get("/{api_key}/api/auth/google/callback")
+@app.get("/{api_key}/auth/google/callback")
 def magaz_google_callback(api_key: str, request: Request,
                            api_key_record: dict = Depends(resolve_api_key_public),
                            code: str = None, error: str = None, state: str = None):
@@ -1551,18 +1896,17 @@ def magaz_google_callback(api_key: str, request: Request,
     frontend   = get_project_frontend_url(project_id)
     if not frontend:
         return RedirectResponse("/?error=site_url_not_configured")
-    # Validate state (CSRF). Constant-time compare; cookie is short-lived.
     cookie_state = request.cookies.get("oa_state_google", "")
     if not state or not cookie_state or not _hmac.compare_digest(state, cookie_state):
         return RedirectResponse(f"{frontend}/login?error=oauth_state_mismatch")
     try:
-        return _magaz_google_callback_inner(api_key, project_id, code, error, frontend)
+        return _magaz_google_callback_inner(api_key, project_id, code, error, frontend, request)
     except Exception:
         traceback.print_exc()
         return RedirectResponse(f"{frontend}/login?error=server_error")
 
 
-def _magaz_google_callback_inner(api_key, project_id, code, error, frontend):
+def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, request):
     import urllib.parse, json as _json
 
     if error or not code:
@@ -1572,7 +1916,7 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend):
     if not client_id:
         return RedirectResponse(f"{frontend}/login?error=google_not_configured")
 
-    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/api/auth/google/callback"
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/auth/google/callback"
     post_data    = urllib.parse.urlencode({
         "code": code, "client_id": client_id, "client_secret": client_secret,
         "redirect_uri": redirect_uri, "grant_type": "authorization_code",
@@ -1624,11 +1968,16 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend):
         else:
             user_id = user["id"]
 
-    token    = create_token(user_id)
+    token   = create_token(user_id)
+    refresh = issue_refresh_token(user_id, project_id, request, label="Google login")
     redirect = RedirectResponse(f"{frontend}", status_code=302)
     redirect.set_cookie(key="authx_token", value=token, httponly=True,
-                        max_age=60*60*24*7, samesite="lax", secure=COOKIE_SECURE, path="/")
-    redirect.delete_cookie("oa_state_google", path=f"/{api_key}/api/auth/google/")
+                        max_age=ACCESS_TOKEN_MINUTES * 60,
+                        samesite="lax", secure=COOKIE_SECURE, path="/")
+    redirect.set_cookie(key="authx_refresh", value=refresh, httponly=True,
+                        max_age=REFRESH_TOKEN_DAYS * 86400,
+                        samesite="lax", secure=COOKIE_SECURE, path="/")
+    redirect.delete_cookie("oa_state_google", path="/")
     return redirect
 
 
@@ -1637,7 +1986,6 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend):
 # ============================================
 
 def _basic_extract(id_field, email_field=None, name_field=None):
-    """Most providers return a flat JSON. Some need different keys."""
     def _do(info: dict) -> dict:
         return {
             "id":    str(info.get(id_field) or ""),
@@ -1722,7 +2070,6 @@ OAUTH_PROVIDERS = {
         "user_info_url": "https://api.notion.com/v1/users/me",
         "scope":         "",
         "extra_query":   {"owner": "user"},
-        # Notion returns { bot: { owner: { user: { id, name, person: { email } } } } }
         "extract":       lambda info: (lambda u: {
             "id":    str(u.get("id") or ""),
             "email": ((u.get("person") or {}).get("email")),
@@ -1820,7 +2167,7 @@ def _get_oauth_credentials(project_id: int, provider: str):
     return None, None
 
 
-@app.get("/{api_key}/api/auth/oauth/{provider}/login")
+@app.get("/{api_key}/auth/oauth/{provider}/login")
 def oauth_login(api_key: str, provider: str,
                 api_key_record: dict = Depends(resolve_api_key_public)):
     import urllib.parse
@@ -1830,7 +2177,7 @@ def oauth_login(api_key: str, provider: str,
     client_id, _ = _get_oauth_credentials(api_key_record["id"], provider)
     if not client_id:
         raise HTTPException(404, f"{provider} OAuth not configured for this store")
-    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/api/auth/oauth/{provider}/callback"
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/auth/oauth/{provider}/callback"
     # CSRF state — orthogonal to PKCE; needed for ALL providers
     state = secrets.token_urlsafe(32)
     params = {
@@ -1842,7 +2189,8 @@ def oauth_login(api_key: str, provider: str,
     }
     if cfg.get("extra_query"):
         params.update(cfg["extra_query"])
-    cookie_path = f"/{api_key}/api/auth/oauth/{provider}/"
+    # path="/" so cookies survive the cross-origin redirect from the provider
+    cookie_path = "/"
     if cfg.get("pkce"):
         import base64, hashlib as _h
         verifier = secrets.token_urlsafe(48)
@@ -1864,7 +2212,7 @@ def oauth_login(api_key: str, provider: str,
     return resp
 
 
-@app.get("/{api_key}/api/auth/oauth/{provider}/callback")
+@app.get("/{api_key}/auth/oauth/{provider}/callback")
 def oauth_callback(api_key: str, provider: str, request: Request,
                    api_key_record: dict = Depends(resolve_api_key_public),
                    code: str = None, error: str = None, state: str = None):
@@ -1889,7 +2237,7 @@ def oauth_callback(api_key: str, provider: str, request: Request,
     if not client_id:
         return RedirectResponse(f"{frontend}/login?error={provider}_not_configured")
 
-    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/api/auth/oauth/{provider}/callback"
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/auth/oauth/{provider}/callback"
 
     try:
         return _oauth_finish(provider, cfg, code, client_id, client_secret,
@@ -2058,17 +2406,19 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
         else:
             user_id = user["id"]
 
-    token    = create_token(user_id)
+    token   = create_token(user_id)
+    refresh = issue_refresh_token(user_id, project_id, request, label=f"{provider} login")
     redirect = RedirectResponse(f"{frontend}", status_code=302)
     redirect.set_cookie(key="authx_token", value=token, httponly=True,
-                        max_age=60*60*24*7, samesite="lax",
+                        max_age=ACCESS_TOKEN_MINUTES * 60, samesite="lax",
                         secure=COOKIE_SECURE, path="/")
-    # Clean up PKCE + state cookies (path is per-provider)
-    api_key = request.path_params.get("api_key", "")
-    cookie_path = f"/{api_key}/api/auth/oauth/{provider}/" if api_key else "/"
+    redirect.set_cookie(key="authx_refresh", value=refresh, httponly=True,
+                        max_age=REFRESH_TOKEN_DAYS * 86400, samesite="lax",
+                        secure=COOKIE_SECURE, path="/")
+    # Clean up PKCE + state cookies (cookies are now set with path="/")
     if cfg.get("pkce"):
-        redirect.delete_cookie(key=f"oa_pkce_{provider}", path=cookie_path)
-    redirect.delete_cookie(key=f"oa_state_{provider}", path=cookie_path)
+        redirect.delete_cookie(key=f"oa_pkce_{provider}", path="/")
+    redirect.delete_cookie(key=f"oa_state_{provider}", path="/")
     return redirect
 
 
@@ -2078,16 +2428,33 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
 # Vonage, or Twilio Verify. We just route the OTP through them.
 # ============================================
 
-# In-memory OTP store. Stores ONLY the SHA-256 hash of the code, never the
-# code itself, so a memory dump doesn't leak active OTPs.
-# Key: (project_id, phone)
-# Value: { code_hash, expires_at, name, attempts, sent_at, twilio_verify }
-_phone_otps = {}
+# Phone OTPs — kvstore-backed. Same as email OTPs; stores SHA-256 hash so
+# a memory/Redis dump can't leak the live code.
+def _phone_otp_key(project_id, phone): return f"phone_otp:{project_id}:{phone}"
+def _phone_otp_get(project_id, phone): return kvstore.get(_phone_otp_key(project_id, phone))
+def _phone_otp_set(project_id, phone, value, ttl):
+    kvstore.set(_phone_otp_key(project_id, phone), value, ttl=ttl)
+def _phone_otp_del(project_id, phone): kvstore.delete(_phone_otp_key(project_id, phone))
 
-# Phone send-code rate limit buckets
-# Key: ("phone", project_id, phone) | ("ip", ip)
-# Value: { count, window_start }
-_phone_send_buckets = {}
+# Phone send-code rate limit buckets — atomic counters with TTL = block window.
+def _phone_send_check_and_record(project_id: int, phone: str, ip: str):
+    """Raise 429 if either per-phone or per-IP limit exceeded; else record."""
+    limits = (
+        (f"phone:{project_id}:{phone}", PHONE_SEND_MAX_PER_PHONE),
+        (f"ip:{ip}",                    PHONE_SEND_MAX_PER_IP),
+    )
+    # Pre-check (don't increment if already over)
+    for ident, lim in limits:
+        cur = int(kvstore.get(_fail_key("phone_send", ident)) or 0)
+        if cur >= lim:
+            left = max(kvstore.ttl(_fail_key("phone_send", ident)), 1)
+            raise HTTPException(429, f"Too many requests. Try again in {left} seconds.")
+    # Record
+    for ident, lim in limits:
+        new_val = kvstore.incr(_fail_key("phone_send", ident), ttl=BLOCK_MINUTES * 60)
+        if new_val > lim:
+            left = max(kvstore.ttl(_fail_key("phone_send", ident)), 1)
+            raise HTTPException(429, f"Too many requests. Try again in {left} seconds.")
 
 
 def _sms_settings(project_id: int):
@@ -2106,30 +2473,12 @@ def _normalize_phone(p: str) -> str:
     # Drop common display chars
     cleaned = "".join(ch for ch in s if ch.isdigit() or ch == "+")
     # Must explicitly start with '+' — no auto-prefixing (it allowed bypass
-    # variants like "1234567890" → "+1234567890" matching "+1 234..." etc.)
+    # variants like "1234567890" в†’ "+1234567890" matching "+1 234..." etc.)
     if not cleaned.startswith("+"):
         return ""
     if not _E164_RE.match(cleaned):
         return ""
     return cleaned
-
-
-def _check_phone_send_rate(project_id: int, phone: str, ip: str):
-    """Raise 429 if either per-phone or per-IP rate exceeded."""
-    now = datetime.utcnow()
-    window = timedelta(minutes=BLOCK_MINUTES)
-    for key, limit in (
-        (("phone", project_id, phone), PHONE_SEND_MAX_PER_PHONE),
-        (("ip", ip),                    PHONE_SEND_MAX_PER_IP),
-    ):
-        b = _phone_send_buckets.get(key)
-        if not b or now - b["window_start"] > window:
-            _phone_send_buckets[key] = {"count": 1, "window_start": now}
-            continue
-        b["count"] += 1
-        if b["count"] > limit:
-            left = int((b["window_start"] + window - now).total_seconds())
-            raise HTTPException(429, f"Too many requests. Try again in {max(left, 1)} seconds.")
 
 
 def _gen_otp(length: int) -> str:
@@ -2138,7 +2487,7 @@ def _gen_otp(length: int) -> str:
 
 
 def _parse_test_numbers(s: str) -> dict:
-    """'+1=789012, +77071234567=000000' → {'+1': '789012', '+77071234567': '000000'}"""
+    """'+1=789012, +77071234567=000000' в†’ {'+1': '789012', '+77071234567': '000000'}"""
     out = {}
     for pair in (s or "").split(","):
         pair = pair.strip()
@@ -2447,7 +2796,7 @@ class PhoneVerifyCodeRequest(BaseModel):
     code:  str
 
 
-@app.post("/{api_key}/api/auth/phone/send-code")
+@app.post("/{api_key}/auth/phone/send-code")
 def phone_send_code(req: PhoneSendCodeRequest, api_key: str, request: Request,
                     api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -2460,7 +2809,7 @@ def phone_send_code(req: PhoneSendCodeRequest, api_key: str, request: Request,
         raise HTTPException(400, "Invalid phone number (use E.164, e.g. +12025550123)")
 
     # Hard rate limit (per-phone + per-IP) — prevents SMS bombing & DoS
-    _check_phone_send_rate(project_id, phone, get_client_ip(request))
+    _phone_send_check_and_record(project_id, phone, get_client_ip(request))
 
     otp_length = int(settings.get("otp_length") or 6)
     if otp_length < 4 or otp_length > 10: otp_length = 6
@@ -2474,13 +2823,13 @@ def phone_send_code(req: PhoneSendCodeRequest, api_key: str, request: Request,
         ok, err = _send_sms(settings, phone, "")
         if not ok:
             raise HTTPException(502, err or "SMS provider failed")
-        _phone_otps[(project_id, phone)] = {
+        _phone_otp_set(project_id, phone, {
             "code_hash":     "",
             "twilio_verify": True,
-            "expires_at":    datetime.utcnow() + timedelta(seconds=expiry),
+            "expires_ts":    time.time() + expiry,
             "name":          (req.name or "").strip()[:200],
             "attempts":      0,
-        }
+        }, ttl=expiry)
         return {"ok": True, "delivery": "twilio_verify"}
 
     # Test numbers — bypass SMS provider but still hash the code at rest
@@ -2493,19 +2842,19 @@ def phone_send_code(req: PhoneSendCodeRequest, api_key: str, request: Request,
         if not ok:
             raise HTTPException(502, err or "SMS provider failed")
 
-    _phone_otps[(project_id, phone)] = {
+    _phone_otp_set(project_id, phone, {
         "code_hash":     hash_otp(code),
         "twilio_verify": False,
-        "expires_at":    datetime.utcnow() + timedelta(seconds=expiry),
+        "expires_ts":    time.time() + expiry,
         "name":          (req.name or "").strip()[:200],
         "attempts":      0,
-    }
+    }, ttl=expiry)
     return {"ok": True, "delivery": "sms"}
 
 
-@app.post("/{api_key}/api/auth/phone/verify-code")
+@app.post("/{api_key}/auth/phone/verify-code")
 def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
-                      response: Response,
+                      response: Response, request: Request,
                       api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     settings   = _sms_settings(project_id)
@@ -2516,18 +2865,21 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
     if not phone:
         raise HTTPException(400, "Invalid phone number")
 
-    pending = _phone_otps.get((project_id, phone))
+    pending = _phone_otp_get(project_id, phone)
     if not pending:
         raise HTTPException(400, "No code requested for this number")
-    if datetime.utcnow() > pending["expires_at"]:
-        _phone_otps.pop((project_id, phone), None)
+    now_ts = time.time()
+    if now_ts > float(pending.get("expires_ts", 0)):
+        _phone_otp_del(project_id, phone)
         raise HTTPException(400, "Code expired")
 
     # Per-OTP brute-force counter — kill the code after MAX attempts so the
     # attacker can't grind through 10^6 combinations
-    pending["attempts"] = pending.get("attempts", 0) + 1
+    pending["attempts"] = int(pending.get("attempts", 0)) + 1
+    _phone_otp_set(project_id, phone, pending,
+                   ttl=int(max(float(pending["expires_ts"]) - now_ts, 1)))
     if pending["attempts"] > PHONE_VERIFY_MAX_ATTEMPTS:
-        _phone_otps.pop((project_id, phone), None)
+        _phone_otp_del(project_id, phone)
         raise HTTPException(429, "Too many invalid attempts. Request a new code.")
 
     code_in = (req.code or "").strip()
@@ -2588,12 +2940,13 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
                 user_id = row["id"]
         conn.commit()
 
-    _phone_otps.pop((project_id, phone), None)
+    _phone_otp_del(project_id, phone)
     # Reset send-rate buckets on successful verify so legit users aren't punished
-    _phone_send_buckets.pop(("phone", project_id, phone), None)
+    kvstore.delete(_fail_key("phone_send", f"phone:{project_id}:{phone}"))
 
     token = create_token(user_id)
     set_auth_cookie(response, token)
+    set_refresh_cookie(response, issue_refresh_token(user_id, project_id, request, label="Phone login"))
     return {"ok": True, "user_id": user_id}
 
 
@@ -2623,7 +2976,7 @@ def _is_webchat_enabled(project_id: int) -> bool:
     return bool(row)
 
 
-@app.get("/{api_key}/api/chat/bootstrap")
+@app.get("/{api_key}/chat/bootstrap")
 def webchat_bootstrap(request: Request,
                       api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -2635,7 +2988,7 @@ def webchat_bootstrap(request: Request,
     }
 
 
-@app.post("/{api_key}/api/chat/messages")
+@app.post("/{api_key}/chat/messages")
 def webchat_send(body: WebChatMessageRequest, request: Request,
                  api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -2669,7 +3022,7 @@ def webchat_send(body: WebChatMessageRequest, request: Request,
     return {"ok": True, "web_chat_id": web_chat_id}
 
 
-@app.get("/{api_key}/api/chat/messages")
+@app.get("/{api_key}/chat/messages")
 def webchat_list(request: Request, web_chat_id: str = "", since_id: int = 0,
                  api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -2709,7 +3062,7 @@ def webchat_list(request: Request, web_chat_id: str = "", since_id: int = 0,
 # ============================================
 #
 # Mirror of the CRM booking module, exposed to the storefront via the SDK.
-# All routes prefixed with /{api_key}/api/booking/...
+# All routes prefixed with /{api_key}/booking/...
 #
 # Slot calculation:
 #   1. Pick the relevant working hours for the date:
@@ -2761,7 +3114,7 @@ class PublicCreateBookingRequest(BaseModel):
     customer_email: str = ""
     notes:          str = ""
 
-@app.get("/{api_key}/api/booking/services")
+@app.get("/{api_key}/booking/services")
 def public_list_services(api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     rows = db_all(
@@ -2793,7 +3146,7 @@ def public_list_services(api_key_record: dict = Depends(resolve_api_key)):
         })
     return out
 
-@app.get("/{api_key}/api/booking/services/{service_id}")
+@app.get("/{api_key}/booking/services/{service_id}")
 def public_get_service(service_id: int, api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     s = db_one(
@@ -2817,11 +3170,17 @@ def public_get_service(service_id: int, api_key_record: dict = Depends(resolve_a
         "staff": [{"id": r["staff_id"], "name": r["staff_name"], "avatar_url": r["avatar_url"]} for r in sids],
     }
 
-@app.get("/{api_key}/api/booking/services/{service_id}/slots")
+@app.get("/{api_key}/booking/services/{service_id}/slots")
 def public_get_slots(service_id: int,
-                     date: str,                                  # "YYYY-MM-DD"
+                     date: str,                                  # "YYYY-MM-DD" — local date in business TZ
                      staff_id: Optional[int] = None,
                      api_key_record: dict = Depends(resolve_api_key)):
+    """
+    Returns slots for `date` in the BUSINESS's local timezone — that's how the
+    customer thinks about it ("any slot on Friday" not "any slot on Friday UTC").
+    Slot strings are local "HH:MM" (e.g. "14:30" Almaty time). Internally we
+    convert to UTC for DB queries against TIMESTAMPTZ bookings.
+    """
     project_id = api_key_record["id"]
     svc = db_one(
         "SELECT * FROM booking_services WHERE id=%s AND project_id=%s AND is_active=TRUE",
@@ -2842,58 +3201,65 @@ def public_get_slots(service_id: int,
     max_days = int(settings["max_advance_days"])
     duration = int(svc["duration_minutes"])
     capacity = int(svc["capacity"]) if not staff_id else 1
+    tz       = _tz(settings.get("timezone") or "UTC")
 
-    today = datetime.utcnow().date()
-    if day < today: return {"date": date, "slots": []}
-    if (day - today).days > max_days: return {"date": date, "slots": []}
+    # Compare LOCAL business dates (not UTC) — otherwise a Tokyo shop's
+    # "today" rolls over while New York is still on yesterday.
+    today_local = datetime.now(tz).date()
+    if day < today_local: return {"date": date, "slots": []}
+    if (day - today_local).days > max_days: return {"date": date, "slots": []}
 
-    # Pick the right working hours
+    # Working hours — LOCAL to the business (input by owner in CRM as wall-clock time)
     hrs = _hours_for(project_id, staff_id if svc["requires_staff"] else None)
-    dow = day.weekday()  # 0=Mon
+    dow = day.weekday()  # 0=Mon, computed from local date
     windows = hrs.get(dow, [])
     if not windows: return {"date": date, "slots": []}
 
-    # Existing bookings on that day (only counts that block the slot)
+    # For DB query, compute the UTC range covering the entire local day
+    day_start_utc = datetime.combine(day, dt_time(0, 0), tzinfo=tz).astimezone(timezone.utc)
+    day_end_utc   = day_start_utc + timedelta(days=1)
+
     blocking_states = ("pending", "confirmed")
     if staff_id:
         existing = db_all(
             """SELECT starts_at, ends_at FROM bookings
                WHERE project_id=%s AND staff_id=%s
                  AND status = ANY(%s)
-                 AND starts_at::date = %s""",
-            (project_id, staff_id, list(blocking_states), day)
+                 AND starts_at >= %s AND starts_at < %s""",
+            (project_id, staff_id, list(blocking_states), day_start_utc, day_end_utc)
         )
     else:
         existing = db_all(
             """SELECT starts_at, ends_at FROM bookings
                WHERE project_id=%s AND service_id=%s
                  AND status = ANY(%s)
-                 AND starts_at::date = %s""",
-            (project_id, service_id, list(blocking_states), day)
+                 AND starts_at >= %s AND starts_at < %s""",
+            (project_id, service_id, list(blocking_states), day_start_utc, day_end_utc)
         )
 
-    now = datetime.utcnow()
-    earliest = now + timedelta(minutes=min_adv)
+    now_utc  = _utcnow()
+    earliest = now_utc + timedelta(minutes=min_adv)
     out_slots = []
     for (open_t, close_t) in windows:
-        slot = datetime.combine(day, open_t)
-        window_end = datetime.combine(day, close_t)
-        while slot + timedelta(minutes=duration) <= window_end:
-            if slot >= earliest:
-                slot_end = slot + timedelta(minutes=duration)
-                # Count overlaps
+        # Build aware datetimes in the business TZ, then convert to UTC for compare
+        slot_local       = datetime.combine(day, open_t,  tzinfo=tz)
+        window_end_local = datetime.combine(day, close_t, tzinfo=tz)
+        while slot_local + timedelta(minutes=duration) <= window_end_local:
+            slot_utc     = slot_local.astimezone(timezone.utc)
+            slot_end_utc = slot_utc + timedelta(minutes=duration)
+            if slot_utc >= earliest:
                 overlap = sum(
                     1 for b in existing
-                    if not (b["ends_at"] <= slot or b["starts_at"] >= slot_end)
+                    if not (b["ends_at"] <= slot_utc or b["starts_at"] >= slot_end_utc)
                 )
                 if overlap < capacity:
-                    out_slots.append(slot.strftime("%H:%M"))
-            slot += timedelta(minutes=interval)
-    return {"date": date, "slots": out_slots}
+                    out_slots.append(slot_local.strftime("%H:%M"))
+            slot_local += timedelta(minutes=interval)
+    return {"date": date, "slots": out_slots, "timezone": settings.get("timezone") or "UTC"}
 
 _EMAIL_RE = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-@app.post("/{api_key}/api/booking/bookings")
+@app.post("/{api_key}/booking/bookings")
 def public_create_booking(req: PublicCreateBookingRequest,
                           request: Request,
                           api_key_record: dict = Depends(resolve_api_key)):
@@ -2912,21 +3278,27 @@ def public_create_booking(req: PublicCreateBookingRequest,
                     (req.staff_id, project_id))
         if not st: raise HTTPException(404, "Staff not found")
 
+    settings = _booking_settings(project_id)
+    biz_tz   = _tz(settings.get("timezone") or "UTC")
+
+    # Parse incoming ISO 8601. Frontend SHOULD send with a TZ offset
+    # ("2026-04-26T14:30:00+05:00"). If it sends naive ("…T14:30:00"),
+    # interpret as the business's local timezone (most user-friendly default).
     try:
         starts = datetime.fromisoformat(req.starts_at.replace("Z", "+00:00"))
     except Exception:
-        raise HTTPException(400, "Invalid starts_at")
-    if starts.tzinfo is not None: starts = starts.replace(tzinfo=None)
+        raise HTTPException(400, "Invalid starts_at (expected ISO 8601)")
+    if starts.tzinfo is None:
+        starts = starts.replace(tzinfo=biz_tz)
+    starts = starts.astimezone(timezone.utc)
     ends = starts + timedelta(minutes=svc["duration_minutes"])
 
-    settings = _booking_settings(project_id)
-
     # Reject bookings in the past or beyond max-advance
-    now = datetime.utcnow()
-    if starts < now - timedelta(minutes=1):
+    now_utc = _utcnow()
+    if starts < now_utc - timedelta(minutes=1):
         raise HTTPException(400, "Cannot book in the past")
     max_days = int(settings.get("max_advance_days") or 60)
-    if (starts - now).days > max_days:
+    if (starts - now_utc).days > max_days:
         raise HTTPException(400, f"Cannot book more than {max_days} days ahead")
 
     # Validate customer-provided contact info (best-effort, prevents garbage)
@@ -2958,8 +3330,8 @@ def public_create_booking(req: PublicCreateBookingRequest,
     # ── Atomic capacity check + insert ─────────────────────────────────
     # PostgreSQL advisory lock keyed by (project_id, staff_id, service_id)
     # serialises concurrent bookings for the same resource. Lock is auto-
-    # released at COMMIT/ROLLBACK. Bigint composite fits 1M projects ×
-    # 1M staff × 1M services without collision.
+    # released at COMMIT/ROLLBACK. Bigint composite fits 1M projects Г—
+    # 1M staff Г— 1M services without collision.
     lock_key = (project_id * 10**12
                 + (req.staff_id or 0) * 10**6
                 + (req.service_id or 0))
@@ -2999,7 +3371,7 @@ def public_create_booking(req: PublicCreateBookingRequest,
     return {"id": bid, "status": initial_status,
             "starts_at": starts.isoformat(), "ends_at": ends.isoformat()}
 
-@app.get("/{api_key}/api/booking/bookings/my")
+@app.get("/{api_key}/booking/bookings/my")
 def public_list_my_bookings(request: Request,
                             api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -3025,7 +3397,7 @@ def public_list_my_bookings(request: Request,
         "status": r["status"], "notes": r["notes"],
     } for r in rows]
 
-@app.delete("/{api_key}/api/booking/bookings/{bid}")
+@app.delete("/{api_key}/booking/bookings/{bid}")
 def public_cancel_booking(bid: int, request: Request,
                           api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
@@ -3038,10 +3410,11 @@ def public_cancel_booking(bid: int, request: Request,
 
     settings = _booking_settings(project_id)
     cancel_window = int(settings["cancellation_window_minutes"])
-    now = datetime.utcnow()
-    starts = row["starts_at"]
-    if starts.tzinfo is not None: starts = starts.replace(tzinfo=None)
-    if (starts - now).total_seconds() / 60 < cancel_window:
+    now_utc = _utcnow()
+    starts  = row["starts_at"]
+    # PG TIMESTAMPTZ в†’ datetime is already aware. Old naive rows fall back to UTC.
+    if starts.tzinfo is None: starts = starts.replace(tzinfo=timezone.utc)
+    if (starts - now_utc).total_seconds() / 60 < cancel_window:
         raise HTTPException(400, "Too late to cancel this booking")
 
     with db_cursor() as (conn, cur):

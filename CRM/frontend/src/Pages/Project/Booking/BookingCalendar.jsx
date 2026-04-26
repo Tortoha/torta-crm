@@ -6,6 +6,27 @@ const HOUR_HEIGHT = 56;            // px per hour row
 const DEFAULT_FIRST_HOUR = 8;
 const DEFAULT_LAST_HOUR  = 22;     // exclusive — i.e. 8..21 visible
 
+// ── Timezone helpers ────────────────────────────────────────────────────
+// All bookings come from the API as ISO with UTC offset (TIMESTAMPTZ in
+// PostgreSQL). For the calendar grid we need to render their wall-clock
+// time in the BUSINESS timezone, NOT the browser's local timezone.
+// (An owner viewing her Almaty salon from a Frankfurt airport should still
+// see appointments at "10:00", not "07:00".)
+
+// Project the given Date instant into the named TZ and return its parts.
+function partsInTz(date, tz) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', weekday: 'short',
+  });
+  const out = {};
+  for (const p of fmt.formatToParts(date)) {
+    if (p.type !== 'literal') out[p.type] = p.value;
+  }
+  return out; // { year, month, day, hour, minute, weekday }
+}
+
 // Compute the visible hour window from the project's working hours so that
 // shops open early or late aren't clipped.
 //   "07:30" → 7,    "22:30" → 23
@@ -34,26 +55,36 @@ const STATUS_COLOR = {
   no_show:   { bg: 'rgba(220,53,69,0.18)', border: 'rgba(220,53,69,0.65)' },
 };
 
-// Get the Monday of the week containing `date`.
-function startOfWeek(date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  const dow = (d.getDay() + 6) % 7;     // shift Sun(0) → 6, Mon(1) → 0
-  d.setDate(d.getDate() - dow);
+const pad = n => String(n).padStart(2, '0');
+
+// Get the Monday of the week containing today, in the BUSINESS timezone.
+// Returns a Date pinned at 12:00 UTC on that Monday — noon avoids DST edge
+// cases that bite midnight-anchored dates near spring-forward transitions.
+function startOfWeekInTz(tz) {
+  const today = partsInTz(new Date(), tz);
+  const todayY = +today.year, todayM = +today.month, todayD = +today.day;
+  // Monday=0, Tuesday=1, ..., Sunday=6
+  const dowMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+  const dow = dowMap[today.weekday] ?? 0;
+  // Build a UTC noon Date and step back `dow` days
+  const d = new Date(Date.UTC(todayY, todayM - 1, todayD, 12, 0, 0));
+  d.setUTCDate(d.getUTCDate() - dow);
   return d;
 }
 
-// Format YYYY-MM-DD without timezone surprises.
-const pad = n => String(n).padStart(2, '0');
-const toISODate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+// Format the calendar grid date as "YYYY-MM-DD" — uses UTC fields because
+// our weekDays are pinned to UTC noon (see startOfWeekInTz).
+const toISODate = d => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 const toISOLocal = (d, h, m) => `${toISODate(d)}T${pad(h)}:${pad(m)}`;
 
 // Calendar — weekly grid with bookings as positioned blocks. Click an empty
 // area to create a booking at that time, click a block to open detail.
-// Pass `workingHours` (array of {open_time, close_time, day_of_week}) to size
-// the hour gutter dynamically; defaults to 08:00–22:00 if not provided.
-function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [] }) {
-  const [anchor, setAnchor] = useState(() => startOfWeek(new Date()));
+// Pass `workingHours` to size the hour gutter dynamically.
+// Pass `businessTz` (IANA name) so booking blocks render in business clock,
+// not browser clock.
+function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [], businessTz }) {
+  const tz = businessTz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const [anchor, setAnchor] = useState(() => startOfWeekInTz(tz));
 
   // Hour window (memoised — recompute only when workingHours change)
   const [firstHour, lastHour] = useMemo(
@@ -73,33 +104,53 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
 
   const weekDays = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(anchor); d.setDate(anchor.getDate() + i); return d;
+      // Use UTC arithmetic so toISODate() returns business-local dates
+      const d = new Date(anchor); d.setUTCDate(anchor.getUTCDate() + i); return d;
     });
   }, [anchor]);
 
-  // Group bookings by (yyyy-mm-dd).
+  // Pre-compute each booking's wall-clock view in the business TZ.
+  // We attach _localDate ("YYYY-MM-DD") and _localTime ("HH:MM") so we can
+  // both group by day and render time labels without re-parsing per render.
+  const localised = useMemo(() => bookings.map(b => {
+    if (!b.starts_at) return b;
+    const start = new Date(b.starts_at);
+    const p = partsInTz(start, tz);
+    return {
+      ...b,
+      _localDate: `${p.year}-${p.month}-${p.day}`,
+      _localTime: `${p.hour}:${p.minute}`,
+      _localHour: parseInt(p.hour, 10),
+      _localMin:  parseInt(p.minute, 10),
+    };
+  }), [bookings, tz]);
+
+  // Group bookings by their LOCAL business date
   const byDay = useMemo(() => {
     const m = {};
-    for (const b of bookings) {
-      if (!b.starts_at) continue;
-      const key = b.starts_at.slice(0, 10);
-      (m[key] = m[key] || []).push(b);
+    for (const b of localised) {
+      if (!b._localDate) continue;
+      (m[b._localDate] = m[b._localDate] || []).push(b);
     }
     return m;
-  }, [bookings]);
+  }, [localised]);
 
-  const todayISO = toISODate(new Date());
+  // "Today" computed in business TZ (not browser local)
+  const todayISO = useMemo(() => {
+    const p = partsInTz(new Date(), tz);
+    return `${p.year}-${p.month}-${p.day}`;
+  }, [tz]);
 
-  const goPrev = () => { const d = new Date(anchor); d.setDate(d.getDate() - 7); setAnchor(d); };
-  const goNext = () => { const d = new Date(anchor); d.setDate(d.getDate() + 7); setAnchor(d); };
-  const goToday = () => setAnchor(startOfWeek(new Date()));
+  const goPrev  = () => { const d = new Date(anchor); d.setUTCDate(d.getUTCDate() - 7); setAnchor(d); };
+  const goNext  = () => { const d = new Date(anchor); d.setUTCDate(d.getUTCDate() + 7); setAnchor(d); };
+  const goToday = () => setAnchor(startOfWeekInTz(tz));
 
-  // Compute block layout: top, height. Clamp to grid bounds.
+  // Compute block layout: top, height. Uses business-TZ wall-clock.
   const blockStyle = (b) => {
     const start = new Date(b.starts_at);
     const end   = new Date(b.ends_at || b.starts_at);
-    const top   = offsetPx(start.getHours(), start.getMinutes());
-    const dur   = (end - start) / 60000;          // minutes
+    const top   = offsetPx(b._localHour ?? 0, b._localMin ?? 0);
+    const dur   = (end - start) / 60000;          // minutes (TZ-independent)
     const h     = Math.max(28, (dur / 60) * HOUR_HEIGHT - 2);
     const c = STATUS_COLOR[b.status] || STATUS_COLOR.confirmed;
     return {
@@ -118,8 +169,11 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
     onCreateAt?.(toISOLocal(day, h, m));
   };
 
-  const headerRange = `${weekDays[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${
-    weekDays[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  // Use UTC formatter — weekDays are pinned to UTC noon to match business-local
+  const _fmtRange = (d, opts) =>
+    new Intl.DateTimeFormat('en-US', { ...opts, timeZone: 'UTC' }).format(d);
+  const headerRange = `${_fmtRange(weekDays[0], { month: 'short', day: 'numeric' })} – ${
+    _fmtRange(weekDays[6], { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
   return (
     <div className="bk-cal">
@@ -128,6 +182,10 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
         <button className="crm-add-btn"  onClick={goToday}   type="button" style={{ padding: '6px 14px' }}>Today</button>
         <button className="crm-icon-btn" onClick={goNext}    type="button" title="Next week"><CaretRight size={16} /></button>
         <span className="bk-cal-range">{headerRange}</span>
+        <span style={{ marginLeft: 'auto', color: 'var(--muted)', fontSize: 12 }}
+              title="All times shown in this timezone">
+          🕐 {tz}
+        </span>
       </div>
 
       <div className="bk-cal-grid">
@@ -151,7 +209,7 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
               <div key={i} className={`bk-cal-col${isToday ? ' bk-cal-col--today' : ''}`}>
                 <div className="bk-cal-col-head">
                   <div className="bk-cal-col-day">{DAY_NAMES[i]}</div>
-                  <div className="bk-cal-col-date">{day.getDate()}</div>
+                  <div className="bk-cal-col-date">{day.getUTCDate()}</div>
                 </div>
 
                 <div className="bk-cal-col-body"
@@ -170,7 +228,7 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
                       style={blockStyle(b)}
                       onClick={(e) => { e.stopPropagation(); onOpenBooking(b); }}>
                       <div className="bk-cal-block-time">
-                        {b.starts_at.slice(11, 16)} · {b.service_name}
+                        {b._localTime || b.starts_at.slice(11, 16)} · {b.service_name}
                       </div>
                       <div className="bk-cal-block-customer">{b.customer_name}</div>
                       {b.staff_name && (

@@ -5,17 +5,53 @@ import { API_BASE } from '../../../api.js';
 
 // Pad to two digits — for date / time strings.
 const pad = n => String(n).padStart(2, '0');
-const todayISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+// Today's date in the BUSINESS timezone (not the browser's), so an admin
+// in Istanbul scheduling for an Almaty salon defaults to Almaty's "today".
+const todayInTz = (tz) => {
+  // sv-SE locale gives us "YYYY-MM-DD HH:MM:SS" — easy to slice
+  const s = new Date().toLocaleString('sv-SE', { timeZone: tz });
+  return s.slice(0, 10);
 };
 
+// Get the UTC offset (in minutes) for a specific instant in a given IANA TZ.
+// Used to build an ISO string with the correct offset for what the user typed.
+function tzOffsetMinutes(tz, dateObj) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const parts = Object.fromEntries(
+    fmt.formatToParts(dateObj).filter(p => p.type !== 'literal').map(p => [p.type, p.value])
+  );
+  // Build a Date as if those wall-clock fields were UTC, then diff
+  const asUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day,
+                         +parts.hour, +parts.minute, +parts.second);
+  return Math.round((asUtc - dateObj.getTime()) / 60000);
+}
+
+// Build an ISO 8601 string with explicit TZ offset for the wall-clock
+// (date, time) interpreted in the business's timezone.
+function buildIsoWithTz(date, time, tz) {
+  // Probe offset around this date — handles DST correctly
+  const probe = new Date(`${date}T${time}:00Z`);
+  const offMin = tzOffsetMinutes(tz, probe);
+  const sign = offMin >= 0 ? '+' : '-';
+  const abs  = Math.abs(offMin);
+  const off  = `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  return `${date}T${time}:00${off}`;
+}
+
 // Modal for the operator to create a booking on behalf of a customer.
-function BookingCreateModal({ projectId, services, staff, presetStart, onClose, onCreated }) {
+function BookingCreateModal({ projectId, services, staff, businessTz, presetStart, onClose, onCreated }) {
+  const tz = businessTz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const pq = `?project_id=${projectId}`;
 
-  // Pre-fill from "click on calendar slot" interaction
-  const presetDate = presetStart ? presetStart.slice(0, 10) : todayISO();
+  // Pre-fill from "click on calendar slot" interaction.
+  // presetStart is a naive local-business ISO ("2026-04-26T14:30") from
+  // BookingCalendar — already in business TZ, no conversion needed.
+  const presetDate = presetStart ? presetStart.slice(0, 10) : todayInTz(tz);
   const presetTime = presetStart ? presetStart.slice(11, 16) : '10:00';
 
   const [serviceId,     setServiceId]     = useState(services[0]?.id ?? '');
@@ -57,7 +93,10 @@ function BookingCreateModal({ projectId, services, staff, presetStart, onClose, 
     }
     setSaving(true); setErr('');
     try {
-      const startsAt = `${date}T${time}:00`;
+      // Build ISO with explicit business-TZ offset. Backend respects whatever
+      // offset is sent, so e.g. "14:30 in Almaty" → "+05:00" → stored as
+      // "09:30 UTC" regardless of where the admin is currently sitting.
+      const startsAt = buildIsoWithTz(date, time, tz);
       const res = await fetch(`${API_BASE}/api/booking/bookings${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -139,7 +178,7 @@ function BookingCreateModal({ projectId, services, staff, presetStart, onClose, 
                     onChange={e => setDate(e.target.value)} />
                 </div>
                 <div className="auth-field">
-                  <label className="auth-label">Time</label>
+                  <label className="auth-label">Time <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: 11 }}>· {tz}</span></label>
                   <input type="time" className="crm-input" value={time}
                     onChange={e => setTime(e.target.value)} />
                 </div>

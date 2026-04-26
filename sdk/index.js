@@ -22,13 +22,89 @@ export function createClient(baseUrl, publishableKey) {
   let _user = undefined;    // undefined = never fetched, null = not logged in
   let _userPromise = null;  // deduplicates concurrent getUser() calls
 
+  // ─── Auto-refresh ──────────────────────────────────────────────────────────
+  // Access token expires after 15 min; refresh token rotates and lasts 30 days.
+  // When ANY request returns 401, we silently call /refresh once and retry.
+  // Concurrent 401s share a single in-flight refresh promise — otherwise they'd
+  // race to consume each other's rotated refresh tokens.
+  const NO_REFRESH_PATHS = [
+    "/refresh",
+    "/send-code", "/verify-code", "/resend-code",
+    "/forgot-password", "/reset-password",
+    "/auth/google", "/auth/oauth", "/auth/phone",
+    "/logout",
+  ];
+  function _isAuthPath(path) {
+    return NO_REFRESH_PATHS.some(p => path.includes(p));
+  }
+
+  let _refreshPromise = null;
+  async function _doRefresh() {
+    if (_refreshPromise) return _refreshPromise;
+    _refreshPromise = (async () => {
+      try {
+        const r = await fetch(`${base}/refresh`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "X-Publishable-Key": publishableKey },
+        });
+        return r.ok;
+      } catch {
+        return false;
+      } finally {
+        // Reset on next tick so concurrent waiters all see the same outcome
+        setTimeout(() => { _refreshPromise = null; }, 0);
+      }
+    })();
+    return _refreshPromise;
+  }
+
+  // ─── CSRF helpers ─────────────────────────────────────────────────────────
+  // The External backend uses a double-submit cookie pattern:
+  //   GET /csrf  → sets readable cookie `csrf_token`
+  //   POST/PUT/...   → must include X-CSRF-Token: <same value>
+  // An attacker on evil.com cannot read our cookie, so cannot forge the header.
+  const _CSRF_SAFE = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+
+  function _getCsrfToken() {
+    try {
+      const m = (typeof document !== "undefined" ? document.cookie : "")
+        .match(/(?:^|;\s*)csrf_token=([^;]+)/);
+      return m ? decodeURIComponent(m[1]) : "";
+    } catch { return ""; }
+  }
+
+  let _csrfPromise = null;
+  async function _ensureCsrf() {
+    if (_getCsrfToken()) return;
+    if (_csrfPromise) return _csrfPromise;
+    _csrfPromise = (async () => {
+      try {
+        await fetch(`${base}/csrf`, {
+          credentials: "include",
+          headers: { "X-Publishable-Key": publishableKey },
+        });
+      } catch { /* non-fatal */ } finally {
+        _csrfPromise = null;
+      }
+    })();
+    return _csrfPromise;
+  }
+
   // ─── Core request helper ──────────────────────────────────────────────────
-  async function req(method, path, body, extraHeaders) {
+  async function _doFetch(method, path, body, extraHeaders) {
+    const m = method.toUpperCase();
+    // Ensure CSRF cookie is set before any state-changing request
+    if (!_CSRF_SAFE.has(m)) await _ensureCsrf();
+
+    const csrfToken = _getCsrfToken();
     const options = {
       method,
       credentials: "include",
       headers: {
         "X-Publishable-Key": publishableKey,
+        // Echo CSRF cookie as header on state-changing requests
+        ...(!_CSRF_SAFE.has(m) && csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
         ...(extraHeaders || {}),
       },
     };
@@ -44,6 +120,20 @@ export function createClient(baseUrl, publishableKey) {
       }
     } catch { /* ignore */ }
     return { ok: res.ok, status: res.status, data };
+  }
+
+  async function req(method, path, body, extraHeaders) {
+    const result = await _doFetch(method, path, body, extraHeaders);
+    if (result.status !== 401 || _isAuthPath(path)) return result;
+
+    // 401 — try silent refresh, then retry once
+    const refreshed = await _doRefresh();
+    if (!refreshed) {
+      _user = null;          // bust cached user — frontend should redirect
+      _userPromise = null;
+      return result;
+    }
+    return _doFetch(method, path, body, extraHeaders);
   }
 
   // ─── Web-chat identity (anonymous, persisted in localStorage) ─────────────
@@ -70,13 +160,13 @@ export function createClient(baseUrl, publishableKey) {
       get user() { return _user; },
 
       /**
-       * Fetch current user from /api/me (cached after first call).
+       * Fetch current user from /me (cached after first call).
        * Pass force=true to bypass cache (e.g. after login).
        */
       async getUser(force = false) {
         if (!force && _user !== undefined) return _user;
         if (!force && _userPromise)        return _userPromise;
-        _userPromise = req("GET", "/api/me").then(({ ok, data }) => {
+        _userPromise = req("GET", "/me").then(({ ok, data }) => {
           _user = ok ? data : null;
           _userPromise = null;
           return _user;
@@ -99,24 +189,24 @@ export function createClient(baseUrl, publishableKey) {
        * payload: { email, password, type: "login"|"register", name? }
        */
       async sendCode(payload) {
-        return req("POST", "/api/send-code", payload);
+        return req("POST", "/send-code", payload);
       },
 
       /** Verify the 6-digit code. Clears user cache on success. */
       async verifyCode(email, code) {
-        const result = await req("POST", "/api/verify-code", { email, code });
+        const result = await req("POST", "/verify-code", { email, code });
         if (result.ok) this.invalidateUser();
         return result;
       },
 
       /** Resend verification code to email. */
       async resendCode(email) {
-        return req("POST", "/api/resend-code", { email });
+        return req("POST", "/resend-code", { email });
       },
 
       /** Log out. Clears user cache. */
       async logout() {
-        const result = await req("POST", "/api/logout");
+        const result = await req("POST", "/logout");
         _user = null;
         _userPromise = null;
         return result;
@@ -124,22 +214,22 @@ export function createClient(baseUrl, publishableKey) {
 
       /** Send password reset link to email. */
       async forgotPassword(email) {
-        return req("POST", "/api/forgot-password", { email });
+        return req("POST", "/forgot-password", { email });
       },
 
       /** Validate a reset token. Returns { ok, data: { email } }. */
       async validateResetToken(token) {
-        return req("GET", `/api/reset-password/validate/${token}`);
+        return req("GET", `/reset-password/validate/${token}`);
       },
 
       /** Submit a new password using a reset token. */
       async resetPassword(token, password, repeat_password) {
-        return req("POST", "/api/reset-password", { token, password, repeat_password });
+        return req("POST", "/reset-password", { token, password, repeat_password });
       },
 
       /** Redirect to Google OAuth login for this store (full page redirect). */
       googleLogin() {
-        window.location.href = `${base}/api/auth/google/login`;
+        window.location.href = `${base}/auth/google/login`;
       },
 
       /**
@@ -152,7 +242,7 @@ export function createClient(baseUrl, publishableKey) {
        */
       oauthLogin(provider) {
         if (!provider) throw new Error("provider name required");
-        window.location.href = `${base}/api/auth/oauth/${provider}/login`;
+        window.location.href = `${base}/auth/oauth/${provider}/login`;
       },
 
       /**
@@ -161,7 +251,7 @@ export function createClient(baseUrl, publishableKey) {
        * @param {string} [name] — optional, used when creating a new user
        */
       async sendPhoneCode(phone, name) {
-        return req("POST", "/api/auth/phone/send-code", { phone, name });
+        return req("POST", "/auth/phone/send-code", { phone, name });
       },
 
       /**
@@ -170,8 +260,38 @@ export function createClient(baseUrl, publishableKey) {
        * @param {string} code
        */
       async verifyPhoneCode(phone, code) {
-        const result = await req("POST", "/api/auth/phone/verify-code", { phone, code });
+        const result = await req("POST", "/auth/phone/verify-code", { phone, code });
         if (result.ok) this.invalidateUser();
+        return result;
+      },
+
+      /**
+       * Manually trigger a refresh-token rotation. The SDK does this
+       * automatically on 401, so you usually don't need to call it.
+       */
+      async refresh() {
+        return req("POST", "/refresh");
+      },
+
+      /**
+       * List the user's active sessions across all devices.
+       * Each item has { id, is_current, created_at, last_used_at,
+       *                 expires_at, user_agent, ip, label }.
+       */
+      async listSessions() {
+        return req("GET", "/sessions");
+      },
+
+      /** Revoke a single session (logout from one device). */
+      async revokeSession(sessionId) {
+        return req("DELETE", `/sessions/${sessionId}`);
+      },
+
+      /** Logout from ALL devices for this user (revokes every session). */
+      async logoutAll() {
+        const result = await req("POST", "/logout-all");
+        _user = null;
+        _userPromise = null;
         return result;
       },
     },
@@ -180,12 +300,12 @@ export function createClient(baseUrl, publishableKey) {
     products: {
       /** List all products (public endpoint). */
       async list() {
-        return req("GET", "/api-products");
+        return req("GET", "/products");
       },
 
       /** Get full product page by hash id. */
       async get(id) {
-        return req("GET", `/api/product/${id}`);
+        return req("GET", `/product/${id}`);
       },
     },
 
@@ -193,22 +313,22 @@ export function createClient(baseUrl, publishableKey) {
     cart: {
       /** Get cart with items and subtotal. */
       async get() {
-        return req("GET", "/api/cart");
+        return req("GET", "/cart");
       },
 
       /** Add item to cart. */
       async add(product_id, variation_id, size_id, quantity = 1) {
-        return req("POST", "/api/cart/add", { product_id, variation_id, size_id, quantity });
+        return req("POST", "/cart/add", { product_id, variation_id, size_id, quantity });
       },
 
       /** Update quantity of a cart item. */
       async update(cartItemId, quantity) {
-        return req("PUT", `/api/cart/${cartItemId}`, { quantity });
+        return req("PUT", `/cart/${cartItemId}`, { quantity });
       },
 
       /** Remove an item from the cart. */
       async remove(cartItemId) {
-        return req("DELETE", `/api/cart/${cartItemId}`);
+        return req("DELETE", `/cart/${cartItemId}`);
       },
     },
 
@@ -216,17 +336,17 @@ export function createClient(baseUrl, publishableKey) {
     favorites: {
       /** Get list of favorited product ids. */
       async list() {
-        return req("GET", "/api/favorites");
+        return req("GET", "/favorites");
       },
 
       /** Add a product to favorites by numeric id. */
       async add(product_id) {
-        return req("POST", "/api/favorites/add", { product_id });
+        return req("POST", "/favorites/add", { product_id });
       },
 
       /** Remove a product from favorites by hash. */
       async remove(productHash) {
-        return req("DELETE", `/api/favorites/${productHash}`);
+        return req("DELETE", `/favorites/${productHash}`);
       },
     },
 
@@ -234,7 +354,7 @@ export function createClient(baseUrl, publishableKey) {
     promos: {
       /** Apply a promo code to the current cart. */
       async apply(code) {
-        return req("POST", "/api/promo-code/apply", { code });
+        return req("POST", "/promo-code/apply", { code });
       },
     },
 
@@ -242,12 +362,12 @@ export function createClient(baseUrl, publishableKey) {
     reviews: {
       /** Submit a product review. */
       async add(product_id, rating, comment) {
-        return req("POST", "/api/reviews/add", { product_id, rating, comment });
+        return req("POST", "/reviews/add", { product_id, rating, comment });
       },
 
       /** Delete own review by id. */
       async delete(reviewId) {
-        return req("DELETE", `/api/reviews/${reviewId}`);
+        return req("DELETE", `/reviews/${reviewId}`);
       },
     },
 
@@ -265,12 +385,12 @@ export function createClient(baseUrl, publishableKey) {
        * @param {string} [payload.promo_code]
        */
       async place(payload) {
-        return req("POST", "/api/orders", payload);
+        return req("POST", "/orders", payload);
       },
 
       /** Get order history for the logged-in customer. */
       async list() {
-        return req("GET", "/api/orders");
+        return req("GET", "/orders");
       },
     },
 
@@ -278,12 +398,12 @@ export function createClient(baseUrl, publishableKey) {
     track: {
       /** Record a site visit (fire-and-forget). */
       visit() {
-        req("POST", "/api/track/visit").catch(() => {});
+        req("POST", "/track/visit").catch(() => {});
       },
 
       /** Record a product page view (fire-and-forget). */
       productView(product_id) {
-        req("POST", "/api/track/product-view", { product_id }).catch(() => {});
+        req("POST", "/track/product-view", { product_id }).catch(() => {});
       },
     },
 
@@ -301,11 +421,11 @@ export function createClient(baseUrl, publishableKey) {
       services: {
         /** List active services for this store. */
         async list() {
-          return req("GET", "/api/booking/services");
+          return req("GET", "/booking/services");
         },
         /** Get one service with its eligible staff. */
         async get(serviceId) {
-          return req("GET", `/api/booking/services/${serviceId}`);
+          return req("GET", `/booking/services/${serviceId}`);
         },
         /**
          * Get available time slots for a service on a given date.
@@ -315,7 +435,7 @@ export function createClient(baseUrl, publishableKey) {
          */
         async getSlots(serviceId, date, staffId) {
           const q = staffId ? `?date=${date}&staff_id=${staffId}` : `?date=${date}`;
-          return req("GET", `/api/booking/services/${serviceId}/slots${q}`);
+          return req("GET", `/booking/services/${serviceId}/slots${q}`);
         },
       },
       bookings: {
@@ -331,15 +451,15 @@ export function createClient(baseUrl, publishableKey) {
          * @param {string} [payload.notes]
          */
         async create(payload) {
-          return req("POST", "/api/booking/bookings", payload);
+          return req("POST", "/booking/bookings", payload);
         },
         /** List the current user's bookings. */
         async list() {
-          return req("GET", "/api/booking/bookings/my");
+          return req("GET", "/booking/bookings/my");
         },
         /** Cancel one of the current user's bookings (subject to cancellation window). */
         async cancel(bookingId) {
-          return req("DELETE", `/api/booking/bookings/${bookingId}`);
+          return req("DELETE", `/booking/bookings/${bookingId}`);
         },
       },
     },
@@ -358,12 +478,12 @@ export function createClient(baseUrl, publishableKey) {
       /**
        * Verifies whether the support widget is enabled for this project and
        * returns (or generates) the anonymous web_chat_id.
-       * Calls GET /api/chat/bootstrap.
+       * Calls GET /chat/bootstrap.
        */
       async bootstrap() {
         const existing = _getWebChatId();
         const headers  = existing ? { "X-Web-Chat-Id": existing } : undefined;
-        const res = await req("GET", "/api/chat/bootstrap", undefined, headers);
+        const res = await req("GET", "/chat/bootstrap", undefined, headers);
         if (res.ok && res.data?.web_chat_id) {
           _setWebChatId(res.data.web_chat_id);
         }
@@ -377,7 +497,7 @@ export function createClient(baseUrl, publishableKey) {
           const boot = await this.bootstrap();
           web_chat_id = boot.data?.web_chat_id || "";
         }
-        const res = await req("POST", "/api/chat/messages", { text, web_chat_id });
+        const res = await req("POST", "/chat/messages", { text, web_chat_id });
         if (res.ok && res.data?.web_chat_id) _setWebChatId(res.data.web_chat_id);
         return res;
       },
@@ -391,7 +511,7 @@ export function createClient(baseUrl, publishableKey) {
         const web_chat_id = _getWebChatId();
         if (!web_chat_id) return { ok: true, status: 200, data: { messages: [] } };
         return req("GET",
-          `/api/chat/messages?web_chat_id=${encodeURIComponent(web_chat_id)}&since_id=${since_id}`);
+          `/chat/messages?web_chat_id=${encodeURIComponent(web_chat_id)}&since_id=${since_id}`);
       },
 
       /** Reset the local visitor identity (forgets past conversation). */

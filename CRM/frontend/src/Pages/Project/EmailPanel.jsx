@@ -109,7 +109,9 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
         const p = json.from_email?.includes('@') ? json.from_email.split('@')[0] : (json.from_email || '');
         setDomain(d); setFromName(n); setFromEmailPrefix(p);
         initialRef.current = { domain: d, fromName: n, fromEmailPrefix: p };
-        onVerifiedChange?.(json.dkim_ok && json.spf_ok);
+        // Full email-security stack = DKIM + SPF + DMARC. Without DMARC,
+        // most providers (Gmail, Outlook) will spam-folder your messages.
+        onVerifiedChange?.(json.dkim_ok && json.spf_ok && json.dmarc_ok);
       } else {
         initialRef.current = { domain: '', fromName: '', fromEmailPrefix: '' };
         onVerifiedChange?.(false);
@@ -147,12 +149,13 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
       setVerifyRes({ dkim: json.dkim_ok, spf: json.spf_ok, dmarc: json.dmarc_ok });
       onVerifiedChange?.(json.all_ok);
       if (json.all_ok) {
-        showToast('Domain fully verified — DKIM and SPF are active.');
+        showToast('Domain fully verified — DKIM, SPF and DMARC are active.');
         load();
       } else {
         const parts = [];
-        if (!json.dkim_ok) parts.push('DKIM not found');
-        if (!json.spf_ok)  parts.push('SPF not found');
+        if (!json.dkim_ok)  parts.push('DKIM not found');
+        if (!json.spf_ok)   parts.push('SPF not found');
+        if (!json.dmarc_ok) parts.push('DMARC not found');
         setErr(parts.join(' · ') + '. DNS may take up to 24h to propagate.');
       }
     } catch { setErr('Network error'); }
@@ -193,7 +196,7 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
 
   if (!data) return <p className="crm-placeholder">Loading…</p>;
 
-  const isVerified  = data.dkim_ok && data.spf_ok;
+  const isVerified  = data.dkim_ok && data.spf_ok && data.dmarc_ok;
   const previewAddr = fullFromEmail || `support@${domain || 'yourdomain.com'}`;
   const records     = data.dns_records || [];
   const visibleRecs = showAll ? records : records.slice(0, 3);

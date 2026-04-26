@@ -481,7 +481,16 @@ function Booking() {
   const [services,  setServices]  = useState([]);
   const [staff,     setStaff]     = useState([]);
   const [hours,     setHours]     = useState([]);   // project working hours
+  const [settings,  setSettings]  = useState(null); // booking_settings (incl. timezone)
   const [loading,   setLoading]   = useState(true);
+
+  // Business timezone — falls back to browser's local TZ if not configured.
+  // All wall-clock displays (Calendar, Create modal) use THIS, not the
+  // browser's TZ — so an Almaty owner travelling to Istanbul still sees
+  // her bookings in Almaty time.
+  const businessTz = settings?.timezone
+    || Intl.DateTimeFormat().resolvedOptions().timeZone
+    || 'UTC';
 
   // List view state
   const [view,      setView]      = useState('list');
@@ -508,16 +517,18 @@ function Booking() {
   // ── Fetch all data ──
   const reload = useCallback(async () => {
     try {
-      const [bRes, sRes, stRes, hRes] = await Promise.all([
+      const [bRes, sRes, stRes, hRes, setRes] = await Promise.all([
         fetch(`${API_BASE}/api/booking/bookings${pq}`, { credentials: 'include' }),
         fetch(`${API_BASE}/api/booking/services${pq}`, { credentials: 'include' }),
         fetch(`${API_BASE}/api/booking/staff${pq}`,    { credentials: 'include' }),
         fetch(`${API_BASE}/api/booking/hours${pq}`,    { credentials: 'include' }),
+        fetch(`${API_BASE}/api/booking/settings${pq}`, { credentials: 'include' }),
       ]);
-      if (bRes.ok)  setBookings(await bRes.json());
-      if (sRes.ok)  setServices(await sRes.json());
-      if (stRes.ok) setStaff(await stRes.json());
-      if (hRes.ok)  setHours(await hRes.json());
+      if (bRes.ok)   setBookings(await bRes.json());
+      if (sRes.ok)   setServices(await sRes.json());
+      if (stRes.ok)  setStaff(await stRes.json());
+      if (hRes.ok)   setHours(await hRes.json());
+      if (setRes.ok) setSettings(await setRes.json());
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, [projectId]);
@@ -693,6 +704,7 @@ function Booking() {
               <BookingCalendar
                 bookings={sorted}
                 workingHours={hours}
+                businessTz={businessTz}
                 onOpenBooking={setOpenBooking}
                 onCreateAt={(iso) => setCreateOpen({ presetStart: iso })}
               />
@@ -790,6 +802,7 @@ function Booking() {
           projectId={projectId}
           services={services}
           staff={staff}
+          businessTz={businessTz}
           presetStart={typeof createOpen === 'object' ? createOpen.presetStart : null}
           onClose={() => setCreateOpen(false)}
           onCreated={() => { setCreateOpen(false); reload(); showToast('Booking created'); }}

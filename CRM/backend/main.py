@@ -1,10 +1,30 @@
 from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, time as dt_time
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:
+    ZoneInfo = None
+    class ZoneInfoNotFoundError(Exception): pass
+
+def _tz(name: str):
+    if not name or ZoneInfo is None:
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, Exception):
+        return timezone.utc
+
+def _utcnow():
+    return datetime.now(timezone.utc)
 from contextlib import contextmanager
 import asyncio
 import sys, os
@@ -38,7 +58,9 @@ except ImportError:
 
 SECRET_KEY       = os.getenv("SECRET_KEY", "")
 ALGORITHM        = "HS256"
-JWT_HOURS        = 24 * 7
+ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))
+REFRESH_TOKEN_DAYS   = int(os.getenv("REFRESH_TOKEN_DAYS",   "30"))
+JWT_HOURS        = ACCESS_TOKEN_MINUTES / 60
 CRM_FRONTEND_URL = os.getenv("CRM_FRONTEND_URL", "http://localhost:5174")
 CRM_BACKEND_URL  = os.getenv("CRM_BACKEND_URL",  "http://localhost:8001")
 MAGAZ_BACKEND_URL= os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
@@ -123,7 +145,6 @@ app = FastAPI()
 
 @app.on_event("startup")
 def run_migrations():
-    """Migrate legacy name-based org slugs to random 20-char hex slugs."""
     import re as _re
     hex20 = _re.compile(r'^[0-9a-f]{20}$')
     try:
@@ -152,7 +173,46 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] sender_avatar column migration failed: {e}")
 
-    # Chat with Customers tables
+    # ─── Refresh tokens (long-lived sessions, rotated on use) ─────────
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_refresh_tokens (
+                    id            SERIAL PRIMARY KEY,
+                    user_id       INTEGER NOT NULL REFERENCES crm_users(id) ON DELETE CASCADE,
+                    token_hash    VARCHAR(64) NOT NULL UNIQUE,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at    TIMESTAMPTZ NOT NULL,
+                    last_used_at  TIMESTAMPTZ,
+                    revoked_at    TIMESTAMPTZ,
+                    revoke_reason VARCHAR(40),
+                    rotated_to_id INTEGER REFERENCES crm_refresh_tokens(id) ON DELETE SET NULL,
+                    parent_id     INTEGER REFERENCES crm_refresh_tokens(id) ON DELETE SET NULL,
+                    user_agent    TEXT,
+                    ip            VARCHAR(64),
+                    label         VARCHAR(100)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_refresh_user "
+                        "ON crm_refresh_tokens(user_id, revoked_at, expires_at)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_refresh_tokens table failed: {e}")
+
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_email_domains ADD COLUMN IF NOT EXISTS spf_ok   BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE crm_email_domains ADD COLUMN IF NOT EXISTS dmarc_ok BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("""
+                UPDATE crm_email_domains
+                   SET spf_ok   = (verify_token IN ('spf_ok', 'all_ok')),
+                       dmarc_ok = (verify_token = 'all_ok')
+                 WHERE verify_token IS NOT NULL
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] spf_ok/dmarc_ok columns migration failed: {e}")
+
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -199,8 +259,6 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] chat tables migration failed: {e}")
 
-    # Generic OAuth providers table (GitHub, Discord, Facebook, GitLab, etc.)
-    # Google stays in crm_oauth_settings (legacy + uses ID token verification differently).
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -220,9 +278,6 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] crm_auth_providers migration failed: {e}")
 
-    # Phone / SMS authentication settings (one row per project).
-    # Supports multiple SMS providers (Twilio, MessageBird, Textlocal, Vonage, Twilio Verify).
-    # Credentials stored per-provider so switching doesn't lose config.
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -410,6 +465,28 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] booking tables migration failed: {e}")
 
+    # Migrate naive TIMESTAMP → TIMESTAMPTZ. Existing rows are interpreted as
+    # UTC (which is what the old code stored: datetime.utcnow + naive replace).
+    # This is a one-time migration; idempotent because PG raises if already TZ.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                SELECT data_type FROM information_schema.columns
+                 WHERE table_name='bookings' AND column_name='starts_at'
+            """)
+            row = cur.fetchone()
+            if row and row["data_type"] == "timestamp without time zone":
+                cur.execute("ALTER TABLE bookings "
+                            "ALTER COLUMN starts_at TYPE TIMESTAMPTZ "
+                            "USING starts_at AT TIME ZONE 'UTC'")
+                cur.execute("ALTER TABLE bookings "
+                            "ALTER COLUMN ends_at   TYPE TIMESTAMPTZ "
+                            "USING ends_at   AT TIME ZONE 'UTC'")
+                conn.commit()
+                print("[migration] bookings.starts_at/ends_at upgraded to TIMESTAMPTZ")
+    except Exception as e:
+        print(f"[migration] TIMESTAMPTZ migration failed: {e}")
+
 # ════════════════════════════════════════════
 # DB POOL
 # ════════════════════════════════════════════
@@ -483,11 +560,69 @@ def send_email(to: str, subject: str, html: str,
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 
-# In-memory хранилища
-pending_verifications = {}
-login_attempts        = {}
-password_reset_tokens = {}
+# ─── Rate-limit / verification storage ────────────────────────────────────
+# Backed by Redis when REDIS_URL is set, otherwise in-memory. See kvstore.py.
+import time as _time
+import kvstore
 
+# Email OTP (pending verifications)
+def _pv_key(email: str) -> str: return f"pv:{email}"
+def _pv_get(email):    return kvstore.get(_pv_key(email))
+def _pv_set(email, v, ttl=None):
+    kvstore.set(_pv_key(email), v, ttl=ttl or CODE_TTL_MINUTES * 60)
+def _pv_del(email):    kvstore.delete(_pv_key(email))
+
+# Failed-attempt counters (logins, reset, etc.) — atomic INCR with TTL window
+def _fail_key(bucket: str, ident: str) -> str: return f"fail:{bucket}:{ident}"
+def _fail_check(bucket: str, ident: str):
+    key = _fail_key(bucket, ident)
+    count = int(kvstore.get(key) or 0)
+    if count >= MAX_FAILED_ATTEMPTS:
+        return True, max(kvstore.ttl(key), 1)
+    return False, 0
+def _fail_record(bucket: str, ident: str) -> int:
+    return kvstore.incr(_fail_key(bucket, ident), ttl=BLOCK_MINUTES * 60)
+def _fail_clear(bucket: str, ident: str):
+    kvstore.delete(_fail_key(bucket, ident))
+
+# Password reset tokens
+def _reset_key(token_hash: str) -> str: return f"pw_reset:{token_hash}"
+def _reset_get(h):    return kvstore.get(_reset_key(h))
+def _reset_set(h, v): kvstore.set(_reset_key(h), v, ttl=RESET_TTL_MINUTES * 60)
+def _reset_del(h):    kvstore.delete(_reset_key(h))
+
+# ─── CSRF double-submit cookie ────────────────────────────────────────────
+# How it works:
+#   1. GET /api/csrf sets a readable (NOT httpOnly) cookie `csrf_token`.
+#   2. Frontend JS reads the cookie and echoes it as X-CSRF-Token header.
+#   3. Middleware compares cookie == header for every state-changing request.
+#   4. An attacker on evil.com cannot read our cookies (same-origin policy),
+#      so they cannot forge the header — request is rejected with 403.
+#
+# Exempt paths: webhook inbound (comes from Telegram/Meta servers, not browsers)
+# and internal chat endpoint (protected by X-Internal-Key instead).
+_CSRF_SAFE_METHODS  = {"GET", "HEAD", "OPTIONS", "TRACE"}
+_CSRF_EXEMPT_PREFIX = ("/api/chat/webhook/", "/api/chat/internal/")
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method in _CSRF_SAFE_METHODS:
+            return await call_next(request)
+        path = request.url.path
+        if any(path.startswith(p) for p in _CSRF_EXEMPT_PREFIX):
+            return await call_next(request)
+        cookie = request.cookies.get("csrf_token", "")
+        header = request.headers.get("x-csrf-token", "")
+        if not cookie or not secrets.compare_digest(
+            cookie.encode("utf-8"), header.encode("utf-8")
+        ):
+            from starlette.responses import JSONResponse as _J
+            return _J({"detail": "CSRF token missing or invalid"}, status_code=403)
+        return await call_next(request)
+
+# Add CSRF before CORS so CORS runs outermost (response ALWAYS gets CORS headers,
+# even on CSRF 403 — browser never sees a confusing CORS error instead of 403).
+app.add_middleware(CSRFMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
@@ -711,15 +846,152 @@ def get_ip(req: Request) -> str:
     return fwd.split(",")[0].strip() if fwd else (req.client.host if req.client else "unknown")
 
 def make_token(user_id: int) -> str:
+    """Short-lived (15 min) access JWT. Companion refresh token is in DB."""
     return jwt.encode(
-        {"sub": str(user_id), "type": "crm", "exp": datetime.utcnow() + timedelta(hours=JWT_HOURS)},
+        {"sub": str(user_id), "type": "crm",
+         "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_MINUTES)},
         SECRET_KEY, algorithm=ALGORITHM,
     )
 
 def set_cookie(response: Response, token: str):
+    """Set ACCESS token cookie (short max_age — frontend silently refreshes)."""
     response.set_cookie("crm_token", token, httponly=True,
-                        max_age=60*60*24*7, samesite="lax",
+                        max_age=ACCESS_TOKEN_MINUTES * 60, samesite="lax",
                         secure=COOKIE_SECURE, path="/")
+
+def set_refresh_cookie(response: Response, refresh_token: str):
+    """Set REFRESH token cookie (long-lived, only sent to /api/refresh path)."""
+    response.set_cookie("crm_refresh", refresh_token, httponly=True,
+                        max_age=REFRESH_TOKEN_DAYS * 86400, samesite="lax",
+                        secure=COOKIE_SECURE, path="/")
+
+def clear_auth_cookies(response: Response):
+    response.delete_cookie("crm_token",   path="/")
+    response.delete_cookie("crm_refresh", path="/")
+
+# ── Refresh token helpers ─────────────────────────────────────────────
+# Format: opaque random string ("rt_" + 64 hex chars). The PLAINTEXT lives
+# only in the user's cookie; the SHA-256 hash is stored in DB. Lookup is
+# constant-time via UNIQUE INDEX on token_hash.
+
+REVOKE_REASON_LOGOUT  = "logout"
+REVOKE_REASON_ROTATED = "rotated"
+REVOKE_REASON_REUSED  = "reuse_detected"   # security incident — chain wiped
+REVOKE_REASON_MANUAL  = "manual_revoke"
+
+def _new_refresh_token() -> tuple[str, str]:
+    """Returns (plaintext, hash). Plaintext goes to cookie, hash to DB."""
+    raw  = "rt_" + secrets.token_hex(32)
+    return raw, hashlib.sha256(raw.encode()).hexdigest()
+
+def issue_refresh_token(user_id: int, request: Request,
+                        parent_id: int | None = None,
+                        label: str | None = None) -> str:
+    """Create a new refresh-token row, return the plaintext string for cookie."""
+    raw, h = _new_refresh_token()
+    ua = (request.headers.get("user-agent") or "")[:500] if request else ""
+    ip = get_ip(request) if request else ""
+    expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO crm_refresh_tokens
+                  (user_id, token_hash, expires_at, parent_id, user_agent, ip, label)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (user_id, h, expires_at, parent_id, ua, ip, label),
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return raw
+
+def _revoke_chain_from(cur, root_id: int, reason: str):
+    """Walk the rotation chain (parent_id ← rotated_to_id) and revoke all
+    descendants AND ancestors. Used when token-reuse is detected — we don't
+    know which side is the attacker, so kill the whole chain."""
+    visited = set()
+    queue = [root_id]
+    while queue:
+        cur_id = queue.pop()
+        if cur_id in visited: continue
+        visited.add(cur_id)
+        cur.execute("""
+            UPDATE crm_refresh_tokens
+               SET revoked_at = COALESCE(revoked_at, NOW()),
+                   revoke_reason = COALESCE(revoke_reason, %s)
+             WHERE id = %s
+        """, (reason, cur_id))
+        cur.execute(
+            "SELECT id FROM crm_refresh_tokens WHERE parent_id=%s OR rotated_to_id=%s",
+            (cur_id, cur_id),
+        )
+        for row in cur.fetchall():
+            if row["id"] not in visited: queue.append(row["id"])
+
+def consume_refresh_token(raw: str, request: Request) -> tuple[int, str] | None:
+    """
+    Validate + atomically rotate a refresh token. Returns (user_id, new_raw)
+    on success; None if the token is invalid/expired/revoked.
+
+    SECURITY: if a revoked token is presented, the entire rotation chain is
+    revoked — this means an attacker cannot use a stolen old refresh while
+    the legitimate user holds the rotated one (the legit user gets logged out
+    on next request, alerting them to the breach).
+    """
+    if not raw: return None
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    with db_cursor() as (conn, cur):
+        # Lock the row to prevent concurrent rotation races
+        cur.execute(
+            "SELECT * FROM crm_refresh_tokens WHERE token_hash=%s FOR UPDATE",
+            (h,),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.commit()
+            return None
+        now_utc = datetime.now(timezone.utc)
+        if row["revoked_at"] is not None:
+            # Token was already used — REUSE attack signal.
+            _revoke_chain_from(cur, row["id"], REVOKE_REASON_REUSED)
+            conn.commit()
+            return None
+        if row["expires_at"] and row["expires_at"] < now_utc:
+            cur.execute(
+                "UPDATE crm_refresh_tokens SET revoked_at=NOW(), revoke_reason='expired' WHERE id=%s",
+                (row["id"],),
+            )
+            conn.commit()
+            return None
+        # Issue new refresh, mark old as rotated
+        new_raw, new_h = _new_refresh_token()
+        ua = (request.headers.get("user-agent") or "")[:500] if request else (row.get("user_agent") or "")
+        ip = get_ip(request) if request else (row.get("ip") or "")
+        new_expires = now_utc + timedelta(days=REFRESH_TOKEN_DAYS)
+        cur.execute(
+            """INSERT INTO crm_refresh_tokens
+                  (user_id, token_hash, expires_at, parent_id, user_agent, ip, label)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (row["user_id"], new_h, new_expires, row["id"], ua, ip, row.get("label")),
+        )
+        new_id = cur.fetchone()["id"]
+        cur.execute("""
+            UPDATE crm_refresh_tokens
+               SET revoked_at=NOW(), revoke_reason=%s,
+                   rotated_to_id=%s, last_used_at=NOW()
+             WHERE id=%s
+        """, (REVOKE_REASON_ROTATED, new_id, row["id"]))
+        conn.commit()
+        return row["user_id"], new_raw
+
+def revoke_refresh_by_raw(raw: str, reason: str = REVOKE_REASON_LOGOUT):
+    if not raw: return
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+            "WHERE token_hash=%s AND revoked_at IS NULL",
+            (reason, h),
+        )
+        conn.commit()
 
 def get_current_user(request: Request) -> dict:
     token = request.cookies.get("crm_token")
@@ -740,22 +1012,18 @@ def get_current_user(request: Request) -> dict:
     return user
 
 def check_rate_limit(keys: list, now: datetime):
+    """Each `key` is treated as a separate (bucket=login, ident=key) pair."""
     for key in keys:
-        s = login_attempts.get(key)
-        if s and s.get("blocked_until") and now < s["blocked_until"]:
-            left = int((s["blocked_until"] - now).total_seconds())
+        blocked, left = _fail_check("login", key)
+        if blocked:
             raise HTTPException(429, f"Too many attempts. Retry in {left}s.")
 
 def record_fail(keys: list, now: datetime):
     for key in keys:
-        s = login_attempts.get(key, {"count": 0, "blocked_until": None})
-        s["count"] += 1
-        if s["count"] >= MAX_FAILED_ATTEMPTS:
-            s = {"count": 0, "blocked_until": now + timedelta(minutes=BLOCK_MINUTES)}
-            login_attempts[key] = s
-            left = int((s["blocked_until"] - now).total_seconds())
+        cnt = _fail_record("login", key)
+        if cnt >= MAX_FAILED_ATTEMPTS:
+            left = max(kvstore.ttl(_fail_key("login", key)), 1)
             raise HTTPException(429, f"Too many attempts. Retry in {left}s.")
-        login_attempts[key] = s
 
 def require_owner(user: dict, project_id: int):
     if not db_one("SELECT id FROM crm_projects WHERE id = %s AND crm_user_id = %s",
@@ -832,6 +1100,31 @@ def send_reset_email(email: str, token: str) -> bool:
     return send_email(email, "Password Reset", html)
 
 # ════════════════════════════════════════════
+# CSRF TOKEN
+# ════════════════════════════════════════════
+
+@app.get("/api/csrf")
+def get_csrf_token(request: Request, response: Response):
+    """Issue (or reuse) a CSRF token cookie.
+    Called once on app load; thereafter JS reads the cookie and sends it
+    as X-CSRF-Token on every state-changing request.
+    The cookie is NOT httpOnly — JS must be able to read it.
+    """
+    token = request.cookies.get("csrf_token", "")
+    if not token:
+        token = secrets.token_hex(32)
+    response.set_cookie(
+        "csrf_token", token,
+        httponly=False,          # JS must read this to echo it as a header
+        samesite="strict",
+        secure=COOKIE_SECURE,
+        max_age=86400,           # 24 h — refreshed on each page load
+        path="/",
+    )
+    return {"csrf_token": token}
+
+
+# ════════════════════════════════════════════
 # АУТЕНТИФИКАЦИЯ
 # ════════════════════════════════════════════
 
@@ -869,18 +1162,19 @@ def send_code(request: SendCodeRequest, req: Request):
         raise HTTPException(400, "Invalid type")
 
     code = gen_otp(6)
-    pending_verifications[email] = {
-        "code_hash": hash_otp(code), "type": request.type,
-        "name": request.name, "password": request.password,
-        "expires": now + timedelta(minutes=CODE_TTL_MINUTES),
-        "next_resend_at": now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
-        "attempts": 0,
-    }
+    now_ts = _time.time()
+    _pv_set(email, {
+        "code_hash":         hash_otp(code), "type": request.type,
+        "name":              request.name, "password": request.password,
+        "expires_ts":        now_ts + CODE_TTL_MINUTES * 60,
+        "next_resend_at_ts": now_ts + RESEND_COOLDOWN_SECONDS,
+        "attempts":          0,
+    })
     if not send_code_email(email, code):
-        del pending_verifications[email]
+        _pv_del(email)
         raise HTTPException(500, "Failed to send email")
 
-    for k in keys: login_attempts.pop(k, None)
+    for k in keys: _fail_clear("login", k)
     return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
 
 
@@ -893,14 +1187,17 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
     keys  = [f"ip:{ip}", f"email:{email}"]
     check_rate_limit(keys, now)
 
-    pending = pending_verifications.get(email)
+    pending = _pv_get(email)
     if not pending:
         record_fail(keys, now); raise HTTPException(400, "Code not found or expired")
-    if now > pending["expires"]:
-        del pending_verifications[email]; raise HTTPException(400, "Code expired")
-    pending["attempts"] = pending.get("attempts", 0) + 1
+    now_ts = _time.time()
+    if now_ts > float(pending.get("expires_ts", 0)):
+        _pv_del(email); raise HTTPException(400, "Code expired")
+    pending["attempts"] = int(pending.get("attempts", 0)) + 1
+    _pv_set(email, pending,
+            ttl=int(max(float(pending["expires_ts"]) - now_ts, 1)))
     if pending["attempts"] > MAX_FAILED_ATTEMPTS:
-        del pending_verifications[email]
+        _pv_del(email)
         raise HTTPException(429, "Too many invalid attempts. Request a new code.")
     if not verify_otp(code, pending.get("code_hash", "")):
         record_fail(keys, now); raise HTTPException(400, "Invalid code")
@@ -922,27 +1219,29 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
             conn.commit()
 
     set_cookie(response, make_token(user_id))
-    del pending_verifications[email]
-    for k in keys: login_attempts.pop(k, None)
+    set_refresh_cookie(response, issue_refresh_token(user_id, req, label="Email login"))
+    _pv_del(email)
+    for k in keys: _fail_clear("login", k)
     return {"success": True}
 
 
 @app.post("/api/resend-code")
 def resend_code_endpoint(request: ResendCodeRequest):
     email = request.email.lower().strip()
-    now   = datetime.utcnow()
-    p     = pending_verifications.get(email)
-    if not p:                        raise HTTPException(400, "No pending verification")
-    if now > p["expires"]:           del pending_verifications[email]; raise HTTPException(400, "Code expired")
-    if now < p["next_resend_at"]:
-        left = int((p["next_resend_at"] - now).total_seconds())
+    now_ts = _time.time()
+    p = _pv_get(email)
+    if not p:                                       raise HTTPException(400, "No pending verification")
+    if now_ts > float(p.get("expires_ts", 0)):       _pv_del(email); raise HTTPException(400, "Code expired")
+    if now_ts < float(p.get("next_resend_at_ts", 0)):
+        left = int(float(p["next_resend_at_ts"]) - now_ts)
         raise HTTPException(429, f"Resend available in {left}s")
 
     code = gen_otp(6)
     p.update(code_hash=hash_otp(code),
-             expires=now + timedelta(minutes=CODE_TTL_MINUTES),
-             next_resend_at=now + timedelta(seconds=RESEND_COOLDOWN_SECONDS),
+             expires_ts=now_ts + CODE_TTL_MINUTES * 60,
+             next_resend_at_ts=now_ts + RESEND_COOLDOWN_SECONDS,
              attempts=0)
+    _pv_set(email, p)
     if not send_code_email(email, code): raise HTTPException(500, "Failed to send email")
     return {"success": True, "resend_available_in": RESEND_COOLDOWN_SECONDS}
 
@@ -956,9 +1255,92 @@ def get_me(user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/logout")
-def logout(response: Response):
-    response.delete_cookie("crm_token", path="/")
+def logout(response: Response, request: Request):
+    # Revoke just THIS session's refresh token; access JWT can't be revoked
+    # but expires in <15 min anyway.
+    revoke_refresh_by_raw(request.cookies.get("crm_refresh", ""))
+    clear_auth_cookies(response)
     return {"success": True}
+
+
+# ════════════════════════════════════════════
+# REFRESH TOKEN / SESSION MANAGEMENT
+# ════════════════════════════════════════════
+
+@app.post("/api/refresh")
+def refresh_session(request: Request, response: Response):
+    """
+    Exchange the long-lived refresh token for a NEW access + refresh pair
+    (rotation). Called silently by the frontend on 401.
+    Returns 401 on any failure → frontend shows login screen.
+    """
+    raw = request.cookies.get("crm_refresh", "")
+    result = consume_refresh_token(raw, request)
+    if not result:
+        clear_auth_cookies(response)
+        raise HTTPException(401, "Invalid or expired refresh token")
+    user_id, new_raw = result
+    # Verify user still exists and is active (might have been deactivated)
+    if not db_one("SELECT 1 FROM crm_users WHERE id=%s AND is_active=TRUE", (user_id,)):
+        clear_auth_cookies(response)
+        raise HTTPException(401, "Account disabled")
+    set_cookie(response, make_token(user_id))
+    set_refresh_cookie(response, new_raw)
+    return {"success": True}
+
+
+@app.get("/api/sessions")
+def list_sessions(request: Request, user: dict = Depends(get_current_user)):
+    """List active (non-revoked, non-expired) sessions for the current user.
+    Marks the session matching the current refresh cookie as 'is_current'."""
+    cur_hash = ""
+    raw = request.cookies.get("crm_refresh", "")
+    if raw:
+        cur_hash = hashlib.sha256(raw.encode()).hexdigest()
+    rows = db_all(
+        """SELECT id, created_at, last_used_at, expires_at, user_agent, ip, label, token_hash
+           FROM crm_refresh_tokens
+           WHERE user_id=%s AND revoked_at IS NULL AND expires_at > NOW()
+           ORDER BY COALESCE(last_used_at, created_at) DESC""",
+        (user["id"],),
+    )
+    return [{
+        "id":         r["id"],
+        "is_current": r["token_hash"] == cur_hash,
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "last_used_at": r["last_used_at"].isoformat() if r["last_used_at"] else None,
+        "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
+        "user_agent": r.get("user_agent"),
+        "ip":         r.get("ip"),
+        "label":      r.get("label"),
+    } for r in rows]
+
+
+@app.delete("/api/sessions/{session_id}")
+def revoke_session(session_id: int, user: dict = Depends(get_current_user)):
+    """Revoke a single session (logout from one device)."""
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+            "WHERE id=%s AND user_id=%s AND revoked_at IS NULL",
+            (REVOKE_REASON_MANUAL, session_id, user["id"]),
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/logout-all")
+def logout_all(response: Response, user: dict = Depends(get_current_user)):
+    """Revoke EVERY session for this user (logout from all devices)."""
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+            "WHERE user_id=%s AND revoked_at IS NULL",
+            (REVOKE_REASON_MANUAL, user["id"]),
+        )
+        conn.commit()
+    clear_auth_cookies(response)
+    return {"ok": True}
 
 
 # ════════════════════════════════════════════
@@ -969,31 +1351,24 @@ def logout(response: Response):
 def forgot_password(request: ForgotPasswordRequest, req: Request):
     email = request.email.lower().strip()
     ip    = get_ip(req)
-    now   = datetime.utcnow()
 
     # Per-IP and per-email rate limit (mitigate enumeration + email bombing)
-    for key in [f"reset:ip:{ip}", f"reset:email:{email}"]:
-        s = login_attempts.get(key)
-        if s and s.get("blocked_until") and now < s["blocked_until"]:
-            left = int((s["blocked_until"] - now).total_seconds())
+    for ident in (f"ip:{ip}", f"email:{email}"):
+        blocked, left = _fail_check("reset", ident)
+        if blocked:
             raise HTTPException(429, f"Too many requests. Try again in {left} seconds.")
-        s = s or {"count": 0, "blocked_until": None}
-        s["count"] += 1
-        if s["count"] >= MAX_FAILED_ATTEMPTS:
-            s = {"count": 0, "blocked_until": now + timedelta(minutes=BLOCK_MINUTES)}
-        login_attempts[key] = s
+        _fail_record("reset", ident)
 
     # Always return generic success — never differentiate existence.
     if db_one("SELECT id FROM crm_users WHERE email = %s", (email,)):
-        for t in [t for t, d in password_reset_tokens.items() if d["email"] == email]:
-            del password_reset_tokens[t]
+        # Sweep prior tokens for this email (cheap; they auto-expire anyway)
+        for k in kvstore.keys_matching("pw_reset:*"):
+            d = kvstore.get(k)
+            if d and d.get("email") == email:
+                kvstore.delete(k)
         raw = secrets.token_urlsafe(32)
         h   = hashlib.sha256(raw.encode()).hexdigest()
-        password_reset_tokens[h] = {
-            "email": email,
-            "expires": now + timedelta(minutes=RESET_TTL_MINUTES),
-            "used": False,
-        }
+        _reset_set(h, {"email": email, "used": False})
         try:
             send_reset_email(email, raw)
         except Exception:
@@ -1003,8 +1378,8 @@ def forgot_password(request: ForgotPasswordRequest, req: Request):
 
 @app.get("/api/reset-password/validate/{token}")
 def validate_reset_token(token: str):
-    data = password_reset_tokens.get(hashlib.sha256(token.encode()).hexdigest())
-    if not data or data.get("used") or datetime.utcnow() > data["expires"]:
+    data = _reset_get(hashlib.sha256(token.encode()).hexdigest())
+    if not data or data.get("used"):
         raise HTTPException(400, "Invalid or expired reset link")
     return {"valid": True, "email": data["email"]}
 
@@ -1015,17 +1390,18 @@ def reset_password(request: ResetPasswordRequest):
         raise HTTPException(400, "Passwords do not match")
     validate_password(request.password)
     h    = hashlib.sha256(request.token.encode()).hexdigest()
-    data = password_reset_tokens.get(h)
-    if not data or data.get("used") or datetime.utcnow() > data["expires"]:
+    data = _reset_get(h)
+    if not data or data.get("used"):
         raise HTTPException(400, "Invalid or expired reset link")
 
-    # Mark used FIRST to defeat reset-token reuse races
+    # Mark used FIRST (still in store) to defeat reuse races, then update DB
     data["used"] = True
+    _reset_set(h, data)
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_users SET password = %s WHERE email = %s",
                     (hash_pw(request.password), data["email"]))
         conn.commit()
-    password_reset_tokens.pop(h, None)
+    _reset_del(h)
     return {"success": True}
 
 
@@ -1797,9 +2173,11 @@ def google_login():
     redirect = RedirectResponse(
         "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     )
+    # path="/" so the cookie reliably survives the cross-origin redirect
+    # from Google → callback. httponly + 10-min TTL keep it safe enough.
     redirect.set_cookie(
         key="crm_oa_state", value=state, httponly=True, max_age=600,
-        samesite="lax", secure=COOKIE_SECURE, path="/api/auth/google/",
+        samesite="lax", secure=COOKIE_SECURE, path="/",
     )
     return redirect
 
@@ -1837,7 +2215,8 @@ def google_callback(request: Request, code: str = None, error: str = None, state
     try:
         from google.oauth2 import id_token as g_id_token
         from google.auth.transport import requests as g_requests
-        idinfo  = g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
+        # 60s skew tolerates normal clock drift between local server and Google
+        idinfo  = g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=60)
         g_id    = idinfo["sub"]
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
@@ -1848,22 +2227,27 @@ def google_callback(request: Request, code: str = None, error: str = None, state
 
     user_id   = _upsert_google_user(g_id, email, name, picture)
     jwt_token = make_token(user_id)
+    refresh   = issue_refresh_token(user_id, request, label="Google login")
     redirect  = RedirectResponse(f"{CRM_FRONTEND_URL}/dashboard", status_code=302)
     redirect.set_cookie(key="crm_token", value=jwt_token, httponly=True,
-                        samesite="lax", secure=COOKIE_SECURE, max_age=60*60*24*7, path="/")
-    redirect.delete_cookie("crm_oa_state", path="/api/auth/google/")
+                        samesite="lax", secure=COOKIE_SECURE,
+                        max_age=ACCESS_TOKEN_MINUTES * 60, path="/")
+    redirect.set_cookie(key="crm_refresh", value=refresh, httponly=True,
+                        samesite="lax", secure=COOKIE_SECURE,
+                        max_age=REFRESH_TOKEN_DAYS * 86400, path="/")
+    redirect.delete_cookie("crm_oa_state", path="/")
     return redirect
 
 
 @app.post("/api/auth/google")
-def google_auth(request: GoogleAuthRequest, response: Response):
+def google_auth(request: GoogleAuthRequest, response: Response, req: Request):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(501, "Google OAuth not configured")
     try:
         from google.oauth2 import id_token
         from google.auth.transport import requests as g_requests
-        # Use same clock skew as callback (consistency)
-        idinfo  = id_token.verify_oauth2_token(request.token, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=10)
+        # Same 60s skew as callback — tolerates normal clock drift
+        idinfo  = id_token.verify_oauth2_token(request.token, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=60)
         g_id    = idinfo["sub"]
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
@@ -1874,6 +2258,7 @@ def google_auth(request: GoogleAuthRequest, response: Response):
 
     user_id = _upsert_google_user(g_id, email, name, picture)
     set_cookie(response, make_token(user_id))
+    set_refresh_cookie(response, issue_refresh_token(user_id, req, label="Google login"))
     return {"success": True}
 
 
@@ -1905,8 +2290,8 @@ def get_email_domain(project_id: int = Query(...), user: dict = Depends(get_curr
         "from_email":     row["from_email"],
         "sender_avatar":  row.get("sender_avatar"),
         "dkim_ok":        bool(row["is_verified"]),
-        "spf_ok":         row["verify_token"] in ("spf_ok", "all_ok"),
-        "dmarc_ok":       row["verify_token"] == "all_ok",
+        "spf_ok":         bool(row.get("spf_ok")),
+        "dmarc_ok":       bool(row.get("dmarc_ok")),
         "verified_at":    row["verified_at"].isoformat() if row["verified_at"] else None,
         "dns_records":    dns_records,
     }
@@ -1967,21 +2352,30 @@ def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
     row = db_one("SELECT * FROM crm_email_domains WHERE project_id = %s", (project_id,))
     if not row: raise HTTPException(404, "No domain configured")
 
-    domain  = row["domain"]
-    result  = _ses("POST", f"/domains/{domain}/verify")
-    dkim_ok  = result.get("dkim_ok", False)
-    spf_ok   = result.get("spf_ok", False)
-    dmarc_ok = result.get("dmarc_ok", False)
-    all_ok   = dkim_ok and spf_ok
+    domain   = row["domain"]
+    result   = _ses("POST", f"/domains/{domain}/verify")
+    dkim_ok  = bool(result.get("dkim_ok",  False))
+    spf_ok   = bool(result.get("spf_ok",   False))
+    dmarc_ok = bool(result.get("dmarc_ok", False))
+    # all_ok = full email security stack (DKIM + SPF + DMARC). Without DMARC,
+    # Gmail/Outlook silently spam-folder the messages.
+    all_ok   = dkim_ok and spf_ok and dmarc_ok
 
     with db_cursor() as (conn, cur):
         cur.execute("""
             UPDATE crm_email_domains
             SET is_verified=%s,
+                spf_ok=%s,
+                dmarc_ok=%s,
                 verify_token=%s,
                 verified_at=CASE WHEN %s AND verified_at IS NULL THEN NOW() ELSE verified_at END
             WHERE project_id=%s
-        """, (dkim_ok, "all_ok" if (spf_ok and dmarc_ok) else ("spf_ok" if spf_ok else None), all_ok, project_id))
+        """, (
+            dkim_ok, spf_ok, dmarc_ok,
+            # Keep verify_token populated for backward compat with any other reader
+            "all_ok" if (spf_ok and dmarc_ok) else ("spf_ok" if spf_ok else ""),
+            all_ok, project_id
+        ))
         conn.commit()
 
     return {"dkim_ok": dkim_ok, "spf_ok": spf_ok, "dmarc_ok": dmarc_ok, "all_ok": all_ok}
@@ -2011,7 +2405,7 @@ def get_oauth_settings(project_id: int = Query(...), user: dict = Depends(get_cu
     require_team_member_or_owner(user, project_id)
     key_row      = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
     api_key_str  = key_row["api_key"] if key_row else ""
-    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/api/auth/google/callback"
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/auth/google/callback"
 
     row = db_one("SELECT * FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
     if not row:
@@ -2087,7 +2481,7 @@ def get_auth_provider(provider: str, project_id: int = Query(...), user: dict = 
         raise HTTPException(400, f"Unknown provider: {provider}")
     key_row     = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
     api_key_str = key_row["api_key"] if key_row else ""
-    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/api/auth/oauth/{provider}/callback"
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/auth/oauth/{provider}/callback"
     row = db_one(
         "SELECT client_id, client_secret, is_enabled FROM crm_auth_providers "
         "WHERE project_id=%s AND provider=%s",
@@ -4252,8 +4646,28 @@ def booking_list(project_id: int = Query(...),
                  user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     where = ["project_id=%s"]; params: list = [project_id]
-    if from_date: where.append("starts_at >= %s"); params.append(from_date)
-    if to_date:   where.append("starts_at <  %s"); params.append(to_date)
+    # Accept date filters as either YYYY-MM-DD (interpreted as business-local
+    # midnight → UTC) or full ISO 8601 with TZ offset.
+    biz_tz = None
+    if from_date or to_date:
+        tz_row = db_one("SELECT timezone FROM booking_settings WHERE project_id=%s",
+                        (project_id,))
+        biz_tz = _tz((tz_row or {}).get("timezone") or "UTC")
+
+    def _parse_filter_date(s, end_of_day=False):
+        try:
+            if "T" in s:
+                d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                if d.tzinfo is None: d = d.replace(tzinfo=biz_tz)
+                return d.astimezone(timezone.utc)
+            day = datetime.strptime(s, "%Y-%m-%d").date()
+            t = dt_time(23, 59, 59) if end_of_day else dt_time(0, 0)
+            return datetime.combine(day, t, tzinfo=biz_tz).astimezone(timezone.utc)
+        except Exception:
+            raise HTTPException(400, f"Invalid date: {s!r}")
+
+    if from_date: where.append("starts_at >= %s"); params.append(_parse_filter_date(from_date))
+    if to_date:   where.append("starts_at <  %s"); params.append(_parse_filter_date(to_date))
     if status and status != "all":
         if status not in BOOKING_STATUSES:
             raise HTTPException(400, "Unknown status")
@@ -4281,12 +4695,20 @@ def booking_create_admin(req: CreateBookingRequest,
         st = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s",
                     (req.staff_id, project_id))
         if not st: raise HTTPException(404, "Staff not found")
+
+    # Resolve business timezone to interpret naive datetimes correctly
+    tz_row = db_one("SELECT timezone FROM booking_settings WHERE project_id=%s",
+                    (project_id,))
+    biz_tz = _tz((tz_row or {}).get("timezone") or "UTC")
     try:
         starts = datetime.fromisoformat(req.starts_at.replace("Z", "+00:00"))
     except Exception:
-        raise HTTPException(400, "Invalid starts_at")
-    if starts.tzinfo is not None: starts = starts.replace(tzinfo=None)
-    ends = starts + timedelta(minutes=svc["duration_minutes"])
+        raise HTTPException(400, "Invalid starts_at (expected ISO 8601)")
+    # Frontend SHOULD send with TZ offset; if naive, interpret as business-local
+    if starts.tzinfo is None:
+        starts = starts.replace(tzinfo=biz_tz)
+    starts = starts.astimezone(timezone.utc)
+    ends   = starts + timedelta(minutes=svc["duration_minutes"])
     status = req.status or "confirmed"
     if status not in BOOKING_STATUSES: raise HTTPException(400, "Unknown status")
     # Best-effort customer contact validation
