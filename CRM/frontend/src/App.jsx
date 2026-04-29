@@ -24,14 +24,18 @@ const OrgSettings   = lazy(() => import('./Pages/Organization/OrgSettings.jsx'))
 // Project
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Project/Revenue.jsx'));
-const Products      = lazy(() => import('./Pages/Project/Products.jsx'));
+const Products      = lazy(() => import('./Pages/Project/Products/Products.jsx'));
+const ProductsList  = lazy(() => import('./Pages/Project/Products/ProductsList.jsx'));
+const Categories    = lazy(() => import('./Pages/Project/Products/Categories.jsx'));
 const Authentication   = lazy(() => import('./Pages/Project/Authentication.jsx'));
 const ProjectSettings  = lazy(() => import('./Pages/Project/ProjectSettings.jsx'));
 const Orders           = lazy(() => import('./Pages/Project/Orders.jsx'));
 const Chat             = lazy(() => import('./Pages/Project/Chat.jsx'));
 const Booking          = lazy(() => import('./Pages/Project/Booking/Booking.jsx'));
-// Product
-const ProductPage   = lazy(() => import('./Pages/Product/ProductPage.jsx'));
+// Product detail pages — live under their own ProductLayout at /product/:hash
+const ProductOverview   = lazy(() => import('./Pages/Product/ProductOverview.jsx'));
+const ProductReviews    = lazy(() => import('./Pages/Product/ProductReviews.jsx'));
+const ProductApiPreview = lazy(() => import('./Pages/Product/ProductApiPreview.jsx'));
 // Settings
 const AccountSettings  = lazy(() => import('./Pages/Settings/Settings.jsx'));
 const SecuritySettings = lazy(() => import('./Pages/Settings/Security.jsx'));
@@ -66,7 +70,10 @@ function App() {
           <Route path="/project/:apiKey"           element={<Layout />}>
             <Route index            element={<Project />} />
             <Route path="dashboard" element={<Navigate to=".." relative="path" replace />} />
-            <Route path="products"   element={<Products />} />
+            <Route path="products"   element={<Products />}>
+              <Route index                element={<ProductsList />} />
+              <Route path="categories"    element={<Categories />} />
+            </Route>
             <Route path="revenue"    element={<Revenue />} />
             <Route path="authentication" element={<Authentication />} />
             <Route path="email"      element={<Navigate to="../authentication" relative="path" replace />} />
@@ -84,12 +91,9 @@ function App() {
             <Route path="notifications" element={<SettingsStub title="Notifications" />} />
           </Route>
           <Route path="/product/:productHash" element={<ProductLayout />}>
-            <Route index                      element={<ProductPage />} />
-            <Route path="variations"          element={<ProductPage />} />
-            <Route path="seo"                 element={<ProductPage />} />
-            <Route path="custom-fields"       element={<ProductPage />} />
-            <Route path="reviews"             element={<ProductPage />} />
-            <Route path="api-preview"         element={<ProductPage />} />
+            <Route index                element={<ProductOverview />} />
+            <Route path="reviews"       element={<ProductReviews />} />
+            <Route path="api-preview"   element={<ProductApiPreview />} />
           </Route>
         </Routes>
       </Suspense>
@@ -97,4 +101,4 @@ function App() {
   );
 }
 
-export default App;
+export default App

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response, HTTPException, Request, Depends
+﻿from fastapi import FastAPI, Response, HTTPException, Request, Depends
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -6,14 +6,10 @@ from datetime import datetime, timedelta, timezone, time as dt_time
 from contextlib import contextmanager
 import sys, os, time
 
-# Ensure modules in the same directory (kvstore.py etc.) are importable
-# regardless of the working directory uvicorn was launched from.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import psycopg2
 import psycopg2.errors
 
-# Use stdlib zoneinfo (Python 3.9+) for IANA timezone support.
-# Fallback to UTC if a timezone string is invalid.
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except ImportError:
@@ -31,7 +27,6 @@ def _tz(name: str):
         return timezone.utc
 
 def _utcnow():
-    """Timezone-aware UTC now."""
     return datetime.now(timezone.utc)
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
@@ -43,7 +38,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 
 # ============================================
-# РќРђРЎРўР РћР™РљР
+# НАСТРОЙКА
 # ============================================
 
 SECRET_KEY            = os.getenv("SECRET_KEY",        "")
@@ -121,7 +116,7 @@ app = FastAPI()
 
 
 # ============================================
-# Р’РЎРџРћРњРћР“РђРўР•Р›Р¬РќР«Р• Р¤РЈРќРљР¦РР (PER-PROJECT)
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (PER-PROJECT)
 # ============================================
 
 def get_project_email(project_id: int) -> tuple:
@@ -134,8 +129,6 @@ def get_project_email(project_id: int) -> tuple:
 def get_project_frontend_url(project_id: int) -> str | None:
     row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id = %s", (project_id,))
     url = row["frontend_url"].rstrip("/") if row and row["frontend_url"] else None
-    # Reject non-http(s) schemes (javascript:, data:, etc.) to prevent
-    # stored XSS via a malicious frontend_url in crm_url_config.
     if url and not url.startswith(("http://", "https://")):
         return None
     return url
@@ -168,7 +161,7 @@ def get_user_by_id(user_id: int, project_id: int):
 
 
 # ============================================
-# РЈРўРР›РРўР«
+# УТИЛИТЫ
 # ============================================
 
 def run_migrations():
@@ -260,7 +253,7 @@ except Exception as _e:
 # New format: "$scrypt$<base64-salt>$<base64-hash>"  (salt=16B, hash=32B)
 # Legacy format: 64 hex chars (SHA-256). On successful legacy login the caller
 # should re-hash with hash_password() and persist it.
-_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1   # ~64 MB, ~80ms
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
 
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
@@ -575,7 +568,7 @@ app.add_middleware(DynamicCORSMiddleware)
 
 
 # ============================================
-# РњРћР”Р•Р›Р
+# МОДЕЛИ
 # ============================================
 
 class SendCodeRequest(BaseModel):
@@ -595,8 +588,13 @@ class ResetPasswordRequest(BaseModel):
 
 class AddToCart(BaseModel):
     product_id: int
-    variation_id: Optional[int] = None
-    size_id: Optional[int] = None
+    # variation_id and configuration_id are required for any product that has
+    # variations / configurations. Old SDK versions (<2.0.0) sent `size_id`
+    # which Pydantic silently dropped → caused FK NOT NULL violation = HTTP 500.
+    # Now we surface a clean 422 instead. Storefronts on torta-js >= 2.0.0
+    # always send the new keys.
+    variation_id: int
+    configuration_id: int
     quantity: int = 1
 
 class UpdateCartQuantity(BaseModel):
@@ -627,31 +625,35 @@ class FrontReview(BaseModel):
     id: int; user_id: int; user_name: str; rating: int
     comment: str = ""; created_at: Optional[str] = None
 
-class FrontSize(BaseModel):
-    id: int; size_name: str; price: float; stock_quantity: int
+class FrontConfiguration(BaseModel):
+    id: int; configuration_name: str; price: float; stock_quantity: int
     sold_quantity: int; is_in_cart: bool = False
     cart_item_id: Optional[int] = None; cart_quantity: int = 0
 
 class FrontVariation(BaseModel):
     id: int; variation_name: str; image: Optional[str] = None
-    is_in_cart: bool = False; sizes: List[FrontSize]
+    is_in_cart: bool = False; configurations: List[FrontConfiguration]
 
 class ProductPageResponse(BaseModel):
     id: int; product_hash: str; title: str
-    description: Optional[str] = ""; characteristics: Optional[str] = ""
+    subtitle: Optional[str] = ""        # short tagline shown under title
+    description: Optional[str] = ""     # long body text
+    category_id: Optional[int]   = None
+    category_name: Optional[str] = None
+    category_slug: Optional[str] = None
     seo_title: Optional[str] = None; seo_description: Optional[str] = None
     seo_keywords: Optional[str] = None; custom_fields: Optional[dict] = {}
     is_authenticated: bool; current_user_id: Optional[int] = None
     is_favorite: bool; can_review: bool
     reviews_count: int; average_rating: float
-    initial_variation_index: int; initial_size_id: Optional[int] = None
+    initial_variation_index: int; initial_configuration_id: Optional[int] = None
     variations: List[FrontVariation]; reviews: List[FrontReview]
 
 class CartPageItem(BaseModel):
     cart_item_id: int; quantity: int; product_id: int; product_hash: str
-    variation_id: Optional[int] = None; size_id: Optional[int] = None
-    title: str; description: Optional[str] = ""; price: float
-    size_name: Optional[str] = None; variation_name: Optional[str] = None
+    variation_id: Optional[int] = None; configuration_id: Optional[int] = None
+    title: str; subtitle: Optional[str] = ""; price: float
+    configuration_name: Optional[str] = None; variation_name: Optional[str] = None
     image_url: Optional[str] = None; is_favorite: bool = False
 
 class CartPageResponse(BaseModel):
@@ -780,7 +782,7 @@ def get_csrf_token(api_key: str, request: Request, response: Response,
 
 
 # ============================================
-# РђРЈРўР•РќРўРР¤РРљРђР¦РРЇ
+# АУТЕНТИФИКАЦИЯ
 # ============================================
 
 @app.post("/{api_key}/send-code")
@@ -975,7 +977,6 @@ def refresh_session(response: Response, request: Request,
 
 @app.get("/{api_key}/sessions")
 def list_sessions(request: Request, api_key_record: dict = Depends(resolve_api_key)):
-    """List active sessions for the current authenticated user."""
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
     cur_hash = ""
@@ -1034,7 +1035,7 @@ def logout_all(response: Response, request: Request,
 
 
 # ============================================
-# Р’РћРЎРЎРўРђРќРћР’Р›Р•РќРР• РџРђР РћР›РЇ
+# ВОССТАНОВЛЕНИЕ ПАРОЛЯ
 # ============================================
 
 @app.post("/{api_key}/forgot-password")
@@ -1102,16 +1103,48 @@ def reset_password(request: ResetPasswordRequest, api_key_record: dict = Depends
 
 
 # ============================================
-# РџР РћР”РЈРљРўР«
+# ПРОДУКТЫ
 # ============================================
 
+@app.get("/{api_key}/categories")
+def list_categories_public(api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    rows = db_all("""
+        SELECT c.id, c.name, c.slug,
+               COUNT(p.id) AS products_count
+          FROM product_categories c
+     LEFT JOIN products p ON p.category_id = c.id
+         WHERE c.project_id = %s
+      GROUP BY c.id
+      ORDER BY LOWER(c.name) ASC
+    """, (project_id,))
+    return [
+        {"id": r["id"], "name": r["name"], "slug": r["slug"],
+         "products_count": int(r["products_count"] or 0)}
+        for r in rows
+    ]
+
+
 @app.get("/{api_key}/products")
-def get_products(api_key_record: dict = Depends(resolve_api_key)):
+def get_products(api_key_record: dict = Depends(resolve_api_key),
+                 category: Optional[str] = None,
+                 uncategorized: bool = False):
     project_id = api_key_record["id"]
     with db_cursor() as (_, cursor):
+        where  = ["p.project_id = %s"]
+        params = [project_id]
+        if uncategorized:
+            where.append("p.category_id IS NULL")
+        elif category:
+            where.append("c.slug = %s")
+            params.append(category)
         cursor.execute(
-            "SELECT id, title, seo_title, seo_description, seo_keywords FROM products WHERE project_id = %s",
-            (project_id,)
+            "SELECT p.id, p.title, p.seo_title, p.seo_description, p.seo_keywords, "
+            "p.category_id, c.name AS category_name, c.slug AS category_slug "
+            "FROM products p "
+            "LEFT JOIN product_categories c ON c.id = p.category_id "
+            f"WHERE {' AND '.join(where)}",
+            params
         )
         products = cursor.fetchall()
         if not products: return []
@@ -1133,7 +1166,7 @@ def get_products(api_key_record: dict = Depends(resolve_api_key)):
             images = {r["id"]: r["image_url"] for r in cursor.fetchall()}
 
         cursor.execute(
-            f"SELECT product_id, MIN(price) as price FROM product_sizes WHERE product_id IN ({fmt}) GROUP BY product_id",
+            f"SELECT product_id, MIN(price) as price FROM product_configurations WHERE product_id IN ({fmt}) GROUP BY product_id",
             product_ids
         )
         prices = {r["product_id"]: float(r["price"]) for r in cursor.fetchall()}
@@ -1151,6 +1184,9 @@ def get_products(api_key_record: dict = Depends(resolve_api_key)):
             "id": p["id"], "hash": hashids.encode(p["id"]), "title": p["title"],
             "price": prices.get(p["id"], 0),
             "image": images.get(first_variation.get(p["id"])),
+            "category_id":   p.get("category_id"),
+            "category_name": p.get("category_name"),
+            "category_slug": p.get("category_slug"),
             "seo_title": p["seo_title"], "seo_description": p["seo_description"],
             "seo_keywords": p["seo_keywords"], "custom_fields": cf_map.get(p["id"], {}),
         }
@@ -1169,29 +1205,34 @@ def get_product_page(product_hash: str, request: Request,
 
     with db_cursor() as (_, cursor):
         cursor.execute(
-            "SELECT id, title, description, characteristics, seo_title, seo_description, seo_keywords "
-            "FROM products WHERE id = %s AND project_id = %s",
+            "SELECT p.id, p.title, p.subtitle, p.description, p.seo_title, p.seo_description, p.seo_keywords, "
+            "p.category_id, c.name AS category_name, c.slug AS category_slug "
+            "FROM products p "
+            "LEFT JOIN product_categories c ON c.id = p.category_id "
+            "WHERE p.id = %s AND p.project_id = %s",
             (product_id, project_id)
         )
         product = cursor.fetchone()
         if not product: raise HTTPException(404, "Product not found")
 
         cursor.execute(
-            "SELECT id, product_id, variation_name, image_url FROM product_variations WHERE product_id = %s",
+            # Honour CRM drag-and-drop ordering via the `position` column.
+            "SELECT id, product_id, variation_name, image_url FROM product_variations "
+            "WHERE product_id = %s ORDER BY position ASC, id ASC",
             (product_id,)
         )
         variations = cursor.fetchall()
 
-        sizes = []
+        configurations = []
         if variations:
             vids = [v["id"] for v in variations]
             vfmt = ",".join(["%s"] * len(vids))
             cursor.execute(
-                f"SELECT id, product_id, variation_id, size_name, price, stock_quantity, sold_quantity "
-                f"FROM product_sizes WHERE variation_id IN ({vfmt})",
+                f"SELECT id, product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity "
+                f"FROM product_configurations WHERE variation_id IN ({vfmt})",
                 vids
             )
-            sizes = cursor.fetchall()
+            configurations = cursor.fetchall()
 
         cursor.execute(
             "SELECT pr.id, pr.user_id, pr.rating, pr.comment, pr.created_at, u.name AS user_name "
@@ -1219,13 +1260,13 @@ def get_product_page(product_hash: str, request: Request,
             is_favorite = cursor.fetchone() is not None
 
             cursor.execute(
-                "SELECT ci.id AS cart_item_id, ci.variation_id, ci.size_id, ci.quantity "
+                "SELECT ci.id AS cart_item_id, ci.variation_id, ci.configuration_id, ci.quantity "
                 "FROM cart_items ci JOIN carts c ON ci.cart_id = c.id "
                 "WHERE c.user_id = %s AND ci.product_id = %s AND c.project_id = %s",
                 (user_id, product_id, project_id)
             )
             for row in cursor.fetchall():
-                cart_map[(row["variation_id"], row["size_id"])] = row
+                cart_map[(row["variation_id"], row["configuration_id"])] = row
 
             cursor.execute(
                 "SELECT id FROM product_reviews WHERE product_id = %s AND user_id = %s AND project_id = %s LIMIT 1",
@@ -1240,13 +1281,13 @@ def get_product_page(product_hash: str, request: Request,
                 )
                 can_review = cursor.fetchone() is not None
 
-    sizes_by_variation = {}
-    for s in sizes:
-        if s["stock_quantity"] <= 0: continue
-        cart_item = cart_map.get((s["variation_id"], s["id"]))
-        sizes_by_variation.setdefault(s["variation_id"], []).append({
-            "id": s["id"], "size_name": s["size_name"], "price": float(s["price"]),
-            "stock_quantity": s["stock_quantity"], "sold_quantity": s["sold_quantity"],
+    cfg_by_variation = {}
+    for c in configurations:
+        if c["stock_quantity"] <= 0: continue
+        cart_item = cart_map.get((c["variation_id"], c["id"]))
+        cfg_by_variation.setdefault(c["variation_id"], []).append({
+            "id": c["id"], "configuration_name": c["configuration_name"], "price": float(c["price"]),
+            "stock_quantity": c["stock_quantity"], "sold_quantity": c["sold_quantity"],
             "is_in_cart": cart_item is not None,
             "cart_item_id": cart_item["cart_item_id"] if cart_item else None,
             "cart_quantity": cart_item["quantity"] if cart_item else 0,
@@ -1255,10 +1296,10 @@ def get_product_page(product_hash: str, request: Request,
     final_variations = [
         {
             "id": v["id"], "variation_name": v["variation_name"], "image": v["image_url"],
-            "is_in_cart": any(s["is_in_cart"] for s in sizes_by_variation.get(v["id"], [])),
-            "sizes": sizes_by_variation.get(v["id"], []),
+            "is_in_cart": any(c["is_in_cart"] for c in cfg_by_variation.get(v["id"], [])),
+            "configurations": cfg_by_variation.get(v["id"], []),
         }
-        for v in variations if sizes_by_variation.get(v["id"])
+        for v in variations if cfg_by_variation.get(v["id"])
     ]
 
     reviews = [
@@ -1271,24 +1312,30 @@ def get_product_page(product_hash: str, request: Request,
     ]
     reviews_count  = len(reviews)
     average_rating = round(sum(r["rating"] for r in reviews) / reviews_count, 1) if reviews_count else 0.0
-    initial_size_id = final_variations[0]["sizes"][0]["id"] if final_variations and final_variations[0]["sizes"] else None
+    initial_configuration_id = (
+        final_variations[0]["configurations"][0]["id"]
+        if final_variations and final_variations[0]["configurations"] else None
+    )
 
     return {
         "id": product["id"], "product_hash": hashids.encode(product["id"]),
-        "title": product["title"], "description": product["description"] or "",
-        "characteristics": product["characteristics"] or "",
+        "title": product["title"], "subtitle": product["subtitle"] or "",
+        "description": product["description"] or "",
+        "category_id":   product.get("category_id"),
+        "category_name": product.get("category_name"),
+        "category_slug": product.get("category_slug"),
         "seo_title": product["seo_title"], "seo_description": product["seo_description"],
         "seo_keywords": product["seo_keywords"], "custom_fields": custom_fields,
         "is_authenticated": user_id is not None, "current_user_id": user_id,
         "is_favorite": is_favorite, "can_review": can_review,
         "reviews_count": reviews_count, "average_rating": average_rating,
-        "initial_variation_index": 0, "initial_size_id": initial_size_id,
+        "initial_variation_index": 0, "initial_configuration_id": initial_configuration_id,
         "variations": final_variations, "reviews": reviews,
     }
 
 
 # ============================================
-# РљРћР Р—РРќРђ
+# КОРЗИНА
 # ============================================
 
 @app.post("/{api_key}/cart/add")
@@ -1310,8 +1357,8 @@ def add_to_cart(item: AddToCart, request: Request,
         if not cursor.fetchone(): raise HTTPException(403, "Product not in this store")
 
         cursor.execute(
-            "SELECT id, quantity FROM cart_items WHERE cart_id=%s AND product_id=%s AND variation_id=%s AND size_id=%s",
-            (cart_id, item.product_id, item.variation_id, item.size_id)
+            "SELECT id, quantity FROM cart_items WHERE cart_id=%s AND product_id=%s AND variation_id=%s AND configuration_id=%s",
+            (cart_id, item.product_id, item.variation_id, item.configuration_id)
         )
         existing = cursor.fetchone()
         if existing:
@@ -1319,8 +1366,8 @@ def add_to_cart(item: AddToCart, request: Request,
                            (existing["quantity"] + item.quantity, existing["id"]))
         else:
             cursor.execute(
-                "INSERT INTO cart_items (cart_id, product_id, variation_id, size_id, quantity) VALUES (%s,%s,%s,%s,%s)",
-                (cart_id, item.product_id, item.variation_id, item.size_id, item.quantity)
+                "INSERT INTO cart_items (cart_id, product_id, variation_id, configuration_id, quantity) VALUES (%s,%s,%s,%s,%s)",
+                (cart_id, item.product_id, item.variation_id, item.configuration_id, item.quantity)
             )
         conn.commit()
     return {"success": True}
@@ -1361,16 +1408,16 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
     user_id = get_current_user_id(request)
     with db_cursor() as (conn, cursor):
         cursor.execute(
-            "SELECT ci.id, ci.size_id FROM cart_items ci JOIN carts c ON ci.cart_id=c.id "
+            "SELECT ci.id, ci.configuration_id FROM cart_items ci JOIN carts c ON ci.cart_id=c.id "
             "WHERE ci.id=%s AND c.user_id=%s AND c.project_id=%s",
             (cart_item_id, user_id, api_key_record["id"])
         )
         item = cursor.fetchone()
         if not item: raise HTTPException(404, "Cart item not found")
-        cursor.execute("SELECT stock_quantity FROM product_sizes WHERE id=%s", (item["size_id"],))
-        size = cursor.fetchone()
-        if size and data.quantity > size["stock_quantity"]:
-            raise HTTPException(400, f"Only {size['stock_quantity']} items in stock")
+        cursor.execute("SELECT stock_quantity FROM product_configurations WHERE id=%s", (item["configuration_id"],))
+        cfg = cursor.fetchone()
+        if cfg and data.quantity > cfg["stock_quantity"]:
+            raise HTTPException(400, f"Only {cfg['stock_quantity']} items in stock")
         cursor.execute("UPDATE cart_items SET quantity=%s WHERE id=%s", (data.quantity, cart_item_id))
         conn.commit()
     return {"success": True}
@@ -1407,11 +1454,11 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
             }
 
         cursor.execute(
-            "SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.size_id, "
-            "p.title, p.description, ps.price, ps.size_name, pv.variation_name, pv.image_url "
+            "SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.configuration_id, "
+            "p.title, p.subtitle, pc.price, pc.configuration_name, pv.variation_name, pv.image_url "
             "FROM cart_items ci JOIN products p ON ci.product_id=p.id "
             "LEFT JOIN product_variations pv ON ci.variation_id=pv.id "
-            "LEFT JOIN product_sizes ps ON ci.size_id=ps.id "
+            "LEFT JOIN product_configurations pc ON ci.configuration_id=pc.id "
             "WHERE ci.cart_id=%s",
             (cart["id"],)
         )
@@ -1438,7 +1485,7 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
 
 
 # ============================================
-# РР—Р‘Р РђРќРќРћР•
+# ИЗБРАННОЕ
 # ============================================
 
 @app.post("/{api_key}/favorites/add")
@@ -1487,7 +1534,7 @@ def remove_from_favorites(product_hash: str, request: Request,
 
 
 # ============================================
-# РћРўР—Р«Р’Р«
+# ОТЗЫВЫ
 # ============================================
 
 @app.post("/{api_key}/reviews/add")
@@ -1548,7 +1595,7 @@ def delete_review(review_id: int, request: Request,
 
 
 # ============================================
-# РџР РћРњРћРљРћР”Р«
+# ПРОМОКОДЫ
 # ============================================
 
 @app.post("/{api_key}/promo-code/apply")
@@ -1564,8 +1611,8 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
         if not cart: raise HTTPException(400, "Cart is empty")
 
         cursor.execute(
-            "SELECT SUM(ps.price * ci.quantity) as subtotal FROM cart_items ci "
-            "JOIN product_sizes ps ON ci.size_id=ps.id WHERE ci.cart_id=%s",
+            "SELECT SUM(pc.price * ci.quantity) as subtotal FROM cart_items ci "
+            "JOIN product_configurations pc ON ci.configuration_id=pc.id WHERE ci.cart_id=%s",
             (cart["id"],)
         )
         subtotal = float((cursor.fetchone() or {}).get("subtotal") or 0)
@@ -1611,7 +1658,7 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
 
 
 # ============================================
-# Р—РђРљРђР—Р«
+# ЗАКАЗЫ
 # ============================================
 
 @app.post("/{api_key}/orders")
@@ -1634,10 +1681,10 @@ def place_order(data: PlaceOrderRequest, request: Request,
             raise HTTPException(400, "Cart is empty")
 
         cursor.execute(
-            "SELECT ci.id, ci.product_id, ci.variation_id, ci.size_id, ci.quantity, "
-            "ps.price, ps.stock_quantity, p.title, pv.variation_name "
+            "SELECT ci.id, ci.product_id, ci.variation_id, ci.configuration_id, ci.quantity, "
+            "pc.price, pc.stock_quantity, p.title, pv.variation_name "
             "FROM cart_items ci "
-            "JOIN product_sizes ps ON ci.size_id = ps.id "
+            "JOIN product_configurations pc ON ci.configuration_id = pc.id "
             "JOIN products p ON ci.product_id = p.id "
             "JOIN product_variations pv ON ci.variation_id = pv.id "
             "WHERE ci.cart_id = %s",
@@ -1706,14 +1753,14 @@ def place_order(data: PlaceOrderRequest, request: Request,
         # Позиции заказа
         for it in items:
             cursor.execute(
-                "INSERT INTO order_items (order_id, product_id, variation_id, size_id, quantity, price) "
+                "INSERT INTO order_items (order_id, product_id, variation_id, configuration_id, quantity, price) "
                 "VALUES (%s,%s,%s,%s,%s,%s)",
-                (order_id, it["product_id"], it["variation_id"], it["size_id"], it["quantity"], it["price"])
+                (order_id, it["product_id"], it["variation_id"], it["configuration_id"], it["quantity"], it["price"])
             )
             # Уменьшаем остаток
             cursor.execute(
-                "UPDATE product_sizes SET stock_quantity = stock_quantity - %s WHERE id=%s",
-                (it["quantity"], it["size_id"])
+                "UPDATE product_configurations SET stock_quantity = stock_quantity - %s WHERE id=%s",
+                (it["quantity"], it["configuration_id"])
             )
 
         # Очищаем корзину
@@ -1782,11 +1829,11 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
     for o in orders:
         items = db_all(
             """SELECT oi.quantity, oi.price,
-                      p.title, pv.variation_name, pv.image_url, ps.size_name
+                      p.title, pv.variation_name, pv.image_url, pc.configuration_name
                FROM order_items oi
                JOIN products p ON oi.product_id=p.id
                JOIN product_variations pv ON oi.variation_id=pv.id
-               JOIN product_sizes ps ON oi.size_id=ps.id
+               JOIN product_configurations pc ON oi.configuration_id=pc.id
                WHERE oi.order_id=%s""",
             (o["id"],)
         )
@@ -1803,12 +1850,12 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
             "updated_at":      o["updated_at"].isoformat() if o["updated_at"] else None,
             "items": [
                 {
-                    "title":          it["title"],
-                    "variation_name": it["variation_name"],
-                    "size_name":      it["size_name"],
-                    "image_url":      it["image_url"],
-                    "quantity":       it["quantity"],
-                    "price":          float(it["price"]),
+                    "title":              it["title"],
+                    "variation_name":     it["variation_name"],
+                    "configuration_name": it["configuration_name"],
+                    "image_url":          it["image_url"],
+                    "quantity":           it["quantity"],
+                    "price":              float(it["price"]),
                 }
                 for it in items
             ],
@@ -1817,7 +1864,7 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
 
 
 # ============================================
-# РўР Р•РљРРќР“ (РІРѕСЂРѕРЅРєР° РїСЂРѕРґР°Р¶)
+# ТРЕКИНГ (воронка продаж)
 # ============================================
 
 @app.post("/{api_key}/track/visit")

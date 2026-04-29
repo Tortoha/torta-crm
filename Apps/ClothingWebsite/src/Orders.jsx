@@ -129,7 +129,7 @@ function Orders() {
                           <div className="os-item-info">
                             <span className="os-item-name">{item.title}</span>
                             <span className="os-item-meta">
-                              {item.variation_name} · {item.size_name}
+                              {item.variation_name} · {item.configuration_name}
                             </span>
                           </div>
                           <span className="os-item-qty">×{item.quantity}</span>

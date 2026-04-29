@@ -16,8 +16,8 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
             <Link to={`/product/${item.product_hash}`} className="cart-item-title-link">
               <h2 className="cart-item-title">{item.title}</h2>
             </Link>
-            <p className="cart-item-description">{item.description}</p>
-            <p className="cart-item-size">{item.size_name}</p>
+            <p className="cart-item-subtitle">{item.subtitle}</p>
+            <p className="cart-item-size">{item.configuration_name}</p>
           </div>
           <div className="cart-item-price">${item.price}</div>
         </div>

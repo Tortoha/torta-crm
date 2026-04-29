@@ -7,6 +7,19 @@ import './Style/Load.css';
 import { API_BASE } from './api.js';
 import { decodeHash } from './Utils/hashids.js';
 
+/**
+ * Top-level layout for the product detail pages (`/product/:productHash`).
+ * Same chrome as the project Layout (Header + Sidebar + main scroll area),
+ * but the project context is resolved server-side from the product id rather
+ * than being read from the URL.
+ *
+ * Sidebar.jsx detects the `/product/:hash` URL pattern on its own and swaps
+ * its nav from project sections → flat product nav (Overview / Reviews / API).
+ *
+ * Children pages get `{ projectId, project, setProductContext }` from
+ * `useOutletContext()`. `setProductContext` is what they use to surface the
+ * product name in the breadcrumb (Header reads it via the `productContext` prop).
+ */
 function ProductLayout() {
   const { productHash } = useParams();
   const [user,    setUser]    = useState(null);
@@ -15,6 +28,7 @@ function ProductLayout() {
   const navigate = useNavigate();
 
   const [productContext, setProductContext] = useState(null);
+  // Stable callback so children can pass it down without re-firing effects.
   const handleSetProductContext = useCallback((ctx) => setProductContext(ctx), []);
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -59,6 +73,8 @@ function ProductLayout() {
     </div>
   );
 
+  if (!project) return null;
+
   const sidebarVar = sidebarOpen ? 'var(--sidebar-w)' : 'var(--sidebar-w-collapsed)';
 
   return (
@@ -68,7 +84,11 @@ function ProductLayout() {
         <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} />
         <main className="crm-main">
           <div className="crm-content crm-content--wide">
-            <Outlet context={{ projectId: project.id, project, setProductContext: handleSetProductContext }} />
+            <Outlet context={{
+              projectId: project.id,
+              project,
+              setProductContext: handleSetProductContext,
+            }} />
           </div>
         </main>
       </div>

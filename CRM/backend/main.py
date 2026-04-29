@@ -137,6 +137,27 @@ def s3_delete_url(url: str, prefix: str) -> None:
     if key and key.startswith(prefix):
         s3_delete(key)
 
+def s3_delete_prefix(prefix: str) -> None:
+    """Best-effort: delete every object under `prefix`. Silently ignores S3 errors."""
+    if not prefix:
+        return
+    try:
+        s3 = _s3_client()
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=AWS_S3_BUCKET, Prefix=prefix):
+            objs = page.get("Contents") or []
+            if not objs:
+                continue
+            # delete_objects accepts up to 1000 keys per request
+            for i in range(0, len(objs), 1000):
+                chunk = objs[i:i+1000]
+                s3.delete_objects(
+                    Bucket=AWS_S3_BUCKET,
+                    Delete={"Objects": [{"Key": o["Key"]} for o in chunk], "Quiet": True},
+                )
+    except Exception:
+        pass
+
 app = FastAPI()
 
 # ════════════════════════════════════════════
@@ -487,6 +508,105 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] TIMESTAMPTZ migration failed: {e}")
 
+    # Rename products columns to match what they actually are visually:
+    #   description     → subtitle    (the short tagline shown under title)
+    #   characteristics → description (the long body text)
+    # Idempotent: only runs if old layout is present and new isn't.
+    # Order matters — rename description→subtitle FIRST to free up "description"
+    # name, then characteristics→description.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                 WHERE table_name='products'
+                   AND column_name IN ('description','characteristics','subtitle')
+            """)
+            cols = {r["column_name"] for r in cur.fetchall()}
+            if "subtitle" not in cols and "description" in cols and "characteristics" in cols:
+                cur.execute("ALTER TABLE products RENAME COLUMN description TO subtitle")
+                cur.execute("ALTER TABLE products RENAME COLUMN characteristics TO description")
+                conn.commit()
+                print("[migration] products columns renamed: description→subtitle, characteristics→description")
+    except Exception as e:
+        print(f"[migration] products column rename failed: {e}")
+
+    # ─── Product categories (flat, one-to-many) ───────────────────────────
+    # Each product can belong to ZERO or ONE category (FK with ON DELETE SET NULL —
+    # deleting a category orphans its products by default; explicit "delete with
+    # products" mode in the API actually deletes them. See DELETE /api/categories).
+    # Slug is auto-generated from name on create; UNIQUE per (project_id, slug).
+    # Slug is intentionally NOT updated on rename — keeps storefront URLs stable.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_categories (
+                    id          SERIAL PRIMARY KEY,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    name        VARCHAR(100) NOT NULL,
+                    slug        VARCHAR(120) NOT NULL,
+                    sort_order  INTEGER NOT NULL DEFAULT 0,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_cat_project_name "
+                        "ON product_categories(project_id, LOWER(name))")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_cat_project_slug "
+                        "ON product_categories(project_id, slug)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_cat_project ON product_categories(project_id)")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS "
+                        "category_id INTEGER REFERENCES product_categories(id) ON DELETE SET NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] product_categories failed: {e}")
+
+    # ── Rename size → configuration ─────────────────────────────────────
+    # The old "sizes" wording was clothing-specific. Renamed to "configurations"
+    # to also fit restaurants, services, anything with priced options.
+    # Idempotent: every step checks whether the old or new name exists first.
+    try:
+        with db_cursor() as (conn, cur):
+            def table_exists(name):
+                cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name=%s", (name,))
+                return cur.fetchone() is not None
+
+            def column_exists(table, col):
+                cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (table, col))
+                return cur.fetchone() is not None
+
+            # 1) product_sizes → product_configurations
+            if table_exists("product_sizes") and not table_exists("product_configurations"):
+                cur.execute("ALTER TABLE product_sizes RENAME TO product_configurations")
+
+            # 2) configuration_name (was size_name)
+            if column_exists("product_configurations", "size_name") and not column_exists("product_configurations", "configuration_name"):
+                cur.execute("ALTER TABLE product_configurations RENAME COLUMN size_name TO configuration_name")
+
+            # 3) cart_items.size_id → configuration_id
+            if column_exists("cart_items", "size_id") and not column_exists("cart_items", "configuration_id"):
+                cur.execute("ALTER TABLE cart_items RENAME COLUMN size_id TO configuration_id")
+
+            # 4) order_items.size_id → configuration_id
+            if column_exists("order_items", "size_id") and not column_exists("order_items", "configuration_id"):
+                cur.execute("ALTER TABLE order_items RENAME COLUMN size_id TO configuration_id")
+
+            # 5) product_variations.position — for drag-and-drop ordering
+            need_backfill = not column_exists("product_variations", "position")
+            cur.execute("ALTER TABLE product_variations ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0")
+            # Backfill positions ONCE, right after column creation, before users
+            # have a chance to reorder. Skipping on later startups preserves user choices.
+            if need_backfill:
+                cur.execute("""
+                    UPDATE product_variations pv
+                       SET position = sub.rn - 1
+                      FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY id) AS rn
+                              FROM product_variations) sub
+                     WHERE pv.id = sub.id
+                """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] size→configuration rename failed: {e}")
+
 # ════════════════════════════════════════════
 # DB POOL
 # ════════════════════════════════════════════
@@ -661,18 +781,29 @@ class CreateProjectRequest(BaseModel):
 class RenameProjectRequest(BaseModel):
     name: str
 
+class CreateCategoryRequest(BaseModel):
+    name: str
+
+class UpdateCategoryRequest(BaseModel):
+    name: str
+
+class SetCategoryProductsRequest(BaseModel):
+    product_ids: List[int] = []
+
 class CreateProductRequest(BaseModel):
     title: str
-    description: str = None
-    characteristics: str = None
+    subtitle: str = None        # short tagline shown under title
+    description: str = None     # long body text
+    category_id: Optional[int] = None
     seo_title: str = None
     seo_description: str = None
     seo_keywords: str = None
 
 class UpdateProductRequest(BaseModel):
     title: str = None
+    subtitle: str = None
     description: str = None
-    characteristics: str = None
+    category_id: Optional[int] = None    # pass null to clear, omit to leave unchanged
     seo_title: str = None
     seo_description: str = None
     seo_keywords: str = None
@@ -685,13 +816,18 @@ class UpdateVariationRequest(BaseModel):
     variation_name: str = None
     image_url: str = None
 
-class CreateSizeRequest(BaseModel):
-    size_name: str
+class ReorderVariationsRequest(BaseModel):
+    # New ordering of all variation IDs for a given product. Each id's array
+    # index becomes its `position` column. Drag-and-drop in CRM uses this.
+    variation_ids: List[int]
+
+class CreateConfigurationRequest(BaseModel):
+    configuration_name: str
     price: float
     stock_quantity: int = 0
 
-class UpdateSizeRequest(BaseModel):
-    size_name: str = None
+class UpdateConfigurationRequest(BaseModel):
+    configuration_name: str = None
     price: float = None
     stock_quantity: int = None
 
@@ -1684,7 +1820,7 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
     pid = (project_id,)
     with db_cursor() as (conn, cur):
         # ── Magaz: порядок важен (FK: sizes → variations → products) ──
-        cur.execute("DELETE FROM product_sizes WHERE variation_id IN (SELECT v.id FROM product_variations v JOIN products p ON v.product_id=p.id WHERE p.project_id=%s)", pid)
+        cur.execute("DELETE FROM product_configurations WHERE variation_id IN (SELECT v.id FROM product_variations v JOIN products p ON v.product_id=p.id WHERE p.project_id=%s)", pid)
         cur.execute("DELETE FROM product_variations WHERE product_id IN (SELECT id FROM products WHERE project_id=%s)", pid)
         cur.execute("DELETE FROM product_custom_fields WHERE project_id=%s", pid)
         cur.execute("DELETE FROM product_reviews     WHERE project_id=%s", pid)
@@ -1707,6 +1843,191 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
         cur.execute("DELETE FROM crm_email_domains  WHERE project_id=%s", pid)
         cur.execute("DELETE FROM crm_projects       WHERE id=%s",         pid)
         conn.commit()
+    # Best-effort: nuke the entire project's S3 folder (product images, etc.)
+    s3_delete_prefix(f"projects/{project_id}/")
+    return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# PRODUCT CATEGORIES
+# ════════════════════════════════════════════
+# Flat (no nesting). One product → at most one category.
+# Slug auto-generated from name on create, NOT updated on rename (stable URLs).
+# Three delete modes: keep_products | delete_products | move (?target_id=X)
+
+def _category_slug(cur, project_id: int, name: str) -> str:
+    """Generate a unique slug for a new category in this project.
+    On collision (rare — usually different name → same slug) appends -2, -3, …"""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")[:100] or "category"
+    slug = base
+    n = 1
+    while True:
+        cur.execute("SELECT 1 FROM product_categories WHERE project_id=%s AND slug=%s",
+                    (project_id, slug))
+        if not cur.fetchone():
+            return slug
+        n += 1
+        slug = f"{base}-{n}"
+
+
+@app.get("/api/categories")
+def list_categories(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all("""
+        SELECT c.id, c.name, c.slug, c.created_at,
+               COUNT(p.id) AS products_count
+          FROM product_categories c
+     LEFT JOIN products p ON p.category_id = c.id
+         WHERE c.project_id = %s
+      GROUP BY c.id
+      ORDER BY LOWER(c.name) ASC
+    """, (project_id,))
+    for r in rows:
+        r["created_at"]     = str(r["created_at"])
+        r["products_count"] = int(r["products_count"] or 0)
+    return rows
+
+
+@app.post("/api/categories")
+def create_category(req: CreateCategoryRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    name = sanitize(req.name.strip())
+    if not name:           raise HTTPException(400, "Name is required")
+    if len(name) > 100:    raise HTTPException(400, "Name too long (max 100)")
+    if db_one("SELECT id FROM product_categories WHERE project_id=%s AND LOWER(name)=LOWER(%s)",
+              (project_id, name)):
+        raise HTTPException(409, "Category with this name already exists")
+    with db_cursor() as (conn, cur):
+        slug = _category_slug(cur, project_id, name)
+        cur.execute(
+            "INSERT INTO product_categories (project_id, name, slug) VALUES (%s,%s,%s) "
+            "RETURNING id, name, slug, created_at",
+            (project_id, name, slug),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    return {"id": row["id"], "name": row["name"], "slug": row["slug"],
+            "created_at": str(row["created_at"]), "products_count": 0}
+
+
+@app.patch("/api/categories/{cat_id}")
+def rename_category(cat_id: int, req: UpdateCategoryRequest,
+                    project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    name = sanitize(req.name.strip())
+    if not name:        raise HTTPException(400, "Name is required")
+    if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
+    if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s", (cat_id, project_id)):
+        raise HTTPException(404, "Category not found")
+    if db_one("SELECT id FROM product_categories WHERE project_id=%s AND LOWER(name)=LOWER(%s) AND id != %s",
+              (project_id, name, cat_id)):
+        raise HTTPException(409, "Category with this name already exists")
+    with db_cursor() as (conn, cur):
+        # Slug stays the same — keeps storefront URLs stable across rename.
+        cur.execute("UPDATE product_categories SET name=%s WHERE id=%s", (name, cat_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.put("/api/categories/{cat_id}/products")
+def set_category_products(
+    cat_id: int,
+    req: SetCategoryProductsRequest,
+    project_id: int = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Replaces the set of products belonging to this category.
+    - Products in `product_ids` that aren't in this category get assigned to it
+      (taking them away from any other category they were in).
+    - Products currently in this category but not in `product_ids` get their
+      category cleared (category_id = NULL).
+    """
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
+                  (cat_id, project_id)):
+        raise HTTPException(404, "Category not found")
+    pids = list({int(x) for x in (req.product_ids or [])})
+    with db_cursor() as (conn, cur):
+        # Verify all given products belong to this project (prevents IDOR)
+        if pids:
+            cur.execute("SELECT id FROM products WHERE id = ANY(%s) AND project_id=%s",
+                        (pids, project_id))
+            valid = {r["id"] for r in cur.fetchall()}
+            if len(valid) != len(pids):
+                raise HTTPException(400, "Some product_ids do not belong to this project")
+        # Un-assign products that were in this category but no longer in the list
+        if pids:
+            cur.execute("UPDATE products SET category_id=NULL "
+                        "WHERE category_id=%s AND id != ALL(%s)", (cat_id, pids))
+        else:
+            cur.execute("UPDATE products SET category_id=NULL WHERE category_id=%s", (cat_id,))
+        # Assign the listed products to this category (overrides previous category if any)
+        if pids:
+            cur.execute("UPDATE products SET category_id=%s "
+                        "WHERE id = ANY(%s) AND project_id=%s", (cat_id, pids, project_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/categories/{cat_id}")
+def delete_category(
+    cat_id: int,
+    mode:      str           = Query("keep_products"),
+    target_id: Optional[int] = Query(None),
+    project_id: int          = Query(...),
+    user: dict               = Depends(get_current_user),
+):
+    """Three delete modes:
+        keep_products    — products keep existing, lose their category (FK SET NULL)
+        delete_products  — DELETE all products in this category (cascades to variations,
+                           sizes, reviews, custom_fields, cart_items, favorites, page_views)
+        move             — UPDATE products to target_id, then delete category
+    """
+    require_team_member_or_owner(user, project_id)
+    if mode not in ("keep_products", "delete_products", "move"):
+        raise HTTPException(400, "Invalid mode")
+    if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
+                  (cat_id, project_id)):
+        raise HTTPException(404, "Category not found")
+
+    with db_cursor() as (conn, cur):
+        if mode == "move":
+            if target_id is None:
+                raise HTTPException(400, "target_id is required for move mode")
+            if target_id == cat_id:
+                raise HTTPException(400, "Cannot move products to the same category")
+            cur.execute("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
+                        (target_id, project_id))
+            if not cur.fetchone():
+                raise HTTPException(404, "Target category not found")
+            cur.execute("UPDATE products SET category_id=%s WHERE category_id=%s AND project_id=%s",
+                        (target_id, cat_id, project_id))
+        elif mode == "delete_products":
+            cur.execute("SELECT id FROM products WHERE category_id=%s AND project_id=%s",
+                        (cat_id, project_id))
+            pids = [r["id"] for r in cur.fetchall()]
+            if pids:
+                # Collect S3 image URLs of all variations BEFORE wiping rows
+                cur.execute("SELECT image_url FROM product_variations WHERE product_id = ANY(%s)", (pids,))
+                victim_urls = [r["image_url"] for r in cur.fetchall() if r.get("image_url")]
+                # Manual cascade — schema has no ON DELETE CASCADE on these FKs.
+                # Order matters: leaves first (sizes), then variations, then product itself.
+                cur.execute("DELETE FROM product_configurations WHERE variation_id IN "
+                            "(SELECT id FROM product_variations WHERE product_id = ANY(%s))", (pids,))
+                cur.execute("DELETE FROM product_variations    WHERE product_id = ANY(%s)", (pids,))
+                cur.execute("DELETE FROM product_custom_fields WHERE product_id = ANY(%s)", (pids,))
+                cur.execute("DELETE FROM product_reviews       WHERE product_id = ANY(%s)", (pids,))
+                cur.execute("DELETE FROM cart_items            WHERE product_id = ANY(%s)", (pids,))
+                cur.execute("DELETE FROM favorites             WHERE product_id = ANY(%s)", (pids,))
+                cur.execute("DELETE FROM product_page_views    WHERE product_id = ANY(%s)", (pids,))
+                cur.execute("DELETE FROM products              WHERE id         = ANY(%s)", (pids,))
+                # Best-effort S3 cleanup after DB rows are gone
+                _prefix = f"projects/{project_id}/products/"
+                for _u in victim_urls:
+                    s3_delete_url(_u, _prefix)
+        # keep_products: ON DELETE SET NULL on products.category_id handles it on the next line
+        cur.execute("DELETE FROM product_categories WHERE id=%s", (cat_id,))
+        conn.commit()
     return {"ok": True}
 
 
@@ -1715,24 +2036,49 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
 # ════════════════════════════════════════════
 
 @app.get("/api/products")
-def list_products(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+def list_products(project_id: int = Query(...),
+                  category_id: Optional[int] = Query(None),
+                  uncategorized: bool = Query(False),
+                  include_uncategorized: bool = Query(False),
+                  user: dict = Depends(get_current_user)):
+    """List products in a project. Filter:
+       - ?category_id=N → only that category
+       - ?uncategorized=true → only products with NULL category
+       - ?category_id=N&include_uncategorized=true → that category PLUS uncategorized
+         (used by the category-edit modal so users can attach orphans without losing
+         the products that already belong to the category they're editing)
+       - neither → all products
+    """
     require_team_member_or_owner(user, project_id)
-    rows = db_all(
-        "SELECT p.id, p.title,"
+    where  = ["p.project_id=%s"]
+    params = [project_id]
+    if uncategorized:
+        where.append("p.category_id IS NULL")
+    elif category_id is not None:
+        if include_uncategorized:
+            where.append("(p.category_id=%s OR p.category_id IS NULL)")
+        else:
+            where.append("p.category_id=%s")
+        params.append(category_id)
+    sql = (
+        "SELECT p.id, p.title, p.category_id, c.name AS category_name, c.slug AS category_slug,"
         " COUNT(DISTINCT v.id) AS variations_count,"
         " COALESCE(SUM(ps.stock_quantity),0) AS total_stock,"
         " COALESCE(MIN(ps.price),0) AS min_price,"
         " COALESCE(MAX(ps.price),0) AS max_price,"
         " COALESCE(AVG(pr.rating),0) AS avg_rating,"
         " COUNT(DISTINCT pr.id) AS reviews_count,"
-        " (SELECT image_url FROM product_variations WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image"
+        " (SELECT image_url FROM product_variations WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image,"
+        " (SELECT COALESCE(json_agg(json_build_object('id', pv2.id, 'name', pv2.variation_name, 'image_url', pv2.image_url) ORDER BY pv2.id), '[]'::json)"
+        "  FROM product_variations pv2 WHERE pv2.product_id=p.id) AS variations"
         " FROM products p"
+        " LEFT JOIN product_categories c ON c.id=p.category_id"
         " LEFT JOIN product_variations v ON v.product_id=p.id"
-        " LEFT JOIN product_sizes ps ON ps.product_id=p.id"
+        " LEFT JOIN product_configurations ps ON ps.product_id=p.id"
         " LEFT JOIN product_reviews pr ON pr.product_id=p.id"
-        " WHERE p.project_id=%s GROUP BY p.id ORDER BY p.id DESC",
-        (project_id,)
+        f" WHERE {' AND '.join(where)} GROUP BY p.id, c.name, c.slug ORDER BY p.id DESC"
     )
+    rows = db_all(sql, tuple(params))
     for r in rows:
         r["avg_rating"]  = round(float(r["avg_rating"] or 0), 1)
         r["min_price"]   = float(r["min_price"] or 0)
@@ -1746,10 +2092,17 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
     require_team_member_or_owner(user, project_id)
     name = request.title.strip()
     if not name: raise HTTPException(400, "Title is required")
+    # Verify category belongs to this project (prevents IDOR)
+    if request.category_id is not None:
+        if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
+                      (request.category_id, project_id)):
+            raise HTTPException(400, "Category does not belong to this project")
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO products (project_id,title,description,characteristics,seo_title,seo_description,seo_keywords) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-            (project_id, sanitize(name), sanitize(request.description), sanitize(request.characteristics),
+            "INSERT INTO products (project_id,title,subtitle,description,category_id,seo_title,seo_description,seo_keywords) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (project_id, sanitize(name), sanitize(request.subtitle), sanitize(request.description),
+             request.category_id,
              sanitize(request.seo_title), sanitize(request.seo_description), sanitize(request.seo_keywords))
         )
         new_id = cur.fetchone()["id"]
@@ -1791,24 +2144,27 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
     if not p: raise HTTPException(404, "Product not found")
 
     variations = db_all(
-        "SELECT id, variation_name, image_url FROM product_variations WHERE product_id=%s ORDER BY id ASC",
+        # Position-first ordering so drag-and-drop in CRM is honoured.
+        # Tie-break by id so newly-created rows (default position=0) keep stable order.
+        "SELECT id, variation_name, image_url, position FROM product_variations"
+        " WHERE product_id=%s ORDER BY position ASC, id ASC",
         (product_id,)
     )
     var_ids = [v["id"] for v in variations]
-    sizes   = []
+    configurations = []
     if var_ids:
-        fmt   = ",".join(["%s"] * len(var_ids))
-        sizes = db_all(
-            "SELECT id,variation_id,size_name,price,stock_quantity,sold_quantity"
-            " FROM product_sizes WHERE variation_id IN (" + fmt + ") ORDER BY id ASC",
+        fmt = ",".join(["%s"] * len(var_ids))
+        configurations = db_all(
+            "SELECT id,variation_id,configuration_name,price,stock_quantity,sold_quantity"
+            " FROM product_configurations WHERE variation_id IN (" + fmt + ") ORDER BY id ASC",
             tuple(var_ids)
         )
-    sizes_by_var = {}
-    for s in sizes:
-        s["price"] = float(s["price"])
-        sizes_by_var.setdefault(s["variation_id"], []).append(s)
+    cfg_by_var = {}
+    for c in configurations:
+        c["price"] = float(c["price"])
+        cfg_by_var.setdefault(c["variation_id"], []).append(c)
     for v in variations:
-        v["sizes"] = sizes_by_var.get(v["id"], [])
+        v["configurations"] = cfg_by_var.get(v["id"], [])
 
     custom_fields = db_all(
         "SELECT field_key,field_value,field_type,is_global FROM product_custom_fields"
@@ -1827,10 +2183,17 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
     for r in reviews:
         r["created_at"] = str(r["created_at"])
 
+    cat_row = None
+    if p.get("category_id"):
+        cat_row = db_one("SELECT id, name, slug FROM product_categories WHERE id=%s", (p["category_id"],))
+
     return {
         "id": p["id"], "title": p["title"],
-        "description":    p["description"]     or "",
-        "characteristics":p["characteristics"] or "",
+        "subtitle":       p["subtitle"]         or "",
+        "description":    p["description"]      or "",
+        "category_id":    p.get("category_id"),
+        "category_name":  cat_row["name"] if cat_row else None,
+        "category_slug":  cat_row["slug"] if cat_row else None,
         "seo_title":      p["seo_title"]        or "",
         "seo_description":p["seo_description"]  or "",
         "seo_keywords":   p["seo_keywords"]     or "",
@@ -1845,11 +2208,18 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
         raise HTTPException(404, "Product not found")
     fields = []; vals = []
     if request.title           is not None: fields.append("title=%s");           vals.append(request.title.strip())
+    if request.subtitle        is not None: fields.append("subtitle=%s");        vals.append(request.subtitle)
     if request.description     is not None: fields.append("description=%s");     vals.append(request.description)
-    if request.characteristics is not None: fields.append("characteristics=%s"); vals.append(request.characteristics)
     if request.seo_title       is not None: fields.append("seo_title=%s");       vals.append(request.seo_title)
     if request.seo_description is not None: fields.append("seo_description=%s"); vals.append(request.seo_description)
     if request.seo_keywords    is not None: fields.append("seo_keywords=%s");    vals.append(request.seo_keywords)
+    # category_id supports explicit null (clear) — check via Pydantic v2 fields_set
+    if "category_id" in request.model_fields_set:
+        if request.category_id is not None:
+            if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
+                          (request.category_id, project_id)):
+                raise HTTPException(400, "Category does not belong to this project")
+        fields.append("category_id=%s"); vals.append(request.category_id)
     if not fields: return {"ok": True}
     vals.extend([product_id, project_id])
     with db_cursor() as (conn, cur):
@@ -1863,13 +2233,21 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
+    # Collect S3 image URLs of all variations BEFORE deleting DB rows
+    image_rows = db_all("SELECT image_url FROM product_variations WHERE product_id=%s", (product_id,))
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_sizes WHERE variation_id IN (SELECT id FROM product_variations WHERE product_id=%s)", (product_id,))
+        cur.execute("DELETE FROM product_configurations WHERE variation_id IN (SELECT id FROM product_variations WHERE product_id=%s)", (product_id,))
         cur.execute("DELETE FROM product_variations WHERE product_id=%s",              (product_id,))
         cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s",           (product_id,))
         cur.execute("DELETE FROM product_reviews WHERE product_id=%s AND project_id=%s", (product_id, project_id))
         cur.execute("DELETE FROM products WHERE id=%s AND project_id=%s",              (product_id, project_id))
         conn.commit()
+    # Best-effort S3 cleanup (don't fail the request if S3 errors out)
+    prefix = f"projects/{project_id}/products/"
+    for r in image_rows:
+        url = (r or {}).get("image_url")
+        if url:
+            s3_delete_url(url, prefix)
     return {"ok": True}
 
 
@@ -1885,11 +2263,42 @@ def create_variation(product_id: int, request: CreateVariationRequest, project_i
     name = request.variation_name.strip()
     if not name: raise HTTPException(400, "Variation name is required")
     with db_cursor() as (conn, cur):
-        cur.execute("INSERT INTO product_variations (product_id,variation_name,image_url) VALUES(%s,%s,%s) RETURNING id",
-                    (product_id, sanitize(name), request.image_url))
+        # Append at the end of the existing order — next position is max+1.
+        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM product_variations WHERE product_id=%s", (product_id,))
+        next_pos = cur.fetchone()["next_pos"]
+        cur.execute("INSERT INTO product_variations (product_id,variation_name,image_url,position) VALUES(%s,%s,%s,%s) RETURNING id",
+                    (product_id, sanitize(name), request.image_url, next_pos))
         new_id = cur.fetchone()["id"]
         conn.commit()
-        return {"id": new_id, "variation_name": name, "image_url": request.image_url, "sizes": []}
+        return {"id": new_id, "variation_name": name, "image_url": request.image_url,
+                "position": next_pos, "configurations": []}
+
+
+@app.put("/api/products/{product_id}/variations/reorder")
+def reorder_variations(
+    product_id: int,
+    req: ReorderVariationsRequest,
+    project_id: int = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Apply a new order to all variations of a product. Each id's index in
+    the array becomes its `position`. Validates that the supplied set matches
+    exactly the variations actually attached to the product (prevents IDOR
+    and partial reorders that would leave dangling positions)."""
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    pids = list(req.variation_ids or [])
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT id FROM product_variations WHERE product_id=%s", (product_id,))
+        existing = {r["id"] for r in cur.fetchall()}
+        if set(pids) != existing:
+            raise HTTPException(400, "variation_ids must contain exactly the variations of this product")
+        for idx, vid in enumerate(pids):
+            cur.execute("UPDATE product_variations SET position=%s WHERE id=%s AND product_id=%s",
+                        (idx, vid, product_id))
+        conn.commit()
+    return {"ok": True}
 
 
 @app.put("/api/products/{product_id}/variations/{var_id}")
@@ -1897,7 +2306,8 @@ def update_variation(product_id: int, var_id: int, request: UpdateVariationReque
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    if not db_one("SELECT id FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id)):
+    cur_row = db_one("SELECT image_url FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id))
+    if not cur_row:
         raise HTTPException(404, "Variation not found")
     fields = []; vals = []
     if request.variation_name is not None: fields.append("variation_name=%s"); vals.append(request.variation_name.strip())
@@ -1907,6 +2317,11 @@ def update_variation(product_id: int, var_id: int, request: UpdateVariationReque
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE product_variations SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
+    # If image_url was changed to something different, delete the old S3 object
+    if request.image_url is not None:
+        old_url = cur_row.get("image_url") or ""
+        if old_url and old_url != request.image_url:
+            s3_delete_url(old_url, f"projects/{project_id}/products/")
     return {"ok": True}
 
 
@@ -1915,61 +2330,69 @@ def delete_variation(product_id: int, var_id: int, project_id: int = Query(...),
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
+    old = db_one("SELECT image_url FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id))
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_sizes WHERE variation_id=%s", (var_id,))
+        cur.execute("DELETE FROM product_configurations WHERE variation_id=%s", (var_id,))
         cur.execute("DELETE FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id))
         conn.commit()
+    if old and old.get("image_url"):
+        s3_delete_url(old["image_url"], f"projects/{project_id}/products/")
     return {"ok": True}
 
 
 # ════════════════════════════════════════════
-# SIZES
+# CONFIGURATIONS (priced options of a variation: sizes / portions / capacity / etc.)
 # ════════════════════════════════════════════
 
-@app.post("/api/products/{product_id}/variations/{var_id}/sizes")
-def create_size(product_id: int, var_id: int, request: CreateSizeRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+@app.post("/api/products/{product_id}/variations/{var_id}/configurations")
+def create_configuration(product_id: int, var_id: int, request: CreateConfigurationRequest,
+                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     if not db_one("SELECT id FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id)):
         raise HTTPException(404, "Variation not found")
-    name = request.size_name.strip()
-    if not name: raise HTTPException(400, "Size name is required")
+    name = request.configuration_name.strip()
+    if not name: raise HTTPException(400, "Configuration name is required")
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO product_sizes (product_id,variation_id,size_name,price,stock_quantity) VALUES(%s,%s,%s,%s,%s) RETURNING id",
+            "INSERT INTO product_configurations (product_id,variation_id,configuration_name,price,stock_quantity) "
+            "VALUES(%s,%s,%s,%s,%s) RETURNING id",
             (product_id, var_id, name, request.price, request.stock_quantity)
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
-        return {"id": new_id, "variation_id": var_id, "size_name": name,
+        return {"id": new_id, "variation_id": var_id, "configuration_name": name,
                 "price": request.price, "stock_quantity": request.stock_quantity, "sold_quantity": 0}
 
 
-@app.put("/api/products/{product_id}/variations/{var_id}/sizes/{size_id}")
-def update_size(product_id: int, var_id: int, size_id: int, request: UpdateSizeRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+@app.put("/api/products/{product_id}/variations/{var_id}/configurations/{cfg_id}")
+def update_configuration(product_id: int, var_id: int, cfg_id: int, request: UpdateConfigurationRequest,
+                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     fields = []; vals = []
-    if request.size_name      is not None: fields.append("size_name=%s");      vals.append(request.size_name.strip())
-    if request.price          is not None: fields.append("price=%s");          vals.append(request.price)
-    if request.stock_quantity is not None: fields.append("stock_quantity=%s"); vals.append(request.stock_quantity)
+    if request.configuration_name is not None: fields.append("configuration_name=%s"); vals.append(request.configuration_name.strip())
+    if request.price              is not None: fields.append("price=%s");              vals.append(request.price)
+    if request.stock_quantity     is not None: fields.append("stock_quantity=%s");     vals.append(request.stock_quantity)
     if not fields: return {"ok": True}
-    vals.extend([size_id, var_id])
+    vals.extend([cfg_id, var_id])
     with db_cursor() as (conn, cur):
-        cur.execute("UPDATE product_sizes SET " + ", ".join(fields) + " WHERE id=%s AND variation_id=%s", vals)
+        cur.execute("UPDATE product_configurations SET " + ", ".join(fields) +
+                    " WHERE id=%s AND variation_id=%s", vals)
         conn.commit()
     return {"ok": True}
 
 
-@app.delete("/api/products/{product_id}/variations/{var_id}/sizes/{size_id}")
-def delete_size(product_id: int, var_id: int, size_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+@app.delete("/api/products/{product_id}/variations/{var_id}/configurations/{cfg_id}")
+def delete_configuration(product_id: int, var_id: int, cfg_id: int,
+                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_sizes WHERE id=%s AND variation_id=%s", (size_id, var_id))
+        cur.execute("DELETE FROM product_configurations WHERE id=%s AND variation_id=%s", (cfg_id, var_id))
         conn.commit()
     return {"ok": True}
 
@@ -2883,11 +3306,11 @@ def get_order(order_id: int, project_id: int = Query(...),
 
     items = db_all(
         """SELECT oi.quantity, oi.price,
-                  p.title, pv.variation_name, pv.image_url, ps.size_name
+                  p.title, pv.variation_name, pv.image_url, pc.configuration_name
            FROM order_items oi
            JOIN products p ON oi.product_id=p.id
            JOIN product_variations pv ON oi.variation_id=pv.id
-           JOIN product_sizes ps ON oi.size_id=ps.id
+           JOIN product_configurations pc ON oi.configuration_id=pc.id
            WHERE oi.order_id=%s""",
         (order_id,)
     )
@@ -2895,10 +3318,10 @@ def get_order(order_id: int, project_id: int = Query(...),
         **{k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in dict(o).items()},
         "items": [
             {
-                "title":          it["title"],
-                "variation_name": it["variation_name"],
-                "size_name":      it["size_name"],
-                "image_url":      it["image_url"],
+                "title":             it["title"],
+                "variation_name":    it["variation_name"],
+                "configuration_name":it["configuration_name"],
+                "image_url":         it["image_url"],
                 "quantity":       it["quantity"],
                 "price":          float(it["price"]),
             }

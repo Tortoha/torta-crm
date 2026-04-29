@@ -3,7 +3,7 @@ import { NavLink, useLocation, useParams } from 'react-router-dom';
 import {
   House, CurrencyDollar, Tag, LockKey, GearSix,
   CaretDown, ArrowLineLeft, ArrowLineRight,
-  Info, ArrowsLeftRight, MagnifyingGlass, SlidersHorizontal, Star, Code,
+  Cube, ChatCircleText, Code,
   Package, ChatCircleDots, CalendarBlank,
 } from '@phosphor-icons/react';
 
@@ -20,7 +20,7 @@ function buildSections(apiKey) {
       ],
     },
     {
-      id: 'business', label: 'Business',
+      id: 'store', label: 'Business',
       items: [
         { to: `${base}/products`, label: 'Products', Icon: Tag     },
         { to: `${base}/orders`,   label: 'Orders',   Icon: Package },
@@ -40,13 +40,13 @@ function buildSections(apiKey) {
 
 function buildProductItems(productHash) {
   const base = `/product/${productHash}`;
+  // After the product-page redesign the old Info / Variations / SEO /
+  // Custom Fields tabs were merged into a single Product Overview page.
+  // Only Reviews and API Preview remain as separate routes.
   return [
-    { to: base,                    label: 'Info',          Icon: Info,             exact: true },
-    { to: `${base}/variations`,    label: 'Variations',    Icon: ArrowsLeftRight  },
-    { to: `${base}/seo`,           label: 'SEO',           Icon: MagnifyingGlass  },
-    { to: `${base}/custom-fields`, label: 'Custom Fields', Icon: SlidersHorizontal },
-    { to: `${base}/reviews`,       label: 'Reviews',       Icon: Star             },
-    { to: `${base}/api-preview`,   label: 'API Preview',   Icon: Code             },
+    { to: base,                  label: 'Product Overview', Icon: Cube,            exact: true },
+    { to: `${base}/reviews`,     label: 'Reviews',          Icon: ChatCircleText },
+    { to: `${base}/api-preview`, label: 'API Preview',      Icon: Code           },
   ];
 }
 
@@ -197,7 +197,8 @@ export default function Sidebar({ collapsed, onToggle }) {
   const location   = useLocation();
   const { apiKey } = useParams();
 
-  // Detect product page
+  // Detect product detail page so the sidebar swaps its nav from project
+  // sections → flat product nav.
   const productMatch = useMemo(
     () => location.pathname.match(/^\/product\/([^/]+)/),
     [location.pathname]

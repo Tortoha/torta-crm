@@ -1,11 +1,10 @@
 import { useParams } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Header from "./Header";
 import "./Style/Product.css";
 import "./Style/Load.css";
 import StarRating from "./Elements/StarRating";
 import ProductVariations from "./Elements/ProductVariations";
-import ProductSizes from "./Elements/ProductSizes";
 import ProductActions from "./Elements/ProductActions";
 import ReviewMenu from "./Elements/ReviewMenu";
 import ReviewsList from "./Elements/ReviewsList";
@@ -28,7 +27,7 @@ function Product() {
             setPage(data);
             if (!silent) {
                 setActiveVariation(data.initial_variation_index || 0);
-                setActiveSize(data.initial_size_id ? { id: data.initial_size_id } : null);
+                setActiveConfiguration(data.initial_configuration_id ? { id: data.initial_configuration_id } : null);
                 client.track.productView(data.id);
             }
         } catch (e) {
@@ -46,20 +45,20 @@ function Product() {
 
     const handleVariationClick = (index) => {
         setActiveVariation(index);
-        const sizes = page.variations?.[index]?.sizes || [];
-        const same = sizes.find(s => s.id === activeSize?.id);
-        const pick = same || sizes[0];
-        setActiveSize(pick ? { id: pick.id, name: pick.size_name } : null);
+        const configurations = page.variations?.[index]?.configurations || [];
+        const same = configurations.find(c => c.id === activeConfiguration?.id);
+        const pick = same || configurations[0];
+        setActiveConfiguration(pick ? { id: pick.id, name: pick.configuration_name } : null);
     };
 
     const handleToggleCart = async () => {
         if (!page.is_authenticated) { window.location.href = "/login"; return; }
-        if (!currentVariation || !currentSize) return;
+        if (!currentVariation || !currentConfiguration) return;
         setAddingToCart(true);
-        if (currentSize.cart_item_id) {
-            await client.cart.remove(currentSize.cart_item_id);
+        if (currentConfiguration.cart_item_id) {
+            await client.cart.remove(currentConfiguration.cart_item_id);
         } else {
-            await client.cart.add(page.id, currentVariation.id, currentSize.id, 1);
+            await client.cart.add(page.id, currentVariation.id, currentConfiguration.id, 1);
         }
         notifyCartUpdate();
         await loadPage(true);
@@ -67,8 +66,8 @@ function Product() {
     };
 
     const handleUpdateQuantity = async (newQuantity) => {
-        if (!currentSize?.cart_item_id || newQuantity < 1 || newQuantity > maxStock) return;
-        await client.cart.update(currentSize.cart_item_id, newQuantity);
+        if (!currentConfiguration?.cart_item_id || newQuantity < 1 || newQuantity > maxStock) return;
+        await client.cart.update(currentConfiguration.cart_item_id, newQuantity);
         notifyCartUpdate();
         loadPage(true);
     };
@@ -85,9 +84,31 @@ function Product() {
 
     // VISUAL STATE
     const [activeVariation, setActiveVariation] = useState(0);
-    const [activeSize, setActiveSize] = useState(null);
+    const [activeConfiguration, setActiveConfiguration] = useState(null);
     const [hoveredVariation, setHoveredVariation] = useState(null);
-    const [hoveredSize, setHoveredSize] = useState(null);
+    const [hoveredConfiguration, setHoveredConfiguration] = useState(null);
+
+    // Sliding indicator that follows the active/hovered configuration button.
+    // (Inlined here instead of a separate <ProductConfigurations> component —
+    //  one tiny picker doesn't deserve its own file.)
+    const cfgRefs = useRef([]);
+    const [cfgIndicatorStyle, setCfgIndicatorStyle] = useState({ transform: 'translateX(0px)', width: '64px' });
+
+    // Recalculate the indicator position whenever the user hovers a different
+    // button, picks a different configuration, or switches variation (which
+    // swaps the whole list of buttons).
+    useEffect(() => {
+        const cfgs = page?.variations?.[activeVariation]?.configurations || [];
+        const activeIdx = cfgs.findIndex(c => c.id === activeConfiguration?.id);
+        const idx = hoveredConfiguration !== null ? hoveredConfiguration : (activeIdx >= 0 ? activeIdx : 0);
+        const btn = cfgRefs.current[idx];
+        if (btn) {
+            setCfgIndicatorStyle({
+                transform: `translateX(${btn.offsetLeft}px)`,
+                width: `${btn.offsetWidth}px`,
+            });
+        }
+    }, [hoveredConfiguration, activeConfiguration?.id, activeVariation, page]);
 
     // LOADING / NOT FOUND
     if (loading) return (
@@ -107,12 +128,12 @@ function Product() {
 
     // VISUAL DERIVED DATA
     const currentVariation = page.variations?.[activeVariation] || null;
-    const currentSize = currentVariation?.sizes?.find(s => s.id === activeSize?.id) || null;
-    const isInCart = !!currentSize?.cart_item_id;
-    const cartQuantity = currentSize?.cart_quantity || 1;
-    const maxStock = currentSize?.stock_quantity || 0;
-    const currentPrice = currentSize?.price || 0;
-    const activeSizeIndex = currentVariation?.sizes?.findIndex(s => s.id === activeSize?.id) ?? 0;
+    const currentConfiguration = currentVariation?.configurations?.find(c => c.id === activeConfiguration?.id) || null;
+    const isInCart = !!currentConfiguration?.cart_item_id;
+    const cartQuantity = currentConfiguration?.cart_quantity || 1;
+    const maxStock = currentConfiguration?.stock_quantity || 0;
+    const currentPrice = currentConfiguration?.price || 0;
+    const activeConfigurationIndex = currentVariation?.configurations?.findIndex(c => c.id === activeConfiguration?.id) ?? 0;
 
     return (
         <>
@@ -126,7 +147,7 @@ function Product() {
 
                 <div className="product-info">
                     <h1 className="product-title">{page.title}</h1>
-                    <p className="product-description">{page.description}</p>
+                    <p className="product-subtitle">{page.subtitle}</p>
                     <h2 className="product-price">${currentPrice}</h2>
 
                     <ProductVariations
@@ -140,17 +161,32 @@ function Product() {
                         }
                     />
 
-                    <ProductSizes
-                        sizes={currentVariation?.sizes}
-                        activeSize={activeSize}
-                        hoveredIndex={hoveredSize}
-                        activeSizeIndex={activeSizeIndex}
-                        onSizeClick={(sizeId, sizeName) => setActiveSize({ id: sizeId, name: sizeName })}
-                        onSizeHover={setHoveredSize}
-                        isSizeInCart={(sizeId) =>
-                            currentVariation?.sizes?.some(s => s.id === sizeId && s.is_in_cart) || false
-                        }
-                    />
+                    {/* ── Configurations picker (S / M / L · 30cm / 40cm · …) ── */}
+                    {currentVariation?.configurations?.length > 0 && (
+                        <div className="product-sizes">
+                            <div className="sizes-wrapper">
+                                <div className="size-indicator" style={cfgIndicatorStyle} />
+                                {currentVariation.configurations.map((c, index) => {
+                                    const underIndicator = index === (
+                                        hoveredConfiguration !== null ? hoveredConfiguration : activeConfigurationIndex
+                                    );
+                                    return (
+                                        <button
+                                            key={c.id}
+                                            ref={el => (cfgRefs.current[index] = el)}
+                                            className={`size-item ${underIndicator ? 'size-item--white' : ''}`}
+                                            onClick={() => setActiveConfiguration({ id: c.id, name: c.configuration_name })}
+                                            onMouseEnter={() => setHoveredConfiguration(index)}
+                                            onMouseLeave={() => setHoveredConfiguration(null)}
+                                        >
+                                            {c.configuration_name}
+                                            {c.is_in_cart && <div className="cart-indicator-dot" />}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
 
                     <ProductActions
                         isInCart={isInCart}
@@ -163,8 +199,8 @@ function Product() {
                         onToggleFavorite={handleToggleFavorite}
                     />
 
-                    <div className="product-characteristics">
-                        <p>{page.characteristics}</p>
+                    <div className="product-description">
+                        <p>{page.description}</p>
                     </div>
 
                     <section className="product-reviews">

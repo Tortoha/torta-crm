@@ -297,7 +297,7 @@ function Checkout() {
                   <img src={item.image_url} alt={item.title} className="checkout-item-img" />
                   <div className="checkout-item-info">
                     <span className="checkout-item-name">{item.title}</span>
-                    <span className="checkout-item-meta">{item.variation_name} · {item.size_name}</span>
+                    <span className="checkout-item-meta">{item.variation_name} · {item.configuration_name}</span>
                     <span className="checkout-item-qty">×{item.quantity}</span>
                   </div>
                   <span className="checkout-item-price">${fmt(item.item_total ?? item.price)}</span>

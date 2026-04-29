@@ -298,14 +298,35 @@ export function createClient(baseUrl, publishableKey) {
 
     // ── Products ─────────────────────────────────────────────────────────────
     products: {
-      /** List all products (public endpoint). */
-      async list() {
-        return req("GET", "/products");
+      /**
+       * List products. Optional filter:
+       *   list({ category: 'trousers' })   — only products in this category (by slug)
+       *   list({ uncategorized: true })    — only products with no category
+       *   list()                           — all products
+       */
+      async list(opts = {}) {
+        const params = new URLSearchParams();
+        if (opts.category)      params.set('category', opts.category);
+        if (opts.uncategorized) params.set('uncategorized', 'true');
+        const qs = params.toString();
+        return req("GET", `/products${qs ? '?' + qs : ''}`);
       },
 
       /** Get full product page by hash id. */
       async get(id) {
         return req("GET", `/product/${id}`);
+      },
+    },
+
+    // ── Categories ───────────────────────────────────────────────────────────
+    categories: {
+      /**
+       * List all product categories (with products_count).
+       * Returns: [{ id, name, slug, products_count }, ...]
+       * Use the slug in `client.products.list({ category: slug })`.
+       */
+      async list() {
+        return req("GET", "/categories");
       },
     },
 
@@ -317,8 +338,8 @@ export function createClient(baseUrl, publishableKey) {
       },
 
       /** Add item to cart. */
-      async add(product_id, variation_id, size_id, quantity = 1) {
-        return req("POST", "/cart/add", { product_id, variation_id, size_id, quantity });
+      async add(product_id, variation_id, configuration_id, quantity = 1) {
+        return req("POST", "/cart/add", { product_id, variation_id, configuration_id, quantity });
       },
 
       /** Update quantity of a cart item. */
