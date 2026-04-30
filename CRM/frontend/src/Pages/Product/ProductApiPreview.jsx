@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useOutletContext, useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Code } from '@phosphor-icons/react';
+import { useOutletContext, useParams } from 'react-router-dom';
 import { API_BASE } from '../../api.js';
 import { decodeHash } from '../../Utils/hashids.js';
 import '../../Style/Products.css';
@@ -8,7 +7,6 @@ import '../../Style/Products.css';
 export default function ProductApiPreview() {
   const { projectId, setProductContext } = useOutletContext();
   const { productHash } = useParams();
-  const navigate = useNavigate();
   const productId = decodeHash(productHash);
   const pq = `?project_id=${projectId}`;
 
@@ -27,7 +25,6 @@ export default function ProductApiPreview() {
     return () => setProductContext?.(null);
   }, [productId, projectId, productHash]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Mirror External API response shape (after the size→configuration rename)
   const buildPreview = () => {
     if (!product) return null;
     return {
@@ -70,16 +67,9 @@ export default function ProductApiPreview() {
 
   return (
     <div className="prod-page po-page">
-      <div className="po-header">
-        <button className="po-back-btn" type="button" title="Back to product"
-          onClick={() => navigate(`/product/${productHash}`)}>
-          <ArrowLeft className="po-back-icon" />
-        </button>
-        <div className="po-title-icon"><Code weight="duotone" /></div>
-        <h1 className="crm-page-title po-title">
-          API Preview{product ? ` · ${product.title}` : ''}
-        </h1>
-      </div>
+      <h1 className="crm-page-title">
+        API Preview{product ? ` · ${product.title}` : ''}
+      </h1>
 
       <section className="po-block">
         <p className="po-block-hint">

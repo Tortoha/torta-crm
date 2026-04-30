@@ -16,10 +16,6 @@
   position: relative;
 }
 
-.crm-page-title {
-  padding-top: 70px;
-}
-
 .prod-toolbar--shrink {
   margin-right: calc(520px + 16px);
   transition: margin-right 0.48s var(--ease-smooth);
@@ -52,6 +48,7 @@
 .prod-card.org-card {
   border-radius: 16px !important;
   overflow: hidden;
+  background-color: #ffffff;
 }
 
 .prod-card .org-card-gloss {
@@ -2024,22 +2021,8 @@ select.prod-field-input {
   min-width: 0;
 }
 
-/* ══════════════════════════════════════════════════════════════════
-   PRODUCT OVERVIEW PAGE  (/project/:apiKey/products/:productHash)
-   New 4-block design (General / Variations / Custom Fields / SEO)
-   that replaced the old 6-tab ProductPage. Reuses .crm-input,
-   .crm-submit-btn, .auth-modal* and friends — see CLAUDE.md.
-   ══════════════════════════════════════════════════════════════════ */
-
 .po-page {
   position: relative;
-}
-
-/* The page-level title needs less top padding because the page header sits
-   right under the fixed CRM header — same trick as Authentication page. */
-.po-page .crm-page-title {
-  padding-top: 0;
-  margin: 0;
 }
 
 /* ─── Page header (back arrow / icon / title / Reviews+API buttons) ── */
@@ -2142,21 +2125,32 @@ select.prod-field-input {
 
 /* ─── Block (the 4 sections) ───────────────────────────────────────── */
 .po-block {
-  margin-bottom: 24px;
+  padding-top: 24px;
+  padding-bottom: 12px;
 }
 
 .po-block-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 0 0 12px;
+  padding-bottom: 8px;
 }
 
 .po-block-title {
   margin: 0 0 12px 0;
   color: var(--text);
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 500;
+  padding-top: 24px;
+}
+
+.crm-page-title1 {
+  margin: 0;
+  padding-top: 0px;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.2;
 }
 
 .po-block-head .po-block-title {
@@ -2164,7 +2158,7 @@ select.prod-field-input {
 }
 
 .po-block-hint {
-  margin: -4px 0 12px;
+  margin-top: 2px;
   color: var(--muted);
   font-size: 12px;
 }
@@ -2176,6 +2170,52 @@ select.prod-field-input {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.po-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.po-form .crm-input {
+  background: #fff;
+  border-radius: 999px;
+  font-size: 14px;
+}
+
+.po-form .crm-input:focus {
+  border-color: var(--card);
+  box-shadow: var(--box-shadow);
+  outline: none;
+}
+
+.po-form textarea.crm-input,
+.po-form .po-textarea {
+  border-radius: 16px !important;
+  background: #fff;
+}
+
+.po-page-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.po-page-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-page-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-bottom: 6px;
 }
 
 .po-empty {
@@ -2200,6 +2240,15 @@ select.prod-field-input {
   letter-spacing: 0.01em;
 }
 
+.po-field-label1 {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+  padding: 0 4px;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
 .po-input,
 .po-textarea {
   width: 100%;
@@ -2209,7 +2258,7 @@ select.prod-field-input {
 .po-textarea {
   border-radius: 16px !important;
   /* override pill .crm-input radius for textareas */
-  resize: vertical;
+  resize: none;
   min-height: 80px;
   font-family: inherit;
   line-height: 1.5;
@@ -2560,10 +2609,15 @@ select.prod-field-input {
   max-width: 760px;
 }
 
-.cfg-modal-body {
+.cfg-modal-body,
+.cfg-block-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.cfg-block-body .crm-input {
+  background: #fff;
 }
 
 /* Top row: image (left) + name+hint (right) */
@@ -2780,6 +2834,7 @@ select.prod-field-input {
   margin-top: 4px;
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
    CREATE PRODUCT MODAL  (replaces NewProductDrawer)
    ══════════════════════════════════════════════════════════════════ */
@@ -2812,7 +2867,7 @@ select.prod-field-input {
 
 .cpm-textarea {
   border-radius: 16px !important;
-  resize: vertical;
+  resize: none;
   min-height: 72px;
   font-family: inherit;
   line-height: 1.5;

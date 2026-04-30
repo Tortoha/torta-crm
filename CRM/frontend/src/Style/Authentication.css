@@ -4,14 +4,16 @@
 
 /* ── Sticky tab wrapper ── */
 .auth-tab-wrapper {
-  position: sticky;
-  top: 0;
+  position: fixed;
+  top: 48px;
+  left: var(--current-sidebar-w, var(--sidebar-w));
+  right: 0;
   z-index: 50;
   display: flex;
   justify-content: center;
   padding: 16px 0 8px;
-  background: var(--bg);
   pointer-events: none;
+  transition: 0.5s ease;
 }
 
 /* ── Tab switcher pill ── */
@@ -76,10 +78,6 @@
 
 .auth-tab-btn--active {
   color: var(--accent);
-}
-
-.auth-page .crm-page-title {
-  padding-top: 70px;
 }
 
 .auth-page-subtitle {

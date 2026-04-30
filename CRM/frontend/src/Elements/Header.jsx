@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
+import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
+import { encodeId } from '../Utils/hashids.js';
 import '../Style/Header.css';
 
 /* ── Initials avatar ── */
@@ -440,9 +442,6 @@ function ProductSwitcherCrumb({ project, productContext }) {
   const [loaded,   setLoaded]  = useState(false);
   const [query,    setQuery]   = useState('');
   const [modal,    setModal]   = useState(false);
-  const [title,    setTitle]   = useState('');
-  const [saving,   setSaving]  = useState(false);
-  const [err,      setErr]     = useState('');
   const wrapRef   = useRef(null);
   const searchRef = useRef(null);
   const itemsEl   = useRef(null);
@@ -492,28 +491,13 @@ function ProductSwitcherCrumb({ project, productContext }) {
     setQuery('');
   };
 
-  const openModal  = () => { setOpen(false); setModal(true); setTitle(''); setErr(''); };
-  const closeModal = () => { setModal(false); setTitle(''); setErr(''); };
+  const openModal  = () => { setOpen(false); setModal(true); };
+  const closeModal = () => { setModal(false); };
 
-  const createProduct = async e => {
-    e.preventDefault();
-    if (!title.trim()) return setErr('Title is required');
-    setSaving(true); setErr('');
-    try {
-      const res  = await fetch(`${API_BASE}/api/products?project_id=${project.id}`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setErr(data.detail || 'Error'); return; }
-      closeModal();
-      setLoaded(false); // force reload next open
-      import('../Utils/hashids.js').then(({ encodeId }) => {
-        navigate(`/product/${encodeId(data.id)}`);
-      });
-    } catch { setErr('Network error'); }
-    finally { setSaving(false); }
+  const handleCreated = (data) => {
+    setModal(false);
+    setLoaded(false);
+    navigate(`/product/${encodeId(data.id)}`);
   };
 
   return (
@@ -584,21 +568,11 @@ function ProductSwitcherCrumb({ project, productContext }) {
         </div>
       </div>
 
-      {modal && (
-        <Modal title="New product" onClose={closeModal} maxWidth={400}>
-          <form onSubmit={createProduct}>
-            <div className="hdr-modal-field">
-              <h4 className="hdr-modal-label">Title</h4>
-              <input className="hdr-modal-input" placeholder="Product name" value={title} autoFocus
-                onChange={e => { setTitle(e.target.value); setErr(''); }} maxLength={200} />
-            </div>
-            {err && <span className="hdr-modal-err">{err}</span>}
-            <button className="hdr-modal-submit" type="submit" disabled={saving || !title.trim()}>
-              {saving ? 'Creating…' : 'Create'}
-            </button>
-          </form>
-        </Modal>
-      )}
+      <CreateProductModal
+        open={modal}
+        pq={`?project_id=${project.id}`}
+        onClose={closeModal}
+        onCreated={handleCreated} />
     </>
   );
 }

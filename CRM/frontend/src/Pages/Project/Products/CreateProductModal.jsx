@@ -125,7 +125,7 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
 }
 
 // ─── Custom Category dropdown (replaces native <select>) ──────
-function CpmCategorySelect({ value, categories, onChange }) {
+export function CpmCategorySelect({ value, categories, onChange }) {
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);

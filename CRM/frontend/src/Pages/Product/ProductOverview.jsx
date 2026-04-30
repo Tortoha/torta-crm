@@ -1,29 +1,46 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useOutletContext, useParams, useNavigate } from 'react-router-dom';
+import { useOutletContext, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, Cube, Plus, Trash, Image as ImageIcon, ChatCircleText, Code, DotsSixVertical,
+  Plus, Trash, Image as ImageIcon, DotsThreeOutline, PencilSimple, X, UploadSimple,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { decodeHash } from '../../Utils/hashids.js';
-import ConfigurationModal from './ConfigurationModal.jsx';
+import ConfigurationBlock from './ConfigurationBlock.jsx';
+import { CpmCategorySelect } from '../Project/Products/CreateProductModal.jsx';
+import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import '../../Style/Authentication.css';
+import '../../Style/Organization.css';
 import '../../Style/Products.css';
+
+const VAR_TILT = {
+  maxAngle: 12, lerp: 0.05, lerpOut: 0.07,
+  scale: 1.04, perspective: 750,
+  gloss: { opacity: 0.14, spread: 60 },
+};
 
 
 export default function ProductOverview() {
-  const { project, projectId, setProductContext } = useOutletContext();
+  const { projectId, setProductContext } = useOutletContext();
   const { productHash } = useParams();
-  const navigate = useNavigate();
   const productId = decodeHash(productHash);
   const pq = `?project_id=${projectId}`;
-  const apiKey = project?.api_key;
 
   const [product,  setProduct]  = useState(null);
   const [loading,  setLoading]  = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [toast,    setToast]    = useState('');
+  const [selectedVarId, setSelectedVarId] = useState(null);
   const toastRef = useRef(null);
+
+  // Auto-pick a variation: keep current if it still exists, otherwise pick first.
+  useEffect(() => {
+    const list = product?.variations || [];
+    setSelectedVarId(prev => {
+      if (prev != null && list.find(v => v.id === prev)) return prev;
+      return list[0]?.id ?? null;
+    });
+  }, [product?.variations]);
 
   // Toast auto-dismiss helper — same pattern as the auth-toast we use elsewhere.
   const showToast = useCallback((msg) => {
@@ -46,11 +63,8 @@ export default function ProductOverview() {
       .finally(() => setLoading(false));
   }, [productId, projectId, productHash, pq, setProductContext]);
 
-  // Clean up the breadcrumb on unmount so the header doesn't keep stale state.
   useEffect(() => () => setProductContext?.(null), [setProductContext]);
 
-  // Reload only the variations sub-tree (used after configuration modal closes
-  // and after drag-and-drop reorder). Avoids a full page refresh.
   const reloadProduct = useCallback(async () => {
     const res  = await fetch(`${API_BASE}/api/products/${productId}${pq}`, { credentials: 'include' });
     if (res.ok) setProduct(await res.json());
@@ -61,18 +75,22 @@ export default function ProductOverview() {
 
   return (
     <Shell>
-      <PageHeader
-        product={product}
-        onBack={() => apiKey && navigate(`/project/${apiKey}/products`)}
-        onReviews={() => navigate(`/product/${productHash}/reviews`)}
-        onApi={() => navigate(`/product/${productHash}/api-preview`)} />
+      <h1 className="crm-page-title">{product.title || 'Untitled'}</h1>
 
       <GeneralBlock product={product} pq={pq} setProduct={setProduct}
         setProductContext={setProductContext} productHash={productHash}
         showToast={showToast} />
 
       <VariationsBlock product={product} productId={productId} pq={pq}
+        selectedVarId={selectedVarId} onSelect={setSelectedVarId}
         reloadProduct={reloadProduct} showToast={showToast} />
+
+      {selectedVarId != null && (
+        <ConfigurationBlock
+          productId={productId}
+          pq={pq}
+          variation={product.variations?.find(v => v.id === selectedVarId)} />
+      )}
 
       <CustomFieldsBlock product={product} productId={productId} pq={pq}
         setProduct={setProduct} showToast={showToast} />
@@ -87,44 +105,10 @@ export default function ProductOverview() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Shell — gives every state (loading / not-found / loaded) the same
-// outer wrapper so the page doesn't jump.
-// ─────────────────────────────────────────────────────────────────
 function Shell({ children }) {
   return <div className="prod-page po-page">{children}</div>;
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Page header — back, icon, title, action buttons (Reviews, API)
-// ─────────────────────────────────────────────────────────────────
-function PageHeader({ product, onBack, onReviews, onApi }) {
-  return (
-    <div className="po-header">
-      <button className="po-back-btn" onClick={onBack} type="button" title="Back to Products">
-        <ArrowLeft className="po-back-icon" />
-      </button>
-      <div className="po-title-icon"><Cube weight="duotone" /></div>
-      <h1 className="crm-page-title po-title">{product.title || 'Untitled'}</h1>
-      <div className="po-header-actions">
-        <button className="po-header-btn" onClick={onReviews} type="button" title="Reviews">
-          <ChatCircleText className="po-header-btn-icon" />
-          <span>Reviews</span>
-          <span className="po-header-btn-count">{(product.reviews || []).length}</span>
-        </button>
-        <button className="po-header-btn" onClick={onApi} type="button" title="API Preview">
-          <Code className="po-header-btn-icon" />
-          <span>API</span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────
-// BLOCK 1 — General
-// Auto-save with debounce. Each field has its own debounced effect.
-// ─────────────────────────────────────────────────────────────────
 function GeneralBlock({ product, pq, setProduct, setProductContext, productHash, showToast }) {
   const [title,    setTitle]    = useState(product.title || '');
   const [subtitle, setSubtitle] = useState(product.subtitle || '');
@@ -132,8 +116,6 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
   const [catId,    setCatId]    = useState(product.category_id ?? '');
   const [categories, setCategories] = useState([]);
 
-  // Refs to skip the very first effect run (which would otherwise PUT the
-  // exact same values back to the server immediately on mount).
   const skipTitle    = useRef(true);
   const skipSubtitle = useRef(true);
   const skipDesc     = useRef(true);
@@ -191,8 +173,7 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
 
   return (
     <section className="po-block">
-      <h2 className="po-block-title">General</h2>
-      <div className="po-block-card">
+      <div className="po-form">
         <Field label="Title">
           <input className="crm-input po-input" value={title}
             onChange={e => setTitle(e.target.value)}
@@ -209,11 +190,10 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
             placeholder="Full product description, materials, features…" />
         </Field>
         <Field label="Category">
-          <select className="crm-input crm-input-select po-input" value={catId}
-            onChange={e => setCatId(e.target.value)}>
-            <option value="">— Uncategorized —</option>
-            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <CpmCategorySelect
+            value={catId == null ? '' : String(catId)}
+            categories={categories}
+            onChange={setCatId} />
         </Field>
       </div>
     </section>
@@ -223,23 +203,28 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
 function Field({ label, children }) {
   return (
     <div className="po-field">
-      <label className="po-field-label">{label}</label>
+      <label className="po-field-label1">{label}</label>
       {children}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────
-// BLOCK 2 — Variations (drag-and-drop, click opens ConfigurationModal)
-// ─────────────────────────────────────────────────────────────────
-function VariationsBlock({ product, productId, pq, reloadProduct, showToast }) {
-  // Local copy so drag-and-drop reorders feel instant; persisted via reorder API.
+
+function VariationsBlock({ product, productId, pq, selectedVarId, onSelect, reloadProduct, showToast }) {
   const [vars, setVars] = useState(product.variations || []);
-  const [openVarId, setOpenVarId] = useState(null);
+  const [editVar, setEditVar] = useState(null);
   const dragId = useRef(null);
 
-  // Sync from props whenever the parent fetches fresh data
   useEffect(() => { setVars(product.variations || []); }, [product.variations]);
+
+  const deleteVariation = async (v) => {
+    if (!confirm(`Delete variation "${v.variation_name}" and all its configurations?`)) return;
+    const res = await fetch(`${API_BASE}/api/products/${productId}/variations/${v.id}${pq}`,
+      { method: 'DELETE', credentials: 'include' });
+    if (!res.ok) { showToast('Delete failed'); return; }
+    if (selectedVarId === v.id) onSelect?.(null);
+    reloadProduct();
+  };
 
   const onDragStart = (id) => (e) => {
     dragId.current = id;
@@ -278,7 +263,6 @@ function VariationsBlock({ product, productId, pq, reloadProduct, showToast }) {
   };
 
   const addVariation = async () => {
-    // Simple inline create — modal opens immediately so the user can fill details
     const res = await fetch(`${API_BASE}/api/products/${productId}/variations${pq}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -286,20 +270,20 @@ function VariationsBlock({ product, productId, pq, reloadProduct, showToast }) {
     });
     if (!res.ok) { showToast('Create failed'); return; }
     const created = await res.json();
-    setVars(prev => [...prev, { ...created, configurations: [] }]);
-    setOpenVarId(created.id);
+    await reloadProduct();
+    onSelect?.(created.id);
   };
 
   return (
     <section className="po-block">
       <div className="po-block-head">
-        <h2 className="po-block-title">Variations</h2>
+        <h2 className="crm-page-title1">Variations</h2>
         <button className="po-add-pill" onClick={addVariation} type="button">
           <Plus weight="bold" /> Add variation
         </button>
       </div>
 
-      <div className="po-block-card po-var-grid" onDrop={onDrop} onDragOver={e => e.preventDefault()}>
+      <div className="prod-grid" onDrop={onDrop} onDragOver={e => e.preventDefault()}>
         {vars.length === 0 && (
           <div className="po-empty">
             No variations yet. Click <b>Add variation</b> — colors, sizes, options.
@@ -307,43 +291,228 @@ function VariationsBlock({ product, productId, pq, reloadProduct, showToast }) {
         )}
 
         {vars.map(v => (
-          <div key={v.id}
-            className="po-var-card"
-            draggable
+          <VarCard key={v.id} v={v}
+            selected={v.id === selectedVarId}
+            onOpen={() => onSelect?.(v.id)}
+            onEdit={() => setEditVar(v)}
+            onDelete={() => deleteVariation(v)}
             onDragStart={onDragStart(v.id)}
             onDragEnd={onDragEnd}
-            onDragOver={onDragOver(v.id)}
-            onClick={() => setOpenVarId(v.id)}
-            title="Click to configure">
-            <div className="po-var-handle" title="Drag to reorder">
-              <DotsSixVertical />
-            </div>
-            <div className="po-var-thumb-wrap">
-              {v.image_url
-                ? <img className="po-var-thumb" src={v.image_url} alt={v.variation_name} />
-                : <div className="po-var-thumb-empty"><ImageIcon weight="duotone" /></div>}
-            </div>
-            <div className="po-var-name">{v.variation_name || 'Unnamed'}</div>
-            <div className="po-var-meta">
-              {v.configurations?.length || 0} {(v.configurations?.length || 0) === 1 ? 'config' : 'configs'}
-            </div>
-          </div>
+            onDragOver={onDragOver(v.id)} />
         ))}
       </div>
 
-      {openVarId != null && (
-        <ConfigurationModal
+      {editVar && (
+        <VarEditModal
           productId={productId}
-          variation={vars.find(v => v.id === openVarId)}
+          variation={editVar}
           pq={pq}
-          onClose={() => { setOpenVarId(null); reloadProduct(); }}
-          onDeleted={() => {
-            setVars(prev => prev.filter(v => v.id !== openVarId));
-            setOpenVarId(null);
-          }}
-        />
+          onClose={() => setEditVar(null)}
+          onSaved={() => { setEditVar(null); reloadProduct(); }} />
       )}
     </section>
+  );
+}
+
+function VarCard({ v, selected, onOpen, onEdit, onDelete, onDragStart, onDragEnd, onDragOver }) {
+  const menuBtnRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { ref, glossRef, handlers } = InteractiveSection(VAR_TILT, menuOpen);
+  const cfgCount = v.configurations?.length || 0;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const h = e => {
+      if (!e.target.closest?.('.org-card-dropdown') && !menuBtnRef.current?.contains(e.target))
+        setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', h);
+    return () => document.removeEventListener('pointerdown', h);
+  }, [menuOpen]);
+
+  return (
+    <div ref={ref}
+      className={`org-card org-card--tilt prod-card${selected ? ' prod-card--selected' : ''}`}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onClick={onOpen}
+      title="Click to configure"
+      {...handlers}>
+      <div ref={glossRef} className="org-card-gloss prod-card-gloss" />
+      <div className="pcard-inner">
+        <div className="pcard-img-wrap">
+          {v.image_url
+            ? <img className="pcard-img" src={v.image_url} alt={v.variation_name} />
+            : <div className="pcard-img-empty"><ImageIcon weight="duotone" /></div>}
+        </div>
+        <div className="pcard-body">
+          <div className="pcard-title">{v.variation_name || 'Unnamed'}</div>
+          <div className="pcard-row1">
+            <span className="pcard-stock">
+              {cfgCount} {cfgCount === 1 ? 'config' : 'configs'}
+            </span>
+          </div>
+        </div>
+      </div>
+      <button ref={menuBtnRef} className="org-card-menu-btn pcard-menu-btn" type="button"
+        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+      </button>
+      {menuOpen && (
+        <VarMenu btnRef={menuBtnRef}
+          onEdit={() => { setMenuOpen(false); onEdit?.(); }}
+          onDelete={() => { setMenuOpen(false); onDelete?.(); }}
+          onClose={() => setMenuOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function VarMenu({ btnRef, onEdit, onDelete, onClose }) {
+  const [pos, setPos] = useState(null);
+
+  useEffect(() => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: Math.max(8, r.right - 160) });
+    }
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!pos) return null;
+  return createPortal(
+    <div className="org-card-dropdown" style={{ top: pos.top, left: pos.left }}
+      onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+      <button className="org-card-dropdown-item" onClick={onEdit}>
+        <PencilSimple className="org-card-dropdown-icon" /> Edit
+      </button>
+      <div className="org-card-dropdown-sep" />
+      <button className="org-card-dropdown-item org-card-dropdown-item--danger" onClick={onDelete}>
+        <Trash className="org-card-dropdown-icon" /> Delete
+      </button>
+    </div>,
+    document.body
+  );
+}
+
+function VarEditModal({ productId, variation, pq, onClose, onSaved }) {
+  const [name,    setName]    = useState(variation.variation_name || '');
+  const [imgUrl,  setImgUrl]  = useState(variation.image_url || '');
+  const [uploading, setUploading] = useState(false);
+  const [dragging,  setDragging]  = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err,  setErr]  = useState('');
+  const fileRef = useRef();
+
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const uploadFile = async (file) => {
+    if (!file || !file.type?.startsWith('image/')) return;
+    setUploading(true);
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const res  = await fetch(`${API_BASE}/api/upload/image${pq}`, { method: 'POST', credentials: 'include', body: fd });
+      const data = await res.json();
+      if (res.ok) setImgUrl(data.url);
+      else setErr(data.detail || 'Upload failed');
+    } catch { setErr('Upload failed'); }
+    setUploading(false);
+  };
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return setErr('Name is required');
+    setBusy(true); setErr('');
+    const res = await fetch(`${API_BASE}/api/products/${productId}/variations/${variation.id}${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ variation_name: trimmed, image_url: imgUrl || null }),
+    });
+    setBusy(false);
+    if (!res.ok) { setErr('Save failed'); return; }
+    onSaved?.();
+  };
+
+  return createPortal(
+    <div className="auth-modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+      <div className="auth-modal cfg-modal" onClick={e => e.stopPropagation()}>
+        <div className="auth-modal-head">
+          <div className="auth-modal-title-row">
+            <div>
+              <div className="auth-modal-title">Edit variation</div>
+              <div className="auth-modal-subtitle-row">
+                <span className="auth-modal-subtitle">Update image and name.</span>
+              </div>
+            </div>
+          </div>
+          <button className="auth-modal-close" onClick={onClose} type="button">
+            <X className="auth-modal-close-icon" />
+          </button>
+        </div>
+
+        <div className="auth-modal-body cfg-modal-body">
+          <form onSubmit={submit}>
+            <div className="cfg-top">
+              <div className="cfg-image-col">
+                <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
+                  onChange={e => uploadFile(e.target.files?.[0])} />
+                <div
+                  className={`cfg-dropzone${dragging ? ' cfg-dropzone--over' : ''}${uploading ? ' cfg-dropzone--loading' : ''}`}
+                  onClick={() => !uploading && fileRef.current?.click()}
+                  onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={e => { e.preventDefault(); setDragging(false); uploadFile(e.dataTransfer.files?.[0]); }}>
+                  {imgUrl ? (
+                    <>
+                      <img src={imgUrl} alt={name} className="cfg-dropzone-preview" />
+                      <div className="cfg-dropzone-overlay">
+                        <UploadSimple weight="bold" /><span>Replace</span>
+                      </div>
+                    </>
+                  ) : uploading ? (
+                    <div className="cfg-dropzone-empty"><div className="cfg-dropzone-spinner" /><span>Uploading…</span></div>
+                  ) : (
+                    <div className="cfg-dropzone-empty">
+                      <ImageIcon weight="duotone" />
+                      <span className="cfg-dropzone-title">Drop image</span>
+                      <span className="cfg-dropzone-hint">or click · WebP</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="cfg-name-col">
+                <label className="po-field-label">Variation name</label>
+                <input className="crm-input" autoFocus value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Black, Spicy, 1L…" maxLength={100} />
+              </div>
+            </div>
+
+            {err && <span className="crm-form-error">{err}</span>}
+
+            <div className="auth-actions" style={{ marginTop: 16 }}>
+              <button className="crm-submit-btn" type="submit" disabled={busy || !name.trim()}>
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+              <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -382,7 +551,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast }) {
 
   return (
     <section className="po-block">
-      <h2 className="po-block-title">Custom Fields</h2>
+      <h2 className="crm-page-title1">Custom Fields</h2>
       <p className="po-block-hint">
         Free-form attributes returned by the storefront API. Toggle <b>Global</b>
         to share the value across every product.
@@ -525,9 +694,9 @@ function SeoBlock({ product, pq, setProduct, showToast }) {
 
   return (
     <section className="po-block">
-      <h2 className="po-block-title">SEO</h2>
+      <h2 className="crm-page-title1">SEO</h2>
       <p className="po-block-hint">Used by the storefront for search-engine results.</p>
-      <div className="po-block-card">
+      <div className="po-form">
         <Field label="SEO Title">
           <input className="crm-input po-input" value={seoTitle}
             onChange={e => setSeoTitle(e.target.value)} placeholder="e.g. Buy Trousers Online" maxLength={200} />
