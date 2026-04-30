@@ -810,11 +810,11 @@ class UpdateProductRequest(BaseModel):
 
 class CreateVariationRequest(BaseModel):
     variation_name: str
-    image_url: str = None
+    image_url: Optional[str] = None
 
 class UpdateVariationRequest(BaseModel):
-    variation_name: str = None
-    image_url: str = None
+    variation_name: Optional[str] = None
+    image_url: Optional[str] = None
 
 class ReorderVariationsRequest(BaseModel):
     # New ordering of all variation IDs for a given product. Each id's array

@@ -1143,7 +1143,8 @@ def get_products(api_key_record: dict = Depends(resolve_api_key),
             "p.category_id, c.name AS category_name, c.slug AS category_slug "
             "FROM products p "
             "LEFT JOIN product_categories c ON c.id = p.category_id "
-            f"WHERE {' AND '.join(where)}",
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY p.id ASC",
             params
         )
         products = cursor.fetchall()
