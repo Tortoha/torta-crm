@@ -3,23 +3,6 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { X, Plus, Trash, UploadSimple, Image as ImageIcon } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 
-/**
- * Click on a variation card opens this modal. It edits the variation itself
- * (name, image) plus the inline list of priced configurations underneath
- * (size / portion / capacity / etc.).
- *
- * Auto-save semantics:
- *   - Variation name → debounced (400 ms after last keystroke).
- *   - Variation image → instant on upload.
- *   - Each configuration row → debounced per row.
- *   - Adding a new configuration row → instant (the row is created on the
- *     server only when the user clicks "Add" or hits Enter; before that it
- *     lives in local state).
- *   - Delete variation → confirmation, then propagated up via onDeleted.
- *
- * Closing (X / overlay click) just dismisses — everything is already saved.
- * The parent then re-fetches the product to pick up authoritative values.
- */
 export default function ConfigurationModal({ productId, variation, pq, onClose, onDeleted }) {
   const [name,    setName]    = useState(variation?.variation_name || '');
   const [imgUrl,  setImgUrl]  = useState(variation?.image_url || '');

@@ -5,10 +5,6 @@ import { API_BASE } from '../../api.js';
 import { decodeHash } from '../../Utils/hashids.js';
 import '../../Style/Products.css';
 
-/**
- * Read-only "what does the storefront API return" preview, with the same shape
- * as the External API actually serves. Useful for SDK / integration debugging.
- */
 export default function ProductApiPreview() {
   const { projectId, setProductContext } = useOutletContext();
   const { productHash } = useParams();

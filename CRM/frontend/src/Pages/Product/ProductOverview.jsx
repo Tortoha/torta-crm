@@ -10,25 +10,13 @@ import ConfigurationModal from './ConfigurationModal.jsx';
 import '../../Style/Authentication.css';
 import '../../Style/Products.css';
 
-/**
- * /project/:apiKey/products/:productHash — single-page replacement for the
- * old 6-tab ProductPage. Four visible sections, all auto-saved:
- *
- *   1) General     — title / subtitle / description / category
- *   2) Variations  — drag-and-drop ordered cards (click → configuration modal)
- *   3) Custom Fields — inline-editable list, immediate persistence
- *   4) SEO         — title / description / keywords
- *
- * Reviews and API Preview are separate pages reached from the header.
- */
+
 export default function ProductOverview() {
   const { project, projectId, setProductContext } = useOutletContext();
   const { productHash } = useParams();
   const navigate = useNavigate();
   const productId = decodeHash(productHash);
   const pq = `?project_id=${projectId}`;
-  // The product detail page lives under its own top-level layout, so the
-  // project apiKey isn't in the URL — it comes from the project context.
   const apiKey = project?.api_key;
 
   const [product,  setProduct]  = useState(null);

@@ -70,17 +70,23 @@
 .pcard-img-wrap {
   flex-shrink: 0;
   align-self: center;
-  height: 94px;            /* phantom height → all cards same height */
-  width: auto;             /* image's natural ratio decides width */
-  min-width: 70.5px;       /* floor (= 3:4 of 94px, also covers empty placeholder) */
-  max-width: 94px;         /* cap for landscape & square */
+  height: 94px;
+  /* phantom height → all cards same height */
+  width: auto;
+  /* image's natural ratio decides width */
+  min-width: 70.5px;
+  /* floor (= 3:4 of 94px, also covers empty placeholder) */
+  max-width: 94px;
+  /* cap for landscape & square */
   margin: 4px 0 4px 4px;
   border-radius: 12px;
   overflow: hidden;
-  background: transparent; /* no visible "bars" — card bg shows through */
+  background: transparent;
+  /* no visible "bars" — card bg shows through */
   position: relative;
   display: flex;
-  align-items: center;     /* center landscape vertically inside phantom 94px */
+  align-items: center;
+  /* center landscape vertically inside phantom 94px */
   justify-content: center;
 }
 
@@ -100,7 +106,8 @@
   width: auto;
   height: auto;
   display: block;
-  border-radius: 12px;     /* round image corners (works even when image < container) */
+  border-radius: 12px;
+  /* round image corners (works even when image < container) */
 }
 
 .pcard-img-empty {
@@ -110,7 +117,8 @@
   align-items: center;
   justify-content: center;
   color: #ccc;
-  background: var(--bg);   /* visible gray placeholder area (container itself is transparent) */
+  background: var(--bg);
+  /* visible gray placeholder area (container itself is transparent) */
   border-radius: 12px;
 }
 
@@ -297,13 +305,17 @@
 
 .pvar-thumb-wrap {
   flex-shrink: 0;
-  height: 85px;            /* phantom height → all variation thumbs same height */
+  height: 85px;
+  /* phantom height → all variation thumbs same height */
   width: auto;
-  min-width: 64px;         /* floor (= 3:4 of 85px) */
-  max-width: 85px;         /* cap for landscape & square */
+  min-width: 64px;
+  /* floor (= 3:4 of 85px) */
+  max-width: 85px;
+  /* cap for landscape & square */
   border-radius: 12px;
   overflow: hidden;
-  background: transparent; /* popover bg shows through */
+  background: transparent;
+  /* popover bg shows through */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -420,13 +432,17 @@
 .prow-img-wrap {
   position: relative;
   z-index: 2;
-  height: 40px;            /* phantom height → all rows same height */
+  height: 40px;
+  /* phantom height → all rows same height */
   width: auto;
-  min-width: 30px;         /* floor (= 3:4 of 40px, also covers empty placeholder) */
-  max-width: 40px;         /* cap for landscape & square */
+  min-width: 30px;
+  /* floor (= 3:4 of 40px, also covers empty placeholder) */
+  max-width: 40px;
+  /* cap for landscape & square */
   border-radius: 6px;
   overflow: hidden;
-  background: transparent; /* row bg shows through */
+  background: transparent;
+  /* row bg shows through */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1600,20 +1616,17 @@
   flex-direction: column;
 }
 
-/* Disabled state for danger delete items in CatMenu */
 .org-card-dropdown-item--disabled {
   opacity: 0.35;
   cursor: not-allowed;
   pointer-events: none;
 }
 
-/* ─── Modals: match Booking/Authentication style ──────────────── */
 .cat-edit-modal {
   max-width: 640px;
   width: 640px;
 }
 
-/* ─── Products picker inside the category edit modal ──────────── */
 .cat-prod-section {
   display: flex;
   flex-direction: column;
@@ -2179,11 +2192,12 @@ select.prod-field-input {
 }
 
 .po-field-label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+  padding: 0 8px;
+  margin: 0;
+  letter-spacing: 0.01em;
 }
 
 .po-input,
@@ -2193,7 +2207,8 @@ select.prod-field-input {
 }
 
 .po-textarea {
-  border-radius: 16px !important;       /* override pill .crm-input radius for textareas */
+  border-radius: 16px !important;
+  /* override pill .crm-input radius for textareas */
   resize: vertical;
   min-height: 80px;
   font-family: inherit;
@@ -2662,7 +2677,9 @@ select.prod-field-input {
 }
 
 @keyframes cfg-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ─── Configurations list (the table-ish block at the bottom) ─── */
@@ -2772,10 +2789,19 @@ select.prod-field-input {
   max-width: 720px;
 }
 
+/* Scoped overrides: give the modal more breathing room than the default 16px */
+.cpm-modal .auth-modal-head {
+  padding: 22px 24px 0;
+}
+
+.cpm-modal .auth-modal-body {
+  padding: 16px;
+}
+
 .cpm-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
 }
 
 .cpm-section {
@@ -2787,129 +2813,78 @@ select.prod-field-input {
 .cpm-textarea {
   border-radius: 16px !important;
   resize: vertical;
-  min-height: 80px;
+  min-height: 72px;
   font-family: inherit;
   line-height: 1.5;
   padding: 10px 16px;
 }
 
-.cpm-vars-section {
-  background: var(--bg);
-  border-radius: 16px;
-  padding: 12px;
+.cpm-form {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
-.cpm-vars-head {
+.cpm-modal .auth-actions {
+  margin-top: 16px;
+  gap: 12px;
+}
+
+.cpm-modal .auth-modal-head {
+  padding: 22px 24px 4px;
+}
+
+/* ─── Custom Category dropdown trigger (form-input shape) ───── */
+.cpm-cat-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.cpm-empty {
-  margin: 4px 0;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.cpm-var-card {
-  background: var(--card);
-  border-radius: 12px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cpm-var-head {
-  display: flex;
-  align-items: center;
   gap: 10px;
-}
-
-.cpm-var-thumb-wrap {
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-  background: var(--bg);
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  overflow: hidden;
-  color: var(--muted);
-  transition: outline-color 0.18s ease;
-  outline: 2px dashed transparent;
-}
-
-.cpm-var-thumb-wrap:hover {
-  outline-color: var(--accent);
-}
-
-.cpm-var-thumb {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.cpm-var-thumb-empty {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.cpm-var-thumb-empty svg {
-  width: 22px;
-  height: 22px;
-}
-
-.cpm-var-name {
-  flex: 1;
-}
-
-.cpm-var-delete,
-.cpm-cfg-delete {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  width: 32px;
-  height: 32px;
+  padding: 11px 18px 11px 16px;
   border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.18s ease, color 0.18s ease;
+  background: #fff;
+  border: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: #111827;
+  cursor: pointer;
+  text-align: left;
+  transition: 0.4s ease
+}
+
+.cpm-cat-btn:hover {
+  box-shadow: var(--box-shadow);
+}
+
+.cpm-cat-btn--open,
+.cpm-cat-btn:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.cpm-cat-placeholder {
+  color: #9CA3AF;
+}
+
+.cpm-cat-caret {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
   flex-shrink: 0;
+  transition: transform 0.22s var(--ease-smooth);
 }
 
-.cpm-var-delete:hover,
-.cpm-cfg-delete:hover {
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
+.cpm-cat-caret--up {
+  transform: rotate(180deg);
 }
 
-.cpm-var-delete svg,
-.cpm-cfg-delete svg {
-  width: 14px;
-  height: 14px;
-}
-
-.cpm-cfg-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.cpm-cfg-row {
-  display: grid;
-  grid-template-columns: 1fr 100px 100px 32px;
-  gap: 8px;
-  align-items: center;
-}
-
-.cpm-add-cfg-btn {
-  align-self: flex-start;
-  margin-top: 4px;
+/* The dropdown panel reuses .cat-filter-dropdown styling (same look as
+   the toolbar Category filter). Only the trigger differs.
+   `box-sizing: border-box` ensures the JS-set inline `width` already
+   accounts for the 6px padding + 1px border, so the dropdown can never
+   render wider than the trigger and spill past the modal edge. */
+.cpm-cat-dropdown {
+  padding: 6px;
+  box-sizing: border-box;
 }

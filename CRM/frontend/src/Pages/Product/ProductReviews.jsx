@@ -5,10 +5,6 @@ import { API_BASE } from '../../api.js';
 import { decodeHash } from '../../Utils/hashids.js';
 import '../../Style/Products.css';
 
-/**
- * Reviews list for a single product. Read-only — moderation lives elsewhere.
- * Reachable from the Reviews button in the ProductOverview header.
- */
 export default function ProductReviews() {
   const { projectId, setProductContext } = useOutletContext();
   const { productHash } = useParams();
@@ -29,7 +25,7 @@ export default function ProductReviews() {
       })
       .finally(() => setLoading(false));
     return () => setProductContext?.(null);
-  }, [productId, projectId, productHash]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [productId, projectId, productHash]);
 
   const reviews = product?.reviews || [];
 
