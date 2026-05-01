@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Plus, Trash } from '@phosphor-icons/react';
+import { Trash } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 
 export default function ConfigurationBlock({ productId, variation, pq }) {
@@ -28,7 +28,7 @@ export default function ConfigurationBlock({ productId, variation, pq }) {
       <div className="cfg-block-body">
         <div className="cfg-list">
           <div className="cfg-list-head">
-            <span className="cfg-col cfg-col-name">Configuration</span>
+            <span className="cfg-col cfg-col-name">Configuration Name</span>
             <span className="cfg-col cfg-col-price">Price</span>
             <span className="cfg-col cfg-col-stock">Stock</span>
             <span className="cfg-col cfg-col-sold">Sold</span>
@@ -94,8 +94,10 @@ function CfgRow({ cfg, productId, variationId, pq, onChange, onDelete }) {
         value={price} onChange={e => setPrice(e.target.value)} />
       <input className="crm-input cfg-cell cfg-col-stock" type="number" min="0"
         value={stock} onChange={e => setStock(e.target.value)} />
-      <span className="cfg-cell cfg-col-sold cfg-sold-num">{cfg.sold_quantity || 0}</span>
-      <button type="button" className="cfg-cell cfg-col-actions cfg-delete-btn" onClick={onDelete} title="Delete">
+      <input type="text" readOnly tabIndex={-1}
+        className="crm-input cfg-cell cfg-col-sold cfg-sold-num"
+        value={cfg.sold_quantity || 0} />
+      <button type="button" className="cfg-col-actions cfg-delete-btn" onClick={onDelete} title="Delete">
         <Trash />
       </button>
     </div>
@@ -106,30 +108,33 @@ function CfgNewRow({ productId, variationId, pq, onAdded }) {
   const [name,  setName]  = useState('');
   const [price, setPrice] = useState('');
   const [stock, setStock] = useState('');
-  const [busy,  setBusy]  = useState(false);
+  const busyRef = useRef(false);
 
-  const submit = async (e) => {
-    e?.preventDefault();
-    if (!name.trim()) return;
-    setBusy(true);
-    const res = await fetch(`${API_BASE}/api/products/${productId}/variations/${variationId}/configurations${pq}`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        configuration_name: name.trim(),
-        price: parseFloat(price) || 0,
-        stock_quantity: parseInt(stock, 10) || 0,
-      }),
-    });
-    setBusy(false);
-    if (!res.ok) return;
-    const data = await res.json();
-    onAdded(data);
-    setName(''); setPrice(''); setStock('');
-  };
+  // Auto-create as soon as the user types a name (debounced).
+  useEffect(() => {
+    if (!name.trim() || busyRef.current) return;
+    const t = setTimeout(async () => {
+      busyRef.current = true;
+      const res = await fetch(`${API_BASE}/api/products/${productId}/variations/${variationId}/configurations${pq}`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          configuration_name: name.trim(),
+          price: parseFloat(price) || 0,
+          stock_quantity: parseInt(stock, 10) || 0,
+        }),
+      });
+      busyRef.current = false;
+      if (!res.ok) return;
+      const data = await res.json();
+      onAdded(data);
+      setName(''); setPrice(''); setStock('');
+    }, 600);
+    return () => clearTimeout(t);
+  }, [name, price, stock]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <form className="cfg-row cfg-row--new" onSubmit={submit}>
+    <div className="cfg-row cfg-row--new">
       <input className="crm-input cfg-cell cfg-col-name" value={name}
         onChange={e => setName(e.target.value)} placeholder="New configuration" />
       <input className="crm-input cfg-cell cfg-col-price" type="number" min="0" step="0.01"
@@ -137,9 +142,7 @@ function CfgNewRow({ productId, variationId, pq, onAdded }) {
       <input className="crm-input cfg-cell cfg-col-stock" type="number" min="0"
         value={stock} onChange={e => setStock(e.target.value)} placeholder="0" />
       <span className="cfg-cell cfg-col-sold" />
-      <button type="submit" className="cfg-cell cfg-col-actions cfg-add-btn" disabled={busy || !name.trim()}>
-        <Plus weight="bold" />
-      </button>
-    </form>
+      <span className="cfg-col-actions" />
+    </div>
   );
 }

@@ -25,6 +25,21 @@ export default function ProductApiPreview() {
     return () => setProductContext?.(null);
   }, [productId, projectId, productHash]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Mirror of what External /{api_key}/product/{hash} actually returns.
+  // Walks the Layer 3+ tree and maps specifications into [{key, value}] shape.
+  const mapSpecs = (arr) => (arr || []).map(s => ({ key: s.spec_key, value: s.spec_value }));
+
+  const mapDeepNode = (n) => ({
+    id: n.id,
+    name: n.name || '',
+    price: n.price ?? null,
+    effective_price: n.effective_price ?? null,
+    stock_quantity: n.stock_quantity || 0,
+    sold_quantity: n.sold_quantity || 0,
+    children: (n.children || []).map(mapDeepNode),
+    specifications: mapSpecs(n.specifications),
+  });
+
   const buildPreview = () => {
     if (!product) return null;
     return {
@@ -40,25 +55,40 @@ export default function ProductApiPreview() {
       seo_description: product.seo_description || null,
       seo_keywords: product.seo_keywords || null,
       custom_fields: Object.fromEntries((product.custom_fields || []).map(f => [f.field_key, f.field_value])),
-      is_authenticated: false, is_favorite: false, can_review: false,
+      is_authenticated: false,
+      current_user_id: null,
+      is_favorite: false,
+      can_review: false,
       reviews_count: (product.reviews || []).length,
       average_rating: 0,
       initial_variation_index: 0,
       initial_configuration_id: product.variations?.[0]?.configurations?.[0]?.id ?? null,
       variations: (product.variations || []).map(v => ({
-        id: v.id, variation_name: v.variation_name, image: v.image_url,
+        id: v.id,
+        variation_name: v.variation_name,
+        image: v.image_url,
+        price: v.price ?? null,
+        effective_price: v.effective_price ?? null,
+        stock_quantity: v.stock_quantity || 0,
+        sold_quantity: v.sold_quantity || 0,
+        is_in_cart: false,
         configurations: (v.configurations || []).map(c => ({
           id: c.id,
-          configuration_name: c.configuration_name,
-          price: c.price,
-          stock_quantity: c.stock_quantity,
-          sold_quantity: c.sold_quantity,
+          configuration_name: c.name || c.configuration_name,
+          price: c.effective_price != null ? c.effective_price : 0,
+          effective_price: c.effective_price ?? null,
+          stock_quantity: c.stock_quantity || 0,
+          sold_quantity: c.sold_quantity || 0,
           is_in_cart: false, cart_item_id: null, cart_quantity: 0,
+          children: (c.children || []).map(mapDeepNode),
+          specifications: mapSpecs(c.specifications),
         })),
+        specifications: mapSpecs(v.specifications),
       })),
       reviews: (product.reviews || []).slice(0, 2).map(r => ({
         id: r.id, user_id: r.user_id, user_name: 'User',
         rating: r.rating, comment: r.comment || '',
+        created_at: r.created_at ?? null,
       })),
     };
   };

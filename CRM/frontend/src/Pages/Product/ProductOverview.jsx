@@ -1,23 +1,15 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
-import {
-  Plus, Trash, Image as ImageIcon, DotsThreeOutline, PencilSimple, X, UploadSimple,
-} from '@phosphor-icons/react';
+import { Plus, Trash } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { decodeHash } from '../../Utils/hashids.js';
-import ConfigurationBlock from './ConfigurationBlock.jsx';
+import LayerBlock from './LayerBlock.jsx';
+import SpecificationsBlock from './SpecificationsBlock.jsx';
 import { CpmCategorySelect } from '../Project/Products/CreateProductModal.jsx';
-import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import '../../Style/Authentication.css';
 import '../../Style/Organization.css';
 import '../../Style/Products.css';
-
-const VAR_TILT = {
-  maxAngle: 12, lerp: 0.05, lerpOut: 0.07,
-  scale: 1.04, perspective: 750,
-  gloss: { opacity: 0.14, spread: 60 },
-};
 
 
 export default function ProductOverview() {
@@ -30,26 +22,18 @@ export default function ProductOverview() {
   const [loading,  setLoading]  = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [toast,    setToast]    = useState('');
-  const [selectedVarId, setSelectedVarId] = useState(null);
+  // Selected row id at each layer 1..5. chain[N-1] = id of selected row at layer N.
+  const [chain, setChain] = useState([null, null, null, null, null]);
+  // How many layers are visible. Min = max(1, backend max_layer); user expands via "Create new layer".
+  const [shownLayers, setShownLayers] = useState(1);
   const toastRef = useRef(null);
 
-  // Auto-pick a variation: keep current if it still exists, otherwise pick first.
-  useEffect(() => {
-    const list = product?.variations || [];
-    setSelectedVarId(prev => {
-      if (prev != null && list.find(v => v.id === prev)) return prev;
-      return list[0]?.id ?? null;
-    });
-  }, [product?.variations]);
-
-  // Toast auto-dismiss helper — same pattern as the auth-toast we use elsewhere.
   const showToast = useCallback((msg) => {
     setToast(msg);
     if (toastRef.current) clearTimeout(toastRef.current);
     toastRef.current = setTimeout(() => setToast(''), 2400);
   }, []);
 
-  // Initial load
   useEffect(() => {
     if (!productId) { setNotFound(true); setLoading(false); return; }
     setLoading(true);
@@ -65,13 +49,86 @@ export default function ProductOverview() {
 
   useEffect(() => () => setProductContext?.(null), [setProductContext]);
 
+  // Reset chain + shownLayers when navigating to a different product so
+  // expansion state from product A doesn't leak into product B.
+  useEffect(() => {
+    setShownLayers(1);
+    setChain([null, null, null, null, null]);
+  }, [productId]);
+
   const reloadProduct = useCallback(async () => {
-    const res  = await fetch(`${API_BASE}/api/products/${productId}${pq}`, { credentials: 'include' });
+    const res = await fetch(`${API_BASE}/api/products/${productId}${pq}`, { credentials: 'include' });
     if (res.ok) setProduct(await res.json());
   }, [productId, pq]);
 
+  // Sync shownLayers from backend's max_layer; auto-pick first row at each layer.
+  useEffect(() => {
+    if (!product) return;
+    const maxLayer = product.max_layer || 1;
+    setShownLayers(prev => Math.max(prev, maxLayer));
+    setChain(prev => {
+      const next = [...prev];
+      let level = product.variations || [];
+      const target = Math.max(maxLayer, prev.findIndex(x => x == null) + 1 || 1, 1);
+      for (let i = 0; i < target && i < 5; i++) {
+        if (!level || level.length === 0) { next[i] = null; continue; }
+        const cur = next[i];
+        let chosen = cur != null ? level.find(x => x.id === cur) : null;
+        if (!chosen) chosen = level[0];
+        next[i] = chosen ? chosen.id : null;
+        level = chosen ? (i === 0 ? (chosen.configurations || []) : (chosen.children || [])) : [];
+      }
+      return next;
+    });
+  }, [product]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Walk the tree per chain → items at each layer + parent's effective_price for placeholder.
+  const layers = useMemo(() => {
+    if (!product) return null;
+    const out = [{ items: product.variations || [], parentId: null, parentEffectivePrice: null }];
+    let level = product.variations || [];
+    for (let i = 0; i < 5; i++) {
+      const sel = level.find(x => x.id === chain[i]);
+      if (!sel) break;
+      const nextItems = i === 0 ? (sel.configurations || []) : (sel.children || []);
+      out.push({
+        items: nextItems,
+        parentId: sel.id,
+        parentEffectivePrice: sel.effective_price ?? null,
+      });
+      level = nextItems;
+    }
+    return out;
+  }, [product, chain]);
+
+  const setChainAt = (level, id) => {
+    setChain(prev => {
+      const next = [...prev];
+      next[level] = id;
+      for (let i = level + 1; i < 5; i++) next[i] = null;
+      return next;
+    });
+  };
+
+  const createNewLayer = () => setShownLayers(n => Math.min(n + 1, 5));
+
+  const deleteLastLayer = async () => {
+    if (shownLayers <= 1) return;
+    if (!confirm(`Delete entire Layer ${shownLayers}?\nAll rows at this layer will be lost. Carts/orders referencing them will break.`)) return;
+    const res = await fetch(`${API_BASE}/api/products/${productId}/layers/${shownLayers}${pq}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    if (res.ok) {
+      setShownLayers(prev => Math.max(prev - 1, 1));
+      await reloadProduct();
+    }
+  };
+
   if (loading)  return <Shell><p className="crm-placeholder">Loading…</p></Shell>;
   if (notFound) return <Shell><p className="crm-placeholder">Product not found.</p></Shell>;
+
+  const lastLayerSelected = chain[shownLayers - 1] != null;
+  const canCreateNewLayer = shownLayers < 5 && lastLayerSelected;
 
   return (
     <Shell>
@@ -81,16 +138,39 @@ export default function ProductOverview() {
         setProductContext={setProductContext} productHash={productHash}
         showToast={showToast} />
 
-      <VariationsBlock product={product} productId={productId} pq={pq}
-        selectedVarId={selectedVarId} onSelect={setSelectedVarId}
-        reloadProduct={reloadProduct} showToast={showToast} />
+      {layers && [1, 2, 3, 4, 5].map(n => {
+        if (n > shownLayers) return null;
+        const layerData = layers[n - 1];
+        if (!layerData) return null;
+        const isLeaf = n === shownLayers;
+        const showDelete = n >= 2 && n === shownLayers;
+        return (
+          <LayerBlock key={n}
+            layer={n}
+            items={layerData.items}
+            parentId={layerData.parentId}
+            inheritedPrice={layerData.parentEffectivePrice}
+            productId={productId} pq={pq}
+            reloadProduct={reloadProduct}
+            selectedId={chain[n - 1]}
+            onSelect={(id) => setChainAt(n - 1, id)}
+            isLeaf={isLeaf}
+            onDeleteLayer={showDelete ? deleteLastLayer : null} />
+        );
+      })}
 
-      {selectedVarId != null && (
-        <ConfigurationBlock
-          productId={productId}
-          pq={pq}
-          variation={product.variations?.find(v => v.id === selectedVarId)} />
+      {canCreateNewLayer && (
+        <button className="po-add-layer-btn" type="button" onClick={createNewLayer}>
+          <Plus weight="bold" /> Create Configuration Layer {shownLayers + 1}
+        </button>
       )}
+
+      <SpecificationsBlock
+        product={product}
+        productId={productId} pq={pq}
+        chain={chain}
+        shownLayers={shownLayers}
+        reloadProduct={reloadProduct} />
 
       <CustomFieldsBlock product={product} productId={productId} pq={pq}
         setProduct={setProduct} showToast={showToast} />
@@ -128,7 +208,6 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
       .catch(() => {});
   }, [pq]);
 
-  // Generic patch helper — sends only the fields that changed.
   const patch = useCallback(async (body) => {
     const res = await fetch(`${API_BASE}/api/products/${product.id}${pq}`, {
       method: 'PUT', credentials: 'include',
@@ -141,7 +220,6 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
     return true;
   }, [product.id, pq, setProduct, showToast]);
 
-  // Title debounced (500 ms after last keystroke)
   useEffect(() => {
     if (skipTitle.current) { skipTitle.current = false; return; }
     const t = setTimeout(async () => {
@@ -165,7 +243,6 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
     return () => clearTimeout(t);
   }, [desc]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Category — instant save (selects don't really need debounce)
   useEffect(() => {
     if (skipCat.current) { skipCat.current = false; return; }
     patch({ category_id: catId === '' ? null : Number(catId) });
@@ -210,315 +287,7 @@ function Field({ label, children }) {
 }
 
 
-function VariationsBlock({ product, productId, pq, selectedVarId, onSelect, reloadProduct, showToast }) {
-  const [vars, setVars] = useState(product.variations || []);
-  const [editVar, setEditVar] = useState(null);
-  const dragId = useRef(null);
-
-  useEffect(() => { setVars(product.variations || []); }, [product.variations]);
-
-  const deleteVariation = async (v) => {
-    if (!confirm(`Delete variation "${v.variation_name}" and all its configurations?`)) return;
-    const res = await fetch(`${API_BASE}/api/products/${productId}/variations/${v.id}${pq}`,
-      { method: 'DELETE', credentials: 'include' });
-    if (!res.ok) { showToast('Delete failed'); return; }
-    if (selectedVarId === v.id) onSelect?.(null);
-    reloadProduct();
-  };
-
-  const onDragStart = (id) => (e) => {
-    dragId.current = id;
-    e.dataTransfer.effectAllowed = 'move';
-    e.currentTarget.classList.add('po-var-card--dragging');
-  };
-  const onDragEnd = (e) => {
-    e.currentTarget.classList.remove('po-var-card--dragging');
-    dragId.current = null;
-  };
-  const onDragOver = (id) => (e) => {
-    e.preventDefault();
-    if (dragId.current == null || dragId.current === id) return;
-    setVars(prev => {
-      const fromIdx = prev.findIndex(v => v.id === dragId.current);
-      const toIdx   = prev.findIndex(v => v.id === id);
-      if (fromIdx === -1 || toIdx === -1) return prev;
-      const next = [...prev];
-      const [moved] = next.splice(fromIdx, 1);
-      next.splice(toIdx, 0, moved);
-      return next;
-    });
-  };
-  // Persist new order on drop
-  const onDrop = async () => {
-    if (dragId.current == null) return;
-    dragId.current = null;
-    const ids = vars.map(v => v.id);
-    const res = await fetch(`${API_BASE}/api/products/${productId}/variations/reorder${pq}`, {
-      method: 'PUT', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ variation_ids: ids }),
-    });
-    if (!res.ok) { showToast('Reorder failed'); reloadProduct(); }
-    else showToast('Order saved');
-  };
-
-  const addVariation = async () => {
-    const res = await fetch(`${API_BASE}/api/products/${productId}/variations${pq}`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ variation_name: 'New variation', image_url: null }),
-    });
-    if (!res.ok) { showToast('Create failed'); return; }
-    const created = await res.json();
-    await reloadProduct();
-    onSelect?.(created.id);
-  };
-
-  return (
-    <section className="po-block">
-      <div className="po-block-head">
-        <h2 className="crm-page-title1">Variations</h2>
-        <button className="po-add-pill" onClick={addVariation} type="button">
-          <Plus weight="bold" /> Add variation
-        </button>
-      </div>
-
-      <div className="prod-grid" onDrop={onDrop} onDragOver={e => e.preventDefault()}>
-        {vars.length === 0 && (
-          <div className="po-empty">
-            No variations yet. Click <b>Add variation</b> — colors, sizes, options.
-          </div>
-        )}
-
-        {vars.map(v => (
-          <VarCard key={v.id} v={v}
-            selected={v.id === selectedVarId}
-            onOpen={() => onSelect?.(v.id)}
-            onEdit={() => setEditVar(v)}
-            onDelete={() => deleteVariation(v)}
-            onDragStart={onDragStart(v.id)}
-            onDragEnd={onDragEnd}
-            onDragOver={onDragOver(v.id)} />
-        ))}
-      </div>
-
-      {editVar && (
-        <VarEditModal
-          productId={productId}
-          variation={editVar}
-          pq={pq}
-          onClose={() => setEditVar(null)}
-          onSaved={() => { setEditVar(null); reloadProduct(); }} />
-      )}
-    </section>
-  );
-}
-
-function VarCard({ v, selected, onOpen, onEdit, onDelete, onDragStart, onDragEnd, onDragOver }) {
-  const menuBtnRef = useRef(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const { ref, glossRef, handlers } = InteractiveSection(VAR_TILT, menuOpen);
-  const cfgCount = v.configurations?.length || 0;
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const h = e => {
-      if (!e.target.closest?.('.org-card-dropdown') && !menuBtnRef.current?.contains(e.target))
-        setMenuOpen(false);
-    };
-    document.addEventListener('pointerdown', h);
-    return () => document.removeEventListener('pointerdown', h);
-  }, [menuOpen]);
-
-  return (
-    <div ref={ref}
-      className={`org-card org-card--tilt prod-card${selected ? ' prod-card--selected' : ''}`}
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onClick={onOpen}
-      title="Click to configure"
-      {...handlers}>
-      <div ref={glossRef} className="org-card-gloss prod-card-gloss" />
-      <div className="pcard-inner">
-        <div className="pcard-img-wrap">
-          {v.image_url
-            ? <img className="pcard-img" src={v.image_url} alt={v.variation_name} />
-            : <div className="pcard-img-empty"><ImageIcon weight="duotone" /></div>}
-        </div>
-        <div className="pcard-body">
-          <div className="pcard-title">{v.variation_name || 'Unnamed'}</div>
-          <div className="pcard-row1">
-            <span className="pcard-stock">
-              {cfgCount} {cfgCount === 1 ? 'config' : 'configs'}
-            </span>
-          </div>
-        </div>
-      </div>
-      <button ref={menuBtnRef} className="org-card-menu-btn pcard-menu-btn" type="button"
-        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
-        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
-      </button>
-      {menuOpen && (
-        <VarMenu btnRef={menuBtnRef}
-          onEdit={() => { setMenuOpen(false); onEdit?.(); }}
-          onDelete={() => { setMenuOpen(false); onDelete?.(); }}
-          onClose={() => setMenuOpen(false)} />
-      )}
-    </div>
-  );
-}
-
-function VarMenu({ btnRef, onEdit, onDelete, onClose }) {
-  const [pos, setPos] = useState(null);
-
-  useEffect(() => {
-    if (btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 6, left: Math.max(8, r.right - 160) });
-    }
-    const onKey = e => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!pos) return null;
-  return createPortal(
-    <div className="org-card-dropdown" style={{ top: pos.top, left: pos.left }}
-      onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
-      <button className="org-card-dropdown-item" onClick={onEdit}>
-        <PencilSimple className="org-card-dropdown-icon" /> Edit
-      </button>
-      <div className="org-card-dropdown-sep" />
-      <button className="org-card-dropdown-item org-card-dropdown-item--danger" onClick={onDelete}>
-        <Trash className="org-card-dropdown-icon" /> Delete
-      </button>
-    </div>,
-    document.body
-  );
-}
-
-function VarEditModal({ productId, variation, pq, onClose, onSaved }) {
-  const [name,    setName]    = useState(variation.variation_name || '');
-  const [imgUrl,  setImgUrl]  = useState(variation.image_url || '');
-  const [uploading, setUploading] = useState(false);
-  const [dragging,  setDragging]  = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err,  setErr]  = useState('');
-  const fileRef = useRef();
-
-  useEffect(() => {
-    const onKey = e => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const uploadFile = async (file) => {
-    if (!file || !file.type?.startsWith('image/')) return;
-    setUploading(true);
-    const fd = new FormData(); fd.append('file', file);
-    try {
-      const res  = await fetch(`${API_BASE}/api/upload/image${pq}`, { method: 'POST', credentials: 'include', body: fd });
-      const data = await res.json();
-      if (res.ok) setImgUrl(data.url);
-      else setErr(data.detail || 'Upload failed');
-    } catch { setErr('Upload failed'); }
-    setUploading(false);
-  };
-
-  const submit = async (e) => {
-    e?.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) return setErr('Name is required');
-    setBusy(true); setErr('');
-    const res = await fetch(`${API_BASE}/api/products/${productId}/variations/${variation.id}${pq}`, {
-      method: 'PUT', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ variation_name: trimmed, image_url: imgUrl || null }),
-    });
-    setBusy(false);
-    if (!res.ok) { setErr('Save failed'); return; }
-    onSaved?.();
-  };
-
-  return createPortal(
-    <div className="auth-modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className="auth-modal cfg-modal" onClick={e => e.stopPropagation()}>
-        <div className="auth-modal-head">
-          <div className="auth-modal-title-row">
-            <div>
-              <div className="auth-modal-title">Edit variation</div>
-              <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">Update image and name.</span>
-              </div>
-            </div>
-          </div>
-          <button className="auth-modal-close" onClick={onClose} type="button">
-            <X className="auth-modal-close-icon" />
-          </button>
-        </div>
-
-        <div className="auth-modal-body cfg-modal-body">
-          <form onSubmit={submit}>
-            <div className="cfg-top">
-              <div className="cfg-image-col">
-                <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
-                  onChange={e => uploadFile(e.target.files?.[0])} />
-                <div
-                  className={`cfg-dropzone${dragging ? ' cfg-dropzone--over' : ''}${uploading ? ' cfg-dropzone--loading' : ''}`}
-                  onClick={() => !uploading && fileRef.current?.click()}
-                  onDragOver={e => { e.preventDefault(); setDragging(true); }}
-                  onDragLeave={() => setDragging(false)}
-                  onDrop={e => { e.preventDefault(); setDragging(false); uploadFile(e.dataTransfer.files?.[0]); }}>
-                  {imgUrl ? (
-                    <>
-                      <img src={imgUrl} alt={name} className="cfg-dropzone-preview" />
-                      <div className="cfg-dropzone-overlay">
-                        <UploadSimple weight="bold" /><span>Replace</span>
-                      </div>
-                    </>
-                  ) : uploading ? (
-                    <div className="cfg-dropzone-empty"><div className="cfg-dropzone-spinner" /><span>Uploading…</span></div>
-                  ) : (
-                    <div className="cfg-dropzone-empty">
-                      <ImageIcon weight="duotone" />
-                      <span className="cfg-dropzone-title">Drop image</span>
-                      <span className="cfg-dropzone-hint">or click · WebP</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="cfg-name-col">
-                <label className="po-field-label">Variation name</label>
-                <input className="crm-input" autoFocus value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="Black, Spicy, 1L…" maxLength={100} />
-              </div>
-            </div>
-
-            {err && <span className="crm-form-error">{err}</span>}
-
-            <div className="auth-actions" style={{ marginTop: 16 }}>
-              <button className="crm-submit-btn" type="submit" disabled={busy || !name.trim()}>
-                {busy ? 'Saving…' : 'Save'}
-              </button>
-              <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────
-// BLOCK 3 — Custom Fields (inline-editable list, instant persistence)
-// ─────────────────────────────────────────────────────────────────
+// ─── Custom Fields ────────────────────────────────────────────────
 function CustomFieldsBlock({ product, productId, pq, setProduct, showToast }) {
   const fields = product.custom_fields || [];
 
@@ -573,10 +342,8 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast }) {
 function CfRow({ field, onSave, onDelete }) {
   const [value, setValue] = useState(field.field_value ?? '');
   const skip = useRef(true);
-  // Re-sync if parent updates (e.g. after Global toggle)
   useEffect(() => { setValue(field.field_value ?? ''); skip.current = true; }, [field.field_value]);
 
-  // Debounced auto-save of value
   useEffect(() => {
     if (skip.current) { skip.current = false; return; }
     const t = setTimeout(() => onSave(field.field_key, value, field.field_type, field.is_global), 500);
@@ -655,9 +422,8 @@ function CfNewRow({ existingKeys, onSave, showToast }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────
-// BLOCK 4 — SEO (3 fields, debounced auto-save)
-// ─────────────────────────────────────────────────────────────────
+
+// ─── SEO ──────────────────────────────────────────────────────────
 function SeoBlock({ product, pq, setProduct, showToast }) {
   const [seoTitle, setSeoTitle] = useState(product.seo_title || '');
   const [seoDesc,  setSeoDesc]  = useState(product.seo_description || '');

@@ -625,14 +625,38 @@ class FrontReview(BaseModel):
     id: int; user_id: int; user_name: str; rating: int
     comment: str = ""; created_at: Optional[str] = None
 
+class FrontSpecification(BaseModel):
+    key: str; value: str
+
+class FrontLayerNode(BaseModel):
+    """Layer 3-5 row (deeper than configuration)."""
+    id: int
+    name: str = ''
+    price: Optional[float] = None
+    effective_price: Optional[float] = None
+    stock_quantity: int = 0
+    sold_quantity: int = 0
+    children: List["FrontLayerNode"] = []
+    specifications: List[FrontSpecification] = []
+
 class FrontConfiguration(BaseModel):
-    id: int; configuration_name: str; price: float; stock_quantity: int
+    id: int; configuration_name: str; price: float
+    effective_price: Optional[float] = None
+    stock_quantity: int
     sold_quantity: int; is_in_cart: bool = False
     cart_item_id: Optional[int] = None; cart_quantity: int = 0
+    children: List[FrontLayerNode] = []
+    specifications: List[FrontSpecification] = []
 
 class FrontVariation(BaseModel):
     id: int; variation_name: str; image: Optional[str] = None
-    is_in_cart: bool = False; configurations: List[FrontConfiguration]
+    price: Optional[float] = None
+    effective_price: Optional[float] = None
+    stock_quantity: int = 0
+    sold_quantity: int = 0
+    is_in_cart: bool = False
+    configurations: List[FrontConfiguration]
+    specifications: List[FrontSpecification] = []
 
 class ProductPageResponse(BaseModel):
     id: int; product_hash: str; title: str
@@ -1154,7 +1178,7 @@ def get_products(api_key_record: dict = Depends(resolve_api_key),
         fmt         = ",".join(["%s"] * len(product_ids))
 
         cursor.execute(
-            f"SELECT product_id, MIN(id) as variation_id FROM product_variations WHERE product_id IN ({fmt}) GROUP BY product_id",
+            f"SELECT product_id, MIN(id) as variation_id FROM product_configurations_l1 WHERE product_id IN ({fmt}) GROUP BY product_id",
             product_ids
         )
         first_variation = {r["product_id"]: r["variation_id"] for r in cursor.fetchall()}
@@ -1163,14 +1187,31 @@ def get_products(api_key_record: dict = Depends(resolve_api_key),
         if first_variation:
             vids = list(first_variation.values())
             vfmt = ",".join(["%s"] * len(vids))
-            cursor.execute(f"SELECT id, image_url FROM product_variations WHERE id IN ({vfmt})", vids)
+            cursor.execute(f"SELECT id, image_url FROM product_configurations_l1 WHERE id IN ({vfmt})", vids)
             images = {r["id"]: r["image_url"] for r in cursor.fetchall()}
 
+        # MIN over Layer 2 prices, falling back to Layer 1 (variation) price for
+        # products that haven't filled in Layer 2 yet, or where some layer-2 rows
+        # have NULL price (inherit from variation).
         cursor.execute(
-            f"SELECT product_id, MIN(price) as price FROM product_configurations WHERE product_id IN ({fmt}) GROUP BY product_id",
+            f"SELECT pv.product_id, MIN(COALESCE(pc.price, pv.price)) as price"
+            f" FROM product_configurations_l2 pc"
+            f" JOIN product_configurations_l1 pv ON pv.id = pc.variation_id"
+            f" WHERE pv.product_id IN ({fmt})"
+            f" GROUP BY pv.product_id",
             product_ids
         )
-        prices = {r["product_id"]: float(r["price"]) for r in cursor.fetchall()}
+        prices = {r["product_id"]: (float(r["price"]) if r["price"] is not None else 0.0)
+                  for r in cursor.fetchall()}
+        # Fallback: products with no Layer 2 → use Layer 1 price
+        cursor.execute(
+            f"SELECT product_id, MIN(price) as price FROM product_configurations_l1"
+            f" WHERE product_id IN ({fmt}) AND price IS NOT NULL GROUP BY product_id",
+            product_ids
+        )
+        for r in cursor.fetchall():
+            if r["product_id"] not in prices:
+                prices[r["product_id"]] = float(r["price"])
 
         cursor.execute(
             f"SELECT product_id, field_key, field_value FROM product_custom_fields WHERE project_id = %s AND product_id IN ({fmt})",
@@ -1218,22 +1259,83 @@ def get_product_page(product_hash: str, request: Request,
 
         cursor.execute(
             # Honour CRM drag-and-drop ordering via the `position` column.
-            "SELECT id, product_id, variation_name, image_url FROM product_variations "
+            "SELECT id, product_id, variation_name, image_url, price, stock_quantity, sold_quantity "
+            "FROM product_configurations_l1 "
             "WHERE product_id = %s ORDER BY position ASC, id ASC",
             (product_id,)
         )
         variations = cursor.fetchall()
 
         configurations = []
+        layer3_by_parent = {}
+        layer4_by_parent = {}
+        layer5_by_parent = {}
+        specifications_by_node = {}    # key: (layer, parent_id) → list[{key,value}]
         if variations:
             vids = [v["id"] for v in variations]
             vfmt = ",".join(["%s"] * len(vids))
             cursor.execute(
-                f"SELECT id, product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity "
-                f"FROM product_configurations WHERE variation_id IN ({vfmt})",
+                f"SELECT id, product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position "
+                f"FROM product_configurations_l2 WHERE variation_id IN ({vfmt}) "
+                f"ORDER BY position ASC, id ASC",
                 vids
             )
             configurations = cursor.fetchall()
+            l2_ids = [c["id"] for c in configurations]
+
+            # Layers 3, 4, 5 — fetch tree depths
+            if l2_ids:
+                fmt3 = ",".join(["%s"] * len(l2_ids))
+                cursor.execute(
+                    f"SELECT id, parent_id, name, price, stock_quantity, sold_quantity, position "
+                    f"FROM product_configurations_l3 WHERE parent_id IN ({fmt3}) "
+                    f"ORDER BY position ASC, id ASC",
+                    l2_ids
+                )
+                l3_rows = cursor.fetchall()
+                for r in l3_rows:
+                    layer3_by_parent.setdefault(r["parent_id"], []).append(r)
+                l3_ids = [r["id"] for r in l3_rows]
+
+                if l3_ids:
+                    fmt4 = ",".join(["%s"] * len(l3_ids))
+                    cursor.execute(
+                        f"SELECT id, parent_id, name, price, stock_quantity, sold_quantity, position "
+                        f"FROM product_configurations_l4 WHERE parent_id IN ({fmt4}) "
+                        f"ORDER BY position ASC, id ASC",
+                        l3_ids
+                    )
+                    l4_rows = cursor.fetchall()
+                    for r in l4_rows:
+                        layer4_by_parent.setdefault(r["parent_id"], []).append(r)
+                    l4_ids = [r["id"] for r in l4_rows]
+
+                    if l4_ids:
+                        fmt5 = ",".join(["%s"] * len(l4_ids))
+                        cursor.execute(
+                            f"SELECT id, parent_id, name, price, stock_quantity, sold_quantity, position "
+                            f"FROM product_configurations_l5 WHERE parent_id IN ({fmt5}) "
+                            f"ORDER BY position ASC, id ASC",
+                            l4_ids
+                        )
+                        for r in cursor.fetchall():
+                            layer5_by_parent.setdefault(r["parent_id"], []).append(r)
+
+            # Specifications: legacy variation_id (layer 1) + new layer/parent_id rows.
+            cursor.execute(
+                f"SELECT variation_id, layer, parent_id, spec_key, spec_value, position "
+                f"FROM product_specifications "
+                f"WHERE variation_id IN ({vfmt}) OR parent_id IS NOT NULL "
+                f"ORDER BY position ASC, id ASC",
+                vids
+            )
+            for row in cursor.fetchall():
+                layer_v = row.get("layer") or 1
+                parent_id = row.get("parent_id") if row.get("parent_id") is not None else row.get("variation_id")
+                specifications_by_node.setdefault((layer_v, parent_id), []).append({
+                    "key":   row["spec_key"],
+                    "value": row["spec_value"],
+                })
 
         cursor.execute(
             "SELECT pr.id, pr.user_id, pr.rating, pr.comment, pr.created_at, u.name AS user_name "
@@ -1282,26 +1384,88 @@ def get_product_page(product_hash: str, request: Request,
                 )
                 can_review = cursor.fetchone() is not None
 
+    # Build tree with effective_price walk-up. Layer 1 (variation) sets the
+    # baseline; deeper layers inherit when their own price is NULL.
+    def _eff(own_price, parent_eff):
+        if own_price is None: return parent_eff
+        return float(own_price)
+
+    def _build_subtree(rows, by_parent_next, layer_below, parent_eff):
+        """rows: items at the current layer. by_parent_next: dict id → next layer rows.
+        layer_below: 3,4,5 — for spec attachment + child fetching."""
+        out = []
+        for r in rows:
+            eff = _eff(r.get("price"), parent_eff)
+            children_rows = by_parent_next.get(r["id"], []) if by_parent_next else []
+            if   layer_below == 3: nested = _build_subtree(children_rows, layer4_by_parent, 4, eff)
+            elif layer_below == 4: nested = _build_subtree(children_rows, layer5_by_parent, 5, eff)
+            elif layer_below == 5: nested = _build_subtree(children_rows, None,             6, eff)
+            else:                   nested = []
+            out.append({
+                "id":             r["id"],
+                "name":           r.get("name") or r.get("configuration_name") or "",
+                "price":          float(r["price"]) if r.get("price") is not None else None,
+                "effective_price": eff,
+                "stock_quantity": r.get("stock_quantity") or 0,
+                "sold_quantity":  r.get("sold_quantity")  or 0,
+                "children":       nested,
+                "specifications": specifications_by_node.get((layer_below, r["id"]), []),
+            })
+        return out
+
     cfg_by_variation = {}
     for c in configurations:
-        if c["stock_quantity"] <= 0: continue
+        # Note: stock filter intentionally relaxed for multi-layer products —
+        # an intermediate Layer 2 row can have stock=0 but its Layer 3+ leaves
+        # carry the real stock. Frontend decides what to show.
         cart_item = cart_map.get((c["variation_id"], c["id"]))
+        children_l3 = layer3_by_parent.get(c["id"], [])
+        # parent_eff for layer 2 is the variation's own price (Layer 1)
+        # We'll fix this per-variation below
         cfg_by_variation.setdefault(c["variation_id"], []).append({
-            "id": c["id"], "configuration_name": c["configuration_name"], "price": float(c["price"]),
-            "stock_quantity": c["stock_quantity"], "sold_quantity": c["sold_quantity"],
-            "is_in_cart": cart_item is not None,
-            "cart_item_id": cart_item["cart_item_id"] if cart_item else None,
-            "cart_quantity": cart_item["quantity"] if cart_item else 0,
+            "_raw": c,
+            "_children_l3": children_l3,
+            "cart_item": cart_item,
         })
 
-    final_variations = [
-        {
+    final_variations = []
+    for v in variations:
+        var_eff = _eff(v.get("price"), None)
+        cfg_entries = cfg_by_variation.get(v["id"], [])
+        configurations_out = []
+        for entry in cfg_entries:
+            c = entry["_raw"]
+            cart_item = entry["cart_item"]
+            cfg_eff = _eff(c.get("price"), var_eff)
+            l3_tree = _build_subtree(entry["_children_l3"], layer4_by_parent, 4, cfg_eff)
+            # `price` field for backwards compat: float, falling back to effective if NULL.
+            display_price = float(c["price"]) if c.get("price") is not None else (cfg_eff if cfg_eff is not None else 0.0)
+            configurations_out.append({
+                "id": c["id"], "configuration_name": c["configuration_name"],
+                "price": display_price, "effective_price": cfg_eff,
+                "stock_quantity": c["stock_quantity"], "sold_quantity": c["sold_quantity"],
+                "is_in_cart": cart_item is not None,
+                "cart_item_id": cart_item["cart_item_id"] if cart_item else None,
+                "cart_quantity": cart_item["quantity"] if cart_item else 0,
+                "children":       l3_tree,
+                "specifications": specifications_by_node.get((2, c["id"]), []),
+            })
+
+        # Skip variations that have no Layer-2 rows AND no own-Layer-1 price/stock
+        # (i.e. truly empty placeholder). Otherwise show the variation.
+        has_purchasable = bool(configurations_out) or (var_eff is not None and (v.get("stock_quantity") or 0) > 0)
+        if not has_purchasable: continue
+
+        final_variations.append({
             "id": v["id"], "variation_name": v["variation_name"], "image": v["image_url"],
-            "is_in_cart": any(c["is_in_cart"] for c in cfg_by_variation.get(v["id"], [])),
-            "configurations": cfg_by_variation.get(v["id"], []),
-        }
-        for v in variations if cfg_by_variation.get(v["id"])
-    ]
+            "price": float(v["price"]) if v.get("price") is not None else None,
+            "effective_price": var_eff,
+            "stock_quantity": v.get("stock_quantity") or 0,
+            "sold_quantity":  v.get("sold_quantity")  or 0,
+            "is_in_cart": any(c["is_in_cart"] for c in configurations_out),
+            "configurations": configurations_out,
+            "specifications": specifications_by_node.get((1, v["id"]), []),
+        })
 
     reviews = [
         {
@@ -1415,7 +1579,7 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
         )
         item = cursor.fetchone()
         if not item: raise HTTPException(404, "Cart item not found")
-        cursor.execute("SELECT stock_quantity FROM product_configurations WHERE id=%s", (item["configuration_id"],))
+        cursor.execute("SELECT stock_quantity FROM product_configurations_l2 WHERE id=%s", (item["configuration_id"],))
         cfg = cursor.fetchone()
         if cfg and data.quantity > cfg["stock_quantity"]:
             raise HTTPException(400, f"Only {cfg['stock_quantity']} items in stock")
@@ -1458,8 +1622,8 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
             "SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.configuration_id, "
             "p.title, p.subtitle, pc.price, pc.configuration_name, pv.variation_name, pv.image_url "
             "FROM cart_items ci JOIN products p ON ci.product_id=p.id "
-            "LEFT JOIN product_variations pv ON ci.variation_id=pv.id "
-            "LEFT JOIN product_configurations pc ON ci.configuration_id=pc.id "
+            "LEFT JOIN product_configurations_l1 pv ON ci.variation_id=pv.id "
+            "LEFT JOIN product_configurations_l2 pc ON ci.configuration_id=pc.id "
             "WHERE ci.cart_id=%s",
             (cart["id"],)
         )
@@ -1613,7 +1777,7 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
 
         cursor.execute(
             "SELECT SUM(pc.price * ci.quantity) as subtotal FROM cart_items ci "
-            "JOIN product_configurations pc ON ci.configuration_id=pc.id WHERE ci.cart_id=%s",
+            "JOIN product_configurations_l2 pc ON ci.configuration_id=pc.id WHERE ci.cart_id=%s",
             (cart["id"],)
         )
         subtotal = float((cursor.fetchone() or {}).get("subtotal") or 0)
@@ -1685,9 +1849,9 @@ def place_order(data: PlaceOrderRequest, request: Request,
             "SELECT ci.id, ci.product_id, ci.variation_id, ci.configuration_id, ci.quantity, "
             "pc.price, pc.stock_quantity, p.title, pv.variation_name "
             "FROM cart_items ci "
-            "JOIN product_configurations pc ON ci.configuration_id = pc.id "
+            "JOIN product_configurations_l2 pc ON ci.configuration_id = pc.id "
             "JOIN products p ON ci.product_id = p.id "
-            "JOIN product_variations pv ON ci.variation_id = pv.id "
+            "JOIN product_configurations_l1 pv ON ci.variation_id = pv.id "
             "WHERE ci.cart_id = %s",
             (cart["id"],)
         )
@@ -1760,7 +1924,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
             )
             # Уменьшаем остаток
             cursor.execute(
-                "UPDATE product_configurations SET stock_quantity = stock_quantity - %s WHERE id=%s",
+                "UPDATE product_configurations_l2 SET stock_quantity = stock_quantity - %s WHERE id=%s",
                 (it["quantity"], it["configuration_id"])
             )
 
@@ -1833,8 +1997,8 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
                       p.title, pv.variation_name, pv.image_url, pc.configuration_name
                FROM order_items oi
                JOIN products p ON oi.product_id=p.id
-               JOIN product_variations pv ON oi.variation_id=pv.id
-               JOIN product_configurations pc ON oi.configuration_id=pc.id
+               JOIN product_configurations_l1 pv ON oi.variation_id=pv.id
+               JOIN product_configurations_l2 pc ON oi.configuration_id=pc.id
                WHERE oi.order_id=%s""",
             (o["id"],)
         )

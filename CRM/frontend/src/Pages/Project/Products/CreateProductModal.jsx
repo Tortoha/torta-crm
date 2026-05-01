@@ -50,7 +50,19 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.detail || 'Create failed'); setBusy(false); return; }
+      if (!res.ok) {
+        const detail = typeof data.detail === 'string' ? data.detail : 'Create failed';
+        setErr(detail); setBusy(false); return;
+      }
+
+      // Auto-create one empty variation so the product detail page opens
+      // with the Configuration block already visible.
+      await fetch(`${API_BASE}/api/products/${data.id}/variations${pq}`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_url: null }),
+      }).catch(() => {});
+
       onCreated(data);
     } catch {
       setErr('Network error');

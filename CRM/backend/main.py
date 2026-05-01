@@ -168,6 +168,21 @@ app = FastAPI()
 def run_migrations():
     import re as _re
     hex20 = _re.compile(r'^[0-9a-f]{20}$')
+
+    # ─── Idempotent table renames (run FIRST so subsequent migrations
+    #     reference the new consistent l1/l2/l3/l4/l5 names) ────────────
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name='product_variations'")
+            if cur.fetchone():
+                cur.execute("ALTER TABLE product_variations RENAME TO product_configurations_l1")
+            cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name='product_configurations'")
+            if cur.fetchone():
+                cur.execute("ALTER TABLE product_configurations RENAME TO product_configurations_l2")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] table rename to l1/l2 failed: {e}")
+
     try:
         with db_cursor() as (conn, cur):
             cur.execute("SELECT id, slug FROM crm_organizations")
@@ -574,13 +589,13 @@ def run_migrations():
                 cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (table, col))
                 return cur.fetchone() is not None
 
-            # 1) product_sizes → product_configurations
-            if table_exists("product_sizes") and not table_exists("product_configurations"):
-                cur.execute("ALTER TABLE product_sizes RENAME TO product_configurations")
+            # 1) product_sizes → product_configurations_l2
+            if table_exists("product_sizes") and not table_exists("product_configurations_l2"):
+                cur.execute("ALTER TABLE product_sizes RENAME TO product_configurations_l2")
 
             # 2) configuration_name (was size_name)
-            if column_exists("product_configurations", "size_name") and not column_exists("product_configurations", "configuration_name"):
-                cur.execute("ALTER TABLE product_configurations RENAME COLUMN size_name TO configuration_name")
+            if column_exists("product_configurations_l2", "size_name") and not column_exists("product_configurations_l2", "configuration_name"):
+                cur.execute("ALTER TABLE product_configurations_l2 RENAME COLUMN size_name TO configuration_name")
 
             # 3) cart_items.size_id → configuration_id
             if column_exists("cart_items", "size_id") and not column_exists("cart_items", "configuration_id"):
@@ -590,22 +605,102 @@ def run_migrations():
             if column_exists("order_items", "size_id") and not column_exists("order_items", "configuration_id"):
                 cur.execute("ALTER TABLE order_items RENAME COLUMN size_id TO configuration_id")
 
-            # 5) product_variations.position — for drag-and-drop ordering
-            need_backfill = not column_exists("product_variations", "position")
-            cur.execute("ALTER TABLE product_variations ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0")
+            # 5) product_configurations_l1.position — for drag-and-drop ordering
+            need_backfill = not column_exists("product_configurations_l1", "position")
+            cur.execute("ALTER TABLE product_configurations_l1 ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0")
             # Backfill positions ONCE, right after column creation, before users
             # have a chance to reorder. Skipping on later startups preserves user choices.
             if need_backfill:
                 cur.execute("""
-                    UPDATE product_variations pv
+                    UPDATE product_configurations_l1 pv
                        SET position = sub.rn - 1
                       FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY id) AS rn
-                              FROM product_variations) sub
+                              FROM product_configurations_l1) sub
                      WHERE pv.id = sub.id
                 """)
             conn.commit()
     except Exception as e:
         print(f"[migration] size→configuration rename failed: {e}")
+
+    # ─── Specifications per variation (key/value pairs) ─────────────
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_specifications (
+                    id           SERIAL PRIMARY KEY,
+                    variation_id INTEGER NOT NULL REFERENCES product_configurations_l1(id) ON DELETE CASCADE,
+                    spec_key     VARCHAR(200) NOT NULL DEFAULT '',
+                    spec_value   VARCHAR(1000) NOT NULL DEFAULT '',
+                    position     INTEGER NOT NULL DEFAULT 0,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_specifications_variation_id ON product_specifications(variation_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] product_specifications create failed: {e}")
+
+    # ─── Multi-layer configurations: Layer 1-5, all named product_configurations_l{n}.
+    #     Renames happen at top of run_migrations() — by here tables are already l1/l2.
+    #     Price NULLABLE on layers 2-5: NULL = inherit from parent.
+    try:
+        with db_cursor() as (conn, cur):
+            # Layer 1 (l1) gets price/stock/sold (becomes a leaf if no Layer 2 exists)
+            cur.execute("ALTER TABLE product_configurations_l1 ADD COLUMN IF NOT EXISTS price NUMERIC(10,2)")
+            cur.execute("ALTER TABLE product_configurations_l1 ADD COLUMN IF NOT EXISTS stock_quantity INTEGER NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE product_configurations_l1 ADD COLUMN IF NOT EXISTS sold_quantity INTEGER NOT NULL DEFAULT 0")
+
+            # Layer 2 price becomes NULLABLE (inherit from Layer 1 when NULL)
+            cur.execute("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_name='product_configurations_l2' AND column_name='price'
+            """)
+            row = cur.fetchone()
+            if row and row.get("is_nullable") == "NO":
+                cur.execute("ALTER TABLE product_configurations_l2 ALTER COLUMN price DROP NOT NULL")
+            # Layer 2 also needs `position` for tree ordering (older schema lacked it)
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0")
+
+            # Layers 3, 4, 5 — hierarchical via parent_id chain.
+            # parent of layer N = previous layer's table.
+            parent_for = {3: "product_configurations_l2", 4: "product_configurations_l3", 5: "product_configurations_l4"}
+            for n, parent_tbl in parent_for.items():
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS product_configurations_l{n} (
+                        id              SERIAL PRIMARY KEY,
+                        parent_id       INTEGER NOT NULL REFERENCES {parent_tbl}(id) ON DELETE CASCADE,
+                        name            VARCHAR(200) NOT NULL DEFAULT '',
+                        price           NUMERIC(10,2),
+                        stock_quantity  INTEGER NOT NULL DEFAULT 0,
+                        sold_quantity   INTEGER NOT NULL DEFAULT 0,
+                        position        INTEGER NOT NULL DEFAULT 0,
+                        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_pc_l{n}_parent ON product_configurations_l{n}(parent_id)")
+
+            # cart_items / order_items: tag which layer the configuration_id refers to.
+            # Existing rows default to 2 (current schema = product_configurations_l2).
+            for tbl in ("cart_items", "order_items"):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS configuration_layer SMALLINT NOT NULL DEFAULT 2")
+
+            # product_specifications: allow attachment to any layer (1-5).
+            # Existing rows are tied to variation_id (Layer 1) — backfill layer=1, parent_id=variation_id.
+            cur.execute("ALTER TABLE product_specifications ADD COLUMN IF NOT EXISTS layer SMALLINT NOT NULL DEFAULT 1")
+            cur.execute("ALTER TABLE product_specifications ADD COLUMN IF NOT EXISTS parent_id INTEGER")
+            cur.execute("UPDATE product_specifications SET parent_id = variation_id WHERE parent_id IS NULL")
+            # Allow specs for layer 2-5 (parent_id used, variation_id NULL)
+            cur.execute("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_name='product_specifications' AND column_name='variation_id'
+            """)
+            row = cur.fetchone()
+            if row and row.get("is_nullable") == "NO":
+                cur.execute("ALTER TABLE product_specifications ALTER COLUMN variation_id DROP NOT NULL")
+
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] multi-layer configurations failed: {e}")
 
 # ════════════════════════════════════════════
 # DB POOL
@@ -792,24 +887,24 @@ class SetCategoryProductsRequest(BaseModel):
 
 class CreateProductRequest(BaseModel):
     title: str
-    subtitle: str = None        # short tagline shown under title
-    description: str = None     # long body text
+    subtitle: Optional[str] = None        # short tagline shown under title
+    description: Optional[str] = None     # long body text
     category_id: Optional[int] = None
-    seo_title: str = None
-    seo_description: str = None
-    seo_keywords: str = None
+    seo_title: Optional[str] = None
+    seo_description: Optional[str] = None
+    seo_keywords: Optional[str] = None
 
 class UpdateProductRequest(BaseModel):
-    title: str = None
-    subtitle: str = None
-    description: str = None
+    title: Optional[str] = None
+    subtitle: Optional[str] = None
+    description: Optional[str] = None
     category_id: Optional[int] = None    # pass null to clear, omit to leave unchanged
-    seo_title: str = None
-    seo_description: str = None
-    seo_keywords: str = None
+    seo_title: Optional[str] = None
+    seo_description: Optional[str] = None
+    seo_keywords: Optional[str] = None
 
 class CreateVariationRequest(BaseModel):
-    variation_name: str
+    variation_name: Optional[str] = None
     image_url: Optional[str] = None
 
 class UpdateVariationRequest(BaseModel):
@@ -830,6 +925,31 @@ class UpdateConfigurationRequest(BaseModel):
     configuration_name: str = None
     price: float = None
     stock_quantity: int = None
+
+class CreateSpecificationRequest(BaseModel):
+    spec_key: Optional[str] = ''
+    spec_value: Optional[str] = ''
+    layer: Optional[int] = 1
+    parent_id: Optional[int] = None
+
+class UpdateSpecificationRequest(BaseModel):
+    spec_key: Optional[str] = None
+    spec_value: Optional[str] = None
+
+class CreateLayerItemRequest(BaseModel):
+    parent_id: Optional[int] = None     # required for layer >= 2
+    name: Optional[str] = ''
+    price: Optional[float] = None       # NULL = inherit from parent
+    stock_quantity: Optional[int] = 0
+    sold_quantity: Optional[int] = 0
+    image_url: Optional[str] = None     # layer 1 only
+
+class UpdateLayerItemRequest(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None       # explicit null in payload = clear (inherit)
+    stock_quantity: Optional[int] = None
+    sold_quantity: Optional[int] = None
+    image_url: Optional[str] = None
 
 class UpsertCustomFieldRequest(BaseModel):
     field_key: str
@@ -1820,8 +1940,8 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
     pid = (project_id,)
     with db_cursor() as (conn, cur):
         # ── Magaz: порядок важен (FK: sizes → variations → products) ──
-        cur.execute("DELETE FROM product_configurations WHERE variation_id IN (SELECT v.id FROM product_variations v JOIN products p ON v.product_id=p.id WHERE p.project_id=%s)", pid)
-        cur.execute("DELETE FROM product_variations WHERE product_id IN (SELECT id FROM products WHERE project_id=%s)", pid)
+        cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id IN (SELECT v.id FROM product_configurations_l1 v JOIN products p ON v.product_id=p.id WHERE p.project_id=%s)", pid)
+        cur.execute("DELETE FROM product_configurations_l1 WHERE product_id IN (SELECT id FROM products WHERE project_id=%s)", pid)
         cur.execute("DELETE FROM product_custom_fields WHERE project_id=%s", pid)
         cur.execute("DELETE FROM product_reviews     WHERE project_id=%s", pid)
         cur.execute("DELETE FROM product_page_views  WHERE project_id=%s", pid)
@@ -2008,13 +2128,13 @@ def delete_category(
             pids = [r["id"] for r in cur.fetchall()]
             if pids:
                 # Collect S3 image URLs of all variations BEFORE wiping rows
-                cur.execute("SELECT image_url FROM product_variations WHERE product_id = ANY(%s)", (pids,))
+                cur.execute("SELECT image_url FROM product_configurations_l1 WHERE product_id = ANY(%s)", (pids,))
                 victim_urls = [r["image_url"] for r in cur.fetchall() if r.get("image_url")]
                 # Manual cascade — schema has no ON DELETE CASCADE on these FKs.
                 # Order matters: leaves first (sizes), then variations, then product itself.
-                cur.execute("DELETE FROM product_configurations WHERE variation_id IN "
-                            "(SELECT id FROM product_variations WHERE product_id = ANY(%s))", (pids,))
-                cur.execute("DELETE FROM product_variations    WHERE product_id = ANY(%s)", (pids,))
+                cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id IN "
+                            "(SELECT id FROM product_configurations_l1 WHERE product_id = ANY(%s))", (pids,))
+                cur.execute("DELETE FROM product_configurations_l1    WHERE product_id = ANY(%s)", (pids,))
                 cur.execute("DELETE FROM product_custom_fields WHERE product_id = ANY(%s)", (pids,))
                 cur.execute("DELETE FROM product_reviews       WHERE product_id = ANY(%s)", (pids,))
                 cur.execute("DELETE FROM cart_items            WHERE product_id = ANY(%s)", (pids,))
@@ -2068,13 +2188,13 @@ def list_products(project_id: int = Query(...),
         " COALESCE(MAX(ps.price),0) AS max_price,"
         " COALESCE(AVG(pr.rating),0) AS avg_rating,"
         " COUNT(DISTINCT pr.id) AS reviews_count,"
-        " (SELECT image_url FROM product_variations WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image,"
+        " (SELECT image_url FROM product_configurations_l1 WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image,"
         " (SELECT COALESCE(json_agg(json_build_object('id', pv2.id, 'name', pv2.variation_name, 'image_url', pv2.image_url) ORDER BY pv2.id), '[]'::json)"
-        "  FROM product_variations pv2 WHERE pv2.product_id=p.id) AS variations"
+        "  FROM product_configurations_l1 pv2 WHERE pv2.product_id=p.id) AS variations"
         " FROM products p"
         " LEFT JOIN product_categories c ON c.id=p.category_id"
-        " LEFT JOIN product_variations v ON v.product_id=p.id"
-        " LEFT JOIN product_configurations ps ON ps.product_id=p.id"
+        " LEFT JOIN product_configurations_l1 v ON v.product_id=p.id"
+        " LEFT JOIN product_configurations_l2 ps ON ps.product_id=p.id"
         " LEFT JOIN product_reviews pr ON pr.product_id=p.id"
         f" WHERE {' AND '.join(where)} GROUP BY p.id, c.name, c.slug ORDER BY p.id DESC"
     )
@@ -2143,28 +2263,60 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
     p = db_one("SELECT * FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
     if not p: raise HTTPException(404, "Product not found")
 
-    variations = db_all(
-        # Position-first ordering so drag-and-drop in CRM is honoured.
-        # Tie-break by id so newly-created rows (default position=0) keep stable order.
-        "SELECT id, variation_name, image_url, position FROM product_variations"
-        " WHERE product_id=%s ORDER BY position ASC, id ASC",
-        (product_id,)
-    )
+    # Multi-layer tree (Layer 1 → 5). Each row has effective_price walked from parent.
+    variations, max_layer = _load_product_tree(product_id)
+
+    # Specifications — fetch all for this product, group by (layer, parent_id).
+    # New rows use parent_id; legacy rows still have variation_id (layer=1).
     var_ids = [v["id"] for v in variations]
-    configurations = []
+    specifications = []
     if var_ids:
+        # Pull all specs that belong to any node in this product's tree.
+        # For layer=1 we filter by variation_id IN var_ids;
+        # for layer>=2 we'll trust parent_id since it's set by new code.
         fmt = ",".join(["%s"] * len(var_ids))
-        configurations = db_all(
-            "SELECT id,variation_id,configuration_name,price,stock_quantity,sold_quantity"
-            " FROM product_configurations WHERE variation_id IN (" + fmt + ") ORDER BY id ASC",
-            tuple(var_ids)
+        specifications = db_all(
+            "SELECT id, variation_id, parent_id, layer, spec_key, spec_value, position"
+            f" FROM product_specifications WHERE variation_id IN ({fmt})"
+            "    OR parent_id IN ("
+            "      SELECT id FROM product_configurations_l1 WHERE product_id=%s"
+            "      UNION SELECT id FROM product_configurations_l2 WHERE variation_id IN (" + fmt + ")"
+            "      UNION SELECT id FROM product_configurations_l3 WHERE parent_id IN ("
+            "        SELECT id FROM product_configurations_l2 WHERE variation_id IN (" + fmt + "))"
+            "      UNION SELECT id FROM product_configurations_l4 WHERE parent_id IN ("
+            "        SELECT id FROM product_configurations_l3 WHERE parent_id IN ("
+            "          SELECT id FROM product_configurations_l2 WHERE variation_id IN (" + fmt + ")))"
+            "      UNION SELECT id FROM product_configurations_l5 WHERE parent_id IN ("
+            "        SELECT id FROM product_configurations_l4 WHERE parent_id IN ("
+            "          SELECT id FROM product_configurations_l3 WHERE parent_id IN ("
+            "            SELECT id FROM product_configurations_l2 WHERE variation_id IN (" + fmt + "))))"
+            "    )"
+            " ORDER BY position ASC, id ASC",
+            tuple(var_ids) + (product_id,) + tuple(var_ids) * 4
         )
-    cfg_by_var = {}
-    for c in configurations:
-        c["price"] = float(c["price"])
-        cfg_by_var.setdefault(c["variation_id"], []).append(c)
+    spec_by_node = {}     # key: (layer, parent_id)
+    for s in specifications:
+        # Backwards-compat: legacy rows have variation_id set, layer defaults to 1
+        layer = s.get("layer") or 1
+        parent_id = s.get("parent_id") if s.get("parent_id") is not None else s.get("variation_id")
+        spec_by_node.setdefault((layer, parent_id), []).append({
+            "id": s["id"], "spec_key": s["spec_key"], "spec_value": s["spec_value"],
+            "position": s["position"], "layer": layer, "parent_id": parent_id,
+        })
+
+    # Attach Layer 1 specs to variations (legacy + layer=1 new entries)
     for v in variations:
-        v["configurations"] = cfg_by_var.get(v["id"], [])
+        v["specifications"] = spec_by_node.get((1, v["id"]), [])
+
+    # Attach deeper-layer specs by walking the tree
+    def _attach_specs(items: list, layer: int):
+        for it in items:
+            it["specifications"] = spec_by_node.get((layer, it["id"]), [])
+            if it.get("children"):
+                _attach_specs(it["children"], layer + 1)
+    for v in variations:
+        if v.get("configurations"):
+            _attach_specs(v["configurations"], 2)
 
     custom_fields = db_all(
         "SELECT field_key,field_value,field_type,is_global FROM product_custom_fields"
@@ -2198,6 +2350,7 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         "seo_description":p["seo_description"]  or "",
         "seo_keywords":   p["seo_keywords"]     or "",
         "variations": variations, "custom_fields": custom_fields, "reviews": reviews,
+        "max_layer": max_layer,
     }
 
 
@@ -2234,10 +2387,10 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     # Collect S3 image URLs of all variations BEFORE deleting DB rows
-    image_rows = db_all("SELECT image_url FROM product_variations WHERE product_id=%s", (product_id,))
+    image_rows = db_all("SELECT image_url FROM product_configurations_l1 WHERE product_id=%s", (product_id,))
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_configurations WHERE variation_id IN (SELECT id FROM product_variations WHERE product_id=%s)", (product_id,))
-        cur.execute("DELETE FROM product_variations WHERE product_id=%s",              (product_id,))
+        cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id IN (SELECT id FROM product_configurations_l1 WHERE product_id=%s)", (product_id,))
+        cur.execute("DELETE FROM product_configurations_l1 WHERE product_id=%s",              (product_id,))
         cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s",           (product_id,))
         cur.execute("DELETE FROM product_reviews WHERE product_id=%s AND project_id=%s", (product_id, project_id))
         cur.execute("DELETE FROM products WHERE id=%s AND project_id=%s",              (product_id, project_id))
@@ -2260,13 +2413,12 @@ def create_variation(product_id: int, request: CreateVariationRequest, project_i
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    name = request.variation_name.strip()
-    if not name: raise HTTPException(400, "Variation name is required")
+    name = (request.variation_name or '').strip()
     with db_cursor() as (conn, cur):
         # Append at the end of the existing order — next position is max+1.
-        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM product_variations WHERE product_id=%s", (product_id,))
+        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM product_configurations_l1 WHERE product_id=%s", (product_id,))
         next_pos = cur.fetchone()["next_pos"]
-        cur.execute("INSERT INTO product_variations (product_id,variation_name,image_url,position) VALUES(%s,%s,%s,%s) RETURNING id",
+        cur.execute("INSERT INTO product_configurations_l1 (product_id,variation_name,image_url,position) VALUES(%s,%s,%s,%s) RETURNING id",
                     (product_id, sanitize(name), request.image_url, next_pos))
         new_id = cur.fetchone()["id"]
         conn.commit()
@@ -2290,12 +2442,12 @@ def reorder_variations(
         raise HTTPException(404, "Product not found")
     pids = list(req.variation_ids or [])
     with db_cursor() as (conn, cur):
-        cur.execute("SELECT id FROM product_variations WHERE product_id=%s", (product_id,))
+        cur.execute("SELECT id FROM product_configurations_l1 WHERE product_id=%s", (product_id,))
         existing = {r["id"] for r in cur.fetchall()}
         if set(pids) != existing:
             raise HTTPException(400, "variation_ids must contain exactly the variations of this product")
         for idx, vid in enumerate(pids):
-            cur.execute("UPDATE product_variations SET position=%s WHERE id=%s AND product_id=%s",
+            cur.execute("UPDATE product_configurations_l1 SET position=%s WHERE id=%s AND product_id=%s",
                         (idx, vid, product_id))
         conn.commit()
     return {"ok": True}
@@ -2306,7 +2458,7 @@ def update_variation(product_id: int, var_id: int, request: UpdateVariationReque
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    cur_row = db_one("SELECT image_url FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id))
+    cur_row = db_one("SELECT image_url FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
     if not cur_row:
         raise HTTPException(404, "Variation not found")
     fields = []; vals = []
@@ -2315,7 +2467,7 @@ def update_variation(product_id: int, var_id: int, request: UpdateVariationReque
     if not fields: return {"ok": True}
     vals.append(var_id)
     with db_cursor() as (conn, cur):
-        cur.execute("UPDATE product_variations SET " + ", ".join(fields) + " WHERE id=%s", vals)
+        cur.execute("UPDATE product_configurations_l1 SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
     # If image_url was changed to something different, delete the old S3 object
     if request.image_url is not None:
@@ -2330,10 +2482,10 @@ def delete_variation(product_id: int, var_id: int, project_id: int = Query(...),
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    old = db_one("SELECT image_url FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id))
+    old = db_one("SELECT image_url FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_configurations WHERE variation_id=%s", (var_id,))
-        cur.execute("DELETE FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id))
+        cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id=%s", (var_id,))
+        cur.execute("DELETE FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
         conn.commit()
     if old and old.get("image_url"):
         s3_delete_url(old["image_url"], f"projects/{project_id}/products/")
@@ -2350,13 +2502,13 @@ def create_configuration(product_id: int, var_id: int, request: CreateConfigurat
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    if not db_one("SELECT id FROM product_variations WHERE id=%s AND product_id=%s", (var_id, product_id)):
+    if not db_one("SELECT id FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id)):
         raise HTTPException(404, "Variation not found")
     name = request.configuration_name.strip()
     if not name: raise HTTPException(400, "Configuration name is required")
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO product_configurations (product_id,variation_id,configuration_name,price,stock_quantity) "
+            "INSERT INTO product_configurations_l2 (product_id,variation_id,configuration_name,price,stock_quantity) "
             "VALUES(%s,%s,%s,%s,%s) RETURNING id",
             (product_id, var_id, name, request.price, request.stock_quantity)
         )
@@ -2379,7 +2531,7 @@ def update_configuration(product_id: int, var_id: int, cfg_id: int, request: Upd
     if not fields: return {"ok": True}
     vals.extend([cfg_id, var_id])
     with db_cursor() as (conn, cur):
-        cur.execute("UPDATE product_configurations SET " + ", ".join(fields) +
+        cur.execute("UPDATE product_configurations_l2 SET " + ", ".join(fields) +
                     " WHERE id=%s AND variation_id=%s", vals)
         conn.commit()
     return {"ok": True}
@@ -2392,9 +2544,516 @@ def delete_configuration(product_id: int, var_id: int, cfg_id: int,
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_configurations WHERE id=%s AND variation_id=%s", (cfg_id, var_id))
+        cur.execute("DELETE FROM product_configurations_l2 WHERE id=%s AND variation_id=%s", (cfg_id, var_id))
         conn.commit()
     return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# SPECIFICATIONS (per variation, key/value pairs)
+# ════════════════════════════════════════════
+
+def _ensure_var_in_product(product_id: int, var_id: int, project_id: int):
+    """Reused guard: variation must belong to product, product to project."""
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    if not db_one("SELECT id FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id)):
+        raise HTTPException(404, "Variation not found")
+
+
+@app.post("/api/products/{product_id}/variations/{var_id}/specifications")
+def create_specification(product_id: int, var_id: int, request: CreateSpecificationRequest,
+                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    _ensure_var_in_product(product_id, var_id, project_id)
+    key = sanitize((request.spec_key or '').strip())
+    value = sanitize((request.spec_value or '').strip())
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM product_specifications WHERE variation_id=%s",
+                    (var_id,))
+        next_pos = cur.fetchone()["next_pos"]
+        cur.execute("INSERT INTO product_specifications (variation_id, spec_key, spec_value, position) "
+                    "VALUES(%s,%s,%s,%s) RETURNING id",
+                    (var_id, key, value, next_pos))
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+        return {"id": new_id, "variation_id": var_id, "spec_key": key, "spec_value": value, "position": next_pos}
+
+
+@app.put("/api/products/{product_id}/variations/{var_id}/specifications/{spec_id}")
+def update_specification(product_id: int, var_id: int, spec_id: int, request: UpdateSpecificationRequest,
+                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    _ensure_var_in_product(product_id, var_id, project_id)
+    fields = []; vals = []
+    if request.spec_key is not None:
+        fields.append("spec_key=%s"); vals.append(sanitize(request.spec_key.strip()))
+    if request.spec_value is not None:
+        fields.append("spec_value=%s"); vals.append(sanitize(request.spec_value.strip()))
+    if not fields: return {"ok": True}
+    vals.extend([spec_id, var_id])
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE product_specifications SET {', '.join(fields)} WHERE id=%s AND variation_id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/variations/{var_id}/specifications/{spec_id}")
+def delete_specification(product_id: int, var_id: int, spec_id: int,
+                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    _ensure_var_in_product(product_id, var_id, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM product_specifications WHERE id=%s AND variation_id=%s", (spec_id, var_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/products/{product_id}/variations/{var_id}/specifications/copy-to-all")
+def copy_specifications_to_all(product_id: int, var_id: int,
+                                project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Replace specifications on every other variation of this product with the
+    current variation's specifications. Atomic per-variation: existing specs
+    are deleted before re-inserting copies."""
+    require_team_member_or_owner(user, project_id)
+    _ensure_var_in_product(product_id, var_id, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT spec_key, spec_value, position FROM product_specifications "
+                    "WHERE variation_id=%s ORDER BY position ASC, id ASC", (var_id,))
+        source_specs = cur.fetchall()
+        cur.execute("SELECT id FROM product_configurations_l1 WHERE product_id=%s AND id != %s",
+                    (product_id, var_id))
+        target_ids = [r["id"] for r in cur.fetchall()]
+        for tid in target_ids:
+            cur.execute("DELETE FROM product_specifications WHERE variation_id=%s", (tid,))
+            for s in source_specs:
+                cur.execute("INSERT INTO product_specifications (variation_id, spec_key, spec_value, position) "
+                            "VALUES(%s,%s,%s,%s)",
+                            (tid, s["spec_key"], s["spec_value"], s["position"]))
+        conn.commit()
+    return {"ok": True, "copied_to": len(target_ids)}
+
+
+# ════════════════════════════════════════════
+# SPECIFICATIONS — generic (any layer 1-5)
+# Endpoints accept layer + parent_id, stores in product_specifications.
+# Old variation-based endpoints above kept for backwards compat (layer 1 only).
+# ════════════════════════════════════════════
+
+@app.post("/api/products/{product_id}/specifications")
+def create_specification_generic(product_id: int, request: CreateSpecificationRequest,
+                                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    layer = request.layer or 1
+    parent_id = request.parent_id
+    if parent_id is None:
+        raise HTTPException(400, "parent_id required")
+    owner_pid = _product_id_for(layer, parent_id)
+    if owner_pid != product_id:
+        raise HTTPException(404, "Parent not found")
+    key = sanitize((request.spec_key or '').strip())
+    value = sanitize((request.spec_value or '').strip())
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next_pos"
+            " FROM product_specifications WHERE layer=%s AND parent_id=%s",
+            (layer, parent_id)
+        )
+        next_pos = cur.fetchone()["next_pos"]
+        # Set variation_id only when layer=1 (backwards compat with legacy code paths)
+        var_id = parent_id if layer == 1 else None
+        cur.execute(
+            "INSERT INTO product_specifications (variation_id, layer, parent_id, spec_key, spec_value, position)"
+            " VALUES(%s, %s, %s, %s, %s, %s) RETURNING id",
+            (var_id, layer, parent_id, key, value, next_pos)
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id, "layer": layer, "parent_id": parent_id,
+            "spec_key": key, "spec_value": value, "position": next_pos}
+
+
+@app.put("/api/products/{product_id}/specifications/{spec_id}")
+def update_specification_generic(product_id: int, spec_id: int, request: UpdateSpecificationRequest,
+                                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    spec = db_one("SELECT layer, parent_id FROM product_specifications WHERE id=%s", (spec_id,))
+    if not spec: raise HTTPException(404, "Spec not found")
+    owner_pid = _product_id_for(spec["layer"] or 1, spec["parent_id"])
+    if owner_pid != product_id:
+        raise HTTPException(404, "Spec not found")
+    fields, vals = [], []
+    if request.spec_key is not None:
+        fields.append("spec_key=%s"); vals.append(sanitize(request.spec_key.strip()))
+    if request.spec_value is not None:
+        fields.append("spec_value=%s"); vals.append(sanitize(request.spec_value.strip()))
+    if not fields: return {"ok": True}
+    vals.append(spec_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE product_specifications SET {', '.join(fields)} WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/specifications/{spec_id}")
+def delete_specification_generic(product_id: int, spec_id: int,
+                                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    spec = db_one("SELECT layer, parent_id FROM product_specifications WHERE id=%s", (spec_id,))
+    if not spec: return {"ok": True}
+    owner_pid = _product_id_for(spec["layer"] or 1, spec["parent_id"])
+    if owner_pid != product_id:
+        raise HTTPException(404, "Spec not found")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM product_specifications WHERE id=%s", (spec_id,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ════════════════════════════════════════════
+# MULTI-LAYER CONFIGURATIONS (Layer 1-5)
+# Layer 1 = product_configurations_l1 (with image_url)
+# Layer 2 = product_configurations_l2 (parent = product_configurations_l1)
+# Layer 3-5 = product_configurations_l{n} (parent = previous layer)
+# ════════════════════════════════════════════
+
+def _layer_table(n: int) -> str:
+    if 1 <= n <= 5: return f"product_configurations_l{n}"
+    raise HTTPException(400, "Invalid layer (must be 1-5)")
+
+def _layer_parent_col(n: int) -> str:
+    if n == 1: return "product_id"
+    if n == 2: return "variation_id"
+    return "parent_id"
+
+def _layer_name_col(n: int) -> str:
+    if n == 1: return "variation_name"
+    if n == 2: return "configuration_name"
+    return "name"
+
+def _product_id_for(n: int, item_id: int) -> Optional[int]:
+    """Walk up the chain to find the owning product_id."""
+    cur_n, cur_id = n, item_id
+    while cur_n >= 2:
+        row = db_one(f"SELECT {_layer_parent_col(cur_n)} AS p FROM {_layer_table(cur_n)} WHERE id=%s", (cur_id,))
+        if not row: return None
+        cur_id = row["p"]
+        cur_n -= 1
+    row = db_one("SELECT product_id FROM product_configurations_l1 WHERE id=%s", (cur_id,))
+    return row["product_id"] if row else None
+
+def _annotate_effective_price(items: list, parent_eff: Optional[float]):
+    """Walk down the tree; each row's effective_price = own price if set,
+    otherwise inherited from parent. Mutates items in place."""
+    for it in items:
+        own = it.get("price")
+        eff = float(own) if own is not None else parent_eff
+        it["effective_price"] = eff
+        if it.get("price") is not None:
+            it["price"] = float(it["price"])
+        for child_key in ("configurations", "children"):
+            if it.get(child_key):
+                _annotate_effective_price(it[child_key], eff)
+
+
+def _load_product_tree(product_id: int) -> tuple[list, int]:
+    """Load all layers for a product as a nested tree. Returns (variations, max_layer)."""
+    variations = db_all(
+        "SELECT id, variation_name, image_url, position, price, stock_quantity, sold_quantity"
+        " FROM product_configurations_l1 WHERE product_id=%s ORDER BY position ASC, id ASC",
+        (product_id,)
+    )
+    if not variations:
+        return [], 1
+
+    max_layer = 1
+    var_ids = [v["id"] for v in variations]
+
+    def _fetch_layer(n: int, parent_ids: list[int]) -> dict:
+        """Fetch layer N rows whose parent is in parent_ids, return dict parent_id → list of rows."""
+        if not parent_ids: return {}
+        fmt = ",".join(["%s"] * len(parent_ids))
+        name_col = _layer_name_col(n)
+        parent_col = _layer_parent_col(n)
+        rows = db_all(
+            f"SELECT id, {parent_col} AS parent_id, {name_col} AS name, price, stock_quantity, sold_quantity, position"
+            f" FROM {_layer_table(n)} WHERE {parent_col} IN ({fmt}) ORDER BY position ASC, id ASC",
+            tuple(parent_ids)
+        )
+        by_parent = {}
+        for r in rows:
+            by_parent.setdefault(r["parent_id"], []).append(r)
+        return by_parent
+
+    # Layer 2
+    l2_by = _fetch_layer(2, var_ids)
+    l2_all = [r for rows in l2_by.values() for r in rows]
+    if l2_all: max_layer = 2
+
+    # Layer 3
+    l2_ids = [r["id"] for r in l2_all]
+    l3_by = _fetch_layer(3, l2_ids)
+    l3_all = [r for rows in l3_by.values() for r in rows]
+    if l3_all: max_layer = 3
+
+    # Layer 4
+    l3_ids = [r["id"] for r in l3_all]
+    l4_by = _fetch_layer(4, l3_ids)
+    l4_all = [r for rows in l4_by.values() for r in rows]
+    if l4_all: max_layer = 4
+
+    # Layer 5
+    l4_ids = [r["id"] for r in l4_all]
+    l5_by = _fetch_layer(5, l4_ids)
+    l5_all = [r for rows in l5_by.values() for r in rows]
+    if l5_all: max_layer = 5
+
+    # Wire up tree (bottom-up)
+    for r in l4_all:
+        r["children"] = l5_by.get(r["id"], [])
+    for r in l3_all:
+        r["children"] = l4_by.get(r["id"], [])
+    for r in l2_all:
+        r["children"] = l3_by.get(r["id"], [])
+    for v in variations:
+        # Backwards compat: keep "configurations" name for Layer 2 list
+        v["configurations"] = l2_by.get(v["id"], [])
+
+    # Effective price walk from each variation downward
+    _annotate_effective_price(variations, None)
+
+    return variations, max_layer
+
+
+# ─── Layer item CRUD (parametrized) ────────────────────────────────
+
+def _verify_layer_item_belongs_to_product(layer: int, item_id: int, product_id: int):
+    owner_pid = _product_id_for(layer, item_id)
+    if owner_pid != product_id:
+        raise HTTPException(404, "Item not found")
+
+
+@app.get("/api/products/{product_id}/layers/{layer}")
+def list_layer_items(product_id: int, layer: int, parent_id: Optional[int] = Query(None),
+                     project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    tbl = _layer_table(layer)
+    parent_col = _layer_parent_col(layer)
+    name_col = _layer_name_col(layer)
+    if layer == 1:
+        rows = db_all(f"SELECT id, {name_col} AS name, image_url, price, stock_quantity, sold_quantity, position"
+                      f" FROM {tbl} WHERE product_id=%s ORDER BY position ASC, id ASC", (product_id,))
+    else:
+        if parent_id is None:
+            raise HTTPException(400, "parent_id query param required for layer >= 2")
+        _verify_layer_item_belongs_to_product(layer - 1, parent_id, product_id)
+        rows = db_all(f"SELECT id, {name_col} AS name, price, stock_quantity, sold_quantity, position"
+                      f" FROM {tbl} WHERE {parent_col}=%s ORDER BY position ASC, id ASC", (parent_id,))
+    for r in rows:
+        if r.get("price") is not None:
+            r["price"] = float(r["price"])
+    return rows
+
+
+@app.post("/api/products/{product_id}/layers/{layer}")
+def create_layer_item(product_id: int, layer: int, request: CreateLayerItemRequest,
+                       project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    tbl = _layer_table(layer)
+    parent_col = _layer_parent_col(layer)
+    name_col = _layer_name_col(layer)
+    name = sanitize((request.name or '').strip())
+
+    if layer == 1:
+        scope_id = product_id
+    else:
+        if request.parent_id is None:
+            raise HTTPException(400, "parent_id required for layer >= 2")
+        _verify_layer_item_belongs_to_product(layer - 1, request.parent_id, product_id)
+        scope_id = request.parent_id
+
+    with db_cursor() as (conn, cur):
+        cur.execute(f"SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM {tbl} WHERE {parent_col}=%s", (scope_id,))
+        next_pos = cur.fetchone()["next_pos"]
+        if layer == 1:
+            cur.execute(
+                f"INSERT INTO {tbl} (product_id, {name_col}, image_url, price, stock_quantity, sold_quantity, position) "
+                f"VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (product_id, name, request.image_url, request.price,
+                 request.stock_quantity or 0, request.sold_quantity or 0, next_pos)
+            )
+        elif layer == 2:
+            # product_configurations_l2 has a legacy NOT NULL product_id column —
+            # set it explicitly (denormalized for fast lookups in External API).
+            cur.execute(
+                f"INSERT INTO {tbl} (product_id, {parent_col}, {name_col}, price, stock_quantity, sold_quantity, position) "
+                f"VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (product_id, scope_id, name, request.price,
+                 request.stock_quantity or 0, request.sold_quantity or 0, next_pos)
+            )
+        else:
+            cur.execute(
+                f"INSERT INTO {tbl} ({parent_col}, {name_col}, price, stock_quantity, sold_quantity, position) "
+                f"VALUES(%s, %s, %s, %s, %s, %s) RETURNING id",
+                (scope_id, name, request.price,
+                 request.stock_quantity or 0, request.sold_quantity or 0, next_pos)
+            )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {
+        "id": new_id, "layer": layer, "name": name,
+        "price": request.price,
+        "stock_quantity": request.stock_quantity or 0,
+        "sold_quantity": request.sold_quantity or 0,
+        "image_url": request.image_url if layer == 1 else None,
+        "position": next_pos,
+        "children": [],
+    }
+
+
+@app.put("/api/products/{product_id}/layers/{layer}/{item_id}")
+def update_layer_item(product_id: int, layer: int, item_id: int, request: UpdateLayerItemRequest,
+                       project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    _verify_layer_item_belongs_to_product(layer, item_id, product_id)
+    tbl = _layer_table(layer)
+    name_col = _layer_name_col(layer)
+    # Pydantic v2: only include fields the client actually sent
+    sent = request.model_dump(exclude_unset=True)
+    fields, vals = [], []
+    if 'name' in sent and sent['name'] is not None:
+        fields.append(f"{name_col}=%s"); vals.append(sanitize(sent['name'].strip()))
+    if 'price' in sent:
+        # Explicit null OR a number both go through (null = inherit)
+        fields.append("price=%s"); vals.append(sent['price'])
+    if 'stock_quantity' in sent and sent['stock_quantity'] is not None:
+        fields.append("stock_quantity=%s"); vals.append(sent['stock_quantity'])
+    if 'sold_quantity' in sent and sent['sold_quantity'] is not None:
+        fields.append("sold_quantity=%s"); vals.append(sent['sold_quantity'])
+    if layer == 1 and 'image_url' in sent:
+        fields.append("image_url=%s"); vals.append(sent['image_url'])
+    if not fields: return {"ok": True}
+    vals.append(item_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE {tbl} SET {', '.join(fields)} WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/layers/{layer}/{item_id}")
+def delete_layer_item(product_id: int, layer: int, item_id: int,
+                       project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    _verify_layer_item_belongs_to_product(layer, item_id, product_id)
+    tbl = _layer_table(layer)
+    with db_cursor() as (conn, cur):
+        cur.execute(f"DELETE FROM {tbl} WHERE id=%s", (item_id,))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/products/{product_id}/layers/{layer}/{item_id}/copy-to-siblings")
+def copy_layer_to_siblings(product_id: int, layer: int, item_id: int,
+                            project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Take all children of `item_id` (at layer `layer`) and replicate them under
+    every sibling of `item_id` at the same layer. NULL prices stay NULL → naturally
+    re-inherit from each new parent's price.
+
+    Example: user is editing Layer 3 children of Layer 2 row "256GB". They click
+    Copy → endpoint clones Layer 3 list under "512GB", "1TB", etc."""
+    if layer < 1 or layer > 4:
+        raise HTTPException(400, "copy-to-siblings requires layer 1-4 (deeper layers have no children)")
+    require_team_member_or_owner(user, project_id)
+    _verify_layer_item_belongs_to_product(layer, item_id, product_id)
+
+    child_layer = layer + 1
+    child_tbl = _layer_table(child_layer)
+    child_name_col = _layer_name_col(child_layer)
+    child_parent_col = _layer_parent_col(child_layer)
+    parent_tbl = _layer_table(layer)
+    parent_parent_col = _layer_parent_col(layer)
+
+    # Find siblings of `item_id` at `layer` (same parent at layer-1, exclude self)
+    grandparent_row = db_one(f"SELECT {parent_parent_col} AS gp FROM {parent_tbl} WHERE id=%s", (item_id,))
+    if not grandparent_row: raise HTTPException(404, "Source not found")
+    siblings = db_all(f"SELECT id FROM {parent_tbl} WHERE {parent_parent_col}=%s AND id != %s",
+                      (grandparent_row["gp"], item_id))
+    if not siblings: return {"ok": True, "copied_to": 0}
+
+    # Source children list at child_layer under item_id
+    source = db_all(
+        f"SELECT {child_name_col} AS name, price, stock_quantity, position FROM {child_tbl}"
+        f" WHERE {child_parent_col}=%s ORDER BY position ASC, id ASC",
+        (item_id,)
+    )
+
+    # Replace each sibling's child list with copies (NULL prices stay NULL).
+    # Layer 2 INSERT also needs product_id (legacy NOT NULL column).
+    with db_cursor() as (conn, cur):
+        for sib in siblings:
+            cur.execute(f"DELETE FROM {child_tbl} WHERE {child_parent_col}=%s", (sib["id"],))
+            for s in source:
+                if child_layer == 2:
+                    cur.execute(
+                        f"INSERT INTO {child_tbl} (product_id, {child_parent_col}, {child_name_col}, price, stock_quantity, position) "
+                        f"VALUES(%s, %s, %s, %s, %s, %s)",
+                        (product_id, sib["id"], s["name"], s["price"], s["stock_quantity"], s["position"])
+                    )
+                else:
+                    cur.execute(
+                        f"INSERT INTO {child_tbl} ({child_parent_col}, {child_name_col}, price, stock_quantity, position) "
+                        f"VALUES(%s, %s, %s, %s, %s)",
+                        (sib["id"], s["name"], s["price"], s["stock_quantity"], s["position"])
+                    )
+        conn.commit()
+    return {"ok": True, "copied_to": len(siblings)}
+
+
+@app.delete("/api/products/{product_id}/layers/{layer}")
+def delete_entire_layer(product_id: int, layer: int,
+                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Wipe every row of `layer` for this product (and CASCADE deletes deeper layers)."""
+    if layer < 2 or layer > 5:
+        raise HTTPException(400, "Only layers 2-5 can be deleted (Layer 1 = the product itself)")
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    # Walk down: delete every row of this layer that belongs to this product.
+    # For layer 2, parent = variation; for layer 3+, parent = previous layer item.
+    # Simplest: collect ids by walking down from product_configurations_l1.
+    var_ids = [r["id"] for r in db_all("SELECT id FROM product_configurations_l1 WHERE product_id=%s", (product_id,))]
+    if not var_ids: return {"ok": True, "deleted_layer": layer}
+
+    # Get all ids at this layer for this product
+    fmt = ",".join(["%s"] * len(var_ids))
+    if layer == 2:
+        target_ids = [r["id"] for r in db_all(f"SELECT id FROM product_configurations_l2 WHERE variation_id IN ({fmt})", tuple(var_ids))]
+    else:
+        # Walk down through each layer
+        current = var_ids
+        for n in range(2, layer):
+            tbl = _layer_table(n)
+            pcol = _layer_parent_col(n)
+            fmt_n = ",".join(["%s"] * len(current))
+            current = [r["id"] for r in db_all(f"SELECT id FROM {tbl} WHERE {pcol} IN ({fmt_n})", tuple(current))]
+            if not current: break
+        if not current:
+            return {"ok": True, "deleted_layer": layer}
+        tbl = _layer_table(layer)
+        pcol = _layer_parent_col(layer)
+        fmt_l = ",".join(["%s"] * len(current))
+        target_ids = [r["id"] for r in db_all(f"SELECT id FROM {tbl} WHERE {pcol} IN ({fmt_l})", tuple(current))]
+
+    if not target_ids: return {"ok": True, "deleted_layer": layer}
+    fmt_t = ",".join(["%s"] * len(target_ids))
+    with db_cursor() as (conn, cur):
+        cur.execute(f"DELETE FROM {_layer_table(layer)} WHERE id IN ({fmt_t})", tuple(target_ids))
+        conn.commit()
+    return {"ok": True, "deleted_layer": layer, "removed": len(target_ids)}
 
 
 # ════════════════════════════════════════════
@@ -3309,8 +3968,8 @@ def get_order(order_id: int, project_id: int = Query(...),
                   p.title, pv.variation_name, pv.image_url, pc.configuration_name
            FROM order_items oi
            JOIN products p ON oi.product_id=p.id
-           JOIN product_variations pv ON oi.variation_id=pv.id
-           JOIN product_configurations pc ON oi.configuration_id=pc.id
+           JOIN product_configurations_l1 pv ON oi.variation_id=pv.id
+           JOIN product_configurations_l2 pc ON oi.configuration_id=pc.id
            WHERE oi.order_id=%s""",
         (order_id,)
     )
