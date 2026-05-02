@@ -52,9 +52,7 @@ except ImportError:
 
 
 
-# ════════════════════════════════════════════
-# КОНФИГ
-# ════════════════════════════════════════════
+# ── КОНФИГ ───────────────────────────────────────────────
 
 SECRET_KEY       = os.getenv("SECRET_KEY", "")
 ALGORITHM        = "HS256"
@@ -160,17 +158,14 @@ def s3_delete_prefix(prefix: str) -> None:
 
 app = FastAPI()
 
-# ════════════════════════════════════════════
-# STARTUP MIGRATIONS
-# ════════════════════════════════════════════
+# ── STARTUP MIGRATIONS ───────────────────────────────────
 
 @app.on_event("startup")
 def run_migrations():
     import re as _re
     hex20 = _re.compile(r'^[0-9a-f]{20}$')
 
-    # ─── Idempotent table renames (run FIRST so subsequent migrations
-    #     reference the new consistent l1/l2/l3/l4/l5 names) ────────────
+    # Idempotent table renames (run FIRST so later migrations see consistent l1..l5 names).
     try:
         with db_cursor() as (conn, cur):
             cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name='product_variations'")
@@ -380,8 +375,7 @@ def run_migrations():
                     created_at                  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Idempotent ALTER for existing installations — adds columns introduced
-            # after the initial table was created.
+            # Idempotent ALTER for existing installations — adds later-introduced columns.
             for col in [
                 "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS aws_access_key_id TEXT",
                 "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS aws_secret_access_key TEXT",
@@ -404,8 +398,7 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] crm_sms_settings migration failed: {e}")
 
-    # Booking module (services, staff, working hours, bookings, settings).
-    # All keyed by project_id — each store/business has its own isolated set.
+    # Booking module (services, staff, hours, bookings, settings) — all keyed by project_id.
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -446,8 +439,7 @@ def run_migrations():
                 )
             """)
 
-            # Working hours: staff_id NULL → project-wide default schedule
-            # (used for services with requires_staff=false).
+            # Working hours: staff_id NULL = project-wide default (for services with requires_staff=false).
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS booking_hours (
                     id           SERIAL PRIMARY KEY,
@@ -475,8 +467,7 @@ def run_migrations():
                 )
             """)
 
-            # Customer bookings. user_id refers to the External-side `users.id`
-            # (not crm_users) — same pattern as orders / favorites / reviews.
+            # Customer bookings: user_id refers to External-side users.id (not crm_users), same as orders/favorites/reviews.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS bookings (
                     id              SERIAL PRIMARY KEY,
@@ -501,9 +492,7 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] booking tables migration failed: {e}")
 
-    # Migrate naive TIMESTAMP → TIMESTAMPTZ. Existing rows are interpreted as
-    # UTC (which is what the old code stored: datetime.utcnow + naive replace).
-    # This is a one-time migration; idempotent because PG raises if already TZ.
+    # One-time migrate naive TIMESTAMP→TIMESTAMPTZ; existing rows interpreted as UTC; idempotent.
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -523,12 +512,7 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] TIMESTAMPTZ migration failed: {e}")
 
-    # Rename products columns to match what they actually are visually:
-    #   description     → subtitle    (the short tagline shown under title)
-    #   characteristics → description (the long body text)
-    # Idempotent: only runs if old layout is present and new isn't.
-    # Order matters — rename description→subtitle FIRST to free up "description"
-    # name, then characteristics→description.
+    # Rename products cols: description→subtitle, then characteristics→description (order matters; idempotent).
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -545,12 +529,7 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] products column rename failed: {e}")
 
-    # ─── Product categories (flat, one-to-many) ───────────────────────────
-    # Each product can belong to ZERO or ONE category (FK with ON DELETE SET NULL —
-    # deleting a category orphans its products by default; explicit "delete with
-    # products" mode in the API actually deletes them. See DELETE /api/categories).
-    # Slug is auto-generated from name on create; UNIQUE per (project_id, slug).
-    # Slug is intentionally NOT updated on rename — keeps storefront URLs stable.
+    # Product categories (flat, 0..1 per product, FK ON DELETE SET NULL); slug auto from name, UNIQUE per project, NOT updated on rename (stable URLs).
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -575,10 +554,7 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] product_categories failed: {e}")
 
-    # ── Rename size → configuration ─────────────────────────────────────
-    # The old "sizes" wording was clothing-specific. Renamed to "configurations"
-    # to also fit restaurants, services, anything with priced options.
-    # Idempotent: every step checks whether the old or new name exists first.
+    # Rename size→configuration (clothing-specific term replaced with generic "priced options"); idempotent per step.
     try:
         with db_cursor() as (conn, cur):
             def table_exists(name):
@@ -608,8 +584,7 @@ def run_migrations():
             # 5) product_configurations_l1.position — for drag-and-drop ordering
             need_backfill = not column_exists("product_configurations_l1", "position")
             cur.execute("ALTER TABLE product_configurations_l1 ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0")
-            # Backfill positions ONCE, right after column creation, before users
-            # have a chance to reorder. Skipping on later startups preserves user choices.
+            # Backfill positions ONCE right after column creation; skip on later startups to preserve user reorders.
             if need_backfill:
                 cur.execute("""
                     UPDATE product_configurations_l1 pv
@@ -640,9 +615,7 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] product_specifications create failed: {e}")
 
-    # ─── Multi-layer configurations: Layer 1-5, all named product_configurations_l{n}.
-    #     Renames happen at top of run_migrations() — by here tables are already l1/l2.
-    #     Price NULLABLE on layers 2-5: NULL = inherit from parent.
+    # Multi-layer configurations product_configurations_l1..l5; price NULLABLE on l2-5 (NULL = inherit from parent).
     try:
         with db_cursor() as (conn, cur):
             # Layer 1 (l1) gets price/stock/sold (becomes a leaf if no Layer 2 exists)
@@ -661,8 +634,7 @@ def run_migrations():
             # Layer 2 also needs `position` for tree ordering (older schema lacked it)
             cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0")
 
-            # Layers 3, 4, 5 — hierarchical via parent_id chain.
-            # parent of layer N = previous layer's table.
+            # Layers 3-5 hierarchical via parent_id chain; parent of layer N = previous layer's table.
             parent_for = {3: "product_configurations_l2", 4: "product_configurations_l3", 5: "product_configurations_l4"}
             for n, parent_tbl in parent_for.items():
                 cur.execute(f"""
@@ -679,13 +651,11 @@ def run_migrations():
                 """)
                 cur.execute(f"CREATE INDEX IF NOT EXISTS idx_pc_l{n}_parent ON product_configurations_l{n}(parent_id)")
 
-            # cart_items / order_items: tag which layer the configuration_id refers to.
-            # Existing rows default to 2 (current schema = product_configurations_l2).
+            # cart_items/order_items: tag the layer for configuration_id; existing rows default to 2 (l2).
             for tbl in ("cart_items", "order_items"):
                 cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS configuration_layer SMALLINT NOT NULL DEFAULT 2")
 
-            # product_specifications: allow attachment to any layer (1-5).
-            # Existing rows are tied to variation_id (Layer 1) — backfill layer=1, parent_id=variation_id.
+            # product_specifications attaches to any layer (1-5); backfill legacy variation_id rows as layer=1, parent_id=variation_id.
             cur.execute("ALTER TABLE product_specifications ADD COLUMN IF NOT EXISTS layer SMALLINT NOT NULL DEFAULT 1")
             cur.execute("ALTER TABLE product_specifications ADD COLUMN IF NOT EXISTS parent_id INTEGER")
             cur.execute("UPDATE product_specifications SET parent_id = variation_id WHERE parent_id IS NULL")
@@ -698,13 +668,23 @@ def run_migrations():
             if row and row.get("is_nullable") == "NO":
                 cur.execute("ALTER TABLE product_specifications ALTER COLUMN variation_id DROP NOT NULL")
 
+            # Custom fields gain a position column so the CRM Drag-and-Drop reorder
+            # endpoint can persist the user's chosen order. Backfilled by created_at.
+            cur.execute("ALTER TABLE product_custom_fields ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0")
+            cur.execute("""
+                UPDATE product_custom_fields cf SET position = sub.rn - 1
+                FROM (
+                    SELECT id, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_at) AS rn
+                    FROM product_custom_fields
+                ) sub
+                WHERE cf.id = sub.id AND cf.position = 0
+            """)
+
             conn.commit()
     except Exception as e:
         print(f"[migration] multi-layer configurations failed: {e}")
 
-# ════════════════════════════════════════════
-# DB POOL
-# ════════════════════════════════════════════
+# ── DB POOL ──────────────────────────────────────────────
 
 _pool = ThreadedConnectionPool(1, 10, **DB_CONFIG)
 
@@ -734,9 +714,7 @@ def db_all(sql: str, params: tuple = ()):
         cur.execute(sql, params)
         return cur.fetchall()
 
-# ════════════════════════════════════════════
-# EMAIL
-# ════════════════════════════════════════════
+# ── EMAIL ────────────────────────────────────────────────
 
 def _ses(method: str, path: str, data: dict | None = None) -> dict:
     """Call self-hosted SES API."""
@@ -775,8 +753,7 @@ def send_email(to: str, subject: str, html: str,
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 
-# ─── Rate-limit / verification storage ────────────────────────────────────
-# Backed by Redis when REDIS_URL is set, otherwise in-memory. See kvstore.py.
+# Rate-limit / verification storage — Redis if REDIS_URL set, else in-memory (see kvstore.py).
 import time as _time
 import kvstore
 
@@ -806,16 +783,7 @@ def _reset_get(h):    return kvstore.get(_reset_key(h))
 def _reset_set(h, v): kvstore.set(_reset_key(h), v, ttl=RESET_TTL_MINUTES * 60)
 def _reset_del(h):    kvstore.delete(_reset_key(h))
 
-# ─── CSRF double-submit cookie ────────────────────────────────────────────
-# How it works:
-#   1. GET /api/csrf sets a readable (NOT httpOnly) cookie `csrf_token`.
-#   2. Frontend JS reads the cookie and echoes it as X-CSRF-Token header.
-#   3. Middleware compares cookie == header for every state-changing request.
-#   4. An attacker on evil.com cannot read our cookies (same-origin policy),
-#      so they cannot forge the header — request is rejected with 403.
-#
-# Exempt paths: webhook inbound (comes from Telegram/Meta servers, not browsers)
-# and internal chat endpoint (protected by X-Internal-Key instead).
+# CSRF double-submit cookie: GET /api/csrf sets readable cookie, frontend echoes it as X-CSRF-Token, middleware compares; exempt: inbound webhooks and X-Internal-Key chat endpoint.
 _CSRF_SAFE_METHODS  = {"GET", "HEAD", "OPTIONS", "TRACE"}
 _CSRF_EXEMPT_PREFIX = ("/api/chat/webhook/", "/api/chat/internal/")
 
@@ -835,8 +803,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return _J({"detail": "CSRF token missing or invalid"}, status_code=403)
         return await call_next(request)
 
-# Add CSRF before CORS so CORS runs outermost (response ALWAYS gets CORS headers,
-# even on CSRF 403 — browser never sees a confusing CORS error instead of 403).
+# Add CSRF before CORS so CORS runs outermost — response always carries CORS headers even on CSRF 403.
 app.add_middleware(CSRFMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -844,9 +811,7 @@ app.add_middleware(
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-# ════════════════════════════════════════════
-# МОДЕЛИ
-# ════════════════════════════════════════════
+# ── МОДЕЛИ ───────────────────────────────────────────────
 
 class SendCodeRequest(BaseModel):
     email: str; type: str; name: str = None; password: str = None
@@ -912,9 +877,16 @@ class UpdateVariationRequest(BaseModel):
     image_url: Optional[str] = None
 
 class ReorderVariationsRequest(BaseModel):
-    # New ordering of all variation IDs for a given product. Each id's array
-    # index becomes its `position` column. Drag-and-drop in CRM uses this.
+    # New ordering of variation IDs for a product; array index becomes `position` (drag-and-drop in CRM).
     variation_ids: List[int]
+
+class ReorderIdsRequest(BaseModel):
+    # Generic reorder payload: array index → position. Used by L2-5 layer-row,
+    # specifications, and custom-fields reorder endpoints.
+    ids: List[int] = []
+    parent_id: Optional[int]    = None  # required for L2-5 (scope) and specs
+    layer: Optional[int]        = None  # required for specs reorder
+    field_keys: Optional[List[str]] = None  # custom_fields use string keys, not ids
 
 class CreateConfigurationRequest(BaseModel):
     configuration_name: str
@@ -956,6 +928,16 @@ class UpsertCustomFieldRequest(BaseModel):
     field_value: str = None
     field_type: str = "string"
     is_global: bool = False
+
+class RestoreRequest(BaseModel):
+    # Generic snapshot restore — used by frontend Undo. The snapshot was
+    # captured client-side before deletion; we rebuild whatever subtree it
+    # describes. Original IDs are gone; restored rows get fresh IDs.
+    type: str                         # variation | layer_node | layer | custom_fields
+    layer: Optional[int]      = None  # required for layer_node + layer
+    parent_id: Optional[int]  = None  # required for layer_node (l2-5)
+    data: Optional[dict]      = None  # the recursive node payload
+    rows: Optional[list]      = None  # list of nodes (whole-layer / cf cascade)
 
 class UpdateSettingsRequest(BaseModel):
     name: str = None
@@ -1038,14 +1020,9 @@ class ChatIntegrationRequest(BaseModel):
 class ChatSendRequest(BaseModel):
     text: str
 
-# ════════════════════════════════════════════
-# ХЕЛПЕРЫ
-# ════════════════════════════════════════════
+# ── ХЕЛПЕРЫ ──────────────────────────────────────────────
 
-# ── Password hashing (scrypt + legacy SHA-256 fallback) ────────────────
-# New format: "$scrypt$<base64-salt>$<base64-hash>"  (salt=16B, hash=32B).
-# Legacy 64-hex SHA-256 hashes still verify; on successful legacy login the
-# caller should re-hash with hash_pw() and write back, lazily migrating users.
+# Password hashing: new "$scrypt$<b64-salt>$<b64-hash>" (salt=16B, hash=32B); legacy 64-hex SHA-256 still verifies and is lazily re-hashed on login.
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
 
 def hash_pw(pw: str) -> str:
@@ -1125,10 +1102,7 @@ def clear_auth_cookies(response: Response):
     response.delete_cookie("crm_token",   path="/")
     response.delete_cookie("crm_refresh", path="/")
 
-# ── Refresh token helpers ─────────────────────────────────────────────
-# Format: opaque random string ("rt_" + 64 hex chars). The PLAINTEXT lives
-# only in the user's cookie; the SHA-256 hash is stored in DB. Lookup is
-# constant-time via UNIQUE INDEX on token_hash.
+# Refresh tokens: opaque "rt_"+64hex; plaintext only in cookie, SHA-256 hash stored in DB (UNIQUE INDEX = constant-time lookup).
 
 REVOKE_REASON_LOGOUT  = "logout"
 REVOKE_REASON_ROTATED = "rotated"
@@ -1333,9 +1307,7 @@ def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
             conn.commit()
     return user_id
 
-# ════════════════════════════════════════════
-# EMAIL HELPERS
-# ════════════════════════════════════════════
+# ── EMAIL HELPERS ────────────────────────────────────────
 
 def send_code_email(email: str, code: int) -> bool:
     html = f"""<div style="font-family:Arial;text-align:center;padding:40px">
@@ -1355,9 +1327,7 @@ def send_reset_email(email: str, token: str) -> bool:
                 <p style="margin-top:24px;color:#999;font-size:12px">{url}</p></div>"""
     return send_email(email, "Password Reset", html)
 
-# ════════════════════════════════════════════
-# CSRF TOKEN
-# ════════════════════════════════════════════
+# ── CSRF TOKEN ───────────────────────────────────────────
 
 @app.get("/api/csrf")
 def get_csrf_token(request: Request, response: Response):
@@ -1380,9 +1350,7 @@ def get_csrf_token(request: Request, response: Response):
     return {"csrf_token": token}
 
 
-# ════════════════════════════════════════════
-# АУТЕНТИФИКАЦИЯ
-# ════════════════════════════════════════════
+# ── АУТЕНТИФИКАЦИЯ ───────────────────────────────────────
 
 @app.post("/api/send-code")
 def send_code(request: SendCodeRequest, req: Request):
@@ -1512,16 +1480,13 @@ def get_me(user: dict = Depends(get_current_user)):
 
 @app.post("/api/logout")
 def logout(response: Response, request: Request):
-    # Revoke just THIS session's refresh token; access JWT can't be revoked
-    # but expires in <15 min anyway.
+    # Revoke only THIS session's refresh token; access JWT can't be revoked but expires <15 min.
     revoke_refresh_by_raw(request.cookies.get("crm_refresh", ""))
     clear_auth_cookies(response)
     return {"success": True}
 
 
-# ════════════════════════════════════════════
-# REFRESH TOKEN / SESSION MANAGEMENT
-# ════════════════════════════════════════════
+# ── REFRESH TOKEN / SESSION MANAGEMENT ───────────────────
 
 @app.post("/api/refresh")
 def refresh_session(request: Request, response: Response):
@@ -1599,9 +1564,7 @@ def logout_all(response: Response, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# ВОССТАНОВЛЕНИЕ ПАРОЛЯ
-# ════════════════════════════════════════════
+# ── ВОССТАНОВЛЕНИЕ ПАРОЛЯ ────────────────────────────────
 
 @app.post("/api/forgot-password")
 def forgot_password(request: ForgotPasswordRequest, req: Request):
@@ -1661,9 +1624,7 @@ def reset_password(request: ResetPasswordRequest):
     return {"success": True}
 
 
-# ════════════════════════════════════════════
-# ORGANIZATIONS
-# ════════════════════════════════════════════
+# ── ORGANIZATIONS ────────────────────────────────────────
 
 @app.get("/api/orgs")
 def get_orgs(user: dict = Depends(get_current_user)):
@@ -1754,9 +1715,7 @@ def delete_org(org_id: int, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# PROJECTS
-# ════════════════════════════════════════════
+# ── PROJECTS ─────────────────────────────────────────────
 
 @app.get("/api/orgs/{org_id}/projects")
 def get_projects(org_id: int, user: dict = Depends(get_current_user)):
@@ -1939,7 +1898,26 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
 
     pid = (project_id,)
     with db_cursor() as (conn, cur):
-        # ── Magaz: порядок важен (FK: sizes → variations → products) ──
+        # Magaz delete order (FK: sizes→variations→products); walk layer tree first to clean L2-5 specs (no parent_id CASCADE).
+        cur.execute("SELECT v.id FROM product_configurations_l1 v JOIN products p ON v.product_id=p.id WHERE p.project_id=%s", pid)
+        _l1 = [r["id"] for r in cur.fetchall()]
+        _l2 = _l3 = _l4 = _l5 = []
+        if _l1:
+            cur.execute("SELECT id FROM product_configurations_l2 WHERE variation_id = ANY(%s)", (_l1,))
+            _l2 = [r["id"] for r in cur.fetchall()]
+        if _l2:
+            cur.execute("SELECT id FROM product_configurations_l3 WHERE parent_id = ANY(%s)", (_l2,))
+            _l3 = [r["id"] for r in cur.fetchall()]
+        if _l3:
+            cur.execute("SELECT id FROM product_configurations_l4 WHERE parent_id = ANY(%s)", (_l3,))
+            _l4 = [r["id"] for r in cur.fetchall()]
+        if _l4:
+            cur.execute("SELECT id FROM product_configurations_l5 WHERE parent_id = ANY(%s)", (_l4,))
+            _l5 = [r["id"] for r in cur.fetchall()]
+        for _layer, _ids in ((2, _l2), (3, _l3), (4, _l4), (5, _l5)):
+            if _ids:
+                cur.execute("DELETE FROM product_specifications WHERE layer=%s AND parent_id = ANY(%s)",
+                            (_layer, _ids))
         cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id IN (SELECT v.id FROM product_configurations_l1 v JOIN products p ON v.product_id=p.id WHERE p.project_id=%s)", pid)
         cur.execute("DELETE FROM product_configurations_l1 WHERE product_id IN (SELECT id FROM products WHERE project_id=%s)", pid)
         cur.execute("DELETE FROM product_custom_fields WHERE project_id=%s", pid)
@@ -1968,12 +1946,7 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# PRODUCT CATEGORIES
-# ════════════════════════════════════════════
-# Flat (no nesting). One product → at most one category.
-# Slug auto-generated from name on create, NOT updated on rename (stable URLs).
-# Three delete modes: keep_products | delete_products | move (?target_id=X)
+# ── PRODUCT CATEGORIES — flat, ≤1 per product, slug fixed at create; delete modes: keep_products|delete_products|move(?target_id=X) ──
 
 def _category_slug(cur, project_id: int, name: str) -> str:
     """Generate a unique slug for a new category in this project.
@@ -2130,8 +2103,21 @@ def delete_category(
                 # Collect S3 image URLs of all variations BEFORE wiping rows
                 cur.execute("SELECT image_url FROM product_configurations_l1 WHERE product_id = ANY(%s)", (pids,))
                 victim_urls = [r["image_url"] for r in cur.fetchall() if r.get("image_url")]
-                # Manual cascade — schema has no ON DELETE CASCADE on these FKs.
-                # Order matters: leaves first (sizes), then variations, then product itself.
+                # Manual cascade (no ON DELETE CASCADE): leaves→variations→product; walk layer tree first to clear L2-5 specs (parent_id has no CASCADE).
+                cur.execute("SELECT id FROM product_configurations_l1 WHERE product_id = ANY(%s)", (pids,))
+                _l1 = [r["id"] for r in cur.fetchall()]
+                cur.execute("SELECT id FROM product_configurations_l2 WHERE variation_id = ANY(%s)", (_l1,)) if _l1 else None
+                _l2 = [r["id"] for r in cur.fetchall()] if _l1 else []
+                cur.execute("SELECT id FROM product_configurations_l3 WHERE parent_id = ANY(%s)", (_l2,)) if _l2 else None
+                _l3 = [r["id"] for r in cur.fetchall()] if _l2 else []
+                cur.execute("SELECT id FROM product_configurations_l4 WHERE parent_id = ANY(%s)", (_l3,)) if _l3 else None
+                _l4 = [r["id"] for r in cur.fetchall()] if _l3 else []
+                cur.execute("SELECT id FROM product_configurations_l5 WHERE parent_id = ANY(%s)", (_l4,)) if _l4 else None
+                _l5 = [r["id"] for r in cur.fetchall()] if _l4 else []
+                for _layer, _ids in ((2, _l2), (3, _l3), (4, _l4), (5, _l5)):
+                    if _ids:
+                        cur.execute("DELETE FROM product_specifications WHERE layer=%s AND parent_id = ANY(%s)",
+                                    (_layer, _ids))
                 cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id IN "
                             "(SELECT id FROM product_configurations_l1 WHERE product_id = ANY(%s))", (pids,))
                 cur.execute("DELETE FROM product_configurations_l1    WHERE product_id = ANY(%s)", (pids,))
@@ -2151,9 +2137,7 @@ def delete_category(
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# PRODUCTS
-# ════════════════════════════════════════════
+# ── PRODUCTS ─────────────────────────────────────────────
 
 @app.get("/api/products")
 def list_products(project_id: int = Query(...),
@@ -2266,14 +2250,11 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
     # Multi-layer tree (Layer 1 → 5). Each row has effective_price walked from parent.
     variations, max_layer = _load_product_tree(product_id)
 
-    # Specifications — fetch all for this product, group by (layer, parent_id).
-    # New rows use parent_id; legacy rows still have variation_id (layer=1).
+    # Specs: fetch all and group by (layer, parent_id); new rows use parent_id, legacy rows have variation_id at layer=1.
     var_ids = [v["id"] for v in variations]
     specifications = []
     if var_ids:
-        # Pull all specs that belong to any node in this product's tree.
-        # For layer=1 we filter by variation_id IN var_ids;
-        # for layer>=2 we'll trust parent_id since it's set by new code.
+        # Pull all specs in this product's tree: layer=1 by variation_id IN var_ids, layer≥2 by parent_id (new code).
         fmt = ",".join(["%s"] * len(var_ids))
         specifications = db_all(
             "SELECT id, variation_id, parent_id, layer, spec_key, spec_value, position"
@@ -2318,13 +2299,35 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         if v.get("configurations"):
             _attach_specs(v["configurations"], 2)
 
-    custom_fields = db_all(
-        "SELECT field_key,field_value,field_type,is_global FROM product_custom_fields"
-        " WHERE product_id=%s AND project_id=%s ORDER BY created_at ASC",
+    own_fields = db_all(
+        "SELECT field_key,field_value,field_type,is_global,position,created_at FROM product_custom_fields"
+        " WHERE product_id=%s AND project_id=%s ORDER BY position ASC, created_at ASC",
         (product_id, project_id)
     )
-    for cf in custom_fields:
+    own_keys = {cf["field_key"] for cf in own_fields}
+    # Project-wide global keys → placeholder rows on products that don't have their own value yet.
+    global_keys_rows = db_all(
+        "SELECT field_key, MAX(field_type) AS field_type"
+        " FROM product_custom_fields"
+        " WHERE project_id=%s AND is_global=TRUE"
+        " GROUP BY field_key ORDER BY field_key ASC",
+        (project_id,)
+    )
+    custom_fields = []
+    for cf in own_fields:
         cf["is_global"] = bool(cf.get("is_global", 0))
+        cf["is_placeholder"] = False
+        cf.pop("created_at", None)
+        custom_fields.append(cf)
+    for gk in global_keys_rows:
+        if gk["field_key"] in own_keys: continue
+        custom_fields.append({
+            "field_key": gk["field_key"],
+            "field_value": "",
+            "field_type": gk["field_type"] or "string",
+            "is_global": True,
+            "is_placeholder": True,
+        })
 
     reviews = db_all(
         "SELECT pr.id,pr.rating,pr.comment,pr.created_at,pr.user_id"
@@ -2388,12 +2391,45 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
         raise HTTPException(404, "Product not found")
     # Collect S3 image URLs of all variations BEFORE deleting DB rows
     image_rows = db_all("SELECT image_url FROM product_configurations_l1 WHERE product_id=%s", (product_id,))
+
+    # Walk the layer tree to collect IDs per layer — parent_id has no FK CASCADE, so L2-5 specs would orphan otherwise (only L1 cascades via variation_id).
+    l1_ids = [r["id"] for r in db_all(
+        "SELECT id FROM product_configurations_l1 WHERE product_id=%s", (product_id,))]
+    l2_ids = [r["id"] for r in db_all(
+        "SELECT id FROM product_configurations_l2 WHERE variation_id = ANY(%s)", (l1_ids,))] if l1_ids else []
+    l3_ids = [r["id"] for r in db_all(
+        "SELECT id FROM product_configurations_l3 WHERE parent_id = ANY(%s)", (l2_ids,))] if l2_ids else []
+    l4_ids = [r["id"] for r in db_all(
+        "SELECT id FROM product_configurations_l4 WHERE parent_id = ANY(%s)", (l3_ids,))] if l3_ids else []
+    l5_ids = [r["id"] for r in db_all(
+        "SELECT id FROM product_configurations_l5 WHERE parent_id = ANY(%s)", (l4_ids,))] if l4_ids else []
+
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id IN (SELECT id FROM product_configurations_l1 WHERE product_id=%s)", (product_id,))
-        cur.execute("DELETE FROM product_configurations_l1 WHERE product_id=%s",              (product_id,))
-        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s",           (product_id,))
-        cur.execute("DELETE FROM product_reviews WHERE product_id=%s AND project_id=%s", (product_id, project_id))
-        cur.execute("DELETE FROM products WHERE id=%s AND project_id=%s",              (product_id, project_id))
+        # Layer 2-5 specs (parent_id-attached) — no FK CASCADE here, wipe by hand.
+        for layer, ids in ((2, l2_ids), (3, l3_ids), (4, l4_ids), (5, l5_ids)):
+            if ids:
+                cur.execute(
+                    "DELETE FROM product_specifications WHERE layer=%s AND parent_id = ANY(%s)",
+                    (layer, ids))
+
+        # Layer tree wipe: l3/l4/l5 cascade via parent_id FK; L1 specs cascade via product_specifications.variation_id.
+        cur.execute(
+            "DELETE FROM product_configurations_l2 WHERE variation_id IN "
+            "(SELECT id FROM product_configurations_l1 WHERE product_id=%s)", (product_id,))
+        cur.execute("DELETE FROM product_configurations_l1 WHERE product_id=%s", (product_id,))
+
+        # Per-product CRM data
+        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s", (product_id,))
+
+        # Storefront tables — purge all refs so product disappears from active carts, favorites, analytics.
+        cur.execute("DELETE FROM product_reviews    WHERE product_id=%s AND project_id=%s", (product_id, project_id))
+        cur.execute("DELETE FROM favorites          WHERE product_id=%s AND project_id=%s", (product_id, project_id))
+        cur.execute("DELETE FROM cart_items         WHERE product_id=%s", (product_id,))
+        cur.execute("DELETE FROM product_page_views WHERE product_id=%s AND project_id=%s", (product_id, project_id))
+
+        # order_items intentionally NOT touched — past orders display the checkout-snapshot fields (product_title / configuration_name).
+
+        cur.execute("DELETE FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
         conn.commit()
     # Best-effort S3 cleanup (don't fail the request if S3 errors out)
     prefix = f"projects/{project_id}/products/"
@@ -2404,9 +2440,7 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# VARIATIONS
-# ════════════════════════════════════════════
+# ── VARIATIONS ───────────────────────────────────────────
 
 @app.post("/api/products/{product_id}/variations")
 def create_variation(product_id: int, request: CreateVariationRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
@@ -2453,6 +2487,99 @@ def reorder_variations(
     return {"ok": True}
 
 
+@app.put("/api/products/{product_id}/layers/{layer}/reorder")
+def reorder_layer_items(
+    product_id: int, layer: int,
+    req: ReorderIdsRequest,
+    project_id: int = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Reorder rows under a parent at layer 2-5. Validates the id set matches
+    exactly the rows currently parented under `parent_id` (idor-safe)."""
+    if layer < 2 or layer > 5:
+        raise HTTPException(400, "Layer must be 2-5 (use /variations/reorder for layer 1)")
+    if req.parent_id is None:
+        raise HTTPException(400, "parent_id required")
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    _verify_layer_item_belongs_to_product(layer - 1, req.parent_id, product_id)
+    tbl = _layer_table(layer)
+    parent_col = _layer_parent_col(layer)
+    ids = list(req.ids or [])
+    with db_cursor() as (conn, cur):
+        cur.execute(f"SELECT id FROM {tbl} WHERE {parent_col}=%s", (req.parent_id,))
+        existing = {r["id"] for r in cur.fetchall()}
+        if set(ids) != existing:
+            raise HTTPException(400, "ids must contain exactly the rows under this parent")
+        for idx, rid in enumerate(ids):
+            cur.execute(f"UPDATE {tbl} SET position=%s WHERE id=%s AND {parent_col}=%s",
+                        (idx, rid, req.parent_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.put("/api/products/{product_id}/specifications/reorder")
+def reorder_specifications(
+    product_id: int,
+    req: ReorderIdsRequest,
+    project_id: int = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Reorder specifications attached to a single (layer, parent_id) node."""
+    if req.layer is None or req.parent_id is None:
+        raise HTTPException(400, "layer and parent_id required")
+    require_team_member_or_owner(user, project_id)
+    owner_pid = _product_id_for(req.layer, req.parent_id)
+    if owner_pid != product_id:
+        raise HTTPException(404, "Parent not found")
+    ids = list(req.ids or [])
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT id FROM product_specifications WHERE layer=%s AND parent_id=%s",
+                    (req.layer, req.parent_id))
+        existing = {r["id"] for r in cur.fetchall()}
+        if set(ids) != existing:
+            raise HTTPException(400, "ids must contain exactly the specs under this node")
+        for idx, sid in enumerate(ids):
+            cur.execute(
+                "UPDATE product_specifications SET position=%s WHERE id=%s AND layer=%s AND parent_id=%s",
+                (idx, sid, req.layer, req.parent_id)
+            )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.put("/api/products/{product_id}/custom-fields/reorder")
+def reorder_custom_fields(
+    product_id: int,
+    req: ReorderIdsRequest,
+    project_id: int = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Reorder custom fields on a product. Uses field_keys (string) instead
+    of ids since the frontend identifies CF rows by key."""
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    keys = list(req.field_keys or [])
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT field_key FROM product_custom_fields WHERE product_id=%s AND project_id=%s",
+                    (product_id, project_id))
+        existing = {r["field_key"] for r in cur.fetchall()}
+        # Allow partial reorders (placeholders aren't owned by this product, so
+        # they can't be reordered server-side; we only persist real-row order).
+        unknown = [k for k in keys if k not in existing]
+        if unknown:
+            raise HTTPException(400, f"Unknown field_keys for this product: {unknown}")
+        for idx, k in enumerate(keys):
+            cur.execute(
+                "UPDATE product_custom_fields SET position=%s WHERE product_id=%s AND project_id=%s AND field_key=%s",
+                (idx, product_id, project_id, k)
+            )
+        conn.commit()
+    return {"ok": True}
+
+
 @app.put("/api/products/{product_id}/variations/{var_id}")
 def update_variation(product_id: int, var_id: int, request: UpdateVariationRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
@@ -2492,9 +2619,7 @@ def delete_variation(product_id: int, var_id: int, project_id: int = Query(...),
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# CONFIGURATIONS (priced options of a variation: sizes / portions / capacity / etc.)
-# ════════════════════════════════════════════
+# ── CONFIGURATIONS (priced options of a variation: sizes / portions / capacity / etc.) ──
 
 @app.post("/api/products/{product_id}/variations/{var_id}/configurations")
 def create_configuration(product_id: int, var_id: int, request: CreateConfigurationRequest,
@@ -2549,9 +2674,7 @@ def delete_configuration(product_id: int, var_id: int, cfg_id: int,
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# SPECIFICATIONS (per variation, key/value pairs)
-# ════════════════════════════════════════════
+# ── SPECIFICATIONS (per variation, key/value pairs) ──────
 
 def _ensure_var_in_product(product_id: int, var_id: int, project_id: int):
     """Reused guard: variation must belong to product, product to project."""
@@ -2634,11 +2757,7 @@ def copy_specifications_to_all(product_id: int, var_id: int,
     return {"ok": True, "copied_to": len(target_ids)}
 
 
-# ════════════════════════════════════════════
-# SPECIFICATIONS — generic (any layer 1-5)
-# Endpoints accept layer + parent_id, stores in product_specifications.
-# Old variation-based endpoints above kept for backwards compat (layer 1 only).
-# ════════════════════════════════════════════
+# ── SPECIFICATIONS — generic (any layer 1-5): endpoints accept layer+parent_id; legacy variation endpoints above remain for layer-1 BC ──
 
 @app.post("/api/products/{product_id}/specifications")
 def create_specification_generic(product_id: int, request: CreateSpecificationRequest,
@@ -2710,12 +2829,74 @@ def delete_specification_generic(product_id: int, spec_id: int,
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# MULTI-LAYER CONFIGURATIONS (Layer 1-5)
-# Layer 1 = product_configurations_l1 (with image_url)
-# Layer 2 = product_configurations_l2 (parent = product_configurations_l1)
-# Layer 3-5 = product_configurations_l{n} (parent = previous layer)
-# ════════════════════════════════════════════
+# ── MULTI-LAYER CONFIGURATIONS (l1 with image_url; l2..l5 each parent = previous layer) ──
+
+def _restore_layer_subtree(cur, *, product_id: int, layer: int, parent_id: Optional[int], node: dict) -> Optional[int]:
+    """Recreate a single layer node + its specs + recurse children. Used by
+    Undo. The frontend passes a snapshot dict shaped like the response of
+    get_product (variations[]→configurations[]→children[], each with a
+    `specifications` array). Original IDs are gone — fresh IDs assigned, but
+    `position` is preserved from the snapshot when present so the visual
+    order is identical to before the delete."""
+    if not node: return None
+    tbl       = _layer_table(layer)
+    parent_col = _layer_parent_col(layer)
+    name_col  = _layer_name_col(layer)
+    name = sanitize((node.get("name") or node.get("variation_name") or node.get("configuration_name") or "").strip())
+    price = node.get("price")
+    stock = node.get("stock_quantity") or 0
+    sold  = node.get("sold_quantity") or 0
+    image_url = node.get("image_url")
+
+    # Use snapshot position if provided; else append at end.
+    if node.get("position") is not None:
+        pos = int(node["position"])
+    else:
+        if layer == 1:
+            cur.execute(f"SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM {tbl} WHERE product_id=%s", (product_id,))
+        else:
+            cur.execute(f"SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM {tbl} WHERE {parent_col}=%s", (parent_id,))
+        pos = cur.fetchone()["next_pos"]
+
+    if layer == 1:
+        cur.execute(
+            f"INSERT INTO {tbl} (product_id, {name_col}, image_url, price, stock_quantity, sold_quantity, position)"
+            f" VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (product_id, name, image_url, price, stock, sold, pos)
+        )
+    elif layer == 2:
+        cur.execute(
+            f"INSERT INTO {tbl} (product_id, {parent_col}, {name_col}, price, stock_quantity, sold_quantity, position)"
+            f" VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (product_id, parent_id, name, price, stock, sold, pos)
+        )
+    else:
+        cur.execute(
+            f"INSERT INTO {tbl} ({parent_col}, {name_col}, price, stock_quantity, sold_quantity, position)"
+            f" VALUES(%s, %s, %s, %s, %s, %s) RETURNING id",
+            (parent_id, name, price, stock, sold, pos)
+        )
+    new_id = cur.fetchone()["id"]
+
+    # Restore specs attached to this node — preserve their original position too.
+    for spec in (node.get("specifications") or []):
+        sk = sanitize((spec.get("spec_key") or "").strip())
+        sv = sanitize(spec.get("spec_value") or "")
+        if not sk: continue
+        var_id_for_spec = new_id if layer == 1 else None
+        cur.execute(
+            "INSERT INTO product_specifications (variation_id, layer, parent_id, spec_key, spec_value, position)"
+            " VALUES(%s, %s, %s, %s, %s, %s)",
+            (var_id_for_spec, layer, new_id, sk, sv, spec.get("position") or 0)
+        )
+
+    # Recurse children. Snapshot may use 'configurations' (l1→l2) or 'children' (l2+→deeper) — accept either.
+    if layer < 5:
+        kids = node.get("children") or node.get("configurations") or []
+        for child in kids:
+            _restore_layer_subtree(cur, product_id=product_id, layer=layer + 1, parent_id=new_id, node=child)
+    return new_id
+
 
 def _layer_table(n: int) -> str:
     if 1 <= n <= 5: return f"product_configurations_l{n}"
@@ -2887,8 +3068,7 @@ def create_layer_item(product_id: int, layer: int, request: CreateLayerItemReque
                  request.stock_quantity or 0, request.sold_quantity or 0, next_pos)
             )
         elif layer == 2:
-            # product_configurations_l2 has a legacy NOT NULL product_id column —
-            # set it explicitly (denormalized for fast lookups in External API).
+            # l2 has a legacy NOT NULL product_id column — set explicitly (denormalized for External API speed).
             cur.execute(
                 f"INSERT INTO {tbl} (product_id, {parent_col}, {name_col}, price, stock_quantity, sold_quantity, position) "
                 f"VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
@@ -2991,8 +3171,7 @@ def copy_layer_to_siblings(product_id: int, layer: int, item_id: int,
         (item_id,)
     )
 
-    # Replace each sibling's child list with copies (NULL prices stay NULL).
-    # Layer 2 INSERT also needs product_id (legacy NOT NULL column).
+    # Replace each sibling's child list with copies (NULL prices stay NULL); L2 INSERT also needs product_id (legacy NOT NULL).
     with db_cursor() as (conn, cur):
         for sib in siblings:
             cur.execute(f"DELETE FROM {child_tbl} WHERE {child_parent_col}=%s", (sib["id"],))
@@ -3022,9 +3201,7 @@ def delete_entire_layer(product_id: int, layer: int,
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    # Walk down: delete every row of this layer that belongs to this product.
-    # For layer 2, parent = variation; for layer 3+, parent = previous layer item.
-    # Simplest: collect ids by walking down from product_configurations_l1.
+    # Delete this layer's rows for this product by walking down from l1 (L2 parent=variation, L3+ parent=previous layer).
     var_ids = [r["id"] for r in db_all("SELECT id FROM product_configurations_l1 WHERE product_id=%s", (product_id,))]
     if not var_ids: return {"ok": True, "deleted_layer": layer}
 
@@ -3056,17 +3233,24 @@ def delete_entire_layer(product_id: int, layer: int,
     return {"ok": True, "deleted_layer": layer, "removed": len(target_ids)}
 
 
-# ════════════════════════════════════════════
-# CUSTOM FIELDS
-# ════════════════════════════════════════════
+# ── CUSTOM FIELDS ────────────────────────────────────────
 
 @app.post("/api/products/{product_id}/custom-fields")
 def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    # Create or update a row. If the field is (or becomes) global, propagate
+    # field_key/field_type/is_global across every product in the project so
+    # the schema for that key stays consistent. field_value stays per-product.
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     key = request.field_key.strip().lower().replace(" ", "_")
     if not key: raise HTTPException(400, "Field key is required")
+
+    project_has_global = db_one(
+        "SELECT 1 FROM product_custom_fields WHERE project_id=%s AND field_key=%s AND is_global=TRUE LIMIT 1",
+        (project_id, key)
+    )
+    cascade = bool(project_has_global) or bool(request.is_global)
 
     ex = db_one("SELECT id FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
                 (product_id, project_id, key))
@@ -3074,23 +3258,101 @@ def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, proj
         if ex:
             cur.execute("UPDATE product_custom_fields SET field_value=%s,field_type=%s,is_global=%s WHERE id=%s",
                         (request.field_value, request.field_type, request.is_global, ex["id"]))
+            row_id = ex["id"]
         else:
-            cur.execute("INSERT INTO product_custom_fields (project_id,product_id,field_key,field_value,field_type,is_global) VALUES(%s,%s,%s,%s,%s,%s)",
-                        (project_id, product_id, key, request.field_value, request.field_type, request.is_global))
+            cur.execute(
+                "INSERT INTO product_custom_fields (project_id,product_id,field_key,field_value,field_type,is_global)"
+                " VALUES(%s,%s,%s,%s,%s,%s) RETURNING id",
+                (project_id, product_id, key, request.field_value, request.field_type, request.is_global)
+            )
+            row_id = cur.fetchone()["id"]
+        if cascade:
+            cur.execute(
+                "UPDATE product_custom_fields SET field_type=%s, is_global=%s"
+                " WHERE project_id=%s AND field_key=%s AND id<>%s",
+                (request.field_type, request.is_global, project_id, key, row_id)
+            )
         conn.commit()
     return {"ok": True, "field_key": key, "is_global": request.is_global}
 
 
-@app.delete("/api/products/{product_id}/custom-fields/{field_key}")
-def delete_custom_field(product_id: int, field_key: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+@app.put("/api/products/{product_id}/custom-fields/{field_key}")
+def update_custom_field(product_id: int, field_key: str, request: UpsertCustomFieldRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    # Full update — supports renaming the key. Path param is the OLD key.
+    # When the row is (or becomes) global, key/type/is_global are propagated
+    # to every other row with the same field_key in the project.
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
+    new_key = request.field_key.strip().lower().replace(" ", "_")
+    if not new_key: raise HTTPException(400, "Field key is required")
+    row = db_one("SELECT id, is_global FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
+                 (product_id, project_id, field_key))
+    if not row: raise HTTPException(404, "Field not found")
+    was_global = bool(row["is_global"])
+    will_be_global = bool(request.is_global)
+    is_global_field = was_global or will_be_global
+
+    if new_key != field_key:
+        if is_global_field:
+            # Renaming a global key — collision means another key already exists anywhere in the project.
+            clash = db_one(
+                "SELECT id FROM product_custom_fields WHERE project_id=%s AND field_key=%s LIMIT 1",
+                (project_id, new_key)
+            )
+        else:
+            clash = db_one(
+                "SELECT id FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
+                (product_id, project_id, new_key)
+            )
+        if clash: raise HTTPException(409, f"Field '{new_key}' already exists")
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
-                    (product_id, project_id, field_key))
+        cur.execute("UPDATE product_custom_fields SET field_key=%s,field_value=%s,field_type=%s,is_global=%s WHERE id=%s",
+                    (new_key, request.field_value, request.field_type, will_be_global, row["id"]))
+        if is_global_field:
+            cur.execute(
+                "UPDATE product_custom_fields SET field_key=%s, field_type=%s, is_global=%s"
+                " WHERE project_id=%s AND field_key=%s AND id<>%s",
+                (new_key, request.field_type, will_be_global, project_id, field_key, row["id"])
+            )
         conn.commit()
-    return {"ok": True}
+    return {"ok": True, "field_key": new_key, "is_global": will_be_global}
+
+
+@app.delete("/api/products/{product_id}/custom-fields/{field_key}")
+def delete_custom_field(product_id: int, field_key: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    # Deleting a global row cascades across the entire project; deleting a
+    # local row only removes that single product's row. Returns the snapshot
+    # of every removed row so the frontend's Undo can re-create them via /restore.
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    row = db_one("SELECT id, is_global FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
+                 (product_id, project_id, field_key))
+    if not row:
+        return {"ok": True, "removed": []}
+    if row["is_global"]:
+        removed = db_all(
+            "SELECT product_id, field_key, field_value, field_type, is_global, position"
+            " FROM product_custom_fields WHERE project_id=%s AND field_key=%s",
+            (project_id, field_key)
+        )
+    else:
+        removed = db_all(
+            "SELECT product_id, field_key, field_value, field_type, is_global, position"
+            " FROM product_custom_fields WHERE id=%s",
+            (row["id"],)
+        )
+    for r in removed:
+        r["is_global"] = bool(r.get("is_global", 0))
+    with db_cursor() as (conn, cur):
+        if row["is_global"]:
+            cur.execute("DELETE FROM product_custom_fields WHERE project_id=%s AND field_key=%s",
+                        (project_id, field_key))
+        else:
+            cur.execute("DELETE FROM product_custom_fields WHERE id=%s", (row["id"],))
+        conn.commit()
+    return {"ok": True, "cascaded": bool(row["is_global"]), "removed": removed}
 
 
 @app.patch("/api/products/{product_id}/custom-fields/{field_key}/global")
@@ -3106,9 +3368,92 @@ def toggle_custom_field_global(product_id: int, field_key: str, project_id: int 
     return {"ok": True, "is_global": new_val}
 
 
-# ════════════════════════════════════════════
-# UPLOAD
-# ════════════════════════════════════════════
+# ── RESTORE (Undo target) ────────────────────────────────
+
+@app.post("/api/products/{product_id}/restore")
+def restore(product_id: int, request: RestoreRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Generic Undo endpoint. Accepts a snapshot captured by the frontend
+    before a destructive action and rebuilds it. Supported types:
+      - variation:     a Layer 1 node + full subtree + specs
+      - layer_node:    a Layer 2-5 node under an existing parent + subtree + specs
+      - layer:         every row at a given layer for this product (used by Delete-layer Undo)
+      - custom_fields: re-insert rows removed by a global cascade delete
+    """
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+
+    if request.type == "variation":
+        if not request.data: raise HTTPException(400, "data required")
+        with db_cursor() as (conn, cur):
+            new_id = _restore_layer_subtree(cur, product_id=product_id, layer=1, parent_id=None, node=request.data)
+            conn.commit()
+        return {"ok": True, "id": new_id}
+
+    if request.type == "layer_node":
+        if request.layer is None or request.parent_id is None or not request.data:
+            raise HTTPException(400, "layer, parent_id, data are required")
+        if not (2 <= request.layer <= 5):
+            raise HTTPException(400, "layer_node requires layer 2-5")
+        # Validate parent still belongs to this product
+        _verify_layer_item_belongs_to_product(request.layer - 1, request.parent_id, product_id)
+        with db_cursor() as (conn, cur):
+            new_id = _restore_layer_subtree(cur, product_id=product_id, layer=request.layer, parent_id=request.parent_id, node=request.data)
+            conn.commit()
+        return {"ok": True, "id": new_id}
+
+    if request.type == "layer":
+        if request.layer is None or not request.rows:
+            raise HTTPException(400, "layer and rows are required")
+        new_ids = []
+        with db_cursor() as (conn, cur):
+            for r in request.rows:
+                pid = r.get("parent_id")
+                if request.layer >= 2 and pid is not None:
+                    # Best-effort: skip rows whose parent is gone
+                    if not _safe_parent_for_product(request.layer - 1, pid, product_id):
+                        continue
+                nid = _restore_layer_subtree(cur, product_id=product_id, layer=request.layer, parent_id=pid, node=r.get("data") or r)
+                if nid is not None: new_ids.append(nid)
+            conn.commit()
+        return {"ok": True, "ids": new_ids}
+
+    if request.type == "custom_fields":
+        if not request.rows: return {"ok": True, "restored": 0}
+        count = 0
+        with db_cursor() as (conn, cur):
+            for r in request.rows:
+                pid = r.get("product_id")
+                if not pid: continue
+                # Validate the row's product still belongs to this project
+                if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (pid, project_id)):
+                    continue
+                key = (r.get("field_key") or "").strip().lower().replace(" ", "_")
+                if not key: continue
+                # ON CONFLICT keeps Undo idempotent if some rows were already re-created elsewhere.
+                cur.execute(
+                    "INSERT INTO product_custom_fields (project_id, product_id, field_key, field_value, field_type, is_global, position)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    (project_id, pid, key, r.get("field_value") or "",
+                     r.get("field_type") or "string", bool(r.get("is_global")),
+                     int(r.get("position") or 0))
+                )
+                count += 1
+            conn.commit()
+        return {"ok": True, "restored": count}
+
+    raise HTTPException(400, f"Unknown restore type: {request.type}")
+
+
+def _safe_parent_for_product(layer: int, parent_id: int, product_id: int) -> bool:
+    try:
+        _verify_layer_item_belongs_to_product(layer, parent_id, product_id)
+        return True
+    except HTTPException:
+        return False
+
+
+# ── UPLOAD ───────────────────────────────────────────────
 
 @app.post("/api/upload/image")
 async def upload_image(
@@ -3189,9 +3534,7 @@ async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_c
     return {"url": url}
 
 
-# ════════════════════════════════════════════
-# SETTINGS
-# ════════════════════════════════════════════
+# ── SETTINGS ─────────────────────────────────────────────
 
 @app.get("/api/settings")
 def get_settings(user: dict = Depends(get_current_user)):
@@ -3234,9 +3577,7 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# GOOGLE OAUTH (CRM login)
-# ════════════════════════════════════════════
+# ── GOOGLE OAUTH (CRM login) ─────────────────────────────
 
 @app.get("/api/auth/google/login")
 def google_login():
@@ -3255,8 +3596,7 @@ def google_login():
     redirect = RedirectResponse(
         "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     )
-    # path="/" so the cookie reliably survives the cross-origin redirect
-    # from Google → callback. httponly + 10-min TTL keep it safe enough.
+    # path="/" so the cookie survives the Google→callback cross-origin redirect; httponly + 10-min TTL keeps it safe.
     redirect.set_cookie(
         key="crm_oa_state", value=state, httponly=True, max_age=600,
         samesite="lax", secure=COOKIE_SECURE, path="/",
@@ -3344,9 +3684,7 @@ def google_auth(request: GoogleAuthRequest, response: Response, req: Request):
     return {"success": True}
 
 
-# ════════════════════════════════════════════
-# EMAIL DOMAIN
-# ════════════════════════════════════════════
+# ── EMAIL DOMAIN ─────────────────────────────────────────
 
 class EmailDomainRequest(BaseModel):
     domain: str
@@ -3439,8 +3777,7 @@ def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
     dkim_ok  = bool(result.get("dkim_ok",  False))
     spf_ok   = bool(result.get("spf_ok",   False))
     dmarc_ok = bool(result.get("dmarc_ok", False))
-    # all_ok = full email security stack (DKIM + SPF + DMARC). Without DMARC,
-    # Gmail/Outlook silently spam-folder the messages.
+    # all_ok = full email stack (DKIM + SPF + DMARC); without DMARC, Gmail/Outlook silently spam-folder.
     all_ok   = dkim_ok and spf_ok and dmarc_ok
 
     with db_cursor() as (conn, cur):
@@ -3478,9 +3815,7 @@ def delete_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
     return {"success": True}
 
 
-# ════════════════════════════════════════════
-# OAUTH SETTINGS
-# ════════════════════════════════════════════
+# ── OAUTH SETTINGS ───────────────────────────────────────
 
 @app.get("/api/oauth-settings")
 def get_oauth_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
@@ -3530,14 +3865,9 @@ def delete_oauth_settings(project_id: int = Query(...), user: dict = Depends(get
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# GENERIC OAUTH PROVIDERS
-# (GitHub, Discord, Facebook, GitLab, Bitbucket, LinkedIn, Twitch,
-#  Spotify, Slack, Notion, Figma, Zoom, Azure, Apple, X, VK, Kakao, KeyCloak)
-# ════════════════════════════════════════════
+# ── GENERIC OAUTH PROVIDERS (GitHub, Discord, Facebook, GitLab, Bitbucket, LinkedIn, Twitch, Spotify, Slack, Notion, Figma, Zoom, Azure, Apple, X, VK, Kakao, KeyCloak) ──
 
-# Whitelist of providers we know how to handle in External.
-# Adding a new provider requires extending OAUTH_PROVIDERS in External/main.py too.
+# Whitelist of providers handled in External — add to OAUTH_PROVIDERS in External/main.py when extending.
 ALLOWED_AUTH_PROVIDERS = {
     "github", "discord", "facebook", "gitlab", "bitbucket", "linkedin",
     "twitch", "spotify", "slack", "notion", "figma", "zoom",
@@ -3621,11 +3951,7 @@ def delete_auth_provider(provider: str, project_id: int = Query(...), user: dict
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# SMS / PHONE AUTHENTICATION
-# Customer brings their own SMS provider — Twilio, MessageBird, Textlocal, Vonage,
-# or Twilio Verify. Credentials stored per-provider so switching keeps history.
-# ════════════════════════════════════════════
+# ── SMS / PHONE AUTH (customer-provided: Twilio/MessageBird/Textlocal/Vonage/Twilio Verify); per-provider creds preserve switching history ──
 
 ALLOWED_SMS_PROVIDERS = {
     "twilio", "twilio_verify", "messagebird", "textlocal", "vonage",
@@ -3753,9 +4079,7 @@ def delete_sms_settings(project_id: int = Query(...), user: dict = Depends(get_c
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# URL CONFIGURATION
-# ════════════════════════════════════════════
+# ── URL CONFIGURATION ────────────────────────────────────
 
 @app.get("/api/url-config")
 def get_url_config(project_id: int = Query(...), user: dict = Depends(get_current_user)):
@@ -3780,9 +4104,7 @@ def save_url_config(req: UrlConfigRequest, project_id: int = Query(...), user: d
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# REDIRECT URLs
-# ════════════════════════════════════════════
+# ── REDIRECT URLs ────────────────────────────────────────
 
 @app.get("/api/redirect-urls")
 def get_redirect_urls(project_id: int = Query(...), user: dict = Depends(get_current_user)):
@@ -3818,9 +4140,7 @@ def delete_redirect_url(url_id: int, project_id: int = Query(...), user: dict = 
     return {"ok": True}
 
 
-# ════════════════════════════════════════════
-# ЗАКАЗЫ
-# ════════════════════════════════════════════
+# ── ЗАКАЗЫ ───────────────────────────────────────────────
 
 ORDER_STATUSES = ["new", "confirmed", "shipped", "delivered", "cancelled", "refunded"]
 
@@ -4016,20 +4336,9 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
     return {"ok": True, "status": body.status}
 
 
-# ════════════════════════════════════════════
-# CHAT WITH CUSTOMERS
-# ════════════════════════════════════════════
+# ── CHAT WITH CUSTOMERS ──────────────────────────────────
 
-# Real-time channels (work on localhost without HTTPS):
-#   telegram — long-poll getUpdates
-#   discord  — Gateway WebSocket
-#   vk       — Long Poll for groups
-#   webchat  — embedded support widget on the client's own website
-#
-# Webhook channels (require public HTTPS, work in production):
-#   whatsapp / instagram / facebook — Meta Graph API webhooks
-#   viber                           — Viber Bot API webhook
-#   x                               — X (Twitter) Account Activity API webhook
+# Channels: real-time (localhost, no HTTPS) — telegram(long-poll)/discord(Gateway WS)/vk(Long Poll)/webchat(widget); webhook (prod, HTTPS) — whatsapp/instagram/facebook(Meta Graph), viber, x.
 CHAT_CHANNELS = {
     "telegram", "discord", "vk", "webchat",
     "whatsapp", "instagram", "facebook", "viber", "x",
@@ -4729,16 +5038,14 @@ async def save_chat_integration(req: ChatIntegrationRequest,
         bot_username = info.get("name") or info.get("uri")
 
     elif channel == "webchat":
-        # No external credentials — the website widget uses the project's existing
-        # public api_key + publishable_key (already validated by External API).
+        # No external credentials — widget reuses the project's existing api_key + publishable_key (validated by External).
         proj = await loop.run_in_executor(
             None, lambda: db_one("SELECT name FROM crm_projects WHERE id=%s", (project_id,))
         )
         bot_username = (proj or {}).get("name") or "Web chat"
 
     elif channel == "x":
-        # X (Twitter) Account Activity API webhook — credentials are stored;
-        # actual subscription must be registered through dev portal manually.
+        # X Account Activity API: creds stored only; subscription must be registered through dev portal manually.
         bot_username = config.get("handle") or "X account"
 
     # ── Persist ───────────────────────────────────────────────────────────────
@@ -4993,16 +5300,14 @@ async def send_message(conv_id: int,
         external_msg_id = str(result.get("message_token", ""))
 
     elif ch == "webchat":
-        # Web-chat replies are stored only — the widget polls External API
-        # (GET /{api_key}/api/chat/messages?since_id=N) to display them.
+        # Web-chat replies are stored only — widget polls GET /{api_key}/api/chat/messages?since_id=N.
         external_msg_id = ""
 
     elif ch == "x":
         token = cfg.get("bearer_token")
         if not token:
             raise HTTPException(400, "X bearer token missing")
-        # X API v2 DM endpoint (requires elevated access). Best-effort send;
-        # full delivery is gated by X dev approval.
+        # X API v2 DM endpoint (needs elevated access) — best-effort send; full delivery gated by X dev approval.
         try:
             url  = f"https://api.twitter.com/2/dm_conversations/with/{chat_id}/messages"
             body = json.dumps({"text": text}).encode()
@@ -5044,12 +5349,7 @@ async def send_message(conv_id: int,
     return {"ok": True, "message": payload}
 
 
-# ── Inbound webhooks ──────────────────────────────────────────────────────────
-#
-# Each external messenger that requires an HTTPS webhook (Meta family, Viber,
-# Telegram in production) hits one of these endpoints. The localhost-friendly
-# real-time channels (Telegram getUpdates, Discord Gateway, VK Long Poll) do
-# NOT use webhooks — pollers handle them.
+# Inbound webhooks: HTTPS-only messengers (Meta family, Viber, Telegram in prod) hit these endpoints; long-poll/Gateway channels go through pollers instead.
 
 @app.post("/api/chat/webhook/telegram/{project_id}")
 async def telegram_webhook(project_id: int, request: Request):
@@ -5079,14 +5379,7 @@ async def telegram_webhook(project_id: int, request: Request):
     return {"ok": True}
 
 
-# ── Meta webhook (WhatsApp / Instagram / Facebook) ────────────────────────────
-#
-# Meta uses the same webhook contract for all three products:
-#   GET  → verification handshake (echoes hub.challenge if hub.verify_token matches)
-#   POST → JSON payload with `entry[].changes[].value.messages[]` (WhatsApp)
-#          or `entry[].messaging[]` (Instagram / Facebook Messenger)
-#
-# Optional: signature verification via X-Hub-Signature-256 + app_secret.
+# Meta webhook (WhatsApp/Instagram/FB) — GET = hub.challenge handshake; POST = entry[].changes[].value.messages[] (WA) or entry[].messaging[] (IG/FB); optional X-Hub-Signature-256 verify.
 
 def _verify_meta_signature(app_secret: str, signature_header: str, body: bytes) -> bool:
     if not app_secret or not signature_header:
@@ -5199,11 +5492,7 @@ async def channel_webhook_inbound(channel: str, project_id: int, request: Reques
     return {"ok": True}
 
 
-# ── Internal endpoint: External API → CRM (web-chat inbound) ──────────────────
-#
-# The website widget (ClothingWebsite) sends a message via External API.
-# External API forwards it here so the CRM operator sees it instantly via
-# the in-process WebSocket hub.
+# Internal endpoint: External API forwards web-chat widget messages here so CRM operators see them instantly via the in-process WebSocket hub.
 
 class WebChatInboundRequest(BaseModel):
     project_id:  int
@@ -5256,26 +5545,11 @@ async def chat_ws(ws: WebSocket, project_id: int):
         await chat_hub.disconnect(project_id, ws)
 
 
-# ════════════════════════════════════════════
-# BOOKING — admin-side endpoints
-# ════════════════════════════════════════════
-#
-# Domain model:
-#   • booking_services       — what can be booked (haircut, yoga class, …)
-#   • booking_staff          — who delivers the service (optional per service)
-#   • booking_staff_services — many-to-many (which staff can do which service)
-#   • booking_hours          — weekly schedule (per-staff or project-wide)
-#   • booking_settings       — per-business rules (slot size, advance window…)
-#   • bookings               — actual appointments
-#
-# All routes require team-member-or-owner access; settings/staff require owner.
+# ── BOOKING admin endpoints — services / staff / staff_services / hours (per-staff or project-wide) / settings / bookings; all require team-or-owner, settings+staff require owner ──
 
 BOOKING_STATUSES = ("pending", "confirmed", "cancelled", "completed", "no_show")
 
-# Allowed status transitions. Terminal states (cancelled / completed) cannot
-# be revived — admins must delete the booking and create a new one. This
-# protects against accidental "un-cancel" of a slot that's already been
-# rebooked, and stops "completed → pending" undo-of-record-keeping bugs.
+# Allowed status transitions; terminal (cancelled/completed) cannot be revived (delete+recreate) — prevents un-cancel of rebooked slots and completed→pending undo bugs.
 BOOKING_STATUS_TRANSITIONS = {
     "pending":   {"confirmed", "cancelled", "no_show"},
     "confirmed": {"completed", "cancelled", "no_show"},
@@ -5728,8 +6002,7 @@ def booking_list(project_id: int = Query(...),
                  user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     where = ["project_id=%s"]; params: list = [project_id]
-    # Accept date filters as either YYYY-MM-DD (interpreted as business-local
-    # midnight → UTC) or full ISO 8601 with TZ offset.
+    # Accept date filters as YYYY-MM-DD (business-local midnight→UTC) or full ISO 8601 with TZ offset.
     biz_tz = None
     if from_date or to_date:
         tz_row = db_one("SELECT timezone FROM booking_settings WHERE project_id=%s",
@@ -5802,8 +6075,7 @@ def booking_create_admin(req: CreateBookingRequest,
         raise HTTPException(400, "Customer name is required")
 
     with db_cursor() as (conn, cur):
-        # Same advisory lock key as the public endpoint to avoid race when
-        # an admin and a customer try to grab the same slot simultaneously
+        # Same advisory lock key as the public endpoint — avoids admin/customer race for the same slot.
         lock_key = (project_id * 10**12
                     + (req.staff_id or 0) * 10**6
                     + (req.service_id or 0))

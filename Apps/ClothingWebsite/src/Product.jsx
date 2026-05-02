@@ -45,10 +45,10 @@ function Product() {
 
     const handleVariationClick = (index) => {
         setActiveVariation(index);
-        const configurations = page.variations?.[index]?.configurations || [];
-        const same = configurations.find(c => c.id === activeConfiguration?.id);
-        const pick = same || configurations[0];
-        setActiveConfiguration(pick ? { id: pick.id, name: pick.configuration_name } : null);
+        const conf_2 = page.conf_1?.[index]?.conf_2 || [];
+        const same = conf_2.find(c => c.id === activeConfiguration?.id);
+        const pick = same || conf_2[0];
+        setActiveConfiguration(pick ? { id: pick.id, name: pick.name } : null);
     };
 
     const handleToggleCart = async () => {
@@ -98,7 +98,7 @@ function Product() {
     // button, picks a different configuration, or switches variation (which
     // swaps the whole list of buttons).
     useEffect(() => {
-        const cfgs = page?.variations?.[activeVariation]?.configurations || [];
+        const cfgs = page?.conf_1?.[activeVariation]?.conf_2 || [];
         const activeIdx = cfgs.findIndex(c => c.id === activeConfiguration?.id);
         const idx = hoveredConfiguration !== null ? hoveredConfiguration : (activeIdx >= 0 ? activeIdx : 0);
         const btn = cfgRefs.current[idx];
@@ -127,13 +127,13 @@ function Product() {
     );
 
     // VISUAL DERIVED DATA
-    const currentVariation = page.variations?.[activeVariation] || null;
-    const currentConfiguration = currentVariation?.configurations?.find(c => c.id === activeConfiguration?.id) || null;
+    const currentVariation = page.conf_1?.[activeVariation] || null;
+    const currentConfiguration = currentVariation?.conf_2?.find(c => c.id === activeConfiguration?.id) || null;
     const isInCart = !!currentConfiguration?.cart_item_id;
     const cartQuantity = currentConfiguration?.cart_quantity || 1;
     const maxStock = currentConfiguration?.stock_quantity || 0;
     const currentPrice = currentConfiguration?.price || 0;
-    const activeConfigurationIndex = currentVariation?.configurations?.findIndex(c => c.id === activeConfiguration?.id) ?? 0;
+    const activeConfigurationIndex = currentVariation?.conf_2?.findIndex(c => c.id === activeConfiguration?.id) ?? 0;
 
     return (
         <>
@@ -151,22 +151,22 @@ function Product() {
                     <h2 className="product-price">${currentPrice}</h2>
 
                     <ProductVariations
-                        variations={page.variations}
+                        variations={page.conf_1}
                         activeIndex={activeVariation}
                         hoveredIndex={hoveredVariation}
                         onVariationClick={handleVariationClick}
                         onVariationHover={setHoveredVariation}
                         isVariationInCart={(variationId) =>
-                            page.variations.some(v => v.id === variationId && v.is_in_cart)
+                            page.conf_1.some(v => v.id === variationId && v.is_in_cart)
                         }
                     />
 
                     {/* ── Configurations picker (S / M / L · 30cm / 40cm · …) ── */}
-                    {currentVariation?.configurations?.length > 0 && (
+                    {currentVariation?.conf_2?.length > 0 && (
                         <div className="product-sizes">
                             <div className="sizes-wrapper">
                                 <div className="size-indicator" style={cfgIndicatorStyle} />
-                                {currentVariation.configurations.map((c, index) => {
+                                {currentVariation.conf_2.map((c, index) => {
                                     const underIndicator = index === (
                                         hoveredConfiguration !== null ? hoveredConfiguration : activeConfigurationIndex
                                     );
@@ -175,11 +175,11 @@ function Product() {
                                             key={c.id}
                                             ref={el => (cfgRefs.current[index] = el)}
                                             className={`size-item ${underIndicator ? 'size-item--white' : ''}`}
-                                            onClick={() => setActiveConfiguration({ id: c.id, name: c.configuration_name })}
+                                            onClick={() => setActiveConfiguration({ id: c.id, name: c.name })}
                                             onMouseEnter={() => setHoveredConfiguration(index)}
                                             onMouseLeave={() => setHoveredConfiguration(null)}
                                         >
-                                            {c.configuration_name}
+                                            {c.name}
                                             {c.is_in_cart && <div className="cart-indicator-dot" />}
                                         </button>
                                     );

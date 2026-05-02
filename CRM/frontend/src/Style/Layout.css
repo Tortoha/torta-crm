@@ -24,6 +24,7 @@
   --delete-tint: rgba(227, 0, 0, 0.07);
   --delete-tint-hover: rgba(227, 0, 0, 0.13);
   --box-shadow: 4px 8px 32px rgba(1, 3, 32, 0.08);
+  --accent-shadow: 2px 4px 12px rgba(1, 3, 32, 0.1);
 }
 
 html,

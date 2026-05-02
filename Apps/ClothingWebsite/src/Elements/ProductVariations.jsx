@@ -38,7 +38,7 @@ function ProductVariations({
                         onMouseEnter={() => onVariationHover(index)}
                         onMouseLeave={() => onVariationHover(null)}
                     >
-                        <img src={v.image} alt={v.variation_name} />
+                        <img src={v.image} alt={v.name} />
                         {isVariationInCart(v.id) && (
                             <div className="cart-indicator-dot"></div>
                         )}

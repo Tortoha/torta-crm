@@ -1,10 +1,15 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
-  Plus, Trash, Image as ImageIcon, DotsThreeOutline, PencilSimple, X, UploadSimple,
+  Plus, Trash, Image as ImageIcon, DotsThreeOutline, PencilSimple, X, UploadSimple, DotsSixVertical,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
+import { useUndoableSave } from '../../Utils/useUndoableSave.js';
+import { RowContextMenu } from '../../Utils/RowContextMenu.jsx';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, useSortable, arrayMove, rectSortingStrategy, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 const LAYER1_TILT = {
   maxAngle: 12, lerp: 0.05, lerpOut: 0.07,
@@ -21,6 +26,36 @@ function sumDeep(items, field) {
   return total;
 }
 
+// Snapshot helpers for Undo — produce a plain-object tree that the backend
+// /restore endpoint can rebuild verbatim (specs included, children recursive).
+// Layer 1 nodes use `variation_name`/`configurations`; deeper layers use
+// `name`/`children`. The backend accepts either shape.
+function snapshotSpec(s) {
+  return { spec_key: s.spec_key, spec_value: s.spec_value, position: s.position };
+}
+function snapshotLayerNode(item) {
+  return {
+    name: item.name || '',
+    price: item.price ?? null,
+    stock_quantity: item.stock_quantity || 0,
+    sold_quantity: item.sold_quantity || 0,
+    specifications: (item.specifications || []).map(snapshotSpec),
+    children: (item.children || []).map(snapshotLayerNode),
+  };
+}
+export function snapshotVariation(v) {
+  return {
+    name: v.variation_name || '',
+    image_url: v.image_url || null,
+    price: v.price ?? null,
+    stock_quantity: v.stock_quantity || 0,
+    sold_quantity: v.sold_quantity || 0,
+    specifications: (v.specifications || []).map(snapshotSpec),
+    children: (v.configurations || []).map(snapshotLayerNode),
+  };
+}
+export { snapshotLayerNode };
+
 export default function LayerBlock(props) {
   if (props.layer === 1) return <Layer1Grid {...props} />;
   return <LayerTable {...props} />;
@@ -28,8 +63,80 @@ export default function LayerBlock(props) {
 
 // ─── Layer 1: card grid (3 cols, image + inline editable price/stock/sold) ──
 
-function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect }) {
+function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect, registerUndo,
+                       bulk, setBulk, clearBulk }) {
   const [editVar, setEditVar] = useState(null);
+  // Press-and-hold activation: 180ms hold without moving ≥5px starts a drag.
+  // Lets the user grab the card from ANYWHERE (including over inputs) without
+  // hijacking quick clicks/typing/text-selection inside form fields.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
+
+  const SCOPE = 'layer1';
+  const inScope = bulk?.scope === SCOPE;
+  const bulkIds = inScope ? bulk.ids : [];
+  const [ctxMenu, setCtxMenu] = useState(null);
+
+  const bulkDelete = useCallback(async (deleteIds) => {
+    if (!deleteIds.length) return;
+    const targets = items.filter(v => deleteIds.includes(v.id));
+    const snapshots = targets.map(snapshotVariation);
+    for (const id of deleteIds) {
+      await fetch(`${API_BASE}/api/products/${productId}/layers/1/${id}${pq}`, {
+        method: 'DELETE', credentials: 'include',
+      });
+    }
+    if (deleteIds.includes(selectedId)) onSelect?.(null);
+    clearBulk?.();
+    await reloadProduct?.();
+    if (snapshots.length && registerUndo) {
+      registerUndo({
+        description: `${deleteIds.length} variation${deleteIds.length === 1 ? '' : 's'} deleted`,
+        undo: async () => {
+          for (const snap of snapshots) {
+            await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'variation', data: snap }),
+            });
+          }
+          await reloadProduct?.();
+        },
+      });
+    }
+  }, [items, productId, pq, selectedId, onSelect, clearBulk, reloadProduct, registerUndo]);
+
+  // Toggle a card in/out of the bulk-select scope. Used by right-click
+  // context menu's "Select" action AND by Shift/Cmd+click as power-user shortcut.
+  const toggleInBulk = useCallback((id) => {
+    setBulk(prev => {
+      const list = prev.scope === SCOPE ? [...prev.ids] : [];
+      const idx = list.indexOf(id);
+      if (idx >= 0) list.splice(idx, 1);
+      else list.push(id);
+      return list.length ? {
+        scope: SCOPE, ids: list,
+        actions: { delete: () => bulkDelete(list) },
+      } : { scope: null, ids: [], actions: null };
+    });
+  }, [setBulk, bulkDelete]);
+
+  const onCardClick = useCallback((e, id, fallback) => {
+    // While in bulk-select mode (entered via context menu or modifier-click),
+    // every plain click toggles membership too — Figma/Notion-style.
+    if (e.shiftKey || e.metaKey || e.ctrlKey || inScope) {
+      e.stopPropagation();
+      e.preventDefault();
+      toggleInBulk(id);
+      return;
+    }
+    fallback?.();
+  }, [inScope, toggleInBulk]);
+
+  const openCtxMenu = useCallback((e, id) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY, id });
+  }, []);
 
   const addItem = async () => {
     const res = await fetch(`${API_BASE}/api/products/${productId}/layers/1${pq}`, {
@@ -44,14 +151,58 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect 
   };
 
   const deleteItem = async (id) => {
+    const target = items.find(v => v.id === id);
     if (!confirm('Delete this variation and all its nested layers?')) return;
+    const snapshot = target ? snapshotVariation(target) : null;
     const res = await fetch(`${API_BASE}/api/products/${productId}/layers/1/${id}${pq}`, {
       method: 'DELETE', credentials: 'include',
     });
     if (!res.ok) return;
     if (selectedId === id) onSelect?.(null);
-    reloadProduct();
+    await reloadProduct();
+    if (snapshot && registerUndo) {
+      registerUndo({
+        description: `Variation "${snapshot.name || 'Untitled'}" deleted`,
+        undo: async () => {
+          const r = await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'variation', data: snapshot }),
+          });
+          if (!r.ok) return;
+          const out = await r.json().catch(() => ({}));
+          await reloadProduct?.();
+          if (out?.id) onSelect?.(out.id);
+        },
+      });
+    }
   };
+
+  const persistOrder = async (newOrder) => {
+    await fetch(`${API_BASE}/api/products/${productId}/variations/reorder${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ variation_ids: newOrder }),
+    });
+  };
+
+  const onDragEnd = async (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldOrder = items.map(v => v.id);
+    const oldIdx = oldOrder.indexOf(active.id);
+    const newIdx = oldOrder.indexOf(over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const newOrder = arrayMove(oldOrder, oldIdx, newIdx);
+    await persistOrder(newOrder);
+    await reloadProduct();
+    registerUndo?.({
+      description: 'Variations reordered',
+      undo: async () => { await persistOrder(oldOrder); await reloadProduct(); },
+    });
+  };
+
+  const itemIds = useMemo(() => items.map(v => v.id), [items]);
 
   return (
     <section className="po-block">
@@ -62,20 +213,29 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect 
         </button>
       </div>
 
-      <div className="prod-grid prod-grid--3">
-        {items.length === 0 && (
-          <div className="po-empty">No variations yet. Click <b>Add variation</b>.</div>
-        )}
-        {items.map(v => (
-          <Layer1Card key={v.id} v={v}
-            productId={productId} pq={pq}
-            reloadProduct={reloadProduct}
-            selected={v.id === selectedId}
-            onSelect={() => onSelect?.(v.id)}
-            onEdit={() => setEditVar(v)}
-            onDelete={() => deleteItem(v.id)} />
-        ))}
-      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={itemIds} strategy={rectSortingStrategy}>
+          <div className="prod-grid prod-grid--3">
+            {items.length === 0 && (
+              <div className="po-empty">No variations yet. Click <b>Add variation</b>.</div>
+            )}
+            {items.map(v => (
+              <SortableLayer1Card key={v.id} v={v}
+                productId={productId} pq={pq}
+                reloadProduct={reloadProduct}
+                selected={v.id === selectedId}
+                onCardClick={(e) => onCardClick(e, v.id, () => onSelect?.(v.id))}
+                onContextMenu={(e) => openCtxMenu(e, v.id)}
+                onEdit={() => setEditVar(v)}
+                onDelete={() => deleteItem(v.id)}
+                registerUndo={registerUndo}
+                bulkSelected={bulkIds.includes(v.id)}
+                bulkActive={inScope}
+                onBulkToggle={() => toggleInBulk(v.id)} />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
 
       {editVar && (
         <Layer1EditModal
@@ -85,11 +245,41 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect 
           onClose={() => setEditVar(null)}
           onSaved={() => { setEditVar(null); reloadProduct(); }} />
       )}
+
+      {ctxMenu && (
+        <RowContextMenu pos={ctxMenu}
+          onSelect={() => toggleInBulk(ctxMenu.id)}
+          onClose={() => setCtxMenu(null)} />
+      )}
     </section>
   );
 }
 
-function Layer1Card({ v, productId, pq, reloadProduct, selected, onSelect, onEdit, onDelete }) {
+// Sortable wrapper around Layer1Card — adds drag listeners on the wrapper
+// (whole tile is grabbable after a 300ms hold) and forwards menu/select
+// callbacks to the inner card.
+function SortableLayer1Card(props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.v.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 5 : 'auto',
+    opacity: isDragging ? 0.85 : 1,
+  };
+  return (
+    <Layer1Card
+      {...props}
+      dragRef={setNodeRef}
+      dragStyle={style}
+      dragHandleProps={{ ...attributes, ...listeners }}
+      isDragging={isDragging}
+    />
+  );
+}
+
+function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, onSelect, onCardClick,
+                       onEdit, onDelete, onContextMenu, dragRef, dragStyle, dragHandleProps, isDragging,
+                       bulkSelected, bulkActive, onBulkToggle }) {
   const menuBtnRef = useRef(null);
   const fileRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -98,10 +288,8 @@ function Layer1Card({ v, productId, pq, reloadProduct, selected, onSelect, onEdi
   const [stock, setStock] = useState(String(v.stock_quantity || 0));
   const [uploading, setUploading] = useState(false);
   const [overFile,  setOverFile]  = useState(false);
-  const skipName  = useRef(true);
-  const skipPrice = useRef(true);
-  const skipStock = useRef(true);
-  const { ref, glossRef, handlers } = InteractiveSection(LAYER1_TILT, menuOpen);
+  // Tilt is disabled while dragging to avoid 3D wobble fighting the drag transform.
+  const { ref, glossRef, handlers } = InteractiveSection(LAYER1_TILT, menuOpen || isDragging);
 
   const hasChildren = (v.configurations || []).length > 0;
   const totalStock  = hasChildren ? sumDeep(v.configurations, 'stock_quantity') : (v.stock_quantity || 0);
@@ -117,52 +305,74 @@ function Layer1Card({ v, productId, pq, reloadProduct, selected, onSelect, onEdi
     return () => document.removeEventListener('pointerdown', h);
   }, [menuOpen]);
 
-  const save = async (body) => {
-    await fetch(`${API_BASE}/api/products/${productId}/layers/1/${v.id}${pq}`, {
+  const save = useCallback(async (body) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/layers/1/${v.id}${pq}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    reloadProduct?.();
-  };
+    if (r.ok) reloadProduct?.();
+    return r.ok;
+  }, [productId, v.id, pq, reloadProduct]);
 
-  useEffect(() => {
-    if (skipName.current) { skipName.current = false; return; }
-    const t = setTimeout(() => save({ name: name.trim() }), 500);
-    return () => clearTimeout(t);
-  }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (skipPrice.current) { skipPrice.current = false; return; }
-    const t = setTimeout(() => save({ price: price === '' ? null : parseFloat(price) }), 500);
-    return () => clearTimeout(t);
-  }, [price]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (skipStock.current) { skipStock.current = false; return; }
-    if (hasChildren) return;
-    const t = setTimeout(() => save({ stock_quantity: parseInt(stock, 10) || 0 }), 500);
-    return () => clearTimeout(t);
-  }, [stock]); // eslint-disable-line react-hooks/exhaustive-deps
+  useUndoableSave({
+    value: name, setValue: setName,
+    serverValue: v.variation_name || '',
+    save: (val) => save({ name: (val || '').trim() }),
+    registerUndo, label: `"${v.variation_name || 'Variation'}" name`,
+    shouldSave: (val) => !!(val || '').trim(),
+  });
+  useUndoableSave({
+    value: price, setValue: setPrice,
+    serverValue: v.price != null ? String(v.price) : '',
+    save: (val) => save({ price: val === '' ? null : parseFloat(val) }),
+    registerUndo, label: `"${v.variation_name || 'Variation'}" price`,
+  });
+  useUndoableSave({
+    value: stock, setValue: setStock,
+    serverValue: String(v.stock_quantity || 0),
+    save: (val) => save({ stock_quantity: parseInt(val, 10) || 0 }),
+    registerUndo, label: `"${v.variation_name || 'Variation'}" stock`,
+    shouldSave: () => !hasChildren,
+  });
 
   const uploadFile = async (file) => {
     if (!file || !file.type?.startsWith('image/')) return;
     setUploading(true);
+    const before = v.image_url || null;
     const fd = new FormData(); fd.append('file', file);
     try {
       const upRes = await fetch(`${API_BASE}/api/upload/image${pq}`, { method: 'POST', credentials: 'include', body: fd });
       const upData = await upRes.json();
-      if (upRes.ok && upData.url) await save({ image_url: upData.url });
+      if (upRes.ok && upData.url) {
+        const ok = await save({ image_url: upData.url });
+        if (ok) registerUndo?.({
+          description: 'Image changed',
+          undo: async () => { await save({ image_url: before }); },
+        });
+      }
     } catch {}
     setUploading(false);
   };
 
+
   return (
+    <div ref={dragRef} style={dragStyle} className={`layer1-drag-wrap${isDragging ? ' layer1-drag-wrap--dragging' : ''}`}
+      {...(dragHandleProps || {})}>
     <div ref={ref}
-      className={`org-card org-card--tilt prod-card layer1-card${selected ? ' prod-card--selected' : ''}`}
-      onClick={onSelect}
-      title="Click to select"
+      className={`org-card org-card--tilt prod-card layer1-card${selected ? ' prod-card--selected' : ''}${isDragging ? ' layer1-card--dragging' : ''}${bulkSelected ? ' layer1-card--bulk' : ''}${bulkActive ? ' layer1-card--bulk-mode' : ''}`}
+      onClick={onCardClick || onSelect}
+      onContextMenu={onContextMenu}
+      title="Click to select · Right-click for actions · hold 0.3s to drag"
       {...handlers}>
+      {bulkActive && (
+        <input type="checkbox" className="cat-prod-checkbox layer1-bulk-check"
+          checked={!!bulkSelected}
+          onChange={() => onBulkToggle?.()}
+          onClick={e => e.stopPropagation()}
+          onPointerDown={e => e.stopPropagation()}
+          aria-label="Toggle selection" />
+      )}
       <div ref={glossRef} className="org-card-gloss prod-card-gloss" />
       <div className="layer1-inner">
         <div className={`layer1-img-wrap${overFile ? ' layer1-img-wrap--over' : ''}${uploading ? ' layer1-img-wrap--loading' : ''}`}
@@ -191,11 +401,12 @@ function Layer1Card({ v, productId, pq, reloadProduct, selected, onSelect, onEdi
           </div>
         </div>
         <div className="layer1-body">
-          <input className="layer1-name-input"
+          <input className={`layer1-name-input${!name.trim() ? ' layer1-name-input--invalid' : ''}`}
             value={name}
             onChange={e => setName(e.target.value)}
             onClick={e => e.stopPropagation()}
-            placeholder="Variation name"
+            placeholder="Variation name *"
+            title={!name.trim() ? 'Variation name is required' : undefined}
             maxLength={100} />
           <div className="layer1-meta-row">
             <span className="layer1-meta-label">Price</span>
@@ -235,6 +446,7 @@ function Layer1Card({ v, productId, pq, reloadProduct, selected, onSelect, onEdi
           onDelete={() => { setMenuOpen(false); onDelete?.(); }}
           onClose={() => setMenuOpen(false)} />
       )}
+    </div>
     </div>
   );
 }
@@ -384,7 +596,72 @@ function Layer1EditModal({ productId, variation, pq, onClose, onSaved }) {
 // ─── Layer 2-5: table view (Name | Price | Stock | Sold | Delete) ────────
 
 function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
-                      selectedId, onSelect, isLeaf, inheritedPrice, onDeleteLayer }) {
+                      selectedId, onSelect, isLeaf, inheritedPrice, onDeleteLayer, registerUndo,
+                      bulk, setBulk, clearBulk }) {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
+
+  const SCOPE = `layer-${layer}`;
+  const inScope = bulk?.scope === SCOPE;
+  const bulkIds = inScope ? bulk.ids : [];
+  const [ctxMenu, setCtxMenu] = useState(null);
+
+  const bulkDelete = useCallback(async (deleteIds) => {
+    if (!deleteIds.length) return;
+    const targets = items.filter(it => deleteIds.includes(it.id));
+    const snapshots = targets.map(snapshotLayerNode);
+    for (const id of deleteIds) {
+      await fetch(`${API_BASE}/api/products/${productId}/layers/${layer}/${id}${pq}`, {
+        method: 'DELETE', credentials: 'include',
+      });
+    }
+    if (deleteIds.includes(selectedId)) onSelect?.(null);
+    clearBulk?.();
+    await reloadProduct?.();
+    if (snapshots.length && registerUndo) {
+      registerUndo({
+        description: `${deleteIds.length} row${deleteIds.length === 1 ? '' : 's'} deleted (Layer ${layer})`,
+        undo: async () => {
+          for (const snap of snapshots) {
+            await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'layer_node', layer, parent_id: parentId, data: snap }),
+            });
+          }
+          await reloadProduct?.();
+        },
+      });
+    }
+  }, [items, layer, parentId, productId, pq, selectedId, onSelect, clearBulk, reloadProduct, registerUndo]);
+
+  const toggleInBulk = useCallback((id) => {
+    setBulk(prev => {
+      const list = prev.scope === SCOPE ? [...prev.ids] : [];
+      const idx = list.indexOf(id);
+      if (idx >= 0) list.splice(idx, 1);
+      else list.push(id);
+      return list.length ? {
+        scope: SCOPE, ids: list,
+        actions: { delete: () => bulkDelete(list) },
+      } : { scope: null, ids: [], actions: null };
+    });
+  }, [SCOPE, setBulk, bulkDelete]);
+
+  // Returns true → caller skips the normal row click (drill into chain).
+  // Triggered on modifier-click OR while bulk-select is already active.
+  const onRowClick = useCallback((e, id) => {
+    if (!(e.shiftKey || e.metaKey || e.ctrlKey || inScope)) return false;
+    e.stopPropagation();
+    e.preventDefault();
+    toggleInBulk(id);
+    return true;
+  }, [inScope, toggleInBulk]);
+
+  const openCtxMenu = useCallback((e, id) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY, id });
+  }, []);
 
   const copyToSiblings = async () => {
     if (!confirm('Replace this list under all sibling parents at the previous layer?')) return;
@@ -394,6 +671,32 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
     );
     if (res.ok) reloadProduct?.();
   };
+
+  const persistOrder = async (ids) => {
+    await fetch(`${API_BASE}/api/products/${productId}/layers/${layer}/reorder${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, parent_id: parentId }),
+    });
+  };
+
+  const onDragEnd = async (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldOrder = items.map(i => i.id);
+    const oldIdx = oldOrder.indexOf(active.id);
+    const newIdx = oldOrder.indexOf(over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const newOrder = arrayMove(oldOrder, oldIdx, newIdx);
+    await persistOrder(newOrder);
+    await reloadProduct?.();
+    registerUndo?.({
+      description: `Layer ${layer} reordered`,
+      undo: async () => { await persistOrder(oldOrder); await reloadProduct?.(); },
+    });
+  };
+
+  const itemIds = useMemo(() => items.map(i => i.id), [items]);
 
   return (
     <section className="po-block">
@@ -407,7 +710,8 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
       </div>
       <div className="cfg-block-body">
         <div className="cfg-list">
-          <div className="cfg-list-head">
+          <div className={`cfg-list-head${inScope ? ' cfg-list-head--bulk-mode' : ''}`}>
+            {inScope && <span className="cfg-col cfg-col-bulk" />}
             <span className="cfg-col cfg-col-name">Configuration Name</span>
             <span className="cfg-col cfg-col-price">Price</span>
             <span className="cfg-col cfg-col-stock">Stock</span>
@@ -415,24 +719,50 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
             <span className="cfg-col cfg-col-actions" />
           </div>
 
-          {items.map(item => (
-            <LayerTableRow key={item.id}
-              layer={layer}
-              item={item}
-              productId={productId} pq={pq}
-              reloadProduct={reloadProduct}
-              selected={item.id === selectedId}
-              onSelect={() => !isLeaf && onSelect?.(item.id)}
-              isLeaf={isLeaf}
-              inheritedPrice={inheritedPrice}
-              onDelete={async () => {
-                const r = await fetch(`${API_BASE}/api/products/${productId}/layers/${layer}/${item.id}${pq}`,
-                  { method: 'DELETE', credentials: 'include' });
-                if (!r.ok) return;
-                if (selectedId === item.id) onSelect?.(null);
-                reloadProduct?.();
-              }} />
-          ))}
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+              {items.map(item => (
+                <SortableLayerTableRow key={item.id}
+                  layer={layer}
+                  item={item}
+                  productId={productId} pq={pq}
+                  reloadProduct={reloadProduct}
+                  selected={item.id === selectedId}
+                  onSelect={() => !isLeaf && onSelect?.(item.id)}
+                  isLeaf={isLeaf}
+                  inheritedPrice={inheritedPrice}
+                  registerUndo={registerUndo}
+                  onRowClick={onRowClick}
+                  onContextMenu={(e) => openCtxMenu(e, item.id)}
+                  bulkSelected={bulkIds.includes(item.id)}
+                  bulkActive={inScope}
+                  onBulkToggle={() => toggleInBulk(item.id)}
+                  onDelete={async () => {
+                    const snapshot = snapshotLayerNode(item);
+                    const r = await fetch(`${API_BASE}/api/products/${productId}/layers/${layer}/${item.id}${pq}`,
+                      { method: 'DELETE', credentials: 'include' });
+                    if (!r.ok) return;
+                    if (selectedId === item.id) onSelect?.(null);
+                    await reloadProduct?.();
+                    if (registerUndo) {
+                      registerUndo({
+                        description: `"${snapshot.name || 'Untitled'}" deleted`,
+                        undo: async () => {
+                          const rr = await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
+                            method: 'POST', credentials: 'include',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              type: 'layer_node', layer, parent_id: parentId, data: snapshot,
+                            }),
+                          });
+                          if (rr.ok) await reloadProduct?.();
+                        },
+                      });
+                    }
+                  }} />
+              ))}
+            </SortableContext>
+          </DndContext>
 
           <LayerTableNewRow
             layer={layer}
@@ -452,55 +782,78 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
           </div>
         )}
       </div>
+
+      {ctxMenu && (
+        <RowContextMenu pos={ctxMenu}
+          onSelect={() => toggleInBulk(ctxMenu.id)}
+          onClose={() => setCtxMenu(null)} />
+      )}
     </section>
   );
 }
 
-function LayerTableRow({ layer, item, productId, pq, reloadProduct, selected, onSelect, isLeaf, inheritedPrice, onDelete }) {
+function SortableLayerTableRow(props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.item.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    background: isDragging ? 'var(--card)' : undefined,
+    boxShadow: isDragging ? 'var(--shadow-card)' : undefined,
+    zIndex: isDragging ? 5 : 'auto',
+    opacity: isDragging ? 0.92 : 1,
+  };
+  return (
+    <LayerTableRow
+      {...props}
+      dragRef={setNodeRef}
+      dragStyle={style}
+      dragHandleProps={{ ...attributes, ...listeners }}
+    />
+  );
+}
+
+function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo,
+                          selected, onSelect, isLeaf, inheritedPrice, onDelete,
+                          dragRef, dragStyle, dragHandleProps, onRowClick, onContextMenu,
+                          bulkSelected, bulkActive, onBulkToggle }) {
   const [name,  setName]  = useState(item.name || '');
   const [price, setPrice] = useState(item.price != null ? String(item.price) : '');
   const [stock, setStock] = useState(String(item.stock_quantity || 0));
-  const skipName  = useRef(true);
-  const skipPrice = useRef(true);
-  const skipStock = useRef(true);
 
-  useEffect(() => {
-    skipName.current = true;
-    skipPrice.current = true;
-    skipStock.current = true;
-    setName(item.name || '');
-    setPrice(item.price != null ? String(item.price) : '');
-    setStock(String(item.stock_quantity || 0));
-  }, [item.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const save = async (body) => {
-    await fetch(`${API_BASE}/api/products/${productId}/layers/${layer}/${item.id}${pq}`, {
+  const save = useCallback(async (body) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/layers/${layer}/${item.id}${pq}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    reloadProduct?.();
-  };
-
-  useEffect(() => {
-    if (skipName.current) { skipName.current = false; return; }
-    const t = setTimeout(() => save({ name: name.trim() }), 400);
-    return () => clearTimeout(t);
-  }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (skipPrice.current) { skipPrice.current = false; return; }
-    const t = setTimeout(() => save({ price: price === '' ? null : parseFloat(price) }), 400);
-    return () => clearTimeout(t);
-  }, [price]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (r.ok) reloadProduct?.();
+    return r.ok;
+  }, [productId, layer, item.id, pq, reloadProduct]);
 
   const hasChildren = (item.children || []).length > 0;
-  useEffect(() => {
-    if (skipStock.current) { skipStock.current = false; return; }
-    if (hasChildren) return;
-    const t = setTimeout(() => save({ stock_quantity: parseInt(stock, 10) || 0 }), 400);
-    return () => clearTimeout(t);
-  }, [stock]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useUndoableSave({
+    value: name, setValue: setName,
+    serverValue: item.name || '',
+    save: (val) => save({ name: (val || '').trim() }),
+    registerUndo, label: `"${item.name || 'Row'}" name`,
+    debounceMs: 400,
+  });
+  useUndoableSave({
+    value: price, setValue: setPrice,
+    serverValue: item.price != null ? String(item.price) : '',
+    save: (val) => save({ price: val === '' ? null : parseFloat(val) }),
+    registerUndo, label: `"${item.name || 'Row'}" price`,
+    debounceMs: 400,
+  });
+  useUndoableSave({
+    value: stock, setValue: setStock,
+    serverValue: String(item.stock_quantity || 0),
+    save: (val) => save({ stock_quantity: parseInt(val, 10) || 0 }),
+    registerUndo, label: `"${item.name || 'Row'}" stock`,
+    shouldSave: () => !hasChildren,
+    debounceMs: 400,
+  });
 
   const displayStock = hasChildren ? sumDeep(item.children, 'stock_quantity') : null;
   const displaySold  = hasChildren
@@ -510,14 +863,26 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, selected, on
   const pricePlaceholder = inheritedPrice != null ? Number(inheritedPrice).toFixed(2) : '0.00';
 
   return (
-    <div className={`cfg-row${selected ? ' cfg-row--selected' : ''}${!isLeaf ? ' cfg-row--clickable' : ''}`}
-      onClick={onSelect}>
+    <div ref={dragRef} style={dragStyle}
+      className={`cfg-row cfg-row--grabbable${selected ? ' cfg-row--selected' : ''}${!isLeaf ? ' cfg-row--clickable' : ''}${bulkSelected ? ' cfg-row--bulk' : ''}${bulkActive ? ' cfg-row--bulk-mode' : ''}`}
+      onClick={(e) => {
+        if (onRowClick?.(e, item.id)) return;
+        onSelect?.();
+      }}
+      onContextMenu={onContextMenu}
+      {...(dragHandleProps || {})}>
+      {bulkActive && (
+        <input type="checkbox" className="cat-prod-checkbox cfg-bulk-check"
+          checked={!!bulkSelected}
+          onChange={() => onBulkToggle?.()}
+          onClick={e => e.stopPropagation()}
+          onPointerDown={e => e.stopPropagation()}
+          aria-label="Toggle selection" />
+      )}
       <input className="crm-input cfg-cell" value={name}
-        onClick={e => e.stopPropagation()}
         onChange={e => setName(e.target.value)} placeholder="S / 30 cm / 1 L" />
       <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
         value={price}
-        onClick={e => e.stopPropagation()}
         onChange={e => setPrice(e.target.value)}
         placeholder={pricePlaceholder} />
       {hasChildren ? (
@@ -527,7 +892,6 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, selected, on
       ) : (
         <input className="crm-input cfg-cell" type="number" min="0"
           value={stock}
-          onClick={e => e.stopPropagation()}
           onChange={e => setStock(e.target.value)} />
       )}
       <input type="text" readOnly tabIndex={-1}

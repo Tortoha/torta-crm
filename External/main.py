@@ -37,14 +37,11 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 
-# ============================================
-# НАСТРОЙКА
-# ============================================
+# ── НАСТРОЙКА ────────────────────────────────────────────
 
 SECRET_KEY            = os.getenv("SECRET_KEY",        "")
 JWT_ALGORITHM         = "HS256"
-# Short-lived access JWT + long-lived rotated refresh token. See CRM backend
-# for the same pattern + extensive comments.
+# Short-lived access JWT + long-lived rotated refresh token (see CRM backend).
 ACCESS_TOKEN_MINUTES  = int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))
 REFRESH_TOKEN_DAYS    = int(os.getenv("REFRESH_TOKEN_DAYS",   "30"))
 JWT_HOURS             = ACCESS_TOKEN_MINUTES / 60   # legacy alias
@@ -115,9 +112,7 @@ app = FastAPI()
 
 
 
-# ============================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (PER-PROJECT)
-# ============================================
+# ── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (PER-PROJECT) ────────────────
 
 def get_project_email(project_id: int) -> tuple:
     row = db_one(
@@ -160,9 +155,7 @@ def get_user_by_id(user_id: int, project_id: int):
     return db_one("SELECT id, name, email FROM users WHERE id = %s AND project_id = %s", (user_id, project_id))
 
 
-# ============================================
-# УТИЛИТЫ
-# ============================================
+# ── УТИЛИТЫ ──────────────────────────────────────────────
 
 def run_migrations():
     with db_cursor() as (conn, cur):
@@ -194,9 +187,7 @@ def run_migrations():
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_email_project ON users(email, project_id)")
             conn.commit()
         except Exception: conn.rollback()
-        # Phone uniqueness per project — prevents duplicate accounts via the
-        # phone OTP race condition (two concurrent verify-code requests).
-        # Partial index ignores rows where phone IS NULL.
+        # Phone uniqueness per project (partial index ignores NULL) — prevents OTP race-condition duplicates.
         try:
             cur.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_phone_project "
@@ -204,9 +195,7 @@ def run_migrations():
             )
             conn.commit()
         except Exception: conn.rollback()
-        # Refresh tokens (per-user sessions, rotated on use). project_id lets
-        # us scope sessions to a single store — same user logged into 2
-        # different stores has 2 independent sessions.
+        # Refresh tokens (per-user sessions, rotated on use); project_id scopes sessions per store.
         try:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -249,10 +238,6 @@ try:
 except Exception as _e:
     print(f"[migration] failed (non-fatal): {_e}")
 
-# ── Password hashing (scrypt + legacy SHA-256 fallback) ────────────────────
-# New format: "$scrypt$<base64-salt>$<base64-hash>"  (salt=16B, hash=32B)
-# Legacy format: 64 hex chars (SHA-256). On successful legacy login the caller
-# should re-hash with hash_password() and persist it.
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
 
 def hash_password(password: str) -> str:
@@ -472,10 +457,152 @@ def resolve_api_key_public(api_key: str) -> dict:
         raise HTTPException(401, "Invalid or inactive API key")
     return record
 
+def _eff_price(own_price, parent_eff):
+    if own_price is None: return parent_eff
+    return float(own_price)
 
-# ============================================
-# CORS MIDDLEWARE
-# ============================================
+
+def _build_layer_subtree(rows, layer, parent_eff,
+                         layer4_by_parent, layer5_by_parent,
+                         specifications_by_node):
+    if not rows: return []
+    next_layer = layer + 1
+    by_parent_below = (layer4_by_parent if layer == 3
+                       else layer5_by_parent if layer == 4
+                       else None)
+    out = []
+    for r in rows:
+        own_price = r.get("price")
+        eff = _eff_price(own_price, parent_eff)
+        children_rows = by_parent_below.get(r["id"], []) if by_parent_below else []
+        nested = (_build_layer_subtree(children_rows, next_layer, eff,
+                                       layer4_by_parent, layer5_by_parent,
+                                       specifications_by_node)
+                  if children_rows and next_layer <= 5 else [])
+        node = {
+            "id":              r["id"],
+            "name":            r.get("name") or r.get("configuration_name") or "",
+            "price":           float(own_price) if own_price is not None else None,
+            "effective_price": eff,
+            "stock_quantity":  r.get("stock_quantity") or 0,
+            "sold_quantity":   r.get("sold_quantity")  or 0,
+            "specifications":  specifications_by_node.get((layer, r["id"]), []),
+        }
+        if nested: node[f"conf_{next_layer}"] = nested
+        out.append(node)
+    return out
+
+
+def _split_keywords(value):
+    # SEO keywords are stored as a single comma-separated string for editing
+    # convenience. Public API returns them as a clean array — easier for
+    # storefronts to render as tags or feed into structured-data generators.
+    if not value: return []
+    return [t.strip() for t in str(value).split(",") if t.strip()]
+
+
+def _assemble_product_payload(
+    product, *,
+    variations,
+    cfg_by_variation_id,
+    layer3_by_parent,
+    layer4_by_parent,
+    layer5_by_parent,
+    specifications_by_node,
+    cart_map,
+    is_favorite, can_review,
+    custom_fields, reviews_raw,
+    user_id,
+):
+    final_variations = []
+    for v in variations:
+        var_eff = _eff_price(v.get("price"), None)
+        cfg_rows = cfg_by_variation_id.get(v["id"], [])
+        conf_2_out = []
+        for c in cfg_rows:
+            cart_item = cart_map.get((c["variation_id"], c["id"]))
+            cfg_eff = _eff_price(c.get("price"), var_eff)
+            l3_rows = layer3_by_parent.get(c["id"], [])
+            l3_tree = _build_layer_subtree(
+                l3_rows, 3, cfg_eff,
+                layer4_by_parent, layer5_by_parent, specifications_by_node)
+            # `price` on L2 falls back to effective when own price is NULL.
+            display_price = (float(c["price"]) if c.get("price") is not None
+                             else (cfg_eff if cfg_eff is not None else 0.0))
+            node_l2 = {
+                "id": c["id"], "name": c["configuration_name"],
+                "price": display_price, "effective_price": cfg_eff,
+                "stock_quantity": c["stock_quantity"], "sold_quantity": c["sold_quantity"],
+                "is_in_cart":   cart_item is not None,
+                "cart_item_id": cart_item["cart_item_id"] if cart_item else None,
+                "cart_quantity": cart_item["quantity"]    if cart_item else 0,
+                "specifications": specifications_by_node.get((2, c["id"]), []),
+            }
+            if l3_tree: node_l2["conf_3"] = l3_tree
+            conf_2_out.append(node_l2)
+
+        # Skip variations with no L2 rows AND no own L1 price/stock (placeholder).
+        has_purchasable = bool(conf_2_out) or (
+            var_eff is not None and (v.get("stock_quantity") or 0) > 0)
+        if not has_purchasable: continue
+
+        node_l1 = {
+            "id": v["id"], "name": v["variation_name"], "image": v.get("image_url"),
+            "price": float(v["price"]) if v.get("price") is not None else None,
+            "effective_price": var_eff,
+            "stock_quantity": v.get("stock_quantity") or 0,
+            "sold_quantity":  v.get("sold_quantity")  or 0,
+            "is_in_cart": any(c["is_in_cart"] for c in conf_2_out),
+            "specifications": specifications_by_node.get((1, v["id"]), []),
+        }
+        if conf_2_out: node_l1["conf_2"] = conf_2_out
+        final_variations.append(node_l1)
+
+    reviews = [
+        {
+            "id": r["id"], "user_id": r["user_id"], "user_name": r["user_name"],
+            "rating": r["rating"], "comment": r["comment"] or "",
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }
+        for r in reviews_raw
+    ]
+    reviews_count  = len(reviews)
+    average_rating = round(sum(r["rating"] for r in reviews) / reviews_count, 1) if reviews_count else 0.0
+
+    first_l2 = (final_variations[0].get("conf_2") if final_variations else None) or []
+    initial_configuration_id = first_l2[0]["id"] if first_l2 else None
+
+    # Backward-compat summary fields used by storefront grid cards.
+    summary_image = final_variations[0]["image"] if final_variations else None
+    summary_price = (first_l2[0]["effective_price"] if first_l2
+                     else (final_variations[0]["effective_price"] if final_variations else 0)) or 0
+
+    product_hash = hashids.encode(product["id"])
+    return {
+        "id": product["id"],
+        "product_hash": product_hash,
+        "hash": product_hash,                 # legacy alias for storefront grid cards
+        "title": product["title"],
+        "subtitle":    product.get("subtitle")    or "",
+        "description": product.get("description") or "",
+        "category_id":   product.get("category_id"),
+        "category_name": product.get("category_name"),
+        "category_slug": product.get("category_slug"),
+        "seo_title":       product.get("seo_title"),
+        "seo_description": product.get("seo_description"),
+        "seo_keywords":    _split_keywords(product.get("seo_keywords")),
+        "custom_fields":   custom_fields,
+        "is_authenticated": user_id is not None, "current_user_id": user_id,
+        "is_favorite": is_favorite, "can_review": can_review,
+        "reviews_count": reviews_count, "average_rating": average_rating,
+        "initial_variation_index": 0, "initial_configuration_id": initial_configuration_id,
+        "image": summary_image,
+        "price": summary_price,
+        "conf_1": final_variations,
+        "reviews": reviews,
+    }
+
+# ── CORS MIDDLEWARE ──────────────────────────────────────
 
 _LOCALHOST_RE = _re.compile(r'^https?://localhost(:\d+)?$')
 
@@ -494,10 +621,6 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         if not origin:
             return await call_next(request)
 
-        # Decide if this origin is permitted. localhost is always allowed (dev).
-        # Otherwise the project must exist AND the origin must match its
-        # configured frontend/redirect URLs. NEVER echo an unknown origin —
-        # that would let any attacker bypass CORS by guessing an API key.
         allow_origin = None
         if _LOCALHOST_RE.match(origin):
             allow_origin = origin
@@ -532,12 +655,6 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         return response
 
 # ─── CSRF double-submit cookie ────────────────────────────────────────────
-# Exempt paths:
-#   /track/   — fire-and-forget analytics (visit, product-view). Anonymous
-#               counters only; no user data at risk. They fire on page load
-#               before the CSRF cookie is guaranteed to be set.
-#   /refresh  — token rotation; the refresh token itself is the credential.
-# Add webhook exemptions here when Twilio/Telegram inbound webhooks are added.
 _CSRF_SAFE_METHODS   = {"GET", "HEAD", "OPTIONS", "TRACE"}
 _CSRF_EXEMPT_SUFFIX  = ("/refresh",)
 _CSRF_EXEMPT_SEGMENT = ("/track/",)
@@ -562,14 +679,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             )
         return await call_next(request)
 
-# CSRF inner, CORS outer — 403 responses still carry CORS headers.
 app.add_middleware(CSRFMiddleware)
 app.add_middleware(DynamicCORSMiddleware)
 
 
-# ============================================
-# МОДЕЛИ
-# ============================================
+# ── МОДЕЛИ ───────────────────────────────────────────────
 
 class SendCodeRequest(BaseModel):
     email: str; type: str; name: str = None; password: str = None
@@ -588,11 +702,6 @@ class ResetPasswordRequest(BaseModel):
 
 class AddToCart(BaseModel):
     product_id: int
-    # variation_id and configuration_id are required for any product that has
-    # variations / configurations. Old SDK versions (<2.0.0) sent `size_id`
-    # which Pydantic silently dropped → caused FK NOT NULL violation = HTTP 500.
-    # Now we surface a clean 422 instead. Storefronts on torta-js >= 2.0.0
-    # always send the new keys.
     variation_id: int
     configuration_id: int
     quantity: int = 1
@@ -628,35 +737,22 @@ class FrontReview(BaseModel):
 class FrontSpecification(BaseModel):
     key: str; value: str
 
-class FrontLayerNode(BaseModel):
-    """Layer 3-5 row (deeper than configuration)."""
+class FrontConfNode(BaseModel):
     id: int
     name: str = ''
     price: Optional[float] = None
     effective_price: Optional[float] = None
     stock_quantity: int = 0
     sold_quantity: int = 0
-    children: List["FrontLayerNode"] = []
     specifications: List[FrontSpecification] = []
-
-class FrontConfiguration(BaseModel):
-    id: int; configuration_name: str; price: float
-    effective_price: Optional[float] = None
-    stock_quantity: int
-    sold_quantity: int; is_in_cart: bool = False
-    cart_item_id: Optional[int] = None; cart_quantity: int = 0
-    children: List[FrontLayerNode] = []
-    specifications: List[FrontSpecification] = []
-
-class FrontVariation(BaseModel):
-    id: int; variation_name: str; image: Optional[str] = None
-    price: Optional[float] = None
-    effective_price: Optional[float] = None
-    stock_quantity: int = 0
-    sold_quantity: int = 0
+    image: Optional[str] = None
     is_in_cart: bool = False
-    configurations: List[FrontConfiguration]
-    specifications: List[FrontSpecification] = []
+    cart_item_id: Optional[int] = None
+    cart_quantity: int = 0
+    conf_2: Optional[List["FrontConfNode"]] = None
+    conf_3: Optional[List["FrontConfNode"]] = None
+    conf_4: Optional[List["FrontConfNode"]] = None
+    conf_5: Optional[List["FrontConfNode"]] = None
 
 class ProductPageResponse(BaseModel):
     id: int; product_hash: str; title: str
@@ -666,12 +762,12 @@ class ProductPageResponse(BaseModel):
     category_name: Optional[str] = None
     category_slug: Optional[str] = None
     seo_title: Optional[str] = None; seo_description: Optional[str] = None
-    seo_keywords: Optional[str] = None; custom_fields: Optional[dict] = {}
+    seo_keywords: List[str] = []; custom_fields: Optional[dict] = {}
     is_authenticated: bool; current_user_id: Optional[int] = None
     is_favorite: bool; can_review: bool
     reviews_count: int; average_rating: float
     initial_variation_index: int; initial_configuration_id: Optional[int] = None
-    variations: List[FrontVariation]; reviews: List[FrontReview]
+    conf_1: List[FrontConfNode]; reviews: List[FrontReview]
 
 class CartPageItem(BaseModel):
     cart_item_id: int; quantity: int; product_id: int; product_hash: str
@@ -686,9 +782,7 @@ class CartPageResponse(BaseModel):
     amount_to_free_shipping: float; shipping_progress: float; total: float
 
 
-# ============================================
-# EMAIL
-# ============================================
+# ── EMAIL ────────────────────────────────────────────────
 
 def send_email(to: str, subject: str, html: str,
                from_name: str = "Torta Store", from_email: str = EMAIL_FROM) -> bool:
@@ -732,17 +826,11 @@ def send_reset_email(email: str, token: str, project_id: int = None) -> bool:
     return send_email(email, "Password Reset", html, from_name, from_email)
 
 
-# ============================================
-# RATE-LIMIT / VERIFICATION STORAGE
-# Backed by Redis when REDIS_URL is set, falls back to in-memory dict for
-# single-worker dev. See kvstore.py.
-# ============================================
+# ── RATE-LIMIT / VERIFICATION STORAGE ────────────────────
 
 import kvstore
 
 # ── Email OTP (pending verifications) ──────────────────────────────────────
-# Key:  pv:<project_id>:<email>
-# TTL:  CODE_TTL_MINUTES * 60
 def _pv_key(project_id: int, email: str) -> str:
     return f"pv:{project_id}:{email}"
 def _pv_get(project_id, email): return kvstore.get(_pv_key(project_id, email))
@@ -750,28 +838,21 @@ def _pv_set(project_id, email, value, ttl=None):
     kvstore.set(_pv_key(project_id, email), value, ttl=ttl or CODE_TTL_MINUTES * 60)
 def _pv_del(project_id, email): kvstore.delete(_pv_key(project_id, email))
 
-# ── Failed-attempt counters (logins, password reset, etc.) ────────────────
-# Key:  fail:<bucket>:<id>      e.g. fail:login:ip:1.2.3.4 / fail:reset:email:foo@bar
-# TTL:  BLOCK_MINUTES * 60      (auto-resets after the cool-down window)
-# Uses atomic INCR; >= MAX_FAILED_ATTEMPTS = blocked. ttl() reports time left.
+# Failed-attempt counters: atomic INCR per fail:<bucket>:<id>, TTL=BLOCK_MINUTES*60; >=MAX_FAILED_ATTEMPTS = blocked.
 def _fail_key(bucket: str, ident: str) -> str:
     return f"fail:{bucket}:{ident}"
 def _fail_check(bucket: str, ident: str):
-    """Returns (blocked: bool, seconds_left: int). Doesn't increment."""
     key = _fail_key(bucket, ident)
     count = int(kvstore.get(key) or 0)
     if count >= MAX_FAILED_ATTEMPTS:
         return True, max(kvstore.ttl(key), 1)
     return False, 0
 def _fail_record(bucket: str, ident: str):
-    """Increment the failure counter. Sets TTL on first hit only."""
     return kvstore.incr(_fail_key(bucket, ident), ttl=BLOCK_MINUTES * 60)
 def _fail_clear(bucket: str, ident: str):
     kvstore.delete(_fail_key(bucket, ident))
 
-# ── Password reset tokens ──────────────────────────────────────────────────
-# Key:  pw_reset:<sha256(raw_token)>
-# TTL:  RESET_TTL_MINUTES * 60
+# Password reset tokens: pw_reset:<sha256(raw_token)>, TTL=RESET_TTL_MINUTES*60.
 def _reset_key(token_hash: str) -> str:
     return f"pw_reset:{token_hash}"
 def _reset_get(token_hash):    return kvstore.get(_reset_key(token_hash))
@@ -780,9 +861,7 @@ def _reset_del(token_hash):    kvstore.delete(_reset_key(token_hash))
 
 
 
-# ============================================
-# CSRF TOKEN
-# ============================================
+# ── CSRF TOKEN ───────────────────────────────────────────
 
 @app.get("/{api_key}/csrf")
 def get_csrf_token(api_key: str, request: Request, response: Response,
@@ -805,9 +884,7 @@ def get_csrf_token(api_key: str, request: Request, response: Response,
     return {"csrf_token": token}
 
 
-# ============================================
-# АУТЕНТИФИКАЦИЯ
-# ============================================
+# ── АУТЕНТИФИКАЦИЯ ───────────────────────────────────────
 
 @app.post("/{api_key}/send-code")
 def send_code(request: SendCodeRequest, req: Request,
@@ -977,9 +1054,7 @@ def logout(response: Response, request: Request,
     return {"success": True}
 
 
-# ============================================
-# REFRESH TOKEN / SESSIONS
-# ============================================
+# ── REFRESH TOKEN / SESSIONS ─────────────────────────────
 
 @app.post("/{api_key}/refresh")
 def refresh_session(response: Response, request: Request,
@@ -1058,9 +1133,7 @@ def logout_all(response: Response, request: Request,
     return {"ok": True}
 
 
-# ============================================
-# ВОССТАНОВЛЕНИЕ ПАРОЛЯ
-# ============================================
+# ── ВОССТАНОВЛЕНИЕ ПАРОЛЯ ────────────────────────────────
 
 @app.post("/{api_key}/forgot-password")
 def forgot_password(request: ForgotPasswordRequest, req: Request,
@@ -1126,9 +1199,7 @@ def reset_password(request: ResetPasswordRequest, api_key_record: dict = Depends
     return {"success": True}
 
 
-# ============================================
-# ПРОДУКТЫ
-# ============================================
+# ── ПРОДУКТЫ ─────────────────────────────────────────────
 
 @app.get("/{api_key}/categories")
 def list_categories_public(api_key_record: dict = Depends(resolve_api_key)):
@@ -1150,11 +1221,15 @@ def list_categories_public(api_key_record: dict = Depends(resolve_api_key)):
 
 
 @app.get("/{api_key}/products")
-def get_products(api_key_record: dict = Depends(resolve_api_key),
+def get_products(request: Request,
+                 api_key_record: dict = Depends(resolve_api_key),
                  category: Optional[str] = None,
                  uncategorized: bool = False):
     project_id = api_key_record["id"]
+    user_id    = try_get_current_user_id(request)
+
     with db_cursor() as (_, cursor):
+        # ── 1. Products (with category filter) ─────────────────────────
         where  = ["p.project_id = %s"]
         params = [project_id]
         if uncategorized:
@@ -1163,7 +1238,8 @@ def get_products(api_key_record: dict = Depends(resolve_api_key),
             where.append("c.slug = %s")
             params.append(category)
         cursor.execute(
-            "SELECT p.id, p.title, p.seo_title, p.seo_description, p.seo_keywords, "
+            "SELECT p.id, p.title, p.subtitle, p.description, "
+            "p.seo_title, p.seo_description, p.seo_keywords, "
             "p.category_id, c.name AS category_name, c.slug AS category_slug "
             "FROM products p "
             "LEFT JOIN product_categories c ON c.id = p.category_id "
@@ -1175,68 +1251,187 @@ def get_products(api_key_record: dict = Depends(resolve_api_key),
         if not products: return []
 
         product_ids = [p["id"] for p in products]
-        fmt         = ",".join(["%s"] * len(product_ids))
+        fmt = ",".join(["%s"] * len(product_ids))
 
+        # ── 2. Layer 1 (variations) for ALL products ───────────────────
         cursor.execute(
-            f"SELECT product_id, MIN(id) as variation_id FROM product_configurations_l1 WHERE product_id IN ({fmt}) GROUP BY product_id",
+            f"SELECT id, product_id, variation_name, image_url, price, stock_quantity, sold_quantity, position "
+            f"FROM product_configurations_l1 WHERE product_id IN ({fmt}) "
+            f"ORDER BY position ASC, id ASC",
             product_ids
         )
-        first_variation = {r["product_id"]: r["variation_id"] for r in cursor.fetchall()}
+        l1_rows = cursor.fetchall()
+        variations_by_product = {}
+        for v in l1_rows:
+            variations_by_product.setdefault(v["product_id"], []).append(v)
+        l1_ids = [v["id"] for v in l1_rows]
 
-        images = {}
-        if first_variation:
-            vids = list(first_variation.values())
-            vfmt = ",".join(["%s"] * len(vids))
-            cursor.execute(f"SELECT id, image_url FROM product_configurations_l1 WHERE id IN ({vfmt})", vids)
-            images = {r["id"]: r["image_url"] for r in cursor.fetchall()}
+        # ── 3. Layer 2 ────────────────────────────────────────────────
+        cfg_by_variation_id = {}
+        l2_ids = []
+        if l1_ids:
+            l1fmt = ",".join(["%s"] * len(l1_ids))
+            cursor.execute(
+                f"SELECT id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position "
+                f"FROM product_configurations_l2 WHERE variation_id IN ({l1fmt}) "
+                f"ORDER BY position ASC, id ASC",
+                l1_ids
+            )
+            for c in cursor.fetchall():
+                cfg_by_variation_id.setdefault(c["variation_id"], []).append(c)
+                l2_ids.append(c["id"])
 
-        # MIN over Layer 2 prices, falling back to Layer 1 (variation) price for
-        # products that haven't filled in Layer 2 yet, or where some layer-2 rows
-        # have NULL price (inherit from variation).
+        # ── 4. Layers 3, 4, 5 (chained by parent_id) ──────────────────
+        layer3_by_parent, layer4_by_parent, layer5_by_parent = {}, {}, {}
+        l3_ids, l4_ids, l5_ids = [], [], []
+        if l2_ids:
+            l2fmt = ",".join(["%s"] * len(l2_ids))
+            cursor.execute(
+                f"SELECT id, parent_id, name, price, stock_quantity, sold_quantity, position "
+                f"FROM product_configurations_l3 WHERE parent_id IN ({l2fmt}) "
+                f"ORDER BY position ASC, id ASC",
+                l2_ids
+            )
+            for r in cursor.fetchall():
+                layer3_by_parent.setdefault(r["parent_id"], []).append(r)
+                l3_ids.append(r["id"])
+        if l3_ids:
+            l3fmt = ",".join(["%s"] * len(l3_ids))
+            cursor.execute(
+                f"SELECT id, parent_id, name, price, stock_quantity, sold_quantity, position "
+                f"FROM product_configurations_l4 WHERE parent_id IN ({l3fmt}) "
+                f"ORDER BY position ASC, id ASC",
+                l3_ids
+            )
+            for r in cursor.fetchall():
+                layer4_by_parent.setdefault(r["parent_id"], []).append(r)
+                l4_ids.append(r["id"])
+        if l4_ids:
+            l4fmt = ",".join(["%s"] * len(l4_ids))
+            cursor.execute(
+                f"SELECT id, parent_id, name, price, stock_quantity, sold_quantity, position "
+                f"FROM product_configurations_l5 WHERE parent_id IN ({l4fmt}) "
+                f"ORDER BY position ASC, id ASC",
+                l4_ids
+            )
+            for r in cursor.fetchall():
+                layer5_by_parent.setdefault(r["parent_id"], []).append(r)
+                l5_ids.append(r["id"])
+
+        # ── 5. Specifications scoped to OUR layer ids ──────────────────
+        specifications_by_node = {}
+        spec_clauses, spec_params = [], []
+        if l1_ids:
+            l1fmt = ",".join(["%s"] * len(l1_ids))
+            spec_clauses.append(f"variation_id IN ({l1fmt})")
+            spec_params.extend(l1_ids)
+        for layer_n, ids in ((2, l2_ids), (3, l3_ids), (4, l4_ids), (5, l5_ids)):
+            if ids:
+                idsfmt = ",".join(["%s"] * len(ids))
+                spec_clauses.append(f"(layer = {layer_n} AND parent_id IN ({idsfmt}))")
+                spec_params.extend(ids)
+        if spec_clauses:
+            cursor.execute(
+                f"SELECT variation_id, layer, parent_id, spec_key, spec_value, position "
+                f"FROM product_specifications WHERE {' OR '.join(spec_clauses)} "
+                f"ORDER BY position ASC, id ASC",
+                spec_params
+            )
+            for row in cursor.fetchall():
+                layer_v = row.get("layer") or 1
+                parent_id = row["parent_id"] if row.get("parent_id") is not None else row["variation_id"]
+                specifications_by_node.setdefault((layer_v, parent_id), []).append({
+                    "key": row["spec_key"], "value": row["spec_value"],
+                })
+
+        # ── 6. Reviews per product ────────────────────────────────────
         cursor.execute(
-            f"SELECT pv.product_id, MIN(COALESCE(pc.price, pv.price)) as price"
-            f" FROM product_configurations_l2 pc"
-            f" JOIN product_configurations_l1 pv ON pv.id = pc.variation_id"
-            f" WHERE pv.product_id IN ({fmt})"
-            f" GROUP BY pv.product_id",
-            product_ids
+            f"SELECT pr.id, pr.user_id, pr.product_id, pr.rating, pr.comment, pr.created_at, "
+            f"u.name AS user_name FROM product_reviews pr "
+            f"JOIN users u ON pr.user_id = u.id AND u.project_id = %s "
+            f"WHERE pr.product_id IN ({fmt}) AND pr.project_id = %s "
+            f"ORDER BY pr.created_at DESC",
+            [project_id] + product_ids + [project_id]
         )
-        prices = {r["product_id"]: (float(r["price"]) if r["price"] is not None else 0.0)
-                  for r in cursor.fetchall()}
-        # Fallback: products with no Layer 2 → use Layer 1 price
-        cursor.execute(
-            f"SELECT product_id, MIN(price) as price FROM product_configurations_l1"
-            f" WHERE product_id IN ({fmt}) AND price IS NOT NULL GROUP BY product_id",
-            product_ids
-        )
+        reviews_by_product = {}
         for r in cursor.fetchall():
-            if r["product_id"] not in prices:
-                prices[r["product_id"]] = float(r["price"])
+            reviews_by_product.setdefault(r["product_id"], []).append(r)
 
+        # ── 7. Custom fields per product ──────────────────────────────
         cursor.execute(
-            f"SELECT product_id, field_key, field_value FROM product_custom_fields WHERE project_id = %s AND product_id IN ({fmt})",
+            f"SELECT product_id, field_key, field_value FROM product_custom_fields "
+            f"WHERE project_id = %s AND product_id IN ({fmt})",
             [project_id] + product_ids
         )
-        cf_map = {}
+        cf_by_product = {}
         for r in cursor.fetchall():
-            cf_map.setdefault(r["product_id"], {})[r["field_key"]] = r["field_value"]
+            cf_by_product.setdefault(r["product_id"], {})[r["field_key"]] = r["field_value"]
+
+        # ── 8. User-scoped data (favorites, cart, can_review) ─────────
+        favorites_set, cart_map_global, can_review_set = set(), {}, set()
+        if user_id:
+            cursor.execute(
+                f"SELECT product_id FROM favorites WHERE user_id = %s "
+                f"AND project_id = %s AND product_id IN ({fmt})",
+                [user_id, project_id] + product_ids
+            )
+            favorites_set = {r["product_id"] for r in cursor.fetchall()}
+
+            cursor.execute(
+                f"SELECT ci.id AS cart_item_id, ci.product_id, ci.variation_id, "
+                f"ci.configuration_id, ci.quantity FROM cart_items ci "
+                f"JOIN carts c ON ci.cart_id = c.id "
+                f"WHERE c.user_id = %s AND c.project_id = %s "
+                f"AND ci.product_id IN ({fmt})",
+                [user_id, project_id] + product_ids
+            )
+            for row in cursor.fetchall():
+                # Keys are unique across products (variation_id and configuration_id are global PKs).
+                cart_map_global[(row["variation_id"], row["configuration_id"])] = row
+
+            # can_review: ordered ('delivered' or 'returned') AND not yet reviewed.
+            cursor.execute(
+                f"SELECT DISTINCT product_id FROM product_reviews "
+                f"WHERE user_id = %s AND project_id = %s "
+                f"AND product_id IN ({fmt})",
+                [user_id, project_id] + product_ids
+            )
+            already_reviewed = {r["product_id"] for r in cursor.fetchall()}
+            cursor.execute(
+                f"SELECT DISTINCT oi.product_id FROM order_history oh "
+                f"JOIN order_items oi ON oh.id = oi.order_id "
+                f"WHERE oh.user_id = %s AND oh.project_id = %s "
+                f"AND oh.status IN ('delivered','returned') "
+                f"AND oi.product_id IN ({fmt})",
+                [user_id, project_id] + product_ids
+            )
+            for r in cursor.fetchall():
+                if r["product_id"] not in already_reviewed:
+                    can_review_set.add(r["product_id"])
 
     return [
-        {
-            "id": p["id"], "hash": hashids.encode(p["id"]), "title": p["title"],
-            "price": prices.get(p["id"], 0),
-            "image": images.get(first_variation.get(p["id"])),
-            "category_id":   p.get("category_id"),
-            "category_name": p.get("category_name"),
-            "category_slug": p.get("category_slug"),
-            "seo_title": p["seo_title"], "seo_description": p["seo_description"],
-            "seo_keywords": p["seo_keywords"], "custom_fields": cf_map.get(p["id"], {}),
-        }
+        _assemble_product_payload(
+            p,
+            variations=variations_by_product.get(p["id"], []),
+            cfg_by_variation_id=cfg_by_variation_id,
+            layer3_by_parent=layer3_by_parent,
+            layer4_by_parent=layer4_by_parent,
+            layer5_by_parent=layer5_by_parent,
+            specifications_by_node=specifications_by_node,
+            cart_map=cart_map_global,
+            is_favorite=p["id"] in favorites_set,
+            can_review=p["id"] in can_review_set,
+            custom_fields=cf_by_product.get(p["id"], {}),
+            reviews_raw=reviews_by_product.get(p["id"], []),
+            user_id=user_id,
+        )
         for p in products
     ]
 
 
-@app.get("/{api_key}/product/{product_hash}", response_model=ProductPageResponse)
+@app.get("/{api_key}/product/{product_hash}",
+         response_model=ProductPageResponse,
+         response_model_exclude_none=True)
 def get_product_page(product_hash: str, request: Request,
                      api_key_record: dict = Depends(resolve_api_key)):
     decoded = hashids.decode(product_hash)
@@ -1384,124 +1579,27 @@ def get_product_page(product_hash: str, request: Request,
                 )
                 can_review = cursor.fetchone() is not None
 
-    # Build tree with effective_price walk-up. Layer 1 (variation) sets the
-    # baseline; deeper layers inherit when their own price is NULL.
-    def _eff(own_price, parent_eff):
-        if own_price is None: return parent_eff
-        return float(own_price)
-
-    def _build_subtree(rows, by_parent_next, layer_below, parent_eff):
-        """rows: items at the current layer. by_parent_next: dict id → next layer rows.
-        layer_below: 3,4,5 — for spec attachment + child fetching."""
-        out = []
-        for r in rows:
-            eff = _eff(r.get("price"), parent_eff)
-            children_rows = by_parent_next.get(r["id"], []) if by_parent_next else []
-            if   layer_below == 3: nested = _build_subtree(children_rows, layer4_by_parent, 4, eff)
-            elif layer_below == 4: nested = _build_subtree(children_rows, layer5_by_parent, 5, eff)
-            elif layer_below == 5: nested = _build_subtree(children_rows, None,             6, eff)
-            else:                   nested = []
-            out.append({
-                "id":             r["id"],
-                "name":           r.get("name") or r.get("configuration_name") or "",
-                "price":          float(r["price"]) if r.get("price") is not None else None,
-                "effective_price": eff,
-                "stock_quantity": r.get("stock_quantity") or 0,
-                "sold_quantity":  r.get("sold_quantity")  or 0,
-                "children":       nested,
-                "specifications": specifications_by_node.get((layer_below, r["id"]), []),
-            })
-        return out
-
-    cfg_by_variation = {}
+    # Group L2 rows by their L1 parent for the assembler.
+    cfg_by_variation_id = {}
     for c in configurations:
-        # Note: stock filter intentionally relaxed for multi-layer products —
-        # an intermediate Layer 2 row can have stock=0 but its Layer 3+ leaves
-        # carry the real stock. Frontend decides what to show.
-        cart_item = cart_map.get((c["variation_id"], c["id"]))
-        children_l3 = layer3_by_parent.get(c["id"], [])
-        # parent_eff for layer 2 is the variation's own price (Layer 1)
-        # We'll fix this per-variation below
-        cfg_by_variation.setdefault(c["variation_id"], []).append({
-            "_raw": c,
-            "_children_l3": children_l3,
-            "cart_item": cart_item,
-        })
+        cfg_by_variation_id.setdefault(c["variation_id"], []).append(c)
 
-    final_variations = []
-    for v in variations:
-        var_eff = _eff(v.get("price"), None)
-        cfg_entries = cfg_by_variation.get(v["id"], [])
-        configurations_out = []
-        for entry in cfg_entries:
-            c = entry["_raw"]
-            cart_item = entry["cart_item"]
-            cfg_eff = _eff(c.get("price"), var_eff)
-            l3_tree = _build_subtree(entry["_children_l3"], layer4_by_parent, 4, cfg_eff)
-            # `price` field for backwards compat: float, falling back to effective if NULL.
-            display_price = float(c["price"]) if c.get("price") is not None else (cfg_eff if cfg_eff is not None else 0.0)
-            configurations_out.append({
-                "id": c["id"], "configuration_name": c["configuration_name"],
-                "price": display_price, "effective_price": cfg_eff,
-                "stock_quantity": c["stock_quantity"], "sold_quantity": c["sold_quantity"],
-                "is_in_cart": cart_item is not None,
-                "cart_item_id": cart_item["cart_item_id"] if cart_item else None,
-                "cart_quantity": cart_item["quantity"] if cart_item else 0,
-                "children":       l3_tree,
-                "specifications": specifications_by_node.get((2, c["id"]), []),
-            })
-
-        # Skip variations that have no Layer-2 rows AND no own-Layer-1 price/stock
-        # (i.e. truly empty placeholder). Otherwise show the variation.
-        has_purchasable = bool(configurations_out) or (var_eff is not None and (v.get("stock_quantity") or 0) > 0)
-        if not has_purchasable: continue
-
-        final_variations.append({
-            "id": v["id"], "variation_name": v["variation_name"], "image": v["image_url"],
-            "price": float(v["price"]) if v.get("price") is not None else None,
-            "effective_price": var_eff,
-            "stock_quantity": v.get("stock_quantity") or 0,
-            "sold_quantity":  v.get("sold_quantity")  or 0,
-            "is_in_cart": any(c["is_in_cart"] for c in configurations_out),
-            "configurations": configurations_out,
-            "specifications": specifications_by_node.get((1, v["id"]), []),
-        })
-
-    reviews = [
-        {
-            "id": r["id"], "user_id": r["user_id"], "user_name": r["user_name"],
-            "rating": r["rating"], "comment": r["comment"] or "",
-            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-        }
-        for r in reviews_raw
-    ]
-    reviews_count  = len(reviews)
-    average_rating = round(sum(r["rating"] for r in reviews) / reviews_count, 1) if reviews_count else 0.0
-    initial_configuration_id = (
-        final_variations[0]["configurations"][0]["id"]
-        if final_variations and final_variations[0]["configurations"] else None
+    return _assemble_product_payload(
+        product,
+        variations=variations,
+        cfg_by_variation_id=cfg_by_variation_id,
+        layer3_by_parent=layer3_by_parent,
+        layer4_by_parent=layer4_by_parent,
+        layer5_by_parent=layer5_by_parent,
+        specifications_by_node=specifications_by_node,
+        cart_map=cart_map,
+        is_favorite=is_favorite, can_review=can_review,
+        custom_fields=custom_fields, reviews_raw=reviews_raw,
+        user_id=user_id,
     )
 
-    return {
-        "id": product["id"], "product_hash": hashids.encode(product["id"]),
-        "title": product["title"], "subtitle": product["subtitle"] or "",
-        "description": product["description"] or "",
-        "category_id":   product.get("category_id"),
-        "category_name": product.get("category_name"),
-        "category_slug": product.get("category_slug"),
-        "seo_title": product["seo_title"], "seo_description": product["seo_description"],
-        "seo_keywords": product["seo_keywords"], "custom_fields": custom_fields,
-        "is_authenticated": user_id is not None, "current_user_id": user_id,
-        "is_favorite": is_favorite, "can_review": can_review,
-        "reviews_count": reviews_count, "average_rating": average_rating,
-        "initial_variation_index": 0, "initial_configuration_id": initial_configuration_id,
-        "variations": final_variations, "reviews": reviews,
-    }
 
-
-# ============================================
-# КОРЗИНА
-# ============================================
+# ── КОРЗИНА ──────────────────────────────────────────────
 
 @app.post("/{api_key}/cart/add")
 def add_to_cart(item: AddToCart, request: Request,
@@ -1649,9 +1747,7 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     }
 
 
-# ============================================
-# ИЗБРАННОЕ
-# ============================================
+# ── ИЗБРАННОЕ ────────────────────────────────────────────
 
 @app.post("/{api_key}/favorites/add")
 def add_to_favorites(item: AddToFavorites, request: Request,
@@ -1698,9 +1794,7 @@ def remove_from_favorites(product_hash: str, request: Request,
     return {"success": True}
 
 
-# ============================================
-# ОТЗЫВЫ
-# ============================================
+# ── ОТЗЫВЫ ───────────────────────────────────────────────
 
 @app.post("/{api_key}/reviews/add")
 def add_review(review: AddReview, request: Request,
@@ -1759,9 +1853,7 @@ def delete_review(review_id: int, request: Request,
     return {"success": True}
 
 
-# ============================================
-# ПРОМОКОДЫ
-# ============================================
+# ── ПРОМОКОДЫ ────────────────────────────────────────────
 
 @app.post("/{api_key}/promo-code/apply")
 def apply_promo_code(data: ApplyPromoCode, request: Request,
@@ -1822,9 +1914,7 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
     }
 
 
-# ============================================
-# ЗАКАЗЫ
-# ============================================
+# ── ЗАКАЗЫ ───────────────────────────────────────────────
 
 @app.post("/{api_key}/orders")
 def place_order(data: PlaceOrderRequest, request: Request,
@@ -2028,9 +2118,7 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
     return result
 
 
-# ============================================
-# ТРЕКИНГ (воронка продаж)
-# ============================================
+# ── ТРЕКИНГ (воронка продаж) ─────────────────────────────
 
 @app.post("/{api_key}/track/visit")
 def track_visit(request: Request, api_key_record: dict = Depends(resolve_api_key)):
@@ -2069,9 +2157,7 @@ def track_product_view(data: TrackProductView, request: Request,
     return {"success": True}
 
 
-# ============================================
-# GOOGLE OAUTH (per-project credentials)
-# ============================================
+# ── GOOGLE OAUTH (per-project credentials) ───────────────
 
 @app.get("/{api_key}/auth/google/login")
 def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_key_public)):
@@ -2079,9 +2165,7 @@ def magaz_google_login(api_key: str, api_key_record: dict = Depends(resolve_api_
     client_id, _ = get_google_credentials(api_key_record["id"])
     if not client_id: raise HTTPException(404, "Google OAuth not configured for this store")
     redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/auth/google/callback"
-    # CSRF protection — random state stored in short-lived cookie, validated
-    # on callback. Without this an attacker can trick a victim into logging
-    # into the attacker's account.
+    # CSRF: random state in short-lived cookie, validated on callback (prevents login-CSRF).
     state = secrets.token_urlsafe(32)
     params = {
         "client_id": client_id, "redirect_uri": redirect_uri,
@@ -2193,9 +2277,7 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
     return redirect
 
 
-# ============================================
-# GENERIC OAUTH PROVIDERS (per-project credentials)
-# ============================================
+# ── GENERIC OAUTH PROVIDERS (per-project credentials) ────
 
 def _basic_extract(id_field, email_field=None, name_field=None):
     def _do(info: dict) -> dict:
@@ -2354,8 +2436,7 @@ OAUTH_PROVIDERS = {
         },
     },
     "keycloak": {
-        # KeyCloak is self-hosted — admins must override authorize_url/token_url/user_info_url
-        # via env (KEYCLOAK_BASE_URL).  Defaults assume Bitnami demo.
+        # KeyCloak self-hosted — override authorize/token/user_info URLs via KEYCLOAK_BASE_URL (defaults: Bitnami demo).
         "authorize_url": os.getenv("KEYCLOAK_BASE_URL", "http://localhost:8080") +
                          "/realms/master/protocol/openid-connect/auth",
         "token_url":     os.getenv("KEYCLOAK_BASE_URL", "http://localhost:8080") +
@@ -2634,14 +2715,9 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
     return redirect
 
 
-# ============================================
-# PHONE / SMS AUTHENTICATION
-# Customer brings their own SMS provider — Twilio, MessageBird, Textlocal,
-# Vonage, or Twilio Verify. We just route the OTP through them.
-# ============================================
+# ── PHONE / SMS AUTH (customer-provided SMS provider: Twilio/MessageBird/Textlocal/Vonage/Twilio Verify) ──
 
-# Phone OTPs — kvstore-backed. Same as email OTPs; stores SHA-256 hash so
-# a memory/Redis dump can't leak the live code.
+# Phone OTPs — kvstore-backed; stores SHA-256 hash so a memory/Redis dump can't leak live codes.
 def _phone_otp_key(project_id, phone): return f"phone_otp:{project_id}:{phone}"
 def _phone_otp_get(project_id, phone): return kvstore.get(_phone_otp_key(project_id, phone))
 def _phone_otp_set(project_id, phone, value, ttl):
@@ -2684,8 +2760,7 @@ def _normalize_phone(p: str) -> str:
     s = p.strip()
     # Drop common display chars
     cleaned = "".join(ch for ch in s if ch.isdigit() or ch == "+")
-    # Must explicitly start with '+' — no auto-prefixing (it allowed bypass
-    # variants like "1234567890" в†’ "+1234567890" matching "+1 234..." etc.)
+    # Must explicitly start with '+' — auto-prefixing previously allowed bypass variants.
     if not cleaned.startswith("+"):
         return ""
     if not _E164_RE.match(cleaned):
@@ -3085,8 +3160,7 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
         _phone_otp_del(project_id, phone)
         raise HTTPException(400, "Code expired")
 
-    # Per-OTP brute-force counter — kill the code after MAX attempts so the
-    # attacker can't grind through 10^6 combinations
+    # Per-OTP brute-force counter — invalidate code after MAX attempts (blocks 10^6 grinding).
     pending["attempts"] = int(pending.get("attempts", 0)) + 1
     _phone_otp_set(project_id, phone, pending,
                    ttl=int(max(float(pending["expires_ts"]) - now_ts, 1)))
@@ -3162,10 +3236,7 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
     return {"ok": True, "user_id": user_id}
 
 
-# ============================================
-# WEB CHAT (support widget on the client's site)
-# ============================================
-#
+# ── WEB CHAT (support widget on the client's site) ───────
 
 
 class WebChatMessageRequest(BaseModel):
@@ -3269,23 +3340,7 @@ def webchat_list(request: Request, web_chat_id: str = "", since_id: int = 0,
     }
 
 
-# ============================================
-# BOOKING — public (customer-facing) endpoints
-# ============================================
-#
-# Mirror of the CRM booking module, exposed to the storefront via the SDK.
-# All routes prefixed with /{api_key}/booking/...
-#
-# Slot calculation:
-#   1. Pick the relevant working hours for the date:
-#        • requires_staff service + staff_id  → that staff's hours
-#        • no staff (or service.requires_staff=false) → project-wide hours
-#   2. Walk the day in slot_interval_minutes (from settings) increments.
-#   3. A slot is "available" when:
-#        • (slot_start + service.duration) ≤ working window end
-#        • Existing concurrent bookings count < capacity
-#        • Slot is in the future (respecting min_advance_minutes)
-#   4. Return list of "HH:MM" times.
+# ── BOOKING — public storefront endpoints at /{api_key}/booking/...; slots: working-hours window walked by interval, available iff fits duration, capacity left, ≥ min_advance_minutes ──
 
 BOOKING_STATUSES_PUB = ("pending", "confirmed", "cancelled", "completed", "no_show")
 _DAY_NAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
@@ -3415,8 +3470,7 @@ def public_get_slots(service_id: int,
     capacity = int(svc["capacity"]) if not staff_id else 1
     tz       = _tz(settings.get("timezone") or "UTC")
 
-    # Compare LOCAL business dates (not UTC) — otherwise a Tokyo shop's
-    # "today" rolls over while New York is still on yesterday.
+    # Compare LOCAL business dates (not UTC) — Tokyo's "today" must not roll over while NY is on yesterday.
     today_local = datetime.now(tz).date()
     if day < today_local: return {"date": date, "slots": []}
     if (day - today_local).days > max_days: return {"date": date, "slots": []}
@@ -3493,9 +3547,7 @@ def public_create_booking(req: PublicCreateBookingRequest,
     settings = _booking_settings(project_id)
     biz_tz   = _tz(settings.get("timezone") or "UTC")
 
-    # Parse incoming ISO 8601. Frontend SHOULD send with a TZ offset
-    # ("2026-04-26T14:30:00+05:00"). If it sends naive ("…T14:30:00"),
-    # interpret as the business's local timezone (most user-friendly default).
+    # Parse ISO 8601; if naive (no TZ offset), interpret as the business's local TZ.
     try:
         starts = datetime.fromisoformat(req.starts_at.replace("Z", "+00:00"))
     except Exception:
@@ -3539,11 +3591,7 @@ def public_create_booking(req: PublicCreateBookingRequest,
 
     if not name: raise HTTPException(400, "Name is required")
 
-    # ── Atomic capacity check + insert ─────────────────────────────────
-    # PostgreSQL advisory lock keyed by (project_id, staff_id, service_id)
-    # serialises concurrent bookings for the same resource. Lock is auto-
-    # released at COMMIT/ROLLBACK. Bigint composite fits 1M projects Г—
-    # 1M staff Г— 1M services without collision.
+    # Atomic capacity check + insert: pg advisory lock on (project_id, staff_id, service_id) serialises concurrent bookings; auto-released at COMMIT/ROLLBACK.
     lock_key = (project_id * 10**12
                 + (req.staff_id or 0) * 10**6
                 + (req.service_id or 0))
