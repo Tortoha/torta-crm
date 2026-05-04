@@ -82,9 +82,15 @@ const toISOLocal = (d, h, m) => `${toISODate(d)}T${pad(h)}:${pad(m)}`;
 // Pass `workingHours` to size the hour gutter dynamically.
 // Pass `businessTz` (IANA name) so booking blocks render in business clock,
 // not browser clock.
-function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [], businessTz }) {
+function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, workingHours = [], businessTz, staff = [] }) {
   const tz = businessTz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const [anchor, setAnchor] = useState(() => startOfWeekInTz(tz));
+  const [staffFilter, setStaffFilter] = useState('all');  // 'all' | staff_id
+
+  // Apply staff filter — bookings without staff_name are kept in 'all' only.
+  const visibleBookings = staffFilter === 'all'
+    ? bookings
+    : bookings.filter(b => String(b.staff_id) === String(staffFilter));
 
   // Hour window (memoised — recompute only when workingHours change)
   const [firstHour, lastHour] = useMemo(
@@ -112,7 +118,7 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
   // Pre-compute each booking's wall-clock view in the business TZ.
   // We attach _localDate ("YYYY-MM-DD") and _localTime ("HH:MM") so we can
   // both group by day and render time labels without re-parsing per render.
-  const localised = useMemo(() => bookings.map(b => {
+  const localised = useMemo(() => visibleBookings.map(b => {
     if (!b.starts_at) return b;
     const start = new Date(b.starts_at);
     const p = partsInTz(start, tz);
@@ -123,7 +129,7 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
       _localHour: parseInt(p.hour, 10),
       _localMin:  parseInt(p.minute, 10),
     };
-  }), [bookings, tz]);
+  }), [visibleBookings, tz]);
 
   // Group bookings by their LOCAL business date
   const byDay = useMemo(() => {
@@ -169,6 +175,26 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
     onCreateAt?.(toISOLocal(day, h, m));
   };
 
+  // Drag-and-drop: HTML5 native, draggable booking blocks. On drop we compute
+  // the target day + minute (snapped to 15min) and call onMoveBooking(id, iso).
+  const onBlockDragStart = (e, b) => {
+    e.dataTransfer.setData('text/plain', String(b.id));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const onColDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
+  const onColDrop = (day, e) => {
+    e.preventDefault();
+    const id = parseInt(e.dataTransfer.getData('text/plain'), 10);
+    if (!id) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const totalMinutes = (y / HOUR_HEIGHT) * 60 + firstHour * 60;
+    const slot = Math.round(totalMinutes / 15) * 15;
+    const h = Math.max(0, Math.min(23, Math.floor(slot / 60)));
+    const m = Math.max(0, Math.min(59, slot % 60));
+    onMoveBooking?.(id, toISOLocal(day, h, m));
+  };
+
   // Use UTC formatter — weekDays are pinned to UTC noon to match business-local
   const _fmtRange = (d, opts) =>
     new Intl.DateTimeFormat('en-US', { ...opts, timeZone: 'UTC' }).format(d);
@@ -182,6 +208,13 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
         <button className="crm-add-btn"  onClick={goToday}   type="button" style={{ padding: '6px 14px' }}>Today</button>
         <button className="crm-icon-btn" onClick={goNext}    type="button" title="Next week"><CaretRight size={16} /></button>
         <span className="bk-cal-range">{headerRange}</span>
+        {staff.length > 0 && (
+          <select className="bk-cal-staff-filter" value={staffFilter}
+            onChange={e => setStaffFilter(e.target.value)} title="Filter by staff">
+            <option value="all">All staff</option>
+            {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        )}
         <span style={{ marginLeft: 'auto', color: 'var(--muted)', fontSize: 12 }}
               title="All times shown in this timezone">
           🕐 {tz}
@@ -197,6 +230,10 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
               {String(h).padStart(2, '0')}:00
             </div>
           ))}
+          {/* Closing label so the last hour row reads e.g. "16:00–17:00". */}
+          <div className="bk-cal-hour bk-cal-hour--close" style={{ height: 0 }}>
+            {String(lastHour).padStart(2, '0')}:00
+          </div>
         </div>
 
         {/* 7 day columns */}
@@ -214,7 +251,9 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
 
                 <div className="bk-cal-col-body"
                   style={{ height: `${HOURS.length * HOUR_HEIGHT}px` }}
-                  onClick={(e) => handleColClick(day, e)}>
+                  onClick={(e) => handleColClick(day, e)}
+                  onDragOver={onColDragOver}
+                  onDrop={(e) => onColDrop(day, e)}>
                   {/* Hour grid lines */}
                   {HOURS.map((_, idx) => (
                     <div key={idx} className="bk-cal-hourline"
@@ -226,6 +265,8 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, workingHours = [
                     <div key={b.id}
                       className={`bk-cal-block bk-cal-block--${b.status}`}
                       style={blockStyle(b)}
+                      draggable={!!onMoveBooking}
+                      onDragStart={(e) => onBlockDragStart(e, b)}
                       onClick={(e) => { e.stopPropagation(); onOpenBooking(b); }}>
                       <div className="bk-cal-block-time">
                         {b._localTime || b.starts_at.slice(11, 16)} · {b.service_name}

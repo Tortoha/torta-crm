@@ -403,3 +403,17 @@
     font-size: 14px;
   }
 }
+
+/* Digital-delivery note (cart contains no physical items). */
+.checkout-digital-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: #f3f6ff;
+  border: 1px solid #d6e0ff;
+  border-radius: 12px;
+  font-size: 14px;
+  color: #1f2937;
+}
+.checkout-digital-note svg { color: #2563eb; flex-shrink: 0; }

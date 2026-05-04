@@ -89,7 +89,7 @@ function Checkout() {
       setError("Recipient name is required");
       return;
     }
-    if (form.delivery_method === "courier" && !form.address.trim()) {
+    if (cart.requires_shipping && form.delivery_method === "courier" && !form.address.trim()) {
       setError("Delivery address is required for courier");
       return;
     }
@@ -98,7 +98,7 @@ function Checkout() {
 
     const payload = {
       recipient_name:  form.recipient_name.trim(),
-      delivery_method: form.delivery_method,
+      delivery_method: cart.requires_shipping ? form.delivery_method : "digital",
       payment_method:  form.payment_method,
     };
     if (form.phone.trim())   payload.phone       = form.phone.trim();
@@ -165,40 +165,49 @@ function Checkout() {
               </div>
             </div>
 
-            {/* Delivery */}
-            <div className="checkout-section">
-              <h2 className="checkout-section-title">Delivery</h2>
+            {/* Delivery — hidden for digital-only carts (no physical shipping). */}
+            {cart.requires_shipping ? (
+              <div className="checkout-section">
+                <h2 className="checkout-section-title">Delivery</h2>
 
-              <div className="checkout-toggle">
-                <button
-                  type="button"
-                  className={`checkout-toggle-btn${form.delivery_method === "courier" ? " checkout-toggle-btn--active" : ""}`}
-                  onClick={() => set("delivery_method", "courier")}
-                >
-                  <Truck weight="bold" /> Courier
-                </button>
-                <button
-                  type="button"
-                  className={`checkout-toggle-btn${form.delivery_method === "postal" ? " checkout-toggle-btn--active" : ""}`}
-                  onClick={() => set("delivery_method", "postal")}
-                >
-                  <EnvelopeSimple weight="bold" /> Postal
-                </button>
-              </div>
-
-              {form.delivery_method === "courier" && (
-                <div className="checkout-field checkout-field--mt">
-                  <label>Delivery Address <span className="req">*</span></label>
-                  <input
-                    type="text"
-                    className="checkout-input"
-                    value={form.address}
-                    onChange={e => set("address", e.target.value)}
-                    placeholder="Street, City, ZIP"
-                  />
+                <div className="checkout-toggle">
+                  <button
+                    type="button"
+                    className={`checkout-toggle-btn${form.delivery_method === "courier" ? " checkout-toggle-btn--active" : ""}`}
+                    onClick={() => set("delivery_method", "courier")}
+                  >
+                    <Truck weight="bold" /> Courier
+                  </button>
+                  <button
+                    type="button"
+                    className={`checkout-toggle-btn${form.delivery_method === "postal" ? " checkout-toggle-btn--active" : ""}`}
+                    onClick={() => set("delivery_method", "postal")}
+                  >
+                    <EnvelopeSimple weight="bold" /> Postal
+                  </button>
                 </div>
-              )}
-            </div>
+
+                {form.delivery_method === "courier" && (
+                  <div className="checkout-field checkout-field--mt">
+                    <label>Delivery Address <span className="req">*</span></label>
+                    <input
+                      type="text"
+                      className="checkout-input"
+                      value={form.address}
+                      onChange={e => set("address", e.target.value)}
+                      placeholder="Street, City, ZIP"
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="checkout-section">
+                <h2 className="checkout-section-title">Delivery</h2>
+                <div className="checkout-digital-note">
+                  <EnvelopeSimple weight="bold" /> Digital delivery — files and links arrive in your email after checkout.
+                </div>
+              </div>
+            )}
 
             {/* Payment */}
             <div className="checkout-section">

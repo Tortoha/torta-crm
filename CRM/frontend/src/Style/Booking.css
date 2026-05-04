@@ -22,6 +22,16 @@
   gap: 12px;
 }
 
+/* Services list — same 7-col rhythm as Products but with service-shaped cells:
+   image | title | duration | price | capacity | staff | menu. */
+.prod-list-head.bk-svc-list-head,
+.prow.bk-svc-prow {
+  grid-template-columns: 40px 2fr 1fr 1fr 1fr 1.4fr 32px;
+}
+/* Hidden services stay editable — keep pointer cursor even though faded. */
+.prow.bk-svc-prow.prow--paused,
+.prod-card.bk-svc-pcard.prod-card--paused { cursor: pointer; }
+
 /* Customer cell */
 .bk-prow-customer {
   display: flex;
@@ -207,6 +217,100 @@
   z-index: 2;
   flex-shrink: 0;
 }
+.bk-cfg-actions--card {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.bk-svc-card:hover .bk-cfg-actions--card,
+.bk-staff-card:hover .bk-cfg-actions--card {
+  opacity: 1;
+}
+
+/* Card-grid layout for Services / Staff tabs (mirrors Products grid). */
+.bk-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+.bk-svc-card,
+.bk-staff-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--card);
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: default;
+  box-shadow: var(--shadow-card);
+  transition: transform 0.2s ease;
+}
+.bk-svc-card--hidden { opacity: 0.55; }
+.bk-svc-card-img {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 12px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+}
+.bk-svc-card-img--empty {
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bk-staff-card-avatar {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 50%;
+  align-self: center;
+  margin-top: 6px;
+  position: relative;
+  z-index: 2;
+}
+.bk-svc-card-body,
+.bk-staff-card-body {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.bk-staff-card-body { text-align: center; }
+.bk-svc-card-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bk-svc-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.bk-staff-card-body .bk-svc-card-meta { justify-content: center; }
+.bk-svc-card-meta--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bk-svc-card-pipe { opacity: 0.4; }
+.bk-staff-card-body .bk-cfg-chiplist { justify-content: center; }
 
 /* Working hours editor (project-wide and per-staff) */
 .bk-hours-block {
@@ -392,6 +496,13 @@
   border-bottom: 1px dashed rgba(0, 0, 0, 0.05);
   box-sizing: border-box;
 }
+.bk-cal-hour--close {
+  height: 0 !important;
+  border-bottom: none;
+  transform: translateY(-12px);
+  font-weight: 500;
+  color: var(--accent);
+}
 
 /* 7 columns, one per weekday */
 .bk-cal-cols {
@@ -488,4 +599,46 @@
   background-size: 5px 5px;
   background-repeat: no-repeat;
   padding-right: 34px !important;
+}
+
+/* Service modal image upload — preview + drop zone. */
+.bk-svc-img-preview {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 12px;
+}
+.bk-svc-img-preview img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.bk-svc-img-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bk-svc-img-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1.5px dashed rgba(0, 0, 0, 0.12);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.bk-svc-img-drop:hover:not(:disabled) {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
 }

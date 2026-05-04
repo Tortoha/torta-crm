@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Plus, Trash, PencilSimple, DotsThreeOutline, MagnifyingGlass, X, Image, List, SquaresFour, ArrowDown, FolderSimple, CaretDown } from '@phosphor-icons/react';
+import { Plus, Trash, PencilSimple, DotsThreeOutline, MagnifyingGlass, X, Image, List, SquaresFour, ArrowDown, FolderSimple, CaretDown, Archive, ArrowCounterClockwise, Pause, Play } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
@@ -87,7 +87,7 @@ function ProdSortToggle({ sort, onSort }) {
 
 // ── ProdMenu (portal dropdown) ─────────────────────────────────
 
-function ProdMenu({ btnRef, onEdit, onDelete, onClose }) {
+function ProdMenu({ btnRef, onEdit, onDelete, onClose, isArchived, isPaused, onArchive, onUnarchive, onPause, onResume }) {
   const [pos, setPos] = useState(null);
 
   useEffect(() => {
@@ -107,6 +107,26 @@ function ProdMenu({ btnRef, onEdit, onDelete, onClose }) {
       <button className="org-card-dropdown-item" onClick={onEdit}>
         <PencilSimple className="org-card-dropdown-icon" /> Edit
       </button>
+      {!isArchived && (
+        isPaused ? (
+          <button className="org-card-dropdown-item" onClick={onResume}>
+            <Play className="org-card-dropdown-icon" /> Resume
+          </button>
+        ) : (
+          <button className="org-card-dropdown-item" onClick={onPause}>
+            <Pause className="org-card-dropdown-icon" /> Pause
+          </button>
+        )
+      )}
+      {isArchived ? (
+        <button className="org-card-dropdown-item" onClick={onUnarchive}>
+          <ArrowCounterClockwise className="org-card-dropdown-icon" /> Restore
+        </button>
+      ) : (
+        <button className="org-card-dropdown-item" onClick={onArchive}>
+          <Archive className="org-card-dropdown-icon" /> Archive
+        </button>
+      )}
       <div className="org-card-dropdown-sep" />
       <button className="org-card-dropdown-item org-card-dropdown-item--danger" onClick={onDelete}>
         <Trash className="org-card-dropdown-icon" /> Delete
@@ -358,7 +378,7 @@ function ProductImage({ p, size = 'card', onPopChange }) {
 
 // ── ProductCard ────────────────────────────────────────────────
 
-function ProductCard({ p, onOpen, onDelete }) {
+function ProductCard({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onResume }) {
   const menuBtnRef = useRef(null);
   const [menuOpen,   setMenuOpen]   = useState(false);
   const [imgPopOpen, setImgPopOpen] = useState(false);
@@ -374,8 +394,16 @@ function ProductCard({ p, onOpen, onDelete }) {
     return () => document.removeEventListener('pointerdown', h);
   }, [menuOpen]);
 
+  // Paused products are click-locked except via the menu (you can still resume/edit/delete).
+  const handleClick = (e) => {
+    if (p.is_paused) { e.stopPropagation(); return; }
+    onOpen();
+  };
+
   return (
-    <div ref={ref} className="org-card org-card--tilt prod-card" onClick={onOpen} {...handlers}>
+    <div ref={ref}
+      className={`org-card org-card--tilt prod-card${p.is_paused ? ' prod-card--paused' : ''}`}
+      onClick={handleClick} {...handlers}>
       <div ref={glossRef} className="org-card-gloss prod-card-gloss" />
       <div className="pcard-inner">
         <ProductImage p={p} size="card" onPopChange={setImgPopOpen} />
@@ -397,7 +425,12 @@ function ProductCard({ p, onOpen, onDelete }) {
       </button>
       {menuOpen && (
         <ProdMenu btnRef={menuBtnRef}
+          isArchived={!!p.is_archived} isPaused={!!p.is_paused}
           onEdit={() => { setMenuOpen(false); onOpen(); }}
+          onArchive={() => { setMenuOpen(false); onArchive?.(); }}
+          onUnarchive={() => { setMenuOpen(false); onUnarchive?.(); }}
+          onPause={() => { setMenuOpen(false); onPause?.(); }}
+          onResume={() => { setMenuOpen(false); onResume?.(); }}
           onDelete={() => { setMenuOpen(false); onDelete(); }}
           onClose={() => setMenuOpen(false)} />
       )}
@@ -408,7 +441,7 @@ function ProductCard({ p, onOpen, onDelete }) {
 // ── ProdListRow ────────────────────────────────────────────────
 // Variations column dropped (lives inside the image popover now).
 
-function ProdListRow({ p, onOpen, onDelete }) {
+function ProdListRow({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onResume }) {
   const menuBtnRef = useRef(null);
   const [menuOpen,   setMenuOpen]   = useState(false);
   const [imgPopOpen, setImgPopOpen] = useState(false);
@@ -424,9 +457,15 @@ function ProdListRow({ p, onOpen, onDelete }) {
     return () => document.removeEventListener('pointerdown', h);
   }, [menuOpen]);
 
+  const handleClick = (e) => {
+    if (p.is_paused) { e.stopPropagation(); return; }
+    onOpen();
+  };
+
   return (
-    <div ref={ref} className={`prow${menuOpen || imgPopOpen ? ' org-list-row--frozen' : ''}`}
-      onClick={onOpen} {...handlers}>
+    <div ref={ref}
+      className={`prow${menuOpen || imgPopOpen ? ' org-list-row--frozen' : ''}${p.is_paused ? ' prow--paused' : ''}`}
+      onClick={handleClick} {...handlers}>
       <div ref={glossRef} className="org-list-gloss" />
       <ProductImage p={p} size="row" onPopChange={setImgPopOpen} />
       <span className="prow-name">{p.title}</span>
@@ -444,7 +483,12 @@ function ProdListRow({ p, onOpen, onDelete }) {
       </button>
       {menuOpen && (
         <ProdMenu btnRef={menuBtnRef}
+          isArchived={!!p.is_archived} isPaused={!!p.is_paused}
           onEdit={() => { setMenuOpen(false); onOpen(); }}
+          onArchive={() => { setMenuOpen(false); onArchive?.(); }}
+          onUnarchive={() => { setMenuOpen(false); onUnarchive?.(); }}
+          onPause={() => { setMenuOpen(false); onPause?.(); }}
+          onResume={() => { setMenuOpen(false); onResume?.(); }}
           onDelete={() => { setMenuOpen(false); onDelete(); }}
           onClose={() => setMenuOpen(false)} />
       )}
@@ -454,7 +498,7 @@ function ProdListRow({ p, onOpen, onDelete }) {
 
 // ── Products (main page) ───────────────────────────────────────
 
-export default function Products() {
+export default function Products({ archived = false }) {
   const { projectId, project } = useOutletContext();
   const navigate = useNavigate();
   const pq = `?project_id=${projectId}`;
@@ -483,15 +527,31 @@ export default function Products() {
       let url = `${API_BASE}/api/products${pq}`;
       if (catFilter === 'uncategorized') url += '&uncategorized=true';
       else if (catFilter !== null)       url += `&category_id=${catFilter}`;
+      if (archived) url += '&archived=true';
       const res  = await fetch(url, { credentials: 'include' });
       const data = await res.json();
       setProducts(Array.isArray(data) ? data : []);
     } catch { setProducts([]); }
     setLoading(false);
-  }, [projectId, catFilter]);
+  }, [projectId, catFilter, archived]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadCategories(); }, [loadCategories]);
+
+  // Quick toggle helpers — reuse PUT /api/products/{id} with a single boolean field.
+  const patchProduct = useCallback(async (id, body) => {
+    const res = await fetch(`${API_BASE}/api/products/${id}${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) load();
+  }, [projectId, load]);
+
+  const archive   = (id) => patchProduct(id, { is_archived: true,  is_paused: false });
+  const unarchive = (id) => patchProduct(id, { is_archived: false });
+  const pause     = (id) => patchProduct(id, { is_paused: true });
+  const resume    = (id) => patchProduct(id, { is_paused: false });
 
   // Inline-create category from the filter dropdown
   const createCategory = async name => {
@@ -517,10 +577,26 @@ export default function Products() {
   const filtered = products.filter(p => !search || p.title.toLowerCase().includes(search.toLowerCase()));
 
   const sorted = [...filtered].sort((a, b) => {
+    // Paused products always sink to the bottom regardless of the chosen sort.
+    if (!!a.is_paused !== !!b.is_paused) return a.is_paused ? 1 : -1;
     if (sort.field === 'name')  { const c = a.title.localeCompare(b.title); return sort.dir === 'asc' ? c : -c; }
     if (sort.field === 'price') return sort.dir === 'asc' ? a.min_price - b.min_price : b.min_price - a.min_price;
     return sort.dir === 'asc' ? a.id - b.id : b.id - a.id;
   });
+
+  // Grouped by product_type for the Active tab. Groups stay in fixed order
+  // (Physical → Digital → Services → Events) so the page reads consistently
+  // regardless of how many items are in each. Empty groups are hidden.
+  const TYPE_GROUPS = [
+    { key: 'physical', label: 'Physical' },
+    { key: 'digital',  label: 'Digital'  },
+    { key: 'service',  label: 'Services' },
+    { key: 'event',    label: 'Events'   },
+  ];
+  const grouped = TYPE_GROUPS.map(g => ({
+    ...g,
+    items: sorted.filter(p => (p.product_type || 'physical') === g.key),
+  })).filter(g => g.items.length > 0);
 
   const curView = viewHover ?? view;
 
@@ -559,7 +635,7 @@ export default function Products() {
         </button>
       </div>
 
-      {/* Product list */}
+      {/* Product list — split into per-type groups (Physical / Digital / Services / Events). */}
       <div className="prod-content">
         {loading && <p className="crm-placeholder">Loading…</p>}
 
@@ -569,34 +645,51 @@ export default function Products() {
           </p>
         )}
 
-        {!loading && sorted.length > 0 && view === 'grid' && (
-          <div className="prod-grid">
-            {sorted.map(p => (
-              <ProductCard key={p.id} p={p}
-                onOpen={() => goToProduct(p.id)}
-                onDelete={() => deleteProduct(p.id)} />
-            ))}
-          </div>
-        )}
+        {!loading && grouped.map(g => (
+          <section key={g.key} className="prod-group">
+            <h2 className="prod-group-title">
+              {g.label}
+              <span className="prod-group-count">{g.items.length}</span>
+            </h2>
 
-        {!loading && sorted.length > 0 && view === 'list' && (
-          <div className="prod-list">
-            <div className="prod-list-head">
-              <span /><span className="org-list-th">Title</span>
-              <span className="org-list-th">Category</span>
-              <span className="org-list-th">Price</span><span className="org-list-th">Stock</span>
-              <span className="org-list-th">Rating</span>
-              <span />
-            </div>
-            <div className="prod-list-block">
-              {sorted.map(p => (
-                <ProdListRow key={p.id} p={p}
-                  onOpen={() => goToProduct(p.id)}
-                  onDelete={() => deleteProduct(p.id)} />
-              ))}
-            </div>
-          </div>
-        )}
+            {curView === 'grid' && (
+              <div className="prod-grid">
+                {g.items.map(p => (
+                  <ProductCard key={p.id} p={p}
+                    onOpen={() => goToProduct(p.id)}
+                    onDelete={() => deleteProduct(p.id)}
+                    onArchive={() => archive(p.id)}
+                    onUnarchive={() => unarchive(p.id)}
+                    onPause={() => pause(p.id)}
+                    onResume={() => resume(p.id)} />
+                ))}
+              </div>
+            )}
+
+            {curView === 'list' && (
+              <div className="prod-list">
+                <div className="prod-list-head">
+                  <span /><span className="org-list-th">Title</span>
+                  <span className="org-list-th">Category</span>
+                  <span className="org-list-th">Price</span><span className="org-list-th">Stock</span>
+                  <span className="org-list-th">Rating</span>
+                  <span />
+                </div>
+                <div className="prod-list-block">
+                  {g.items.map(p => (
+                    <ProdListRow key={p.id} p={p}
+                      onOpen={() => goToProduct(p.id)}
+                      onDelete={() => deleteProduct(p.id)}
+                      onArchive={() => archive(p.id)}
+                      onUnarchive={() => unarchive(p.id)}
+                      onPause={() => pause(p.id)}
+                      onResume={() => resume(p.id)} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        ))}
       </div>
 
       {/* Create-product modal — replaces the old right-side drawer */}

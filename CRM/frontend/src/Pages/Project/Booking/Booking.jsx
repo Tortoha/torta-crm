@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useNavigate } from 'react-router-dom';
+import { encodeId } from '../../../Utils/hashids.js';
 import {
   CalendarBlank, GearSix, MagnifyingGlass, List, SquaresFour, CalendarCheck,
-  Plus, CaretDown, ArrowDown, Trash, Pencil, Clock, User, X,
+  Plus, CaretDown, ArrowDown, Trash, Pencil, Clock, User, Users, Briefcase, DotsThreeOutline, X,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
@@ -79,7 +80,9 @@ function TabSwitcher({ tab, setTab }) {
 
   const TABS = [
     { key: 'bookings', label: 'Bookings', Icon: CalendarBlank },
-    { key: 'settings', label: 'Settings', Icon: GearSix },
+    { key: 'services', label: 'Services', Icon: Briefcase     },
+    { key: 'staff',    label: 'Staff',    Icon: Users          },
+    { key: 'settings', label: 'Settings', Icon: GearSix       },
   ];
 
   return (
@@ -107,7 +110,7 @@ function StatusBadge({ status }) {
 
 // ── Sort toggle (shared with Orders style) ────────────────────
 
-function SortToggle({ sort, onSort }) {
+function SortToggle({ sort, onSort, options = SORT_OPTIONS, defaultDirs = DEFAULT_DIR }) {
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -130,14 +133,14 @@ function SortToggle({ sort, onSort }) {
       field,
       dir: field === prev.field
         ? (prev.dir === 'asc' ? 'desc' : 'asc')
-        : DEFAULT_DIR[field] ?? 'asc',
+        : defaultDirs[field] ?? 'asc',
     }));
   };
 
   return (
     <div className="ord-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {options.map(({ field, label }) => {
         const active = sort.field === field;
         const isCur  = curField === field;
         return (
@@ -157,6 +160,11 @@ function SortToggle({ sort, onSort }) {
     </div>
   );
 }
+
+const SVC_SORT_OPTIONS  = [{field:'name',label:'Sort by name'},{field:'price',label:'Sort by price'},{field:'duration',label:'Sort by duration'}];
+const SVC_SORT_DIRS     = { name: 'asc', price: 'asc', duration: 'asc' };
+const STAFF_SORT_OPTIONS= [{field:'name',label:'Sort by name'},{field:'date',label:'Sort by date'}];
+const STAFF_SORT_DIRS   = { name: 'asc', date: 'desc' };
 
 // ── Status filter pill bar ────────────────────────────────────
 
@@ -198,10 +206,13 @@ function StatusFilter({ active, counts, onChange }) {
 
 // ── Booking row (table view) ─────────────────────────────────
 
-function BookingRow({ booking, onOpen }) {
+function BookingRow({ booking, onOpen, onRowClick, isSelected }) {
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
   return (
-    <div ref={ref} className="prow bk-prow" onClick={() => onOpen(booking)} {...handlers}>
+    <div ref={ref}
+      className={`prow bk-prow${isSelected ? ' prow--bulk' : ''}`}
+      onClick={(e) => { if (onRowClick?.(e, booking)) return; onOpen(booking); }}
+      {...handlers}>
       <div ref={glossRef} className="org-list-gloss" />
 
       <span className="bk-prow-customer">
@@ -231,10 +242,13 @@ function BookingRow({ booking, onOpen }) {
 
 // ── Booking card (cards view) ─────────────────────────────────
 
-function BookingCard({ booking, onOpen }) {
+function BookingCard({ booking, onOpen, onRowClick, isSelected }) {
   const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, false);
   return (
-    <div ref={ref} className="ord-card bk-card" onClick={() => onOpen(booking)} {...handlers}>
+    <div ref={ref}
+      className={`ord-card bk-card${isSelected ? ' bk-card--bulk' : ''}`}
+      onClick={(e) => { if (onRowClick?.(e, booking)) return; onOpen(booking); }}
+      {...handlers}>
       <div ref={glossRef} className="ord-card-gloss" />
       <div className="ord-card-main">
         <div className="ord-card-top">
@@ -256,47 +270,154 @@ function BookingCard({ booking, onOpen }) {
   );
 }
 
-// ─── Service & Staff settings sub-sections ──────────────────────
+// ─── Service & Staff list/card components ──────────────────────
+// Visual design mirrored from Pages/Project/Products/ProductsList.jsx
+// (prod-card / prow + tilt + 3-dots menu) so Services and Products feel
+// like one product in the same CRM, not two different pages.
 
-function ServiceCard({ service, staff, onEdit, onDelete }) {
-  const { ref, glossRef, handlers } = InteractiveSection(ITEM_TILT, false);
+function ServiceMenu({ btnRef, onEdit, onDelete, onClose }) {
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: Math.max(8, r.right - 160) });
+    }
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  if (!pos) return null;
+  return createPortal(
+    <div className="org-card-dropdown" style={{ top: pos.top, left: pos.left }}
+      onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+      <button className="org-card-dropdown-item" onClick={onEdit}>
+        <Pencil className="org-card-dropdown-icon" /> Edit
+      </button>
+      <div className="org-card-dropdown-sep" />
+      <button className="org-card-dropdown-item org-card-dropdown-item--danger" onClick={onDelete}>
+        <Trash className="org-card-dropdown-icon" /> Delete
+      </button>
+    </div>,
+    document.body
+  );
+}
+
+function ServiceRow({ service, staff, onEdit, onDelete }) {
+  const menuBtnRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, menuOpen);
   const linked = (service.staff_ids || []).map(id => staff.find(s => s.id === id)).filter(Boolean);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const h = e => {
+      if (!e.target.closest?.('.org-card-dropdown') && !menuBtnRef.current?.contains(e.target))
+        setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', h);
+    return () => document.removeEventListener('pointerdown', h);
+  }, [menuOpen]);
+
+  const capLabel = service.requires_staff
+    ? '1:1'
+    : service.capacity > 1 ? `${service.capacity} seats` : '—';
+  const staffLabel = linked.length === 0 ? '—'
+    : linked.length === 1 ? linked[0].name
+    : `${linked[0].name} +${linked.length - 1}`;
+
   return (
-    <div ref={ref} className="bk-cfg-row" {...handlers}>
+    <div ref={ref}
+      className={`prow bk-svc-prow${menuOpen ? ' org-list-row--frozen' : ''}${!service.is_active ? ' prow--paused' : ''}`}
+      onClick={onEdit} {...handlers}>
       <div ref={glossRef} className="org-list-gloss" />
-      <div className="bk-cfg-row-main">
+      <div className="prow-img-wrap">
         {service.image_url
-          ? <img src={service.image_url} className="bk-cfg-img" alt="" />
-          : <div className="bk-cfg-img bk-cfg-img--empty"><CalendarBlank size={20} /></div>}
-        <div className="bk-cfg-info">
-          <div className="bk-cfg-name">{service.name}</div>
-          <div className="bk-cfg-meta">
-            <span>{service.duration_minutes} min</span>
-            <span>·</span>
-            <span>{fmtMoney(service.price)}</span>
-            {service.requires_staff
-              ? <><span>·</span><span>requires staff</span></>
-              : service.capacity > 1
-                ? <><span>·</span><span>capacity {service.capacity}</span></>
-                : null}
-            {!service.is_active && <><span>·</span><span className="bk-cfg-inactive">hidden</span></>}
-          </div>
-          {linked.length > 0 && (
-            <div className="bk-cfg-chiplist">
-              {linked.map(s => <span key={s.id} className="bk-staff-chip"><User size={11} /> {s.name}</span>)}
-            </div>
-          )}
-        </div>
+          ? <img src={service.image_url} className="prow-img" alt="" />
+          : <div className="prow-img-empty"><Briefcase size={14} /></div>}
       </div>
-      <div className="bk-cfg-actions">
-        <button className="crm-icon-btn" type="button" onClick={onEdit} title="Edit"><Pencil size={16} /></button>
-        <button className="crm-icon-btn crm-icon-btn--danger" type="button" onClick={onDelete} title="Delete"><Trash size={16} /></button>
-      </div>
+      <span className="prow-name">{service.name}</span>
+      <span className="prow-cell">{service.duration_minutes} min</span>
+      <span className="prow-cell">{fmtMoney(service.price)}</span>
+      <span className="prow-cell">{capLabel}</span>
+      <span className="prow-cell">{staffLabel}</span>
+      <button ref={menuBtnRef} className="org-list-menu-btn" type="button"
+        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+      </button>
+      {menuOpen && (
+        <ServiceMenu btnRef={menuBtnRef}
+          onEdit={() => { setMenuOpen(false); onEdit(); }}
+          onDelete={() => { setMenuOpen(false); onDelete(); }}
+          onClose={() => setMenuOpen(false)} />
+      )}
     </div>
   );
 }
 
-function StaffCard({ member, services, onEdit, onDelete }) {
+function ServiceCard({ service, staff, onEdit, onDelete }) {
+  const menuBtnRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, menuOpen);
+  const linked = (service.staff_ids || []).map(id => staff.find(s => s.id === id)).filter(Boolean);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const h = e => {
+      if (!e.target.closest?.('.org-card-dropdown') && !menuBtnRef.current?.contains(e.target))
+        setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', h);
+    return () => document.removeEventListener('pointerdown', h);
+  }, [menuOpen]);
+
+  // Bottom-right badge (mirrors pcard-cat-badge): hidden state wins, then capacity for group sessions.
+  let badge = null;
+  if (!service.is_active)                 badge = 'Hidden';
+  else if (service.requires_staff)        badge = '1:1';
+  else if (service.capacity > 1)          badge = `${service.capacity} seats`;
+
+  return (
+    <div ref={ref}
+      className={`org-card org-card--tilt prod-card bk-svc-pcard${!service.is_active ? ' prod-card--paused' : ''}`}
+      onClick={onEdit} {...handlers}>
+      <div ref={glossRef} className="org-card-gloss prod-card-gloss" />
+      <div className="pcard-inner">
+        <div className="pcard-img-wrap">
+          {service.image_url
+            ? <img src={service.image_url} className="pcard-img" alt="" />
+            : <div className="pcard-img-empty"><Briefcase size={22} /></div>}
+        </div>
+        <div className="pcard-body">
+          <div className="pcard-title">{service.name}</div>
+          <div className="pcard-row1">
+            <span className="pcard-price">{service.duration_minutes} min</span>
+            <span className="pcard-pipe">|</span>
+            <span className="pcard-stock">{fmtMoney(service.price)}</span>
+          </div>
+          {linked.length > 0 && (
+            <div className="bk-cfg-chiplist">
+              {linked.slice(0, 3).map(s => <span key={s.id} className="bk-staff-chip"><User size={11} /> {s.name}</span>)}
+              {linked.length > 3 && <span className="bk-staff-chip">+{linked.length - 3}</span>}
+            </div>
+          )}
+        </div>
+      </div>
+      {badge && <span className="pcard-cat-badge">{badge}</span>}
+      <button ref={menuBtnRef} className="org-card-menu-btn pcard-menu-btn" type="button"
+        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+      </button>
+      {menuOpen && (
+        <ServiceMenu btnRef={menuBtnRef}
+          onEdit={() => { setMenuOpen(false); onEdit(); }}
+          onDelete={() => { setMenuOpen(false); onDelete(); }}
+          onClose={() => setMenuOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function StaffRow({ member, services, onEdit, onDelete }) {
   const { ref, glossRef, handlers } = InteractiveSection(ITEM_TILT, false);
   const linked = (member.service_ids || []).map(id => services.find(s => s.id === id)).filter(Boolean);
   return (
@@ -325,9 +446,86 @@ function StaffCard({ member, services, onEdit, onDelete }) {
   );
 }
 
+function StaffCard({ member, services, onEdit, onDelete }) {
+  const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, false);
+  const linked = (member.service_ids || []).map(id => services.find(s => s.id === id)).filter(Boolean);
+  return (
+    <div ref={ref} className={`bk-staff-card org-card${!member.is_active ? ' bk-svc-card--hidden' : ''}`} {...handlers}>
+      <div ref={glossRef} className="org-card-gloss" />
+      {member.avatar_url
+        ? <img src={member.avatar_url} className="bk-staff-card-avatar" alt="" />
+        : <div className="bk-staff-card-avatar bk-svc-card-img--empty"><User size={36} /></div>}
+      <div className="bk-staff-card-body">
+        <div className="bk-svc-card-name">{member.name}</div>
+        {member.bio && <div className="bk-svc-card-meta bk-svc-card-meta--clamp">{member.bio}</div>}
+        {linked.length > 0 && (
+          <div className="bk-cfg-chiplist">
+            {linked.slice(0, 3).map(s => <span key={s.id} className="bk-staff-chip">{s.name}</span>)}
+            {linked.length > 3 && <span className="bk-staff-chip">+{linked.length - 3}</span>}
+          </div>
+        )}
+      </div>
+      <div className="bk-cfg-actions bk-cfg-actions--card">
+        <button className="crm-icon-btn" type="button" onClick={onEdit} title="Edit"><Pencil size={16} /></button>
+        <button className="crm-icon-btn crm-icon-btn--danger" type="button" onClick={onDelete} title="Delete"><Trash size={16} /></button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Stats block (Settings tab) ────────────────────────────────
+function StatsBlock({ projectId }) {
+  const pq = `?project_id=${projectId}`;
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/booking/stats${pq}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null).then(setStats);
+  }, [projectId]);
+
+  if (!stats) return <p className="crm-placeholder">Loading…</p>;
+  const wow = stats.last_week_count
+    ? Math.round(((stats.week_count - stats.last_week_count) / stats.last_week_count) * 100)
+    : null;
+
+  return (
+    <div className="bk-stats-grid">
+      <StatCard label="Total bookings" value={stats.total} />
+      <StatCard label="This week" value={stats.week_count}
+        delta={wow != null ? `${wow >= 0 ? '+' : ''}${wow}% vs last week` : ''} />
+      <StatCard label="Avg ticket" value={`$${stats.avg_ticket.toFixed(2)}`} />
+      <StatCard label="No-show rate" value={`${stats.no_show_rate}%`}
+        tone={stats.no_show_rate > 15 ? 'warn' : 'ok'} />
+      {stats.top_staff.length > 0 && (
+        <div className="bk-stats-card bk-stats-card--wide">
+          <span className="bk-stats-label">Top staff (completed)</span>
+          <div className="bk-stats-staff-list">
+            {stats.top_staff.map(s => (
+              <div key={s.id} className="bk-stats-staff-row">
+                <span className="bk-stats-staff-name">{s.name}</span>
+                <span className="bk-stats-staff-count">{s.completed}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatCard({ label, value, delta, tone }) {
+  return (
+    <div className={`bk-stats-card${tone === 'warn' ? ' bk-stats-card--warn' : ''}`}>
+      <span className="bk-stats-label">{label}</span>
+      <span className="bk-stats-value">{value}</span>
+      {delta && <span className="bk-stats-delta">{delta}</span>}
+    </div>
+  );
+}
+
 // ─── Working Hours editor (project-wide) ──────────────────────
 
-function HoursEditor({ projectId, showToast }) {
+function HoursEditor({ projectId, showToast, onSaved }) {
   const pq = `?project_id=${projectId}`;
   const [rows, setRows] = useState(() => DAY_NAMES.map((_, i) => ({ day_of_week: i, open_time: '', close_time: '', enabled: false })));
   const [saving, setSaving] = useState(false);
@@ -358,7 +556,10 @@ function HoursEditor({ projectId, showToast }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (res.ok) showToast('Hours saved');
+      if (res.ok) {
+        showToast('Hours saved');
+        onSaved?.();
+      }
     } finally { setSaving(false); }
   };
 
@@ -389,7 +590,7 @@ function HoursEditor({ projectId, showToast }) {
 
 // ─── Booking Rules ────────────────────────────────────────────
 
-function RulesEditor({ projectId, showToast }) {
+function RulesEditor({ projectId, showToast, onSaved }) {
   const pq = `?project_id=${projectId}`;
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -412,7 +613,10 @@ function RulesEditor({ projectId, showToast }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (res.ok) showToast('Rules saved');
+      if (res.ok) {
+        showToast('Rules saved');
+        onSaved?.();
+      }
     } finally { setSaving(false); }
   };
 
@@ -474,6 +678,12 @@ function RulesEditor({ projectId, showToast }) {
 
 function Booking() {
   const { projectId } = useOutletContext();
+  const navigate = useNavigate();
+  // Edit click on a service: linked products jump to /product/{hash}; legacy ones (no product_id) keep the modal.
+  const onEditService = (s) => {
+    if (s.product_id) navigate(`/product/${encodeId(s.product_id)}`);
+    else setEditService(s);
+  };
   const pq = `?project_id=${projectId}`;
 
   const [tab,       setTab]       = useState('bookings');
@@ -493,17 +703,81 @@ function Booking() {
     || 'UTC';
 
   // List view state
-  const [view,      setView]      = useState('list');
+  const [view,      setView]      = useState('calendar');
   const [viewHover, setViewHover] = useState(null);
   const [statusTab, setStatusTab] = useState('all');
   const [search,    setSearch]    = useState('');
   const [sort,      setSort]      = useState({ field: 'date', dir: 'desc' });
+
+  // Services tab state
+  const [svcSearch, setSvcSearch] = useState('');
+  const [svcSort,   setSvcSort]   = useState({ field: 'name', dir: 'asc' });
+  const [svcView,   setSvcView]   = useState('list');
+  const [svcViewHover, setSvcViewHover] = useState(null);
+
+  // Staff tab state
+  const [stfSearch, setStfSearch] = useState('');
+  const [stfSort,   setStfSort]   = useState({ field: 'name', dir: 'asc' });
+  const [stfView,   setStfView]   = useState('list');
+  const [stfViewHover, setStfViewHover] = useState(null);
 
   // Modals
   const [openBooking,  setOpenBooking]  = useState(null);
   const [createOpen,   setCreateOpen]   = useState(false);
   const [editService,  setEditService]  = useState(null);   // null = closed; {} = create new; {…} = edit
   const [editStaff,    setEditStaff]    = useState(null);
+
+  // Bulk selection — Shift/Ctrl+click toggles a row, plain click in bulk-mode also toggles.
+  const [selected, setSelected] = useState(new Set());
+  const inBulk = selected.size > 0;
+  const toggleSel = (id) => setSelected(s => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const clearSel = () => setSelected(new Set());
+
+  const onRowClick = (e, b) => {
+    if (e.shiftKey || e.metaKey || e.ctrlKey || inBulk) {
+      e.stopPropagation();
+      toggleSel(b.id);
+      return true;  // caller skips the open-detail behaviour
+    }
+    return false;
+  };
+
+  const bulkSetStatus = async (status) => {
+    if (!selected.size) return;
+    if (!confirm(`Set ${selected.size} booking${selected.size === 1 ? '' : 's'} to "${status}"?`)) return;
+    await Promise.all(Array.from(selected).map(id =>
+      fetch(`${API_BASE}/api/booking/bookings/${id}${pq}`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      })
+    ));
+    setBookings(prev => prev.map(b => selected.has(b.id) ? { ...b, status } : b));
+    clearSel();
+    showToast(`${selected.size} booking${selected.size === 1 ? '' : 's'} updated`);
+  };
+
+  const bulkDelete = async () => {
+    if (!selected.size) return;
+    if (!confirm(`Delete ${selected.size} booking${selected.size === 1 ? '' : 's'} permanently?`)) return;
+    await Promise.all(Array.from(selected).map(id =>
+      fetch(`${API_BASE}/api/booking/bookings/${id}${pq}`, { method: 'DELETE', credentials: 'include' })
+    ));
+    setBookings(prev => prev.filter(b => !selected.has(b.id)));
+    clearSel();
+    showToast(`${selected.size} booking${selected.size === 1 ? '' : 's'} deleted`);
+  };
+
+  // Esc clears selection.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && selected.size) clearSel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selected.size]);
 
   // Toast
   const [toast, setToast] = useState('');
@@ -574,7 +848,40 @@ function Booking() {
     return arr;
   }, [filtered, sort]);
 
-  const curView = viewHover ?? view;
+  const curView    = viewHover    ?? view;
+  const curSvcView = svcViewHover ?? svcView;
+  const curStfView = stfViewHover ?? stfView;
+
+  // Services: search + sort
+  const servicesSorted = useMemo(() => {
+    const q = svcSearch.toLowerCase();
+    let arr = services.filter(s => !q || s.name.toLowerCase().includes(q));
+    arr = [...arr].sort((a, b) => {
+      const getVal = svcSort.field === 'name'
+        ? (x => (x.name || '').toLowerCase())
+        : svcSort.field === 'price'
+        ? (x => Number(x.price) || 0)
+        : (x => Number(x.duration_minutes) || 0);
+      const va = getVal(a), vb = getVal(b);
+      const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+      return svcSort.dir === 'asc' ? c : -c;
+    });
+    return arr;
+  }, [services, svcSearch, svcSort]);
+
+  // Staff: search + sort
+  const staffSorted = useMemo(() => {
+    const q = stfSearch.toLowerCase();
+    let arr = staff.filter(m => !q || (m.name || '').toLowerCase().includes(q));
+    arr = [...arr].sort((a, b) => {
+      if (stfSort.field === 'name') {
+        const c = (a.name || '').localeCompare(b.name || '');
+        return stfSort.dir === 'asc' ? c : -c;
+      }
+      return stfSort.dir === 'asc' ? a.id - b.id : b.id - a.id;
+    });
+    return arr;
+  }, [staff, stfSearch, stfSort]);
 
   // ── Service / staff handlers ──
   const deleteService = async (id) => {
@@ -677,7 +984,10 @@ function Booking() {
                   </div>
                 ) : (
                   <div className="prod-list-block">
-                    {sorted.map(b => <BookingRow key={b.id} booking={b} onOpen={setOpenBooking} />)}
+                    {sorted.map(b => (
+                      <BookingRow key={b.id} booking={b} onOpen={setOpenBooking}
+                        onRowClick={onRowClick} isSelected={selected.has(b.id)} />
+                    ))}
                   </div>
                 )}
               </div>
@@ -694,7 +1004,10 @@ function Booking() {
                 </div>
               ) : (
                 <div className="ord-cards">
-                  {sorted.map(b => <BookingCard key={b.id} booking={b} onOpen={setOpenBooking} />)}
+                  {sorted.map(b => (
+                    <BookingCard key={b.id} booking={b} onOpen={setOpenBooking}
+                      onRowClick={onRowClick} isSelected={selected.has(b.id)} />
+                  ))}
                 </div>
               )
             )}
@@ -705,9 +1018,142 @@ function Booking() {
                 bookings={sorted}
                 workingHours={hours}
                 businessTz={businessTz}
+                staff={staff}
                 onOpenBooking={setOpenBooking}
                 onCreateAt={(iso) => setCreateOpen({ presetStart: iso })}
+                onMoveBooking={async (id, iso) => {
+                  const res = await fetch(`${API_BASE}/api/booking/bookings/${id}/move${pq}&starts_at=${encodeURIComponent(iso)}`,
+                    { method: 'PUT', credentials: 'include' });
+                  if (res.ok) { reload(); showToast('Booking moved'); }
+                  else showToast('Move failed');
+                }}
               />
+            )}
+          </>
+        )}
+
+        {/* ───────────────────────────  SERVICES TAB  ─────────────────────────── */}
+        {tab === 'services' && (
+          <>
+            <h1 className="crm-page-title">Services</h1>
+            <div className="org-toolbar bk-toolbar">
+              <div className="org-search-wrap">
+                <MagnifyingGlass className="org-search-icon" />
+                <input className="org-search-input" placeholder="Search services…"
+                  value={svcSearch} onChange={e => setSvcSearch(e.target.value)} />
+              </div>
+              <SortToggle sort={svcSort} onSort={setSvcSort}
+                options={SVC_SORT_OPTIONS} defaultDirs={SVC_SORT_DIRS} />
+              <div className="org-view-toggle" onMouseLeave={() => setSvcViewHover(null)}>
+                <div className="org-view-indicator"
+                  style={{ transform: `translateX(${curSvcView === 'cards' ? 30 : 0}px)` }} />
+                <button className={`org-view-btn${curSvcView === 'list' ? ' org-view-btn--current' : ''}`}
+                  onClick={() => setSvcView('list')} onMouseEnter={() => setSvcViewHover('list')}
+                  title="List view" type="button">
+                  <List className="org-view-icon" />
+                </button>
+                <button className={`org-view-btn${curSvcView === 'cards' ? ' org-view-btn--current' : ''}`}
+                  onClick={() => setSvcView('cards')} onMouseEnter={() => setSvcViewHover('cards')}
+                  title="Cards view" type="button">
+                  <SquaresFour className="org-view-icon" />
+                </button>
+              </div>
+              <button className="org-new-btn" type="button" onClick={() => setEditService({})}>
+                <Plus className="org-new-icon" /> New service
+              </button>
+            </div>
+            {loading ? (
+              <p className="crm-placeholder">Loading services…</p>
+            ) : servicesSorted.length === 0 ? (
+              <div className="bk-empty-block">
+                {services.length === 0
+                  ? 'No services yet — add one to start accepting bookings.'
+                  : 'No services match your search.'}
+              </div>
+            ) : curSvcView === 'cards' ? (
+              <div className="prod-grid">
+                {servicesSorted.map(s => (
+                  <ServiceCard key={s.id} service={s} staff={staff}
+                    onEdit={() => onEditService(s)}
+                    onDelete={() => deleteService(s.id)} />
+                ))}
+              </div>
+            ) : (
+              <div className="prod-list">
+                <div className="prod-list-head bk-svc-list-head">
+                  <span /><span className="org-list-th">Title</span>
+                  <span className="org-list-th">Duration</span>
+                  <span className="org-list-th">Price</span>
+                  <span className="org-list-th">Capacity</span>
+                  <span className="org-list-th">Staff</span>
+                  <span />
+                </div>
+                <div className="prod-list-block">
+                  {servicesSorted.map(s => (
+                    <ServiceRow key={s.id} service={s} staff={staff}
+                      onEdit={() => onEditService(s)}
+                      onDelete={() => deleteService(s.id)} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ───────────────────────────  STAFF TAB  ─────────────────────────── */}
+        {tab === 'staff' && (
+          <>
+            <h1 className="crm-page-title">Staff</h1>
+            <div className="org-toolbar bk-toolbar">
+              <div className="org-search-wrap">
+                <MagnifyingGlass className="org-search-icon" />
+                <input className="org-search-input" placeholder="Search staff…"
+                  value={stfSearch} onChange={e => setStfSearch(e.target.value)} />
+              </div>
+              <SortToggle sort={stfSort} onSort={setStfSort}
+                options={STAFF_SORT_OPTIONS} defaultDirs={STAFF_SORT_DIRS} />
+              <div className="org-view-toggle" onMouseLeave={() => setStfViewHover(null)}>
+                <div className="org-view-indicator"
+                  style={{ transform: `translateX(${curStfView === 'cards' ? 30 : 0}px)` }} />
+                <button className={`org-view-btn${curStfView === 'list' ? ' org-view-btn--current' : ''}`}
+                  onClick={() => setStfView('list')} onMouseEnter={() => setStfViewHover('list')}
+                  title="List view" type="button">
+                  <List className="org-view-icon" />
+                </button>
+                <button className={`org-view-btn${curStfView === 'cards' ? ' org-view-btn--current' : ''}`}
+                  onClick={() => setStfView('cards')} onMouseEnter={() => setStfViewHover('cards')}
+                  title="Cards view" type="button">
+                  <SquaresFour className="org-view-icon" />
+                </button>
+              </div>
+              <button className="org-new-btn" type="button" onClick={() => setEditStaff({})}>
+                <Plus className="org-new-icon" /> New staff
+              </button>
+            </div>
+            {loading ? (
+              <p className="crm-placeholder">Loading staff…</p>
+            ) : staffSorted.length === 0 ? (
+              <div className="bk-empty-block">
+                {staff.length === 0
+                  ? 'No staff configured. Services without a required staff member will be booked by capacity instead.'
+                  : 'No staff match your search.'}
+              </div>
+            ) : curStfView === 'cards' ? (
+              <div className="bk-card-grid">
+                {staffSorted.map(m => (
+                  <StaffCard key={m.id} member={m} services={services}
+                    onEdit={() => setEditStaff(m)}
+                    onDelete={() => deleteStaff(m.id)} />
+                ))}
+              </div>
+            ) : (
+              <div className="bk-cfg-list">
+                {staffSorted.map(m => (
+                  <StaffRow key={m.id} member={m} services={services}
+                    onEdit={() => setEditStaff(m)}
+                    onDelete={() => deleteStaff(m.id)} />
+                ))}
+              </div>
             )}
           </>
         )}
@@ -717,54 +1163,16 @@ function Booking() {
           <>
             <h1 className="crm-page-title">Booking Settings</h1>
             <p className="auth-page-subtitle">
-              Configure services, staff, working hours and booking rules for this business.
+              Working hours and booking rules for this business.
             </p>
 
-            {/* Services */}
             <section className="bk-section">
               <div className="bk-section-head">
-                <h2 className="bk-section-title">Services</h2>
-                <button className="crm-add-btn" type="button" onClick={() => setEditService({})}>
-                  <Plus size={14} /> New service
-                </button>
+                <h2 className="bk-section-title">Stats</h2>
               </div>
-              {services.length === 0 ? (
-                <div className="bk-empty-block">No services yet — add one to start accepting bookings.</div>
-              ) : (
-                <div className="bk-cfg-list">
-                  {services.map(s => (
-                    <ServiceCard key={s.id} service={s} staff={staff}
-                      onEdit={() => setEditService(s)}
-                      onDelete={() => deleteService(s.id)} />
-                  ))}
-                </div>
-              )}
+              <StatsBlock projectId={projectId} />
             </section>
 
-            {/* Staff */}
-            <section className="bk-section">
-              <div className="bk-section-head">
-                <h2 className="bk-section-title">Staff</h2>
-                <button className="crm-add-btn" type="button" onClick={() => setEditStaff({})}>
-                  <Plus size={14} /> New staff
-                </button>
-              </div>
-              {staff.length === 0 ? (
-                <div className="bk-empty-block">
-                  No staff configured. Services without a required staff member will be booked by capacity instead.
-                </div>
-              ) : (
-                <div className="bk-cfg-list">
-                  {staff.map(m => (
-                    <StaffCard key={m.id} member={m} services={services}
-                      onEdit={() => setEditStaff(m)}
-                      onDelete={() => deleteStaff(m.id)} />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Working hours */}
             <section className="bk-section">
               <div className="bk-section-head">
                 <h2 className="bk-section-title">Working hours</h2>
@@ -772,15 +1180,14 @@ function Booking() {
               <p className="auth-field-hint" style={{ marginBottom: 12 }}>
                 Default hours of operation. Used for services without a specific staff member.
               </p>
-              <HoursEditor projectId={projectId} showToast={showToast} />
+              <HoursEditor projectId={projectId} showToast={showToast} onSaved={reload} />
             </section>
 
-            {/* Rules */}
             <section className="bk-section">
               <div className="bk-section-head">
                 <h2 className="bk-section-title">Booking rules</h2>
               </div>
-              <RulesEditor projectId={projectId} showToast={showToast} />
+              <RulesEditor projectId={projectId} showToast={showToast} onSaved={reload} />
             </section>
           </>
         )}
@@ -831,6 +1238,25 @@ function Booking() {
 
       {/* Toast */}
       {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
+
+      {/* Bulk-actions toolbar — appears when ≥1 booking is selected. */}
+      {inBulk && createPortal(
+        <div className="bulk-bar" role="toolbar">
+          <span className="bulk-bar-count">
+            <span className="bulk-bar-dot" />
+            {selected.size} booking{selected.size === 1 ? '' : 's'}
+          </span>
+          <div className="bulk-bar-divider" />
+          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('confirmed')}>Confirm</button>
+          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('completed')}>Completed</button>
+          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('cancelled')}>Cancel</button>
+          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('no_show')}>No-show</button>
+          <div className="bulk-bar-divider" />
+          <button type="button" className="bulk-bar-btn bulk-bar-btn--danger" onClick={bulkDelete}>Delete</button>
+          <button type="button" className="bulk-bar-btn" onClick={clearSel}>Cancel</button>
+        </div>,
+        document.body
+      )}
     </>
   );
 }

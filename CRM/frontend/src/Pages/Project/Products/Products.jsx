@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { Tag, FolderSimple } from '@phosphor-icons/react';
+import { Tag, FolderSimple, Archive } from '@phosphor-icons/react';
 import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 
@@ -14,13 +14,17 @@ export default function Products() {
   const TABS = [
     { key: 'list',       to: base,                  label: 'Products',   Icon: Tag          },
     { key: 'categories', to: `${base}/categories`,  label: 'Categories', Icon: FolderSimple },
+    { key: 'archive',    to: `${base}/archive`,     label: 'Archive',    Icon: Archive      },
   ];
-  const activeKey = location.pathname.endsWith('/categories') ? 'categories' : 'list';
+  const activeKey =
+    location.pathname.endsWith('/categories') ? 'categories' :
+    location.pathname.endsWith('/archive')    ? 'archive'    : 'list';
+  const titleByKey = { list: 'Products', categories: 'Categories', archive: 'Archive' };
 
   return (
     <div className="prod-page-wrap">
       <TabSwitcher tabs={TABS} activeKey={activeKey} onPick={to => navigate(to)} />
-      <h1 className="crm-page-title">{activeKey === 'categories' ? 'Categories' : 'Products'}</h1>
+      <h1 className="crm-page-title">{titleByKey[activeKey]}</h1>
       <Outlet context={ctx} />
     </div>
   );

@@ -4,7 +4,7 @@ import {
   House, CurrencyDollar, Tag, LockKey, GearSix,
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Cube, ChatCircleText, Code,
-  Package, ChatCircleDots, CalendarBlank,
+  Package, ChatCircleDots, CalendarBlank, Plug,
 } from '@phosphor-icons/react';
 
 // ── Nav configs ────────────────────────────────────────────────
@@ -32,6 +32,7 @@ function buildSections(apiKey) {
       id: 'account', label: 'Account',
       items: [
         { to: `${base}/authentication`, label: 'Authentication', Icon: LockKey   },
+        { to: `${base}/integrations`,   label: 'Integrations',   Icon: Plug      },
         { to: `${base}/settings`,       label: 'Settings',       Icon: GearSix   },
       ],
     },

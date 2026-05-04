@@ -80,6 +80,7 @@ function Header() {
                   </div>
                 </div>
                 <Link to={"/"}>Home</Link>
+                <Link to={"/booking"}>Book a service</Link>
                 <Link to={"/cart"}>Cart</Link>
                 <Link to={"/favorites"}>Favorites</Link>
                 <Link to={"/orders"}>My Orders</Link>

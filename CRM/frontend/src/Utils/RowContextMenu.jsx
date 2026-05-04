@@ -2,16 +2,7 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle } from '@phosphor-icons/react';
 
-// Right-click row/card context menu — single "Select" action that drops the
-// row into the page-wide bulk-selection scope. Reuses the existing
-// `.org-card-dropdown` visual language so the dropdown blends with the rest
-// of the CRM (rounded card, soft shadow, accent-tint hover). Closes on Esc,
-// click-outside, or window scroll.
-//
-// Caller manages the open-state:
-//   const [ctx, setCtx] = useState(null); // { x, y, id }
-//   <div onContextMenu={(e) => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, id }); }} />
-//   {ctx && <RowContextMenu pos={ctx} onSelect={() => addToBulk(ctx.id)} onClose={() => setCtx(null)} />}
+// Right-click context menu with a single "Select" action that enters bulk-mode for the caller's scope.
 export function RowContextMenu({ pos, onSelect, onClose }) {
   useEffect(() => {
     const onKey   = (e) => { if (e.key === 'Escape') onClose(); };
@@ -29,8 +20,7 @@ export function RowContextMenu({ pos, onSelect, onClose }) {
     };
   }, [onClose]);
 
-  // Clamp inside the viewport so a right-click near the bottom/right edge
-  // doesn't push the menu offscreen.
+  // Clamp inside viewport.
   const margin = 8;
   const width  = 200;
   const height = 60;

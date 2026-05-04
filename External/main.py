@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, Response, HTTPException, Request, Depends
+﻿from fastapi import FastAPI, Response, HTTPException, Request, Depends, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -51,6 +51,9 @@ INTERNAL_API_KEY      = os.getenv("INTERNAL_API_KEY",  "torta-internal-dev-key")
 SES_API_URL           = os.getenv("SES_API_URL",       "https://ses.tortacrm.com")
 SES_INTERNAL_KEY      = os.getenv("SES_INTERNAL_KEY",  "")
 EMAIL_FROM            = os.getenv("EMAIL_FROM",        "support@tortacrm.com")
+# Stripe (optional). When STRIPE_SECRET_KEY is unset, /booking/payment-intent returns 501; project owners enable on demand.
+STRIPE_SECRET_KEY     = os.getenv("STRIPE_SECRET_KEY",  "")
+STRIPE_API_BASE       = os.getenv("STRIPE_API_BASE",   "https://api.stripe.com/v1")
 ENVIRONMENT           = os.getenv("ENVIRONMENT", "development").lower()
 IS_PRODUCTION         = ENVIRONMENT == "production"
 COOKIE_SECURE         = IS_PRODUCTION   # Secure flag on auth cookies in prod
@@ -494,9 +497,7 @@ def _build_layer_subtree(rows, layer, parent_eff,
 
 
 def _split_keywords(value):
-    # SEO keywords are stored as a single comma-separated string for editing
-    # convenience. Public API returns them as a clean array — easier for
-    # storefronts to render as tags or feed into structured-data generators.
+    # DB stores comma-separated string; API returns a clean array.
     if not value: return []
     return [t.strip() for t in str(value).split(",") if t.strip()]
 
@@ -824,6 +825,149 @@ def send_reset_email(email: str, token: str, project_id: int = None) -> bool:
             Reset password</a>
         <p style="margin-top:24px;color:#999;font-size:12px;word-break:break-all">{reset_url_esc}</p></div>"""
     return send_email(email, "Password Reset", html, from_name, from_email)
+
+
+# ── WEBHOOK DISPATCHER ───────────────────────────────────
+# Mirrors CRM/backend/main.py — both share the same DB and tables. Kept tiny
+# (no retry queue, just fire-and-forget) so calls inside request handlers don't
+# block the response. Wrapped in BackgroundTasks at the call sites.
+
+def _build_slack_message(event: str, data: dict) -> dict:
+    label_map = {
+        "order.created":     "🆕 New order",     "order.paid":        "💰 Order paid",
+        "order.shipped":     "🚚 Order shipped", "order.delivered":   "✅ Order delivered",
+        "order.cancelled":   "🚫 Order cancelled","order.returned":    "↩ Order returned",
+        "booking.created":   "📅 New booking",   "booking.confirmed": "✅ Booking confirmed",
+        "booking.completed": "🏁 Booking completed", "booking.cancelled": "🚫 Booking cancelled",
+        "booking.no_show":   "👻 No-show",
+        "customer.created":  "👤 New customer",  "payment.received":  "💸 Payment received",
+        "product.created":   "🆕 Product added", "product.updated":   "✏ Product updated",
+    }
+    title = label_map.get(event, event)
+    fields = []
+    if "order_id" in data:    fields.append({"title": "Order #", "value": str(data["order_id"]), "short": True})
+    if "booking_id" in data:  fields.append({"title": "Booking #", "value": str(data["booking_id"]), "short": True})
+    if data.get("amount") is not None:
+        fields.append({"title": "Amount",
+                       "value": f"{data.get('currency', 'USD')} {data['amount']}", "short": True})
+    cust = data.get("customer") or {}
+    if cust.get("name"):  fields.append({"title": "Customer", "value": cust["name"], "short": True})
+    if cust.get("email"): fields.append({"title": "Email",    "value": cust["email"], "short": True})
+    if data.get("service_name"): fields.append({"title": "Service",   "value": data["service_name"], "short": True})
+    if data.get("starts_at"):    fields.append({"title": "Starts at", "value": data["starts_at"], "short": True})
+    return {"text": title, "attachments": [{"color": "#0071E3", "fields": fields}]}
+
+
+def _build_discord_message(event: str, data: dict) -> dict:
+    title_map = {
+        "order.created":     "🆕 New order",     "order.paid":        "💰 Order paid",
+        "order.shipped":     "🚚 Order shipped", "order.delivered":   "✅ Order delivered",
+        "order.cancelled":   "🚫 Order cancelled","order.returned":    "↩ Order returned",
+        "booking.created":   "📅 New booking",   "booking.confirmed": "✅ Booking confirmed",
+        "booking.completed": "🏁 Booking completed", "booking.cancelled": "🚫 Booking cancelled",
+        "booking.no_show":   "👻 No-show",
+        "customer.created":  "👤 New customer",  "payment.received":  "💸 Payment received",
+        "product.created":   "🆕 Product added", "product.updated":   "✏ Product updated",
+    }
+    title = title_map.get(event, event)
+    fields = []
+    if "order_id" in data:    fields.append({"name": "Order #", "value": str(data["order_id"]), "inline": True})
+    if "booking_id" in data:  fields.append({"name": "Booking #", "value": str(data["booking_id"]), "inline": True})
+    if data.get("amount") is not None:
+        fields.append({"name": "Amount", "value": f"{data.get('currency', 'USD')} {data['amount']}", "inline": True})
+    cust = data.get("customer") or {}
+    if cust.get("name"):  fields.append({"name": "Customer", "value": cust["name"], "inline": True})
+    if cust.get("email"): fields.append({"name": "Email",    "value": cust["email"], "inline": True})
+    return {"embeds": [{"title": title, "color": 0x0071E3, "fields": fields,
+                        "timestamp": _utcnow().isoformat()}]}
+
+
+def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
+    sub_type = sub["type"]
+    if sub_type == "slack":
+        body_obj = _build_slack_message(event, data)
+        body     = json.dumps(body_obj).encode()
+        headers  = {"Content-Type": "application/json"}
+    elif sub_type == "discord":
+        body_obj = _build_discord_message(event, data)
+        body     = json.dumps(body_obj).encode()
+        headers  = {"Content-Type": "application/json"}
+    else:
+        body_obj = {"event": event, "project_id": sub["project_id"],
+                    "occurred_at": _utcnow().isoformat(), "data": data}
+        body = json.dumps(body_obj, default=str).encode()
+        sig  = hashlib.sha256()  # placeholder — real sig below
+        import hmac as _hmac_local
+        sig  = _hmac_local.new(sub["secret"].encode(), body, hashlib.sha256).hexdigest()
+        headers = {
+            "Content-Type":      "application/json",
+            "X-Torta-Event":     event,
+            "X-Torta-Signature": f"sha256={sig}",
+            "X-Torta-Timestamp": str(int(time.time())),
+            "User-Agent":        "Torta-Webhooks/1.0",
+        }
+
+    t0 = time.time()
+    out = {"subscription_id": sub["id"], "project_id": sub["project_id"],
+           "event": event, "payload": json.dumps(body_obj, default=str),
+           "attempt": attempt}
+    try:
+        req = urllib.request.Request(sub["url"], data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            text = resp.read(4096).decode("utf-8", errors="replace")
+            out.update({"status": "success" if 200 <= resp.status < 300 else "failed",
+                        "http_code": resp.status, "response_body": text[:2000],
+                        "duration_ms": int((time.time() - t0) * 1000)})
+    except urllib.error.HTTPError as e:
+        try:    txt = e.read(4096).decode("utf-8", errors="replace")
+        except Exception: txt = str(e)
+        out.update({"status": "failed", "http_code": e.code,
+                    "response_body": txt[:2000],
+                    "duration_ms": int((time.time() - t0) * 1000)})
+    except Exception as e:
+        out.update({"status": "failed", "http_code": None,
+                    "response_body": str(e)[:2000],
+                    "duration_ms": int((time.time() - t0) * 1000)})
+    return out
+
+
+def dispatch_event(project_id: int, event: str, data: dict):
+    """Look up active subscriptions on `project_id` that listen to `event`,
+    fire each one, log to crm_webhook_deliveries. Never raises — silent on
+    failure (failures show up in the Logs tab in CRM)."""
+    try:
+        rows = db_all(
+            "SELECT * FROM crm_webhook_subscriptions WHERE project_id=%s AND is_active=TRUE",
+            (project_id,)
+        )
+    except Exception as e:
+        print(f"[webhook] subs query failed: {e}"); return
+    for sub in rows:
+        events = sub.get("events") or []
+        if events and event not in events:
+            continue
+        try:
+            out = _post_webhook_one(dict(sub), event, data)
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    """INSERT INTO crm_webhook_deliveries
+                          (subscription_id, project_id, event, payload, status,
+                           http_code, response_body, duration_ms, attempt)
+                       VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s)""",
+                    (out["subscription_id"], out["project_id"], out["event"],
+                     out["payload"], out["status"], out.get("http_code"),
+                     out.get("response_body", ""), out.get("duration_ms"),
+                     out["attempt"])
+                )
+                cur.execute(
+                    "UPDATE crm_webhook_subscriptions SET last_status=%s, last_error=%s, last_event_at=NOW() WHERE id=%s",
+                    (out["status"],
+                     out.get("response_body", "")[:500] if out["status"] != "success" else "",
+                     sub["id"])
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[webhook] dispatch failed for sub {sub.get('id')}: {e}")
 
 
 # ── RATE-LIMIT / VERIFICATION STORAGE ────────────────────
@@ -1229,8 +1373,10 @@ def get_products(request: Request,
     user_id    = try_get_current_user_id(request)
 
     with db_cursor() as (_, cursor):
-        # ── 1. Products (with category filter) ─────────────────────────
-        where  = ["p.project_id = %s"]
+        # ── 1. Products (with category filter) — archived/paused hidden from storefront.
+        where  = ["p.project_id = %s",
+                  "COALESCE(p.is_archived, FALSE) = FALSE",
+                  "COALESCE(p.is_paused, FALSE) = FALSE"]
         params = [project_id]
         if uncategorized:
             where.append("p.category_id IS NULL")
@@ -1446,7 +1592,9 @@ def get_product_page(product_hash: str, request: Request,
             "p.category_id, c.name AS category_name, c.slug AS category_slug "
             "FROM products p "
             "LEFT JOIN product_categories c ON c.id = p.category_id "
-            "WHERE p.id = %s AND p.project_id = %s",
+            "WHERE p.id = %s AND p.project_id = %s "
+            "  AND COALESCE(p.is_archived, FALSE) = FALSE "
+            "  AND COALESCE(p.is_paused, FALSE) = FALSE",
             (product_id, project_id)
         )
         product = cursor.fetchone()
@@ -1718,7 +1866,7 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
 
         cursor.execute(
             "SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.configuration_id, "
-            "p.title, p.subtitle, pc.price, pc.configuration_name, pv.variation_name, pv.image_url "
+            "p.title, p.subtitle, p.product_type, pc.price, pc.configuration_name, pv.variation_name, pv.image_url "
             "FROM cart_items ci JOIN products p ON ci.product_id=p.id "
             "LEFT JOIN product_configurations_l1 pv ON ci.variation_id=pv.id "
             "LEFT JOIN product_configurations_l2 pc ON ci.configuration_id=pc.id "
@@ -1733,7 +1881,9 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
         items.append({**row, "price": price, "product_hash": hashids.encode(row["product_id"]),
                       "is_favorite": row["product_id"] in favorites_set})
 
-    final_shipping    = 0.0 if subtotal >= free_threshold else shipping_cost
+    # Digital-only carts skip shipping (no physical address required).
+    requires_shipping = any(it.get("product_type") in (None, "physical") for it in items)
+    final_shipping    = 0.0 if (subtotal >= free_threshold or not requires_shipping) else shipping_cost
     shipping_progress = min((subtotal / free_threshold) * 100, 100) if free_threshold > 0 else 100
     amount_to_free    = max(free_threshold - subtotal, 0)
 
@@ -1744,6 +1894,7 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
         "amount_to_free_shipping": round(amount_to_free, 2),
         "shipping_progress": round(shipping_progress, 2),
         "total": round(subtotal + final_shipping, 2),
+        "requires_shipping": requires_shipping,
     }
 
 
@@ -1918,6 +2069,7 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
 
 @app.post("/{api_key}/orders")
 def place_order(data: PlaceOrderRequest, request: Request,
+                background_tasks: BackgroundTasks,
                 api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
@@ -1937,7 +2089,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
 
         cursor.execute(
             "SELECT ci.id, ci.product_id, ci.variation_id, ci.configuration_id, ci.quantity, "
-            "pc.price, pc.stock_quantity, p.title, pv.variation_name "
+            "pc.price, pc.stock_quantity, p.title, p.product_type, pv.variation_name "
             "FROM cart_items ci "
             "JOIN product_configurations_l2 pc ON ci.configuration_id = pc.id "
             "JOIN products p ON ci.product_id = p.id "
@@ -2038,6 +2190,10 @@ def place_order(data: PlaceOrderRequest, request: Request,
             "<tr><td style='padding:6px 0;color:#888'>Shipping</td>"
             "<td style='padding:6px 0;text-align:right;color:#888'>" + str(int(final_shipping)) + "</td></tr>"
         ) if final_shipping else ""
+
+        digital_html = _build_digital_html(project_id, items)
+        event_html   = _build_event_html(api_key_record["api_key"], items, order_id)
+
         send_email(
             to=user["email"],
             subject="Order #" + str(order_id) + " confirmed",
@@ -2048,6 +2204,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
                 "<table style='width:100%;border-collapse:collapse'>" + items_html + shipping_row + "</table>"
                 "<hr style='margin:16px 0'>"
                 "<p><b>Total: $" + f"{float(total):.2f}" + "</b></p>"
+                + digital_html + event_html +
                 "<p>We will notify you when the status changes.</p>"
                 "</div>"
             ),
@@ -2055,7 +2212,127 @@ def place_order(data: PlaceOrderRequest, request: Request,
             from_email=from_email,
         )
 
+    # Outbound webhooks: order is created and considered paid the moment it's placed
+    # in this CRM (no async payment provider yet). Fire both events; integrations
+    # filter on the ones they care about.
+    event_data = {
+        "order_id": order_id,
+        "amount":   float(total),
+        "currency": "USD",
+        "customer": {"name": (user or {}).get("name", "") or rn,
+                     "email": (user or {}).get("email", "")},
+        "items": [{"product_id": it["product_id"], "title": it["title"],
+                   "variation": it.get("variation_name"), "qty": it["quantity"],
+                   "price": float(it["price"])} for it in items],
+        "delivery_method": data.delivery_method,
+    }
+    background_tasks.add_task(dispatch_event, project_id, "order.created", event_data)
+    background_tasks.add_task(dispatch_event, project_id, "order.paid",    event_data)
     return {"success": True, "order_id": order_id}
+
+
+def _build_digital_html(project_id: int, items: list) -> str:
+    """Render a 'Your downloads' block listing every file URL stored as a Custom Field
+    of type=file on each digital product. Returns '' when there are no digital items."""
+    digital_ids = [it["product_id"] for it in items if it.get("product_type") == "digital"]
+    if not digital_ids: return ""
+    fmt = ",".join(["%s"] * len(digital_ids))
+    rows = db_all(
+        f"SELECT product_id, field_key, field_value FROM product_custom_fields "
+        f"WHERE project_id=%s AND product_id IN ({fmt}) AND field_type='file' AND field_value <> ''",
+        tuple([project_id] + digital_ids)
+    )
+    if not rows: return ""
+    titles = {it["product_id"]: it["title"] for it in items}
+    lines = []
+    for r in rows:
+        url = sanitize(r["field_value"])
+        title = sanitize(titles.get(r["product_id"]) or "")
+        key = sanitize(r["field_key"])
+        lines.append(
+            f"<li style='margin:6px 0'><b>{title}</b> &middot; "
+            f"<a href='{url}' style='color:#0071E3'>{key}</a></li>"
+        )
+    return (
+        "<hr style='margin:16px 0'>"
+        "<h3 style='margin:0 0 8px;color:#111'>Your downloads</h3>"
+        "<ul style='padding-left:18px;margin:0'>" + "".join(lines) + "</ul>"
+    )
+
+
+def _build_event_html(api_key: str, items: list, order_id: int) -> str:
+    """Render a 'Your tickets' block — one QR code per event item (signed token).
+    QR is embedded inline as base64 PNG so the email client renders without external fetches."""
+    event_items = [it for it in items if it.get("product_type") == "event"]
+    if not event_items: return ""
+    try:
+        import qrcode, io as _io, base64 as _b64
+    except Exception:
+        return ""
+    parts = ["<hr style='margin:16px 0'><h3 style='margin:0 0 8px;color:#111'>Your tickets</h3>"]
+    for it in event_items:
+        for n in range(int(it["quantity"])):
+            token = _sign_ticket(order_id, it["id"], n)
+            url = f"{MAGAZ_BACKEND_URL}/{api_key}/tickets/verify?t={token}"
+            buf = _io.BytesIO()
+            qrcode.make(url).save(buf, format="PNG")
+            b64 = _b64.b64encode(buf.getvalue()).decode("ascii")
+            title = sanitize(it["title"])
+            sub   = sanitize(it["variation_name"] or "")
+            parts.append(
+                "<div style='margin:12px 0;padding:12px;border:1px solid #eee;border-radius:12px;text-align:center'>"
+                f"<div style='font-weight:600;margin-bottom:8px'>{title}</div>"
+                f"<div style='color:#666;font-size:13px;margin-bottom:8px'>{sub} &middot; ticket {n+1}</div>"
+                f"<img src='data:image/png;base64,{b64}' alt='QR' style='width:140px;height:140px' />"
+                "</div>"
+            )
+    return "".join(parts)
+
+
+def _sign_ticket(order_id: int, order_item_id: int, idx: int) -> str:
+    """HMAC-SHA256 signed token: base64url('{order_id}.{item_id}.{idx}.{sig8}')."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64
+    msg = f"{order_id}.{order_item_id}.{idx}".encode()
+    sig = _hmac.new(SECRET_KEY.encode(), msg, _hl.sha256).hexdigest()[:16]
+    raw = f"{order_id}.{order_item_id}.{idx}.{sig}".encode()
+    return _b64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+@app.get("/{api_key}/tickets/verify")
+def verify_ticket(api_key: str, t: str = "",
+                  api_key_record: dict = Depends(resolve_api_key_public)):
+    """Public endpoint — staff scans QR with phone, browser hits this URL, gets a JSON status."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64
+    try:
+        pad = "=" * ((4 - len(t) % 4) % 4)
+        raw = _b64.urlsafe_b64decode(t + pad).decode()
+        order_id, item_id, idx, sig = raw.split(".")
+        msg = f"{order_id}.{item_id}.{idx}".encode()
+        expected = _hmac.new(SECRET_KEY.encode(), msg, _hl.sha256).hexdigest()[:16]
+        if not _hmac.compare_digest(sig, expected):
+            return {"ok": False, "error": "invalid_signature"}
+    except Exception:
+        return {"ok": False, "error": "malformed"}
+    project_id = api_key_record["id"]
+    row = db_one(
+        "SELECT oh.status, oh.recipient_name, p.title, pv.variation_name "
+        "FROM order_items oi JOIN order_history oh ON oi.order_id=oh.id "
+        "JOIN products p ON oi.product_id=p.id "
+        "LEFT JOIN product_configurations_l1 pv ON oi.variation_id=pv.id "
+        "WHERE oi.id=%s AND oh.id=%s AND oh.project_id=%s",
+        (int(item_id), int(order_id), project_id)
+    )
+    if not row: return {"ok": False, "error": "not_found"}
+    valid = row["status"] not in ("cancelled", "refunded")
+    return {
+        "ok": valid,
+        "order_id": int(order_id),
+        "ticket_idx": int(idx),
+        "title": row["title"],
+        "variation": row["variation_name"],
+        "recipient": row["recipient_name"],
+        "status": row["status"],
+    }
 
 
 @app.get("/{api_key}/orders")
@@ -3505,9 +3782,10 @@ def public_get_slots(service_id: int,
 
     now_utc  = _utcnow()
     earliest = now_utc + timedelta(minutes=min_adv)
+    # Group services (capacity>1, no required staff) emit slots_detailed with seats_left for "X seats left" UI.
     out_slots = []
+    detailed  = []
     for (open_t, close_t) in windows:
-        # Build aware datetimes in the business TZ, then convert to UTC for compare
         slot_local       = datetime.combine(day, open_t,  tzinfo=tz)
         window_end_local = datetime.combine(day, close_t, tzinfo=tz)
         while slot_local + timedelta(minutes=duration) <= window_end_local:
@@ -3519,15 +3797,23 @@ def public_get_slots(service_id: int,
                     if not (b["ends_at"] <= slot_utc or b["starts_at"] >= slot_end_utc)
                 )
                 if overlap < capacity:
-                    out_slots.append(slot_local.strftime("%H:%M"))
+                    label = slot_local.strftime("%H:%M")
+                    out_slots.append(label)
+                    detailed.append({"time": label, "seats_left": capacity - overlap, "capacity": capacity})
             slot_local += timedelta(minutes=interval)
-    return {"date": date, "slots": out_slots, "timezone": settings.get("timezone") or "UTC"}
+    return {
+        "date": date, "slots": out_slots,
+        "slots_detailed": detailed,
+        "capacity": capacity,
+        "timezone": settings.get("timezone") or "UTC",
+    }
 
 _EMAIL_RE = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 @app.post("/{api_key}/booking/bookings")
 def public_create_booking(req: PublicCreateBookingRequest,
                           request: Request,
+                          background_tasks: BackgroundTasks,
                           api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
@@ -3628,6 +3914,20 @@ def public_create_booking(req: PublicCreateBookingRequest,
         )
         bid = cur.fetchone()["id"]
         conn.commit()
+
+    # Outbound webhooks: always fire booking.created; if auto_confirm is on,
+    # also fire booking.confirmed in the same dispatch cycle.
+    event_data = {
+        "booking_id":   bid, "service_id":  req.service_id,
+        "service_name": svc["name"],
+        "staff_id":     req.staff_id, "starts_at": starts.isoformat(),
+        "ends_at":      ends.isoformat(), "status":   initial_status,
+        "amount":       float(svc.get("price") or 0), "currency": "USD",
+        "customer":     {"name": name, "email": email, "phone": phone},
+    }
+    background_tasks.add_task(dispatch_event, project_id, "booking.created", event_data)
+    if initial_status == "confirmed":
+        background_tasks.add_task(dispatch_event, project_id, "booking.confirmed", event_data)
     return {"id": bid, "status": initial_status,
             "starts_at": starts.isoformat(), "ends_at": ends.isoformat()}
 
@@ -3659,6 +3959,7 @@ def public_list_my_bookings(request: Request,
 
 @app.delete("/{api_key}/booking/bookings/{bid}")
 def public_cancel_booking(bid: int, request: Request,
+                          background_tasks: BackgroundTasks,
                           api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
@@ -3680,4 +3981,281 @@ def public_cancel_booking(bid: int, request: Request,
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE bookings SET status='cancelled' WHERE id=%s", (bid,))
         conn.commit()
+
+    background_tasks.add_task(dispatch_event, project_id, "booking.cancelled", {
+        "booking_id": bid, "service_id": row["service_id"],
+        "starts_at": starts.isoformat(),
+        "customer": {"name": row.get("customer_name", ""),
+                     "email": row.get("customer_email", "")},
+    })
     return {"ok": True, "status": "cancelled"}
+
+
+# ── BOOKING REMINDER (T-1h) ──────────────────────────────
+# Cron job hits /internal/booking/process-reminders every 5 min; idempotent via reminder_sent_at column. Window 50–70 min keeps noise low if cron skips a beat.
+
+def _build_booking_reminder_html(service_name: str, staff_name: Optional[str],
+                                 starts_at: datetime, biz_tz, venue: Optional[str] = None) -> str:
+    local = starts_at.astimezone(biz_tz)
+    try:    when = local.strftime("%A, %B %d at %H:%M")
+    except Exception: when = local.isoformat()
+    staff_line = f"<p style='color:#666;margin:4px 0'>With <b>{sanitize(staff_name)}</b></p>" if staff_name else ""
+    venue_line = f"<p style='color:#666;margin:4px 0'>{sanitize(venue)}</p>" if venue else ""
+    return f"""<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px">
+        <h1 style="color:#0071e3;margin:0 0 8px">Reminder: in 1 hour</h1>
+        <p style="font-size:18px;color:#111;margin:0 0 16px"><b>{sanitize(service_name)}</b></p>
+        <p style="font-size:16px;color:#333;margin:0 0 4px">{sanitize(when)}</p>
+        {staff_line}{venue_line}
+        <p style="color:#999;font-size:12px;margin-top:32px">See you soon!</p>
+    </div>"""
+
+@app.post("/internal/booking/process-reminders")
+def internal_process_booking_reminders(request: Request):
+    """Send 1-hour reminders for confirmed bookings. Cron expected every 5 min.
+    Selects bookings with starts_at in [now+50min, now+70min] that haven't been
+    reminded yet, marks reminder_sent_at on success. Returns count for monitoring."""
+    if request.headers.get("X-Internal-Key") != INTERNAL_API_KEY:
+        raise HTTPException(401, "Unauthorized")
+    now_utc = _utcnow()
+    lo = now_utc + timedelta(minutes=50)
+    hi = now_utc + timedelta(minutes=70)
+    rows = db_all(
+        """SELECT b.id, b.project_id, b.service_id, b.staff_id, b.customer_email,
+                  b.starts_at, b.notes,
+                  s.name AS service_name, s.duration_minutes,
+                  st.name AS staff_name
+           FROM bookings b
+           JOIN booking_services s ON s.id = b.service_id
+           LEFT JOIN booking_staff st ON st.id = b.staff_id
+           WHERE b.status='confirmed'
+             AND b.reminder_sent_at IS NULL
+             AND b.starts_at BETWEEN %s AND %s
+             AND b.customer_email <> ''""",
+        (lo, hi)
+    )
+    sent, failed = 0, 0
+    for r in rows:
+        settings = _booking_settings(r["project_id"])
+        biz_tz   = _tz(settings.get("timezone") or "UTC")
+        starts   = r["starts_at"]
+        if starts.tzinfo is None: starts = starts.replace(tzinfo=timezone.utc)
+        from_name, from_email = get_project_email(r["project_id"])
+        html = _build_booking_reminder_html(
+            r["service_name"], r["staff_name"], starts, biz_tz, venue=None
+        )
+        ok = send_email(r["customer_email"], "Reminder: your appointment is in 1 hour",
+                        html, from_name, from_email)
+        if ok:
+            with db_cursor() as (conn, cur):
+                cur.execute("UPDATE bookings SET reminder_sent_at=NOW() WHERE id=%s", (r["id"],))
+                conn.commit()
+            sent += 1
+        else:
+            failed += 1
+    return {"sent": sent, "failed": failed, "candidates": len(rows)}
+
+
+# ── BOOKING PAYMENT (Stripe stub) ────────────────────────
+# Per-project frontend can call this to create a Stripe PaymentIntent and pay before slot is held. Returns 501 if Stripe is not configured server-side; structured to plug in stripe-python later.
+
+@app.post("/{api_key}/booking/payment-intent")
+def public_create_booking_payment_intent(
+    payload: dict,
+    api_key_record: dict = Depends(resolve_api_key),
+):
+    project_id = api_key_record["id"]
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(501, "Online payment is not configured for this store")
+
+    service_id = payload.get("service_id")
+    if not service_id:
+        raise HTTPException(400, "service_id is required")
+    svc = db_one(
+        "SELECT id, name, price FROM booking_services WHERE id=%s AND project_id=%s AND is_active=TRUE",
+        (service_id, project_id)
+    )
+    if not svc: raise HTTPException(404, "Service not found")
+    amount_cents = int(round(float(svc["price"] or 0) * 100))
+    if amount_cents <= 0:
+        raise HTTPException(400, "This service has no price set")
+
+    import urllib.parse
+    body = urllib.parse.urlencode({
+        "amount":             str(amount_cents),
+        "currency":           "usd",
+        "description":        f"{svc['name']} (project {project_id})",
+        "metadata[project_id]": str(project_id),
+        "metadata[service_id]": str(service_id),
+    }).encode()
+    req = urllib.request.Request(
+        f"{STRIPE_API_BASE}/payment_intents", data=body,
+        headers={
+            "Authorization": f"Bearer {STRIPE_SECRET_KEY}",
+            "Content-Type":  "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+        return {"client_secret": data.get("client_secret"), "id": data.get("id"),
+                "amount": amount_cents, "currency": "usd"}
+    except urllib.error.HTTPError as e:
+        try:    detail = json.loads(e.read()).get("error", {}).get("message", "Stripe error")
+        except Exception: detail = "Stripe error"
+        raise HTTPException(502, detail)
+    except Exception as e:
+        raise HTTPException(502, f"Payment provider unavailable: {e}")
+
+
+# ── PDF DOCUMENTS ────────────────────────────────────────
+# Invoice / Act / Receipt / Ticket — all rendered by pdf_documents.render_document
+# from per-project branding stored in crm_document_settings.
+
+def _get_branding(project_id: int) -> dict:
+    row = db_one("SELECT * FROM crm_document_settings WHERE project_id=%s", (project_id,))
+    if not row:
+        return {"style": "modern", "company_name": "", "logo_url": None,
+                "address": "", "tax_id_label": "Tax ID", "tax_id": "",
+                "contact_email": "", "contact_phone": "", "footer_note": "",
+                "accent_color": "#0071E3"}
+    return dict(row)
+
+
+def _pdf_response(pdf_bytes: bytes, filename: str):
+    from fastapi.responses import Response as _Response
+    return _Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'}
+    )
+
+
+@app.get("/{api_key}/orders/{order_id}/invoice.pdf")
+def order_invoice_pdf(order_id: int, request: Request,
+                      style: Optional[str] = Query(None),
+                      api_key_record: dict = Depends(resolve_api_key)):
+    """Return a PDF invoice for one order. Customer must be authenticated and
+    own the order (or pass an `?internal_key=` for staff access — TODO)."""
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    order = db_one(
+        "SELECT * FROM order_history WHERE id=%s AND project_id=%s AND user_id=%s",
+        (order_id, project_id, user_id)
+    )
+    if not order: raise HTTPException(404, "Order not found")
+
+    items = db_all(
+        """SELECT oi.quantity, oi.price, p.title, pv.variation_name
+           FROM order_items oi
+           JOIN products p                  ON oi.product_id     = p.id
+           LEFT JOIN product_configurations_l1 pv ON oi.variation_id   = pv.id
+           WHERE oi.order_id=%s""",
+        (order_id,)
+    )
+    subtotal = sum(float(i["price"]) * i["quantity"] for i in items)
+    total    = float(order.get("total_amount") or 0)
+    shipping = max(0.0, total - subtotal)
+
+    branding = _get_branding(project_id)
+    branding["style"] = style or branding.get("style") or "modern"
+
+    user = db_one("SELECT name, email FROM users WHERE id=%s", (user_id,))
+    data = {
+        "number":   order_id,
+        "issued_at": order["created_at"].strftime("%Y-%m-%d") if order.get("created_at") else "",
+        "currency": "USD",
+        "customer": {"name": (user or {}).get("name", "") or order.get("recipient_name", ""),
+                     "email": (user or {}).get("email", "")},
+        "items": [{"title": i["title"], "variation": i.get("variation_name"),
+                   "qty": i["quantity"], "price": float(i["price"])} for i in items],
+        "subtotal": subtotal, "shipping": shipping, "discount": 0,
+        "total":    total,
+    }
+    from pdf_documents import render_document
+    pdf = render_document("invoice", branding["style"], branding, data)
+    return _pdf_response(pdf, f"invoice-{order_id}.pdf")
+
+
+@app.get("/{api_key}/booking/bookings/{bid}/act.pdf")
+def booking_act_pdf(bid: int, request: Request,
+                    style: Optional[str] = Query(None),
+                    api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    row = db_one(
+        """SELECT b.*, s.name AS service_name, s.duration_minutes, s.price AS service_price
+           FROM bookings b JOIN booking_services s ON s.id=b.service_id
+           WHERE b.id=%s AND b.project_id=%s AND b.user_id=%s""",
+        (bid, project_id, user_id)
+    )
+    if not row: raise HTTPException(404, "Booking not found")
+    branding = _get_branding(project_id)
+    branding["style"] = style or branding.get("style") or "modern"
+    starts = row["starts_at"]
+    when = starts.strftime("%Y-%m-%d %H:%M") if starts else ""
+    data = {
+        "number": bid,
+        "performed_at": when,
+        "currency": "USD",
+        "customer": {"name": row.get("customer_name", "")},
+        "items": [{"title": row["service_name"],
+                   "variation": f"{row['duration_minutes']} min",
+                   "qty": 1, "price": float(row.get("service_price") or 0)}],
+        "subtotal": float(row.get("service_price") or 0),
+        "total":    float(row.get("service_price") or 0),
+    }
+    from pdf_documents import render_document
+    pdf = render_document("act", branding["style"], branding, data)
+    return _pdf_response(pdf, f"act-{bid}.pdf")
+
+
+@app.get("/{api_key}/orders/{order_id}/receipt.pdf")
+def order_receipt_pdf(order_id: int, request: Request,
+                      style: Optional[str] = Query(None),
+                      api_key_record: dict = Depends(resolve_api_key)):
+    """Receipt — like invoice but more compact, includes digital download links."""
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    order = db_one(
+        "SELECT * FROM order_history WHERE id=%s AND project_id=%s AND user_id=%s",
+        (order_id, project_id, user_id)
+    )
+    if not order: raise HTTPException(404, "Order not found")
+    items = db_all(
+        """SELECT oi.quantity, oi.price, oi.product_id, p.title, p.product_type, pv.variation_name
+           FROM order_items oi
+           JOIN products p ON oi.product_id=p.id
+           LEFT JOIN product_configurations_l1 pv ON oi.variation_id=pv.id
+           WHERE oi.order_id=%s""",
+        (order_id,)
+    )
+    digital_ids = [i["product_id"] for i in items if i.get("product_type") == "digital"]
+    downloads = []
+    if digital_ids:
+        fmt = ",".join(["%s"] * len(digital_ids))
+        files = db_all(
+            f"SELECT product_id, field_key, field_value FROM product_custom_fields"
+            f" WHERE project_id=%s AND product_id IN ({fmt}) AND field_type='file'"
+            f" AND field_value <> ''",
+            tuple([project_id] + digital_ids)
+        )
+        titles = {i["product_id"]: i["title"] for i in items}
+        for f in files:
+            downloads.append({"label": titles.get(f["product_id"]) or f["field_key"],
+                              "url":   f["field_value"]})
+
+    branding = _get_branding(project_id)
+    branding["style"] = style or branding.get("style") or "modern"
+    data = {
+        "number": order_id,
+        "paid_at": order["created_at"].strftime("%Y-%m-%d") if order.get("created_at") else "",
+        "currency": "USD",
+        "items": [{"title": i["title"], "variation": i.get("variation_name"),
+                   "qty": i["quantity"], "price": float(i["price"])} for i in items],
+        "subtotal": sum(float(i["price"]) * i["quantity"] for i in items),
+        "total":    float(order.get("total_amount") or 0),
+        "downloads": downloads,
+    }
+    from pdf_documents import render_document
+    pdf = render_document("receipt", branding["style"], branding, data)
+    return _pdf_response(pdf, f"receipt-{order_id}.pdf")

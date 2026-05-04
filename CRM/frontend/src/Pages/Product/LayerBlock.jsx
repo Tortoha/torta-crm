@@ -26,10 +26,7 @@ function sumDeep(items, field) {
   return total;
 }
 
-// Snapshot helpers for Undo — produce a plain-object tree that the backend
-// /restore endpoint can rebuild verbatim (specs included, children recursive).
-// Layer 1 nodes use `variation_name`/`configurations`; deeper layers use
-// `name`/`children`. The backend accepts either shape.
+// Snapshot helpers for Undo — recursive plain-object tree consumed by /restore.
 function snapshotSpec(s) {
   return { spec_key: s.spec_key, spec_value: s.spec_value, position: s.position };
 }
@@ -64,11 +61,9 @@ export default function LayerBlock(props) {
 // ─── Layer 1: card grid (3 cols, image + inline editable price/stock/sold) ──
 
 function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect, registerUndo,
-                       bulk, setBulk, clearBulk }) {
+                       bulk, setBulk, clearBulk, productType }) {
   const [editVar, setEditVar] = useState(null);
-  // Press-and-hold activation: 180ms hold without moving ≥5px starts a drag.
-  // Lets the user grab the card from ANYWHERE (including over inputs) without
-  // hijacking quick clicks/typing/text-selection inside form fields.
+  // Press-and-hold (300ms) drag activation lets users grab from anywhere including over inputs.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
 
   const SCOPE = 'layer1';
@@ -105,8 +100,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
     }
   }, [items, productId, pq, selectedId, onSelect, clearBulk, reloadProduct, registerUndo]);
 
-  // Toggle a card in/out of the bulk-select scope. Used by right-click
-  // context menu's "Select" action AND by Shift/Cmd+click as power-user shortcut.
+  // Toggle a card in/out of bulk scope (used by ctx-menu Select + modifier-click).
   const toggleInBulk = useCallback((id) => {
     setBulk(prev => {
       const list = prev.scope === SCOPE ? [...prev.ids] : [];
@@ -121,8 +115,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
   }, [setBulk, bulkDelete]);
 
   const onCardClick = useCallback((e, id, fallback) => {
-    // While in bulk-select mode (entered via context menu or modifier-click),
-    // every plain click toggles membership too — Figma/Notion-style.
+    // While in bulk-mode every plain click toggles too (Figma/Notion-style).
     if (e.shiftKey || e.metaKey || e.ctrlKey || inScope) {
       e.stopPropagation();
       e.preventDefault();
@@ -207,9 +200,9 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
   return (
     <section className="po-block">
       <div className="po-block-head">
-        <h2 className="po-block-title">Configuration Layer 1</h2>
+        <h2 className="po-block-title">{productType === 'event' ? 'Ticket types' : 'Configuration Layer 1'}</h2>
         <button className="po-add-pill" onClick={addItem} type="button">
-          <Plus weight="bold" /> Add variation
+          <Plus weight="bold" /> {productType === 'event' ? 'Add ticket type' : 'Add variation'}
         </button>
       </div>
 
@@ -255,9 +248,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
   );
 }
 
-// Sortable wrapper around Layer1Card — adds drag listeners on the wrapper
-// (whole tile is grabbable after a 300ms hold) and forwards menu/select
-// callbacks to the inner card.
+// Sortable wrapper: drag listeners on the outer wrap (whole tile grabbable after 300ms hold).
 function SortableLayer1Card(props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.v.id });
   const style = {
@@ -288,7 +279,7 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
   const [stock, setStock] = useState(String(v.stock_quantity || 0));
   const [uploading, setUploading] = useState(false);
   const [overFile,  setOverFile]  = useState(false);
-  // Tilt is disabled while dragging to avoid 3D wobble fighting the drag transform.
+  // Disable tilt while dragging so the 3D wobble doesn't fight the drag transform.
   const { ref, glossRef, handlers } = InteractiveSection(LAYER1_TILT, menuOpen || isDragging);
 
   const hasChildren = (v.configurations || []).length > 0;
@@ -647,8 +638,7 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
     });
   }, [SCOPE, setBulk, bulkDelete]);
 
-  // Returns true → caller skips the normal row click (drill into chain).
-  // Triggered on modifier-click OR while bulk-select is already active.
+  // Returns true → caller skips drill (modifier-click or bulk-mode active).
   const onRowClick = useCallback((e, id) => {
     if (!(e.shiftKey || e.metaKey || e.ctrlKey || inScope)) return false;
     e.stopPropagation();

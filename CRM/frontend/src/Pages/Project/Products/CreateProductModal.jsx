@@ -4,18 +4,26 @@ import { X, CaretDown } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
 
+const PRODUCT_TYPE_OPTIONS = [
+  { id: 'physical', name: 'Physical' },
+  { id: 'digital',  name: 'Digital'  },
+  { id: 'service',  name: 'Service'  },
+  { id: 'event',    name: 'Event'    },
+];
+
 export default function CreateProductModal({ open, pq, onClose, onCreated }) {
   const [title,    setTitle]    = useState('');
   const [subtitle, setSubtitle] = useState('');
   const [desc,     setDesc]     = useState('');
   const [catId,    setCatId]    = useState('');
+  const [ptype,    setPtype]    = useState('physical');
   const [categories, setCategories] = useState([]);
   const [busy,     setBusy]     = useState(false);
   const [err,      setErr]      = useState('');
 
   useEffect(() => {
     if (!open) return;
-    setTitle(''); setSubtitle(''); setDesc(''); setCatId('');
+    setTitle(''); setSubtitle(''); setDesc(''); setCatId(''); setPtype('physical');
     setBusy(false); setErr('');
     fetch(`${API_BASE}/api/categories${pq}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : [])
@@ -47,6 +55,7 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
           subtitle: subtitle.trim() || null,
           description: desc.trim() || null,
           category_id: catId === '' ? null : Number(catId),
+          product_type: ptype,
         }),
       });
       const data = await res.json();
@@ -117,6 +126,10 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
               <label className="po-field-label">Category</label>
               <CpmCategorySelect value={catId} categories={categories} onChange={setCatId} />
             </div>
+            <div className="cpm-section">
+              <label className="po-field-label">Type</label>
+              <CpmOptionSelect value={ptype} options={PRODUCT_TYPE_OPTIONS} onChange={setPtype} />
+            </div>
 
             {err && <span className="crm-form-error">{err}</span>}
 
@@ -133,6 +146,74 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
       </div>
     </div>,
     document.body
+  );
+}
+
+// Generic option-list select reusing the Category dropdown's look.
+// `options`: [{ id, name }, ...]. `value`: the currently selected id (or '').
+export function CpmOptionSelect({ value, options, onChange, placeholder = 'Select…' }) {
+  const btnRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const [hovered, setHovered] = useState(null);
+
+  const activeKey = value === '' || value == null ? 'none' : `o:${value}`;
+  const current = hovered ?? activeKey;
+  const { indRef, setItemRef } = DynamicBlock(current, open);
+
+  useEffect(() => {
+    if (!open || !btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const margin = 12;
+    const width = Math.min(r.width, window.innerWidth - margin * 2);
+    const maxLeft = window.innerWidth - width - margin;
+    const left = Math.max(margin, Math.min(r.left, maxLeft));
+    setPos({ top: r.bottom + 6, left, width });
+    const onKey = e => { if (e.key === 'Escape') setOpen(false); };
+    const onPd  = e => {
+      if (!e.target.closest?.('.cpm-cat-dropdown') && !btnRef.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPd);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPd);
+    };
+  }, [open]);
+
+  const selected = options.find(o => String(o.id) === String(value));
+  const label = selected ? selected.name : placeholder;
+
+  return (
+    <>
+      <button ref={btnRef} type="button"
+        className={`cpm-cat-btn${open ? ' cpm-cat-btn--open' : ''}`}
+        onClick={() => setOpen(v => !v)}>
+        <span className={selected ? '' : 'cpm-cat-placeholder'}>{label}</span>
+        <CaretDown weight="bold" className={`cpm-cat-caret${open ? ' cpm-cat-caret--up' : ''}`} />
+      </button>
+      {open && pos && createPortal(
+        <div className="cat-filter-dropdown cpm-cat-dropdown"
+          style={{ top: pos.top, left: pos.left, width: pos.width }}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}
+          onMouseLeave={() => setHovered(null)}>
+          <div ref={indRef} className="cat-filter-indicator" />
+          {options.map(o => {
+            const k = `o:${o.id}`;
+            return (
+              <button key={o.id} ref={setItemRef(k)} type="button"
+                className={`cat-filter-item${current === k ? ' cat-filter-item--current' : ''}`}
+                onMouseEnter={() => setHovered(k)}
+                onClick={() => { onChange(String(o.id)); setOpen(false); }}>
+                <span>{o.name}</span>
+              </button>
+            );
+          })}
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 

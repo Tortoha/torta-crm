@@ -417,6 +417,9 @@ def run_migrations():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_services_project ON booking_services(project_id)")
+            # Optional 1:1 link to a products row (when service is created via Products → New).
+            cur.execute("ALTER TABLE booking_services ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id) ON DELETE CASCADE")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_booking_services_product ON booking_services(product_id) WHERE product_id IS NOT NULL")
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS booking_staff (
@@ -512,6 +515,16 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] TIMESTAMPTZ migration failed: {e}")
 
+    # bookings.reminder_sent_at — populated by /internal/booking/process-reminders cron; null = not yet reminded.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_bookings_reminder "
+                        "ON bookings(starts_at) WHERE reminder_sent_at IS NULL AND status='confirmed'")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] bookings.reminder_sent_at migration failed: {e}")
+
     # Rename products cols: description→subtitle, then characteristics→description (order matters; idempotent).
     try:
         with db_cursor() as (conn, cur):
@@ -553,6 +566,26 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] product_categories failed: {e}")
+
+    # Vertical-strategy fields: type, archive, pause.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS product_type VARCHAR(16) NOT NULL DEFAULT 'physical'")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_paused   BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("""
+                DO $do$
+                BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='products_product_type_check') THEN
+                    ALTER TABLE products ADD CONSTRAINT products_product_type_check
+                      CHECK (product_type IN ('physical','digital','service','event'));
+                  END IF;
+                END $do$;
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_products_archived ON products(project_id, is_archived)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] product_type/archive/pause failed: {e}")
 
     # Rename size→configuration (clothing-specific term replaced with generic "priced options"); idempotent per step.
     try:
@@ -668,8 +701,7 @@ def run_migrations():
             if row and row.get("is_nullable") == "NO":
                 cur.execute("ALTER TABLE product_specifications ALTER COLUMN variation_id DROP NOT NULL")
 
-            # Custom fields gain a position column so the CRM Drag-and-Drop reorder
-            # endpoint can persist the user's chosen order. Backfilled by created_at.
+            # Custom fields position column for drag-and-drop reorder.
             cur.execute("ALTER TABLE product_custom_fields ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0")
             cur.execute("""
                 UPDATE product_custom_fields cf SET position = sub.rn - 1
@@ -683,6 +715,92 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] multi-layer configurations failed: {e}")
+
+    # Modifiers — simple flat list per product (multi-select on storefront).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_modifiers (
+                    id          SERIAL PRIMARY KEY,
+                    product_id  INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                    name        VARCHAR(160) NOT NULL DEFAULT '',
+                    price       NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    position    INTEGER NOT NULL DEFAULT 0,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_modifiers_product ON product_modifiers(product_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] product_modifiers failed: {e}")
+
+    # Outbound integrations — webhook subscriptions + delivery log. Same engine
+    # serves Custom Webhook, Slack and Discord (type column branches the body shape).
+    # `events` is a Postgres TEXT[] of event names; empty = subscribe to all.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_webhook_subscriptions (
+                    id            SERIAL PRIMARY KEY,
+                    project_id    INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    type          VARCHAR(32) NOT NULL DEFAULT 'webhook',
+                    name          VARCHAR(200) NOT NULL DEFAULT '',
+                    url           VARCHAR(2000) NOT NULL,
+                    secret        VARCHAR(120) NOT NULL DEFAULT '',
+                    events        TEXT[] NOT NULL DEFAULT '{}',
+                    config        JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+                    last_status   VARCHAR(20) NOT NULL DEFAULT 'unknown',
+                    last_error    TEXT NOT NULL DEFAULT '',
+                    last_event_at TIMESTAMPTZ,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_subs_project ON crm_webhook_subscriptions(project_id)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_webhook_deliveries (
+                    id              SERIAL PRIMARY KEY,
+                    subscription_id INTEGER NOT NULL REFERENCES crm_webhook_subscriptions(id) ON DELETE CASCADE,
+                    project_id      INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    event           VARCHAR(64) NOT NULL,
+                    payload         JSONB NOT NULL,
+                    status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    http_code       INTEGER,
+                    response_body   TEXT NOT NULL DEFAULT '',
+                    duration_ms     INTEGER,
+                    attempt         INTEGER NOT NULL DEFAULT 1,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_deliv_project ON crm_webhook_deliveries(project_id, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_deliv_sub     ON crm_webhook_deliveries(subscription_id, created_at DESC)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_webhook_* failed: {e}")
+
+    # Documents (PDF) branding per project — invoice header, footer, tax IDs, etc.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_document_settings (
+                    project_id    INTEGER PRIMARY KEY REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    style         VARCHAR(20) NOT NULL DEFAULT 'modern',
+                    company_name  VARCHAR(200) NOT NULL DEFAULT '',
+                    logo_url      VARCHAR(2000),
+                    address       TEXT NOT NULL DEFAULT '',
+                    tax_id_label  VARCHAR(40) NOT NULL DEFAULT 'Tax ID',
+                    tax_id        VARCHAR(80) NOT NULL DEFAULT '',
+                    contact_email VARCHAR(200) NOT NULL DEFAULT '',
+                    contact_phone VARCHAR(40) NOT NULL DEFAULT '',
+                    footer_note   TEXT NOT NULL DEFAULT '',
+                    accent_color  VARCHAR(20) NOT NULL DEFAULT '#0071E3',
+                    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_document_settings failed: {e}")
 
 # ── DB POOL ──────────────────────────────────────────────
 
@@ -858,6 +976,7 @@ class CreateProductRequest(BaseModel):
     seo_title: Optional[str] = None
     seo_description: Optional[str] = None
     seo_keywords: Optional[str] = None
+    product_type: Optional[str] = "physical"  # physical | digital | service | event
 
 class UpdateProductRequest(BaseModel):
     title: Optional[str] = None
@@ -867,6 +986,9 @@ class UpdateProductRequest(BaseModel):
     seo_title: Optional[str] = None
     seo_description: Optional[str] = None
     seo_keywords: Optional[str] = None
+    product_type: Optional[str] = None
+    is_archived: Optional[bool] = None
+    is_paused: Optional[bool] = None
 
 class CreateVariationRequest(BaseModel):
     variation_name: Optional[str] = None
@@ -929,10 +1051,15 @@ class UpsertCustomFieldRequest(BaseModel):
     field_type: str = "string"
     is_global: bool = False
 
+class ModifierRequest(BaseModel):
+    name:  Optional[str]   = ''
+    price: Optional[float] = 0
+
+class ReorderModifiersRequest(BaseModel):
+    ids: List[int] = []
+
 class RestoreRequest(BaseModel):
-    # Generic snapshot restore — used by frontend Undo. The snapshot was
-    # captured client-side before deletion; we rebuild whatever subtree it
-    # describes. Original IDs are gone; restored rows get fresh IDs.
+    # Generic Undo snapshot — fresh IDs assigned on rebuild.
     type: str                         # variation | layer_node | layer | custom_fields
     layer: Optional[int]      = None  # required for layer_node + layer
     parent_id: Optional[int]  = None  # required for layer_node (l2-5)
@@ -2144,15 +2271,10 @@ def list_products(project_id: int = Query(...),
                   category_id: Optional[int] = Query(None),
                   uncategorized: bool = Query(False),
                   include_uncategorized: bool = Query(False),
+                  product_type: Optional[str] = Query(None),
+                  archived: bool = Query(False),
                   user: dict = Depends(get_current_user)):
-    """List products in a project. Filter:
-       - ?category_id=N → only that category
-       - ?uncategorized=true → only products with NULL category
-       - ?category_id=N&include_uncategorized=true → that category PLUS uncategorized
-         (used by the category-edit modal so users can attach orphans without losing
-         the products that already belong to the category they're editing)
-       - neither → all products
-    """
+    """List products. Filters: category_id, uncategorized, product_type, archived (default false)."""
     require_team_member_or_owner(user, project_id)
     where  = ["p.project_id=%s"]
     params = [project_id]
@@ -2164,8 +2286,16 @@ def list_products(project_id: int = Query(...),
         else:
             where.append("p.category_id=%s")
         params.append(category_id)
+    if product_type:
+        if product_type not in ("physical", "digital", "service", "event"):
+            raise HTTPException(400, "Invalid product_type")
+        where.append("p.product_type=%s")
+        params.append(product_type)
+    where.append("p.is_archived = %s")
+    params.append(bool(archived))
     sql = (
-        "SELECT p.id, p.title, p.category_id, c.name AS category_name, c.slug AS category_slug,"
+        "SELECT p.id, p.title, p.category_id, p.product_type, p.is_archived, p.is_paused,"
+        " c.name AS category_name, c.slug AS category_slug,"
         " COUNT(DISTINCT v.id) AS variations_count,"
         " COALESCE(SUM(ps.stock_quantity),0) AS total_stock,"
         " COALESCE(MIN(ps.price),0) AS min_price,"
@@ -2188,6 +2318,8 @@ def list_products(project_id: int = Query(...),
         r["min_price"]   = float(r["min_price"] or 0)
         r["max_price"]   = float(r["max_price"] or 0)
         r["total_stock"] = int(r["total_stock"] or 0)
+        r["is_archived"] = bool(r.get("is_archived"))
+        r["is_paused"]   = bool(r.get("is_paused"))
     return rows
 
 
@@ -2196,22 +2328,32 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
     require_team_member_or_owner(user, project_id)
     name = request.title.strip()
     if not name: raise HTTPException(400, "Title is required")
-    # Verify category belongs to this project (prevents IDOR)
     if request.category_id is not None:
         if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
                       (request.category_id, project_id)):
             raise HTTPException(400, "Category does not belong to this project")
+    ptype = (request.product_type or "physical").strip()
+    if ptype not in ("physical", "digital", "service", "event"):
+        raise HTTPException(400, "Invalid product_type")
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO products (project_id,title,subtitle,description,category_id,seo_title,seo_description,seo_keywords) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            "INSERT INTO products (project_id,title,subtitle,description,category_id,seo_title,seo_description,seo_keywords,product_type) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (project_id, sanitize(name), sanitize(request.subtitle), sanitize(request.description),
              request.category_id,
-             sanitize(request.seo_title), sanitize(request.seo_description), sanitize(request.seo_keywords))
+             sanitize(request.seo_title), sanitize(request.seo_description), sanitize(request.seo_keywords),
+             ptype)
         )
         new_id = cur.fetchone()["id"]
+        # type=service → also seed a booking_services row linked 1:1 to the product.
+        if ptype == "service":
+            cur.execute(
+                "INSERT INTO booking_services (project_id, product_id, name, description, duration_minutes, price, is_active)"
+                " VALUES (%s, %s, %s, %s, 30, 0, TRUE)",
+                (project_id, new_id, sanitize(name), sanitize(request.description or ""))
+            )
         conn.commit()
-        return {"id": new_id, "title": name}
+        return {"id": new_id, "title": name, "product_type": ptype}
 
 
 @app.get("/api/products/{product_id}/project-context")
@@ -2305,7 +2447,7 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         (product_id, project_id)
     )
     own_keys = {cf["field_key"] for cf in own_fields}
-    # Project-wide global keys → placeholder rows on products that don't have their own value yet.
+    # Global keys → placeholder rows on products without their own value.
     global_keys_rows = db_all(
         "SELECT field_key, MAX(field_type) AS field_type"
         " FROM product_custom_fields"
@@ -2342,6 +2484,13 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
     if p.get("category_id"):
         cat_row = db_one("SELECT id, name, slug FROM product_categories WHERE id=%s", (p["category_id"],))
 
+    modifiers = db_all(
+        "SELECT id, name, price, position FROM product_modifiers"
+        " WHERE product_id=%s ORDER BY position ASC, id ASC",
+        (product_id,)
+    )
+    for m in modifiers: m["price"] = float(m.get("price") or 0)
+
     return {
         "id": p["id"], "title": p["title"],
         "subtitle":       p["subtitle"]         or "",
@@ -2352,7 +2501,11 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         "seo_title":      p["seo_title"]        or "",
         "seo_description":p["seo_description"]  or "",
         "seo_keywords":   p["seo_keywords"]     or "",
+        "product_type":   p.get("product_type") or "physical",
+        "is_archived":    bool(p.get("is_archived")),
+        "is_paused":      bool(p.get("is_paused")),
         "variations": variations, "custom_fields": custom_fields, "reviews": reviews,
+        "modifiers": modifiers,
         "max_layer": max_layer,
     }
 
@@ -2376,10 +2529,30 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
                           (request.category_id, project_id)):
                 raise HTTPException(400, "Category does not belong to this project")
         fields.append("category_id=%s"); vals.append(request.category_id)
+    if request.product_type is not None:
+        if request.product_type not in ("physical", "digital", "service", "event"):
+            raise HTTPException(400, "Invalid product_type")
+        fields.append("product_type=%s"); vals.append(request.product_type)
+    if request.is_archived is not None:
+        fields.append("is_archived=%s"); vals.append(bool(request.is_archived))
+    if request.is_paused is not None:
+        fields.append("is_paused=%s"); vals.append(bool(request.is_paused))
     if not fields: return {"ok": True}
     vals.extend([product_id, project_id])
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE products SET " + ", ".join(fields) + " WHERE id=%s AND project_id=%s", vals)
+        # Sync title/description to linked booking_service so service edits in either place stay aligned.
+        if request.title is not None or request.description is not None:
+            sync_fields, sync_vals = [], []
+            if request.title is not None:
+                sync_fields.append("name=%s"); sync_vals.append(sanitize(request.title.strip())[:200])
+            if request.description is not None:
+                sync_fields.append("description=%s"); sync_vals.append(sanitize(request.description or "")[:5000])
+            sync_vals.append(product_id)
+            cur.execute(
+                f"UPDATE booking_services SET {', '.join(sync_fields)} WHERE product_id=%s",
+                sync_vals
+            )
         conn.commit()
     return {"ok": True}
 
@@ -2494,8 +2667,7 @@ def reorder_layer_items(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Reorder rows under a parent at layer 2-5. Validates the id set matches
-    exactly the rows currently parented under `parent_id` (idor-safe)."""
+    """Reorder rows under a parent at layer 2-5; id set must match existing rows (idor-safe)."""
     if layer < 2 or layer > 5:
         raise HTTPException(400, "Layer must be 2-5 (use /variations/reorder for layer 1)")
     if req.parent_id is None:
@@ -2556,8 +2728,7 @@ def reorder_custom_fields(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Reorder custom fields on a product. Uses field_keys (string) instead
-    of ids since the frontend identifies CF rows by key."""
+    """Reorder custom fields by field_keys (CF rows are identified by key, not id)."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -2832,12 +3003,7 @@ def delete_specification_generic(product_id: int, spec_id: int,
 # ── MULTI-LAYER CONFIGURATIONS (l1 with image_url; l2..l5 each parent = previous layer) ──
 
 def _restore_layer_subtree(cur, *, product_id: int, layer: int, parent_id: Optional[int], node: dict) -> Optional[int]:
-    """Recreate a single layer node + its specs + recurse children. Used by
-    Undo. The frontend passes a snapshot dict shaped like the response of
-    get_product (variations[]→configurations[]→children[], each with a
-    `specifications` array). Original IDs are gone — fresh IDs assigned, but
-    `position` is preserved from the snapshot when present so the visual
-    order is identical to before the delete."""
+    """Recursively recreate a layer node + specs + children for Undo; preserves snapshot position."""
     if not node: return None
     tbl       = _layer_table(layer)
     parent_col = _layer_parent_col(layer)
@@ -3237,9 +3403,7 @@ def delete_entire_layer(product_id: int, layer: int,
 
 @app.post("/api/products/{product_id}/custom-fields")
 def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    # Create or update a row. If the field is (or becomes) global, propagate
-    # field_key/field_type/is_global across every product in the project so
-    # the schema for that key stays consistent. field_value stays per-product.
+    # If global, propagate field_key/field_type/is_global across project; field_value stays per-product.
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -3278,9 +3442,7 @@ def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, proj
 
 @app.put("/api/products/{product_id}/custom-fields/{field_key}")
 def update_custom_field(product_id: int, field_key: str, request: UpsertCustomFieldRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    # Full update — supports renaming the key. Path param is the OLD key.
-    # When the row is (or becomes) global, key/type/is_global are propagated
-    # to every other row with the same field_key in the project.
+    # Path param = OLD key (for rename). Global rows propagate key/type/is_global across project.
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -3295,7 +3457,7 @@ def update_custom_field(product_id: int, field_key: str, request: UpsertCustomFi
 
     if new_key != field_key:
         if is_global_field:
-            # Renaming a global key — collision means another key already exists anywhere in the project.
+            # Rename collision check across the whole project.
             clash = db_one(
                 "SELECT id FROM product_custom_fields WHERE project_id=%s AND field_key=%s LIMIT 1",
                 (project_id, new_key)
@@ -3321,9 +3483,7 @@ def update_custom_field(product_id: int, field_key: str, request: UpsertCustomFi
 
 @app.delete("/api/products/{product_id}/custom-fields/{field_key}")
 def delete_custom_field(product_id: int, field_key: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    # Deleting a global row cascades across the entire project; deleting a
-    # local row only removes that single product's row. Returns the snapshot
-    # of every removed row so the frontend's Undo can re-create them via /restore.
+    # Global row delete cascades across project; returns removed[] so Undo can /restore.
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -3372,13 +3532,7 @@ def toggle_custom_field_global(product_id: int, field_key: str, project_id: int 
 
 @app.post("/api/products/{product_id}/restore")
 def restore(product_id: int, request: RestoreRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Generic Undo endpoint. Accepts a snapshot captured by the frontend
-    before a destructive action and rebuilds it. Supported types:
-      - variation:     a Layer 1 node + full subtree + specs
-      - layer_node:    a Layer 2-5 node under an existing parent + subtree + specs
-      - layer:         every row at a given layer for this product (used by Delete-layer Undo)
-      - custom_fields: re-insert rows removed by a global cascade delete
-    """
+    """Generic Undo target: rebuilds a snapshot. Types: variation | layer_node | layer | custom_fields."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -3453,6 +3607,89 @@ def _safe_parent_for_product(layer: int, parent_id: int, product_id: int) -> boo
         return False
 
 
+# ── MODIFIERS ────────────────────────────────────────────
+
+@app.get("/api/products/{product_id}/modifiers")
+def list_modifiers(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    rows = db_all(
+        "SELECT id, name, price, position FROM product_modifiers"
+        " WHERE product_id=%s ORDER BY position ASC, id ASC",
+        (product_id,)
+    )
+    for r in rows: r["price"] = float(r.get("price") or 0)
+    return rows
+
+
+@app.post("/api/products/{product_id}/modifiers")
+def create_modifier(product_id: int, request: ModifierRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    name = sanitize((request.name or '').strip())
+    if not name: raise HTTPException(400, "Name is required")
+    price = float(request.price or 0)
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM product_modifiers WHERE product_id=%s", (product_id,))
+        pos = cur.fetchone()["next_pos"]
+        cur.execute(
+            "INSERT INTO product_modifiers (product_id, name, price, position)"
+            " VALUES(%s, %s, %s, %s) RETURNING id",
+            (product_id, name, price, pos)
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id, "name": name, "price": price, "position": pos}
+
+
+@app.put("/api/products/{product_id}/modifiers/{mod_id}")
+def update_modifier(product_id: int, mod_id: int, request: ModifierRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT id FROM product_modifiers WHERE id=%s AND product_id=%s", (mod_id, product_id))
+    if not row: raise HTTPException(404, "Modifier not found")
+    fields, vals = [], []
+    if request.name is not None:
+        n = sanitize(request.name.strip())
+        if not n: raise HTTPException(400, "Name cannot be empty")
+        fields.append("name=%s"); vals.append(n)
+    if request.price is not None:
+        fields.append("price=%s"); vals.append(float(request.price))
+    if not fields: return {"ok": True}
+    vals.append(mod_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE product_modifiers SET {', '.join(fields)} WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/modifiers/{mod_id}")
+def delete_modifier(product_id: int, mod_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM product_modifiers WHERE id=%s AND product_id=%s", (mod_id, product_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.put("/api/products/{product_id}/modifiers/reorder")
+def reorder_modifiers(product_id: int, req: ReorderModifiersRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    ids = list(req.ids or [])
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT id FROM product_modifiers WHERE product_id=%s", (product_id,))
+        existing = {r["id"] for r in cur.fetchall()}
+        if set(ids) != existing:
+            raise HTTPException(400, "ids must contain exactly the modifiers of this product")
+        for idx, mid in enumerate(ids):
+            cur.execute("UPDATE product_modifiers SET position=%s WHERE id=%s", (idx, mid))
+        conn.commit()
+    return {"ok": True}
+
+
 # ── UPLOAD ───────────────────────────────────────────────
 
 @app.post("/api/upload/image")
@@ -3491,6 +3728,35 @@ async def upload_image(
         with open(path, "wb") as f:
             f.write(out.read())
         return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}"}
+
+
+@app.post("/api/upload/file")
+async def upload_file(
+    file: UploadFile = File(...),
+    project_id: Optional[int] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    """Generic file upload for Custom Field type=file (digital products, ticket PDFs, etc.)."""
+    import re as _re_local
+    contents = await file.read()
+    if len(contents) > 50 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 50MB)")
+    safe_name = _re_local.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "file")
+    filename = f"{secrets.token_hex(12)}_{safe_name}"
+
+    if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
+        folder = f"projects/{project_id}/files" if project_id else "files"
+        key = f"{folder}/{filename}"
+        try:
+            url = s3_upload(io.BytesIO(contents), key, content_type=file.content_type or "application/octet-stream")
+            return {"url": url, "name": file.filename, "size": len(contents)}
+        except (BotoCoreError, ClientError) as e:
+            raise HTTPException(500, f"S3 upload failed: {e}")
+    else:
+        path = os.path.join(UPLOADS_DIR, filename)
+        with open(path, "wb") as f:
+            f.write(contents)
+        return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}", "name": file.filename, "size": len(contents)}
 
 
 @app.post("/api/upload/avatar")
@@ -5994,6 +6260,59 @@ def _enrich_booking(rows):
         r["staff_avatar"]     = st["avatar_url"] if st else None
     return rows
 
+@app.get("/api/booking/stats")
+def booking_stats(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Aggregate snapshot for the Bookings dashboard: counts by status, this week
+    vs last week, no-show rate, average ticket, top staff by completed bookings."""
+    require_team_member_or_owner(user, project_id)
+    counts = db_all(
+        "SELECT status, COUNT(*) AS n FROM bookings WHERE project_id=%s GROUP BY status",
+        (project_id,)
+    )
+    by_status = {r["status"]: int(r["n"]) for r in counts}
+    total = sum(by_status.values())
+    no_show = by_status.get("no_show", 0)
+    completed = by_status.get("completed", 0)
+    cancelled = by_status.get("cancelled", 0)
+
+    no_show_rate = (no_show / max(1, completed + no_show + cancelled)) * 100
+
+    avg_row = db_one(
+        "SELECT AVG(s.price) AS avg_price FROM bookings b"
+        " JOIN booking_services s ON b.service_id=s.id"
+        " WHERE b.project_id=%s AND b.status IN ('completed','confirmed')",
+        (project_id,)
+    )
+    avg_ticket = float(avg_row["avg_price"] or 0) if avg_row else 0
+
+    week_row = db_one(
+        "SELECT COUNT(*) AS n FROM bookings WHERE project_id=%s AND starts_at >= NOW() - INTERVAL '7 days'",
+        (project_id,)
+    )
+    last_week_row = db_one(
+        "SELECT COUNT(*) AS n FROM bookings WHERE project_id=%s "
+        "  AND starts_at >= NOW() - INTERVAL '14 days' AND starts_at < NOW() - INTERVAL '7 days'",
+        (project_id,)
+    )
+
+    top_staff = db_all(
+        "SELECT s.id, s.name, COUNT(b.id) AS n FROM booking_staff s"
+        " LEFT JOIN bookings b ON b.staff_id=s.id AND b.project_id=%s AND b.status='completed'"
+        " WHERE s.project_id=%s GROUP BY s.id, s.name ORDER BY n DESC LIMIT 5",
+        (project_id, project_id)
+    )
+
+    return {
+        "total": total,
+        "by_status": by_status,
+        "no_show_rate": round(no_show_rate, 1),
+        "avg_ticket": round(avg_ticket, 2),
+        "week_count": int((week_row or {}).get("n") or 0),
+        "last_week_count": int((last_week_row or {}).get("n") or 0),
+        "top_staff": [{"id": r["id"], "name": r["name"], "completed": int(r["n"])} for r in top_staff],
+    }
+
+
 @app.get("/api/booking/bookings")
 def booking_list(project_id: int = Query(...),
                  from_date: Optional[str] = Query(None),
@@ -6121,6 +6440,37 @@ def booking_update_status(bid: int, req: UpdateBookingStatusRequest,
         conn.commit()
     return {"ok": True}
 
+@app.put("/api/booking/bookings/{bid}/move")
+def booking_move(bid: int,
+                 starts_at: str = Query(...),
+                 project_id: int = Query(...),
+                 user: dict = Depends(get_current_user)):
+    """Reschedule a booking — used by calendar drag-and-drop. starts_at is naive ISO
+    in business TZ. ends_at is recomputed from the linked service's duration."""
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT b.id, b.service_id, s.duration_minutes FROM bookings b"
+        " JOIN booking_services s ON b.service_id=s.id"
+        " WHERE b.id=%s AND b.project_id=%s",
+        (bid, project_id)
+    )
+    if not row: raise HTTPException(404, "Booking not found")
+    tz_row = db_one("SELECT timezone FROM booking_settings WHERE project_id=%s", (project_id,))
+    biz_tz = _tz((tz_row or {}).get("timezone") or "UTC")
+    try:
+        starts = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(400, "Invalid starts_at")
+    if starts.tzinfo is None:
+        starts = starts.replace(tzinfo=biz_tz)
+    starts = starts.astimezone(timezone.utc)
+    ends = starts + timedelta(minutes=row["duration_minutes"])
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE bookings SET starts_at=%s, ends_at=%s WHERE id=%s", (starts, ends, bid))
+        conn.commit()
+    return {"ok": True, "starts_at": starts.isoformat(), "ends_at": ends.isoformat()}
+
+
 @app.delete("/api/booking/bookings/{bid}")
 def booking_delete(bid: int, project_id: int = Query(...),
                    user: dict = Depends(get_current_user)):
@@ -6128,5 +6478,518 @@ def booking_delete(bid: int, project_id: int = Query(...),
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM bookings WHERE id=%s AND project_id=%s",
                     (bid, project_id))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── INTEGRATIONS / WEBHOOKS ──────────────────────────────
+# Outbound webhook engine: project owners subscribe URLs to events; on each event
+# we POST a signed JSON payload, retry on transient failure, log every delivery.
+# Same engine powers Custom Webhook, Slack and Discord (type column branches body shape).
+
+ALL_EVENTS = [
+    "order.created", "order.paid", "order.shipped", "order.delivered",
+    "order.cancelled", "order.returned",
+    "booking.created", "booking.confirmed", "booking.completed",
+    "booking.cancelled", "booking.no_show",
+    "customer.created",
+    "payment.received",
+    "product.created", "product.updated",
+]
+ALLOWED_INTEGRATION_TYPES = {"webhook", "slack", "discord"}
+
+
+def _build_slack_message(event: str, data: dict) -> dict:
+    """Render an event as a Slack 'incoming webhook' payload (text + attachment)."""
+    label_map = {
+        "order.created":      ("🆕 New order",        ":package:"),
+        "order.paid":         ("💰 Order paid",       ":moneybag:"),
+        "order.shipped":      ("🚚 Order shipped",    ":truck:"),
+        "order.delivered":    ("✅ Order delivered",  ":white_check_mark:"),
+        "order.cancelled":    ("🚫 Order cancelled",  ":x:"),
+        "order.returned":     ("↩ Order returned",    ":arrow_left:"),
+        "booking.created":    ("📅 New booking",      ":calendar:"),
+        "booking.confirmed":  ("✅ Booking confirmed",":white_check_mark:"),
+        "booking.completed":  ("🏁 Booking completed",":checkered_flag:"),
+        "booking.cancelled":  ("🚫 Booking cancelled",":x:"),
+        "booking.no_show":    ("👻 No-show",           ":ghost:"),
+        "customer.created":   ("👤 New customer",     ":bust_in_silhouette:"),
+        "payment.received":   ("💸 Payment received", ":dollar:"),
+        "product.created":    ("🆕 Product added",    ":new:"),
+        "product.updated":    ("✏ Product updated",   ":pencil2:"),
+    }
+    title, _ = label_map.get(event, (event, ":bell:"))
+    fields = []
+    if "order_id" in data:    fields.append({"title": "Order #", "value": str(data.get("order_id")), "short": True})
+    if "booking_id" in data:  fields.append({"title": "Booking #", "value": str(data.get("booking_id")), "short": True})
+    if data.get("amount"):    fields.append({"title": "Amount",
+                                              "value": f"{data.get('currency', 'USD')} {data['amount']}",
+                                              "short": True})
+    cust = data.get("customer") or {}
+    if cust.get("name"):      fields.append({"title": "Customer", "value": cust["name"], "short": True})
+    if cust.get("email"):     fields.append({"title": "Email",    "value": cust["email"], "short": True})
+    if data.get("service_name"): fields.append({"title": "Service", "value": data["service_name"], "short": True})
+    if data.get("starts_at"):    fields.append({"title": "Starts at", "value": data["starts_at"], "short": True})
+    return {
+        "text": title,
+        "attachments": [{"color": "#0071E3", "fields": fields}],
+    }
+
+
+def _build_discord_message(event: str, data: dict) -> dict:
+    """Render an event as a Discord webhook payload (embeds)."""
+    title_map = {
+        "order.created":      "🆕 New order",
+        "order.paid":         "💰 Order paid",
+        "order.shipped":      "🚚 Order shipped",
+        "order.delivered":    "✅ Order delivered",
+        "order.cancelled":    "🚫 Order cancelled",
+        "order.returned":     "↩ Order returned",
+        "booking.created":    "📅 New booking",
+        "booking.confirmed":  "✅ Booking confirmed",
+        "booking.completed":  "🏁 Booking completed",
+        "booking.cancelled":  "🚫 Booking cancelled",
+        "booking.no_show":    "👻 No-show",
+        "customer.created":   "👤 New customer",
+        "payment.received":   "💸 Payment received",
+        "product.created":    "🆕 Product added",
+        "product.updated":    "✏ Product updated",
+    }
+    title = title_map.get(event, event)
+    fields = []
+    if "order_id" in data:    fields.append({"name": "Order #", "value": str(data.get("order_id")), "inline": True})
+    if "booking_id" in data:  fields.append({"name": "Booking #", "value": str(data.get("booking_id")), "inline": True})
+    if data.get("amount"):    fields.append({"name": "Amount",
+                                              "value": f"{data.get('currency', 'USD')} {data['amount']}",
+                                              "inline": True})
+    cust = data.get("customer") or {}
+    if cust.get("name"):      fields.append({"name": "Customer", "value": cust["name"], "inline": True})
+    if cust.get("email"):     fields.append({"name": "Email",    "value": cust["email"], "inline": True})
+    if data.get("service_name"): fields.append({"name": "Service", "value": data["service_name"], "inline": True})
+    if data.get("starts_at"):    fields.append({"name": "Starts at", "value": data["starts_at"], "inline": True})
+    return {
+        "embeds": [{
+            "title": title, "color": 0x0071E3,
+            "fields": fields,
+            "timestamp": _utcnow().isoformat(),
+        }],
+    }
+
+
+def _post_webhook(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
+    """Synchronously POSTs an event payload to a single subscription. Returns
+    a delivery dict suitable for INSERT into crm_webhook_deliveries."""
+    sub_type = sub["type"]
+    if sub_type == "slack":
+        body_obj   = _build_slack_message(event, data)
+        ext_body   = json.dumps(body_obj).encode()
+        ext_headers = {"Content-Type": "application/json"}
+    elif sub_type == "discord":
+        body_obj   = _build_discord_message(event, data)
+        ext_body   = json.dumps(body_obj).encode()
+        ext_headers = {"Content-Type": "application/json"}
+    else:
+        body_obj = {
+            "event":       event,
+            "project_id":  sub["project_id"],
+            "occurred_at": _utcnow().isoformat(),
+            "data":        data,
+        }
+        ext_body = json.dumps(body_obj, default=str).encode()
+        sig = hmac.new(sub["secret"].encode(), ext_body, hashlib.sha256).hexdigest()
+        ext_headers = {
+            "Content-Type":       "application/json",
+            "X-Torta-Event":      event,
+            "X-Torta-Signature":  f"sha256={sig}",
+            "X-Torta-Timestamp":  str(int(time.time())),
+            "User-Agent":         "Torta-Webhooks/1.0",
+        }
+
+    t0  = time.time()
+    req = urllib.request.Request(sub["url"], data=ext_body, headers=ext_headers, method="POST")
+    out = {
+        "subscription_id": sub["id"], "project_id": sub["project_id"],
+        "event": event, "payload": json.dumps(body_obj, default=str),
+        "attempt": attempt,
+    }
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            response_text = resp.read(4096).decode("utf-8", errors="replace")
+            out.update({
+                "status": "success" if 200 <= resp.status < 300 else "failed",
+                "http_code": resp.status, "response_body": response_text[:2000],
+                "duration_ms": int((time.time() - t0) * 1000),
+            })
+    except urllib.error.HTTPError as e:
+        try:    body = e.read(4096).decode("utf-8", errors="replace")
+        except Exception: body = str(e)
+        out.update({"status": "failed", "http_code": e.code,
+                    "response_body": body[:2000],
+                    "duration_ms": int((time.time() - t0) * 1000)})
+    except Exception as e:
+        out.update({"status": "failed", "http_code": None,
+                    "response_body": str(e)[:2000],
+                    "duration_ms": int((time.time() - t0) * 1000)})
+    return out
+
+
+def dispatch_event(project_id: int, event: str, data: dict):
+    """Find every active subscription on this project that listens to `event`,
+    POST the payload to each, log to crm_webhook_deliveries. Designed for
+    BackgroundTasks (fire-and-forget) — never raises into the caller's request."""
+    try:
+        rows = db_all(
+            "SELECT * FROM crm_webhook_subscriptions WHERE project_id=%s AND is_active=TRUE",
+            (project_id,)
+        )
+    except Exception as e:
+        print(f"[webhook] subs query failed: {e}"); return
+
+    for sub in rows:
+        events = sub.get("events") or []
+        if events and event not in events:
+            continue
+        try:
+            out = _post_webhook(dict(sub), event, data, attempt=1)
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    """INSERT INTO crm_webhook_deliveries
+                          (subscription_id, project_id, event, payload, status,
+                           http_code, response_body, duration_ms, attempt)
+                       VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s)""",
+                    (out["subscription_id"], out["project_id"], out["event"],
+                     out["payload"], out["status"], out.get("http_code"),
+                     out.get("response_body", ""), out.get("duration_ms"),
+                     out["attempt"])
+                )
+                cur.execute(
+                    "UPDATE crm_webhook_subscriptions SET last_status=%s, last_error=%s, last_event_at=NOW() WHERE id=%s",
+                    (out["status"], out.get("response_body", "")[:500] if out["status"] != "success" else "",
+                     sub["id"])
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[webhook] dispatch failed for sub {sub.get('id')}: {e}")
+
+
+# ── Integration endpoints ───────────────────────────────
+
+class IntegrationCreateRequest(BaseModel):
+    type:    str = "webhook"
+    name:    str = ""
+    url:     str
+    events:  Optional[List[str]] = None  # None or [] = all events
+    config:  Optional[dict]      = None
+
+class IntegrationUpdateRequest(BaseModel):
+    name:      Optional[str]       = None
+    url:       Optional[str]       = None
+    events:    Optional[List[str]] = None
+    config:    Optional[dict]      = None
+    is_active: Optional[bool]      = None
+
+
+@app.get("/api/integrations/events")
+def integrations_events(user: dict = Depends(get_current_user)):
+    """Public catalog of dispatchable event names — fed into the connector modal
+    so the UI doesn't have to keep its own list in sync."""
+    return {"events": ALL_EVENTS}
+
+
+@app.get("/api/integrations")
+def integrations_list(project_id: int = Query(...),
+                      user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        """SELECT id, type, name, url, events, config, is_active,
+                  last_status, last_error, last_event_at, created_at
+           FROM crm_webhook_subscriptions WHERE project_id=%s
+           ORDER BY id DESC""",
+        (project_id,)
+    )
+    # Stat: how many deliveries each subscription has had (lifetime).
+    counts = {}
+    for r in db_all(
+        "SELECT subscription_id, COUNT(*) AS n FROM crm_webhook_deliveries"
+        " WHERE project_id=%s GROUP BY subscription_id", (project_id,)
+    ):
+        counts[r["subscription_id"]] = r["n"]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["deliveries"]    = counts.get(r["id"], 0)
+        d["last_event_at"] = r["last_event_at"].isoformat() if r["last_event_at"] else None
+        d["created_at"]    = r["created_at"].isoformat()    if r["created_at"]    else None
+        d.pop("secret", None)  # never expose the signing secret over GET list
+        out.append(d)
+    return out
+
+
+@app.post("/api/integrations")
+def integrations_create(req: IntegrationCreateRequest,
+                        project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if req.type not in ALLOWED_INTEGRATION_TYPES:
+        raise HTTPException(400, f"Unsupported type. Allowed: {sorted(ALLOWED_INTEGRATION_TYPES)}")
+    url = (req.url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "URL must start with http:// or https://")
+    events = req.events or []
+    invalid = [e for e in events if e not in ALL_EVENTS]
+    if invalid:
+        raise HTTPException(400, f"Unknown events: {invalid}")
+    secret = "wh_sec_" + secrets.token_hex(24)
+    name   = (req.name or "").strip()[:200] or _default_integration_name(req.type)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO crm_webhook_subscriptions
+                  (project_id, type, name, url, secret, events, config)
+               VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
+            (project_id, req.type, sanitize(name), url, secret, events,
+             json.dumps(req.config or {}))
+        )
+        sub_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": sub_id, "secret": secret}
+
+
+def _default_integration_name(t: str) -> str:
+    return {"slack": "Slack notifications", "discord": "Discord notifications",
+            "webhook": "Custom Webhook"}.get(t, t.title())
+
+
+# NOTE: /deliveries routes MUST be declared BEFORE /{sub_id} routes — FastAPI
+# matches routes in declaration order; otherwise GET /deliveries hits /{sub_id}
+# with sub_id="deliveries" and 404s with "not an int" pydantic validation.
+
+@app.get("/api/integrations/deliveries")
+def integrations_deliveries(project_id: int = Query(...),
+                            subscription_id: Optional[int] = Query(None),
+                            event: Optional[str] = Query(None),
+                            status: Optional[str] = Query(None),
+                            limit: int = Query(100, ge=1, le=500),
+                            user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    where  = ["d.project_id=%s"]
+    params = [project_id]
+    if subscription_id is not None: where.append("d.subscription_id=%s"); params.append(subscription_id)
+    if event:   where.append("d.event=%s");  params.append(event)
+    if status:  where.append("d.status=%s"); params.append(status)
+    params.append(limit)
+    rows = db_all(
+        f"""SELECT d.id, d.subscription_id, d.event, d.status, d.http_code,
+                   d.duration_ms, d.attempt, d.created_at, d.response_body,
+                   s.type AS sub_type, s.name AS sub_name
+            FROM crm_webhook_deliveries d
+            LEFT JOIN crm_webhook_subscriptions s ON s.id=d.subscription_id
+            WHERE {' AND '.join(where)}
+            ORDER BY d.id DESC LIMIT %s""",
+        params
+    )
+    return [{
+        **{k: r[k] for k in ("id", "subscription_id", "event", "status",
+                              "http_code", "duration_ms", "attempt",
+                              "response_body", "sub_type", "sub_name")},
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+    } for r in rows]
+
+
+@app.get("/api/integrations/deliveries/{delivery_id}")
+def integrations_delivery_detail(delivery_id: int,
+                                 project_id: int = Query(...),
+                                 user: dict = Depends(get_current_user)):
+    """Full payload + headers for a single delivery — used by the 'expand row' UX in Logs."""
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT * FROM crm_webhook_deliveries WHERE id=%s AND project_id=%s",
+        (delivery_id, project_id)
+    )
+    if not row: raise HTTPException(404, "Delivery not found")
+    d = dict(row)
+    d["created_at"] = row["created_at"].isoformat() if row["created_at"] else None
+    return d
+
+
+@app.post("/api/integrations/deliveries/{delivery_id}/retry")
+def integrations_delivery_retry(delivery_id: int,
+                                project_id: int = Query(...),
+                                user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT * FROM crm_webhook_deliveries WHERE id=%s AND project_id=%s",
+        (delivery_id, project_id)
+    )
+    if not row: raise HTTPException(404, "Delivery not found")
+    sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+                 (row["subscription_id"], project_id))
+    if not sub: raise HTTPException(404, "Integration was deleted")
+    try:    payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
+    except Exception: payload = {}
+    data = payload.get("data", payload)  # webhook payloads wrap data; slack/discord don't
+    out = _post_webhook(dict(sub), row["event"], data, attempt=row["attempt"] + 1)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO crm_webhook_deliveries
+                  (subscription_id, project_id, event, payload, status,
+                   http_code, response_body, duration_ms, attempt)
+               VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s)""",
+            (out["subscription_id"], out["project_id"], out["event"],
+             out["payload"], out["status"], out.get("http_code"),
+             out.get("response_body", ""), out.get("duration_ms"), out["attempt"])
+        )
+        conn.commit()
+    return {"status": out["status"], "http_code": out.get("http_code")}
+
+
+@app.get("/api/integrations/{sub_id}")
+def integrations_get(sub_id: int, project_id: int = Query(...),
+                     user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+        (sub_id, project_id)
+    )
+    if not row: raise HTTPException(404, "Integration not found")
+    d = dict(row)
+    d["last_event_at"] = row["last_event_at"].isoformat() if row["last_event_at"] else None
+    d["created_at"]    = row["created_at"].isoformat()    if row["created_at"]    else None
+    return d
+
+
+@app.put("/api/integrations/{sub_id}")
+def integrations_update(sub_id: int, req: IntegrationUpdateRequest,
+                        project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT id FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+                 (sub_id, project_id))
+    if not row: raise HTTPException(404, "Integration not found")
+    fields, values = [], []
+    if req.name is not None:
+        fields.append("name=%s");  values.append(sanitize(req.name.strip())[:200])
+    if req.url is not None:
+        u = req.url.strip()
+        if not u.startswith(("http://", "https://")):
+            raise HTTPException(400, "URL must start with http:// or https://")
+        fields.append("url=%s");   values.append(u)
+    if req.events is not None:
+        invalid = [e for e in req.events if e not in ALL_EVENTS]
+        if invalid: raise HTTPException(400, f"Unknown events: {invalid}")
+        fields.append("events=%s"); values.append(req.events)
+    if req.config is not None:
+        fields.append("config=%s::jsonb"); values.append(json.dumps(req.config))
+    if req.is_active is not None:
+        fields.append("is_active=%s"); values.append(req.is_active)
+    if not fields: return {"ok": True}
+    values.append(sub_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE crm_webhook_subscriptions SET {', '.join(fields)} WHERE id=%s", values)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/integrations/{sub_id}")
+def integrations_delete(sub_id: int, project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+                    (sub_id, project_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/integrations/{sub_id}/test")
+def integrations_test(sub_id: int, project_id: int = Query(...),
+                      user: dict = Depends(get_current_user)):
+    """Sends a synthetic 'order.paid' event so the user can verify the receiver
+    works without waiting for a real order. Logged to deliveries like real events."""
+    require_team_member_or_owner(user, project_id)
+    sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+                 (sub_id, project_id))
+    if not sub: raise HTTPException(404, "Integration not found")
+    test_data = {
+        "order_id": 0, "test": True, "amount": 99.99, "currency": "USD",
+        "customer": {"name": "Test Customer", "email": "test@example.com"},
+        "items": [{"title": "Test product", "qty": 1, "price": 99.99}],
+    }
+    out = _post_webhook(dict(sub), "order.paid", test_data, attempt=1)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """INSERT INTO crm_webhook_deliveries
+                  (subscription_id, project_id, event, payload, status,
+                   http_code, response_body, duration_ms, attempt)
+               VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s)""",
+            (out["subscription_id"], out["project_id"], out["event"],
+             out["payload"], out["status"], out.get("http_code"),
+             out.get("response_body", ""), out.get("duration_ms"), out["attempt"])
+        )
+        cur.execute(
+            "UPDATE crm_webhook_subscriptions SET last_status=%s, last_error=%s, last_event_at=NOW() WHERE id=%s",
+            (out["status"], out.get("response_body", "")[:500] if out["status"] != "success" else "",
+             sub_id)
+        )
+        conn.commit()
+    return {
+        "status": out["status"], "http_code": out.get("http_code"),
+        "duration_ms": out.get("duration_ms"),
+        "response_body": (out.get("response_body") or "")[:500],
+    }
+
+
+# ── DOCUMENT (PDF) settings ─────────────────────────────
+
+class DocumentSettingsRequest(BaseModel):
+    style:         Optional[str] = None
+    company_name:  Optional[str] = None
+    logo_url:      Optional[str] = None
+    address:       Optional[str] = None
+    tax_id_label:  Optional[str] = None
+    tax_id:        Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    footer_note:   Optional[str] = None
+    accent_color:  Optional[str] = None
+
+
+@app.get("/api/document-settings")
+def document_settings_get(project_id: int = Query(...),
+                          user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT * FROM crm_document_settings WHERE project_id=%s", (project_id,))
+    if not row:
+        return {
+            "project_id": project_id, "style": "modern",
+            "company_name": "", "logo_url": None, "address": "",
+            "tax_id_label": "Tax ID", "tax_id": "",
+            "contact_email": "", "contact_phone": "",
+            "footer_note": "", "accent_color": "#0071E3",
+        }
+    return {**row, "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None}
+
+
+@app.put("/api/document-settings")
+def document_settings_save(req: DocumentSettingsRequest,
+                           project_id: int = Query(...),
+                           user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    allowed_styles = {"modern", "classic", "minimal"}
+    if req.style is not None and req.style not in allowed_styles:
+        raise HTTPException(400, f"Style must be one of {sorted(allowed_styles)}")
+    fields = req.model_dump(exclude_unset=True)
+    fields = {k: (sanitize(v) if isinstance(v, str) else v) for k, v in fields.items()}
+    cols = ["project_id"] + list(fields.keys())
+    vals = [project_id] + [fields[k] for k in fields]
+    placeholders = ", ".join(["%s"] * len(cols))
+    update_clause = ", ".join(f"{k}=EXCLUDED.{k}" for k in fields) + ", updated_at=NOW()"
+    if not fields:
+        return {"ok": True}
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            f"INSERT INTO crm_document_settings ({', '.join(cols)}) VALUES ({placeholders})"
+            f" ON CONFLICT (project_id) DO UPDATE SET {update_clause}",
+            vals
+        )
         conn.commit()
     return {"ok": True}

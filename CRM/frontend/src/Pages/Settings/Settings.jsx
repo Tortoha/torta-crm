@@ -54,6 +54,9 @@ function Settings() {
   // Avatar
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError]         = useState('');
+  // Mirror Header.jsx: if the stored avatar_url returns 404 / dead host,
+  // flip to InitialsAvatar instead of showing browser's broken-image icon.
+  const [avatarImgFailed, setAvatarImgFailed] = useState(false);
   const [cropFile, setCropFile]               = useState(null);
   const avatarInputRef = useRef();
 
@@ -128,6 +131,7 @@ function Settings() {
       if (!res.ok) return setAvatarError(json.detail || 'Upload failed');
       const bustedUrl = json.url + '?v=' + Date.now();
       setData(prev => ({ ...prev, avatar_url: bustedUrl }));
+      setAvatarImgFailed(false);   // new upload succeeded → re-enable <img>
       updateUser?.({ avatar_url: bustedUrl });
     } catch { setAvatarError('Network error'); }
     finally { setAvatarUploading(false); }
@@ -150,11 +154,12 @@ function Settings() {
             {/* Avatar block */}
             <div className="sett-avatar-block">
               <div className="sett-avatar-wrap">
-                {data?.avatar_url ? (
+                {data?.avatar_url && !avatarImgFailed ? (
                   <img
                     src={data.avatar_url}
-                    alt="avatar"
+                    alt=""
                     className="sett-avatar-img"
+                    onError={() => setAvatarImgFailed(true)}
                   />
                 ) : (
                   <InitialsAvatar name={data?.name} size={80} />

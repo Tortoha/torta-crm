@@ -1,16 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// Page-scoped undo stack. Consumers call `register({ description, undo })`
-// right after a destructive action; the toast shows the description with an
-// "Undo" button, and Ctrl/Cmd+Z fires the most recent entry's undo callback.
-//
-// Snapshot-based: the consumer captures whatever data it needs BEFORE
-// deleting and writes a `undo` closure that recreates it (typically by
-// re-POSTing). The stack itself doesn't know about backend models.
-//
-// The Ctrl+Z handler intentionally ignores keys pressed while focus is in
-// an INPUT/TEXTAREA/contentEditable so the browser's native text-undo keeps
-// working inside form fields.
+// Page-scoped undo stack: register({description, undo, silent}) + Ctrl/Cmd+Z (skipped inside text inputs).
 export function useUndoStack({ max = 10, autoDismissMs = 8000 } = {}) {
   const [toast, setToast] = useState(null);
   const stackRef = useRef([]);
@@ -25,8 +15,7 @@ export function useUndoStack({ max = 10, autoDismissMs = 8000 } = {}) {
     if (typeof undo !== 'function') return;
     const entry = { description, undo, silent, id: Date.now() + Math.random() };
     stackRef.current = [...stackRef.current, entry].slice(-max);
-    // silent=true → only added to the stack so Ctrl+Z still works, but no
-    // toast pops. Used for noisy actions like every keystroke-debounce save.
+    // silent=true → stack-only, no toast (used for noisy debounced saves).
     if (!silent) {
       setToast(entry);
       armDismiss();

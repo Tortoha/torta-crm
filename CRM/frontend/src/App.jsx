@@ -32,6 +32,7 @@ const ProjectSettings  = lazy(() => import('./Pages/Project/ProjectSettings.jsx'
 const Orders           = lazy(() => import('./Pages/Project/Orders.jsx'));
 const Chat             = lazy(() => import('./Pages/Project/Chat.jsx'));
 const Booking          = lazy(() => import('./Pages/Project/Booking/Booking.jsx'));
+const Integrations     = lazy(() => import('./Pages/Project/Integrations/Integrations.jsx'));
 // Product detail pages — live under their own ProductLayout at /product/:hash
 const ProductOverview   = lazy(() => import('./Pages/Product/ProductOverview.jsx'));
 const ProductReviews    = lazy(() => import('./Pages/Product/ProductReviews.jsx'));
@@ -73,6 +74,7 @@ function App() {
             <Route path="products"   element={<Products />}>
               <Route index                element={<ProductsList />} />
               <Route path="categories"    element={<Categories />} />
+              <Route path="archive"       element={<ProductsList archived />} />
             </Route>
             <Route path="revenue"    element={<Revenue />} />
             <Route path="authentication" element={<Authentication />} />
@@ -80,9 +82,10 @@ function App() {
             <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="url-config" element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="orders"     element={<Orders />} />
-            <Route path="booking"    element={<Booking />} />
-            <Route path="chat"       element={<Chat />} />
-            <Route path="settings"   element={<ProjectSettings />} />
+            <Route path="booking"      element={<Booking />} />
+            <Route path="integrations" element={<Integrations />} />
+            <Route path="chat"         element={<Chat />} />
+            <Route path="settings"     element={<ProjectSettings />} />
           </Route>
           <Route path="/settings" element={<SettingsLayout />}>
             <Route path="account"       element={<AccountSettings />} />

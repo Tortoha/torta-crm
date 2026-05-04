@@ -19,6 +19,7 @@ import { CpmCategorySelect } from '../Project/Products/CreateProductModal.jsx';
 import '../../Style/Authentication.css';
 import '../../Style/Organization.css';
 import '../../Style/Products.css';
+import '../../Style/Booking.css';
 
 
 export default function ProductOverview() {
@@ -38,17 +39,13 @@ export default function ProductOverview() {
   const toastRef = useRef(null);
   const { register: registerUndo, undo: performUndo, toast: undoToast, dismissToast: dismissUndo } = useUndoStack();
 
-  // Bulk-select state — single source of truth across all blocks. When a
-  // block changes scope (user clicks in another section), the previous
-  // selection is wiped automatically since each block only shows selection
-  // when bulk.scope matches its own.
+  // Bulk-select: single source of truth; switching scope auto-clears the previous one.
   const [bulk, setBulk] = useState({ scope: null, ids: [], actions: null });
   const clearBulk = useCallback(() => setBulk({ scope: null, ids: [], actions: null }), []);
 
   useEffect(() => {
     const onKey = (e) => {
-      // Esc clears selection. Delete/Backspace fires the bulk-delete action
-      // — but only when focus isn't in a text input so we don't eat keystrokes.
+      // Esc clears; Delete/Backspace fires bulk delete (skipped inside text inputs).
       const t = e.target;
       const tag = t?.tagName;
       const inField = tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable;
@@ -87,8 +84,7 @@ export default function ProductOverview() {
 
   useEffect(() => () => setProductContext?.(null), [setProductContext]);
 
-  // Reset chain + shownLayers when navigating to a different product so
-  // expansion state from product A doesn't leak into product B.
+  // Reset chain + shownLayers on product change.
   useEffect(() => {
     setShownLayers(1);
     setChain([null, null, null, null, null]);
@@ -99,16 +95,13 @@ export default function ProductOverview() {
     if (res.ok) setProduct(await res.json());
   }, [productId, pq]);
 
-  // Walk the tree and fill chain greedily — keep current id if still valid,
-  // otherwise auto-pick the first row at that layer. Used both on product
-  // reload and when user clicks a row at any layer.
+  // Greedy chain-fill: keep current id if still valid, else auto-pick first row at that layer.
   const fillChain = useCallback((startChain, productData) => {
     const next = [...startChain];
     if (!productData) return next;
     let level = productData.variations || [];
     for (let i = 0; i < 5; i++) {
       if (!level || level.length === 0) {
-        // No more rows below — clear the rest of the chain
         for (let j = i; j < 5; j++) next[j] = null;
         break;
       }
@@ -152,25 +145,18 @@ export default function ProductOverview() {
     setChain(prev => {
       const next = [...prev];
       next[level] = id;
-      // Reset deeper levels — fillChain will then auto-pick first row at each
       for (let i = level + 1; i < 5; i++) next[i] = null;
       return fillChain(next, product);
     });
   };
 
-  const createNewLayer = () => {
-    // fillChain (run on every product/chain change) already keeps the chain
-    // greedily filled with first-available rows at each layer that has data.
-    // So we just bump shownLayers; the next render will reveal Layer N+1.
-    setShownLayers(n => Math.min(n + 1, 5));
-  };
+  // fillChain already keeps the chain greedily filled, so just bump shownLayers.
+  const createNewLayer = () => setShownLayers(n => Math.min(n + 1, 5));
 
   const deleteLastLayer = async () => {
     if (shownLayers <= 1) return;
     if (!confirm(`Delete entire Layer ${shownLayers}?\nAll rows at this layer will be lost. Carts/orders referencing them will break.`)) return;
-    // Build a {parent_id, data} snapshot for every row at the target layer
-    // by walking down the product tree. Used by Undo to recreate the whole
-    // layer (with deep subtrees + specs) under the original parents.
+    // Snapshot every row at the target layer (with subtree) for Undo.
     const layerN = shownLayers;
     const rows = [];
     const walk = (items, currentLayer, parentId) => {
@@ -211,8 +197,6 @@ export default function ProductOverview() {
   if (loading)  return <Shell><p className="crm-placeholder">Loading…</p></Shell>;
   if (notFound) return <Shell><p className="crm-placeholder">Product not found.</p></Shell>;
 
-  // Button visible when the last visible layer has any rows (selection optional —
-  // createNewLayer auto-picks first row at each unselected layer).
   const lastLayerItems = layers?.[shownLayers - 1]?.items || [];
   const canCreateNewLayer = shownLayers < 5 && lastLayerItems.length > 0;
 
@@ -224,7 +208,26 @@ export default function ProductOverview() {
         setProductContext={setProductContext} productHash={productHash}
         showToast={showToast} registerUndo={registerUndo} />
 
-      {layers && [1, 2, 3, 4, 5].map(n => {
+      {/* Service-type products: full inline editor that PATCHes booking_services. */}
+      {product.product_type === 'service' && (
+        <ServiceDetailsBlock product={product} pq={pq}
+          registerUndo={registerUndo} showToast={showToast} />
+      )}
+
+      {/* Event details — datetime + venue. Stored as reserved Custom Fields. */}
+      {product.product_type === 'event' && (
+        <EventDetailsBlock product={product} productId={productId} pq={pq}
+          setProduct={setProduct} showToast={showToast} />
+      )}
+
+      {/* Digital files — primary block for type=digital. */}
+      {product.product_type === 'digital' && (
+        <DigitalFilesBlock product={product} productId={productId} pq={pq}
+          setProduct={setProduct} showToast={showToast} />
+      )}
+
+      {/* Hide layers + specs for digital/service (single-SKU). Event keeps them as ticket types. */}
+      {product.product_type !== 'digital' && product.product_type !== 'service' && layers && [1, 2, 3, 4, 5].map(n => {
         if (n > shownLayers) return null;
         const layerData = layers[n - 1];
         if (!layerData) return null;
@@ -243,30 +246,43 @@ export default function ProductOverview() {
             isLeaf={isLeaf}
             onDeleteLayer={showDelete ? deleteLastLayer : null}
             registerUndo={registerUndo}
-            bulk={bulk} setBulk={setBulk} clearBulk={clearBulk} />
+            bulk={bulk} setBulk={setBulk} clearBulk={clearBulk}
+            productType={product.product_type} />
         );
       })}
 
-      {canCreateNewLayer && (
+      {product.product_type !== 'digital' && product.product_type !== 'service' && canCreateNewLayer && (
         <button className="po-add-layer-btn" type="button" onClick={createNewLayer}>
           <Plus weight="bold" /> Create Configuration Layer {shownLayers + 1}
         </button>
       )}
 
-      <SpecificationsBlock
-        product={product}
-        productId={productId} pq={pq}
-        chain={chain}
-        shownLayers={shownLayers}
-        reloadProduct={reloadProduct}
-        registerUndo={registerUndo}
-        bulk={bulk} setBulk={setBulk} clearBulk={clearBulk} />
+      {/* Modifiers — multi-select add-ons (e.g. food: extra cheese / no onion). */}
+      {product.product_type === 'physical' && (
+        <ModifiersBlock product={product} productId={productId} pq={pq}
+          reloadProduct={reloadProduct} registerUndo={registerUndo} />
+      )}
 
-      <CustomFieldsBlock product={product} productId={productId} pq={pq}
-        setProduct={setProduct} showToast={showToast} registerUndo={registerUndo}
-        bulk={bulk} setBulk={setBulk} clearBulk={clearBulk} />
+      {product.product_type !== 'digital' && product.product_type !== 'service' && (
+        <SpecificationsBlock
+          product={product}
+          productId={productId} pq={pq}
+          chain={chain}
+          shownLayers={shownLayers}
+          reloadProduct={reloadProduct}
+          registerUndo={registerUndo}
+          bulk={bulk} setBulk={setBulk} clearBulk={clearBulk} />
+      )}
 
-      <SeoBlock product={product} pq={pq} setProduct={setProduct} showToast={showToast} registerUndo={registerUndo} />
+      {product.product_type !== 'service' && (
+        <CustomFieldsBlock product={product} productId={productId} pq={pq}
+          setProduct={setProduct} showToast={showToast} registerUndo={registerUndo}
+          bulk={bulk} setBulk={setBulk} clearBulk={clearBulk} />
+      )}
+
+      {product.product_type !== 'service' && (
+        <SeoBlock product={product} pq={pq} setProduct={setProduct} showToast={showToast} registerUndo={registerUndo} />
+      )}
 
       {toast && createPortal(
         <div className="auth-toast">{toast}</div>,
@@ -293,9 +309,7 @@ export default function ProductOverview() {
   );
 }
 
-// Figma-style floating toolbar for multi-selection. Appears when any block
-// has at least one selected row/card; hidden otherwise. Click "Delete" to
-// fire the active block's bulk-delete action (one Undo entry covers all).
+// Figma-style floating bulk-select toolbar.
 function BulkBar({ bulk, clearBulk }) {
   const label = bulkScopeLabel(bulk.scope, bulk.ids.length);
   return (
@@ -329,11 +343,19 @@ function Shell({ children }) {
   return <div className="prod-page po-page">{children}</div>;
 }
 
+const PRODUCT_TYPE_OPTIONS = [
+  { value: 'physical', label: 'Physical' },
+  { value: 'digital',  label: 'Digital'  },
+  { value: 'service',  label: 'Service'  },
+  { value: 'event',    label: 'Event'    },
+];
+
 function GeneralBlock({ product, pq, setProduct, setProductContext, productHash, showToast, registerUndo }) {
   const [title,    setTitle]    = useState(product.title || '');
   const [subtitle, setSubtitle] = useState(product.subtitle || '');
   const [desc,     setDesc]     = useState(product.description || '');
   const [catId,    setCatId]    = useState(product.category_id ?? '');
+  const [ptype,    setPtype]    = useState(product.product_type || 'physical');
   const [categories, setCategories] = useState([]);
 
   useEffect(() => {
@@ -381,7 +403,14 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
     value: catId, setValue: setCatId, serverValue: product.category_id ?? '',
     save: (v) => patch({ category_id: v === '' ? null : Number(v) }),
     registerUndo, label: 'Category',
-    silent: false,  // category change is a discrete click — show toast
+    silent: false,
+    debounceMs: 50,
+  });
+  useUndoableSave({
+    value: ptype, setValue: setPtype, serverValue: product.product_type || 'physical',
+    save: (v) => patch({ product_type: v }),
+    registerUndo, label: 'Type',
+    silent: false,
     debounceMs: 50,
   });
 
@@ -405,11 +434,16 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
             onChange={e => setDesc(e.target.value)}
             placeholder="Full product description, materials, features…" />
         </Field>
-        <Field label="Category">
-          <CpmCategorySelect
-            value={catId == null ? '' : String(catId)}
-            categories={categories}
-            onChange={setCatId} />
+        {ptype !== 'service' && (
+          <Field label="Category">
+            <CpmCategorySelect
+              value={catId == null ? '' : String(catId)}
+              categories={categories}
+              onChange={setCatId} />
+          </Field>
+        )}
+        <Field label="Type">
+          <CfCombobox value={ptype} options={PRODUCT_TYPE_OPTIONS} onChange={setPtype} size="md" />
         </Field>
       </div>
     </section>
@@ -432,10 +466,12 @@ function Field({ label, required, error, children }) {
 
 // ─── Custom Fields ────────────────────────────────────────────────
 const CF_TYPE_OPTIONS = [
-  { value: 'string',  label: 'string'  },
-  { value: 'number',  label: 'number'  },
-  { value: 'boolean', label: 'boolean' },
-  { value: 'json',    label: 'json'    },
+  { value: 'string',   label: 'string'   },
+  { value: 'number',   label: 'number'   },
+  { value: 'boolean',  label: 'boolean'  },
+  { value: 'datetime', label: 'datetime' },
+  { value: 'file',     label: 'file'     },
+  { value: 'json',     label: 'json'     },
 ];
 const CF_GLOBAL_OPTIONS = [
   { value: 'no',  label: 'No'  },
@@ -446,7 +482,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
   const fields = product.custom_fields || [];
   const realKeys = fields.filter(f => !f.is_placeholder).map(f => f.field_key);
 
-  // POST — create new row (also used when filling in a placeholder for the first time).
+  // POST — create new row (also turns a placeholder into a real one).
   const create = async (body) => {
     const res = await fetch(`${API_BASE}/api/products/${productId}/custom-fields${pq}`, {
       method: 'POST', credentials: 'include',
@@ -511,8 +547,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
           body: JSON.stringify({ type: 'custom_fields', rows: removedRows }),
         });
         if (!r.ok) { showToast('Restore failed'); return; }
-        // Re-add the row on the current product visually; other products
-        // will see their rows again on their next page load.
+        // Other products' rows reappear on their own next reload.
         const ownRow = removedRows.find(rr => rr.product_id === productId);
         if (ownRow) {
           setProduct(p => ({
@@ -531,8 +566,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
   const [ctxMenu, setCtxMenu] = useState(null);
 
-  // Reorder only persists for real (non-placeholder) rows; placeholders are
-  // sorted to the end on each render anyway since they aren't owned here.
+  // Placeholders aren't owned here, so reorder only persists real rows.
   const persistOrder = async (newKeys) => {
     await fetch(`${API_BASE}/api/products/${productId}/custom-fields/reorder${pq}`, {
       method: 'PUT', credentials: 'include',
@@ -550,7 +584,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
     const oldIdx = oldOrder.indexOf(active.id);
     const newIdx = oldOrder.indexOf(over.id);
     const newOrder = arrayMove(oldOrder, oldIdx, newIdx);
-    // Optimistically reorder local state so the UI doesn't snap back.
+    // Optimistic reorder so UI doesn't snap back.
     setProduct(p => {
       const placeholders = (p.custom_fields || []).filter(f => f.is_placeholder);
       const byKey = Object.fromEntries(realFields.map(f => [f.field_key, f]));
@@ -581,7 +615,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
 
   const bulkDelete = useCallback(async (keys) => {
     if (!keys.length) return;
-    // Capture snapshots from server response (so cascade rows are included for global keys).
+    // Server's removed[] includes cascade rows for global keys.
     const allRemoved = [];
     for (const k of keys) {
       const r = await fetch(`${API_BASE}/api/products/${productId}/custom-fields/${encodeURIComponent(k)}${pq}`, {
@@ -667,7 +701,8 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
                   onContextMenu={(e) => openCtxMenu(e, f.field_key)}
                   bulkSelected={bulkIds.includes(f.field_key)}
                   bulkActive={inScope}
-                  onBulkToggle={() => toggleInBulk(f.field_key)} />
+                  onBulkToggle={() => toggleInBulk(f.field_key)}
+                  productId={productId} pq={pq} />
               ))}
             </SortableContext>
           </DndContext>
@@ -675,9 +710,11 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
             <CfRow key={f.field_key} field={f}
               onCreate={create} onUpdate={update} registerUndo={registerUndo}
               onDelete={() => remove(f.field_key)}
-              bulkActive={inScope} />
+              bulkActive={inScope}
+              productId={productId} pq={pq} />
           ))}
-          <CfNewRow existingKeys={realKeys} onSave={create} bulkActive={inScope} />
+          <CfNewRow existingKeys={realKeys} onSave={create} bulkActive={inScope}
+            productId={productId} pq={pq} />
         </div>
       </div>
 
@@ -710,7 +747,7 @@ function SortableCfRow(props) {
 
 function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
                   dragRef, dragStyle, dragHandleProps, onRowClick, onContextMenu,
-                  bulkSelected, bulkActive, onBulkToggle }) {
+                  bulkSelected, bulkActive, onBulkToggle, productId, pq }) {
   const isPlaceholder = !!field.is_placeholder;
   const originalKeyRef = useRef(field.field_key);
   const [key,    setKey]    = useState(field.field_key);
@@ -718,10 +755,9 @@ function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
   const [type,   setType]   = useState(field.field_type || 'string');
   const [global, setGlobal] = useState(!!field.is_global);
   const skip = useRef(true);
-  // True after this row exists server-side. Placeholders flip on first save.
+  // True after this row exists server-side; placeholders flip on first save.
   const persisted = useRef(!isPlaceholder);
-  // Snapshot of last-confirmed server state, used to register an undo entry
-  // that rolls back any field-level edit (key/value/type/global) on this row.
+  // Last-confirmed server state for the row's Undo.
   const prevServer = useRef({
     field_key:   field.field_key,
     field_value: field.field_value ?? '',
@@ -785,7 +821,7 @@ function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
   };
 
   const keyEmpty = !key.trim();
-  // Placeholders aren't sortable (no real row server-side); skip drag listeners.
+  // Placeholders skip drag listeners (no real row server-side).
   const grabProps = isPlaceholder ? {} : (dragHandleProps || {});
   const showCheckbox = bulkActive && !isPlaceholder;
 
@@ -807,7 +843,7 @@ function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
       <input className={`crm-input cfg-cell${keyEmpty ? ' cfg-cell--invalid' : ''}`} value={key} readOnly={isPlaceholder}
         onChange={e => setKey(e.target.value)} placeholder="field_key *"
         title={keyEmpty ? 'Field key is required' : undefined} />
-      <CfValueInput type={type} value={value} onChange={setValue} />
+      <CfValueInput type={type} value={value} onChange={setValue} productId={productId} pq={pq} />
       <CfCombobox value={type} options={CF_TYPE_OPTIONS} onChange={changeType} />
       <CfCombobox value={global ? 'yes' : 'no'} options={CF_GLOBAL_OPTIONS}
         onChange={(v) => setGlobal(v === 'yes')} />
@@ -821,16 +857,17 @@ function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
   );
 }
 
-// Normalize a value when the user switches type so the displayed editor never
-// drifts from the stored value (boolean shouldn't keep "asd"; number shouldn't keep letters).
+// Coerce stored value to match the new type.
 function normalizeForType(value, type) {
   const v = value ?? '';
-  if (type === 'boolean') return v === 'true' || v === 'false' ? v : 'false';
-  if (type === 'number')  return /^-?\d*\.?\d*$/.test(v) ? v : '';
+  if (type === 'boolean')  return v === 'true' || v === 'false' ? v : 'false';
+  if (type === 'number')   return /^-?\d*\.?\d*$/.test(v) ? v : '';
+  if (type === 'datetime') return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? v : '';
+  if (type === 'file')     return /^https?:\/\//.test(v) ? v : '';
   return v;
 }
 
-function CfNewRow({ existingKeys, onSave, bulkActive }) {
+function CfNewRow({ existingKeys, onSave, bulkActive, productId, pq }) {
   const [key, setKey] = useState('');
   const [val, setVal] = useState('');
   const [type, setType] = useState('string');
@@ -861,7 +898,7 @@ function CfNewRow({ existingKeys, onSave, bulkActive }) {
       {bulkActive && <span className="cfg-col cfg-col-bulk" />}
       <input className="crm-input cfg-cell" value={key}
         onChange={e => setKey(e.target.value)} placeholder="field_key" />
-      <CfValueInput type={type} value={val} onChange={setVal} />
+      <CfValueInput type={type} value={val} onChange={setVal} productId={productId} pq={pq} />
       <CfCombobox value={type} options={CF_TYPE_OPTIONS} onChange={changeType} />
       <CfCombobox value={global ? 'yes' : 'no'} options={CF_GLOBAL_OPTIONS}
         onChange={(v) => setGlobal(v === 'yes')} />
@@ -870,9 +907,8 @@ function CfNewRow({ existingKeys, onSave, bulkActive }) {
   );
 }
 
-// Type-aware value editor: number filters non-numeric, boolean is a Yes/No combobox,
-// json gets a textarea with auto-close brackets, tab indent, and live validation.
-function CfValueInput({ type, value, onChange }) {
+// Type-aware value editor.
+function CfValueInput({ type, value, onChange, productId, pq }) {
   if (type === 'boolean') {
     const v = value === 'true' ? 'true' : value === 'false' ? 'false' : '';
     return (
@@ -896,6 +932,15 @@ function CfValueInput({ type, value, onChange }) {
         placeholder="0" />
     );
   }
+  if (type === 'datetime') {
+    return (
+      <input className="crm-input cfg-cell" type="datetime-local" value={value}
+        onChange={e => onChange(e.target.value)} />
+    );
+  }
+  if (type === 'file') {
+    return <CfFileInput value={value} onChange={onChange} productId={productId} pq={pq} />;
+  }
   if (type === 'json') {
     return <CfJsonInput value={value} onChange={onChange} />;
   }
@@ -905,11 +950,50 @@ function CfValueInput({ type, value, onChange }) {
   );
 }
 
-// CodeMirror 6 JSON editor: syntax highlighting, auto-bracket close, smart
-// indent. Wraps the inline editor with a tiny toolbar that exposes Format
-// (prettify via JSON.stringify) and Expand (open in a full-screen modal).
-// The inline + modal share the same value/onChange so debounced auto-save
-// keeps firing regardless of which UI the user typed in.
+// File-upload value editor: drop/click → POST /api/upload/file → store URL as field_value.
+function CfFileInput({ value, onChange, productId, pq }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const fileName = value ? decodeURIComponent(value.split('/').pop().replace(/^[a-f0-9]{24}_/, '')) : '';
+
+  const upload = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const res = await fetch(`${API_BASE}/api/upload/file${pq}`, { method: 'POST', credentials: 'include', body: fd });
+      const data = await res.json();
+      if (res.ok && data.url) onChange(data.url);
+    } catch {}
+    setBusy(false);
+  };
+
+  return (
+    <div className="cf-file-input">
+      <input ref={inputRef} type="file" className="hidden-input"
+        onChange={e => upload(e.target.files?.[0])} />
+      {value ? (
+        <>
+          <a href={value} target="_blank" rel="noreferrer" className="cf-file-link"
+            title={value} onClick={e => e.stopPropagation()}>
+            {fileName || 'Download'}
+          </a>
+          <button type="button" className="cf-file-replace"
+            onClick={() => inputRef.current?.click()} disabled={busy}>
+            {busy ? 'Uploading…' : 'Replace'}
+          </button>
+        </>
+      ) : (
+        <button type="button" className="cf-file-empty"
+          onClick={() => inputRef.current?.click()} disabled={busy}>
+          {busy ? 'Uploading…' : 'Upload file'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// CodeMirror 6 JSON editor with Format + Expand-to-modal toolbar.
 const CF_JSON_EXTENSIONS = [cmJson()];
 
 function CfJsonInput({ value, onChange }) {
@@ -925,7 +1009,7 @@ function CfJsonInput({ value, onChange }) {
       const formatted = JSON.stringify(JSON.parse(value), null, 2);
       onChange(formatted);
     } catch {
-      // Invalid JSON — silently no-op; the red border already flags it.
+      // Invalid JSON — no-op (red border already flags it).
     }
   }, [value, onChange]);
 
@@ -974,8 +1058,7 @@ function CfJsonInput({ value, onChange }) {
 }
 
 function CfJsonModal({ value, onChange, onClose }) {
-  // Local state so user can review before discarding via Cancel; Save commits
-  // back through the same onChange the inline editor uses.
+  // Local draft so Cancel discards; Save commits via parent onChange.
   const [draft, setDraft] = useState(value);
   const valid = useMemo(() => {
     if (!draft || !draft.trim()) return true;
@@ -1040,9 +1123,9 @@ function CfJsonModal({ value, onChange, onClose }) {
   );
 }
 
-// In-row Category-style combobox. Mirrors LayerSelect (SpecificationsBlock):
-// pill trigger + portal panel with sliding DynamicBlock indicator.
-function CfCombobox({ value, options, onChange }) {
+// In-row pill-trigger + portal panel combobox (Category-style).
+// `size`: 'sm' (default, compact for cfg-row cells) | 'md' (full-width like CpmCategorySelect).
+function CfCombobox({ value, options, onChange, size = 'sm' }) {
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
@@ -1077,7 +1160,7 @@ function CfCombobox({ value, options, onChange }) {
   return (
     <>
       <button ref={btnRef} type="button"
-        className={`cpm-cat-btn cf-cb-btn${open ? ' cpm-cat-btn--open' : ''}`}
+        className={`cpm-cat-btn${size === 'sm' ? ' cf-cb-btn' : ''}${open ? ' cpm-cat-btn--open' : ''}`}
         onClick={() => setOpen(v => !v)}>
         <span>{selected?.label ?? value}</span>
         <CaretDown weight="bold" className={`cpm-cat-caret${open ? ' cpm-cat-caret--up' : ''}`} />
@@ -1104,6 +1187,524 @@ function CfCombobox({ value, options, onChange }) {
         document.body
       )}
     </>
+  );
+}
+
+
+// ─── Service details (type=service) ──────────────────────────────
+// Inline editor that hits PUT /api/booking/services/{id} so service products
+// can be fully managed from the Product page (no need to jump to Bookings).
+function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
+  const [svc, setSvc] = useState(null);     // linked booking_services row
+  const [staff, setStaff] = useState([]);   // all staff in project (for picker)
+  const fileRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  // Fetch the linked booking_service + project staff list.
+  useEffect(() => {
+    fetch(`${API_BASE}/api/booking/services${pq}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(list => setSvc((list || []).find(s => s.product_id === product.id) || null))
+      .catch(() => {});
+    fetch(`${API_BASE}/api/booking/staff${pq}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setStaff(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, [product.id, pq]);
+
+  // Local-state mirror so each field is responsive to typing.
+  const [duration, setDuration] = useState('30');
+  const [price,    setPrice]    = useState('0');
+  const [capacity, setCapacity] = useState('1');
+  const [reqStaff, setReqStaff] = useState(false);
+  const [active,   setActive]   = useState(true);
+  const [staffIds, setStaffIds] = useState([]);
+  const [imageUrl, setImageUrl] = useState('');
+
+  useEffect(() => {
+    if (!svc) return;
+    setDuration(String(svc.duration_minutes || 30));
+    setPrice(String(svc.price ?? 0));
+    setCapacity(String(svc.capacity || 1));
+    setReqStaff(!!svc.requires_staff);
+    setActive(svc.is_active !== false);
+    setStaffIds(svc.staff_ids || []);
+    setImageUrl(svc.image_url || '');
+  }, [svc?.id]);
+
+  // Single PUT helper (booking_services.PUT requires the full row).
+  const save = useCallback(async (overrides = {}) => {
+    if (!svc) return false;
+    const body = {
+      name: product.title || svc.name || '',
+      description: product.description || '',
+      duration_minutes: parseInt(duration, 10) || 30,
+      price: parseFloat(price) || 0,
+      image_url: imageUrl || null,
+      is_active: active,
+      requires_staff: reqStaff,
+      capacity: parseInt(capacity, 10) || 1,
+      staff_ids: staffIds,
+      ...overrides,
+    };
+    const res = await fetch(`${API_BASE}/api/booking/services/${svc.id}${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      setSvc(s => s ? { ...s, ...body } : s);
+      showToast?.('Service saved');
+    } else {
+      showToast?.('Save failed');
+    }
+    return res.ok;
+  }, [svc, product, duration, price, capacity, active, reqStaff, staffIds, imageUrl, pq, showToast]);
+
+  // Debounced save when local fields change (skip first render after svc loads).
+  const skip = useRef(true);
+  useEffect(() => {
+    if (!svc) return;
+    if (skip.current) { skip.current = false; return; }
+    const t = setTimeout(() => save(), 500);
+    return () => clearTimeout(t);
+  }, [duration, price, capacity, active, reqStaff, staffIds, imageUrl]); // eslint-disable-line
+
+  const upload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const res = await fetch(`${API_BASE}/api/upload/image${pq}`, {
+        method: 'POST', credentials: 'include', body: fd,
+      });
+      const data = await res.json();
+      if (res.ok && data.url) setImageUrl(data.url);
+      else showToast?.('Upload failed');
+    } finally { setUploading(false); }
+  };
+
+  const toggleStaff = (id) => {
+    setStaffIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  if (!svc) return (
+    <section className="po-block po-service-link">
+      <div className="po-service-link-icon">⏱</div>
+      <div className="po-service-link-body">
+        <h2 className="po-block-title">Service details</h2>
+        <p className="po-block-hint">Linking this product to a booking service…</p>
+      </div>
+    </section>
+  );
+
+  return (
+    <section className="po-block">
+      <h2 className="po-block-title">Service details</h2>
+      <p className="po-block-hint">
+        How customers book this service — duration, price, image, staff. Editing here mirrors Bookings → Services.
+      </p>
+
+      <div className="po-form">
+        <div className="po-svc-grid">
+          <Field label="Duration (minutes)">
+            <input className="crm-input po-input" type="number" min="5" max="1440"
+              value={duration} onChange={e => setDuration(e.target.value)} />
+          </Field>
+          <Field label="Price">
+            <input className="crm-input po-input" type="number" min="0" step="0.01"
+              value={price} onChange={e => setPrice(e.target.value)} />
+          </Field>
+        </div>
+
+        <div className="po-field" style={{ marginTop: 12 }}>
+          <label className="po-field-label1">Image (optional)</label>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
+            onChange={e => upload(e.target.files?.[0])} />
+          {imageUrl ? (
+            <div className="bk-svc-img-preview">
+              <img src={imageUrl} alt="" />
+              <div className="bk-svc-img-actions">
+                <button type="button" className="crm-submit-btn auth-btn-secondary"
+                  onClick={() => fileRef.current?.click()} disabled={uploading}>
+                  {uploading ? 'Uploading…' : 'Replace'}
+                </button>
+                <button type="button" className="auth-btn-danger"
+                  onClick={() => setImageUrl('')}>Remove</button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" className="bk-svc-img-drop"
+              onClick={() => fileRef.current?.click()} disabled={uploading}>
+              {uploading ? 'Uploading…' : 'Click to upload an image'}
+            </button>
+          )}
+        </div>
+
+        <div className="auth-sep" />
+
+        <div className="auth-toggle-row">
+          <div>
+            <span className="auth-toggle-label">Visible to customers</span>
+            <p className="auth-field-hint">Hidden services don't appear in the storefront.</p>
+          </div>
+          <label className="auth-toggle">
+            <input type="checkbox" checked={active}
+              onChange={e => setActive(e.target.checked)} />
+            <span className="auth-toggle-track" />
+          </label>
+        </div>
+
+        <div className="auth-toggle-row">
+          <div>
+            <span className="auth-toggle-label">Requires staff selection</span>
+            <p className="auth-field-hint">
+              When ON, customers must pick a specific staff member (each slot = one person at a time).<br />
+              When OFF, slots use the <b>capacity</b> below — useful for group classes / shared resources.
+            </p>
+          </div>
+          <label className="auth-toggle">
+            <input type="checkbox" checked={reqStaff}
+              onChange={e => setReqStaff(e.target.checked)} />
+            <span className="auth-toggle-track" />
+          </label>
+        </div>
+
+        {!reqStaff && (
+          <div className="po-field" style={{ marginTop: 12 }}>
+            <label className="po-field-label1">Capacity per slot</label>
+            <p className="po-block-hint" style={{ marginTop: 0, marginBottom: 8 }}>
+              How many simultaneous bookings fit into one slot (1 = exclusive).
+            </p>
+            <input className="crm-input po-input" type="number" min="1"
+              value={capacity} onChange={e => setCapacity(e.target.value)} />
+          </div>
+        )}
+      </div>
+
+      {staff.length > 0 && (
+        <div className="po-svc-staff">
+          <label className="po-field-label1">Staff that can deliver this service</label>
+          <p className="po-block-hint" style={{ marginTop: 0, marginBottom: 8 }}>
+            {reqStaff
+              ? 'Customers will pick one of these.'
+              : 'Optional reference list (informational when capacity-based).'}
+          </p>
+          <div className="po-svc-staff-row">
+            {staff.map(s => {
+              const on = staffIds.includes(s.id);
+              return (
+                <button key={s.id} type="button"
+                  className={`po-svc-staff-chip${on ? ' po-svc-staff-chip--on' : ''}`}
+                  onClick={() => toggleStaff(s.id)}>
+                  {s.avatar_url
+                    ? <img src={s.avatar_url} alt="" className="po-svc-staff-avatar" />
+                    : <span className="po-svc-staff-avatar po-svc-staff-avatar--empty">
+                        {(s.name || '?')[0]}
+                      </span>}
+                  <span>{s.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── Event details (type=event) ──────────────────────────────────
+// Stores values in product_custom_fields under reserved keys so they're
+// part of the same data layer as everything else; the dedicated UI just
+// surfaces them as first-class form fields with a date-picker etc.
+const EVENT_RESERVED_KEYS = new Set(['event_start_at', 'event_end_at', 'venue', 'venue_address']);
+
+function EventDetailsBlock({ product, productId, pq, setProduct, showToast }) {
+  const fields = product.custom_fields || [];
+  const findVal = (key) => (fields.find(f => f.field_key === key && !f.is_placeholder)?.field_value) || '';
+
+  const [start, setStart] = useState(() => findVal('event_start_at'));
+  const [end,   setEnd]   = useState(() => findVal('event_end_at'));
+  const [venue,   setVenue]   = useState(() => findVal('venue'));
+  const [address, setAddress] = useState(() => findVal('venue_address'));
+  const skip = useRef(true);
+
+  // Re-sync when the product reloads (Undo, etc.).
+  useEffect(() => {
+    skip.current = true;
+    setStart(findVal('event_start_at'));
+    setEnd(findVal('event_end_at'));
+    setVenue(findVal('venue'));
+    setAddress(findVal('venue_address'));
+  }, [product.id, JSON.stringify(fields)]); // eslint-disable-line
+
+  const upsert = useCallback(async (key, value, fieldType) => {
+    const res = await fetch(`${API_BASE}/api/products/${productId}/custom-fields${pq}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field_key: key, field_value: value, field_type: fieldType, is_global: false }),
+    });
+    if (!res.ok) { showToast?.('Save failed'); return false; }
+    setProduct(p => {
+      const next = [...(p.custom_fields || [])];
+      const idx = next.findIndex(f => f.field_key === key && !f.is_placeholder);
+      const row = { field_key: key, field_value: value, field_type: fieldType, is_global: false, is_placeholder: false };
+      if (idx >= 0) next[idx] = { ...next[idx], ...row };
+      else next.push(row);
+      return { ...p, custom_fields: next };
+    });
+    return true;
+  }, [productId, pq, setProduct, showToast]);
+
+  // Debounced save per field.
+  useEffect(() => { if (skip.current) return;
+    const t = setTimeout(() => upsert('event_start_at', start, 'datetime'), 500);
+    return () => clearTimeout(t);
+  }, [start]); // eslint-disable-line
+  useEffect(() => { if (skip.current) return;
+    const t = setTimeout(() => upsert('event_end_at', end, 'datetime'), 500);
+    return () => clearTimeout(t);
+  }, [end]); // eslint-disable-line
+  useEffect(() => { if (skip.current) return;
+    const t = setTimeout(() => upsert('venue', venue, 'string'), 500);
+    return () => clearTimeout(t);
+  }, [venue]); // eslint-disable-line
+  useEffect(() => { if (skip.current) return;
+    const t = setTimeout(() => upsert('venue_address', address, 'string'), 500);
+    return () => clearTimeout(t);
+  }, [address]); // eslint-disable-line
+  useEffect(() => { skip.current = false; }, []);
+
+  return (
+    <section className="po-block">
+      <h2 className="po-block-title">Event details</h2>
+      <p className="po-block-hint">
+        When and where the event happens. Used by the storefront to render the event header
+        and by the QR ticket sent in the order confirmation email.
+      </p>
+      <div className="po-form po-svc-grid">
+        <Field label="Start" required={!start.trim()}>
+          <input className="crm-input po-input" type="datetime-local" value={start}
+            onChange={e => setStart(e.target.value)} />
+        </Field>
+        <Field label="End">
+          <input className="crm-input po-input" type="datetime-local" value={end}
+            onChange={e => setEnd(e.target.value)} />
+        </Field>
+        <Field label="Venue">
+          <input className="crm-input po-input" value={venue} maxLength={200}
+            onChange={e => setVenue(e.target.value)} placeholder="Almaty Arena" />
+        </Field>
+        <Field label="Address">
+          <input className="crm-input po-input" value={address} maxLength={300}
+            onChange={e => setAddress(e.target.value)} placeholder="Khusainova 1" />
+        </Field>
+      </div>
+    </section>
+  );
+}
+
+// ─── Digital files (type=digital) ────────────────────────────────
+// Direct upload UI for digital products. Each file becomes a Custom Field of
+// type=file with `field_key = file_<n>`. Customers see download links in
+// their order confirmation email (via the digital_html block in External).
+function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
+  const inputRef = useRef(null);
+  const fileFields = (product.custom_fields || [])
+    .filter(f => !f.is_placeholder && f.field_type === 'file' && f.field_value);
+
+  const upload = async (file) => {
+    if (!file) return;
+    const fd = new FormData(); fd.append('file', file);
+    const upRes = await fetch(`${API_BASE}/api/upload/file${pq}`, {
+      method: 'POST', credentials: 'include', body: fd,
+    });
+    const upData = await upRes.json();
+    if (!upRes.ok || !upData.url) { showToast?.('Upload failed'); return; }
+    // Pick a unique file_<n> key.
+    const taken = new Set(fileFields.map(f => f.field_key));
+    let n = 1;
+    while (taken.has(`file_${n}`)) n++;
+    const key = `file_${n}`;
+    const cfRes = await fetch(`${API_BASE}/api/products/${productId}/custom-fields${pq}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field_key: key, field_value: upData.url, field_type: 'file', is_global: false }),
+    });
+    if (!cfRes.ok) { showToast?.('Save failed'); return; }
+    setProduct(p => ({ ...p,
+      custom_fields: [...(p.custom_fields || []),
+        { field_key: key, field_value: upData.url, field_type: 'file', is_global: false, is_placeholder: false }],
+    }));
+    showToast?.('File added');
+  };
+
+  const remove = async (key) => {
+    if (!confirm(`Remove "${key}"?`)) return;
+    const res = await fetch(`${API_BASE}/api/products/${productId}/custom-fields/${encodeURIComponent(key)}${pq}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    if (!res.ok) return;
+    setProduct(p => ({ ...p, custom_fields: (p.custom_fields || []).filter(f => f.field_key !== key) }));
+  };
+
+  return (
+    <section className="po-block">
+      <h2 className="po-block-title">Files</h2>
+      <p className="po-block-hint">
+        Files customers receive after purchase. URLs are signed and emailed automatically when the order is paid.
+      </p>
+      <div className="po-files-list">
+        {fileFields.length === 0 && (
+          <p className="po-files-empty">No files yet. Add the digital product (PDF, image, archive…) below.</p>
+        )}
+        {fileFields.map(f => {
+          const fname = decodeURIComponent(f.field_value.split('/').pop().replace(/^[a-f0-9]{24}_/, ''));
+          return (
+            <div key={f.field_key} className="po-files-row">
+              <span className="po-files-icon">📄</span>
+              <a className="po-files-link" href={f.field_value} target="_blank" rel="noreferrer" title={f.field_value}>
+                {fname || f.field_key}
+              </a>
+              <button type="button" className="po-files-remove" onClick={() => remove(f.field_key)}>
+                <Trash />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <input ref={inputRef} type="file" className="hidden-input"
+        onChange={e => { upload(e.target.files?.[0]); e.target.value = ''; }} />
+      <button type="button" className="po-add-pill po-files-add"
+        onClick={() => inputRef.current?.click()}>
+        <Plus weight="bold" /> Upload file
+      </button>
+    </section>
+  );
+}
+
+// ─── Modifiers (type=physical) ────────────────────────────────────
+function ModifiersBlock({ product, productId, pq, reloadProduct, registerUndo }) {
+  const modifiers = product.modifiers || [];
+
+  const create = async (body) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifiers${pq}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) reloadProduct?.();
+    return r.ok;
+  };
+
+  const update = async (id, body) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifiers/${id}${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) reloadProduct?.();
+    return r.ok;
+  };
+
+  const remove = async (id) => {
+    if (!confirm('Delete this modifier?')) return;
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifiers/${id}${pq}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    if (r.ok) reloadProduct?.();
+  };
+
+  return (
+    <section className="po-block">
+      <h2 className="po-block-title">Modifiers</h2>
+      <p className="po-block-hint">
+        Add-ons the customer can pick alongside the product (e.g. "Extra cheese +200 ₸", "No onion 0 ₸").
+        Multi-select on the storefront — checked items are added to the price.
+      </p>
+      <div className="cfg-block-body">
+        <div className="cfg-list">
+          <div className="cfg-list-head spec-list-head">
+            <span className="cfg-col">Name</span>
+            <span className="cfg-col">Price delta</span>
+            <span className="cfg-col cfg-col-actions" />
+          </div>
+          {modifiers.map(m => (
+            <ModifierRow key={m.id} m={m} onUpdate={update}
+              onDelete={() => remove(m.id)} registerUndo={registerUndo} />
+          ))}
+          <ModifierNewRow onSave={create} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ModifierRow({ m, onUpdate, onDelete, registerUndo }) {
+  const [name,  setName]  = useState(m.name);
+  const [price, setPrice] = useState(String(m.price));
+  const skip = useRef(true);
+
+  useEffect(() => {
+    skip.current = true;
+    setName(m.name);
+    setPrice(String(m.price));
+  }, [m.id]);
+
+  useEffect(() => {
+    if (skip.current) { skip.current = false; return; }
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const t = setTimeout(async () => {
+      const before = { name: m.name, price: m.price };
+      const ok = await onUpdate(m.id, { name: trimmed, price: parseFloat(price) || 0 });
+      if (ok) registerUndo?.({
+        description: `Modifier "${m.name}" changed`,
+        silent: true,
+        undo: async () => { await onUpdate(m.id, before); },
+      });
+    }, 500);
+    return () => clearTimeout(t);
+  }, [name, price]); // eslint-disable-line
+
+  return (
+    <div className="cfg-row spec-row">
+      <input className="crm-input cfg-cell" value={name}
+        onChange={e => setName(e.target.value)} placeholder="Extra cheese" />
+      <input className="crm-input cfg-cell" type="number" step="0.01"
+        value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" />
+      <button type="button" className="cfg-col-actions cfg-delete-btn" onClick={onDelete} title="Delete">
+        <Trash />
+      </button>
+    </div>
+  );
+}
+
+function ModifierNewRow({ onSave }) {
+  const [name,  setName]  = useState('');
+  const [price, setPrice] = useState('');
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    const trimmed = name.trim();
+    if (!trimmed || busyRef.current) return;
+    const t = setTimeout(async () => {
+      busyRef.current = true;
+      const ok = await onSave({ name: trimmed, price: parseFloat(price) || 0 });
+      busyRef.current = false;
+      if (ok) { setName(''); setPrice(''); }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [name, price]); // eslint-disable-line
+
+  return (
+    <div className="cfg-row cfg-row--new spec-row">
+      <input className="crm-input cfg-cell" value={name}
+        onChange={e => setName(e.target.value)} placeholder="New modifier" />
+      <input className="crm-input cfg-cell" type="number" step="0.01"
+        value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" />
+      <span className="cfg-col-actions" />
+    </div>
   );
 }
 

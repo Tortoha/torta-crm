@@ -34,9 +34,7 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
   const specs = selectedNode?.specifications || [];
 
   const updateLocal = useCallback((id, patch) => {
-    // Server-side reload will refresh — but we keep a quick local mutation
-    // so debounced saves don't flicker. Just trigger a reload after timeout.
-    // Simpler: rely on reloadProduct after save.
+    // Reload-driven sync; placeholder kept for future local mutation.
     void id; void patch;
   }, []);
 
@@ -306,8 +304,7 @@ function SpecRow({ spec, productId, pq, onChange, onDelete, reloadProduct, regis
   );
 }
 
-// Custom layer dropdown — same visual language as CpmCategorySelect:
-// pill trigger + portal panel with sliding hover indicator.
+// Layer dropdown (Category-style: pill trigger + portal panel + sliding indicator).
 function LayerSelect({ layer, setLayer, shownLayers }) {
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);

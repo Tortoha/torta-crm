@@ -1,17 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from '@phosphor-icons/react';
+import { X, UploadSimple, Image as ImageIcon } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 
-// Modal for creating / editing a booking service.
-// Shape (PUT/POST): { name, description, duration_minutes, price, image_url,
-//                     is_active, requires_staff, capacity, staff_ids: [int] }
+// New-service modal. Creates a `products` row with type=service (which
+// auto-seeds a linked booking_service via backend), then PUTs the
+// service-specific fields. Only used for CREATE — editing existing services
+// jumps straight to /product/{hash} (see Booking.jsx → onEditService).
 function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved }) {
   const pq = `?project_id=${projectId}`;
   const isEdit = !!service;
+  const fileRef = useRef(null);
 
   const [form, setForm] = useState(() => ({
     name:             service?.name             ?? '',
+    subtitle:         service?.subtitle         ?? '',
     description:      service?.description      ?? '',
     duration_minutes: service?.duration_minutes ?? 30,
     price:            service?.price            ?? 0,
@@ -21,8 +24,9 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
     capacity:         service?.capacity         ?? 1,
     staff_ids:        service?.staff_ids        ?? [],
   }));
-  const [saving, setSaving] = useState(false);
-  const [err,    setErr]    = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [err,       setErr]       = useState('');
 
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
@@ -38,24 +42,70 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
       : [...f.staff_ids, id],
   }));
 
+  const upload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const res = await fetch(`${API_BASE}/api/upload/image${pq}`, {
+        method: 'POST', credentials: 'include', body: fd,
+      });
+      const data = await res.json();
+      if (res.ok && data.url) upd('image_url', data.url);
+      else setErr('Upload failed');
+    } finally { setUploading(false); }
+  };
+
+  // CREATE: products → backend auto-creates booking_service → PUT booking_service with details.
+  // EDIT (legacy, for services without product_id): plain PUT /booking/services.
   const save = async () => {
     if (!form.name.trim()) { setErr('Name is required'); return; }
     if (form.duration_minutes < 5) { setErr('Duration must be ≥ 5 min'); return; }
     setSaving(true); setErr('');
     try {
-      const url = isEdit
-        ? `${API_BASE}/api/booking/services/${service.id}${pq}`
-        : `${API_BASE}/api/booking/services${pq}`;
-      const res = await fetch(url, {
-        method: isEdit ? 'PUT' : 'POST', credentials: 'include',
+      const payload = {
+        ...form,
+        price: parseFloat(form.price) || 0,
+        duration_minutes: parseInt(form.duration_minutes, 10) || 30,
+        capacity: parseInt(form.capacity, 10) || 1,
+        image_url: form.image_url || null,
+      };
+
+      if (!isEdit) {
+        // 1) Create the product row (backend seeds booking_services with defaults).
+        const pRes = await fetch(`${API_BASE}/api/products${pq}`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title:        form.name.trim(),
+            subtitle:     form.subtitle?.trim() || null,
+            description:  form.description?.trim() || null,
+            product_type: 'service',
+          }),
+        });
+        const pData = await pRes.json();
+        if (!pRes.ok) { setErr(pData.detail || 'Error creating service'); return; }
+
+        // 2) Find the booking_service the backend just created (one per product_id).
+        const listRes = await fetch(`${API_BASE}/api/booking/services${pq}`, { credentials: 'include' });
+        const list = listRes.ok ? await listRes.json() : [];
+        const linked = (list || []).find(s => s.product_id === pData.id);
+        if (linked) {
+          await fetch(`${API_BASE}/api/booking/services/${linked.id}${pq}`, {
+            method: 'PUT', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, name: form.name.trim() }),
+          });
+        }
+        onSaved();
+        return;
+      }
+
+      // EDIT (legacy): existing booking_service without a product link.
+      const res = await fetch(`${API_BASE}/api/booking/services/${service.id}${pq}`, {
+        method: 'PUT', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          price: parseFloat(form.price) || 0,
-          duration_minutes: parseInt(form.duration_minutes, 10) || 30,
-          capacity: parseInt(form.capacity, 10) || 1,
-          image_url: form.image_url || null,
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) onSaved();
       else { const j = await res.json(); setErr(j.detail || 'Error saving'); }
@@ -89,6 +139,13 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
           </div>
 
           <div className="auth-field">
+            <label className="auth-label">Subtitle (optional)</label>
+            <input className="crm-input" value={form.subtitle}
+              onChange={e => upd('subtitle', e.target.value)}
+              placeholder="Short tagline shown under the title" />
+          </div>
+
+          <div className="auth-field">
             <label className="auth-label">Description (optional)</label>
             <textarea className="crm-input bk-textarea" rows={3}
               value={form.description} onChange={e => upd('description', e.target.value)}
@@ -110,10 +167,34 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">Image URL (optional)</label>
-            <input className="crm-input" value={form.image_url}
-              onChange={e => upd('image_url', e.target.value)}
-              placeholder="https://…" />
+            <label className="auth-label">Image (optional)</label>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
+              onChange={e => upload(e.target.files?.[0])} />
+            {form.image_url ? (
+              <div className="bk-svc-img-preview">
+                <img src={form.image_url} alt="" />
+                <div className="bk-svc-img-actions">
+                  <button type="button" className="crm-submit-btn auth-btn-secondary"
+                    onClick={() => fileRef.current?.click()} disabled={uploading}>
+                    {uploading ? 'Uploading…' : 'Replace'}
+                  </button>
+                  <button type="button" className="auth-btn-danger"
+                    onClick={() => upd('image_url', '')}>Remove</button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" className="bk-svc-img-drop"
+                onClick={() => fileRef.current?.click()} disabled={uploading}>
+                {uploading ? (
+                  <span>Uploading…</span>
+                ) : (
+                  <>
+                    <UploadSimple weight="bold" size={20} />
+                    <span>Click to upload an image</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
           <div className="auth-sep" />
