@@ -28,9 +28,45 @@
 .prow.bk-svc-prow {
   grid-template-columns: 40px 2fr 1fr 1fr 1fr 1.4fr 32px;
 }
-/* Hidden services stay editable — keep pointer cursor even though faded. */
+/* Staff list — 5 cells: avatar | name | bio | services | menu. */
+.prod-list-head.bk-stf-list-head,
+.prow.bk-stf-prow {
+  grid-template-columns: 40px 1.4fr 2fr 1.4fr 32px;
+}
+
+/* Round avatar inside prow / pcard image-wrap (instead of square service image) */
+.bk-stf-avatar-wrap {
+  border-radius: 50% !important;
+  overflow: hidden;
+}
+.prow .bk-stf-avatar-wrap {
+  width: 40px; height: 40px;
+  background: var(--accent-tint);
+}
+.pcard-img-wrap.bk-stf-avatar-wrap {
+  width: 84px; height: 84px;
+  margin: 4px 0 4px 4px;
+}
+.bk-stf-avatar {
+  border-radius: 50% !important;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.prow-img-empty.bk-stf-avatar,
+.pcard-img-empty.bk-stf-avatar {
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hidden services / staff stay editable — keep pointer cursor even though faded. */
 .prow.bk-svc-prow.prow--paused,
-.prod-card.bk-svc-pcard.prod-card--paused { cursor: pointer; }
+.prow.bk-stf-prow.prow--paused,
+.prod-card.bk-svc-pcard.prod-card--paused,
+.prod-card.bk-stf-pcard.prod-card--paused { cursor: pointer; }
 
 /* Customer cell */
 .bk-prow-customer {
@@ -305,7 +341,6 @@
 .bk-staff-card-body .bk-svc-card-meta { justify-content: center; }
 .bk-svc-card-meta--clamp {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -316,21 +351,21 @@
 .bk-hours-block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  background: rgba(0, 0, 0, 0.02);
-  padding: 12px;
+  gap: 4px;
   border-radius: 12px;
 }
+
 .bk-hours-row {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 4px 10px;
 }
 .bk-hours-day {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 70px;
+  width: 64px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
@@ -338,14 +373,23 @@
   user-select: none;
 }
 .bk-hours-day input { cursor: pointer; }
-.bk-hours-time {
-  width: 110px;
-  padding: 6px 12px !important;
-  font-size: 13px;
-  background: #fff !important;
+/* TimePicker wrapper — when the parent day is unchecked, fade + block clicks. */
+.bk-hours-time-wrap {
+  flex: 1;
+  min-width: 0;
 }
-.bk-hours-time:disabled { opacity: 0.4; cursor: not-allowed; }
+.bk-hours-time-wrap[data-disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
 .bk-hours-dash { color: var(--muted); font-size: 16px; }
+/* Grouping: vertical list of services under "Services this person can deliver" */
+.bk-staff-services {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 12px;
+}
 
 /* Booking rules grid (2 columns) */
 .bk-rules-grid {
@@ -451,83 +495,194 @@
    ════════════════════════════════════════════ */
 
 .bk-cal {
-  background: var(--card);
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: var(--shadow-card);
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
 }
 .bk-cal-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  height: 44px;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 0 14px;
+  margin-bottom: 6px;
+  padding-right: 6px;
 }
-.bk-cal-range {
-  margin-left: 12px;
+
+/* Date-range button (was a static span) — opens the WeekPicker popup */
+.bk-cal-range-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  font-family: inherit;
   font-weight: 600;
   font-size: 14px;
   color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
+.bk-cal-range-btn:hover { background: rgba(0, 0, 0, 0.04); }
+.bk-cal-range-caret {
+  color: var(--muted);
+  transition: transform 0.2s ease;
+}
+.bk-cal-range-caret--up { transform: rotate(180deg); }
+
+/* Staff filter — Combobox with a leading Users icon, sits at the right */
+.bk-cal-staff-cb {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 140px;
+}
+.bk-cal-staff-cb-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.bk-cal-staff-cb .cpm-cat-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  flex: 1;
+}
+
+/* ── WeekPicker popup ─────────────────────── */
+.bk-week-pop {
+  position: fixed;
+  z-index: 4000;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
+  user-select: none;
+}
+.bk-week-grid {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Indicator pill — spans the whole 7-cell row that the cursor is over */
+.bk-week-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  transition: transform 0.45s var(--ease-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)),
+              height 0.45s var(--ease-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)),
+              opacity 0.18s ease;
+  z-index: 1;
+}
+.bk-week-row {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  cursor: pointer;
+}
+.bk-week-cell {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  border-radius: 999px;       /* matches indicator on edges */
+  transition: color 0.15s ease;
+}
+/* Active week (anchor by default, hovered week when hovering) — text accent.
+   Outside-month dates stay faded to keep the visual hierarchy. */
+.bk-week-row--current .bk-week-cell { color: var(--accent); }
+.bk-week-row--current .bk-week-cell.bk-week-cell--out { color: rgba(0, 113, 227, 0.35); }
+.bk-week-cell--out { color: rgba(0, 0, 0, 0.25); }
 
 .bk-cal-grid {
   display: grid;
   grid-template-columns: 60px 1fr;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  gap: 6px;
+  background: var(--bg);
+  border-radius: 16px;
+  border: none;
+  overflow: visible;
 }
 
-/* Hour gutter */
+/* Hour gutter — transparent flex container; each label is its own pill */
 .bk-cal-gutter {
-  background: rgba(0, 0, 0, 0.02);
-  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
   display: flex;
   flex-direction: column;
 }
 .bk-cal-gutter-spacer {
-  height: 44px;          /* matches .bk-cal-col-head */
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  height: 44px;          /* matches .bk-cal-col-head height */
+  margin-bottom: 6px;    /* matches col-head margin-bottom */
 }
 .bk-cal-hour {
-  font-size: 11px;
-  color: var(--muted);
-  padding: 4px 6px;
-  text-align: right;
-  border-bottom: 1px dashed rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: stretch;
   box-sizing: border-box;
 }
-.bk-cal-hour--close {
-  height: 0 !important;
-  border-bottom: none;
-  transform: translateY(-12px);
-  font-weight: 500;
-  color: var(--accent);
+/* Row-height variants — empty hour stays compact, busy hour expands so the
+   booking card has room. Mirrors ROW_MIN / ROW_BUSY constants in JSX. */
+.bk-cal-hour--empty { height: 48px; }
+.bk-cal-hour--busy  { height: 100px; }
+.bk-cal-hour-pill {
+  flex: 1;
+  background: var(--card);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;          /* vertically center the time text inside the pill */
+  justify-content: center;      /* horizontal-center too — feels balanced inside a thin gutter */
+  padding: 0 10px;
+  margin: 3px 0;                /* 3px+3px = 6px visual gap, matches col-body cells + col gap */
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1;
 }
 
-/* 7 columns, one per weekday */
+/* 7 columns, one per weekday — column itself is transparent; the day-head
+   and each hour cell are individual rounded pills sitting on the page bg. */
 .bk-cal-cols {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
 }
 .bk-cal-col {
-  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
   display: flex;
   flex-direction: column;
 }
-.bk-cal-col:last-child { border-right: none; }
-.bk-cal-col--today .bk-cal-col-head { background: var(--accent-tint); color: var(--accent); }
 
 .bk-cal-col-head {
   height: 44px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: var(--card);
+  border-radius: 10px;
+  margin-bottom: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   font-size: 13px;
-  background: rgba(0, 0, 0, 0.02);
   font-weight: 500;
   box-sizing: border-box;
+  transition: background 0.15s ease;
+}
+.bk-cal-col--today .bk-cal-col-head {
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 .bk-cal-col-day  { color: var(--muted); }
 .bk-cal-col-date {
@@ -538,54 +693,190 @@
 .bk-cal-col--today .bk-cal-col-day,
 .bk-cal-col--today .bk-cal-col-date { color: var(--accent); }
 
-/* Body of one day column — relative for absolute-positioned blocks */
+/* Body of one day column — relative for absolute-positioned cells + bookings */
 .bk-cal-col-body {
   position: relative;
   cursor: cell;
 }
-.bk-cal-hourline {
+
+.bk-cal-cell {
   position: absolute;
-  left: 0; right: 0;
-  height: 1px;
-  background: rgba(0, 0, 0, 0.05);
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border-radius: 10px;
+  cursor: pointer;
+  pointer-events: auto;            /* receive hover for tilt + click bubbles up */
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  transition: background 0.15s ease, box-shadow 0.4s ease;
+}
+.bk-cal-cell:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07);
+  z-index: 1;
+}
+/* Gloss overlay — same pattern as .org-card-gloss; opacity is animated by
+   InteractiveSection on hover. */
+.bk-cal-cell-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+/* Cell height variants — values pulled into CSS so DevTools shows the rule
+   (only `top` stays inline since it's a cumulative offset that depends on
+   which rows above are busy). 6px subtracted = 3px top + 3px bottom inset
+   for visual gap between rows. */
+.bk-cal-cell--empty { height: 42px; }   /* ROW_MIN  (48) − 6 */
+.bk-cal-cell--busy  { height: 94px; }   /* ROW_BUSY (100) − 6 */
+
+.bk-cal-col--today .bk-cal-cell {
+  background: var(--accent-tint);
 }
 
-/* Booking block (positioned absolutely inside its day column) */
-.bk-cal-block {
+/* Booking card — copy of .org-card visual: white pill, soft shadow on hover,
+   structured info layout. Status indicated by left accent stripe + tinted badge. */
+.bk-cal-card {
   position: absolute;
-  left: 2px;
-  right: 2px;
-  border-radius: 6px;
-  padding: 4px 6px;
-  font-size: 11px;
+  left: 4px;
+  right: 4px;
+  background: var(--card);
+  border-radius: 16px;
   cursor: pointer;
   overflow: hidden;
-  transition: filter 0.15s ease;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
 }
-.bk-cal-block:hover { filter: brightness(0.96); }
-.bk-cal-block-time {
+.bk-cal-card:hover {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
+  transform: translateY(-1px);
+}
+
+.bk-cal-card-stripe {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 3px;
+  background: var(--accent);
+  z-index: 1;
+}
+.bk-cal-card--pending   .bk-cal-card-stripe { background: rgba(0, 113, 227, 0.55); }
+.bk-cal-card--confirmed .bk-cal-card-stripe { background: var(--accent); }
+.bk-cal-card--completed .bk-cal-card-stripe { background: rgba(99, 99, 99, 0.55); }
+.bk-cal-card--cancelled .bk-cal-card-stripe { background: rgba(220, 53, 69, 0.55); }
+.bk-cal-card--no_show   .bk-cal-card-stripe { background: rgba(220, 53, 69, 0.85); }
+
+.bk-cal-card-inner {
+  position: relative;
+  padding: 10px 12px 10px 14px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bk-cal-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bk-cal-card-time {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bk-cal-card-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.bk-cal-card-badge--pending,
+.bk-cal-card-badge--confirmed { background: var(--accent-tint); color: var(--accent); }
+.bk-cal-card-badge--completed { background: rgba(99, 99, 99, 0.10); color: rgba(99, 99, 99, 0.9); }
+.bk-cal-card-badge--cancelled,
+.bk-cal-card-badge--no_show   { background: rgba(220, 53, 69, 0.10); color: #c92a39; }
+
+.bk-cal-card-service {
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.25;
 }
-.bk-cal-block-customer {
+.bk-cal-card-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.3;
 }
-.bk-cal-block-staff {
-  color: var(--muted);
-  font-size: 10px;
+.bk-cal-card-line span {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
-.bk-cal-block--cancelled .bk-cal-block-time,
-.bk-cal-block--cancelled .bk-cal-block-customer { text-decoration: line-through; opacity: 0.7; }
+.bk-cal-card-icon { flex-shrink: 0; color: var(--muted); }
+.bk-cal-card-line--notes {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 11px;
+}
+.bk-cal-card-price {
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.bk-cal-card--cancelled,
+.bk-cal-card--no_show { opacity: 0.7; }
+.bk-cal-card--cancelled .bk-cal-card-service,
+.bk-cal-card--cancelled .bk-cal-card-time { text-decoration: line-through; }
+
+/* Card being dragged — fade so the source row doesn't visually compete with
+   the cursor preview the browser renders. */
+.bk-cal-card--dragging {
+  opacity: 0.4;
+  transform: scale(0.98);
+}
+
+/* Drop-rejected toast (slot conflict). Position: fixed at the bottom centre,
+   like .auth-toast but with red accent. Auto-fades via CSS animation. */
+.bk-cal-drop-error {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #dc3545;
+  color: #fff;
+  padding: 10px 22px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 8px 24px rgba(220, 53, 69, 0.30);
+  z-index: 4000;
+  animation: bk-drop-error-in 0.25s var(--ease-smooth, ease-out);
+}
+@keyframes bk-drop-error-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0);   }
+}
 
 /* Select inputs inside booking modals — match crm-input look */
 .bk-modal select.crm-input {
@@ -641,4 +932,213 @@
   background: var(--accent-tint);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ════════════════════════════════════════════
+   BOOKING-CREATE MODAL — custom Date / Time pickers
+   (Service / Status reuse .cpm-cat-btn from Products)
+   ════════════════════════════════════════════ */
+
+/* Combobox triggers in the booking modal — match the modal width even when
+   their label is short, and align icon+text on the left. */
+.auth-modal .cpm-cat-btn {
+  width: 100%;
+  justify-content: space-between;
+}
+.bk-date-icon-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Date popover ─────────────────────────────── */
+.bk-date-pop {
+  position: fixed;
+  z-index: 4000;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
+  user-select: none;
+}
+.bk-date-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+.bk-date-month {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.bk-date-nav {
+  border: none;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+.bk-date-nav:hover { background: var(--accent-tint); color: var(--accent); }
+
+.bk-date-dow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+.bk-date-dow span { padding: 4px 0; }
+
+.bk-date-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+/* The DynamicBlock pill that follows the cursor — same blue tint as the
+   sidebar / sort indicator. */
+.bk-date-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 0;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  transition: transform 0.45s var(--ease-smooth, ease-out),
+              height 0.45s var(--ease-smooth, ease-out),
+              width 0.45s var(--ease-smooth, ease-out),
+              opacity 0.18s ease;
+  z-index: 1;
+}
+.bk-date-cell {
+  position: relative;
+  z-index: 2;
+  border: none;
+  background: transparent;
+  height: 32px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.15s ease;
+}
+.bk-date-cell--out { color: rgba(0, 0, 0, 0.25); }
+.bk-date-cell--today {
+  color: var(--accent);
+  font-weight: 600;
+}
+/* Hovered cell (DynamicBlock indicator behind it) — accent text matches the
+   sidebar / org-menu pattern. Excluded for the already-selected cell which
+   is fully accent-painted. */
+.bk-date-cell--current {
+  color: var(--accent);
+}
+.bk-date-cell--sel {
+  background: var(--accent);
+  color: #fff;
+}
+.bk-date-cell--sel:hover { color: #fff; }
+
+/* ── Time picker (iPhone-alarm wheel) ──── */
+.bk-time-pop {
+  position: fixed;
+  z-index: 4000;
+  background: var(--card);
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
+  user-select: none;
+}
+.bk-time-wheels {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Each wheel — fixed-height container, items absolutely positioned and
+   transform-shifted around the center. Mouse wheel rotates by one notch.
+   Pointer-down + drag scrolls smoothly, like swiping the iOS picker. */
+.bk-time-wheel {
+  position: relative;
+  flex: 1;
+  min-width: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;            /* allow pointer drag on touch devices */
+  user-select: none;
+}
+.bk-time-wheel--dragging {
+  cursor: grabbing;
+}
+.bk-time-item {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  margin-top: -18px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  color: var(--text);
+  cursor: inherit;               /* matches the wheel's grab/grabbing */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1),
+              opacity 0.25s ease;
+}
+/* During an active drag, kill the snap-back transition so items glide with
+   the cursor sub-pixel (no perceptual rubber-band lag). */
+.bk-time-wheel--dragging .bk-time-item {
+  transition: none;
+}
+.bk-time-item--sel {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* Center band — fixed accent-tint pill that the selected row sits in */
+.bk-time-band {
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  right: 4px;
+  height: 36px;
+  transform: translateY(-50%);
+  background: var(--accent-tint);
+  border-radius: 10px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bk-time-colon {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--muted);
+  flex-shrink: 0;
+  z-index: 1;
 }

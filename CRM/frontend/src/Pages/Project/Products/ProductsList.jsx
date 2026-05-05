@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Plus, Trash, PencilSimple, DotsThreeOutline, MagnifyingGlass, X, Image, List, SquaresFour, ArrowDown, FolderSimple, CaretDown, Archive, ArrowCounterClockwise, Pause, Play } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { useOutletContext, useNavigate } from 'react-router-dom';
@@ -288,11 +288,27 @@ function StarRating({ value }) {
 
 function VariationsPopover({ variations, anchorRef, onClose }) {
   const popRef     = useRef(null);
-  const anchorRect = useRef(null);                // stores getBoundingClientRect result
-  const [pos,   setPos]   = useState(null);       // { top, left, above }
-  const [ready, setReady] = useState(false);      // triggers visibility + animation
+  const anchorRect = useRef(null);
+  const [pos,   setPos]   = useState(null);
+  const [ready, setReady] = useState(false);
 
-  // Pass 1: record anchor position, place portal below (still invisible)
+  // Aggregate every photo from every variation into one flat list (de-duped).
+  // Max 6 per row by CSS — long lists wrap into multiple rows.
+  // Back-compat: if a variation still carries the legacy single `image_url`
+  // (stale response, browser cache, etc.) treat it as a one-photo gallery.
+  const allImages = useMemo(() => {
+    const seen = new Set(); const out = [];
+    for (const v of (variations || [])) {
+      const arr = Array.isArray(v.images) && v.images.length > 0
+        ? v.images
+        : (v.image_url || v.image ? [v.image_url || v.image] : []);
+      for (const u of arr) {
+        if (u && !seen.has(u)) { out.push(u); seen.add(u); }
+      }
+    }
+    return out;
+  }, [variations]);
+
   useEffect(() => {
     if (!anchorRef.current) return;
     const r = anchorRef.current.getBoundingClientRect();
@@ -304,33 +320,26 @@ function VariationsPopover({ variations, anchorRef, onClose }) {
     return () => document.removeEventListener('keydown', onKey);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Pass 2: pos just changed → portal is now in DOM → measure real height → final position
   useEffect(() => {
-    if (!pos || ready) return;          // guard: skip if not yet set or already done
+    if (!pos || ready) return;
     const pop = popRef.current;
     if (!pop) return;
     const r         = anchorRect.current;
     const h         = pop.offsetHeight;
-    // Prefer above; fall back to below only if not enough room above
     const openAbove = r.top > h + 12;
     setPos({ top: openAbove ? r.top - h - 8 : r.bottom + 8, left: r.left + r.width / 2, above: openAbove });
     setReady(true);
   }, [pos]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!pos) return null;
+  if (!pos || allImages.length === 0) return null;
   return createPortal(
     <div ref={popRef}
       className={`pvar-stack${pos.above ? ' pvar-stack--above' : ''}${ready ? ' pvar-stack--ready' : ''}`}
       style={{ top: pos.top, left: pos.left }}
       onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
-      {variations.map((v, i) => (
-        <div key={v.id} className="pvar-row" style={{ animationDelay: `${i * 28}ms` }}>
-          <div className="pvar-thumb-wrap">
-            {v.image_url
-              ? <img src={v.image_url} alt={v.name} className="pvar-thumb" />
-              : <div className="pvar-thumb-empty"><Image size={14} /></div>}
-          </div>
-          {v.name && <span className="pvar-name">{v.name}</span>}
+      {allImages.map((url, i) => (
+        <div key={url} className="pvar-photo" style={{ animationDelay: `${i * 28}ms` }}>
+          <img src={url} alt="" className="pvar-thumb" />
         </div>
       ))}
     </div>,
@@ -652,7 +661,7 @@ export default function Products({ archived = false }) {
               <span className="prod-group-count">{g.items.length}</span>
             </h2>
 
-            {curView === 'grid' && (
+            {view === 'grid' && (
               <div className="prod-grid">
                 {g.items.map(p => (
                   <ProductCard key={p.id} p={p}
@@ -666,7 +675,7 @@ export default function Products({ archived = false }) {
               </div>
             )}
 
-            {curView === 'list' && (
+            {view === 'list' && (
               <div className="prod-list">
                 <div className="prod-list-head">
                   <span /><span className="org-list-th">Title</span>

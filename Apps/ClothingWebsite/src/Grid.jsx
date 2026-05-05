@@ -8,7 +8,9 @@ function Grid() {
 
   useEffect(() => {
     client.products.list().then(({ ok, data }) => {
-      if (ok) setData(data);
+      // Home grid is the clothing storefront — only show physical goods.
+      // Digital, service and event products live on dedicated pages.
+      if (ok) setData((data || []).filter(p => (p.product_type || 'physical') === 'physical'));
     }).catch(err => console.log(err));
   }, [])
 

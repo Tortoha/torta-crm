@@ -417,58 +417,117 @@ function ServiceCard({ service, staff, onEdit, onDelete }) {
   );
 }
 
+// Staff row — mirrors ServiceRow / ProdListRow visual exactly. Round avatar
+// (bk-prow-avatar override) instead of square service image; otherwise same
+// 7-col grid + tilt + 3-dot menu.
 function StaffRow({ member, services, onEdit, onDelete }) {
-  const { ref, glossRef, handlers } = InteractiveSection(ITEM_TILT, false);
+  const menuBtnRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, menuOpen);
   const linked = (member.service_ids || []).map(id => services.find(s => s.id === id)).filter(Boolean);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const h = e => {
+      if (!e.target.closest?.('.org-card-dropdown') && !menuBtnRef.current?.contains(e.target))
+        setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', h);
+    return () => document.removeEventListener('pointerdown', h);
+  }, [menuOpen]);
+
+  const servicesLabel = linked.length === 0 ? '—'
+    : linked.length === 1 ? linked[0].name
+    : `${linked[0].name} +${linked.length - 1}`;
+
   return (
-    <div ref={ref} className="bk-cfg-row" {...handlers}>
+    <div ref={ref}
+      className={`prow bk-stf-prow${menuOpen ? ' org-list-row--frozen' : ''}${!member.is_active ? ' prow--paused' : ''}`}
+      onClick={onEdit} {...handlers}>
       <div ref={glossRef} className="org-list-gloss" />
-      <div className="bk-cfg-row-main">
+      <div className="prow-img-wrap bk-stf-avatar-wrap">
         {member.avatar_url
-          ? <img src={member.avatar_url} className="bk-cfg-img bk-cfg-img--round" alt="" />
-          : <div className="bk-cfg-img bk-cfg-img--round bk-cfg-img--empty"><User size={20} /></div>}
-        <div className="bk-cfg-info">
-          <div className="bk-cfg-name">{member.name}</div>
-          {member.bio && <div className="bk-cfg-meta">{member.bio}</div>}
-          {linked.length > 0 && (
-            <div className="bk-cfg-chiplist">
-              {linked.map(s => <span key={s.id} className="bk-staff-chip">{s.name}</span>)}
-            </div>
-          )}
-          {!member.is_active && <div className="bk-cfg-meta"><span className="bk-cfg-inactive">hidden</span></div>}
-        </div>
+          ? <img src={member.avatar_url} className="prow-img bk-stf-avatar" alt="" />
+          : <div className="prow-img-empty bk-stf-avatar"><User size={14} /></div>}
       </div>
-      <div className="bk-cfg-actions">
-        <button className="crm-icon-btn" type="button" onClick={onEdit} title="Edit"><Pencil size={16} /></button>
-        <button className="crm-icon-btn crm-icon-btn--danger" type="button" onClick={onDelete} title="Delete"><Trash size={16} /></button>
-      </div>
+      <span className="prow-name">{member.name}</span>
+      <span className="prow-cell">{member.bio || <span className="prow-empty">—</span>}</span>
+      <span className="prow-cell">{servicesLabel}</span>
+      <button ref={menuBtnRef} className="org-list-menu-btn" type="button"
+        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+      </button>
+      {menuOpen && (
+        <ServiceMenu btnRef={menuBtnRef}
+          onEdit={() => { setMenuOpen(false); onEdit(); }}
+          onDelete={() => { setMenuOpen(false); onDelete(); }}
+          onClose={() => setMenuOpen(false)} />
+      )}
     </div>
   );
 }
 
+// Staff card — mirrors ServiceCard / ProductCard. Round avatar instead of
+// square image, but same prod-card shell + tilt + 3-dot menu + bottom-right badge.
 function StaffCard({ member, services, onEdit, onDelete }) {
-  const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, false);
+  const menuBtnRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, menuOpen);
   const linked = (member.service_ids || []).map(id => services.find(s => s.id === id)).filter(Boolean);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const h = e => {
+      if (!e.target.closest?.('.org-card-dropdown') && !menuBtnRef.current?.contains(e.target))
+        setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', h);
+    return () => document.removeEventListener('pointerdown', h);
+  }, [menuOpen]);
+
+  const badge = !member.is_active ? 'Hidden'
+              : linked.length > 0 ? `${linked.length} service${linked.length === 1 ? '' : 's'}`
+              : null;
+
   return (
-    <div ref={ref} className={`bk-staff-card org-card${!member.is_active ? ' bk-svc-card--hidden' : ''}`} {...handlers}>
-      <div ref={glossRef} className="org-card-gloss" />
-      {member.avatar_url
-        ? <img src={member.avatar_url} className="bk-staff-card-avatar" alt="" />
-        : <div className="bk-staff-card-avatar bk-svc-card-img--empty"><User size={36} /></div>}
-      <div className="bk-staff-card-body">
-        <div className="bk-svc-card-name">{member.name}</div>
-        {member.bio && <div className="bk-svc-card-meta bk-svc-card-meta--clamp">{member.bio}</div>}
-        {linked.length > 0 && (
-          <div className="bk-cfg-chiplist">
-            {linked.slice(0, 3).map(s => <span key={s.id} className="bk-staff-chip">{s.name}</span>)}
-            {linked.length > 3 && <span className="bk-staff-chip">+{linked.length - 3}</span>}
-          </div>
-        )}
+    <div ref={ref}
+      className={`org-card org-card--tilt prod-card bk-stf-pcard${!member.is_active ? ' prod-card--paused' : ''}`}
+      onClick={onEdit} {...handlers}>
+      <div ref={glossRef} className="org-card-gloss prod-card-gloss" />
+      <div className="pcard-inner">
+        <div className="pcard-img-wrap bk-stf-avatar-wrap">
+          {member.avatar_url
+            ? <img src={member.avatar_url} className="pcard-img bk-stf-avatar" alt="" />
+            : <div className="pcard-img-empty bk-stf-avatar"><User size={22} /></div>}
+        </div>
+        <div className="pcard-body">
+          <div className="pcard-title">{member.name}</div>
+          {member.bio && (
+            <div className="pcard-row1">
+              <span className="pcard-stock" style={{ whiteSpace: 'normal', lineHeight: 1.3 }}>
+                {member.bio}
+              </span>
+            </div>
+          )}
+          {linked.length > 0 && (
+            <div className="bk-cfg-chiplist">
+              {linked.slice(0, 3).map(s => <span key={s.id} className="bk-staff-chip">{s.name}</span>)}
+              {linked.length > 3 && <span className="bk-staff-chip">+{linked.length - 3}</span>}
+            </div>
+          )}
+        </div>
       </div>
-      <div className="bk-cfg-actions bk-cfg-actions--card">
-        <button className="crm-icon-btn" type="button" onClick={onEdit} title="Edit"><Pencil size={16} /></button>
-        <button className="crm-icon-btn crm-icon-btn--danger" type="button" onClick={onDelete} title="Delete"><Trash size={16} /></button>
-      </div>
+      {badge && <span className="pcard-cat-badge">{badge}</span>}
+      <button ref={menuBtnRef} className="org-card-menu-btn pcard-menu-btn" type="button"
+        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+      </button>
+      {menuOpen && (
+        <ServiceMenu btnRef={menuBtnRef}
+          onEdit={() => { setMenuOpen(false); onEdit(); }}
+          onDelete={() => { setMenuOpen(false); onDelete(); }}
+          onClose={() => setMenuOpen(false)} />
+      )}
     </div>
   );
 }
@@ -1018,6 +1077,7 @@ function Booking() {
                 bookings={sorted}
                 workingHours={hours}
                 businessTz={businessTz}
+                slotInterval={settings?.slot_interval_minutes || 30}
                 staff={staff}
                 onOpenBooking={setOpenBooking}
                 onCreateAt={(iso) => setCreateOpen({ presetStart: iso })}
@@ -1070,7 +1130,7 @@ function Booking() {
                   ? 'No services yet — add one to start accepting bookings.'
                   : 'No services match your search.'}
               </div>
-            ) : curSvcView === 'cards' ? (
+            ) : svcView === 'cards' ? (
               <div className="prod-grid">
                 {servicesSorted.map(s => (
                   <ServiceCard key={s.id} service={s} staff={staff}
@@ -1138,8 +1198,8 @@ function Booking() {
                   ? 'No staff configured. Services without a required staff member will be booked by capacity instead.'
                   : 'No staff match your search.'}
               </div>
-            ) : curStfView === 'cards' ? (
-              <div className="bk-card-grid">
+            ) : stfView === 'cards' ? (
+              <div className="prod-grid">
                 {staffSorted.map(m => (
                   <StaffCard key={m.id} member={m} services={services}
                     onEdit={() => setEditStaff(m)}
@@ -1147,12 +1207,20 @@ function Booking() {
                 ))}
               </div>
             ) : (
-              <div className="bk-cfg-list">
-                {staffSorted.map(m => (
-                  <StaffRow key={m.id} member={m} services={services}
-                    onEdit={() => setEditStaff(m)}
-                    onDelete={() => deleteStaff(m.id)} />
-                ))}
+              <div className="prod-list">
+                <div className="prod-list-head bk-stf-list-head">
+                  <span /><span className="org-list-th">Name</span>
+                  <span className="org-list-th">Bio</span>
+                  <span className="org-list-th">Services</span>
+                  <span />
+                </div>
+                <div className="prod-list-block">
+                  {staffSorted.map(m => (
+                    <StaffRow key={m.id} member={m} services={services}
+                      onEdit={() => setEditStaff(m)}
+                      onDelete={() => deleteStaff(m.id)} />
+                  ))}
+                </div>
               </div>
             )}
           </>
@@ -1210,6 +1278,8 @@ function Booking() {
           services={services}
           staff={staff}
           businessTz={businessTz}
+          workingHours={hours}
+          slotInterval={settings?.slot_interval_minutes || 30}
           presetStart={typeof createOpen === 'object' ? createOpen.presetStart : null}
           onClose={() => setCreateOpen(false)}
           onCreated={() => { setCreateOpen(false); reload(); showToast('Booking created'); }}
@@ -1231,6 +1301,7 @@ function Booking() {
           projectId={projectId}
           member={editStaff.id ? editStaff : null}
           allServices={services}
+          slotInterval={settings?.slot_interval_minutes || 30}
           onClose={() => setEditStaff(null)}
           onSaved={() => { setEditStaff(null); reload(); showToast('Staff saved'); }}
         />

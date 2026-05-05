@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, User } from '@phosphor-icons/react';
+import { X, User, UploadSimple } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { TimePicker } from './BookingCreateModal.jsx';
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // Modal for creating / editing a staff member, plus their per-day working hours.
-function BookingStaffModal({ projectId, member, allServices, onClose, onSaved }) {
+function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, onClose, onSaved }) {
   const pq = `?project_id=${projectId}`;
   const isEdit = !!member;
 
@@ -20,8 +21,24 @@ function BookingStaffModal({ projectId, member, allServices, onClose, onSaved })
   const [hours, setHours] = useState(() =>
     DAY_NAMES.map((_, i) => ({ day_of_week: i, open_time: '10:00', close_time: '19:00', enabled: false }))
   );
-  const [saving, setSaving] = useState(false);
-  const [err,    setErr]    = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [err,       setErr]       = useState('');
+  const fileRef = useRef(null);
+
+  const upload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const res = await fetch(`${API_BASE}/api/upload/image${pq}`, {
+        method: 'POST', credentials: 'include', body: fd,
+      });
+      const data = await res.json();
+      if (res.ok && data.url) upd('avatar_url', data.url);
+      else setErr('Upload failed');
+    } finally { setUploading(false); }
+  };
 
   // Load existing hours when editing
   useEffect(() => {
@@ -119,9 +136,34 @@ function BookingStaffModal({ projectId, member, allServices, onClose, onSaved })
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">Avatar URL (optional)</label>
-            <input className="crm-input" value={form.avatar_url}
-              onChange={e => upd('avatar_url', e.target.value)} placeholder="https://…" />
+            <label className="auth-label">Staff photo (optional)</label>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
+              onChange={e => upload(e.target.files?.[0])} />
+            {form.avatar_url ? (
+              <div className="bk-svc-img-preview">
+                <img src={form.avatar_url} alt="" />
+                <div className="bk-svc-img-actions">
+                  <button type="button" className="crm-submit-btn auth-btn-secondary"
+                    onClick={() => fileRef.current?.click()} disabled={uploading}>
+                    {uploading ? 'Uploading…' : 'Replace'}
+                  </button>
+                  <button type="button" className="auth-btn-danger"
+                    onClick={() => upd('avatar_url', '')}>Remove</button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" className="bk-svc-img-drop"
+                onClick={() => fileRef.current?.click()} disabled={uploading}>
+                {uploading ? (
+                  <span>Uploading…</span>
+                ) : (
+                  <>
+                    <UploadSimple weight="bold" size={20} />
+                    <span>Click to upload a photo</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
           <div className="auth-field">
@@ -146,14 +188,22 @@ function BookingStaffModal({ projectId, member, allServices, onClose, onSaved })
           {allServices && allServices.length > 0 && (
             <div className="auth-field">
               <label className="auth-label">Services this person can deliver</label>
-              <div className="bk-staff-pick">
-                {allServices.map(s => (
-                  <button key={s.id} type="button"
-                    className={`bk-staff-pick-btn${form.service_ids.includes(s.id) ? ' bk-staff-pick-btn--on' : ''}`}
-                    onClick={() => toggleService(s.id)}>
-                    {s.name}
-                  </button>
-                ))}
+              {/* Same checkbox row pattern as the Categories → Add products picker. */}
+              <div className="bk-staff-services">
+                {allServices.map(s => {
+                  const checked = form.service_ids.includes(s.id);
+                  return (
+                    <label key={s.id}
+                      className={`cat-prod-row${checked ? ' cat-prod-row--checked' : ''}`}>
+                      <input type="checkbox" className="cat-prod-checkbox"
+                        checked={checked} onChange={() => toggleService(s.id)} />
+                      <span className="cat-prod-title">{s.name}</span>
+                      <span className="cat-prod-badge">
+                        {s.duration_minutes} min · ${Number(s.price || 0).toFixed(0)}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -165,19 +215,23 @@ function BookingStaffModal({ projectId, member, allServices, onClose, onSaved })
             <p className="auth-field-hint">Select days and set open/close times.</p>
             <div className="bk-hours-block">
               {hours.map((r, i) => (
-                <div key={i} className="bk-hours-row">
+                <div key={i}
+                  className={`bk-hours-row cat-prod-row${r.enabled ? ' cat-prod-row--checked' : ''}`}>
                   <label className="bk-hours-day">
-                    <input type="checkbox" checked={r.enabled}
+                    <input type="checkbox" className="cat-prod-checkbox"
+                      checked={r.enabled}
                       onChange={e => updHour(i, 'enabled', e.target.checked)} />
                     <span>{DAY_NAMES[i]}</span>
                   </label>
-                  <input type="time" className="crm-input bk-hours-time"
-                    value={r.open_time} disabled={!r.enabled}
-                    onChange={e => updHour(i, 'open_time', e.target.value)} />
+                  <div className="bk-hours-time-wrap" data-disabled={!r.enabled || undefined}>
+                    <TimePicker value={r.open_time} slotInterval={slotInterval}
+                      onChange={(v) => updHour(i, 'open_time', v)} />
+                  </div>
                   <span className="bk-hours-dash">–</span>
-                  <input type="time" className="crm-input bk-hours-time"
-                    value={r.close_time} disabled={!r.enabled}
-                    onChange={e => updHour(i, 'close_time', e.target.value)} />
+                  <div className="bk-hours-time-wrap" data-disabled={!r.enabled || undefined}>
+                    <TimePicker value={r.close_time} slotInterval={slotInterval}
+                      onChange={(v) => updHour(i, 'close_time', v)} />
+                  </div>
                 </div>
               ))}
             </div>

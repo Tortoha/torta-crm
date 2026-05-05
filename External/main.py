@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, Response, HTTPException, Request, Depends, BackgroundTasks
+﻿from fastapi import FastAPI, Response, HTTPException, Request, Depends, BackgroundTasks, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -547,8 +547,11 @@ def _assemble_product_payload(
             var_eff is not None and (v.get("stock_quantity") or 0) > 0)
         if not has_purchasable: continue
 
+        images = list(v.get("images") or [])
         node_l1 = {
-            "id": v["id"], "name": v["variation_name"], "image": v.get("image_url"),
+            "id": v["id"], "name": v["variation_name"],
+            "images": images,                    # full per-variation gallery
+            "image":  images[0] if images else None,   # cover (back-compat alias for clients using `image`)
             "price": float(v["price"]) if v.get("price") is not None else None,
             "effective_price": var_eff,
             "stock_quantity": v.get("stock_quantity") or 0,
@@ -573,8 +576,15 @@ def _assemble_product_payload(
     first_l2 = (final_variations[0].get("conf_2") if final_variations else None) or []
     initial_configuration_id = first_l2[0]["id"] if first_l2 else None
 
-    # Backward-compat summary fields used by storefront grid cards.
+    # Storefront cover (= cover of first variation). Aggregated full gallery
+    # is also surfaced as `images` so a Products card can show the photo stack.
     summary_image = final_variations[0]["image"] if final_variations else None
+    aggregated_images = []
+    seen_imgs = set()
+    for v in final_variations:
+        for u in (v.get("images") or []):
+            if u and u not in seen_imgs:
+                aggregated_images.append(u); seen_imgs.add(u)
     summary_price = (first_l2[0]["effective_price"] if first_l2
                      else (final_variations[0]["effective_price"] if final_variations else 0)) or 0
 
@@ -586,6 +596,7 @@ def _assemble_product_payload(
         "title": product["title"],
         "subtitle":    product.get("subtitle")    or "",
         "description": product.get("description") or "",
+        "product_type": product.get("product_type") or "physical",   # physical | digital | service | event
         "category_id":   product.get("category_id"),
         "category_name": product.get("category_name"),
         "category_slug": product.get("category_slug"),
@@ -597,8 +608,9 @@ def _assemble_product_payload(
         "is_favorite": is_favorite, "can_review": can_review,
         "reviews_count": reviews_count, "average_rating": average_rating,
         "initial_variation_index": 0, "initial_configuration_id": initial_configuration_id,
-        "image": summary_image,
-        "price": summary_price,
+        "image":  summary_image,                                      # back-compat: cover URL
+        "images": aggregated_images,                                  # full union of all variation galleries
+        "price":  summary_price,
         "conf_1": final_variations,
         "reviews": reviews,
     }
@@ -757,8 +769,10 @@ class FrontConfNode(BaseModel):
 
 class ProductPageResponse(BaseModel):
     id: int; product_hash: str; title: str
+    hash: Optional[str] = None          # legacy alias, same value as product_hash
     subtitle: Optional[str] = ""        # short tagline shown under title
     description: Optional[str] = ""     # long body text
+    product_type: str = "physical"      # physical | digital | service | event
     category_id: Optional[int]   = None
     category_name: Optional[str] = None
     category_slug: Optional[str] = None
@@ -768,6 +782,9 @@ class ProductPageResponse(BaseModel):
     is_favorite: bool; can_review: bool
     reviews_count: int; average_rating: float
     initial_variation_index: int; initial_configuration_id: Optional[int] = None
+    image: Optional[str] = None         # cover URL (= images[0]); back-compat
+    images: List[str] = []              # union of all variation galleries
+    price: float = 0                    # summary price (lowest L2 or first variation)
     conf_1: List[FrontConfNode]; reviews: List[FrontReview]
 
 class CartPageItem(BaseModel):
@@ -1384,7 +1401,7 @@ def get_products(request: Request,
             where.append("c.slug = %s")
             params.append(category)
         cursor.execute(
-            "SELECT p.id, p.title, p.subtitle, p.description, "
+            "SELECT p.id, p.title, p.subtitle, p.description, p.product_type, "
             "p.seo_title, p.seo_description, p.seo_keywords, "
             "p.category_id, c.name AS category_name, c.slug AS category_slug "
             "FROM products p "
@@ -1401,7 +1418,7 @@ def get_products(request: Request,
 
         # ── 2. Layer 1 (variations) for ALL products ───────────────────
         cursor.execute(
-            f"SELECT id, product_id, variation_name, image_url, price, stock_quantity, sold_quantity, position "
+            f"SELECT id, product_id, variation_name, images, price, stock_quantity, sold_quantity, position "
             f"FROM product_configurations_l1 WHERE product_id IN ({fmt}) "
             f"ORDER BY position ASC, id ASC",
             product_ids
@@ -1588,7 +1605,8 @@ def get_product_page(product_hash: str, request: Request,
 
     with db_cursor() as (_, cursor):
         cursor.execute(
-            "SELECT p.id, p.title, p.subtitle, p.description, p.seo_title, p.seo_description, p.seo_keywords, "
+            "SELECT p.id, p.title, p.subtitle, p.description, p.product_type, "
+            "p.seo_title, p.seo_description, p.seo_keywords, "
             "p.category_id, c.name AS category_name, c.slug AS category_slug "
             "FROM products p "
             "LEFT JOIN product_categories c ON c.id = p.category_id "
@@ -1602,7 +1620,7 @@ def get_product_page(product_hash: str, request: Request,
 
         cursor.execute(
             # Honour CRM drag-and-drop ordering via the `position` column.
-            "SELECT id, product_id, variation_name, image_url, price, stock_quantity, sold_quantity "
+            "SELECT id, product_id, variation_name, images, price, stock_quantity, sold_quantity "
             "FROM product_configurations_l1 "
             "WHERE product_id = %s ORDER BY position ASC, id ASC",
             (product_id,)
@@ -1866,7 +1884,8 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
 
         cursor.execute(
             "SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.configuration_id, "
-            "p.title, p.subtitle, p.product_type, pc.price, pc.configuration_name, pv.variation_name, pv.image_url "
+            "p.title, p.subtitle, p.product_type, pc.price, pc.configuration_name, pv.variation_name, "
+            "(pv.images)[1] AS image_url "
             "FROM cart_items ci JOIN products p ON ci.product_id=p.id "
             "LEFT JOIN product_configurations_l1 pv ON ci.variation_id=pv.id "
             "LEFT JOIN product_configurations_l2 pc ON ci.configuration_id=pc.id "
@@ -2361,7 +2380,7 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
     for o in orders:
         items = db_all(
             """SELECT oi.quantity, oi.price,
-                      p.title, pv.variation_name, pv.image_url, pc.configuration_name
+                      p.title, pv.variation_name, (pv.images)[1] AS image_url, pc.configuration_name
                FROM order_items oi
                JOIN products p ON oi.product_id=p.id
                JOIN product_configurations_l1 pv ON oi.variation_id=pv.id

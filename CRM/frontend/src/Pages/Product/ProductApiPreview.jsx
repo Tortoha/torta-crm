@@ -73,10 +73,12 @@ export default function ProductApiPreview() {
         if (kids.length) out.conf_3 = kids;
         return out;
       });
+      const images = Array.isArray(v.images) ? v.images : [];
       const out = {
         id: v.id,
         name: v.variation_name,
-        image: v.image_url,
+        images,                        // full per-variation gallery
+        image: images[0] || null,      // back-compat: cover URL
         price: v.price ?? null,
         effective_price: v.effective_price ?? null,
         stock_quantity: v.stock_quantity || 0,
@@ -88,12 +90,28 @@ export default function ProductApiPreview() {
       return out;
     });
 
+    // Aggregate top-level summary fields the same way External does
+    // (image = first variation cover, images = union of all variation galleries
+    // deduped, price = lowest L2 effective_price or first variation's).
+    const summaryImage = conf_1[0]?.image ?? null;
+    const summaryImages = [];
+    const seen = new Set();
+    for (const v of conf_1) {
+      for (const u of (v.images || [])) {
+        if (u && !seen.has(u)) { summaryImages.push(u); seen.add(u); }
+      }
+    }
+    const firstL2 = conf_1[0]?.conf_2?.[0] || null;
+    const summaryPrice = firstL2?.effective_price ?? conf_1[0]?.effective_price ?? 0;
+
     return {
       id: product.id,
       product_hash: productHash,
+      hash: productHash,                  // legacy alias for grid cards
       title: product.title,
       subtitle: product.subtitle || '',
       description: product.description || '',
+      product_type: product.product_type || 'physical',  // physical | digital | service | event
       category_id:   product.category_id ?? null,
       category_name: product.category_name ?? null,
       category_slug: product.category_slug ?? null,
@@ -109,6 +127,9 @@ export default function ProductApiPreview() {
       average_rating: 0,
       initial_variation_index: 0,
       initial_configuration_id: conf_1[0]?.conf_2?.[0]?.id ?? null,
+      image:  summaryImage,                // back-compat: cover URL
+      images: summaryImages,               // full union of all variation galleries
+      price:  summaryPrice,                // summary price
       conf_1,
       reviews: (product.reviews || []).slice(0, 2).map(r => ({
         id: r.id, user_id: r.user_id, user_name: 'User',
@@ -120,26 +141,11 @@ export default function ProductApiPreview() {
 
   const preview = buildPreview();
 
-  // /{api_key}/products returns an array of the same payload shape PLUS three
-  // backward-compat summary keys (hash, image, price) at each item's top level.
-  // We illustrate by wrapping THIS product in a 1-element array — the real
-  // endpoint returns every product in the catalog with the same per-item shape.
-  const buildListPreview = () => {
-    if (!preview) return null;
-    const conf_1 = preview.conf_1 || [];
-    const firstL2 = conf_1[0]?.conf_2?.[0] || null;
-    // Spread the detail payload, then append the three summary keys. Spread
-    // first so insertion order keeps the rich data block in its familiar layout
-    // and the summary keys group at the end where they're easy to spot.
-    return [{
-      ...preview,
-      hash:  preview.product_hash,
-      image: conf_1[0]?.image ?? null,
-      price: firstL2?.effective_price ?? conf_1[0]?.effective_price ?? 0,
-    }];
-  };
-
-  const listPreview = buildListPreview();
+  // /{api_key}/products returns an array of the SAME payload shape — External
+  // shares one assembler (`_assemble_product_payload`) between list and detail
+  // endpoints. We illustrate by wrapping THIS product in a 1-element array;
+  // the real endpoint returns every product in the catalog with the same shape.
+  const listPreview = preview ? [preview] : null;
 
   return (
     <div className="prod-page po-page">
@@ -166,9 +172,7 @@ export default function ProductApiPreview() {
         <p className="po-block-hint">
           What your storefront receives when it calls{' '}
           <code className="po-api-code">GET /{'{api_key}'}/products</code>.
-          Each item carries the same full payload as the single-product endpoint,
-          plus three backward-compat summary keys at the top level
-          (<code>hash</code>, <code>image</code>, <code>price</code>) for grid cards.
+          Each item carries the exact same payload as the single-product endpoint.
           The example below wraps <i>this</i> product in a 1-element array — the real
           response contains every product in the catalog.
         </p>

@@ -420,6 +420,17 @@ def run_migrations():
             # Optional 1:1 link to a products row (when service is created via Products → New).
             cur.execute("ALTER TABLE booking_services ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id) ON DELETE CASCADE")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_booking_services_product ON booking_services(product_id) WHERE product_id IS NOT NULL")
+            # Backfill: any product with product_type='service' but no linked booking_services
+            # row (e.g. switched type via PATCH, or created before the link existed) gets one
+            # auto-seeded so ServiceDetailsBlock in Product Overview can edit it.
+            cur.execute(
+                "INSERT INTO booking_services (project_id, product_id, name, description,"
+                "                              duration_minutes, price, is_active)"
+                " SELECT p.project_id, p.id, p.title, COALESCE(p.description, ''), 30, 0, TRUE"
+                "   FROM products p"
+                "   LEFT JOIN booking_services bs ON bs.product_id = p.id"
+                "  WHERE p.product_type = 'service' AND bs.id IS NULL"
+            )
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS booking_staff (
@@ -734,6 +745,26 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] product_modifiers failed: {e}")
 
+    # Per-variation image gallery: replace single image_url with TEXT[] images.
+    # First in array = cover. Cart/order items keep their own image_url snapshot.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE product_configurations_l1 "
+                        "ADD COLUMN IF NOT EXISTS images TEXT[] NOT NULL DEFAULT '{}'")
+            cur.execute("SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='product_configurations_l1' AND column_name='image_url'")
+            if cur.fetchone():
+                # Backfill: existing single image_url → 1-element array (idempotent: skip if already migrated).
+                cur.execute("UPDATE product_configurations_l1 "
+                            "SET images = ARRAY[image_url] "
+                            "WHERE image_url IS NOT NULL AND image_url <> '' "
+                            "  AND (images IS NULL OR cardinality(images) = 0)")
+                cur.execute("ALTER TABLE product_configurations_l1 DROP COLUMN image_url")
+                print("[migration] product_configurations_l1.image_url → images TEXT[]")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] L1 images[] failed: {e}")
+
     # Outbound integrations — webhook subscriptions + delivery log. Same engine
     # serves Custom Webhook, Slack and Discord (type column branches the body shape).
     # `events` is a Postgres TEXT[] of event names; empty = subscribe to all.
@@ -991,12 +1022,12 @@ class UpdateProductRequest(BaseModel):
     is_paused: Optional[bool] = None
 
 class CreateVariationRequest(BaseModel):
-    variation_name: Optional[str] = None
-    image_url: Optional[str] = None
+    variation_name: Optional[str]       = None
+    images:         Optional[List[str]] = None   # full gallery; first = cover
 
 class UpdateVariationRequest(BaseModel):
-    variation_name: Optional[str] = None
-    image_url: Optional[str] = None
+    variation_name: Optional[str]       = None
+    images:         Optional[List[str]] = None   # whole array overwrites — frontend orchestrates upload-then-PUT
 
 class ReorderVariationsRequest(BaseModel):
     # New ordering of variation IDs for a product; array index becomes `position` (drag-and-drop in CRM).
@@ -1036,14 +1067,14 @@ class CreateLayerItemRequest(BaseModel):
     price: Optional[float] = None       # NULL = inherit from parent
     stock_quantity: Optional[int] = 0
     sold_quantity: Optional[int] = 0
-    image_url: Optional[str] = None     # layer 1 only
+    images: Optional[List[str]] = None  # layer 1 only — cover = images[0]
 
 class UpdateLayerItemRequest(BaseModel):
     name: Optional[str] = None
     price: Optional[float] = None       # explicit null in payload = clear (inherit)
     stock_quantity: Optional[int] = None
     sold_quantity: Optional[int] = None
-    image_url: Optional[str] = None
+    images: Optional[List[str]] = None  # whole array overwrite
 
 class UpsertCustomFieldRequest(BaseModel):
     field_key: str
@@ -2227,9 +2258,10 @@ def delete_category(
                         (cat_id, project_id))
             pids = [r["id"] for r in cur.fetchall()]
             if pids:
-                # Collect S3 image URLs of all variations BEFORE wiping rows
-                cur.execute("SELECT image_url FROM product_configurations_l1 WHERE product_id = ANY(%s)", (pids,))
-                victim_urls = [r["image_url"] for r in cur.fetchall() if r.get("image_url")]
+                # Collect S3 image URLs of all variations BEFORE wiping rows.
+                # `unnest(images)` flattens the per-variation TEXT[] gallery into one row per URL.
+                cur.execute("SELECT unnest(images) AS u FROM product_configurations_l1 WHERE product_id = ANY(%s)", (pids,))
+                victim_urls = [r["u"] for r in cur.fetchall() if r.get("u")]
                 # Manual cascade (no ON DELETE CASCADE): leaves→variations→product; walk layer tree first to clear L2-5 specs (parent_id has no CASCADE).
                 cur.execute("SELECT id FROM product_configurations_l1 WHERE product_id = ANY(%s)", (pids,))
                 _l1 = [r["id"] for r in cur.fetchall()]
@@ -2302,8 +2334,8 @@ def list_products(project_id: int = Query(...),
         " COALESCE(MAX(ps.price),0) AS max_price,"
         " COALESCE(AVG(pr.rating),0) AS avg_rating,"
         " COUNT(DISTINCT pr.id) AS reviews_count,"
-        " (SELECT image_url FROM product_configurations_l1 WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image,"
-        " (SELECT COALESCE(json_agg(json_build_object('id', pv2.id, 'name', pv2.variation_name, 'image_url', pv2.image_url) ORDER BY pv2.id), '[]'::json)"
+        " (SELECT (images)[1] FROM product_configurations_l1 WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image,"
+        " (SELECT COALESCE(json_agg(json_build_object('id', pv2.id, 'name', pv2.variation_name, 'images', pv2.images) ORDER BY pv2.id), '[]'::json)"
         "  FROM product_configurations_l1 pv2 WHERE pv2.product_id=p.id) AS variations"
         " FROM products p"
         " LEFT JOIN product_categories c ON c.id=p.category_id"
@@ -2541,6 +2573,19 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
     vals.extend([product_id, project_id])
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE products SET " + ", ".join(fields) + " WHERE id=%s AND project_id=%s", vals)
+        # If the product is (now) a service, ensure a 1:1 booking_services row exists.
+        # Covers products that were created as non-service then switched via PATCH —
+        # without this, ServiceDetailsBlock in Product Overview would be stuck on the
+        # "Linking…" placeholder because GET /api/booking/services has no row for it.
+        if request.product_type == "service":
+            cur.execute(
+                "INSERT INTO booking_services (project_id, product_id, name, description,"
+                "                              duration_minutes, price, is_active)"
+                " SELECT %s, %s, p.title, COALESCE(p.description, ''), 30, 0, TRUE"
+                "   FROM products p WHERE p.id=%s"
+                " ON CONFLICT DO NOTHING",
+                (project_id, product_id, product_id)
+            )
         # Sync title/description to linked booking_service so service edits in either place stay aligned.
         if request.title is not None or request.description is not None:
             sync_fields, sync_vals = [], []
@@ -2563,7 +2608,7 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     # Collect S3 image URLs of all variations BEFORE deleting DB rows
-    image_rows = db_all("SELECT image_url FROM product_configurations_l1 WHERE product_id=%s", (product_id,))
+    image_rows = db_all("SELECT unnest(images) AS image_url FROM product_configurations_l1 WHERE product_id=%s", (product_id,))
 
     # Walk the layer tree to collect IDs per layer — parent_id has no FK CASCADE, so L2-5 specs would orphan otherwise (only L1 cascades via variation_id).
     l1_ids = [r["id"] for r in db_all(
@@ -2621,15 +2666,16 @@ def create_variation(product_id: int, request: CreateVariationRequest, project_i
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     name = (request.variation_name or '').strip()
+    images = list(request.images or [])
     with db_cursor() as (conn, cur):
         # Append at the end of the existing order — next position is max+1.
         cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM product_configurations_l1 WHERE product_id=%s", (product_id,))
         next_pos = cur.fetchone()["next_pos"]
-        cur.execute("INSERT INTO product_configurations_l1 (product_id,variation_name,image_url,position) VALUES(%s,%s,%s,%s) RETURNING id",
-                    (product_id, sanitize(name), request.image_url, next_pos))
+        cur.execute("INSERT INTO product_configurations_l1 (product_id,variation_name,images,position) VALUES(%s,%s,%s,%s) RETURNING id",
+                    (product_id, sanitize(name), images, next_pos))
         new_id = cur.fetchone()["id"]
         conn.commit()
-        return {"id": new_id, "variation_name": name, "image_url": request.image_url,
+        return {"id": new_id, "variation_name": name, "images": images,
                 "position": next_pos, "configurations": []}
 
 
@@ -2756,22 +2802,23 @@ def update_variation(product_id: int, var_id: int, request: UpdateVariationReque
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    cur_row = db_one("SELECT image_url FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
+    cur_row = db_one("SELECT images FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
     if not cur_row:
         raise HTTPException(404, "Variation not found")
-    fields = []; vals = []
+    fields, vals = [], []
     if request.variation_name is not None: fields.append("variation_name=%s"); vals.append(request.variation_name.strip())
-    if request.image_url      is not None: fields.append("image_url=%s");      vals.append(request.image_url)
+    if request.images         is not None: fields.append("images=%s");         vals.append(list(request.images))
     if not fields: return {"ok": True}
     vals.append(var_id)
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE product_configurations_l1 SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
-    # If image_url was changed to something different, delete the old S3 object
-    if request.image_url is not None:
-        old_url = cur_row.get("image_url") or ""
-        if old_url and old_url != request.image_url:
-            s3_delete_url(old_url, f"projects/{project_id}/products/")
+    # If images were replaced, S3-clean any URL that's gone from the new array.
+    if request.images is not None:
+        old_set = set(cur_row.get("images") or [])
+        new_set = set(request.images or [])
+        for url in (old_set - new_set):
+            if url: s3_delete_url(url, f"projects/{project_id}/products/")
     return {"ok": True}
 
 
@@ -2780,13 +2827,13 @@ def delete_variation(product_id: int, var_id: int, project_id: int = Query(...),
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    old = db_one("SELECT image_url FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
+    old = db_one("SELECT images FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id=%s", (var_id,))
         cur.execute("DELETE FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
         conn.commit()
-    if old and old.get("image_url"):
-        s3_delete_url(old["image_url"], f"projects/{project_id}/products/")
+    for url in (old.get("images") if old else None) or []:
+        if url: s3_delete_url(url, f"projects/{project_id}/products/")
     return {"ok": True}
 
 
@@ -3000,7 +3047,7 @@ def delete_specification_generic(product_id: int, spec_id: int,
     return {"ok": True}
 
 
-# ── MULTI-LAYER CONFIGURATIONS (l1 with image_url; l2..l5 each parent = previous layer) ──
+# ── MULTI-LAYER CONFIGURATIONS (l1 with images[]; l2..l5 each parent = previous layer) ──
 
 def _restore_layer_subtree(cur, *, product_id: int, layer: int, parent_id: Optional[int], node: dict) -> Optional[int]:
     """Recursively recreate a layer node + specs + children for Undo; preserves snapshot position."""
@@ -3012,7 +3059,7 @@ def _restore_layer_subtree(cur, *, product_id: int, layer: int, parent_id: Optio
     price = node.get("price")
     stock = node.get("stock_quantity") or 0
     sold  = node.get("sold_quantity") or 0
-    image_url = node.get("image_url")
+    images = list(node.get("images") or [])    # full per-variation gallery (L1 only)
 
     # Use snapshot position if provided; else append at end.
     if node.get("position") is not None:
@@ -3026,9 +3073,9 @@ def _restore_layer_subtree(cur, *, product_id: int, layer: int, parent_id: Optio
 
     if layer == 1:
         cur.execute(
-            f"INSERT INTO {tbl} (product_id, {name_col}, image_url, price, stock_quantity, sold_quantity, position)"
+            f"INSERT INTO {tbl} (product_id, {name_col}, images, price, stock_quantity, sold_quantity, position)"
             f" VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-            (product_id, name, image_url, price, stock, sold, pos)
+            (product_id, name, images, price, stock, sold, pos)
         )
     elif layer == 2:
         cur.execute(
@@ -3106,7 +3153,7 @@ def _annotate_effective_price(items: list, parent_eff: Optional[float]):
 def _load_product_tree(product_id: int) -> tuple[list, int]:
     """Load all layers for a product as a nested tree. Returns (variations, max_layer)."""
     variations = db_all(
-        "SELECT id, variation_name, image_url, position, price, stock_quantity, sold_quantity"
+        "SELECT id, variation_name, images, position, price, stock_quantity, sold_quantity"
         " FROM product_configurations_l1 WHERE product_id=%s ORDER BY position ASC, id ASC",
         (product_id,)
     )
@@ -3190,7 +3237,7 @@ def list_layer_items(product_id: int, layer: int, parent_id: Optional[int] = Que
     parent_col = _layer_parent_col(layer)
     name_col = _layer_name_col(layer)
     if layer == 1:
-        rows = db_all(f"SELECT id, {name_col} AS name, image_url, price, stock_quantity, sold_quantity, position"
+        rows = db_all(f"SELECT id, {name_col} AS name, images, price, stock_quantity, sold_quantity, position"
                       f" FROM {tbl} WHERE product_id=%s ORDER BY position ASC, id ASC", (product_id,))
     else:
         if parent_id is None:
@@ -3228,9 +3275,9 @@ def create_layer_item(product_id: int, layer: int, request: CreateLayerItemReque
         next_pos = cur.fetchone()["next_pos"]
         if layer == 1:
             cur.execute(
-                f"INSERT INTO {tbl} (product_id, {name_col}, image_url, price, stock_quantity, sold_quantity, position) "
+                f"INSERT INTO {tbl} (product_id, {name_col}, images, price, stock_quantity, sold_quantity, position) "
                 f"VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                (product_id, name, request.image_url, request.price,
+                (product_id, name, list(request.images or []), request.price,
                  request.stock_quantity or 0, request.sold_quantity or 0, next_pos)
             )
         elif layer == 2:
@@ -3255,7 +3302,7 @@ def create_layer_item(product_id: int, layer: int, request: CreateLayerItemReque
         "price": request.price,
         "stock_quantity": request.stock_quantity or 0,
         "sold_quantity": request.sold_quantity or 0,
-        "image_url": request.image_url if layer == 1 else None,
+        "images": list(request.images or []) if layer == 1 else [],
         "position": next_pos,
         "children": [],
     }
@@ -3270,6 +3317,15 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
     name_col = _layer_name_col(layer)
     # Pydantic v2: only include fields the client actually sent
     sent = request.model_dump(exclude_unset=True)
+
+    # For L1 image edits — read the OLD array first so we can S3-clean any URLs
+    # that disappear from the new one (gallery-popover removes single photos by
+    # PUT'ing the full new array).
+    old_images = []
+    if layer == 1 and 'images' in sent:
+        cur_row = db_one(f"SELECT images FROM {tbl} WHERE id=%s", (item_id,))
+        old_images = (cur_row or {}).get("images") or []
+
     fields, vals = [], []
     if 'name' in sent and sent['name'] is not None:
         fields.append(f"{name_col}=%s"); vals.append(sanitize(sent['name'].strip()))
@@ -3280,13 +3336,20 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
         fields.append("stock_quantity=%s"); vals.append(sent['stock_quantity'])
     if 'sold_quantity' in sent and sent['sold_quantity'] is not None:
         fields.append("sold_quantity=%s"); vals.append(sent['sold_quantity'])
-    if layer == 1 and 'image_url' in sent:
-        fields.append("image_url=%s"); vals.append(sent['image_url'])
+    if layer == 1 and 'images' in sent:
+        fields.append("images=%s"); vals.append(list(sent['images'] or []))
     if not fields: return {"ok": True}
     vals.append(item_id)
     with db_cursor() as (conn, cur):
         cur.execute(f"UPDATE {tbl} SET {', '.join(fields)} WHERE id=%s", vals)
         conn.commit()
+
+    # Best-effort S3 cleanup for removed photos (after commit so a delete failure
+    # doesn't roll back the metadata change).
+    if layer == 1 and 'images' in sent:
+        new_set = set(sent['images'] or [])
+        for url in (set(old_images) - new_set):
+            if url: s3_delete_url(url, f"projects/{project_id}/products/")
     return {"ok": True}
 
 
@@ -3296,9 +3359,14 @@ def delete_layer_item(product_id: int, layer: int, item_id: int,
     require_team_member_or_owner(user, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
     tbl = _layer_table(layer)
+    # Capture L1 image URLs before delete so we can S3-clean them post-commit.
+    images_to_clean = []
     with db_cursor() as (conn, cur):
         cur.execute(f"DELETE FROM {tbl} WHERE id=%s", (item_id,))
         conn.commit()
+    # S3 cleanup after commit — best-effort, never fails the request.
+    for url in images_to_clean:
+        if url: s3_delete_url(url, f"projects/{project_id}/products/")
     return {"ok": True}
 
 
@@ -4551,7 +4619,7 @@ def get_order(order_id: int, project_id: int = Query(...),
 
     items = db_all(
         """SELECT oi.quantity, oi.price,
-                  p.title, pv.variation_name, pv.image_url, pc.configuration_name
+                  p.title, pv.variation_name, (pv.images)[1] AS image_url, pc.configuration_name
            FROM order_items oi
            JOIN products p ON oi.product_id=p.id
            JOIN product_configurations_l1 pv ON oi.variation_id=pv.id

@@ -320,14 +320,21 @@
   opacity: 0.5;
   cursor: default;
 }
+
 .prod-card--paused:hover,
 .prow--paused:hover {
   opacity: 0.65;
 }
 
 /* Per-type product groups on the Products list page. */
-.prod-group { margin-bottom: 28px; }
-.prod-group:last-child { margin-bottom: 0; }
+.prod-group {
+  margin-bottom: 28px;
+}
+
+.prod-group:last-child {
+  margin-bottom: 0;
+}
+
 .prod-group-title {
   display: flex;
   align-items: center;
@@ -338,6 +345,7 @@
   color: var(--text);
   letter-spacing: -0.01em;
 }
+
 .prod-group-count {
   display: inline-flex;
   align-items: center;
@@ -361,6 +369,7 @@
   background: linear-gradient(135deg, var(--accent-tint), rgba(0, 113, 227, 0.04));
   border: 1px solid rgba(0, 113, 227, 0.15);
 }
+
 .po-service-link-icon {
   font-size: 28px;
   width: 56px;
@@ -372,7 +381,12 @@
   justify-content: center;
   flex-shrink: 0;
 }
-.po-service-link-body { flex: 1; min-width: 0; }
+
+.po-service-link-body {
+  flex: 1;
+  min-width: 0;
+}
+
 .po-service-link-meta {
   margin-top: 8px;
   font-size: 13px;
@@ -399,7 +413,11 @@
   padding: 0;
   transition: background 0.2s ease;
 }
-.po-toggle--on { background: var(--accent); }
+
+.po-toggle--on {
+  background: var(--accent);
+}
+
 .po-toggle-dot {
   position: absolute;
   top: 3px;
@@ -411,36 +429,51 @@
   transition: transform 0.2s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
-.po-toggle--on .po-toggle-dot { transform: translateX(18px); }
+
+.po-toggle--on .po-toggle-dot {
+  transform: translateX(18px);
+}
 
 /* Staff multi-select chips (Service block). */
-.po-svc-staff { margin-top: 16px; }
+.po-svc-staff {
+  margin-top: 16px;
+}
+
 .po-svc-staff-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
 }
+
 .po-svc-staff-chip {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 5px 14px 5px 5px;
   background: var(--card);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: none;
   border-radius: 999px;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: 0.4s ease;
 }
-.po-svc-staff-chip:hover { border-color: rgba(0, 0, 0, 0.16); }
+
+.po-svc-staff-chip:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
 .po-svc-staff-chip--on {
   background: var(--accent);
-  border-color: var(--accent);
   color: #fff;
 }
+
+.po-svc-staff-chip--on:hover {
+  background: var(--accent-hover);
+}
+
 .po-svc-staff-avatar {
   width: 26px;
   height: 26px;
@@ -453,7 +486,6 @@
   justify-content: center;
   font-weight: 600;
 }
-.po-svc-staff-avatar--empty {}
 
 /* Digital files block. */
 .po-files-list {
@@ -462,6 +494,7 @@
   gap: 8px;
   margin-bottom: 12px;
 }
+
 .po-files-empty {
   margin: 0;
   padding: 16px;
@@ -471,6 +504,7 @@
   border-radius: 12px;
   font-size: 13px;
 }
+
 .po-files-row {
   display: flex;
   align-items: center;
@@ -479,7 +513,12 @@
   background: var(--card);
   border-radius: 999px;
 }
-.po-files-icon { font-size: 16px; flex-shrink: 0; }
+
+.po-files-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
 .po-files-link {
   flex: 1;
   min-width: 0;
@@ -490,7 +529,11 @@
   text-decoration: none;
   font-size: 14px;
 }
-.po-files-link:hover { text-decoration: underline; }
+
+.po-files-link:hover {
+  text-decoration: underline;
+}
+
 .po-files-remove {
   background: none;
   border: none;
@@ -501,9 +544,20 @@
   flex-shrink: 0;
   transition: color 0.15s ease, background 0.15s ease;
 }
-.po-files-remove:hover { color: #d93025; background: rgba(217, 48, 37, 0.08); }
-.po-files-remove svg { width: 16px; height: 16px; }
-.po-files-add { width: fit-content; }
+
+.po-files-remove:hover {
+  color: #d93025;
+  background: rgba(217, 48, 37, 0.08);
+}
+
+.po-files-remove svg {
+  width: 16px;
+  height: 16px;
+}
+
+.po-files-add {
+  width: fit-content;
+}
 
 /* Custom Field type=file editor. */
 .cf-file-input {
@@ -517,6 +571,7 @@
   border: 2px solid transparent;
   font-size: 13px;
 }
+
 .cf-file-link {
   flex: 1 1 auto;
   min-width: 0;
@@ -526,7 +581,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cf-file-link:hover { text-decoration: underline; }
+
+.cf-file-link:hover {
+  text-decoration: underline;
+}
+
 .cf-file-replace,
 .cf-file-empty {
   border: none;
@@ -539,14 +598,22 @@
   cursor: pointer;
   flex: 0 0 auto;
 }
+
 .cf-file-empty {
   flex: 1 1 auto;
   text-align: center;
 }
+
 .cf-file-replace:hover,
-.cf-file-empty:hover { background: rgba(0, 113, 227, 0.12); }
+.cf-file-empty:hover {
+  background: rgba(0, 113, 227, 0.12);
+}
+
 .cf-file-replace:disabled,
-.cf-file-empty:disabled { opacity: 0.5; cursor: not-allowed; }
+.cf-file-empty:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* ══════════════════════════════════════════
    PAGE & CONTENT
@@ -784,13 +851,14 @@
   background: var(--card);
   border-radius: 16px;
   padding: 4px;
-  max-width: 420px;
+  /* 6 photos × 85px + 5 gaps × 4px + 2×4 padding = 538px — caps row at 6 */
+  max-width: 538px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
   gap: 4px;
-  /* No animation here — fired only after position is measured (--ready) */
+  /* width: auto — popup hugs content (e.g. 2 photos = 2-photo width) */
 }
 
 /* Invisible until JS measures real height and snaps position */
@@ -823,13 +891,30 @@
   }
 }
 
-.pvar-row {
+/* Each photo cell — fixed 85px tall, width follows natural aspect ratio
+   (min 64px = 3:4 of 85, max 85px = square cap). Same adaptive sizing as
+   product cards on the catalog grid — landscape photos are shorter & wider,
+   portrait photos are tall & narrow, no cropping. */
+.pvar-photo {
+  flex: 0 0 auto;
+  height: 85px;
+  min-width: 64px;
+  max-width: 85px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: transparent;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  transition: background 0.18s ease;
-  cursor: default;
+  justify-content: center;
+  animation: pvar-row-in 0.22s var(--ease-smooth) backwards;
+}
+.pvar-photo .pvar-thumb {
+  max-height: 85px;
+  max-width: 85px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 12px;
 }
 
 @keyframes pvar-row-in {
@@ -3567,9 +3652,135 @@ select.prod-field-input {
 }
 
 .layer1-img-wrap:hover .layer1-img-overlay,
-.layer1-img-wrap.layer1-img-wrap--over .layer1-img-overlay {
+.layer1-img-wrap.layer1-img-wrap--open .layer1-img-overlay {
   opacity: 1;
 }
+
+/* Photo-count badge in the corner (visible only when variation has >1 image) */
+.layer1-img-count {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ── VariationGalleryPopover (per-variation multi-photo manager) ──
+   Matches the .pvar-stack visual on Products page exactly: anchored above
+   the card when there's room, two-pass positioning (invisible until measured),
+   pop-in animation, flex-wrap row of 85px-tall adaptive tiles. */
+
+.vgal-pop {
+  position: fixed;
+  z-index: 4000;
+  transform: translateX(-50%);
+  background: var(--card);
+  border-radius: 16px;
+  padding: 4px;
+  /* 6 tiles × 85 + 5 gaps × 4 + 2×4 padding = 538 — same cap as .pvar-stack */
+  max-width: 538px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+/* Invisible until JS measures real height and snaps position above/below */
+.vgal-pop:not(.vgal-pop--ready) { visibility: hidden; }
+.vgal-pop--ready { animation: pvar-pop-in 0.22s var(--ease-smooth); }
+.vgal-pop--above { transform-origin: bottom center; }
+.vgal-pop:not(.vgal-pop--above) { transform-origin: top center; }
+
+.vgal-grid {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+  /* width: auto — popup hugs content (1 photo = 1-photo wide) */
+}
+
+/* Tile = same adaptive sizing as .pvar-photo on the Products page */
+.vgal-tile {
+  position: relative;
+  flex: 0 0 auto;
+  height: 85px;
+  min-width: 64px;
+  max-width: 85px;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: grab;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vgal-tile--dragging { cursor: grabbing; opacity: 0.4; }
+.vgal-img {
+  max-height: 85px;
+  max-width: 85px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 12px;
+}
+.vgal-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: rgba(220, 53, 69, 0.92);
+  color: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.vgal-tile:hover .vgal-del { opacity: 1; }
+
+/* Add-button — matches tile dimensions so it sits on the same row as photos.
+   Square 85×85 to keep "+ Add" tap target generous regardless of how many
+   photos are next to it. */
+.vgal-add {
+  flex: 0 0 85px;
+  width: 85px;
+  height: 85px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1.5px dashed rgba(0, 0, 0, 0.12);
+  background: transparent;
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  font-family: inherit;
+}
+.vgal-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.vgal-add:disabled { cursor: progress; opacity: 0.6; }
+.vgal-add-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: vgal-spin 0.8s linear infinite;
+}
+@keyframes vgal-spin { to { transform: rotate(360deg); } }
 
 .layer1-body {
   flex: 1;

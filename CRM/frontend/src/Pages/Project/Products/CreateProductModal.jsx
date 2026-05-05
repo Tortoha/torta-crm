@@ -69,7 +69,7 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
       await fetch(`${API_BASE}/api/products/${data.id}/variations${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_url: null }),
+        body: JSON.stringify({ images: [] }),
       }).catch(() => {});
 
       onCreated(data);
