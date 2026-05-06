@@ -4384,3 +4384,323 @@ select.prod-field-input {
   padding: 6px;
   box-sizing: border-box;
 }
+
+/* ─── Modifier groups (ProductOverview ModifiersBlock) ─────────────
+   Visual language mirrors org-toolbar (Orders page):
+   pill containers on var(--card), 34px tall, 999px radius, gap 8px. */
+
+.po-mod-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.po-mod-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Whole head row IS the drag handle — long-press anywhere starts drag,
+   matches Configuration Layers UX. touch-action:none prevents mobile scroll
+   from competing with the gesture. No visible grip dots. */
+.po-mod-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  touch-action: none;
+}
+
+/* Name input — search-style pill (mirrors .org-search-wrap). */
+.po-mod-name-wrap {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 0 16px;
+  flex: 1;
+  min-width: 0;
+}
+.po-mod-name-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  min-width: 0;
+}
+.po-mod-name-input::placeholder { color: #bbb; }
+
+/* Control type segmented toggle (mirrors .ord-sort-toggle). */
+.po-mod-ctrl-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.po-mod-ctrl-indicator {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+.po-mod-ctrl-btn {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0 16px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  transition: color 0.4s ease;
+}
+.po-mod-ctrl-btn--current { color: var(--accent); }
+
+/* Min / Max — single grouped pill. */
+.po-mod-num-group {
+  display: inline-flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 0 14px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.po-mod-num-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.po-mod-num-input {
+  width: 38px;
+  height: 30px;
+  border: none;
+  outline: none;
+  background: transparent;
+  text-align: center;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+}
+.po-mod-num-input::-webkit-inner-spin-button,
+.po-mod-num-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.po-mod-num-input::placeholder { color: #c8c8c8; }
+.po-mod-num-divider {
+  width: 1px;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 0 2px;
+}
+
+/* Required toggle pill — lights up with --accent when on. */
+.po-mod-required-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 16px;
+  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+  transition: background 0.18s var(--ease-smooth), color 0.18s var(--ease-smooth);
+}
+.po-mod-required-dot {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid #c4c4c4;
+  border-radius: 4px;
+  flex-shrink: 0;
+  position: relative;
+  transition: border-color 0.18s var(--ease-smooth), background 0.18s var(--ease-smooth);
+}
+.po-mod-required-btn--on {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.po-mod-required-btn--on .po-mod-required-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.po-mod-required-btn--on .po-mod-required-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='2.5,6.5 5,9 9.5,3.5'/></svg>") no-repeat center / 80%;
+}
+
+/* Default-item Combobox wrapper (radio-only) — reuses the project-wide
+   .cpm-cat-btn / .cat-filter-dropdown widget. We just shrink the trigger to
+   fit the 34px toolbar row and give it a min-width so the labels don't clip. */
+.po-mod-default-cb {
+  flex-shrink: 0;
+  min-width: 200px;
+  max-width: 280px;
+}
+.po-mod-default-cb .cpm-cat-btn {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+/* Delete-group icon button. */
+.po-mod-group-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.18s var(--ease-smooth), color 0.18s var(--ease-smooth);
+}
+.po-mod-group-del:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: #d12626;
+}
+
+/* Items list inside a group — sits below the head row.
+   Mirrors Configuration Layer 2 row design: each cell is its own pill on
+   var(--card), grid layout with gap 4px, trash icon as the last column. */
+.po-mod-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Whole row is the drag handle (long-press) — no outer pill, only cells. */
+.po-mod-item {
+  display: grid;
+  grid-template-columns: 1fr 1fr 32px;
+  align-items: center;
+  gap: 4px;
+  touch-action: none;
+}
+
+/* Cells share the cfg-row .crm-input pattern: card-coloured pill, 36px tall. */
+.po-mod-item-name,
+.po-mod-item-price {
+  height: 36px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  padding: 0 16px;
+  background: var(--card);
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+  transition: border-color 0.2s ease;
+}
+.po-mod-item-name:focus,
+.po-mod-item-price:focus {
+  border-color: var(--accent);
+}
+.po-mod-item-name::placeholder,
+.po-mod-item-price::placeholder { color: #bbb; }
+
+.po-mod-item-price::-webkit-inner-spin-button,
+.po-mod-item-price::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.po-mod-item-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.18s var(--ease-smooth), color 0.18s var(--ease-smooth);
+}
+.po-mod-item-del:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: #d12626;
+}
+
+.po-mod-items-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 4px 0 0 14px;
+}
+
+.po-mod-add-item {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--accent);
+  border-radius: 999px;
+  cursor: pointer;
+  margin-top: 4px;
+  transition: background 0.18s var(--ease-smooth);
+  background-color: var(--accent-tint);
+  border: none;
+}
+.po-mod-add-item:hover {
+  background: var(--accent-tint-hover);
+}
+
+.po-mod-add-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: opacity 0.18s var(--ease-smooth);
+}
+.po-mod-add-group:hover { opacity: 0.9; }

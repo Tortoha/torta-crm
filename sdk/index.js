@@ -332,19 +332,47 @@ export function createClient(baseUrl, publishableKey) {
 
     // ── Cart ─────────────────────────────────────────────────────────────────
     cart: {
-      /** Get cart with items and subtotal. */
+      /** Get cart with items and subtotal. Each item carries `modifiers: [...]`
+       *  (selected modifier items with `name`, `price_delta`, `group_name`) and
+       *  `base_price` — the SKU price without modifiers, useful for UI breakdown.
+       *  `price` is the unit price INCLUDING modifier deltas. */
       async get() {
         return req("GET", "/cart");
       },
 
-      /** Add item to cart. */
-      async add(product_id, variation_id, configuration_id, quantity = 1) {
-        return req("POST", "/cart/add", { product_id, variation_id, configuration_id, quantity });
+      /**
+       * Add item to cart.
+       * @param {number} product_id
+       * @param {number} variation_id
+       * @param {number} configuration_id
+       * @param {number} [quantity=1]
+       * @param {number[]} [selected_modifier_item_ids=[]] — IDs from product.modifier_groups[*].items[*].id
+       *
+       * The server validates each id belongs to a group of this product and
+       * that per-group min/max/required/radio constraints hold. Two cart lines
+       * with the SAME SKU but DIFFERENT modifier sets are kept separate;
+       * identical sets are merged (quantity bumped).
+       */
+      async add(product_id, variation_id, configuration_id, quantity = 1, selected_modifier_item_ids = []) {
+        return req("POST", "/cart/add", {
+          product_id, variation_id, configuration_id, quantity,
+          selected_modifier_item_ids,
+        });
       },
 
-      /** Update quantity of a cart item. */
-      async update(cartItemId, quantity) {
-        return req("PUT", `/cart/${cartItemId}`, { quantity });
+      /**
+       * Update quantity (and optionally modifier selection) of a cart item.
+       * @param {number} cartItemId
+       * @param {number} quantity
+       * @param {number[]} [selected_modifier_item_ids] — when provided, replaces
+       *   the line's modifier set; when omitted, modifiers stay as-is.
+       */
+      async update(cartItemId, quantity, selected_modifier_item_ids) {
+        const body = { quantity };
+        if (selected_modifier_item_ids !== undefined) {
+          body.selected_modifier_item_ids = selected_modifier_item_ids;
+        }
+        return req("PUT", `/cart/${cartItemId}`, body);
       },
 
       /** Remove an item from the cart. */

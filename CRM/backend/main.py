@@ -727,23 +727,91 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] multi-layer configurations failed: {e}")
 
-    # Modifiers — simple flat list per product (multi-select on storefront).
+    # Modifiers — two-level model: groups (checkbox or radio, with min/max/required/default)
+    # contain items (name + price_delta). Old flat product_modifiers table is dropped.
+    #
+    # Self-healing strategy: detect schema mismatch (e.g. wrong NOT NULL constraints
+    # left over from a previous partial migration) and drop+recreate cleanly. Safe
+    # because this feature is brand new — no production data to preserve. Once
+    # users are actually creating modifier groups, switch to additive ALTERs only.
     try:
         with db_cursor() as (conn, cur):
+            # Drop legacy flat modifier table (clean break, no prod data).
+            cur.execute("DROP TABLE IF EXISTS product_modifiers CASCADE")
+
+            # Detect a broken pre-existing schema: check whether `max_select` allows NULL
+            # (it MUST, otherwise checkbox groups with unlimited max can't be inserted).
+            # If the column exists with NOT NULL — or the table is otherwise mis-shaped —
+            # nuke both tables and rebuild from scratch. Test data is forfeit by design.
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS product_modifiers (
-                    id          SERIAL PRIMARY KEY,
-                    product_id  INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-                    name        VARCHAR(160) NOT NULL DEFAULT '',
-                    price       NUMERIC(10,2) NOT NULL DEFAULT 0,
-                    position    INTEGER NOT NULL DEFAULT 0,
-                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                SELECT is_nullable FROM information_schema.columns
+                 WHERE table_name='product_modifier_groups' AND column_name='max_select'
+            """)
+            row = cur.fetchone()
+            schema_broken = row is not None and row["is_nullable"] != "YES"
+            # Also rebuild if any of the new columns are missing entirely — easier
+            # than tracking down which subset of ADD COLUMN failed in past attempts.
+            if not schema_broken:
+                cur.execute("""
+                    SELECT COUNT(*) AS n FROM information_schema.columns
+                     WHERE table_name='product_modifier_groups'
+                       AND column_name IN ('control_type', 'default_item_id', 'min_select',
+                                           'max_select', 'is_required', 'position', 'name')
+                """)
+                schema_broken = (cur.fetchone()["n"] != 7)
+            if schema_broken:
+                print("[migration] product_modifier_groups: detected stale schema, recreating from scratch")
+                cur.execute("DROP TABLE IF EXISTS product_modifier_items  CASCADE")
+                cur.execute("DROP TABLE IF EXISTS product_modifier_groups CASCADE")
+
+            # Fresh-create groups (covers both first-run AND post-drop rebuild).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_modifier_groups (
+                    id              SERIAL PRIMARY KEY,
+                    product_id      INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                    name            VARCHAR(200) NOT NULL DEFAULT '',
+                    control_type    VARCHAR(16)  NOT NULL DEFAULT 'checkbox',
+                    min_select      INTEGER      NOT NULL DEFAULT 0,
+                    max_select      INTEGER,
+                    is_required     BOOLEAN      NOT NULL DEFAULT FALSE,
+                    default_item_id INTEGER,
+                    position        INTEGER      NOT NULL DEFAULT 0,
+                    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    CONSTRAINT chk_modifier_control CHECK (control_type IN ('checkbox', 'radio'))
                 )
             """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_modifiers_product ON product_modifiers(product_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_modifier_groups_product ON product_modifier_groups(product_id)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_modifier_items (
+                    id          SERIAL PRIMARY KEY,
+                    group_id    INTEGER        NOT NULL REFERENCES product_modifier_groups(id) ON DELETE CASCADE,
+                    name        VARCHAR(200)   NOT NULL DEFAULT '',
+                    price_delta NUMERIC(10, 2) NOT NULL DEFAULT 0,
+                    position    INTEGER        NOT NULL DEFAULT 0,
+                    created_at  TIMESTAMPTZ    NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_modifier_items_group ON product_modifier_items(group_id)")
+
+            # default_item_id FK — references items table; needs both tables + column to exist.
+            cur.execute("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_modifier_default_item') THEN
+                        ALTER TABLE product_modifier_groups
+                        ADD CONSTRAINT fk_modifier_default_item
+                        FOREIGN KEY (default_item_id) REFERENCES product_modifier_items(id) ON DELETE SET NULL;
+                    END IF;
+                END $$;
+            """)
+
+            # cart_items / order_items: array of selected modifier item ids per line.
+            cur.execute("ALTER TABLE cart_items  ADD COLUMN IF NOT EXISTS selected_modifier_item_ids INTEGER[] NOT NULL DEFAULT '{}'")
+            cur.execute("ALTER TABLE order_items ADD COLUMN IF NOT EXISTS selected_modifier_item_ids INTEGER[] NOT NULL DEFAULT '{}'")
             conn.commit()
+            print("[migration] product_modifier_groups OK")
     except Exception as e:
-        print(f"[migration] product_modifiers failed: {e}")
+        print(f"[migration] product_modifier_groups failed: {e}")
 
     # Per-variation image gallery: replace single image_url with TEXT[] images.
     # First in array = cover. Cart/order items keep their own image_url snapshot.
@@ -1082,12 +1150,26 @@ class UpsertCustomFieldRequest(BaseModel):
     field_type: str = "string"
     is_global: bool = False
 
-class ModifierRequest(BaseModel):
-    name:  Optional[str]   = ''
-    price: Optional[float] = 0
+class ModifierGroupRequest(BaseModel):
+    # All fields optional so the same model serves create + partial update via fields_set.
+    name:            Optional[str]   = None
+    control_type:    Optional[str]   = None     # 'checkbox' | 'radio'
+    min_select:      Optional[int]   = None
+    max_select:      Optional[int]   = None     # null = unlimited (checkbox)
+    is_required:     Optional[bool]  = None
+    default_item_id: Optional[int]   = None     # null clears (radio without preselect)
 
-class ReorderModifiersRequest(BaseModel):
-    ids: List[int] = []
+class ModifierItemRequest(BaseModel):
+    name:        Optional[str]   = None
+    price_delta: Optional[float] = None
+
+class ReorderGroupsRequest(BaseModel):
+    ids: List[int] = []                          # full list of group ids in new order
+
+class ReorderItemsRequest(BaseModel):
+    # Cross-group move + reorder in one shot. Each entry: { id, group_id, position }.
+    # group_id can be the same (sort within group) or different (move between groups).
+    items: List[dict] = []
 
 class RestoreRequest(BaseModel):
     # Generic Undo snapshot — fresh IDs assigned on rebuild.
@@ -2516,12 +2598,33 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
     if p.get("category_id"):
         cat_row = db_one("SELECT id, name, slug FROM product_categories WHERE id=%s", (p["category_id"],))
 
-    modifiers = db_all(
-        "SELECT id, name, price, position FROM product_modifiers"
-        " WHERE product_id=%s ORDER BY position ASC, id ASC",
-        (product_id,)
-    )
-    for m in modifiers: m["price"] = float(m.get("price") or 0)
+    # Modifier groups — two-level fetch (groups + items in one round-trip each).
+    # Guarded with try/except so a failed/skipped migration doesn't break product
+    # loading entirely — page still renders with an empty modifier_groups array.
+    groups = []
+    try:
+        groups = db_all(
+            "SELECT id, name, control_type, min_select, max_select, is_required,"
+            "       default_item_id, position FROM product_modifier_groups"
+            " WHERE product_id=%s ORDER BY position ASC, id ASC",
+            (product_id,)
+        )
+        items_by_group: dict = {}
+        if groups:
+            gids = [g["id"] for g in groups]
+            rows = db_all(
+                "SELECT id, group_id, name, price_delta, position FROM product_modifier_items"
+                " WHERE group_id = ANY(%s) ORDER BY position ASC, id ASC",
+                (gids,)
+            )
+            for r in rows:
+                r["price_delta"] = float(r.get("price_delta") or 0)
+                items_by_group.setdefault(r["group_id"], []).append(r)
+        for g in groups:
+            g["items"] = items_by_group.get(g["id"], [])
+    except Exception as e:
+        print(f"[get_product] modifier groups fetch failed (table missing?): {e}")
+        groups = []
 
     return {
         "id": p["id"], "title": p["title"],
@@ -2537,7 +2640,7 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         "is_archived":    bool(p.get("is_archived")),
         "is_paused":      bool(p.get("is_paused")),
         "variations": variations, "custom_fields": custom_fields, "reviews": reviews,
-        "modifiers": modifiers,
+        "modifier_groups": groups,
         "max_layer": max_layer,
     }
 
@@ -3677,83 +3780,297 @@ def _safe_parent_for_product(layer: int, parent_id: int, product_id: int) -> boo
 
 # ── MODIFIERS ────────────────────────────────────────────
 
-@app.get("/api/products/{product_id}/modifiers")
-def list_modifiers(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+# ─── Modifier groups + items ────────────────────────────────────────
+# Two-level model: groups (checkbox|radio) → items (name + price_delta).
+# Routing pattern mirrors layers: collection ops on /modifier-groups,
+# single ops on /modifier-groups/{gid} and /modifier-items/{iid}.
+
+def _validate_group_payload(req: ModifierGroupRequest, *, control_type: str = None,
+                             min_select: int = None, max_select: int = None):
+    """Common validation for create + update — consistent error messages."""
+    ct = control_type if control_type is not None else (req.control_type or 'checkbox')
+    if ct not in ('checkbox', 'radio'):
+        raise HTTPException(400, "control_type must be 'checkbox' or 'radio'")
+    mn = min_select if min_select is not None else (req.min_select if req.min_select is not None else 0)
+    mx = max_select if max_select is not None else req.max_select  # may be None = unlimited
+    if mn < 0:
+        raise HTTPException(400, "min_select must be ≥ 0")
+    if mx is not None:
+        if mx < 0: raise HTTPException(400, "max_select must be ≥ 0")
+        if mx < mn: raise HTTPException(400, "max_select must be ≥ min_select")
+    # Radio = inherently single-select. Force max=1 server-side so storefront can't
+    # accidentally over-select even if the client UI is buggy.
+    if ct == 'radio' and mx is not None and mx > 1:
+        raise HTTPException(400, "max_select must be 0 or 1 for radio groups")
+    return ct, mn, mx
+
+
+@app.get("/api/products/{product_id}/modifier-groups")
+def list_modifier_groups(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    rows = db_all(
-        "SELECT id, name, price, position FROM product_modifiers"
+    groups = db_all(
+        "SELECT id, name, control_type, min_select, max_select, is_required,"
+        "       default_item_id, position FROM product_modifier_groups"
         " WHERE product_id=%s ORDER BY position ASC, id ASC",
         (product_id,)
     )
-    for r in rows: r["price"] = float(r.get("price") or 0)
-    return rows
+    items_by_group: dict = {}
+    if groups:
+        gids = [g["id"] for g in groups]
+        rows = db_all(
+            "SELECT id, group_id, name, price_delta, position FROM product_modifier_items"
+            " WHERE group_id = ANY(%s) ORDER BY position ASC, id ASC",
+            (gids,)
+        )
+        for r in rows:
+            r["price_delta"] = float(r.get("price_delta") or 0)
+            items_by_group.setdefault(r["group_id"], []).append(r)
+    for g in groups:
+        g["items"] = items_by_group.get(g["id"], [])
+    return groups
 
 
-@app.post("/api/products/{product_id}/modifiers")
-def create_modifier(product_id: int, request: ModifierRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+@app.post("/api/products/{product_id}/modifier-groups")
+def create_modifier_group(product_id: int, request: ModifierGroupRequest,
+                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
-    name = sanitize((request.name or '').strip())
-    if not name: raise HTTPException(400, "Name is required")
-    price = float(request.price or 0)
+    ct, mn, mx = _validate_group_payload(request)
+    name = sanitize((request.name or '').strip())[:200]
+    is_required = bool(request.is_required) if request.is_required is not None else False
     with db_cursor() as (conn, cur):
-        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM product_modifiers WHERE product_id=%s", (product_id,))
+        cur.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next_pos"
+            " FROM product_modifier_groups WHERE product_id=%s", (product_id,)
+        )
         pos = cur.fetchone()["next_pos"]
         cur.execute(
-            "INSERT INTO product_modifiers (product_id, name, price, position)"
-            " VALUES(%s, %s, %s, %s) RETURNING id",
-            (product_id, name, price, pos)
+            "INSERT INTO product_modifier_groups"
+            "  (product_id, name, control_type, min_select, max_select, is_required, position)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (product_id, name, ct, mn, mx, is_required, pos)
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
-    return {"id": new_id, "name": name, "price": price, "position": pos}
+    return {
+        "id": new_id, "name": name, "control_type": ct,
+        "min_select": mn, "max_select": mx, "is_required": is_required,
+        "default_item_id": None, "position": pos, "items": [],
+    }
 
 
-@app.put("/api/products/{product_id}/modifiers/{mod_id}")
-def update_modifier(product_id: int, mod_id: int, request: ModifierRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+@app.put("/api/products/{product_id}/modifier-groups/{gid}")
+def update_modifier_group(product_id: int, gid: int, request: ModifierGroupRequest,
+                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
-    row = db_one("SELECT id FROM product_modifiers WHERE id=%s AND product_id=%s", (mod_id, product_id))
-    if not row: raise HTTPException(404, "Modifier not found")
+    g = db_one(
+        "SELECT id, control_type, min_select, max_select FROM product_modifier_groups"
+        " WHERE id=%s AND product_id=%s", (gid, product_id)
+    )
+    if not g: raise HTTPException(404, "Modifier group not found")
+
+    # Compute the post-update values for validation (so radio→checkbox switch sees consistent state).
+    new_ct = request.control_type if request.control_type is not None else g["control_type"]
+    new_mn = request.min_select   if request.min_select   is not None else g["min_select"]
+    new_mx = request.max_select   if "max_select" in request.model_fields_set else g["max_select"]
+    _validate_group_payload(request, control_type=new_ct, min_select=new_mn, max_select=new_mx)
+
     fields, vals = [], []
     if request.name is not None:
-        n = sanitize(request.name.strip())
-        if not n: raise HTTPException(400, "Name cannot be empty")
-        fields.append("name=%s"); vals.append(n)
-    if request.price is not None:
-        fields.append("price=%s"); vals.append(float(request.price))
+        fields.append("name=%s"); vals.append(sanitize(request.name.strip())[:200])
+    if request.control_type is not None:
+        fields.append("control_type=%s"); vals.append(new_ct)
+    if request.min_select is not None:
+        fields.append("min_select=%s"); vals.append(new_mn)
+    if "max_select" in request.model_fields_set:
+        fields.append("max_select=%s"); vals.append(new_mx)
+    if request.is_required is not None:
+        fields.append("is_required=%s"); vals.append(bool(request.is_required))
+    if "default_item_id" in request.model_fields_set:
+        # Validate the default item belongs to this group (or is being cleared with NULL).
+        if request.default_item_id is not None:
+            owned = db_one(
+                "SELECT id FROM product_modifier_items WHERE id=%s AND group_id=%s",
+                (request.default_item_id, gid)
+            )
+            if not owned: raise HTTPException(400, "default_item_id must reference an item in this group")
+        fields.append("default_item_id=%s"); vals.append(request.default_item_id)
     if not fields: return {"ok": True}
-    vals.append(mod_id)
+    vals.append(gid)
     with db_cursor() as (conn, cur):
-        cur.execute(f"UPDATE product_modifiers SET {', '.join(fields)} WHERE id=%s", vals)
+        cur.execute(f"UPDATE product_modifier_groups SET {', '.join(fields)} WHERE id=%s", vals)
         conn.commit()
     return {"ok": True}
 
 
-@app.delete("/api/products/{product_id}/modifiers/{mod_id}")
-def delete_modifier(product_id: int, mod_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+@app.delete("/api/products/{product_id}/modifier-groups/{gid}")
+def delete_modifier_group(product_id: int, gid: int,
+                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM product_modifier_groups WHERE id=%s AND product_id=%s",
+                  (gid, product_id)):
+        raise HTTPException(404, "Modifier group not found")
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM product_modifiers WHERE id=%s AND product_id=%s", (mod_id, product_id))
+        # ON DELETE CASCADE on items takes care of cleanup.
+        cur.execute("DELETE FROM product_modifier_groups WHERE id=%s", (gid,))
         conn.commit()
     return {"ok": True}
 
 
-@app.put("/api/products/{product_id}/modifiers/reorder")
-def reorder_modifiers(product_id: int, req: ReorderModifiersRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+@app.put("/api/products/{product_id}/modifier-groups/reorder")
+def reorder_modifier_groups(product_id: int, req: ReorderGroupsRequest,
+                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     ids = list(req.ids or [])
     with db_cursor() as (conn, cur):
-        cur.execute("SELECT id FROM product_modifiers WHERE product_id=%s", (product_id,))
+        cur.execute("SELECT id FROM product_modifier_groups WHERE product_id=%s", (product_id,))
         existing = {r["id"] for r in cur.fetchall()}
         if set(ids) != existing:
-            raise HTTPException(400, "ids must contain exactly the modifiers of this product")
-        for idx, mid in enumerate(ids):
-            cur.execute("UPDATE product_modifiers SET position=%s WHERE id=%s", (idx, mid))
+            raise HTTPException(400, "ids must contain exactly the groups of this product")
+        for idx, gid in enumerate(ids):
+            cur.execute("UPDATE product_modifier_groups SET position=%s WHERE id=%s", (idx, gid))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/products/{product_id}/modifier-groups/{gid}/items")
+def create_modifier_item(product_id: int, gid: int, request: ModifierItemRequest,
+                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one(
+        "SELECT g.id FROM product_modifier_groups g"
+        " JOIN products p ON g.product_id=p.id"
+        " WHERE g.id=%s AND p.id=%s AND p.project_id=%s",
+        (gid, product_id, project_id),
+    ):
+        raise HTTPException(404, "Modifier group not found")
+    # Empty name allowed on create — same UX as groups: user types it in after the
+    # row appears. Save validation kicks in only via the PUT debounced save.
+    name = sanitize((request.name or '').strip())[:200]
+    delta = float(request.price_delta or 0)
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT COALESCE(MAX(position), -1) + 1 AS next_pos"
+                    " FROM product_modifier_items WHERE group_id=%s", (gid,))
+        pos = cur.fetchone()["next_pos"]
+        cur.execute(
+            "INSERT INTO product_modifier_items (group_id, name, price_delta, position)"
+            " VALUES (%s, %s, %s, %s) RETURNING id",
+            (gid, name, delta, pos)
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id, "group_id": gid, "name": name, "price_delta": delta, "position": pos}
+
+
+@app.put("/api/products/{product_id}/modifier-items/{iid}")
+def update_modifier_item(product_id: int, iid: int, request: ModifierItemRequest,
+                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT i.id FROM product_modifier_items i"
+        " JOIN product_modifier_groups g ON i.group_id=g.id"
+        " JOIN products p ON g.product_id=p.id"
+        " WHERE i.id=%s AND p.id=%s AND p.project_id=%s",
+        (iid, product_id, project_id),
+    )
+    if not row: raise HTTPException(404, "Modifier item not found")
+    fields, vals = [], []
+    if request.name is not None:
+        # Allow empty (user can clear the field temporarily); DB column has DEFAULT ''.
+        fields.append("name=%s"); vals.append(sanitize(request.name.strip())[:200])
+    if request.price_delta is not None:
+        fields.append("price_delta=%s"); vals.append(float(request.price_delta))
+    if not fields: return {"ok": True}
+    vals.append(iid)
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE product_modifier_items SET {', '.join(fields)} WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/modifier-items/{iid}")
+def delete_modifier_item(product_id: int, iid: int,
+                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT i.id FROM product_modifier_items i"
+        " JOIN product_modifier_groups g ON i.group_id=g.id"
+        " JOIN products p ON g.product_id=p.id"
+        " WHERE i.id=%s AND p.id=%s AND p.project_id=%s",
+        (iid, product_id, project_id),
+    )
+    if not row: raise HTTPException(404, "Modifier item not found")
+    with db_cursor() as (conn, cur):
+        # Group's default_item_id has ON DELETE SET NULL FK — auto-cleared.
+        cur.execute("DELETE FROM product_modifier_items WHERE id=%s", (iid,))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.put("/api/products/{product_id}/modifier-items/reorder")
+def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
+                            project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Single endpoint for both within-group sort and cross-group move.
+
+    Body: { items: [{ id, group_id, position }, ...] }
+
+    Each entry overwrites both group_id and position for the given item id.
+    Caller is responsible for sending consistent positions (we don't auto-renumber).
+    """
+    require_team_member_or_owner(user, project_id)
+    payload = list(req.items or [])
+    if not payload: return {"ok": True}
+
+    item_ids = [int(e.get("id")) for e in payload if e.get("id") is not None]
+    if not item_ids: raise HTTPException(400, "items must contain id+group_id+position triples")
+
+    # Verify every item id belongs to this product (defence against IDOR).
+    rows = db_all(
+        "SELECT i.id FROM product_modifier_items i"
+        " JOIN product_modifier_groups g ON i.group_id=g.id"
+        " WHERE i.id = ANY(%s) AND g.product_id=%s",
+        (item_ids, product_id),
+    )
+    found = {r["id"] for r in rows}
+    if found != set(item_ids):
+        raise HTTPException(400, "ids must reference items of this product only")
+
+    # Verify every target group_id belongs to this product too.
+    target_gids = list({int(e.get("group_id")) for e in payload if e.get("group_id") is not None})
+    if target_gids:
+        owned = db_all(
+            "SELECT id FROM product_modifier_groups WHERE id = ANY(%s) AND product_id=%s",
+            (target_gids, product_id),
+        )
+        if {r["id"] for r in owned} != set(target_gids):
+            raise HTTPException(400, "group_id must reference a group of this product")
+
+    with db_cursor() as (conn, cur):
+        for entry in payload:
+            iid = int(entry["id"])
+            gid = int(entry["group_id"])
+            pos = int(entry["position"])
+            cur.execute(
+                "UPDATE product_modifier_items SET group_id=%s, position=%s WHERE id=%s",
+                (gid, pos, iid)
+            )
+        # An item moved to another group might have been the default of the old group.
+        # Null out any orphaned default_item_id so the FK + group consistency stays clean.
+        cur.execute(
+            "UPDATE product_modifier_groups g"
+            " SET default_item_id = NULL"
+            " WHERE g.product_id=%s AND g.default_item_id IS NOT NULL"
+            "   AND NOT EXISTS ("
+            "     SELECT 1 FROM product_modifier_items i"
+            "      WHERE i.id = g.default_item_id AND i.group_id = g.id"
+            "   )",
+            (product_id,)
+        )
         conn.commit()
     return {"ok": True}
 

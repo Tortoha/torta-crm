@@ -1131,3 +1131,96 @@ body {
     bottom: 8px;
   }
 }
+/* ── Modifier groups (food add-ons / sauces / removals) ─────────────────── */
+
+.product-modifiers {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 18px 0 8px;
+}
+
+.pmod-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pmod-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pmod-group-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.pmod-required {
+  color: #d12626;
+  margin-left: 3px;
+}
+
+.pmod-group-hint {
+  font-size: 12px;
+  color: #666;
+}
+
+.pmod-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pmod-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e6e6e6;
+  border-radius: 12px;
+  cursor: pointer;
+  background: #fff;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+.pmod-item:hover { border-color: #c8c8c8; }
+.pmod-item--on  { border-color: #111; background: #fafafa; }
+
+.pmod-item input[type="radio"],
+.pmod-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #111;
+  cursor: pointer;
+}
+
+.pmod-item-name { flex: 1 1 auto; font-size: 14px; }
+.pmod-item-price { font-size: 13px; color: #666; }
+
+.pmod-error {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #d12626;
+}
+
+/* ── Cart line modifier list ───────────────────────────────────────────── */
+
+.cart-item-mods {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cart-item-mod {
+  font-size: 12px;
+  color: #666;
+  display: flex;
+  gap: 6px;
+}
+.cart-item-mod-delta { color: #999; }

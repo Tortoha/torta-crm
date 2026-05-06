@@ -16,6 +16,7 @@ import { RowContextMenu } from '../../Utils/RowContextMenu.jsx';
 import LayerBlock, { snapshotLayerNode } from './LayerBlock.jsx';
 import SpecificationsBlock from './SpecificationsBlock.jsx';
 import { CpmCategorySelect } from '../Project/Products/CreateProductModal.jsx';
+import { Combobox } from '../Project/Booking/BookingCreateModal.jsx';
 import '../../Style/Authentication.css';
 import '../../Style/Organization.css';
 import '../../Style/Products.css';
@@ -1584,21 +1585,24 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
 }
 
 // ─── Modifiers (type=physical) ────────────────────────────────────
+// Two-level structure: groups (checkbox or radio) → items (name + price_delta).
+// DnD: groups reorder vertically; items reorder within group AND cross-group via
+// shared DndContext + per-group SortableContext (multi-container pattern).
 function ModifiersBlock({ product, productId, pq, reloadProduct, registerUndo }) {
-  const modifiers = product.modifiers || [];
+  const groups = product.modifier_groups || [];
 
-  const create = async (body) => {
-    const r = await fetch(`${API_BASE}/api/products/${productId}/modifiers${pq}`, {
+  // ─── Group CRUD ───────────────────────────────────────────────────
+  const createGroup = async () => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifier-groups${pq}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ name: '', control_type: 'checkbox' }),
     });
     if (r.ok) reloadProduct?.();
-    return r.ok;
   };
 
-  const update = async (id, body) => {
-    const r = await fetch(`${API_BASE}/api/products/${productId}/modifiers/${id}${pq}`, {
+  const updateGroup = async (gid, body) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifier-groups/${gid}${pq}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1607,103 +1611,390 @@ function ModifiersBlock({ product, productId, pq, reloadProduct, registerUndo })
     return r.ok;
   };
 
-  const remove = async (id) => {
-    if (!confirm('Delete this modifier?')) return;
-    const r = await fetch(`${API_BASE}/api/products/${productId}/modifiers/${id}${pq}`, {
+  const deleteGroup = async (gid) => {
+    if (!confirm('Delete this group and all its items?')) return;
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifier-groups/${gid}${pq}`, {
       method: 'DELETE', credentials: 'include',
     });
     if (r.ok) reloadProduct?.();
+  };
+
+  const reorderGroups = async (newOrder) => {
+    await fetch(`${API_BASE}/api/products/${productId}/modifier-groups/reorder${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: newOrder.map(g => g.id) }),
+    });
+    reloadProduct?.();
+  };
+
+  // ─── Item CRUD ────────────────────────────────────────────────────
+  const createItem = async (gid) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifier-groups/${gid}/items${pq}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '', price_delta: 0 }),
+    });
+    if (r.ok) reloadProduct?.();
+  };
+
+  const updateItem = async (iid, body) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifier-items/${iid}${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) reloadProduct?.();
+    return r.ok;
+  };
+
+  const deleteItem = async (iid) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/modifier-items/${iid}${pq}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    if (r.ok) reloadProduct?.();
+  };
+
+  // ─── DnD: cross-group items + within-group sort + group sort ──────
+  // Long-press (300 ms) activation — same pattern as Configuration Layers.
+  // No visible drag handle: press-and-hold anywhere on the row starts drag,
+  // tap-and-release goes through to the underlying input/button as normal.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
+
+  const onDragEnd = async ({ active, over }) => {
+    if (!over) return;
+    const a = String(active.id); const o = String(over.id);
+    if (a === o) return;
+
+    // Group-level drag handles use prefix "group:".
+    if (a.startsWith('group:') && o.startsWith('group:')) {
+      const oldIdx = groups.findIndex(g => `group:${g.id}` === a);
+      const newIdx = groups.findIndex(g => `group:${g.id}` === o);
+      if (oldIdx < 0 || newIdx < 0) return;
+      reorderGroups(arrayMove(groups, oldIdx, newIdx));
+      return;
+    }
+
+    // Item drag — id is the item id (number-as-string).
+    const findItem = (id) => {
+      for (const g of groups) {
+        const it = (g.items || []).find(x => String(x.id) === id);
+        if (it) return { group: g, item: it };
+      }
+      return null;
+    };
+    const src = findItem(a);
+    if (!src) return;
+
+    // Drop target: either another item id, or a group's drop-zone id "drop:GROUP_ID"
+    let targetGroupId, targetIndex;
+    if (o.startsWith('drop:')) {
+      targetGroupId = parseInt(o.slice(5), 10);
+      const tg = groups.find(g => g.id === targetGroupId);
+      targetIndex = (tg?.items || []).length; // append
+    } else {
+      const dst = findItem(o);
+      if (!dst) return;
+      targetGroupId = dst.group.id;
+      targetIndex = (dst.group.items || []).findIndex(x => String(x.id) === o);
+    }
+
+    // Build the full update payload — all items of all groups, with their final positions.
+    const next = groups.map(g => ({ ...g, items: [...(g.items || [])] }));
+    const srcG = next.find(g => g.id === src.group.id);
+    const dstG = next.find(g => g.id === targetGroupId);
+    if (!srcG || !dstG) return;
+    const srcIdx = srcG.items.findIndex(x => x.id === src.item.id);
+    if (srcIdx < 0) return;
+    const [moved] = srcG.items.splice(srcIdx, 1);
+    // Adjust target index if dragging within the same group and removed from above.
+    if (srcG.id === dstG.id && srcIdx < targetIndex) targetIndex -= 1;
+    dstG.items.splice(targetIndex, 0, moved);
+
+    const payload = [];
+    for (const g of next) {
+      g.items.forEach((it, i) => payload.push({ id: it.id, group_id: g.id, position: i }));
+    }
+    await fetch(`${API_BASE}/api/products/${productId}/modifier-items/reorder${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: payload }),
+    });
+    reloadProduct?.();
   };
 
   return (
     <section className="po-block">
       <h2 className="po-block-title">Modifiers</h2>
       <p className="po-block-hint">
-        Add-ons the customer can pick alongside the product (e.g. "Extra cheese +200 ₸", "No onion 0 ₸").
-        Multi-select on the storefront — checked items are added to the price.
+        Group add-ons by category. Each group is either Checkbox (multi-select) or Radio (single-select),
+        with optional min / max selection and required flag. Drag items between groups, drag whole groups to reorder.
       </p>
-      <div className="cfg-block-body">
-        <div className="cfg-list">
-          <div className="cfg-list-head spec-list-head">
-            <span className="cfg-col">Name</span>
-            <span className="cfg-col">Price delta</span>
-            <span className="cfg-col cfg-col-actions" />
+
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={groups.map(g => `group:${g.id}`)} strategy={verticalListSortingStrategy}>
+          <div className="po-mod-groups">
+            {groups.map(g => (
+              <ModifierGroupCard key={g.id} group={g}
+                onChange={updateGroup}
+                onDelete={() => deleteGroup(g.id)}
+                onAddItem={() => createItem(g.id)}
+                onItemChange={updateItem}
+                onItemDelete={deleteItem}
+                registerUndo={registerUndo} />
+            ))}
           </div>
-          {modifiers.map(m => (
-            <ModifierRow key={m.id} m={m} onUpdate={update}
-              onDelete={() => remove(m.id)} registerUndo={registerUndo} />
-          ))}
-          <ModifierNewRow onSave={create} />
-        </div>
-      </div>
+        </SortableContext>
+      </DndContext>
+
+      <button type="button" className="po-mod-add-group" onClick={createGroup}>
+        <Plus weight="bold" /> Add group
+      </button>
     </section>
   );
 }
 
-function ModifierRow({ m, onUpdate, onDelete, registerUndo }) {
-  const [name,  setName]  = useState(m.name);
-  const [price, setPrice] = useState(String(m.price));
+function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange, onItemDelete, registerUndo }) {
+  const sortable = useSortable({ id: `group:${group.id}` });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = sortable;
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  // Local controlled state for the group header so typing feels native.
+  const [name,       setName]       = useState(group.name || '');
+  const [ctrl,       setCtrl]       = useState(group.control_type || 'checkbox');
+  const [minSel,     setMinSel]     = useState(String(group.min_select ?? 0));
+  const [maxSel,     setMaxSel]     = useState(group.max_select == null ? '' : String(group.max_select));
+  const [required,   setRequired]   = useState(!!group.is_required);
+  const [defItem,    setDefItem]    = useState(group.default_item_id ?? '');
+  const skip = useRef(true);
+
+  // Re-sync when the underlying group data changes from elsewhere (e.g. reorder reload).
+  useEffect(() => {
+    skip.current = true;
+    setName(group.name || '');
+    setCtrl(group.control_type || 'checkbox');
+    setMinSel(String(group.min_select ?? 0));
+    setMaxSel(group.max_select == null ? '' : String(group.max_select));
+    setRequired(!!group.is_required);
+    setDefItem(group.default_item_id ?? '');
+  }, [group.id, group.name, group.control_type, group.min_select, group.max_select, group.is_required, group.default_item_id]);
+
+  // Debounced save — same pattern as Layer1Card / SpecRow.
+  useEffect(() => {
+    if (skip.current) { skip.current = false; return; }
+    const t = setTimeout(async () => {
+      const body = {
+        name,
+        control_type: ctrl,
+        min_select: parseInt(minSel, 10) || 0,
+        max_select: maxSel === '' ? null : (parseInt(maxSel, 10) || 0),
+        is_required: required,
+        // default_item_id is sent only when control_type=radio, otherwise cleared.
+        default_item_id: ctrl === 'radio' && defItem !== '' ? Number(defItem) : null,
+      };
+      await onChange(group.id, body);
+    }, 500);
+    return () => clearTimeout(t);
+  }, [name, ctrl, minSel, maxSel, required, defItem]); // eslint-disable-line
+
+  // Items live in their own SortableContext (per group) — but inside the same
+  // DndContext (parent), so cross-group drag sees them.
+  const items = group.items || [];
+  const dropZoneId = `drop:${group.id}`;
+  const dropSortable = useSortable({ id: dropZoneId });
+
+  // Sliding indicator that follows the active control_type segment (Orders-toolbar pattern).
+  const ctrlIndRef = useRef(null);
+  const ctrlBtnRefs = useRef({});
+  const [ctrlHovered, setCtrlHovered] = useState(null);
+  const ctrlCurrent = ctrlHovered ?? ctrl;
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = ctrlIndRef.current;
+      const el  = ctrlBtnRefs.current[ctrlCurrent];
+      if (!ind || !el) return;
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [ctrlCurrent, ctrl]);
+
+  // Stop drag activation on interactive children — without this, holding down
+  // on an input or button for 300 ms would start a group reorder drag instead
+  // of focusing the input. Single-tap still works because PointerSensor needs
+  // the press to last 300 ms before activating.
+  const stopDrag = { onPointerDown: (e) => e.stopPropagation() };
+
+  return (
+    <div ref={setNodeRef} style={style} className="po-mod-group">
+      {/* Whole head row is the drag handle — long-press anywhere starts drag. */}
+      <div className="po-mod-group-head" {...attributes} {...listeners}>
+        {/* Group name — search-style pill (mirrors org-search-wrap from Orders toolbar). */}
+        <div className="po-mod-name-wrap">
+          <input
+            className="po-mod-name-input"
+            value={name}
+            placeholder="Group name (e.g. Sauces)"
+            onChange={e => setName(e.target.value)}
+            {...stopDrag}
+          />
+        </div>
+
+        {/* Control type — segmented toggle pill (mirrors OrdSortToggle). */}
+        <div className="po-mod-ctrl-toggle" onMouseLeave={() => setCtrlHovered(null)} {...stopDrag}>
+          <div ref={ctrlIndRef} className="po-mod-ctrl-indicator" />
+          {[
+            { val: 'checkbox', label: 'Checkbox' },
+            { val: 'radio',    label: 'Radio'    },
+          ].map(({ val, label }) => (
+            <button
+              key={val}
+              ref={el => (ctrlBtnRefs.current[val] = el)}
+              type="button"
+              className={`po-mod-ctrl-btn${ctrl === val ? ' po-mod-ctrl-btn--current' : ''}`}
+              onClick={() => setCtrl(val)}
+              onMouseEnter={() => setCtrlHovered(val)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Min / Max — single grouped pill with two number inputs. */}
+        <div className="po-mod-num-group" {...stopDrag}>
+          <span className="po-mod-num-label">Min</span>
+          <input
+            className="po-mod-num-input" type="number" min="0"
+            value={minSel} onChange={e => setMinSel(e.target.value)}
+          />
+          <span className="po-mod-num-divider" />
+          <span className="po-mod-num-label">Max</span>
+          <input
+            className="po-mod-num-input" type="number" min="0"
+            value={maxSel} placeholder={ctrl === 'radio' ? '1' : '∞'}
+            onChange={e => setMaxSel(e.target.value)}
+          />
+        </div>
+
+        {/* Required — toggle pill (lights up with --accent when active). */}
+        <button
+          type="button"
+          className={`po-mod-required-btn${required ? ' po-mod-required-btn--on' : ''}`}
+          onClick={() => setRequired(!required)}
+          {...stopDrag}
+        >
+          <span className="po-mod-required-dot" />
+          Required
+        </button>
+
+        {/* Default-item — radio-only Combobox (same widget as CpmCategorySelect /
+            BookingCreateModal). Wrapped in a stopDrag div so press-and-hold on
+            the trigger doesn't fire group reorder. */}
+        {ctrl === 'radio' && items.length > 0 && (
+          <div className="po-mod-default-cb" {...stopDrag}>
+            <Combobox
+              value={defItem === '' ? '' : Number(defItem)}
+              placeholder="No default"
+              options={[
+                { value: '', label: 'No default' },
+                ...items.map(it => ({
+                  value: it.id,
+                  label: `Default: ${it.name || `#${it.id}`}`,
+                })),
+              ]}
+              onChange={(v) => setDefItem(v === '' ? '' : v)}
+            />
+          </div>
+        )}
+
+        <button
+          type="button" className="po-mod-group-del"
+          onClick={onDelete} title="Delete group"
+          {...stopDrag}
+        >
+          <Trash />
+        </button>
+      </div>
+
+      <div ref={dropSortable.setNodeRef} className="po-mod-items">
+        <SortableContext items={items.map(it => String(it.id))} strategy={verticalListSortingStrategy}>
+          {items.map(it => (
+            <ModifierItemRow key={it.id} item={it}
+              onUpdate={onItemChange}
+              onDelete={() => onItemDelete(it.id)}
+              registerUndo={registerUndo} />
+          ))}
+        </SortableContext>
+        {items.length === 0 && (
+          <div className="po-mod-items-empty">No items yet — add one below.</div>
+        )}
+        <button type="button" className="po-mod-add-item" onClick={onAddItem}>
+          <Plus weight="bold" /> Add item
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ModifierItemRow({ item, onUpdate, onDelete, registerUndo }) {
+  const sortable = useSortable({ id: String(item.id) });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = sortable;
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  const [name,  setName]  = useState(item.name || '');
+  const [price, setPrice] = useState(String(item.price_delta ?? 0));
   const skip = useRef(true);
 
   useEffect(() => {
     skip.current = true;
-    setName(m.name);
-    setPrice(String(m.price));
-  }, [m.id]);
+    setName(item.name || '');
+    setPrice(String(item.price_delta ?? 0));
+  }, [item.id, item.name, item.price_delta]);
 
   useEffect(() => {
     if (skip.current) { skip.current = false; return; }
-    const trimmed = name.trim();
-    if (!trimmed) return;
     const t = setTimeout(async () => {
-      const before = { name: m.name, price: m.price };
-      const ok = await onUpdate(m.id, { name: trimmed, price: parseFloat(price) || 0 });
+      const before = { name: item.name, price_delta: item.price_delta };
+      const ok = await onUpdate(item.id, { name: name || '', price_delta: parseFloat(price) || 0 });
       if (ok) registerUndo?.({
-        description: `Modifier "${m.name}" changed`,
+        description: `Modifier item "${item.name || '—'}" changed`,
         silent: true,
-        undo: async () => { await onUpdate(m.id, before); },
+        undo: async () => { await onUpdate(item.id, before); },
       });
     }, 500);
     return () => clearTimeout(t);
   }, [name, price]); // eslint-disable-line
 
+  // Long-press anywhere on the row starts drag; pointerdown on inputs/buttons
+  // is stopped so taps focus the input as expected.
+  const stopDrag = { onPointerDown: (e) => e.stopPropagation() };
+
   return (
-    <div className="cfg-row spec-row">
-      <input className="crm-input cfg-cell" value={name}
-        onChange={e => setName(e.target.value)} placeholder="Extra cheese" />
-      <input className="crm-input cfg-cell" type="number" step="0.01"
-        value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" />
-      <button type="button" className="cfg-col-actions cfg-delete-btn" onClick={onDelete} title="Delete">
+    <div ref={setNodeRef} style={style} className="po-mod-item" {...attributes} {...listeners}>
+      <input
+        className="po-mod-item-name" value={name}
+        onChange={e => setName(e.target.value)}
+        placeholder="Item name"
+        {...stopDrag}
+      />
+      <input
+        className="po-mod-item-price" type="number" step="0.01"
+        value={price} onChange={e => setPrice(e.target.value)}
+        placeholder="0.00"
+        {...stopDrag}
+      />
+      <button type="button" className="po-mod-item-del" onClick={onDelete} title="Delete item" {...stopDrag}>
         <Trash />
       </button>
-    </div>
-  );
-}
-
-function ModifierNewRow({ onSave }) {
-  const [name,  setName]  = useState('');
-  const [price, setPrice] = useState('');
-  const busyRef = useRef(false);
-
-  useEffect(() => {
-    const trimmed = name.trim();
-    if (!trimmed || busyRef.current) return;
-    const t = setTimeout(async () => {
-      busyRef.current = true;
-      const ok = await onSave({ name: trimmed, price: parseFloat(price) || 0 });
-      busyRef.current = false;
-      if (ok) { setName(''); setPrice(''); }
-    }, 600);
-    return () => clearTimeout(t);
-  }, [name, price]); // eslint-disable-line
-
-  return (
-    <div className="cfg-row cfg-row--new spec-row">
-      <input className="crm-input cfg-cell" value={name}
-        onChange={e => setName(e.target.value)} placeholder="New modifier" />
-      <input className="crm-input cfg-cell" type="number" step="0.01"
-        value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" />
-      <span className="cfg-col-actions" />
     </div>
   );
 }

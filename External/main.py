@@ -514,6 +514,7 @@ def _assemble_product_payload(
     is_favorite, can_review,
     custom_fields, reviews_raw,
     user_id,
+    modifier_groups=None,    # list of pre-shaped groups for THIS product (or None)
 ):
     final_variations = []
     for v in variations:
@@ -611,9 +612,134 @@ def _assemble_product_payload(
         "image":  summary_image,                                      # back-compat: cover URL
         "images": aggregated_images,                                  # full union of all variation galleries
         "price":  summary_price,
+        "modifier_groups": modifier_groups or [],                     # checkbox/radio add-on groups
         "conf_1": final_variations,
         "reviews": reviews,
     }
+
+
+# ── Modifier groups: shared fetch helper used by both list and single endpoints ────
+def _fetch_modifier_groups_for_products(product_ids):
+    """Returns dict: { product_id → [ {group fields + items[]} ] } sorted by position.
+
+    Two queries (groups + items) regardless of how many products — avoids N+1.
+    Guarded so a missing migration doesn't break the entire product-list endpoint.
+    """
+    if not product_ids: return {}
+    try:
+        groups = db_all(
+            "SELECT id, product_id, name, control_type, min_select, max_select,"
+            "       is_required, default_item_id, position"
+            "  FROM product_modifier_groups WHERE product_id = ANY(%s)"
+            " ORDER BY position ASC, id ASC",
+            (list(product_ids),)
+        )
+    except Exception as e:
+        print(f"[modifier-groups] fetch failed (table missing?): {e}")
+        return {pid: [] for pid in product_ids}
+    if not groups:
+        return {pid: [] for pid in product_ids}
+    gids = [g["id"] for g in groups]
+    items = db_all(
+        "SELECT id, group_id, name, price_delta, position"
+        "  FROM product_modifier_items WHERE group_id = ANY(%s)"
+        " ORDER BY position ASC, id ASC",
+        (gids,)
+    )
+    items_by_group: dict = {}
+    for r in items:
+        items_by_group.setdefault(r["group_id"], []).append({
+            "id":          r["id"],
+            "name":        r["name"],
+            "price_delta": float(r["price_delta"] or 0),
+            "position":    r["position"],
+        })
+    by_product: dict = {pid: [] for pid in product_ids}
+    for g in groups:
+        by_product[g["product_id"]].append({
+            "id":              g["id"],
+            "name":            g["name"],
+            "control_type":    g["control_type"],
+            "min_select":      g["min_select"],
+            "max_select":      g["max_select"],
+            "is_required":     bool(g["is_required"]),
+            "default_item_id": g["default_item_id"],
+            "position":        g["position"],
+            "items":           items_by_group.get(g["id"], []),
+        })
+    return by_product
+
+
+def _validate_modifier_selection(product_id, selected_item_ids):
+    """Validate that selected_item_ids respect this product's group constraints.
+
+    Raises HTTPException(400) on:
+      - any id that doesn't belong to a group of this product
+      - exceeding max_select within a group
+      - falling below min_select for a required group
+      - selecting >1 item in a radio group
+
+    Returns the same set of ids (deduped) plus a list of {id, name, price_delta, group_id}
+    rows for downstream snapshotting in cart/order.
+    """
+    selected = sorted(set(int(x) for x in (selected_item_ids or []) if x is not None))
+    if not selected:
+        # Still need to verify required groups have selections — fetch groups regardless.
+        groups = db_all(
+            "SELECT id, control_type, min_select, is_required FROM product_modifier_groups"
+            " WHERE product_id=%s", (product_id,)
+        )
+        for g in groups:
+            if g["is_required"] and (g["min_select"] or 0) > 0:
+                raise HTTPException(400, f"Group '{g['id']}' requires at least {g['min_select']} selection(s)")
+        return [], []
+
+    # Pull every selected item with its group context. ANY-array filter avoids N queries.
+    items = db_all(
+        "SELECT i.id, i.name, i.price_delta, i.group_id,"
+        "       g.control_type, g.min_select, g.max_select, g.is_required, g.product_id"
+        "  FROM product_modifier_items i"
+        "  JOIN product_modifier_groups g ON i.group_id = g.id"
+        " WHERE i.id = ANY(%s) AND g.product_id = %s",
+        (selected, product_id)
+    )
+    found_ids = {it["id"] for it in items}
+    bad = [x for x in selected if x not in found_ids]
+    if bad:
+        raise HTTPException(400, f"Modifier item(s) {bad} do not belong to this product")
+
+    # Group counts (selected) and constraint check.
+    by_group: dict = {}
+    for it in items:
+        by_group.setdefault(it["group_id"], []).append(it)
+
+    # Need ALL product groups (not just selected ones) to check is_required + min_select.
+    all_groups = db_all(
+        "SELECT id, control_type, min_select, max_select, is_required"
+        "  FROM product_modifier_groups WHERE product_id=%s",
+        (product_id,)
+    )
+    for g in all_groups:
+        gid = g["id"]
+        picked = by_group.get(gid, [])
+        n = len(picked)
+        if g["control_type"] == "radio" and n > 1:
+            raise HTTPException(400, f"Radio group {gid} accepts at most 1 selection (got {n})")
+        if g["max_select"] is not None and n > g["max_select"]:
+            raise HTTPException(400, f"Group {gid} accepts at most {g['max_select']} selection(s) (got {n})")
+        if g["is_required"] and n < (g["min_select"] or 0):
+            raise HTTPException(400, f"Group {gid} requires at least {g['min_select']} selection(s)")
+        if not g["is_required"] and n > 0 and n < (g["min_select"] or 0):
+            raise HTTPException(400, f"Group {gid} requires at least {g['min_select']} selection(s) when picked")
+
+    # Snapshot rows for cart line display + order history.
+    snapshot = [
+        {"id": it["id"], "name": it["name"],
+         "price_delta": float(it["price_delta"] or 0),
+         "group_id": it["group_id"]}
+        for it in items
+    ]
+    return selected, snapshot
 
 # ── CORS MIDDLEWARE ──────────────────────────────────────
 
@@ -718,9 +844,15 @@ class AddToCart(BaseModel):
     variation_id: int
     configuration_id: int
     quantity: int = 1
+    # IDs of selected product_modifier_items. Server validates each id belongs to a
+    # group of this product and that the per-group min/max/required constraints hold.
+    selected_modifier_item_ids: List[int] = []
 
 class UpdateCartQuantity(BaseModel):
     quantity: int
+    # Optional — when present, replaces the cart line's modifier selection.
+    # When absent, modifiers stay as-is (quantity-only edit).
+    selected_modifier_item_ids: Optional[List[int]] = None
 
 class AddToFavorites(BaseModel):
     product_id: int
@@ -785,14 +917,17 @@ class ProductPageResponse(BaseModel):
     image: Optional[str] = None         # cover URL (= images[0]); back-compat
     images: List[str] = []              # union of all variation galleries
     price: float = 0                    # summary price (lowest L2 or first variation)
+    modifier_groups: List[dict] = []    # checkbox/radio add-on groups with items
     conf_1: List[FrontConfNode]; reviews: List[FrontReview]
 
 class CartPageItem(BaseModel):
     cart_item_id: int; quantity: int; product_id: int; product_hash: str
     variation_id: Optional[int] = None; configuration_id: Optional[int] = None
     title: str; subtitle: Optional[str] = ""; price: float
+    base_price: Optional[float] = None     # SKU price w/o modifiers (for UI breakdown)
     configuration_name: Optional[str] = None; variation_name: Optional[str] = None
     image_url: Optional[str] = None; is_favorite: bool = False
+    modifiers: List[dict] = []             # [{id, name, price_delta, group_id, group_name}]
 
 class CartPageResponse(BaseModel):
     items: List[CartPageItem]; favorites_ids: List[int]
@@ -1572,6 +1707,8 @@ def get_products(request: Request,
                 if r["product_id"] not in already_reviewed:
                     can_review_set.add(r["product_id"])
 
+    modifier_groups_by_product = _fetch_modifier_groups_for_products(product_ids)
+
     return [
         _assemble_product_payload(
             p,
@@ -1587,6 +1724,7 @@ def get_products(request: Request,
             custom_fields=cf_by_product.get(p["id"], {}),
             reviews_raw=reviews_by_product.get(p["id"], []),
             user_id=user_id,
+            modifier_groups=modifier_groups_by_product.get(p["id"], []),
         )
         for p in products
     ]
@@ -1750,6 +1888,8 @@ def get_product_page(product_hash: str, request: Request,
     for c in configurations:
         cfg_by_variation_id.setdefault(c["variation_id"], []).append(c)
 
+    modifier_groups = _fetch_modifier_groups_for_products([product_id]).get(product_id, [])
+
     return _assemble_product_payload(
         product,
         variations=variations,
@@ -1762,6 +1902,7 @@ def get_product_page(product_hash: str, request: Request,
         is_favorite=is_favorite, can_review=can_review,
         custom_fields=custom_fields, reviews_raw=reviews_raw,
         user_id=user_id,
+        modifier_groups=modifier_groups,
     )
 
 
@@ -1772,6 +1913,13 @@ def add_to_cart(item: AddToCart, request: Request,
                 api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s",
+                  (item.product_id, project_id)):
+        raise HTTPException(403, "Product not in this store")
+    # Validate selected modifier ids belong to this product and respect group rules.
+    sel_ids, _ = _validate_modifier_selection(item.product_id, item.selected_modifier_item_ids)
+    sel_ids_sorted = sorted(sel_ids)
+
     with db_cursor() as (conn, cursor):
         cursor.execute("SELECT id FROM carts WHERE user_id = %s AND project_id = %s", (user_id, project_id))
         cart = cursor.fetchone()
@@ -1782,21 +1930,29 @@ def add_to_cart(item: AddToCart, request: Request,
         else:
             cart_id = cart["id"]
 
-        cursor.execute("SELECT id FROM products WHERE id = %s AND project_id = %s", (item.product_id, project_id))
-        if not cursor.fetchone(): raise HTTPException(403, "Product not in this store")
-
+        # Merge with existing line ONLY if the modifier selection matches exactly
+        # (sorted comparison). Different modifier sets stay as separate cart lines —
+        # same SKU + different sauces = two visually distinct customer choices.
         cursor.execute(
-            "SELECT id, quantity FROM cart_items WHERE cart_id=%s AND product_id=%s AND variation_id=%s AND configuration_id=%s",
+            "SELECT id, quantity, selected_modifier_item_ids FROM cart_items"
+            " WHERE cart_id=%s AND product_id=%s AND variation_id=%s AND configuration_id=%s",
             (cart_id, item.product_id, item.variation_id, item.configuration_id)
         )
-        existing = cursor.fetchone()
+        existing = None
+        for row in cursor.fetchall():
+            if sorted(row["selected_modifier_item_ids"] or []) == sel_ids_sorted:
+                existing = row
+                break
+
         if existing:
             cursor.execute("UPDATE cart_items SET quantity=%s WHERE id=%s",
                            (existing["quantity"] + item.quantity, existing["id"]))
         else:
             cursor.execute(
-                "INSERT INTO cart_items (cart_id, product_id, variation_id, configuration_id, quantity) VALUES (%s,%s,%s,%s,%s)",
-                (cart_id, item.product_id, item.variation_id, item.configuration_id, item.quantity)
+                "INSERT INTO cart_items (cart_id, product_id, variation_id, configuration_id, quantity, selected_modifier_item_ids)"
+                " VALUES (%s,%s,%s,%s,%s,%s)",
+                (cart_id, item.product_id, item.variation_id, item.configuration_id,
+                 item.quantity, sel_ids_sorted)
             )
         conn.commit()
     return {"success": True}
@@ -1837,7 +1993,7 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
     user_id = get_current_user_id(request)
     with db_cursor() as (conn, cursor):
         cursor.execute(
-            "SELECT ci.id, ci.configuration_id FROM cart_items ci JOIN carts c ON ci.cart_id=c.id "
+            "SELECT ci.id, ci.product_id, ci.configuration_id FROM cart_items ci JOIN carts c ON ci.cart_id=c.id "
             "WHERE ci.id=%s AND c.user_id=%s AND c.project_id=%s",
             (cart_item_id, user_id, api_key_record["id"])
         )
@@ -1847,7 +2003,17 @@ def update_cart_quantity(cart_item_id: int, data: UpdateCartQuantity, request: R
         cfg = cursor.fetchone()
         if cfg and data.quantity > cfg["stock_quantity"]:
             raise HTTPException(400, f"Only {cfg['stock_quantity']} items in stock")
-        cursor.execute("UPDATE cart_items SET quantity=%s WHERE id=%s", (data.quantity, cart_item_id))
+        # Optional modifier-set replacement (when client sends selected_modifier_item_ids).
+        # Absent = quantity-only edit.
+        if data.selected_modifier_item_ids is not None:
+            sel_ids, _ = _validate_modifier_selection(item["product_id"], data.selected_modifier_item_ids)
+            cursor.execute(
+                "UPDATE cart_items SET quantity=%s, selected_modifier_item_ids=%s WHERE id=%s",
+                (data.quantity, sorted(sel_ids), cart_item_id)
+            )
+        else:
+            cursor.execute("UPDATE cart_items SET quantity=%s WHERE id=%s",
+                           (data.quantity, cart_item_id))
         conn.commit()
     return {"success": True}
 
@@ -1884,6 +2050,7 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
 
         cursor.execute(
             "SELECT ci.id as cart_item_id, ci.quantity, ci.product_id, ci.variation_id, ci.configuration_id, "
+            "ci.selected_modifier_item_ids, "
             "p.title, p.subtitle, p.product_type, pc.price, pc.configuration_name, pv.variation_name, "
             "(pv.images)[1] AS image_url "
             "FROM cart_items ci JOIN products p ON ci.product_id=p.id "
@@ -1894,11 +2061,41 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
         )
         rows = cursor.fetchall()
 
+        # Bulk-fetch all modifier item snapshots referenced by any cart line — single query.
+        all_mod_ids = {mid for r in rows for mid in (r["selected_modifier_item_ids"] or [])}
+        mod_meta = {}
+        if all_mod_ids:
+            cursor.execute(
+                "SELECT i.id, i.name, i.price_delta, i.group_id, g.name AS group_name"
+                "  FROM product_modifier_items i"
+                "  JOIN product_modifier_groups g ON i.group_id = g.id"
+                " WHERE i.id = ANY(%s)",
+                (list(all_mod_ids),)
+            )
+            for m in cursor.fetchall():
+                mod_meta[m["id"]] = {
+                    "id":          m["id"],
+                    "name":        m["name"],
+                    "price_delta": float(m["price_delta"] or 0),
+                    "group_id":    m["group_id"],
+                    "group_name":  m["group_name"],
+                }
+
     items = []; subtotal = 0.0
     for row in rows:
-        price = float(row["price"] or 0); subtotal += price * row["quantity"]
-        items.append({**row, "price": price, "product_hash": hashids.encode(row["product_id"]),
-                      "is_favorite": row["product_id"] in favorites_set})
+        # Per-line modifier snapshot — only items still alive in DB show up.
+        mods = [mod_meta[mid] for mid in (row["selected_modifier_item_ids"] or []) if mid in mod_meta]
+        mods_total = sum(m["price_delta"] for m in mods)
+        line_unit = float(row["price"] or 0) + mods_total
+        subtotal += line_unit * row["quantity"]
+        items.append({
+            **row,
+            "price": line_unit,                          # unit price including modifiers
+            "base_price": float(row["price"] or 0),      # SKU price without modifiers
+            "modifiers": mods,                           # [{id, name, price_delta, group_id, group_name}]
+            "product_hash": hashids.encode(row["product_id"]),
+            "is_favorite": row["product_id"] in favorites_set,
+        })
 
     # Digital-only carts skip shipping (no physical address required).
     requires_shipping = any(it.get("product_type") in (None, "physical") for it in items)
@@ -2108,6 +2305,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
 
         cursor.execute(
             "SELECT ci.id, ci.product_id, ci.variation_id, ci.configuration_id, ci.quantity, "
+            "ci.selected_modifier_item_ids, "
             "pc.price, pc.stock_quantity, p.title, p.product_type, pv.variation_name "
             "FROM cart_items ci "
             "JOIN product_configurations_l2 pc ON ci.configuration_id = pc.id "
@@ -2125,7 +2323,24 @@ def place_order(data: PlaceOrderRequest, request: Request,
             if it["stock_quantity"] < it["quantity"]:
                 raise HTTPException(400, f"Not enough stock for {it['title']}")
 
-        subtotal = sum(float(it["price"]) * it["quantity"] for it in items)
+        # Per-line modifier price deltas (carried into order_items unit price snapshot).
+        all_mod_ids = {mid for it in items for mid in (it["selected_modifier_item_ids"] or [])}
+        mod_delta_by_id = {}
+        if all_mod_ids:
+            cursor.execute(
+                "SELECT id, price_delta FROM product_modifier_items WHERE id = ANY(%s)",
+                (list(all_mod_ids),)
+            )
+            for r in cursor.fetchall():
+                mod_delta_by_id[r["id"]] = float(r["price_delta"] or 0)
+        for it in items:
+            it["mod_delta_total"] = sum(
+                mod_delta_by_id.get(mid, 0)
+                for mid in (it["selected_modifier_item_ids"] or [])
+            )
+            it["unit_price"] = float(it["price"] or 0) + it["mod_delta_total"]
+
+        subtotal = sum(it["unit_price"] * it["quantity"] for it in items)
 
         # РџСЂРѕРјРѕРєРѕРґ
         discount = 0.0
@@ -2176,12 +2391,15 @@ def place_order(data: PlaceOrderRequest, request: Request,
         )
         order_id = cursor.fetchone()["id"]
 
-        # Позиции заказа
+        # Позиции заказа — price snapshots the unit price INCLUDING modifier deltas
+        # so order history shows the price the customer actually paid per unit.
         for it in items:
             cursor.execute(
-                "INSERT INTO order_items (order_id, product_id, variation_id, configuration_id, quantity, price) "
-                "VALUES (%s,%s,%s,%s,%s,%s)",
-                (order_id, it["product_id"], it["variation_id"], it["configuration_id"], it["quantity"], it["price"])
+                "INSERT INTO order_items (order_id, product_id, variation_id, configuration_id, quantity, price, selected_modifier_item_ids) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (order_id, it["product_id"], it["variation_id"], it["configuration_id"],
+                 it["quantity"], round(it["unit_price"], 2),
+                 sorted(it["selected_modifier_item_ids"] or []))
             )
             # Уменьшаем остаток
             cursor.execute(
@@ -2379,7 +2597,7 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
     result = []
     for o in orders:
         items = db_all(
-            """SELECT oi.quantity, oi.price,
+            """SELECT oi.quantity, oi.price, oi.selected_modifier_item_ids,
                       p.title, pv.variation_name, (pv.images)[1] AS image_url, pc.configuration_name
                FROM order_items oi
                JOIN products p ON oi.product_id=p.id
@@ -2388,6 +2606,24 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
                WHERE oi.order_id=%s""",
             (o["id"],)
         )
+        # Bulk-fetch modifier item names referenced by any line in this order.
+        mod_ids = {mid for it in items for mid in (it["selected_modifier_item_ids"] or [])}
+        mod_meta = {}
+        if mod_ids:
+            mods = db_all(
+                "SELECT i.id, i.name, i.price_delta, g.name AS group_name"
+                "  FROM product_modifier_items i"
+                "  JOIN product_modifier_groups g ON i.group_id = g.id"
+                " WHERE i.id = ANY(%s)",
+                (list(mod_ids),)
+            )
+            for m in mods:
+                mod_meta[m["id"]] = {
+                    "id":          m["id"],
+                    "name":        m["name"],
+                    "price_delta": float(m["price_delta"] or 0),
+                    "group_name":  m["group_name"],
+                }
         result.append({
             "id":              o["id"],
             "total_amount":    o["total_amount"],
@@ -2407,6 +2643,12 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
                     "image_url":          it["image_url"],
                     "quantity":           it["quantity"],
                     "price":              float(it["price"]),
+                    # Per-line modifier snapshot — names visible even if items were
+                    # later renamed/deleted in CRM (DB still holds names via JOIN at read time).
+                    "modifiers": [
+                        mod_meta[mid] for mid in (it["selected_modifier_item_ids"] or [])
+                        if mid in mod_meta
+                    ],
                 }
                 for it in items
             ],

@@ -18,6 +18,21 @@ function Product() {
     const [page, setPage] = useState(null);
     const [loading, setLoading] = useState(true);
     const [addingToCart, setAddingToCart] = useState(false);
+    // Modifier item ids selected by the customer. Reset on product load + when
+    // the radio defaults change (e.g. switching variation never affects this,
+    // but loading a different product does).
+    const [selectedModifiers, setSelectedModifiers] = useState([]);
+
+    const initModifiersFromDefaults = (data) => {
+        // Pre-select default_item_id for each radio group that has one.
+        const ids = [];
+        for (const g of (data?.modifier_groups || [])) {
+            if (g.control_type === 'radio' && g.default_item_id != null) {
+                ids.push(g.default_item_id);
+            }
+        }
+        setSelectedModifiers(ids);
+    };
 
     const loadPage = async (silent = false) => {
         if (!silent) setLoading(true);
@@ -28,6 +43,7 @@ function Product() {
             if (!silent) {
                 setActiveVariation(data.initial_variation_index || 0);
                 setActiveConfiguration(data.initial_configuration_id ? { id: data.initial_configuration_id } : null);
+                initModifiersFromDefaults(data);
                 client.track.productView(data.id);
             }
         } catch (e) {
@@ -51,15 +67,55 @@ function Product() {
         setActiveConfiguration(pick ? { id: pick.id, name: pick.name } : null);
     };
 
+    // Modifier picker handlers — radio replaces, checkbox toggles within group.
+    const handleModifierToggle = (group, item) => {
+        setSelectedModifiers(prev => {
+            const inGroup = (group.items || []).map(i => i.id);
+            const others = prev.filter(id => !inGroup.includes(id));
+            if (group.control_type === 'radio') {
+                // Already selected? Allow clearing (only if !is_required).
+                const currentInGroup = prev.find(id => inGroup.includes(id));
+                if (currentInGroup === item.id) {
+                    return group.is_required ? prev : others;
+                }
+                return [...others, item.id];
+            }
+            // Checkbox: toggle. Respect max_select.
+            const ownInGroup = prev.filter(id => inGroup.includes(id));
+            const isSelected = ownInGroup.includes(item.id);
+            if (isSelected) {
+                return [...others, ...ownInGroup.filter(id => id !== item.id)];
+            }
+            const max = group.max_select;
+            if (max != null && ownInGroup.length >= max) return prev;
+            return [...others, ...ownInGroup, item.id];
+        });
+    };
+
+    // Group-level validation — used to disable "Add to Cart" when constraints fail.
+    const modifierError = () => {
+        for (const g of (page?.modifier_groups || [])) {
+            const inGroup = (g.items || []).map(i => i.id);
+            const picked = selectedModifiers.filter(id => inGroup.includes(id));
+            if (g.is_required && picked.length < (g.min_select || 0)) {
+                return `${g.name || 'Group'} requires at least ${g.min_select} selection${g.min_select === 1 ? '' : 's'}`;
+            }
+            if (!g.is_required && picked.length > 0 && picked.length < (g.min_select || 0)) {
+                return `${g.name || 'Group'} requires at least ${g.min_select} selection${g.min_select === 1 ? '' : 's'} when picked`;
+            }
+        }
+        return null;
+    };
+
     const handleToggleCart = async () => {
         if (!page.is_authenticated) { window.location.href = "/login"; return; }
         if (!currentVariation || !currentConfiguration) return;
+        if (modifierError()) return;
         setAddingToCart(true);
-        if (currentConfiguration.cart_item_id) {
-            await client.cart.remove(currentConfiguration.cart_item_id);
-        } else {
-            await client.cart.add(page.id, currentVariation.id, currentConfiguration.id, 1);
-        }
+        // Always ADD — backend merges identical (SKU + modifier set) lines.
+        // The "remove if already in cart" toggle behaviour only worked for products
+        // without modifiers; with modifiers the same SKU can have many distinct lines.
+        await client.cart.add(page.id, currentVariation.id, currentConfiguration.id, 1, selectedModifiers);
         notifyCartUpdate();
         await loadPage(true);
         setAddingToCart(false);
@@ -132,8 +188,17 @@ function Product() {
     const isInCart = !!currentConfiguration?.cart_item_id;
     const cartQuantity = currentConfiguration?.cart_quantity || 1;
     const maxStock = currentConfiguration?.stock_quantity || 0;
-    const currentPrice = currentConfiguration?.price || 0;
+    // Sum modifier deltas for the currently selected items (across all groups).
+    const modifierDelta = (page.modifier_groups || []).reduce((acc, g) => {
+        for (const it of (g.items || [])) {
+            if (selectedModifiers.includes(it.id)) acc += Number(it.price_delta) || 0;
+        }
+        return acc;
+    }, 0);
+    const basePrice = currentConfiguration?.price || 0;
+    const currentPrice = basePrice + modifierDelta;
     const activeConfigurationIndex = currentVariation?.conf_2?.findIndex(c => c.id === activeConfiguration?.id) ?? 0;
+    const modError = modifierError();
 
     return (
         <>
@@ -188,12 +253,62 @@ function Product() {
                         </div>
                     )}
 
+                    {/* ── Modifier groups (food add-ons / sauces / remove-ingredient) ── */}
+                    {(page.modifier_groups || []).length > 0 && (
+                        <div className="product-modifiers">
+                            {page.modifier_groups.map(g => {
+                                const inGroup = (g.items || []).map(i => i.id);
+                                const picked = selectedModifiers.filter(id => inGroup.includes(id));
+                                const hint = g.control_type === 'radio'
+                                    ? (g.is_required ? 'Choose one' : 'Choose one (optional)')
+                                    : (g.max_select != null
+                                        ? `Choose up to ${g.max_select}`
+                                        : (g.min_select > 0 ? `Choose at least ${g.min_select}` : 'Choose any'));
+                                return (
+                                    <section key={g.id} className="pmod-group">
+                                        <header className="pmod-group-head">
+                                            <h3 className="pmod-group-title">
+                                                {g.name || 'Options'}
+                                                {g.is_required && <span className="pmod-required">*</span>}
+                                            </h3>
+                                            <span className="pmod-group-hint">{hint}</span>
+                                        </header>
+                                        <div className="pmod-items">
+                                            {(g.items || []).map(it => {
+                                                const checked = picked.includes(it.id);
+                                                return (
+                                                    <label key={it.id}
+                                                        className={`pmod-item ${checked ? 'pmod-item--on' : ''}`}>
+                                                        <input
+                                                            type={g.control_type === 'radio' ? 'radio' : 'checkbox'}
+                                                            name={`mod-group-${g.id}`}
+                                                            checked={checked}
+                                                            onChange={() => handleModifierToggle(g, it)}
+                                                        />
+                                                        <span className="pmod-item-name">{it.name || '—'}</span>
+                                                        <span className="pmod-item-price">
+                                                            {it.price_delta > 0 ? `+$${it.price_delta}`
+                                                                : it.price_delta < 0 ? `-$${Math.abs(it.price_delta)}`
+                                                                : '+$0'}
+                                                        </span>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </section>
+                                );
+                            })}
+                            {modError && <p className="pmod-error">{modError}</p>}
+                        </div>
+                    )}
+
                     <ProductActions
                         isInCart={isInCart}
                         isFavorite={page.is_favorite}
                         cartQuantity={cartQuantity}
                         addingToCart={addingToCart}
                         maxStock={maxStock}
+                        addDisabled={!!modError}
                         onToggleCart={handleToggleCart}
                         onUpdateQuantity={handleUpdateQuantity}
                         onToggleFavorite={handleToggleFavorite}

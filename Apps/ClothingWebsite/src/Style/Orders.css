@@ -264,3 +264,10 @@
     font-size: 15px;
   }
 }
+
+.os-item-mods {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: #888;
+}

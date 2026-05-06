@@ -130,6 +130,10 @@ export default function ProductApiPreview() {
       image:  summaryImage,                // back-compat: cover URL
       images: summaryImages,               // full union of all variation galleries
       price:  summaryPrice,                // summary price
+      // Modifier groups — preserved as-is from CRM admin payload. Same shape:
+      // [{ id, name, control_type, min_select, max_select, is_required,
+      //    default_item_id, position, items: [{id, name, price_delta, position}] }]
+      modifier_groups: product.modifier_groups || [],
       conf_1,
       reviews: (product.reviews || []).slice(0, 2).map(r => ({
         id: r.id, user_id: r.user_id, user_name: 'User',

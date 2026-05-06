@@ -6,6 +6,7 @@ function ProductActions({
     cartQuantity,
     addingToCart,
     maxStock,
+    addDisabled = false,
     onToggleCart,
     onUpdateQuantity,
     onToggleFavorite
@@ -16,7 +17,7 @@ function ProductActions({
                 <button
                     className={`btn-primary ${isInCart ? "btn-primary--active" : ""}`}
                     onClick={onToggleCart}
-                    disabled={addingToCart}
+                    disabled={addingToCart || addDisabled}
                 >
                     {addingToCart ? "Loading..." : isInCart ? "Remove From Cart" : "Add To Cart"}
                 </button>

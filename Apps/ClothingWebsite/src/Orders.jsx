@@ -131,6 +131,16 @@ function Orders() {
                             <span className="os-item-meta">
                               {item.variation_name} · {item.configuration_name}
                             </span>
+                            {/* Modifier snapshot — names visible even if items
+                                are later renamed/deleted in CRM (resolved
+                                server-side via JOIN at read time). */}
+                            {Array.isArray(item.modifiers) && item.modifiers.length > 0 && (
+                              <span className="os-item-mods">
+                                {item.modifiers.map(m =>
+                                  m.group_name ? `${m.group_name}: ${m.name}` : m.name
+                                ).join(' · ')}
+                              </span>
+                            )}
                           </div>
                           <span className="os-item-qty">×{item.quantity}</span>
                           <span className="os-item-price">${fmt(item.price)}</span>

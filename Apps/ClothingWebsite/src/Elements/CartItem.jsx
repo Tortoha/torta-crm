@@ -18,6 +18,23 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
             </Link>
             <p className="cart-item-subtitle">{item.subtitle}</p>
             <p className="cart-item-size">{item.configuration_name}</p>
+            {/* Selected modifier add-ons (sauces, removals, etc.) — grouped by group_name. */}
+            {Array.isArray(item.modifiers) && item.modifiers.length > 0 && (
+              <ul className="cart-item-mods">
+                {item.modifiers.map(m => (
+                  <li key={m.id} className="cart-item-mod">
+                    <span className="cart-item-mod-name">
+                      {m.group_name ? `${m.group_name}: ` : ''}{m.name}
+                    </span>
+                    {m.price_delta !== 0 && (
+                      <span className="cart-item-mod-delta">
+                        {m.price_delta > 0 ? `+$${m.price_delta}` : `-$${Math.abs(m.price_delta)}`}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="cart-item-price">${item.price}</div>
         </div>
