@@ -37,6 +37,16 @@ const Integrations     = lazy(() => import('./Pages/Project/Integrations/Integra
 const ProductOverview   = lazy(() => import('./Pages/Product/ProductOverview.jsx'));
 const ProductReviews    = lazy(() => import('./Pages/Product/ProductReviews.jsx'));
 const ProductApiPreview = lazy(() => import('./Pages/Product/ProductApiPreview.jsx'));
+const ProductSettings   = lazy(() => import('./Pages/Product/ProductSettings.jsx'));
+const ProductInventory  = lazy(() => import('./Pages/Product/ProductInventory.jsx'));
+const ProductQA         = lazy(() => import('./Pages/Product/ProductQA.jsx'));
+// Project-level Products tabs (pricing, warehouses, inventory, settings)
+const PromoCodes        = lazy(() => import('./Pages/Project/Products/PromoCodes.jsx'));
+const Discounts         = lazy(() => import('./Pages/Project/Products/Discounts.jsx'));
+const TierPricing       = lazy(() => import('./Pages/Project/Products/TierPricing.jsx'));
+const Warehouses        = lazy(() => import('./Pages/Project/Products/Warehouses.jsx'));
+const ProductsInventory = lazy(() => import('./Pages/Project/Products/ProductsInventory.jsx'));
+const ProductsSettings  = lazy(() => import('./Pages/Project/Products/ProductsSettings.jsx'));
 // Settings
 const AccountSettings  = lazy(() => import('./Pages/Settings/Settings.jsx'));
 const SecuritySettings = lazy(() => import('./Pages/Settings/Security.jsx'));
@@ -74,7 +84,13 @@ function App() {
             <Route path="products"   element={<Products />}>
               <Route index                element={<ProductsList />} />
               <Route path="categories"    element={<Categories />} />
+              <Route path="inventory"     element={<ProductsInventory />} />
               <Route path="archive"       element={<ProductsList archived />} />
+              <Route path="promo-codes"   element={<PromoCodes />} />
+              <Route path="discounts"     element={<Discounts />} />
+              <Route path="tier-pricing"  element={<TierPricing />} />
+              <Route path="warehouses"    element={<Warehouses />} />
+              <Route path="settings"      element={<ProductsSettings />} />
             </Route>
             <Route path="revenue"    element={<Revenue />} />
             <Route path="authentication" element={<Authentication />} />
@@ -95,7 +111,10 @@ function App() {
           </Route>
           <Route path="/product/:productHash" element={<ProductLayout />}>
             <Route index                element={<ProductOverview />} />
+            <Route path="settings"      element={<ProductSettings />} />
+            <Route path="inventory"     element={<ProductInventory />} />
             <Route path="reviews"       element={<ProductReviews />} />
+            <Route path="qa"            element={<ProductQA />} />
             <Route path="api-preview"   element={<ProductApiPreview />} />
           </Route>
         </Routes>

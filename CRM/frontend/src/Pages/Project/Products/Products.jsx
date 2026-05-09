@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { Tag, FolderSimple, Archive } from '@phosphor-icons/react';
+import { Tag, FolderSimple, Archive, Ticket, Percent, ChartBar, Warehouse, ListBullets, GearSix } from '@phosphor-icons/react';
 import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 
@@ -12,14 +12,32 @@ export default function Products() {
   const base       = `/project/${apiKey}/products`;
 
   const TABS = [
-    { key: 'list',       to: base,                  label: 'Products',   Icon: Tag          },
-    { key: 'categories', to: `${base}/categories`,  label: 'Categories', Icon: FolderSimple },
-    { key: 'archive',    to: `${base}/archive`,     label: 'Archive',    Icon: Archive      },
+    { key: 'list',          to: base,                     label: 'Products',     Icon: Tag          },
+    { key: 'categories',    to: `${base}/categories`,     label: 'Categories',   Icon: FolderSimple },
+    { key: 'inventory',     to: `${base}/inventory`,      label: 'Inventory',    Icon: ListBullets  },
+    { key: 'promo-codes',   to: `${base}/promo-codes`,    label: 'Promo codes',  Icon: Ticket       },
+    { key: 'discounts',     to: `${base}/discounts`,      label: 'Discount',     Icon: Percent      },
+    { key: 'tier-pricing',  to: `${base}/tier-pricing`,   label: 'Tier pricing', Icon: ChartBar     },
+    { key: 'warehouses',    to: `${base}/warehouses`,     label: 'Warehouses',   Icon: Warehouse    },
+    { key: 'archive',       to: `${base}/archive`,        label: 'Archive',      Icon: Archive      },
+    { key: 'settings',      to: `${base}/settings`,       label: 'Settings',     Icon: GearSix      },
   ];
+  const path = location.pathname;
   const activeKey =
-    location.pathname.endsWith('/categories') ? 'categories' :
-    location.pathname.endsWith('/archive')    ? 'archive'    : 'list';
-  const titleByKey = { list: 'Products', categories: 'Categories', archive: 'Archive' };
+    path.endsWith('/categories')   ? 'categories'   :
+    path.endsWith('/inventory')    ? 'inventory'    :
+    path.endsWith('/promo-codes')  ? 'promo-codes'  :
+    path.endsWith('/discounts')    ? 'discounts'    :
+    path.endsWith('/tier-pricing') ? 'tier-pricing' :
+    path.endsWith('/warehouses')   ? 'warehouses'   :
+    path.endsWith('/settings')     ? 'settings'     :
+    path.endsWith('/archive')      ? 'archive'      : 'list';
+  const titleByKey = {
+    list: 'Products', categories: 'Categories', archive: 'Archive',
+    inventory: 'Inventory', settings: 'Product settings',
+    'promo-codes': 'Promo codes', discounts: 'Discount',
+    'tier-pricing': 'Tier pricing', warehouses: 'Warehouses',
+  };
 
   return (
     <div className="prod-page-wrap">

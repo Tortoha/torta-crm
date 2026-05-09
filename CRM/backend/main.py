@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File, Query, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -420,9 +420,7 @@ def run_migrations():
             # Optional 1:1 link to a products row (when service is created via Products → New).
             cur.execute("ALTER TABLE booking_services ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id) ON DELETE CASCADE")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_booking_services_product ON booking_services(product_id) WHERE product_id IS NOT NULL")
-            # Backfill: any product with product_type='service' but no linked booking_services
-            # row (e.g. switched type via PATCH, or created before the link existed) gets one
-            # auto-seeded so ServiceDetailsBlock in Product Overview can edit it.
+            # Backfill: service products without booking_services row get auto-seeded.
             cur.execute(
                 "INSERT INTO booking_services (project_id, product_id, name, description,"
                 "                              duration_minutes, price, is_active)"
@@ -598,6 +596,374 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] product_type/archive/pause failed: {e}")
 
+    # Phase 1: SaaS-grade physical product fields (catalog ID, shipping flags, inventory, B2B, OG).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS sku                  VARCHAR(80)  NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode              VARCHAR(80)  NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS brand                VARCHAR(120) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS manufacturer         VARCHAR(120) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS vendor               VARCHAR(120) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS country_of_origin    VARCHAR(80)  NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS hs_code              VARCHAR(20)  NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS og_image_url         VARCHAR(1000)")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS requires_shipping    BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS ships_internationally BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS shipping_class       VARCHAR(40)  NOT NULL DEFAULT 'standard'")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS lead_time_days       INTEGER      NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS continue_selling_oos BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS moq                  INTEGER      NOT NULL DEFAULT 1")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS order_increment      INTEGER      NOT NULL DEFAULT 1")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS low_stock_threshold  INTEGER      NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_pre_order         BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS pre_order_release_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS net_terms_days       INTEGER      NOT NULL DEFAULT 0")  # B2B Net 30
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS allow_po             BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("""
+                DO $do$
+                BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='products_shipping_class_check') THEN
+                    ALTER TABLE products ADD CONSTRAINT products_shipping_class_check
+                      CHECK (shipping_class IN ('standard','fragile','oversized','hazmat','perishable'));
+                  END IF;
+                END $do$;
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] products SaaS fields failed: {e}")
+
+    # Discounts: sale_type/value/starts/ends on products+l1+l2. Walk-up: L2 → L1 → product. types: percent|amount|fixed.
+    try:
+        with db_cursor() as (conn, cur):
+            for tbl in ('products', 'product_configurations_l1', 'product_configurations_l2'):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS sale_type      VARCHAR(20)")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS sale_value     NUMERIC(10,2)")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS sale_starts_at TIMESTAMPTZ")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS sale_ends_at   TIMESTAMPTZ")
+                cur.execute(f"""
+                    DO $do$
+                    BEGIN
+                      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='{tbl}_sale_type_check') THEN
+                        ALTER TABLE {tbl} ADD CONSTRAINT {tbl}_sale_type_check
+                          CHECK (sale_type IS NULL OR sale_type IN ('percent','amount','fixed'));
+                      END IF;
+                    END $do$;
+                """)
+            # One-shot migration of legacy l2.sale_price → sale_type='fixed' / sale_value=sale_price.
+            cur.execute(
+                "UPDATE product_configurations_l2"
+                "   SET sale_type='fixed', sale_value=sale_price"
+                " WHERE sale_price IS NOT NULL AND sale_type IS NULL"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] sale fields failed: {e}")
+
+    # Auto-SKU: org-level (numeric/letters/alphanumeric/manual + length); manual leaves empty.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS sku_mode VARCHAR(20) NOT NULL DEFAULT 'numeric'")
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS sku_length INTEGER NOT NULL DEFAULT 8")
+            cur.execute("""
+                DO $do$
+                BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='crm_organizations_sku_mode_check') THEN
+                    ALTER TABLE crm_organizations ADD CONSTRAINT crm_organizations_sku_mode_check
+                      CHECK (sku_mode IN ('numeric','letters','alphanumeric','manual'));
+                  END IF;
+                END $do$;
+            """)
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_products_project_sku "
+                        "ON products (project_id, sku) WHERE sku <> ''")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_l2_project_sku_code "
+                        "ON product_configurations_l2 (product_id, sku_code) WHERE sku_code <> ''")
+            cur.execute("ALTER TABLE crm_projects DROP COLUMN IF EXISTS auto_sku")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] org sku settings failed: {e}")
+
+    # Per-SKU (L2) attrs: sku_code, compare_at_price, cost_price, weight + dims for carrier APIs.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS barcode          VARCHAR(80)    NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS sku_code         VARCHAR(80)    NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS compare_at_price NUMERIC(10, 2)")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS cost_price       NUMERIC(10, 2)")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS weight_g         NUMERIC(10, 2)")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS length_cm        NUMERIC(10, 2)")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS width_cm         NUMERIC(10, 2)")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS height_cm        NUMERIC(10, 2)")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS sale_price       NUMERIC(10, 2)")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS sale_starts_at   TIMESTAMPTZ")
+            cur.execute("ALTER TABLE product_configurations_l2 ADD COLUMN IF NOT EXISTS sale_ends_at     TIMESTAMPTZ")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] L2 SaaS fields failed: {e}")
+
+    # Tax categories per project — referenced from products.tax_category_id.
+    # Default category seeded at first lookup if list is empty.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_tax_categories (
+                    id          SERIAL PRIMARY KEY,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    name        VARCHAR(120) NOT NULL,
+                    rate        NUMERIC(5, 2) NOT NULL DEFAULT 0,   -- percent (0–100)
+                    is_default  BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tax_categories_project ON product_tax_categories(project_id)")
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS tax_category_id INTEGER")
+            cur.execute("""
+                DO $do$
+                BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_products_tax_category') THEN
+                    ALTER TABLE products ADD CONSTRAINT fk_products_tax_category
+                      FOREIGN KEY (tax_category_id) REFERENCES product_tax_categories(id) ON DELETE SET NULL;
+                  END IF;
+                END $do$;
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] product_tax_categories failed: {e}")
+
+    # Tier pricing per SKU — wholesale-style "buy N+ for $X each".
+    # Lookup at cart-add: pick the highest min_qty row that's <= quantity.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_tier_pricing (
+                    id              SERIAL PRIMARY KEY,
+                    sku_id          INTEGER NOT NULL REFERENCES product_configurations_l2(id) ON DELETE CASCADE,
+                    min_qty         INTEGER NOT NULL CHECK (min_qty >= 1),
+                    price           NUMERIC(10, 2) NOT NULL CHECK (price >= 0),
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (sku_id, min_qty)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tier_pricing_sku ON product_tier_pricing(sku_id, min_qty)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] product_tier_pricing failed: {e}")
+
+    # Phase 2: cart_items.reserved_until soft-locks SKU for 15min to prevent checkout oversell.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE cart_items ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_cart_items_reserved ON cart_items(reserved_until) WHERE reserved_until IS NOT NULL")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] cart_items reserved_until failed: {e}")
+
+    # ── Phase 3: Reviews enhancements ─────────────────────────────────
+    try:
+        with db_cursor() as (conn, cur):
+            # Inline merchant reply on product_reviews — single reply per review.
+            cur.execute("ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS merchant_reply    TEXT")
+            cur.execute("ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS merchant_reply_at TIMESTAMPTZ")
+            # Photos uploaded by reviewer.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_review_photos (
+                    id          SERIAL PRIMARY KEY,
+                    review_id   INTEGER NOT NULL REFERENCES product_reviews(id) ON DELETE CASCADE,
+                    url         VARCHAR(1000) NOT NULL,
+                    position    INTEGER NOT NULL DEFAULT 0,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_review_photos_review ON product_review_photos(review_id)")
+            # Helpful / unhelpful votes from other shoppers (one per user per review).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_review_votes (
+                    id          SERIAL PRIMARY KEY,
+                    review_id   INTEGER NOT NULL REFERENCES product_reviews(id) ON DELETE CASCADE,
+                    user_id     INTEGER NOT NULL,
+                    is_helpful  BOOLEAN NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (review_id, user_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_review_votes_review ON product_review_votes(review_id)")
+            # Q&A — distinct from reviews, no rating.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_questions (
+                    id           SERIAL PRIMARY KEY,
+                    project_id   INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    product_id   INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                    user_id      INTEGER NOT NULL,
+                    question     TEXT NOT NULL,
+                    answer       TEXT,
+                    answered_at  TIMESTAMPTZ,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_questions_product ON product_questions(product_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] reviews enhancements failed: {e}")
+
+    # Phase 5: Multi-warehouse infrastructure (default WH per project, product_stock per-SKU overrides).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS warehouses (
+                    id          SERIAL PRIMARY KEY,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    name        VARCHAR(120) NOT NULL,
+                    code        VARCHAR(40)  NOT NULL DEFAULT '',
+                    address     TEXT NOT NULL DEFAULT '',
+                    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+                    is_default  BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_warehouses_project ON warehouses(project_id)")
+            # Partial unique index — only one default per project.
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_warehouses_default_per_project ON warehouses(project_id) WHERE is_default")
+            # Structured address fields (legacy `address` TEXT stays as fallback display string).
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS country     VARCHAR(80)  NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS city        VARCHAR(120) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS street      VARCHAR(255) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS postal_code VARCHAR(40)  NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS region      VARCHAR(120) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS contact_name  VARCHAR(120) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(40)  NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS notes         TEXT NOT NULL DEFAULT ''")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_stock (
+                    id              SERIAL PRIMARY KEY,
+                    sku_id          INTEGER NOT NULL REFERENCES product_configurations_l2(id) ON DELETE CASCADE,
+                    warehouse_id    INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+                    quantity        INTEGER NOT NULL DEFAULT 0,
+                    sold_quantity   INTEGER NOT NULL DEFAULT 0,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (sku_id, warehouse_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_stock_sku ON product_stock(sku_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_product_stock_warehouse ON product_stock(warehouse_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] warehouses + product_stock failed: {e}")
+
+    # Phase A backfill: copy l2.stock_quantity → product_stock(default_wh) per SKU. Idempotent.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO warehouses (project_id, name, code, is_default, is_active)"
+                " SELECT DISTINCT p.project_id, 'Main warehouse', 'MAIN', TRUE, TRUE"
+                "   FROM products p"
+                "  WHERE NOT EXISTS (SELECT 1 FROM warehouses w WHERE w.project_id = p.project_id)"
+                " ON CONFLICT DO NOTHING"
+            )
+            cur.execute(
+                "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+                " SELECT c.id, w.id, c.stock_quantity, c.sold_quantity"
+                "   FROM product_configurations_l2 c"
+                "   JOIN product_configurations_l1 v ON c.variation_id = v.id"
+                "   JOIN products p              ON v.product_id = p.id"
+                "   JOIN warehouses w            ON w.project_id = p.project_id AND w.is_default"
+                " ON CONFLICT (sku_id, warehouse_id) DO NOTHING"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] product_stock backfill failed: {e}")
+
+    # ── Phase 6: Stock audit log + restock waitlist ───────────────────
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_stock_log (
+                    id           BIGSERIAL PRIMARY KEY,
+                    project_id   INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    sku_id       INTEGER NOT NULL REFERENCES product_configurations_l2(id) ON DELETE CASCADE,
+                    warehouse_id INTEGER REFERENCES warehouses(id) ON DELETE SET NULL,
+                    delta        INTEGER NOT NULL,
+                    reason       VARCHAR(40) NOT NULL,            -- sale|restock|manual|return|damage|transfer|reservation
+                    reference_id INTEGER,
+                    user_id      INTEGER,                         -- crm_users.id (NULL for system events)
+                    note         TEXT NOT NULL DEFAULT '',
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_log_sku ON product_stock_log(sku_id, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_stock_log_project ON product_stock_log(project_id, created_at DESC)")
+
+            # Restock waitlist — user signs up, gets email when stock returns.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_restock_subscriptions (
+                    id            SERIAL PRIMARY KEY,
+                    project_id    INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    product_id    INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                    sku_id        INTEGER REFERENCES product_configurations_l2(id) ON DELETE CASCADE,
+                    email         VARCHAR(200) NOT NULL,
+                    user_id       INTEGER,
+                    notified_at   TIMESTAMPTZ,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_restock_subs_sku ON product_restock_subscriptions(sku_id) WHERE notified_at IS NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_restock_subs_product ON product_restock_subscriptions(product_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] stock_log + restock_subs failed: {e}")
+
+    # Phase 7: L1 media_alt TEXT[] for SEO; media_type derived from URL ext at read time.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE product_configurations_l1 ADD COLUMN IF NOT EXISTS media_alt TEXT[] NOT NULL DEFAULT '{}'")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] L1 media_alt failed: {e}")
+
+    # Phase 1 backfill: seed default specs (Material/Care/etc) on physical-product L1 variations.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE product_configurations_l1 ADD COLUMN IF NOT EXISTS default_specs_seeded BOOLEAN NOT NULL DEFAULT FALSE")
+            # Find variations that haven't been seeded yet AND belong to physical products.
+            cur.execute(
+                "SELECT v.id FROM product_configurations_l1 v"
+                "  JOIN products p ON v.product_id = p.id"
+                " WHERE p.product_type = 'physical' AND v.default_specs_seeded = FALSE"
+            )
+            target_vids = [r["id"] for r in cur.fetchall()]
+            DEFAULT_SPECS = ["Material", "Care instructions", "Country of origin", "Size guide"]
+            for vid in target_vids:
+                # Only add default spec if key doesn't already exist on this variation.
+                cur.execute(
+                    "SELECT spec_key FROM product_specifications"
+                    " WHERE (variation_id = %s OR (layer = 1 AND parent_id = %s))",
+                    (vid, vid)
+                )
+                existing_keys = {r["spec_key"] for r in cur.fetchall()}
+                base_pos_row = cur.execute(
+                    "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM product_specifications"
+                    " WHERE (variation_id = %s OR (layer = 1 AND parent_id = %s))",
+                    (vid, vid)
+                )
+                base_pos_row = cur.fetchone()
+                pos = (base_pos_row.get("p") if base_pos_row else 0) or 0
+                for key in DEFAULT_SPECS:
+                    if key in existing_keys: continue
+                    cur.execute(
+                        "INSERT INTO product_specifications"
+                        "  (variation_id, layer, parent_id, spec_key, spec_value, position)"
+                        " VALUES (%s, 1, %s, %s, '', %s)",
+                        (vid, vid, key, pos)
+                    )
+                    pos += 1
+                cur.execute(
+                    "UPDATE product_configurations_l1 SET default_specs_seeded = TRUE WHERE id = %s",
+                    (vid,)
+                )
+            if target_vids:
+                print(f"[migration] seeded default specs for {len(target_vids)} physical variations")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] default specs seeding failed: {e}")
+
     # Rename size→configuration (clothing-specific term replaced with generic "priced options"); idempotent per step.
     try:
         with db_cursor() as (conn, cur):
@@ -727,30 +1093,20 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] multi-layer configurations failed: {e}")
 
-    # Modifiers — two-level model: groups (checkbox or radio, with min/max/required/default)
-    # contain items (name + price_delta). Old flat product_modifiers table is dropped.
-    #
-    # Self-healing strategy: detect schema mismatch (e.g. wrong NOT NULL constraints
-    # left over from a previous partial migration) and drop+recreate cleanly. Safe
-    # because this feature is brand new — no production data to preserve. Once
-    # users are actually creating modifier groups, switch to additive ALTERs only.
+    # Modifiers — 2-level: groups (checkbox/radio + min/max/required/default) contain items (name + price_delta). Self-heals on schema mismatch by drop+recreate.
     try:
         with db_cursor() as (conn, cur):
             # Drop legacy flat modifier table (clean break, no prod data).
             cur.execute("DROP TABLE IF EXISTS product_modifiers CASCADE")
 
-            # Detect a broken pre-existing schema: check whether `max_select` allows NULL
-            # (it MUST, otherwise checkbox groups with unlimited max can't be inserted).
-            # If the column exists with NOT NULL — or the table is otherwise mis-shaped —
-            # nuke both tables and rebuild from scratch. Test data is forfeit by design.
+            # Schema sanity check: `max_select` MUST be nullable (else unlimited checkbox groups break).
             cur.execute("""
                 SELECT is_nullable FROM information_schema.columns
                  WHERE table_name='product_modifier_groups' AND column_name='max_select'
             """)
             row = cur.fetchone()
             schema_broken = row is not None and row["is_nullable"] != "YES"
-            # Also rebuild if any of the new columns are missing entirely — easier
-            # than tracking down which subset of ADD COLUMN failed in past attempts.
+            # Also rebuild if any of the 7 new columns are missing entirely.
             if not schema_broken:
                 cur.execute("""
                     SELECT COUNT(*) AS n FROM information_schema.columns
@@ -833,9 +1189,7 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] L1 images[] failed: {e}")
 
-    # Outbound integrations — webhook subscriptions + delivery log. Same engine
-    # serves Custom Webhook, Slack and Discord (type column branches the body shape).
-    # `events` is a Postgres TEXT[] of event names; empty = subscribe to all.
+    # Outbound integrations: webhook subs + log. Same engine for Custom/Slack/Discord (type branches).
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -1088,6 +1442,67 @@ class UpdateProductRequest(BaseModel):
     product_type: Optional[str] = None
     is_archived: Optional[bool] = None
     is_paused: Optional[bool] = None
+    # ── Phase 1: SaaS-grade physical fields (all optional / nullable) ──
+    sku: Optional[str] = None
+    barcode: Optional[str] = None
+    brand: Optional[str] = None
+    manufacturer: Optional[str] = None
+    vendor: Optional[str] = None
+    country_of_origin: Optional[str] = None
+    hs_code: Optional[str] = None
+    og_image_url: Optional[str] = None
+    requires_shipping: Optional[bool] = None
+    ships_internationally: Optional[bool] = None
+    shipping_class: Optional[str] = None              # standard|fragile|oversized|hazmat|perishable
+    lead_time_days: Optional[int] = None
+    continue_selling_oos: Optional[bool] = None
+    moq: Optional[int] = None
+    order_increment: Optional[int] = None
+    low_stock_threshold: Optional[int] = None
+    is_pre_order: Optional[bool] = None
+    pre_order_release_at: Optional[str] = None        # ISO timestamp
+    net_terms_days: Optional[int] = None
+    allow_po: Optional[bool] = None
+    tax_category_id: Optional[int] = None             # null clears
+    # ── Discount (product-level, propagates to every SKU lacking its own) ──
+    sale_type:       Optional[str]   = None  # 'percent' | 'amount' | 'fixed' | null=clear
+    sale_value:      Optional[float] = None
+    sale_starts_at:  Optional[str]   = None  # ISO; null = effective immediately
+    sale_ends_at:    Optional[str]   = None  # ISO; null = no end
+
+class TaxCategoryRequest(BaseModel):
+    name: Optional[str] = None
+    rate: Optional[float] = None
+    is_default: Optional[bool] = None
+
+class TierPricingRequest(BaseModel):
+    sku_id: int
+    min_qty: int
+    price: float
+
+class StockAdjustRequest(BaseModel):
+    sku_id: int
+    delta: int                              # signed: +50 = restock, -2 = manual write-off
+    reason: str                             # 'restock' | 'manual' | 'damage' | 'transfer' | etc.
+    note: Optional[str] = ''
+    warehouse_id: Optional[int] = None
+
+class WarehouseRequest(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    address: Optional[str] = None              # legacy / fallback free-form
+    is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
+    # Structured address — preferred. UI groups these as "Address" section.
+    country:       Optional[str] = None
+    city:          Optional[str] = None
+    street:        Optional[str] = None
+    postal_code:   Optional[str] = None
+    region:        Optional[str] = None
+    # Operations contact (optional) — useful for transit/coordination calls.
+    contact_name:  Optional[str] = None
+    contact_phone: Optional[str] = None
+    notes:         Optional[str] = None
 
 class CreateVariationRequest(BaseModel):
     variation_name: Optional[str]       = None
@@ -1142,7 +1557,23 @@ class UpdateLayerItemRequest(BaseModel):
     price: Optional[float] = None       # explicit null in payload = clear (inherit)
     stock_quantity: Optional[int] = None
     sold_quantity: Optional[int] = None
-    images: Optional[List[str]] = None  # whole array overwrite
+    images: Optional[List[str]] = None  # whole array overwrite (L1 only)
+    media_alt: Optional[List[str]] = None  # L1 only, parallel to images
+    # ── Discount (per-layer; walk-up resolution: L2 own → L1 own → product own) ──
+    sale_type:       Optional[str]   = None  # 'percent' | 'amount' | 'fixed' | null=clear
+    sale_value:      Optional[float] = None
+    # ── Phase 1: per-SKU (L2) physical fields. All optional + nullable. ──
+    sku_code:         Optional[str]   = None
+    barcode:          Optional[str]   = None
+    compare_at_price: Optional[float] = None
+    cost_price:       Optional[float] = None
+    weight_g:         Optional[float] = None
+    length_cm:        Optional[float] = None
+    width_cm:         Optional[float] = None
+    height_cm:        Optional[float] = None
+    sale_price:       Optional[float] = None
+    sale_starts_at:   Optional[str]   = None  # ISO timestamp
+    sale_ends_at:     Optional[str]   = None  # ISO timestamp
 
 class UpsertCustomFieldRequest(BaseModel):
     field_key: str
@@ -1374,9 +1805,7 @@ def issue_refresh_token(user_id: int, request: Request,
     return raw
 
 def _revoke_chain_from(cur, root_id: int, reason: str):
-    """Walk the rotation chain (parent_id ← rotated_to_id) and revoke all
-    descendants AND ancestors. Used when token-reuse is detected — we don't
-    know which side is the attacker, so kill the whole chain."""
+    """Walk rotation chain (parent_id ↔ rotated_to_id) and revoke all on token-reuse detection."""
     visited = set()
     queue = [root_id]
     while queue:
@@ -1397,15 +1826,7 @@ def _revoke_chain_from(cur, root_id: int, reason: str):
             if row["id"] not in visited: queue.append(row["id"])
 
 def consume_refresh_token(raw: str, request: Request) -> tuple[int, str] | None:
-    """
-    Validate + atomically rotate a refresh token. Returns (user_id, new_raw)
-    on success; None if the token is invalid/expired/revoked.
-
-    SECURITY: if a revoked token is presented, the entire rotation chain is
-    revoked — this means an attacker cannot use a stolen old refresh while
-    the legitimate user holds the rotated one (the legit user gets logged out
-    on next request, alerting them to the breach).
-    """
+    """Validate + atomically rotate refresh token; revokes whole chain on reuse attack signal."""
     if not raw: return None
     h = hashlib.sha256(raw.encode()).hexdigest()
     with db_cursor() as (conn, cur):
@@ -1571,11 +1992,7 @@ def send_reset_email(email: str, token: str) -> bool:
 
 @app.get("/api/csrf")
 def get_csrf_token(request: Request, response: Response):
-    """Issue (or reuse) a CSRF token cookie.
-    Called once on app load; thereafter JS reads the cookie and sends it
-    as X-CSRF-Token on every state-changing request.
-    The cookie is NOT httpOnly — JS must be able to read it.
-    """
+    """Issue (or reuse) CSRF token cookie (non-httpOnly so JS echoes it as X-CSRF-Token)."""
     token = request.cookies.get("csrf_token", "")
     if not token:
         token = secrets.token_hex(32)
@@ -1730,11 +2147,7 @@ def logout(response: Response, request: Request):
 
 @app.post("/api/refresh")
 def refresh_session(request: Request, response: Response):
-    """
-    Exchange the long-lived refresh token for a NEW access + refresh pair
-    (rotation). Called silently by the frontend on 401.
-    Returns 401 on any failure → frontend shows login screen.
-    """
+    """Exchange refresh token for NEW access+refresh pair (rotation); 401 on any failure."""
     raw = request.cookies.get("crm_refresh", "")
     result = consume_refresh_token(raw, request)
     if not result:
@@ -1752,8 +2165,7 @@ def refresh_session(request: Request, response: Response):
 
 @app.get("/api/sessions")
 def list_sessions(request: Request, user: dict = Depends(get_current_user)):
-    """List active (non-revoked, non-expired) sessions for the current user.
-    Marks the session matching the current refresh cookie as 'is_current'."""
+    """List active sessions for current user; marks the one matching current refresh cookie."""
     cur_hash = ""
     raw = request.cookies.get("crm_refresh", "")
     if raw:
@@ -1973,6 +2385,97 @@ def get_projects(org_id: int, user: dict = Depends(get_current_user)):
     return rows
 
 
+# Org-wide SKU generation settings on crm_organizations: modes numeric/letters/alphanumeric/manual, length 4..64 (default numeric, 8).
+
+@app.get("/api/orgs/{org_id}/sku-settings")
+def get_org_sku_settings(org_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    row = db_one("SELECT sku_mode, sku_length FROM crm_organizations WHERE id=%s", (org_id,))
+    if not row: raise HTTPException(404, "Org not found")
+    return {"mode": row["sku_mode"], "length": int(row["sku_length"])}
+
+
+@app.put("/api/orgs/{org_id}/sku-settings")
+def update_org_sku_settings(org_id: int, body: dict = Body(...),
+                              user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    mode = (body.get("mode") or "numeric").strip().lower()
+    if mode not in ("numeric", "letters", "alphanumeric", "manual"):
+        raise HTTPException(400, "Invalid mode")
+    try:
+        length = int(body.get("length", 8))
+    except Exception:
+        raise HTTPException(400, "Length must be an integer")
+    if length < 4 or length > 64:
+        raise HTTPException(400, "Length must be 4..64")
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_organizations SET sku_mode=%s, sku_length=%s WHERE id=%s",
+                    (mode, length, org_id))
+        conn.commit()
+    return {"ok": True, "mode": mode, "length": length}
+
+
+@app.post("/api/orgs/{org_id}/sku-regenerate")
+def regenerate_org_skus(org_id: int, user: dict = Depends(get_current_user)):
+    """Wipe + regenerate every product.sku and l2.sku_code in the org under current settings."""
+    require_org_owner(user, org_id)
+    settings = db_one("SELECT sku_mode, sku_length FROM crm_organizations WHERE id=%s", (org_id,))
+    if not settings: raise HTTPException(404, "Org not found")
+    mode = settings["sku_mode"]; length = int(settings["sku_length"])
+
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT id FROM crm_projects WHERE org_id=%s", (org_id,))
+        project_ids = [r["id"] for r in cur.fetchall()]
+        if not project_ids:
+            return {"ok": True, "products_updated": 0, "skus_updated": 0}
+
+        if mode == "manual":
+            cur.execute("UPDATE products SET sku='' WHERE project_id = ANY(%s)", (project_ids,))
+            products_updated = cur.rowcount
+            cur.execute(
+                "UPDATE product_configurations_l2 SET sku_code='' WHERE product_id IN"
+                " (SELECT id FROM products WHERE project_id = ANY(%s))",
+                (project_ids,)
+            )
+            skus_updated = cur.rowcount
+            conn.commit()
+            return {"ok": True, "products_updated": products_updated, "skus_updated": skus_updated}
+
+        # Clear first, then regenerate row-by-row.
+        cur.execute("UPDATE products SET sku='' WHERE project_id = ANY(%s)", (project_ids,))
+        cur.execute(
+            "UPDATE product_configurations_l2 SET sku_code='' WHERE product_id IN"
+            " (SELECT id FROM products WHERE project_id = ANY(%s))",
+            (project_ids,)
+        )
+
+        cur.execute("SELECT id, project_id FROM products WHERE project_id = ANY(%s)", (project_ids,))
+        prod_rows = cur.fetchall()
+        products_updated = 0
+        for pr in prod_rows:
+            new_sku = _gen_unique_product_sku(cur, pr["project_id"], mode, length)
+            if new_sku:
+                cur.execute("UPDATE products SET sku=%s WHERE id=%s", (new_sku, pr["id"]))
+                products_updated += 1
+
+        cur.execute(
+            "SELECT c2.id, c2.product_id FROM product_configurations_l2 c2"
+            " JOIN products p ON p.id = c2.product_id"
+            " WHERE p.project_id = ANY(%s)",
+            (project_ids,)
+        )
+        l2_rows = cur.fetchall()
+        skus_updated = 0
+        for lr in l2_rows:
+            new_code = _gen_unique_l2_sku_code(cur, lr["product_id"], mode, length)
+            if new_code:
+                cur.execute("UPDATE product_configurations_l2 SET sku_code=%s WHERE id=%s",
+                            (new_code, lr["id"]))
+                skus_updated += 1
+        conn.commit()
+    return {"ok": True, "products_updated": products_updated, "skus_updated": skus_updated}
+
+
 @app.post("/api/orgs/{org_id}/projects")
 def create_project(org_id: int, request: CreateProjectRequest, req: Request, user: dict = Depends(get_current_user)):
     require_org_owner(user, org_id)
@@ -2189,8 +2692,7 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
 # ── PRODUCT CATEGORIES — flat, ≤1 per product, slug fixed at create; delete modes: keep_products|delete_products|move(?target_id=X) ──
 
 def _category_slug(cur, project_id: int, name: str) -> str:
-    """Generate a unique slug for a new category in this project.
-    On collision (rare — usually different name → same slug) appends -2, -3, …"""
+    """Generate unique category slug in this project (appends -2, -3 on collision)."""
     base = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")[:100] or "category"
     slug = base
     n = 1
@@ -2269,12 +2771,7 @@ def set_category_products(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Replaces the set of products belonging to this category.
-    - Products in `product_ids` that aren't in this category get assigned to it
-      (taking them away from any other category they were in).
-    - Products currently in this category but not in `product_ids` get their
-      category cleared (category_id = NULL).
-    """
+    """Replaces set of products in this category (assigns new ones, clears removed ones)."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
                   (cat_id, project_id)):
@@ -2310,12 +2807,7 @@ def delete_category(
     project_id: int          = Query(...),
     user: dict               = Depends(get_current_user),
 ):
-    """Three delete modes:
-        keep_products    — products keep existing, lose their category (FK SET NULL)
-        delete_products  — DELETE all products in this category (cascades to variations,
-                           sizes, reviews, custom_fields, cart_items, favorites, page_views)
-        move             — UPDATE products to target_id, then delete category
-    """
+    """Three modes: keep_products | delete_products | move(?target_id=X)."""
     require_team_member_or_owner(user, project_id)
     if mode not in ("keep_products", "delete_products", "move"):
         raise HTTPException(400, "Invalid mode")
@@ -2380,6 +2872,55 @@ def delete_category(
 
 # ── PRODUCTS ─────────────────────────────────────────────
 
+# Org-level SKU generation helpers (settings on crm_organizations); unique-checked per project/product.
+
+_SKU_ALPHABETS = {
+    'numeric':      '0123456789',
+    'letters':      'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    'alphanumeric': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+}
+
+
+def _resolve_sku_settings(project_id: int):
+    row = db_one(
+        "SELECT o.sku_mode, o.sku_length"
+        "  FROM crm_organizations o JOIN crm_projects p ON p.org_id = o.id"
+        " WHERE p.id = %s",
+        (project_id,)
+    )
+    if not row: return ('numeric', 8)
+    return (row['sku_mode'], int(row['sku_length']))
+
+
+def _gen_sku_string(mode: str, length: int) -> str:
+    chars = _SKU_ALPHABETS.get(mode, '')
+    if not chars: return ''
+    n = max(4, min(64, int(length)))
+    return ''.join(random.choices(chars, k=n))
+
+
+def _gen_unique_product_sku(cur, project_id: int, mode: str, length: int) -> str:
+    if mode == 'manual': return ''
+    for _ in range(50):
+        candidate = _gen_sku_string(mode, length)
+        cur.execute("SELECT 1 FROM products WHERE project_id=%s AND sku=%s",
+                    (project_id, candidate))
+        if cur.fetchone() is None:
+            return candidate
+    raise HTTPException(500, "Couldn't generate unique product SKU after 50 tries")
+
+
+def _gen_unique_l2_sku_code(cur, product_id: int, mode: str, length: int) -> str:
+    if mode == 'manual': return ''
+    for _ in range(50):
+        candidate = _gen_sku_string(mode, length)
+        cur.execute("SELECT 1 FROM product_configurations_l2 WHERE product_id=%s AND sku_code=%s",
+                    (product_id, candidate))
+        if cur.fetchone() is None:
+            return candidate
+    raise HTTPException(500, "Couldn't generate unique L2 SKU code after 50 tries")
+
+
 @app.get("/api/products")
 def list_products(project_id: int = Query(...),
                   category_id: Optional[int] = Query(None),
@@ -2408,7 +2949,8 @@ def list_products(project_id: int = Query(...),
     where.append("p.is_archived = %s")
     params.append(bool(archived))
     sql = (
-        "SELECT p.id, p.title, p.category_id, p.product_type, p.is_archived, p.is_paused,"
+        "SELECT p.id, p.title, p.sku, p.category_id, p.product_type, p.is_archived, p.is_paused,"
+        " p.sale_type, p.sale_value, p.sale_starts_at, p.sale_ends_at,"
         " c.name AS category_name, c.slug AS category_slug,"
         " COUNT(DISTINCT v.id) AS variations_count,"
         " COALESCE(SUM(ps.stock_quantity),0) AS total_stock,"
@@ -2418,7 +2960,10 @@ def list_products(project_id: int = Query(...),
         " COUNT(DISTINCT pr.id) AS reviews_count,"
         " (SELECT (images)[1] FROM product_configurations_l1 WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image,"
         " (SELECT COALESCE(json_agg(json_build_object('id', pv2.id, 'name', pv2.variation_name, 'images', pv2.images) ORDER BY pv2.id), '[]'::json)"
-        "  FROM product_configurations_l1 pv2 WHERE pv2.product_id=p.id) AS variations"
+        "  FROM product_configurations_l1 pv2 WHERE pv2.product_id=p.id) AS variations,"
+        " (SELECT COUNT(*) FROM product_tier_pricing tp"
+        "    JOIN product_configurations_l2 ll2 ON tp.sku_id = ll2.id"
+        "   WHERE ll2.product_id = p.id) AS tier_count"
         " FROM products p"
         " LEFT JOIN product_categories c ON c.id=p.category_id"
         " LEFT JOIN product_configurations_l1 v ON v.product_id=p.id"
@@ -2434,6 +2979,12 @@ def list_products(project_id: int = Query(...),
         r["total_stock"] = int(r["total_stock"] or 0)
         r["is_archived"] = bool(r.get("is_archived"))
         r["is_paused"]   = bool(r.get("is_paused"))
+        if r.get("sale_value") is not None:
+            r["sale_value"] = float(r["sale_value"])
+        for tk in ("sale_starts_at", "sale_ends_at"):
+            if r.get(tk) is not None:
+                r[tk] = r[tk].isoformat()
+        r["tier_count"] = int(r.get("tier_count") or 0)
     return rows
 
 
@@ -2449,16 +3000,24 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
     ptype = (request.product_type or "physical").strip()
     if ptype not in ("physical", "digital", "service", "event"):
         raise HTTPException(400, "Invalid product_type")
+    sku_explicit = sanitize((request.sku or '').strip())[:80]
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO products (project_id,title,subtitle,description,category_id,seo_title,seo_description,seo_keywords,product_type) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            "INSERT INTO products (project_id,title,subtitle,description,category_id,seo_title,seo_description,seo_keywords,product_type,sku) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (project_id, sanitize(name), sanitize(request.subtitle), sanitize(request.description),
              request.category_id,
              sanitize(request.seo_title), sanitize(request.seo_description), sanitize(request.seo_keywords),
-             ptype)
+             ptype, sku_explicit)
         )
         new_id = cur.fetchone()["id"]
+        # Auto-SKU: random unique code per org's sku_mode + sku_length (manual leaves blank).
+        if not sku_explicit:
+            mode, length = _resolve_sku_settings(project_id)
+            generated = _gen_unique_product_sku(cur, project_id, mode, length)
+            if generated:
+                cur.execute("UPDATE products SET sku=%s WHERE id=%s",
+                            (generated, new_id))
         # type=service → also seed a booking_services row linked 1:1 to the product.
         if ptype == "service":
             cur.execute(
@@ -2598,9 +3157,7 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
     if p.get("category_id"):
         cat_row = db_one("SELECT id, name, slug FROM product_categories WHERE id=%s", (p["category_id"],))
 
-    # Modifier groups — two-level fetch (groups + items in one round-trip each).
-    # Guarded with try/except so a failed/skipped migration doesn't break product
-    # loading entirely — page still renders with an empty modifier_groups array.
+    # Modifier groups: two-level fetch (groups + items); guarded so missing migration doesn't break.
     groups = []
     try:
         groups = db_all(
@@ -2639,6 +3196,33 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         "product_type":   p.get("product_type") or "physical",
         "is_archived":    bool(p.get("is_archived")),
         "is_paused":      bool(p.get("is_paused")),
+        # ── Phase 1: SaaS-grade physical fields (all default to '' / 0 / False / None) ──
+        "sku":                   p.get("sku") or "",
+        "barcode":               p.get("barcode") or "",
+        "brand":                 p.get("brand") or "",
+        "manufacturer":          p.get("manufacturer") or "",
+        "vendor":                p.get("vendor") or "",
+        "country_of_origin":     p.get("country_of_origin") or "",
+        "hs_code":               p.get("hs_code") or "",
+        "og_image_url":          p.get("og_image_url"),
+        "requires_shipping":     bool(p.get("requires_shipping", True)),
+        "ships_internationally": bool(p.get("ships_internationally")),
+        "shipping_class":        p.get("shipping_class") or "standard",
+        "lead_time_days":        int(p.get("lead_time_days") or 0),
+        "continue_selling_oos":  bool(p.get("continue_selling_oos")),
+        "moq":                   int(p.get("moq") or 1),
+        "order_increment":       int(p.get("order_increment") or 1),
+        "low_stock_threshold":   int(p.get("low_stock_threshold") or 0),
+        "is_pre_order":          bool(p.get("is_pre_order")),
+        "pre_order_release_at":  p["pre_order_release_at"].isoformat() if p.get("pre_order_release_at") else None,
+        "net_terms_days":        int(p.get("net_terms_days") or 0),
+        "allow_po":              bool(p.get("allow_po")),
+        "tax_category_id":       p.get("tax_category_id"),
+        # Discount (product-level) — UI walk-up resolution at storefront.
+        "sale_type":      p.get("sale_type"),
+        "sale_value":     float(p["sale_value"]) if p.get("sale_value") is not None else None,
+        "sale_starts_at": p["sale_starts_at"].isoformat() if p.get("sale_starts_at") else None,
+        "sale_ends_at":   p["sale_ends_at"].isoformat()   if p.get("sale_ends_at")   else None,
         "variations": variations, "custom_fields": custom_fields, "reviews": reviews,
         "modifier_groups": groups,
         "max_layer": max_layer,
@@ -2672,14 +3256,62 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
         fields.append("is_archived=%s"); vals.append(bool(request.is_archived))
     if request.is_paused is not None:
         fields.append("is_paused=%s"); vals.append(bool(request.is_paused))
+    # ── Phase 1: SaaS-grade physical fields ──
+    # Free-text identifiers (sku, barcode, brand, etc.) — sanitized.
+    for fld in ("sku", "barcode", "brand", "manufacturer", "vendor",
+                "country_of_origin", "hs_code"):
+        v = getattr(request, fld)
+        if v is not None:
+            fields.append(f"{fld}=%s"); vals.append(sanitize(v.strip())[:200])
+    if "og_image_url" in request.model_fields_set:
+        fields.append("og_image_url=%s"); vals.append(request.og_image_url)
+    for fld in ("requires_shipping", "ships_internationally",
+                "continue_selling_oos", "is_pre_order", "allow_po"):
+        v = getattr(request, fld)
+        if v is not None:
+            fields.append(f"{fld}=%s"); vals.append(bool(v))
+    if request.shipping_class is not None:
+        if request.shipping_class not in ("standard", "fragile", "oversized", "hazmat", "perishable"):
+            raise HTTPException(400, "Invalid shipping_class")
+        fields.append("shipping_class=%s"); vals.append(request.shipping_class)
+    for fld in ("lead_time_days", "moq", "order_increment",
+                "low_stock_threshold", "net_terms_days"):
+        v = getattr(request, fld)
+        if v is not None:
+            iv = int(v)
+            if iv < 0: raise HTTPException(400, f"{fld} must be ≥ 0")
+            # moq/order_increment must be ≥ 1 to make sense in a cart math.
+            if fld in ("moq", "order_increment") and iv < 1:
+                raise HTTPException(400, f"{fld} must be ≥ 1")
+            fields.append(f"{fld}=%s"); vals.append(iv)
+    if "pre_order_release_at" in request.model_fields_set:
+        fields.append("pre_order_release_at=%s"); vals.append(request.pre_order_release_at)
+    if "tax_category_id" in request.model_fields_set:
+        if request.tax_category_id is not None:
+            if not db_one("SELECT id FROM product_tax_categories WHERE id=%s AND project_id=%s",
+                          (request.tax_category_id, project_id)):
+                raise HTTPException(400, "Tax category does not belong to this project")
+        fields.append("tax_category_id=%s"); vals.append(request.tax_category_id)
+    # Discount fields — null-explicit clears, value sets.
+    if "sale_type" in request.model_fields_set:
+        v = request.sale_type
+        if v is not None and v not in ('percent', 'amount', 'fixed'):
+            raise HTTPException(400, "Invalid sale_type")
+        fields.append("sale_type=%s"); vals.append(v)
+    if "sale_value" in request.model_fields_set:
+        v = request.sale_value
+        if v is not None and float(v) < 0:
+            raise HTTPException(400, "sale_value must be ≥ 0")
+        fields.append("sale_value=%s"); vals.append(v)
+    if "sale_starts_at" in request.model_fields_set:
+        fields.append("sale_starts_at=%s"); vals.append(request.sale_starts_at)
+    if "sale_ends_at" in request.model_fields_set:
+        fields.append("sale_ends_at=%s"); vals.append(request.sale_ends_at)
     if not fields: return {"ok": True}
     vals.extend([product_id, project_id])
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE products SET " + ", ".join(fields) + " WHERE id=%s AND project_id=%s", vals)
-        # If the product is (now) a service, ensure a 1:1 booking_services row exists.
-        # Covers products that were created as non-service then switched via PATCH —
-        # without this, ServiceDetailsBlock in Product Overview would be stuck on the
-        # "Linking…" placeholder because GET /api/booking/services has no row for it.
+        # Ensure 1:1 booking_services row when product becomes a service (for type-switch via PATCH).
         if request.product_type == "service":
             cur.execute(
                 "INSERT INTO booking_services (project_id, product_id, name, description,"
@@ -2789,10 +3421,7 @@ def reorder_variations(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Apply a new order to all variations of a product. Each id's index in
-    the array becomes its `position`. Validates that the supplied set matches
-    exactly the variations actually attached to the product (prevents IDOR
-    and partial reorders that would leave dangling positions)."""
+    """Apply new order to all variations (id index → position); supplied set must match exactly."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -3240,8 +3869,7 @@ def _product_id_for(n: int, item_id: int) -> Optional[int]:
     return row["product_id"] if row else None
 
 def _annotate_effective_price(items: list, parent_eff: Optional[float]):
-    """Walk down the tree; each row's effective_price = own price if set,
-    otherwise inherited from parent. Mutates items in place."""
+    """Annotate effective_price = own price if set, else parent_eff (mutates items in place)."""
     for it in items:
         own = it.get("price")
         eff = float(own) if own is not None else parent_eff
@@ -3256,29 +3884,52 @@ def _annotate_effective_price(items: list, parent_eff: Optional[float]):
 def _load_product_tree(product_id: int) -> tuple[list, int]:
     """Load all layers for a product as a nested tree. Returns (variations, max_layer)."""
     variations = db_all(
-        "SELECT id, variation_name, images, position, price, stock_quantity, sold_quantity"
+        "SELECT id, variation_name, images, position, price, stock_quantity, sold_quantity,"
+        " sale_type, sale_value, sale_starts_at, sale_ends_at"
         " FROM product_configurations_l1 WHERE product_id=%s ORDER BY position ASC, id ASC",
         (product_id,)
     )
     if not variations:
         return [], 1
+    for v in variations:
+        if v.get("sale_value") is not None:
+            v["sale_value"] = float(v["sale_value"])
+        for tk in ("sale_starts_at", "sale_ends_at"):
+            if v.get(tk) is not None:
+                v[tk] = v[tk].isoformat()
 
     max_layer = 1
     var_ids = [v["id"] for v in variations]
 
     def _fetch_layer(n: int, parent_ids: list[int]) -> dict:
-        """Fetch layer N rows whose parent is in parent_ids, return dict parent_id → list of rows."""
+        """Fetch layer N rows for parent_ids → dict {parent_id: rows}; L2 includes physical attrs."""
         if not parent_ids: return {}
         fmt = ",".join(["%s"] * len(parent_ids))
         name_col = _layer_name_col(n)
         parent_col = _layer_parent_col(n)
+        extra = ""
+        if n == 2:
+            extra = (", sku_code, barcode, compare_at_price, cost_price,"
+                     " weight_g, length_cm, width_cm, height_cm,"
+                     " sale_price, sale_starts_at, sale_ends_at,"
+                     " sale_type, sale_value")
         rows = db_all(
-            f"SELECT id, {parent_col} AS parent_id, {name_col} AS name, price, stock_quantity, sold_quantity, position"
+            f"SELECT id, {parent_col} AS parent_id, {name_col} AS name,"
+            f" price, stock_quantity, sold_quantity, position{extra}"
             f" FROM {_layer_table(n)} WHERE {parent_col} IN ({fmt}) ORDER BY position ASC, id ASC",
             tuple(parent_ids)
         )
         by_parent = {}
         for r in rows:
+            # Cast NUMERIC → float for JSON serialisation.
+            for nk in ('compare_at_price', 'cost_price', 'weight_g',
+                        'length_cm', 'width_cm', 'height_cm',
+                        'sale_price', 'sale_value'):
+                if nk in r and r[nk] is not None:
+                    r[nk] = float(r[nk])
+            for tk in ('sale_starts_at', 'sale_ends_at'):
+                if tk in r and r[tk] is not None:
+                    r[tk] = r[tk].isoformat()
             by_parent.setdefault(r["parent_id"], []).append(r)
         return by_parent
 
@@ -3399,6 +4050,36 @@ def create_layer_item(product_id: int, layer: int, request: CreateLayerItemReque
                  request.stock_quantity or 0, request.sold_quantity or 0, next_pos)
             )
         new_id = cur.fetchone()["id"]
+        # Auto-SKU on Layer 2 — random unique code per the organization's settings.
+        if layer == 2:
+            mode, length = _resolve_sku_settings(project_id)
+            generated = _gen_unique_l2_sku_code(cur, product_id, mode, length)
+            if generated:
+                cur.execute("UPDATE product_configurations_l2 SET sku_code=%s WHERE id=%s AND sku_code=''",
+                            (generated, new_id))
+        # Phase 1: pre-seed default specs (Material/Care/etc) on new L1 physical-product variations.
+        if layer == 1:
+            cur.execute("SELECT product_type FROM products WHERE id=%s", (product_id,))
+            ptype = (cur.fetchone() or {}).get("product_type") or "physical"
+            if ptype == "physical":
+                DEFAULT_SPECS = [
+                    "Material",
+                    "Care instructions",
+                    "Country of origin",
+                    "Size guide",
+                ]
+                for pos, key in enumerate(DEFAULT_SPECS):
+                    cur.execute(
+                        "INSERT INTO product_specifications"
+                        "  (variation_id, layer, parent_id, spec_key, spec_value, position)"
+                        " VALUES (%s, 1, %s, %s, '', %s)",
+                        (new_id, new_id, key, pos)
+                    )
+            # Mark seeded regardless of type — prevents startup backfill on later type flips.
+            cur.execute(
+                "UPDATE product_configurations_l1 SET default_specs_seeded = TRUE WHERE id = %s",
+                (new_id,)
+            )
         conn.commit()
     return {
         "id": new_id, "layer": layer, "name": name,
@@ -3421,9 +4102,7 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
     # Pydantic v2: only include fields the client actually sent
     sent = request.model_dump(exclude_unset=True)
 
-    # For L1 image edits — read the OLD array first so we can S3-clean any URLs
-    # that disappear from the new one (gallery-popover removes single photos by
-    # PUT'ing the full new array).
+    # For L1 image edits — read OLD array so we can S3-clean URLs that disappear from new one.
     old_images = []
     if layer == 1 and 'images' in sent:
         cur_row = db_one(f"SELECT images FROM {tbl} WHERE id=%s", (item_id,))
@@ -3441,6 +4120,44 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
         fields.append("sold_quantity=%s"); vals.append(sent['sold_quantity'])
     if layer == 1 and 'images' in sent:
         fields.append("images=%s"); vals.append(list(sent['images'] or []))
+    if layer == 1 and 'media_alt' in sent:
+        fields.append("media_alt=%s"); vals.append(list(sent['media_alt'] or []))
+    # Discount fields — supported on layers 1 and 2 (product-level handled in update_product).
+    if layer in (1, 2):
+        if 'sale_type' in sent:
+            v = sent['sale_type']
+            if v is not None and v not in ('percent', 'amount', 'fixed'):
+                raise HTTPException(400, "Invalid sale_type")
+            fields.append("sale_type=%s"); vals.append(v)
+        if 'sale_value' in sent:
+            v = sent['sale_value']
+            if v is not None and float(v) < 0:
+                raise HTTPException(400, "sale_value must be ≥ 0")
+            fields.append("sale_value=%s"); vals.append(v)
+        # sale_starts_at / sale_ends_at on L2 already handled by the per-SKU
+        # block below. For L1 we add them here.
+        if layer == 1:
+            if 'sale_starts_at' in sent:
+                fields.append("sale_starts_at=%s"); vals.append(sent['sale_starts_at'])
+            if 'sale_ends_at' in sent:
+                fields.append("sale_ends_at=%s"); vals.append(sent['sale_ends_at'])
+    # ── Phase 1: per-SKU (L2) physical fields ──
+    if layer == 2:
+        if 'sku_code' in sent and sent['sku_code'] is not None:
+            fields.append("sku_code=%s"); vals.append(sanitize(sent['sku_code'].strip())[:80])
+        if 'barcode' in sent and sent['barcode'] is not None:
+            fields.append("barcode=%s"); vals.append(sanitize(sent['barcode'].strip())[:80])
+        # NUMERIC nullable fields — explicit null clears, number sets, omit leaves alone
+        for nf in ('compare_at_price', 'cost_price', 'weight_g',
+                    'length_cm', 'width_cm', 'height_cm', 'sale_price'):
+            if nf in sent:
+                v = sent[nf]
+                if v is not None and float(v) < 0:
+                    raise HTTPException(400, f"{nf} must be ≥ 0")
+                fields.append(f"{nf}=%s"); vals.append(v)
+        for tf in ('sale_starts_at', 'sale_ends_at'):
+            if tf in sent:
+                fields.append(f"{tf}=%s"); vals.append(sent[tf])
     if not fields: return {"ok": True}
     vals.append(item_id)
     with db_cursor() as (conn, cur):
@@ -3476,12 +4193,7 @@ def delete_layer_item(product_id: int, layer: int, item_id: int,
 @app.post("/api/products/{product_id}/layers/{layer}/{item_id}/copy-to-siblings")
 def copy_layer_to_siblings(product_id: int, layer: int, item_id: int,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Take all children of `item_id` (at layer `layer`) and replicate them under
-    every sibling of `item_id` at the same layer. NULL prices stay NULL → naturally
-    re-inherit from each new parent's price.
-
-    Example: user is editing Layer 3 children of Layer 2 row "256GB". They click
-    Copy → endpoint clones Layer 3 list under "512GB", "1TB", etc."""
+    """Replicate item_id's children to every sibling at same layer (NULL prices re-inherit)."""
     if layer < 1 or layer > 4:
         raise HTTPException(400, "copy-to-siblings requires layer 1-4 (deeper layers have no children)")
     require_team_member_or_owner(user, project_id)
@@ -3780,10 +4492,7 @@ def _safe_parent_for_product(layer: int, parent_id: int, product_id: int) -> boo
 
 # ── MODIFIERS ────────────────────────────────────────────
 
-# ─── Modifier groups + items ────────────────────────────────────────
-# Two-level model: groups (checkbox|radio) → items (name + price_delta).
-# Routing pattern mirrors layers: collection ops on /modifier-groups,
-# single ops on /modifier-groups/{gid} and /modifier-items/{iid}.
+# Modifier groups + items: 2-level model (groups checkbox|radio → items name+price_delta).
 
 def _validate_group_payload(req: ModifierGroupRequest, *, control_type: str = None,
                              min_select: int = None, max_select: int = None):
@@ -4015,13 +4724,7 @@ def delete_modifier_item(product_id: int, iid: int,
 @app.put("/api/products/{product_id}/modifier-items/reorder")
 def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Single endpoint for both within-group sort and cross-group move.
-
-    Body: { items: [{ id, group_id, position }, ...] }
-
-    Each entry overwrites both group_id and position for the given item id.
-    Caller is responsible for sending consistent positions (we don't auto-renumber).
-    """
+    """Within-group sort + cross-group move. Body: { items: [{ id, group_id, position }, ...] }."""
     require_team_member_or_owner(user, project_id)
     payload = list(req.items or [])
     if not payload: return {"ok": True}
@@ -4059,8 +4762,7 @@ def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
                 "UPDATE product_modifier_items SET group_id=%s, position=%s WHERE id=%s",
                 (gid, pos, iid)
             )
-        # An item moved to another group might have been the default of the old group.
-        # Null out any orphaned default_item_id so the FK + group consistency stays clean.
+        # Null out orphaned default_item_id (item may have been default of its old group).
         cur.execute(
             "UPDATE product_modifier_groups g"
             " SET default_item_id = NULL"
@@ -4071,6 +4773,1012 @@ def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
             "   )",
             (product_id,)
         )
+        conn.commit()
+    return {"ok": True}
+
+
+# Promo codes CRUD: shared with External (validates at /{api_key}/promo-code/apply); CRM owns admin UI.
+
+def _ensure_promo_codes_table():
+    """Create promo_codes + promo_code_uses with full Phase 1 column set (idempotent)."""
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS promo_codes (
+                    id               SERIAL PRIMARY KEY,
+                    project_id       INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    code             VARCHAR(40) NOT NULL,
+                    discount_type    VARCHAR(16) NOT NULL DEFAULT 'percentage',
+                    discount_value   NUMERIC(10, 2) NOT NULL DEFAULT 0,
+                    min_order_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+                    max_discount     NUMERIC(10, 2),
+                    usage_limit      INTEGER,
+                    times_used       INTEGER NOT NULL DEFAULT 0,
+                    is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+                    valid_from       TIMESTAMPTZ,
+                    valid_until      TIMESTAMPTZ,
+                    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_project ON promo_codes(project_id)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_promo_code_per_project ON promo_codes(project_id, code)")
+            # Phase 1 expansion — per-user limits + category targeting.
+            cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS per_user_limit INTEGER")
+            cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS category_ids INTEGER[] NOT NULL DEFAULT '{}'")
+            # Per-user usage log — primary source for per_user_limit checks at /promo-code/apply.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS promo_code_uses (
+                    id          SERIAL PRIMARY KEY,
+                    promo_id    INTEGER NOT NULL REFERENCES promo_codes(id) ON DELETE CASCADE,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    user_id     INTEGER NOT NULL,
+                    order_id    INTEGER,
+                    used_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_promo_uses_user ON promo_code_uses(promo_id, user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_promo_uses_project ON promo_code_uses(project_id, used_at DESC)")
+            conn.commit()
+    except Exception as e:
+        print(f"[promo_codes] table ensure failed: {e}")
+
+
+class PromoCodeRequest(BaseModel):
+    code:             Optional[str]   = None
+    discount_type:    Optional[str]   = None     # 'percentage' | 'fixed'
+    discount_value:   Optional[float] = None
+    min_order_amount: Optional[float] = None
+    max_discount:     Optional[float] = None     # null = unlimited
+    usage_limit:      Optional[int]   = None     # null = global unlimited
+    per_user_limit:   Optional[int]   = None     # null = unlimited per user
+    category_ids:     Optional[List[int]] = None # empty / null = all categories
+    is_active:        Optional[bool]  = None
+    valid_from:       Optional[str]   = None     # ISO timestamp
+    valid_until:      Optional[str]   = None
+
+
+@app.get("/api/promo-codes")
+def list_promo_codes(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    _ensure_promo_codes_table()
+    rows = db_all(
+        "SELECT id, code, discount_type, discount_value, min_order_amount, max_discount,"
+        "       usage_limit, times_used, per_user_limit, category_ids,"
+        "       is_active, valid_from, valid_until, created_at"
+        "  FROM promo_codes WHERE project_id=%s ORDER BY created_at DESC",
+        (project_id,)
+    )
+    for r in rows:
+        for nf in ('discount_value', 'min_order_amount', 'max_discount'):
+            if r.get(nf) is not None: r[nf] = float(r[nf])
+        for tf in ('valid_from', 'valid_until', 'created_at'):
+            if r.get(tf) is not None: r[tf] = r[tf].isoformat()
+        r["category_ids"] = list(r.get("category_ids") or [])
+    return rows
+
+
+@app.post("/api/promo-codes")
+def create_promo_code(req: PromoCodeRequest, project_id: int = Query(...),
+                      user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    _ensure_promo_codes_table()
+    code = sanitize((req.code or '').strip().upper())[:40]
+    if not code: raise HTTPException(400, "Code is required")
+    dtype = (req.discount_type or 'percentage').strip()
+    if dtype not in ('percentage', 'fixed'):
+        raise HTTPException(400, "discount_type must be 'percentage' or 'fixed'")
+    dval = float(req.discount_value or 0)
+    if dval < 0: raise HTTPException(400, "discount_value must be ≥ 0")
+    if dtype == 'percentage' and dval > 100:
+        raise HTTPException(400, "Percentage cannot exceed 100")
+    min_order = float(req.min_order_amount or 0)
+    if min_order < 0: raise HTTPException(400, "min_order_amount must be ≥ 0")
+    max_disc = float(req.max_discount) if req.max_discount is not None else None
+    usage = int(req.usage_limit) if req.usage_limit is not None else None
+    if usage is not None and usage < 1: raise HTTPException(400, "usage_limit must be ≥ 1")
+    is_active = bool(req.is_active) if req.is_active is not None else True
+    per_user = int(req.per_user_limit) if req.per_user_limit is not None else None
+    if per_user is not None and per_user < 1:
+        raise HTTPException(400, "per_user_limit must be ≥ 1")
+    cat_ids = list(req.category_ids or [])
+    if len(cat_ids) > 200:
+        raise HTTPException(400, "category_ids capped at 200 entries")
+    # Verify supplied category ids really belong to this project (IDOR defense).
+    if cat_ids:
+        owned = db_all(
+            "SELECT id FROM product_categories WHERE id = ANY(%s) AND project_id = %s",
+            (cat_ids, project_id)
+        )
+        if {r["id"] for r in owned} != set(cat_ids):
+            raise HTTPException(400, "category_ids must reference categories of this project")
+
+    with db_cursor() as (conn, cur):
+        try:
+            cur.execute(
+                "INSERT INTO promo_codes"
+                "  (project_id, code, discount_type, discount_value, min_order_amount,"
+                "   max_discount, usage_limit, per_user_limit, category_ids,"
+                "   is_active, valid_from, valid_until)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (project_id, code, dtype, dval, min_order, max_disc, usage,
+                 per_user, cat_ids, is_active, req.valid_from, req.valid_until)
+            )
+        except psycopg2.errors.UniqueViolation:
+            raise HTTPException(400, f"Code '{code}' already exists for this project")
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id}
+
+
+@app.put("/api/promo-codes/{pcid}")
+def update_promo_code(pcid: int, req: PromoCodeRequest, project_id: int = Query(...),
+                      user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if not db_one("SELECT id FROM promo_codes WHERE id=%s AND project_id=%s",
+                  (pcid, project_id)):
+        raise HTTPException(404, "Promo code not found")
+    fields, vals = [], []
+    if req.code is not None:
+        fields.append("code=%s"); vals.append(sanitize(req.code.strip().upper())[:40])
+    if req.discount_type is not None:
+        if req.discount_type not in ('percentage', 'fixed'):
+            raise HTTPException(400, "Invalid discount_type")
+        fields.append("discount_type=%s"); vals.append(req.discount_type)
+    if req.discount_value is not None:
+        fields.append("discount_value=%s"); vals.append(float(req.discount_value))
+    if req.min_order_amount is not None:
+        fields.append("min_order_amount=%s"); vals.append(float(req.min_order_amount))
+    if "max_discount" in req.model_fields_set:
+        fields.append("max_discount=%s"); vals.append(req.max_discount)
+    if "usage_limit" in req.model_fields_set:
+        fields.append("usage_limit=%s"); vals.append(req.usage_limit)
+    if "per_user_limit" in req.model_fields_set:
+        if req.per_user_limit is not None and int(req.per_user_limit) < 1:
+            raise HTTPException(400, "per_user_limit must be ≥ 1")
+        fields.append("per_user_limit=%s"); vals.append(req.per_user_limit)
+    if "category_ids" in req.model_fields_set:
+        cat_ids = list(req.category_ids or [])
+        if len(cat_ids) > 200:
+            raise HTTPException(400, "category_ids capped at 200 entries")
+        if cat_ids:
+            owned = db_all(
+                "SELECT id FROM product_categories WHERE id = ANY(%s) AND project_id = %s",
+                (cat_ids, project_id)
+            )
+            if {r["id"] for r in owned} != set(cat_ids):
+                raise HTTPException(400, "category_ids must reference categories of this project")
+        fields.append("category_ids=%s"); vals.append(cat_ids)
+    if req.is_active is not None:
+        fields.append("is_active=%s"); vals.append(bool(req.is_active))
+    if "valid_from" in req.model_fields_set:
+        fields.append("valid_from=%s"); vals.append(req.valid_from)
+    if "valid_until" in req.model_fields_set:
+        fields.append("valid_until=%s"); vals.append(req.valid_until)
+    if not fields: return {"ok": True}
+    vals.append(pcid)
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE promo_codes SET {', '.join(fields)} WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/promo-codes/{pcid}")
+def delete_promo_code(pcid: int, project_id: int = Query(...),
+                     user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if not db_one("SELECT id FROM promo_codes WHERE id=%s AND project_id=%s",
+                  (pcid, project_id)):
+        raise HTTPException(404, "Promo code not found")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM promo_codes WHERE id=%s", (pcid,))
+        conn.commit()
+    return {"ok": True}
+
+
+# Tax categories CRUD: per-project list referenced via products.tax_category_id (nullable FK).
+
+@app.get("/api/tax-categories")
+def list_tax_categories(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT id, name, rate, is_default FROM product_tax_categories"
+        " WHERE project_id=%s ORDER BY is_default DESC, name ASC",
+        (project_id,)
+    )
+    for r in rows: r["rate"] = float(r["rate"] or 0)
+    return rows
+
+
+@app.post("/api/tax-categories")
+def create_tax_category(req: TaxCategoryRequest, project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    name = sanitize((req.name or '').strip())[:120]
+    if not name: raise HTTPException(400, "Name is required")
+    rate = float(req.rate or 0)
+    if rate < 0 or rate > 100: raise HTTPException(400, "Rate must be 0..100")
+    is_default = bool(req.is_default)
+    with db_cursor() as (conn, cur):
+        if is_default:
+            # Only one default per project — clear the previous one if any.
+            cur.execute("UPDATE product_tax_categories SET is_default=FALSE WHERE project_id=%s", (project_id,))
+        cur.execute(
+            "INSERT INTO product_tax_categories (project_id, name, rate, is_default)"
+            " VALUES (%s, %s, %s, %s) RETURNING id",
+            (project_id, name, rate, is_default)
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id, "name": name, "rate": rate, "is_default": is_default}
+
+
+@app.put("/api/tax-categories/{tcid}")
+def update_tax_category(tcid: int, req: TaxCategoryRequest, project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if not db_one("SELECT id FROM product_tax_categories WHERE id=%s AND project_id=%s",
+                  (tcid, project_id)):
+        raise HTTPException(404, "Tax category not found")
+    fields, vals = [], []
+    if req.name is not None:
+        n = sanitize(req.name.strip())[:120]
+        if not n: raise HTTPException(400, "Name cannot be empty")
+        fields.append("name=%s"); vals.append(n)
+    if req.rate is not None:
+        r = float(req.rate)
+        if r < 0 or r > 100: raise HTTPException(400, "Rate must be 0..100")
+        fields.append("rate=%s"); vals.append(r)
+    if req.is_default is not None:
+        fields.append("is_default=%s"); vals.append(bool(req.is_default))
+    if not fields: return {"ok": True}
+    vals.append(tcid)
+    with db_cursor() as (conn, cur):
+        if req.is_default:
+            # Unset other defaults in the same project before flipping this one.
+            cur.execute("UPDATE product_tax_categories SET is_default=FALSE"
+                        " WHERE project_id=%s AND id<>%s", (project_id, tcid))
+        cur.execute(f"UPDATE product_tax_categories SET {', '.join(fields)} WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/tax-categories/{tcid}")
+def delete_tax_category(tcid: int, project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if not db_one("SELECT id FROM product_tax_categories WHERE id=%s AND project_id=%s",
+                  (tcid, project_id)):
+        raise HTTPException(404, "Tax category not found")
+    with db_cursor() as (conn, cur):
+        # FK on products.tax_category_id is ON DELETE SET NULL — safe.
+        cur.execute("DELETE FROM product_tax_categories WHERE id=%s", (tcid,))
+        conn.commit()
+    return {"ok": True}
+
+
+# Tier pricing CRUD: per-SKU wholesale ladder; checkout picks highest min_qty ≤ line qty.
+
+@app.get("/api/products/{product_id}/tier-pricing")
+def list_tier_pricing(product_id: int, project_id: int = Query(...),
+                       user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    rows = db_all(
+        "SELECT tp.id, tp.sku_id, tp.min_qty, tp.price"
+        "  FROM product_tier_pricing tp"
+        "  JOIN product_configurations_l2 c ON tp.sku_id = c.id"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        " WHERE v.product_id=%s ORDER BY tp.sku_id ASC, tp.min_qty ASC",
+        (product_id,)
+    )
+    for r in rows: r["price"] = float(r["price"] or 0)
+    return rows
+
+
+@app.post("/api/products/{product_id}/tier-pricing")
+def create_tier_pricing(product_id: int, req: TierPricingRequest,
+                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    # Verify the SKU belongs to this product (IDOR defense).
+    if not db_one(
+        "SELECT c.id FROM product_configurations_l2 c"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        " WHERE c.id=%s AND v.product_id=%s",
+        (req.sku_id, product_id)
+    ):
+        raise HTTPException(404, "SKU not found in this product")
+    if req.min_qty < 1: raise HTTPException(400, "min_qty must be ≥ 1")
+    if req.price < 0:   raise HTTPException(400, "price must be ≥ 0")
+    with db_cursor() as (conn, cur):
+        try:
+            cur.execute(
+                "INSERT INTO product_tier_pricing (sku_id, min_qty, price)"
+                " VALUES (%s, %s, %s) RETURNING id",
+                (req.sku_id, req.min_qty, req.price)
+            )
+            new_id = cur.fetchone()["id"]
+            conn.commit()
+        except psycopg2.errors.UniqueViolation:
+            raise HTTPException(400, f"Tier pricing already exists for sku {req.sku_id}, qty {req.min_qty}")
+    return {"id": new_id, "sku_id": req.sku_id, "min_qty": req.min_qty, "price": req.price}
+
+
+@app.delete("/api/products/{product_id}/tier-pricing/{tier_id}")
+def delete_tier_pricing(product_id: int, tier_id: int,
+                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    # Verify ownership through joins to enforce project isolation.
+    row = db_one(
+        "SELECT tp.id FROM product_tier_pricing tp"
+        "  JOIN product_configurations_l2 c ON tp.sku_id = c.id"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "  JOIN products p ON v.product_id = p.id"
+        " WHERE tp.id=%s AND p.id=%s AND p.project_id=%s",
+        (tier_id, product_id, project_id)
+    )
+    if not row: raise HTTPException(404, "Tier not found")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM product_tier_pricing WHERE id=%s", (tier_id,))
+        conn.commit()
+    return {"ok": True}
+
+
+# Stock adjust + audit log: manual restock/write-off/damage; updates stock + emits product_stock_log row.
+
+@app.post("/api/products/{product_id}/stock/adjust")
+def adjust_stock(product_id: int, req: StockAdjustRequest,
+                 project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    # Validate SKU belongs to this product + project.
+    sku = db_one(
+        "SELECT c.id FROM product_configurations_l2 c"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "  JOIN products p ON v.product_id = p.id"
+        " WHERE c.id=%s AND p.id=%s AND p.project_id=%s",
+        (req.sku_id, product_id, project_id)
+    )
+    if not sku: raise HTTPException(404, "SKU not found in this product")
+    if req.reason not in ('restock', 'manual', 'damage', 'transfer', 'return'):
+        raise HTTPException(400, "Invalid reason")
+    delta = int(req.delta)
+    if delta == 0: raise HTTPException(400, "Delta must be non-zero")
+    with db_cursor() as (conn, cur):
+        # Resolve target warehouse (request value, or project's default).
+        if req.warehouse_id is not None:
+            _verify_warehouse_in_project(cur, req.warehouse_id, project_id)
+            wh_id = req.warehouse_id
+        else:
+            wh_id = _default_warehouse_id(cur, project_id)
+        # Lock the per-(sku, warehouse) row before reading current quantity to
+        # avoid races between two concurrent admins editing the same SKU.
+        cur.execute(
+            "SELECT quantity FROM product_stock"
+            " WHERE sku_id=%s AND warehouse_id=%s FOR UPDATE",
+            (req.sku_id, wh_id)
+        )
+        existing = cur.fetchone()
+        old_qty_wh = int((existing or {}).get("quantity") or 0)
+        new_qty_wh = old_qty_wh + delta
+        if new_qty_wh < 0:
+            raise HTTPException(400, "Resulting stock would be negative on this warehouse")
+        # Aggregate across all warehouses — used to detect the "0→positive" transition.
+        cur.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS total"
+            "  FROM product_stock WHERE sku_id=%s",
+            (req.sku_id,)
+        )
+        was_zero = int((cur.fetchone() or {}).get("total") or 0) == 0
+        # Upsert per-WH stock.
+        cur.execute(
+            "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+            " VALUES (%s, %s, %s, 0)"
+            " ON CONFLICT (sku_id, warehouse_id)"
+            " DO UPDATE SET quantity = product_stock.quantity + EXCLUDED.quantity",
+            (req.sku_id, wh_id, delta)
+        )
+        # Sync L2 aggregate so callers reading l2.stock_quantity see the new sum.
+        _sync_l2_stock(cur, req.sku_id)
+        cur.execute(
+            "INSERT INTO product_stock_log"
+            "  (project_id, sku_id, warehouse_id, delta, reason, user_id, note)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (project_id, req.sku_id, wh_id, delta, req.reason,
+             user["id"], sanitize(req.note or '')[:1000])
+        )
+        # Recompute new aggregate for the response (so the UI doesn't need a refetch).
+        cur.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS total"
+            "  FROM product_stock WHERE sku_id=%s",
+            (req.sku_id,)
+        )
+        new_qty = int((cur.fetchone() or {}).get("total") or 0)
+        # Phase 6: restock notifications when stock transitions 0 → >0 (mark subs pending; send async).
+        notify_emails = []
+        if was_zero and new_qty > 0:
+            cur.execute(
+                "SELECT id, email FROM product_restock_subscriptions"
+                " WHERE (sku_id=%s OR sku_id IS NULL) AND notified_at IS NULL"
+                "   AND product_id = (SELECT v.product_id FROM product_configurations_l1 v"
+                "                      JOIN product_configurations_l2 c ON c.variation_id=v.id"
+                "                      WHERE c.id=%s)",
+                (req.sku_id, req.sku_id)
+            )
+            subs = cur.fetchall() or []
+            notify_emails = [(s["id"], s["email"]) for s in subs]
+            if notify_emails:
+                ids = [s[0] for s in notify_emails]
+                cur.execute(
+                    "UPDATE product_restock_subscriptions SET notified_at=NOW() WHERE id = ANY(%s)",
+                    (ids,)
+                )
+        conn.commit()
+    # Fire-and-forget restock notifications post-commit (CRM sends from platform default).
+    for _, email in notify_emails:
+        try:
+            send_email(
+                to=email,
+                subject="Back in stock — your wishlist item is available",
+                html=("<p>Good news — the item you were watching is back in stock.</p>"
+                      "<p>Visit the store to grab it before it sells out.</p>"),
+            )
+        except Exception:
+            pass
+    return {"ok": True, "new_quantity": new_qty, "notified": len(notify_emails)}
+
+
+@app.get("/api/products/{product_id}/stock/log")
+def get_stock_log(product_id: int, project_id: int = Query(...), limit: int = Query(100),
+                   user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT sl.id, sl.sku_id, sl.warehouse_id, sl.delta, sl.reason,"
+        "       sl.reference_id, sl.user_id, sl.note, sl.created_at,"
+        "       u.name AS user_name, c.configuration_name AS sku_name"
+        "  FROM product_stock_log sl"
+        "  JOIN product_configurations_l2 c ON sl.sku_id = c.id"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "  LEFT JOIN crm_users u ON sl.user_id = u.id"
+        " WHERE v.product_id=%s AND sl.project_id=%s"
+        " ORDER BY sl.created_at DESC LIMIT %s",
+        (product_id, project_id, max(1, min(int(limit), 500)))
+    )
+    for r in rows:
+        r["created_at"] = r["created_at"].isoformat() if r["created_at"] else None
+    return rows
+
+
+@app.get("/api/products/{product_id}/stock/per-warehouse")
+def get_per_warehouse_stock(product_id: int, project_id: int = Query(...),
+                              user: dict = Depends(get_current_user)):
+    """Per-SKU per-warehouse stock matrix for product: [{sku_id, sku_name, variation_name, warehouses[]}]."""
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    skus = db_all(
+        "SELECT c.id AS sku_id, c.configuration_name AS sku_name, c.sku_code,"
+        "       v.variation_name, v.id AS variation_id, c.position"
+        "  FROM product_configurations_l2 c"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        " WHERE v.product_id = %s"
+        " ORDER BY v.position ASC, c.position ASC, c.id ASC",
+        (product_id,)
+    )
+    if not skus: return []
+    warehouses = db_all(
+        "SELECT id, name, code, is_default FROM warehouses"
+        " WHERE project_id=%s AND is_active=TRUE"
+        " ORDER BY is_default DESC, name ASC",
+        (project_id,)
+    )
+    sku_ids = [s["sku_id"] for s in skus]
+    stock_rows = db_all(
+        "SELECT sku_id, warehouse_id, quantity, sold_quantity FROM product_stock"
+        " WHERE sku_id = ANY(%s)",
+        (sku_ids,)
+    )
+    # Map (sku, wh) → (qty, sold) for per-WH tree to show sold counts in one round-trip.
+    by_pair = {
+        (r["sku_id"], r["warehouse_id"]): (int(r["quantity"]), int(r["sold_quantity"] or 0))
+        for r in stock_rows
+    }
+    return [
+        {
+            "sku_id":           s["sku_id"],
+            "sku_name":         s["sku_name"],
+            "sku_code":         s.get("sku_code") or "",
+            "variation_id":     s["variation_id"],
+            "variation_name":   s["variation_name"],
+            "warehouses": [
+                {
+                    "warehouse_id":  w["id"],
+                    "name":          w["name"],
+                    "code":          w.get("code") or "",
+                    "is_default":    bool(w["is_default"]),
+                    "quantity":      by_pair.get((s["sku_id"], w["id"]), (0, 0))[0],
+                    "sold_quantity": by_pair.get((s["sku_id"], w["id"]), (0, 0))[1],
+                }
+                for w in warehouses
+            ],
+        }
+        for s in skus
+    ]
+
+
+@app.get("/api/projects/{project_id}/stock/per-warehouse-summary")
+def get_project_stock_summary(project_id: int,
+                                user: dict = Depends(get_current_user)):
+    """Project-wide snapshot for Inventory 'by Warehouse' view: one row per (warehouse, sku) with stock."""
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT ps.warehouse_id, ps.sku_id, ps.quantity, ps.sold_quantity,"
+        "       w.name AS warehouse_name, w.code AS warehouse_code, w.is_default,"
+        "       c.configuration_name AS sku_name, c.sku_code,"
+        "       v.id AS variation_id, v.variation_name,"
+        "       (v.images)[1] AS variation_image,"
+        "       p.id AS product_id, p.title AS product_title, p.sku AS product_sku,"
+        "       (SELECT (vv.images)[1] FROM product_configurations_l1 vv"
+        "         WHERE vv.product_id = p.id ORDER BY vv.position ASC, vv.id ASC LIMIT 1) AS product_image"
+        "  FROM product_stock ps"
+        "  JOIN warehouses w ON ps.warehouse_id = w.id"
+        "  JOIN product_configurations_l2 c ON ps.sku_id = c.id"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "  JOIN products p ON v.product_id = p.id"
+        " WHERE w.project_id=%s AND w.is_active"
+        " ORDER BY w.is_default DESC, w.name ASC, p.title ASC, v.position ASC, c.position ASC",
+        (project_id,)
+    )
+    return rows
+
+
+@app.post("/api/projects/{project_id}/stock/bulk-transfer")
+def bulk_transfer_stock(project_id: int, body: dict = Body(...),
+                         user: dict = Depends(get_current_user)):
+    """Atomic multi-line warehouse transfer (max 500 rows). Body: { transfers: [{ sku_id, from_warehouse_id, to_warehouse_id, quantity, note? }, ...] }."""
+    require_team_member_or_owner(user, project_id)
+    raw = body.get("transfers") if isinstance(body, dict) else None
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(400, "transfers must be a non-empty array")
+    if len(raw) > 500:
+        raise HTTPException(400, "Too many transfers in one request (max 500)")
+
+    # Validate every row in pure Python before touching the DB. Any failure short-circuits the whole batch.
+    parsed = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            raise HTTPException(400, f"transfers[{i}] must be an object")
+        try:
+            sku_id   = int(row["sku_id"])
+            from_wh  = int(row["from_warehouse_id"])
+            to_wh    = int(row["to_warehouse_id"])
+            qty      = int(row["quantity"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, f"transfers[{i}] missing or non-integer field")
+        if from_wh == to_wh: raise HTTPException(400, f"transfers[{i}]: from and to are the same warehouse")
+        if qty <= 0:         raise HTTPException(400, f"transfers[{i}]: quantity must be > 0")
+        note = sanitize(str(row.get("note") or ''))[:500]
+        parsed.append({"sku_id": sku_id, "from_wh": from_wh, "to_wh": to_wh, "qty": qty, "note": note})
+
+    affected_skus = set()
+    with db_cursor() as (conn, cur):
+        # IDOR guards — verify every referenced sku/WH belongs to THIS project.
+        sku_ids = list({p["sku_id"] for p in parsed})
+        wh_ids  = list({w for p in parsed for w in (p["from_wh"], p["to_wh"])})
+        cur.execute(
+            "SELECT c.id FROM product_configurations_l2 c"
+            "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+            "  JOIN products p                  ON v.product_id   = p.id"
+            " WHERE p.project_id=%s AND c.id = ANY(%s)",
+            (project_id, sku_ids)
+        )
+        ok_sku = {r["id"] for r in cur.fetchall()}
+        for s in sku_ids:
+            if s not in ok_sku: raise HTTPException(404, f"SKU {s} not found in this project")
+        cur.execute("SELECT id FROM warehouses WHERE project_id=%s AND id = ANY(%s)",
+                    (project_id, wh_ids))
+        ok_wh = {r["id"] for r in cur.fetchall()}
+        for w in wh_ids:
+            if w not in ok_wh: raise HTTPException(404, f"Warehouse {w} not found in this project")
+
+        # Apply transfers — order by (sku, from_wh) so deadlocks between concurrent
+        # batches resolve deterministically.
+        parsed.sort(key=lambda p: (p["sku_id"], p["from_wh"], p["to_wh"]))
+        for p in parsed:
+            cur.execute(
+                "SELECT quantity FROM product_stock"
+                " WHERE sku_id=%s AND warehouse_id=%s FOR UPDATE",
+                (p["sku_id"], p["from_wh"])
+            )
+            src_row = cur.fetchone() or {}
+            src_qty = int(src_row.get("quantity") or 0)
+            if src_qty < p["qty"]:
+                raise HTTPException(400,
+                    f"Insufficient stock on source warehouse for SKU {p['sku_id']} "
+                    f"(have {src_qty}, need {p['qty']})")
+            # Decrement source. RETURNING quantity guards against silent UPDATE-no-op duplication bug.
+            cur.execute(
+                "UPDATE product_stock SET quantity = quantity - %s"
+                " WHERE sku_id=%s AND warehouse_id=%s"
+                " RETURNING quantity",
+                (p["qty"], p["sku_id"], p["from_wh"])
+            )
+            updated = cur.fetchone()
+            if not updated:
+                raise HTTPException(500,
+                    f"Source stock row vanished mid-transfer for SKU {p['sku_id']} "
+                    f"at warehouse {p['from_wh']} — refusing to duplicate stock")
+            expected = src_qty - p["qty"]
+            if int(updated["quantity"]) != expected:
+                raise HTTPException(500,
+                    f"Source stock state inconsistent for SKU {p['sku_id']} "
+                    f"at warehouse {p['from_wh']}: expected {expected}, got {updated['quantity']}")
+            # Increment destination (UPSERT — first transfer to a brand-new WH must INSERT).
+            cur.execute(
+                "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+                " VALUES (%s, %s, %s, 0)"
+                " ON CONFLICT (sku_id, warehouse_id)"
+                " DO UPDATE SET quantity = product_stock.quantity + EXCLUDED.quantity",
+                (p["sku_id"], p["to_wh"], p["qty"])
+            )
+            # Two audit log rows — keeps the chronological trail readable per WH.
+            cur.execute(
+                "INSERT INTO product_stock_log (project_id, sku_id, warehouse_id, delta, reason, user_id, note)"
+                " VALUES (%s, %s, %s, %s, 'transfer', %s, %s)",
+                (project_id, p["sku_id"], p["from_wh"], -p["qty"], user["id"], p["note"])
+            )
+            cur.execute(
+                "INSERT INTO product_stock_log (project_id, sku_id, warehouse_id, delta, reason, user_id, note)"
+                " VALUES (%s, %s, %s, %s, 'transfer', %s, %s)",
+                (project_id, p["sku_id"], p["to_wh"], p["qty"], user["id"], p["note"])
+            )
+            affected_skus.add(p["sku_id"])
+        # Re-sync L2 aggregate per touched SKU (UPSERT may have created quantity=0 rows).
+        for sid in affected_skus:
+            _sync_l2_stock(cur, sid)
+        conn.commit()
+    return {"ok": True, "transfers_applied": len(parsed), "skus_affected": len(affected_skus)}
+
+
+# Bulk apply project-wide defaults to every product (Products → Settings tab).
+
+@app.post("/api/projects/{project_id}/products/bulk-apply-defaults")
+def bulk_apply_product_defaults(project_id: int, body: dict = Body(...),
+                                  user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    fields_in = body.get("fields") if isinstance(body, dict) else None
+    if not isinstance(fields_in, dict) or not fields_in:
+        raise HTTPException(400, "No fields provided")
+
+    BOOL_FIELDS = {'ships_internationally', 'requires_shipping',
+                   'continue_selling_oos', 'allow_po'}
+    INT_FIELDS  = {'lead_time_days', 'low_stock_threshold', 'net_terms_days'}
+    SHIPPING_CLASSES = {'standard', 'fragile', 'oversized', 'hazmat', 'perishable'}
+
+    set_clauses, vals = [], []
+    for key, val in fields_in.items():
+        if key in BOOL_FIELDS:
+            v = bool(val)
+        elif key in INT_FIELDS:
+            try: v = int(val)
+            except Exception: raise HTTPException(400, f"{key} must be an integer")
+            if v < 0: raise HTTPException(400, f"{key} must be >= 0")
+            if key == 'net_terms_days' and v > 365: raise HTTPException(400, "net_terms_days too large")
+            if key == 'lead_time_days' and v > 365: raise HTTPException(400, "lead_time_days too large")
+        elif key == 'shipping_class':
+            v = str(val or '').strip().lower()
+            if v not in SHIPPING_CLASSES:
+                raise HTTPException(400, "Invalid shipping_class")
+        else:
+            raise HTTPException(400, f"Field '{key}' is not allowed")
+        set_clauses.append(f"{key}=%s")
+        vals.append(v)
+
+    vals.append(project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE products SET {', '.join(set_clauses)} WHERE project_id=%s", vals)
+        affected = cur.rowcount
+        conn.commit()
+    return {"ok": True, "affected": affected}
+
+
+# ─── Warehouses CRUD ────────────────────────────────────────────────
+# Each project starts with one default warehouse on first list call.
+
+def _ensure_default_warehouse(project_id):
+    """Lazy-create default warehouse on first access (idempotent via partial unique index)."""
+    if not db_one("SELECT id FROM warehouses WHERE project_id=%s LIMIT 1", (project_id,)):
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO warehouses (project_id, name, code, is_default, is_active)"
+                " VALUES (%s, %s, %s, TRUE, TRUE) ON CONFLICT DO NOTHING",
+                (project_id, "Main warehouse", "MAIN")
+            )
+            conn.commit()
+
+
+# Multi-warehouse stock (Phase A): product_stock is source of truth, l2.stock_quantity is denormalised aggregate. Every write must call _sync_l2_stock(sku_id).
+
+def _default_warehouse_id(cur, project_id):
+    """Return the default WH id for the project, creating one if missing."""
+    cur.execute("SELECT id FROM warehouses WHERE project_id=%s AND is_default LIMIT 1", (project_id,))
+    row = cur.fetchone()
+    if row: return row["id"]
+    cur.execute(
+        "INSERT INTO warehouses (project_id, name, code, is_default, is_active)"
+        " VALUES (%s, 'Main warehouse', 'MAIN', TRUE, TRUE) RETURNING id",
+        (project_id,)
+    )
+    return cur.fetchone()["id"]
+
+
+def _verify_warehouse_in_project(cur, warehouse_id, project_id):
+    """403/404 guard for warehouse_id — prevents IDOR. Call from every WH endpoint."""
+    cur.execute("SELECT id FROM warehouses WHERE id=%s AND project_id=%s",
+                (warehouse_id, project_id))
+    if not cur.fetchone():
+        raise HTTPException(404, "Warehouse not found in this project")
+
+
+def _verify_sku_in_project(cur, sku_id, project_id):
+    """Same idea, for SKUs (Layer 2 row)."""
+    cur.execute(
+        "SELECT c.id FROM product_configurations_l2 c"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "  JOIN products p                  ON v.product_id   = p.id"
+        " WHERE c.id=%s AND p.project_id=%s",
+        (sku_id, project_id)
+    )
+    if not cur.fetchone():
+        raise HTTPException(404, "SKU not found in this project")
+
+
+def _sync_l2_stock(cur, sku_id):
+    """Recompute l2.stock_quantity = SUM(product_stock.quantity) for this SKU."""
+    cur.execute(
+        "UPDATE product_configurations_l2"
+        "   SET stock_quantity = COALESCE("
+        "         (SELECT SUM(quantity) FROM product_stock WHERE sku_id=%s), 0)"
+        " WHERE id=%s",
+        (sku_id, sku_id)
+    )
+
+
+def _per_warehouse_stock(cur, sku_id):
+    """List {warehouse_id, name, code, is_default, quantity} for every project WH (0 if no row)."""
+    cur.execute(
+        "SELECT w.id AS warehouse_id, w.name, w.code, w.is_default,"
+        "       COALESCE(ps.quantity, 0) AS quantity"
+        "  FROM warehouses w"
+        "  LEFT JOIN product_stock ps ON ps.warehouse_id = w.id AND ps.sku_id = %s"
+        " WHERE w.project_id = ("
+        "         SELECT p.project_id FROM product_configurations_l2 c"
+        "           JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "           JOIN products p                  ON v.product_id   = p.id"
+        "          WHERE c.id = %s)"
+        "   AND w.is_active = TRUE"
+        " ORDER BY w.is_default DESC, w.name ASC",
+        (sku_id, sku_id)
+    )
+    return [dict(r) for r in cur.fetchall()]
+
+
+_WH_STR_FIELDS = {
+    "country": 80, "city": 120, "street": 255, "postal_code": 40, "region": 120,
+    "contact_name": 120, "contact_phone": 40,
+}
+
+
+@app.get("/api/warehouses")
+def list_warehouses(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    _ensure_default_warehouse(project_id)
+    rows = db_all(
+        "SELECT id, name, code, address, is_active, is_default, created_at,"
+        "       country, city, street, postal_code, region,"
+        "       contact_name, contact_phone, notes"
+        " FROM warehouses WHERE project_id=%s"
+        " ORDER BY is_default DESC, name ASC",
+        (project_id,)
+    )
+    for r in rows:
+        r["created_at"] = r["created_at"].isoformat() if r["created_at"] else None
+    return rows
+
+
+@app.post("/api/warehouses")
+def create_warehouse(req: WarehouseRequest, project_id: int = Query(...),
+                     user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    name = sanitize((req.name or '').strip())[:120]
+    if not name: raise HTTPException(400, "Name is required")
+    code     = sanitize((req.code or '').strip())[:40]
+    address  = sanitize(req.address or '')[:1000]
+    notes    = sanitize(req.notes or '')[:2000]
+    extras = {fld: sanitize(getattr(req, fld) or '').strip()[:lim]
+              for fld, lim in _WH_STR_FIELDS.items()}
+    is_default = bool(req.is_default)
+    with db_cursor() as (conn, cur):
+        if is_default:
+            cur.execute("UPDATE warehouses SET is_default=FALSE WHERE project_id=%s", (project_id,))
+        cur.execute(
+            "INSERT INTO warehouses ("
+            "  project_id, name, code, address, is_default, is_active,"
+            "  country, city, street, postal_code, region, contact_name, contact_phone, notes"
+            ") VALUES (%s,%s,%s,%s,%s,TRUE, %s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (project_id, name, code, address, is_default,
+             extras["country"], extras["city"], extras["street"],
+             extras["postal_code"], extras["region"],
+             extras["contact_name"], extras["contact_phone"], notes)
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id}
+
+
+@app.put("/api/warehouses/{wid}")
+def update_warehouse(wid: int, req: WarehouseRequest, project_id: int = Query(...),
+                     user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    if not db_one("SELECT id FROM warehouses WHERE id=%s AND project_id=%s", (wid, project_id)):
+        raise HTTPException(404, "Warehouse not found")
+    fields, vals = [], []
+    if req.name is not None:
+        n = sanitize(req.name.strip())[:120]
+        if not n: raise HTTPException(400, "Name cannot be empty")
+        fields.append("name=%s"); vals.append(n)
+    if req.code is not None:
+        fields.append("code=%s"); vals.append(sanitize(req.code.strip())[:40])
+    if req.address is not None:
+        fields.append("address=%s"); vals.append(sanitize(req.address)[:1000])
+    if req.notes is not None:
+        fields.append("notes=%s"); vals.append(sanitize(req.notes)[:2000])
+    for fld, lim in _WH_STR_FIELDS.items():
+        v = getattr(req, fld)
+        if v is not None:
+            fields.append(f"{fld}=%s"); vals.append(sanitize(v.strip())[:lim])
+    if req.is_active is not None:
+        # Block deactivating a WH that still holds stock or the default WH.
+        if req.is_active is False:
+            cur_default = db_one("SELECT is_default FROM warehouses WHERE id=%s", (wid,))
+            if cur_default and cur_default.get("is_default"):
+                raise HTTPException(400, "Cannot deactivate the default warehouse")
+            leftover = db_one("SELECT COALESCE(SUM(quantity),0) AS t FROM product_stock WHERE warehouse_id=%s", (wid,))
+            if int((leftover or {}).get("t") or 0) > 0:
+                raise HTTPException(400,
+                    "Warehouse still holds stock — transfer it out first.")
+        fields.append("is_active=%s"); vals.append(bool(req.is_active))
+    if req.is_default is not None:
+        # Setting is_default=False on the only default would orphan the project — block.
+        if req.is_default is False:
+            row = db_one("SELECT is_default FROM warehouses WHERE id=%s", (wid,))
+            if row and row.get("is_default"):
+                raise HTTPException(400, "Pick another warehouse as default before unflagging this one")
+        fields.append("is_default=%s"); vals.append(bool(req.is_default))
+    if not fields: return {"ok": True}
+    vals.append(wid)
+    with db_cursor() as (conn, cur):
+        if req.is_default:
+            cur.execute("UPDATE warehouses SET is_default=FALSE WHERE project_id=%s AND id<>%s",
+                        (project_id, wid))
+        cur.execute(f"UPDATE warehouses SET {', '.join(fields)} WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/warehouses/{wid}")
+def delete_warehouse(wid: int, project_id: int = Query(...),
+                     user: dict = Depends(get_current_user)):
+    require_owner(user, project_id)
+    row = db_one("SELECT id, is_default FROM warehouses WHERE id=%s AND project_id=%s",
+                 (wid, project_id))
+    if not row: raise HTTPException(404, "Warehouse not found")
+    if row["is_default"]:
+        raise HTTPException(400, "Cannot delete the default warehouse — set another as default first")
+    # Don't silently destroy stock (cascades into product_stock); force transfer-out first.
+    leftover = db_one(
+        "SELECT COALESCE(SUM(quantity), 0) AS total FROM product_stock WHERE warehouse_id=%s",
+        (wid,)
+    )
+    if int((leftover or {}).get("total") or 0) > 0:
+        raise HTTPException(400,
+            "Warehouse still holds stock — transfer it to another warehouse "
+            "(or write it off via Adjust) before deleting.")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM warehouses WHERE id=%s", (wid,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ─── Restock waitlist (CRM-side: list + manual notify-out) ──────────
+
+@app.get("/api/products/{product_id}/restock-subscriptions")
+def list_restock_subs(product_id: int, project_id: int = Query(...),
+                       user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    rows = db_all(
+        "SELECT id, sku_id, email, user_id, notified_at, created_at"
+        " FROM product_restock_subscriptions WHERE product_id=%s"
+        " ORDER BY created_at DESC LIMIT 500",
+        (product_id,)
+    )
+    for r in rows:
+        r["created_at"]  = r["created_at"].isoformat() if r["created_at"] else None
+        r["notified_at"] = r["notified_at"].isoformat() if r["notified_at"] else None
+    return rows
+
+
+# ─── Q&A management ─────────────────────────────────────────────────
+# Customers post questions via External API; merchant answers them via CRM.
+
+@app.get("/api/products/{product_id}/questions")
+def list_questions(product_id: int, project_id: int = Query(...),
+                    user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    rows = db_all(
+        "SELECT id, user_id, question, answer, answered_at, created_at"
+        " FROM product_questions WHERE product_id=%s"
+        " ORDER BY created_at DESC LIMIT 200",
+        (product_id,)
+    )
+    for r in rows:
+        r["created_at"]  = r["created_at"].isoformat() if r["created_at"] else None
+        r["answered_at"] = r["answered_at"].isoformat() if r["answered_at"] else None
+    return rows
+
+
+class AnswerQuestionRequest(BaseModel):
+    answer: str
+
+@app.put("/api/products/{product_id}/questions/{qid}/answer")
+def answer_question(product_id: int, qid: int, req: AnswerQuestionRequest,
+                     project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT id FROM product_questions WHERE id=%s AND product_id=%s AND project_id=%s",
+        (qid, product_id, project_id)
+    )
+    if not row: raise HTTPException(404, "Question not found")
+    answer = sanitize(req.answer.strip())[:5000]
+    if not answer: raise HTTPException(400, "Answer cannot be empty")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE product_questions SET answer=%s, answered_at=NOW() WHERE id=%s",
+            (answer, qid)
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+# ─── Review merchant reply ──────────────────────────────────────────
+
+class ReviewReplyRequest(BaseModel):
+    reply: str  # empty string clears the reply
+
+@app.put("/api/products/{product_id}/reviews/{review_id}/reply")
+def reply_to_review(product_id: int, review_id: int, req: ReviewReplyRequest,
+                     project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if not db_one(
+        "SELECT id FROM product_reviews WHERE id=%s AND product_id=%s AND project_id=%s",
+        (review_id, product_id, project_id)
+    ):
+        raise HTTPException(404, "Review not found")
+    reply = sanitize(req.reply.strip())[:5000]
+    with db_cursor() as (conn, cur):
+        if reply:
+            cur.execute(
+                "UPDATE product_reviews SET merchant_reply=%s, merchant_reply_at=NOW() WHERE id=%s",
+                (reply, review_id)
+            )
+        else:
+            cur.execute(
+                "UPDATE product_reviews SET merchant_reply=NULL, merchant_reply_at=NULL WHERE id=%s",
+                (review_id,)
+            )
         conn.commit()
     return {"ok": True}
 
@@ -4113,6 +5821,118 @@ async def upload_image(
         with open(path, "wb") as f:
             f.write(out.read())
         return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}"}
+
+
+# Media upload (Phase 7): images/videos/3D/AR; preserves original format (no server-side transcoding).
+
+ALLOWED_MEDIA_EXTS = {
+    # images — also accepted by /api/upload/image for back-compat
+    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+    'webp': 'image/webp', 'gif': 'image/gif',
+    # video
+    'mp4': 'video/mp4', 'webm': 'video/webm', 'mov': 'video/quicktime', 'm4v': 'video/x-m4v',
+    # 3D / AR
+    'glb': 'model/gltf-binary', 'usdz': 'model/vnd.usdz+zip', 'gltf': 'model/gltf+json',
+}
+
+MEDIA_SIZE_LIMITS = {
+    'image': 10 * 1024 * 1024,    # 10 MB
+    'video': 100 * 1024 * 1024,   # 100 MB
+    'model':  50 * 1024 * 1024,   #  50 MB
+}
+
+def _media_kind_from_ext(ext: str) -> Optional[str]:
+    if ext in ('jpg', 'jpeg', 'png', 'webp', 'gif'): return 'image'
+    if ext in ('mp4', 'webm', 'mov', 'm4v'):         return 'video'
+    if ext in ('glb', 'usdz', 'gltf'):               return 'model'
+    return None
+
+
+@app.post("/api/upload/media")
+async def upload_media(
+    file: UploadFile = File(...),
+    project_id: Optional[int] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    """Multi-type upload for L1 variation gallery (images/videos/3D/AR); preserves user-chosen ext."""
+    fname = (file.filename or '').strip()
+    ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
+    if ext not in ALLOWED_MEDIA_EXTS:
+        raise HTTPException(400, f"File type .{ext or '?'} not allowed. "
+                                  f"Allowed: {sorted(ALLOWED_MEDIA_EXTS.keys())}")
+    kind = _media_kind_from_ext(ext)
+    contents = await file.read()
+    cap = MEDIA_SIZE_LIMITS.get(kind, 10 * 1024 * 1024)
+    if len(contents) > cap:
+        raise HTTPException(400, f"File too large (max {cap // (1024*1024)} MB for {kind})")
+
+    # Mime-type sniff defence — refuse if declared mime mismatches ext (.glb-renamed-from-.exe).
+    declared = (file.content_type or '').lower()
+    expected = ALLOWED_MEDIA_EXTS[ext]
+    # Browsers send 'application/octet-stream' for unknown types — accept that.
+    if declared and declared != expected and declared != 'application/octet-stream':
+        # Allow image/* for any image ext (browsers vary on jpeg vs jpg).
+        if not (kind == 'image' and declared.startswith('image/')):
+            raise HTTPException(400, f"Mime mismatch: file says '{declared}', extension says '{expected}'")
+
+    filename = f"{secrets.token_hex(16)}.{ext}"
+    if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
+        folder = f"projects/{project_id}/products" if project_id else "products"
+        key = f"{folder}/{filename}"
+        try:
+            buf = io.BytesIO(contents); buf.seek(0)
+            url = s3_upload(buf, key, content_type=expected)
+            return {"url": url, "type": kind, "size": len(contents)}
+        except (BotoCoreError, ClientError) as e:
+            raise HTTPException(500, f"S3 upload failed: {e}")
+    else:
+        path = os.path.join(UPLOADS_DIR, filename)
+        with open(path, "wb") as f:
+            f.write(contents)
+        return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}", "type": kind, "size": len(contents)}
+
+
+# Trusted external embed hosts for "Paste URL" path — narrow (SSRF/clickjacking risk).
+SAFE_MEDIA_HOSTS = (
+    "youtube.com", "www.youtube.com", "youtu.be",
+    "vimeo.com", "player.vimeo.com",
+)
+
+def _is_safe_media_url(url: str) -> bool:
+    """True if URL is on our S3 bucket OR https + whitelisted external host."""
+    if not url: return False
+    u = str(url).lower()
+    if u.startswith("https://torta-crm.s3.") or "/torta-crm." in u:
+        return True
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(u)
+    except Exception:
+        return False
+    if p.scheme != "https": return False
+    return p.hostname in SAFE_MEDIA_HOSTS
+
+
+class AddMediaUrlRequest(BaseModel):
+    url: str
+
+@app.post("/api/products/{product_id}/layers/1/{var_id}/media-url")
+def add_media_url(product_id: int, var_id: int, req: AddMediaUrlRequest,
+                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Append S3 or whitelisted-host URL to variation's images[] (refuses arbitrary external URLs)."""
+    require_team_member_or_owner(user, project_id)
+    _verify_layer_item_belongs_to_product(1, var_id, product_id)
+    url = (req.url or '').strip()
+    if not _is_safe_media_url(url):
+        raise HTTPException(400, "URL must be from your S3 bucket or a whitelisted "
+                                  "video host (YouTube, Vimeo) over https.")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE product_configurations_l1 SET images = array_append(images, %s) WHERE id=%s",
+            (url, var_id)
+        )
+        conn.commit()
+    return {"ok": True, "url": url}
 
 
 @app.post("/api/upload/file")
@@ -4888,8 +6708,7 @@ def get_orders_stats(project_id: int = Query(...),
 @app.get("/api/orders/stream")
 async def stream_orders(project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    """SSE: 3-second poll. Fires when new_count OR max order id changes.
-    Tracks max id so a new order is always detected even if new_count stays equal."""
+    """SSE 3s poll: fires on new_count OR max id change (catches new orders even if count equal)."""
     require_team_member_or_owner(user, project_id)
 
     async def generator():
@@ -5061,8 +6880,7 @@ chat_hub = ChatHub()
 async def _handle_inbound_message(project_id: int, channel: str,
                                   external_chat_id: str, text: str,
                                   external_msg_id: str = ""):
-    """Channel-agnostic inbound message handler.
-    Upserts conversation + inserts message + broadcasts via WebSocket."""
+    """Channel-agnostic inbound: upsert conversation + insert message + broadcast via WebSocket."""
     if not external_chat_id or not text:
         return
 
@@ -5193,10 +7011,7 @@ telegram_poller = TelegramPoller()
 # ── Discord Gateway WebSocket poller (works on localhost without HTTPS) ───────
 
 class DiscordPoller:
-    """Connects to Discord Gateway via WebSocket. Receives DMs in real-time.
-
-    Required intents: DIRECT_MESSAGES (4096) + MESSAGE_CONTENT (32768) = 36864.
-    For DMs the MESSAGE_CONTENT intent must be enabled in the bot's Developer Portal."""
+    """Connects to Discord Gateway via WebSocket; receives DMs in real-time (intents 36864)."""
 
     GATEWAY_URL    = "wss://gateway.discord.gg/?v=10&encoding=json"
     DM_INTENTS     = (1 << 12) | (1 << 15)  # DIRECT_MESSAGES + MESSAGE_CONTENT
@@ -6867,10 +8682,7 @@ def booking_delete(bid: int, project_id: int = Query(...),
     return {"ok": True}
 
 
-# ── INTEGRATIONS / WEBHOOKS ──────────────────────────────
-# Outbound webhook engine: project owners subscribe URLs to events; on each event
-# we POST a signed JSON payload, retry on transient failure, log every delivery.
-# Same engine powers Custom Webhook, Slack and Discord (type column branches body shape).
+# INTEGRATIONS / WEBHOOKS — outbound engine: subscribe URLs to events, POST signed JSON, retry, log. Powers Custom/Slack/Discord (type column branches body shape).
 
 ALL_EVENTS = [
     "order.created", "order.paid", "order.shipped", "order.delivered",
@@ -7144,9 +8956,7 @@ def _default_integration_name(t: str) -> str:
             "webhook": "Custom Webhook"}.get(t, t.title())
 
 
-# NOTE: /deliveries routes MUST be declared BEFORE /{sub_id} routes — FastAPI
-# matches routes in declaration order; otherwise GET /deliveries hits /{sub_id}
-# with sub_id="deliveries" and 404s with "not an int" pydantic validation.
+# NOTE: /deliveries routes MUST be declared BEFORE /{sub_id} (FastAPI matches in declaration order).
 
 @app.get("/api/integrations/deliveries")
 def integrations_deliveries(project_id: int = Query(...),
@@ -7288,8 +9098,7 @@ def integrations_delete(sub_id: int, project_id: int = Query(...),
 @app.post("/api/integrations/{sub_id}/test")
 def integrations_test(sub_id: int, project_id: int = Query(...),
                       user: dict = Depends(get_current_user)):
-    """Sends a synthetic 'order.paid' event so the user can verify the receiver
-    works without waiting for a real order. Logged to deliveries like real events."""
+    """Sends synthetic 'order.paid' to verify receiver; logged to deliveries like real events."""
     require_team_member_or_owner(user, project_id)
     sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                  (sub_id, project_id))

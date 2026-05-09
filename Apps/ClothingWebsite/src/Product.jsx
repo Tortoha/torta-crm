@@ -18,9 +18,7 @@ function Product() {
     const [page, setPage] = useState(null);
     const [loading, setLoading] = useState(true);
     const [addingToCart, setAddingToCart] = useState(false);
-    // Modifier item ids selected by the customer. Reset on product load + when
-    // the radio defaults change (e.g. switching variation never affects this,
-    // but loading a different product does).
+    // Modifier item ids selected by the customer; reset on product load.
     const [selectedModifiers, setSelectedModifiers] = useState([]);
 
     const initModifiersFromDefaults = (data) => {
@@ -61,9 +59,9 @@ function Product() {
 
     const handleVariationClick = (index) => {
         setActiveVariation(index);
-        const conf_2 = page.conf_1?.[index]?.conf_2 || [];
-        const same = conf_2.find(c => c.id === activeConfiguration?.id);
-        const pick = same || conf_2[0];
+        const cfgs = page.conf_layer_1?.[index]?.conf_layer_2 || [];
+        const same = cfgs.find(c => c.id === activeConfiguration?.id);
+        const pick = same || cfgs[0];
         setActiveConfiguration(pick ? { id: pick.id, name: pick.name } : null);
     };
 
@@ -110,15 +108,18 @@ function Product() {
     const handleToggleCart = async () => {
         if (!page.is_authenticated) { window.location.href = "/login"; return; }
         if (!currentVariation || !currentConfiguration) return;
-        if (modifierError()) return;
         setAddingToCart(true);
-        // Always ADD — backend merges identical (SKU + modifier set) lines.
-        // The "remove if already in cart" toggle behaviour only worked for products
-        // without modifiers; with modifiers the same SKU can have many distinct lines.
-        await client.cart.add(page.id, currentVariation.id, currentConfiguration.id, 1, selectedModifiers);
-        notifyCartUpdate();
-        await loadPage(true);
-        setAddingToCart(false);
+        try {
+            // Toggle: remove this configuration's cart line, or add a new one (modifier sibling lines stay).
+            if (isInCart && currentConfiguration.cart_item_id) {
+                await client.cart.remove(currentConfiguration.cart_item_id);
+            } else {
+                if (modifierError()) return;
+                await client.cart.add(page.id, currentVariation.id, currentConfiguration.id, 1, selectedModifiers);
+            }
+            notifyCartUpdate();
+            await loadPage(true);
+        } finally { setAddingToCart(false); }
     };
 
     const handleUpdateQuantity = async (newQuantity) => {
@@ -144,17 +145,13 @@ function Product() {
     const [hoveredVariation, setHoveredVariation] = useState(null);
     const [hoveredConfiguration, setHoveredConfiguration] = useState(null);
 
-    // Sliding indicator that follows the active/hovered configuration button.
-    // (Inlined here instead of a separate <ProductConfigurations> component —
-    //  one tiny picker doesn't deserve its own file.)
+    // Sliding indicator that follows the active/hovered configuration button (inlined; too small for its own component).
     const cfgRefs = useRef([]);
     const [cfgIndicatorStyle, setCfgIndicatorStyle] = useState({ transform: 'translateX(0px)', width: '64px' });
 
-    // Recalculate the indicator position whenever the user hovers a different
-    // button, picks a different configuration, or switches variation (which
-    // swaps the whole list of buttons).
+    // Recalculate indicator position on hover/pick/variation change.
     useEffect(() => {
-        const cfgs = page?.conf_1?.[activeVariation]?.conf_2 || [];
+        const cfgs = page?.conf_layer_1?.[activeVariation]?.conf_layer_2 || [];
         const activeIdx = cfgs.findIndex(c => c.id === activeConfiguration?.id);
         const idx = hoveredConfiguration !== null ? hoveredConfiguration : (activeIdx >= 0 ? activeIdx : 0);
         const btn = cfgRefs.current[idx];
@@ -183,8 +180,8 @@ function Product() {
     );
 
     // VISUAL DERIVED DATA
-    const currentVariation = page.conf_1?.[activeVariation] || null;
-    const currentConfiguration = currentVariation?.conf_2?.find(c => c.id === activeConfiguration?.id) || null;
+    const currentVariation = page.conf_layer_1?.[activeVariation] || null;
+    const currentConfiguration = currentVariation?.conf_layer_2?.find(c => c.id === activeConfiguration?.id) || null;
     const isInCart = !!currentConfiguration?.cart_item_id;
     const cartQuantity = currentConfiguration?.cart_quantity || 1;
     const maxStock = currentConfiguration?.stock_quantity || 0;
@@ -196,9 +193,28 @@ function Product() {
         return acc;
     }, 0);
     const basePrice = currentConfiguration?.price || 0;
+    const compareAtPrice = currentConfiguration?.compare_at_price || null;
+    const onSale = !!currentConfiguration?.on_sale;
     const currentPrice = basePrice + modifierDelta;
-    const activeConfigurationIndex = currentVariation?.conf_2?.findIndex(c => c.id === activeConfiguration?.id) ?? 0;
+    const activeConfigurationIndex = currentVariation?.conf_layer_2?.findIndex(c => c.id === activeConfiguration?.id) ?? 0;
     const modError = modifierError();
+    // Phase 1: Stock indicator messaging.
+    const continueOOS = !!page.continue_selling_oos;
+    const lowThreshold = page.low_stock_threshold || 0;
+    // Show stock indicator only when useful (OOS, backorder, low stock); "in stock" stays implicit.
+    let stockMessage = null;
+    if (maxStock === 0) {
+        stockMessage = continueOOS ? 'Available on backorder' : 'Out of stock';
+    } else if (lowThreshold > 0 && maxStock <= lowThreshold) {
+        stockMessage = `Only ${maxStock} left in stock`;
+    }
+    // Phase 1: B2B MOQ feedback for the customer.
+    const moq = page.moq || 1;
+    const moqHint = moq > 1 ? `Minimum order: ${moq} pcs` : null;
+    // Phase 6: pre-order banner.
+    const preOrderHint = page.is_pre_order && page.pre_order_release_at
+        ? `Ships from ${new Date(page.pre_order_release_at).toLocaleDateString()}`
+        : null;
 
     return (
         <>
@@ -211,27 +227,47 @@ function Product() {
                 </div>
 
                 <div className="product-info">
+                    {page.brand && <p className="product-brand">{page.brand}</p>}
                     <h1 className="product-title">{page.title}</h1>
                     <p className="product-subtitle">{page.subtitle}</p>
-                    <h2 className="product-price">${currentPrice}</h2>
+                    <div className="product-price-row">
+                        <h2 className="product-price">${currentPrice}</h2>
+                        {compareAtPrice && compareAtPrice > currentPrice && (
+                            <span className="product-price-old">${compareAtPrice}</span>
+                        )}
+                        {onSale && <span className="product-badge product-badge--sale">On Sale</span>}
+                        {page.is_pre_order && <span className="product-badge product-badge--preorder">Pre-order</span>}
+                    </div>
+                    {stockMessage && (
+                        <p className={`product-stock product-stock--${
+                            maxStock === 0 ? 'oos' :
+                            (lowThreshold > 0 && maxStock <= lowThreshold) ? 'low' : 'ok'
+                        }`}>{stockMessage}</p>
+                    )}
+                    {moqHint && <p className="product-moq-hint">{moqHint}</p>}
+                    {preOrderHint && <p className="product-preorder-hint">{preOrderHint}</p>}
+                    {/* Restock notify-me when out of stock and not continuing-to-sell. */}
+                    {maxStock === 0 && !continueOOS && (
+                        <RestockButton page={page} skuId={currentConfiguration?.id} />
+                    )}
 
                     <ProductVariations
-                        variations={page.conf_1}
+                        variations={page.conf_layer_1}
                         activeIndex={activeVariation}
                         hoveredIndex={hoveredVariation}
                         onVariationClick={handleVariationClick}
                         onVariationHover={setHoveredVariation}
                         isVariationInCart={(variationId) =>
-                            page.conf_1.some(v => v.id === variationId && v.is_in_cart)
+                            page.conf_layer_1.some(v => v.id === variationId && v.is_in_cart)
                         }
                     />
 
                     {/* ── Configurations picker (S / M / L · 30cm / 40cm · …) ── */}
-                    {currentVariation?.conf_2?.length > 0 && (
+                    {currentVariation?.conf_layer_2?.length > 0 && (
                         <div className="product-sizes">
                             <div className="sizes-wrapper">
                                 <div className="size-indicator" style={cfgIndicatorStyle} />
-                                {currentVariation.conf_2.map((c, index) => {
+                                {currentVariation.conf_layer_2.map((c, index) => {
                                     const underIndicator = index === (
                                         hoveredConfiguration !== null ? hoveredConfiguration : activeConfigurationIndex
                                     );
@@ -342,6 +378,34 @@ function Product() {
 
             <CartButton />
         </>
+    );
+}
+
+// Notify-me button shown when SKU is OOS — subscribes via /restock/subscribe so the merchant can email on restock.
+function RestockButton({ page, skuId }) {
+    const [open, setOpen] = useState(false);
+    const [email, setEmail] = useState(page.is_authenticated ? '' : '');
+    const [done, setDone] = useState(false);
+    const submit = async () => {
+        await client.restock.subscribe(page.id, skuId, email || null);
+        setDone(true);
+    };
+    if (done) return <p className="product-restock-done">We'll email you when it's back.</p>;
+    if (!open) return (
+        <button type="button" className="product-restock-btn" onClick={() => setOpen(true)}>
+            Notify me when it's back
+        </button>
+    );
+    return (
+        <div className="product-restock-form">
+            {!page.is_authenticated && (
+                <input type="email" placeholder="your@email.com" value={email}
+                    onChange={e => setEmail(e.target.value)} className="product-restock-input" />
+            )}
+            <button type="button" className="product-restock-btn" onClick={submit}>
+                Subscribe
+            </button>
+        </div>
     );
 }
 

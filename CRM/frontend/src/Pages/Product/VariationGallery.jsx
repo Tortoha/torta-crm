@@ -7,15 +7,19 @@ import { CSS } from '@dnd-kit/utilities';
 import { API_BASE } from '../../api.js';
 
 // ── Multi-photo gallery popover for one L1 variation ────────────────
-// Anchored to a triggering card. Shows per-variation gallery as a 6-col grid.
-// - `+` button to multi-upload via file input (multiple files at once).
-// - Drag-and-drop reorder (first slot = cover, propagated to grid card).
-// - Hover any tile → red X to delete (S3 cleanup is handled by backend
-//   diffing the array on PUT).
-// All edits PUT the full new array to /layers/1/{varId} which is the same
-// endpoint the inline editors use.
+// 6-col grid; +button multi-upload; DnD reorder (slot 0 = cover); X deletes (S3 cleanup via PUT diff).
 
 const MAX_PER_ROW = 6;
+
+// Detect media type from URL/host (mirror of External _media_type); avoids broken <img> for non-image content.
+function mediaTypeOf(url) {
+  if (!url) return 'image';
+  const u = String(url).toLowerCase().split('?', 1)[0];
+  if (/(youtube\.com|youtu\.be|vimeo\.com)/.test(u)) return 'video-embed';
+  if (/\.(mp4|webm|mov|m4v)$/.test(u)) return 'video';
+  if (/\.(glb|usdz|gltf)$/.test(u))    return 'model';
+  return 'image';
+}
 
 function GalleryTile({ url, onDelete, draggable }) {
   const sortable = useSortable({ id: url });
@@ -25,15 +29,26 @@ function GalleryTile({ url, onDelete, draggable }) {
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
+  const kind = mediaTypeOf(url);
   return (
     <div ref={setNodeRef} style={style}
-      className={`vgal-tile${isDragging ? ' vgal-tile--dragging' : ''}`}
+      className={`vgal-tile vgal-tile--${kind}${isDragging ? ' vgal-tile--dragging' : ''}`}
       {...(draggable ? { ...attributes, ...listeners } : {})}>
-      <img src={url} alt="" className="vgal-img" />
+      {kind === 'image' && <img src={url} alt="" className="vgal-img" />}
+      {kind === 'video' && (
+        // muted + playsInline — preview only, not full playback
+        <video src={url} className="vgal-img" muted playsInline preload="metadata" />
+      )}
+      {kind === 'video-embed' && (
+        <div className="vgal-media-placeholder">▶ Video</div>
+      )}
+      {kind === 'model' && (
+        <div className="vgal-media-placeholder">⬢ 3D / AR</div>
+      )}
       <button type="button" className="vgal-del"
         onPointerDown={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); onDelete(); }}
-        title="Delete this photo">
+        title="Delete this media">
         <X weight="bold" size={11} />
       </button>
     </div>
@@ -71,18 +86,14 @@ export default function VariationGalleryPopover({
     };
   }, [anchorRef, onClose]);
 
-  // Position the popover ABOVE the anchor card image, synchronously after
-  // every layout — useLayoutEffect runs after DOM mutations but before paint,
-  // so `pop.offsetHeight` is always fresh and there is no visible flicker
-  // between "below → above" measurement passes.
+  // Position popover ABOVE anchor via useLayoutEffect (post-mutation, pre-paint) — no flicker.
   useLayoutEffect(() => {
     const pop = popRef.current;
     const anchor = anchorRef?.current;
     if (!pop || !anchor) return;
     const r = anchor.getBoundingClientRect();
     const h = pop.offsetHeight;
-    // Always above. Clamp to 8px from viewport top so the popover doesn't
-    // disappear off-screen when the card is right at the top of the page.
+    // Always above; clamp to 8px from viewport top so popover stays on-screen.
     const top  = Math.max(8, r.top - h - 8);
     const left = r.left + r.width / 2;
     // Only update state if the values actually changed — avoids feedback loops.
@@ -101,15 +112,16 @@ export default function VariationGalleryPopover({
     return res.ok;
   };
 
+  // Phase 7 — multi-type upload via /api/upload/media (preserves format; no WebP conversion).
+  const ACCEPT_EXT = "image/*,video/*,.glb,.usdz,.gltf";
+
   const onUpload = async (fileList) => {
     if (!fileList || fileList.length === 0) return;
     setUploading(true);
-    const files = Array.from(fileList).filter(f => f.type?.startsWith('image/'));
     try {
-      // Upload all files in parallel — same endpoint the rest of the app uses
-      const results = await Promise.all(files.map(async (file) => {
+      const results = await Promise.all(Array.from(fileList).map(async (file) => {
         const fd = new FormData(); fd.append('file', file);
-        const r = await fetch(`${API_BASE}/api/upload/image${pq}`, {
+        const r = await fetch(`${API_BASE}/api/upload/media${pq}`, {
           method: 'POST', credentials: 'include', body: fd,
         });
         if (!r.ok) return null;
@@ -123,6 +135,32 @@ export default function VariationGalleryPopover({
         await persist(next);
       }
     } finally { setUploading(false); }
+  };
+
+  // ── Add-by-URL flow (YouTube / Vimeo / own S3) — server validates whitelist + appends to images[]. ──
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [urlInput,    setUrlInput]    = useState('');
+  const [urlError,    setUrlError]    = useState('');
+
+  const submitUrl = async () => {
+    const url = urlInput.trim();
+    if (!url) { setUrlError('Paste a URL first'); return; }
+    setUploading(true); setUrlError('');
+    const r = await fetch(`${API_BASE}/api/products/${productId}/layers/1/${variationId}/media-url${pq}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (r.ok) {
+      const next = [...images, url];
+      setImages(next);
+      onChange?.(next);
+      setUrlInput(''); setShowAddMenu(false);
+    } else {
+      const j = await r.json().catch(() => ({}));
+      setUrlError(j.detail || 'Failed to add URL');
+    }
+    setUploading(false);
   };
 
   const removeAt = async (idx) => {
@@ -142,18 +180,18 @@ export default function VariationGalleryPopover({
     await persist(next);
   };
 
-  // Always render the portal — even before the first measurement — so popRef
-  // gets attached and useLayoutEffect can read offsetHeight. We just park it
-  // off-screen until the layout effect fires.
+  // Always render portal so popRef attaches and useLayoutEffect can read offsetHeight; park off-screen until measured.
   const renderPos = pos || { top: -9999, left: -9999, above: true };
-  return createPortal(
+  return (
+    <>
+    {createPortal(
     <div ref={popRef}
       className={`vgal-pop${renderPos.above ? ' vgal-pop--above' : ''}${ready ? ' vgal-pop--ready' : ''}`}
       onPointerDown={e => e.stopPropagation()}
       onClick={e => e.stopPropagation()}
       style={{ top: renderPos.top, left: renderPos.left }}>
-      <input ref={fileRef} type="file" accept="image/*" multiple className="hidden-input"
-        onChange={(e) => { onUpload(e.target.files); e.target.value = ''; }} />
+      <input ref={fileRef} type="file" accept={ACCEPT_EXT} multiple className="hidden-input"
+        onChange={(e) => { onUpload(e.target.files); e.target.value = ''; setShowAddMenu(false); }} />
       {/* Flex-wrap row of tiles — same adaptive sizing as Products photo stack. */}
       <div className="vgal-grid">
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
@@ -165,11 +203,82 @@ export default function VariationGalleryPopover({
           </SortableContext>
         </DndContext>
         <button type="button" className="vgal-add"
-          onClick={() => fileRef.current?.click()} disabled={uploading}>
+          onClick={() => { setUrlError(''); setShowAddMenu(true); }} disabled={uploading}>
           {uploading
             ? <span className="vgal-add-spinner" />
             : <Plus weight="bold" size={22} />}
         </button>
+      </div>
+
+    </div>,
+    document.body,
+  )}
+    <AddMediaModal
+      open={showAddMenu}
+      uploading={uploading}
+      onPickFile={() => fileRef.current?.click()}
+      urlInput={urlInput}
+      setUrlInput={(v) => { setUrlInput(v); setUrlError(''); }}
+      urlError={urlError}
+      onSubmitUrl={submitUrl}
+      onClose={() => { setShowAddMenu(false); setUrlError(''); }}
+    />
+    </>
+  );
+}
+
+// Add-Media modal — separate portal on top of gallery popover. Closes on X/backdrop/Esc.
+function AddMediaModal({ open, uploading, onPickFile, urlInput, setUrlInput,
+                         urlError, onSubmitUrl, onClose }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return createPortal(
+    <div className="vgal-modal-backdrop"
+      onPointerDown={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => e.stopPropagation()}>
+      <div className="vgal-modal" onPointerDown={(e) => e.stopPropagation()}>
+        <header className="vgal-modal-head">
+          <h2 className="vgal-modal-title">Add media</h2>
+          <button type="button" className="vgal-modal-close" onClick={onClose} aria-label="Close">
+            <X weight="bold" size={14} />
+          </button>
+        </header>
+        <p className="vgal-modal-hint">
+          Add image, video, or 3D / AR file. Upload from your computer or
+          paste a YouTube / Vimeo URL.
+        </p>
+
+        <button type="button" className="vgal-modal-upload"
+          onClick={onPickFile} disabled={uploading}>
+          {uploading ? 'Uploading…' : 'Choose file from computer'}
+        </button>
+
+        <div className="vgal-modal-divider"><span>or</span></div>
+
+        <div className="vgal-modal-url-row">
+          <input className="crm-input vgal-modal-url-input" type="text"
+            placeholder="https://youtube.com/watch?v=…  or  https://vimeo.com/…"
+            value={urlInput}
+            onChange={(e) => setUrlInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') onSubmitUrl(); }}
+            autoFocus />
+          <button type="button" className="crm-add-btn vgal-modal-url-btn"
+            onClick={onSubmitUrl} disabled={uploading || !urlInput.trim()}>
+            Add URL
+          </button>
+        </div>
+        {urlError && <p className="vgal-modal-error">{urlError}</p>}
+
+        <p className="vgal-modal-foot">
+          Allowed: images (jpg/png/webp/gif), video (mp4/webm/mov), 3D / AR (glb/usdz/gltf).
+          External URLs must be from YouTube or Vimeo over https.
+        </p>
       </div>
     </div>,
     document.body,

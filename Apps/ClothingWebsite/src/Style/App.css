@@ -68,11 +68,51 @@ a {
 }
 
 .card {
+    position: relative;
     aspect-ratio: 3 / 4;
     overflow: hidden;
     border-radius: 16px;
     box-shadow: 0 px 0px rgba(0, 0, 0, 0);
     transition: 0.3s ease-in-out;
+}
+
+/* Sale badge — top-left of cover image, brand-blue to match storefront accents. */
+.card-sale-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    padding: 4px 10px;
+    background: #0071E3;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+    z-index: 1;
+}
+
+/* Sale price layout: strikethrough original price stacked above the new price. */
+.card-price--sale {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+}
+.card-price-old {
+    font-size: 14px;
+    color: #888;
+    text-decoration: line-through;
+    font-weight: 500;
+    line-height: 1;
+    margin-bottom: 2px;
+}
+.card-price-now {
+    color: #0071E3;
+    font-weight: 600;
+    line-height: 1.1;
+}
+.card-price-now .mini-price-title {
+    color: #0071E3;
 }
 
 .a-card {

@@ -36,9 +36,7 @@ function buildIsoWithTz(date, time, tz) {
   return `${date}T${time}:00${off}`;
 }
 
-// ── Generic combobox (Service / Status) ─────────────────────────────
-// Same UX as CpmCategorySelect on the product page: rounded pill button,
-// portal dropdown, DynamicBlock indicator follows hover.
+// ── Generic combobox (Service / Status) — same UX as CpmCategorySelect: pill button + portal dropdown + DynamicBlock. ──
 
 export function Combobox({ value, options, placeholder = '— Select —', onChange }) {
   const btnRef = useRef(null);
@@ -105,11 +103,9 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
   );
 }
 
-// ── Date picker ─────────────────────────────────────────────────────
-// Click → portal dropdown with month grid. Prev/next month nav. Hovered
-// day gets the same DynamicBlock floating pill that follows the cursor.
+// ── Date picker — portal dropdown with month grid, prev/next nav, DynamicBlock pill on hover. ──
 
-function DatePicker({ value, onChange, tz }) {
+export function DatePicker({ value, onChange, tz }) {
   const btnRef = useRef(null);
   const indRef = useRef(null);
   const cellRefs = useRef({});
@@ -123,8 +119,7 @@ function DatePicker({ value, onChange, tz }) {
   const todayStr = todayInTz(tz);
   const current = hovered ?? value;
 
-  // 2-D DynamicBlock indicator — DynamicBlock util only handles Y.
-  // For a calendar grid we need both translate(X, Y) and (width, height).
+  // 2-D indicator: DynamicBlock util only handles Y; calendar grid needs translate(X,Y) + (width,height).
   useEffect(() => {
     const ind = indRef.current;
     if (!ind) return;
@@ -246,19 +241,14 @@ function DatePicker({ value, onChange, tz }) {
   );
 }
 
-// ── Time picker — iPhone-alarm wheel (transform-based, not native scroll) ──
-// Each column shows 5 rows: ±2 around the selected one, fading + scaling
-// like the real iOS wheel. Mouse wheel rotates the wheel by one item per
-// notch. Restricted to working hours + slot_interval.
+// ── Time picker — iPhone-alarm wheel (transform-based); 5 rows fading+scaling, restricted to working hours + slot_interval. ──
 
 const WHEEL_ITEM_H = 36;
 const WHEEL_VISIBLE = 5;       // odd — selected sits in the center
 
 function TimeWheel({ items, value, onChange }) {
   const idx = Math.max(0, items.indexOf(value));
-  // Drag state — `dragDelta` is in px and re-renders the wheel each move so
-  // items follow the cursor smoothly. On release we compute how many slots
-  // the drag covered and snap the value to that target.
+  // Drag state: dragDelta (px) re-renders wheel each move; on release, compute slots covered and snap value.
   const dragRef = useRef(null);              // { startY, startIdx }
   const lastDragSizeRef = useRef(0);         // gates onClick after a drag
   const [dragDelta, setDragDelta] = useState(0);
@@ -312,8 +302,7 @@ function TimeWheel({ items, value, onChange }) {
         const offset = i - visualIdx;
         if (Math.abs(offset) > radius + 0.5) return null;
         const absOff = Math.abs(offset);
-        // Continuous interpolation of opacity / scale so items fade smoothly
-        // through the wheel rotation, not in discrete steps.
+        // Continuous opacity/scale interpolation for smooth fade through wheel rotation.
         const opacity = Math.max(0.15, 1 - absOff * 0.40);
         const scale   = Math.max(0.7,  1 - absOff * 0.15);
         const isSel   = i === idx;
@@ -348,8 +337,7 @@ export function TimePicker({ value, onChange, workingHours, slotInterval, dayOfW
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
 
-  // Compute valid hours for this weekday from working_hours config.
-  // Falls back to 0..23 when the project hasn't configured hours yet.
+  // Valid hours for this weekday from working_hours; falls back to 0..23 when unset.
   const validHours = useMemo(() => {
     if (!workingHours || workingHours.length === 0) {
       return Array.from({ length: 24 }, (_, i) => i);

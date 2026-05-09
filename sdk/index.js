@@ -418,6 +418,52 @@ export function createClient(baseUrl, publishableKey) {
       async delete(reviewId) {
         return req("DELETE", `/reviews/${reviewId}`);
       },
+
+      /**
+       * Attach a previously-uploaded photo URL (from your S3 bucket) to one
+       * of the user's reviews. Up to 5 photos per review. The URL must point
+       * to your project's S3 bucket — external URLs are rejected.
+       */
+      async attachPhoto(review_id, url) {
+        return req("POST", "/reviews/photos", { review_id, url });
+      },
+
+      /** Remove one of the user's review photos by id. */
+      async deletePhoto(photoId) {
+        return req("DELETE", `/reviews/photos/${photoId}`);
+      },
+
+      /** Cast or change a helpful/unhelpful vote on someone else's review. */
+      async vote(review_id, is_helpful) {
+        return req("POST", "/reviews/vote", { review_id, is_helpful });
+      },
+
+      /** Withdraw your vote on a review. */
+      async unvote(reviewId) {
+        return req("DELETE", `/reviews/vote/${reviewId}`);
+      },
+    },
+
+    // ── Q&A ──────────────────────────────────────────────────────────────────
+    qa: {
+      /** Submit a question for a product (visible after merchant answers). */
+      async ask(product_id, question) {
+        return req("POST", "/questions", { product_id, question });
+      },
+    },
+
+    // ── Restock waitlist ────────────────────────────────────────────────────
+    restock: {
+      /**
+       * Subscribe the visitor (anonymous or authenticated) to be notified by
+       * email when this product/SKU is restocked.
+       * @param {number} product_id
+       * @param {number|null} [sku_id] — optional, watch a specific configuration
+       * @param {string|null} [email] — required when not authenticated
+       */
+      async subscribe(product_id, sku_id, email) {
+        return req("POST", "/restock/subscribe", { product_id, sku_id, email });
+      },
     },
 
     // ── Orders ───────────────────────────────────────────────────────────────

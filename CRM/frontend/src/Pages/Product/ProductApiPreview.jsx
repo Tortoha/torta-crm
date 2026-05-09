@@ -25,10 +25,7 @@ export default function ProductApiPreview() {
     return () => setProductContext?.(null);
   }, [productId, projectId, productHash]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Mirror of what External /{api_key}/product/{hash} actually returns.
-  // Tree shape: conf_1[] → conf_2[] → conf_3[] → conf_4[] → conf_5[].
-  // Each level uses `name` (was variation_name / configuration_name).
-  // The conf_{N+1} key is omitted on leaves so consumers can detect them.
+  // Mirror External /{api_key}/product/{hash}: conf_layer_1..5 tree, `name` per level, leaves omit next layer key.
   const mapSpecs = (arr) => (arr || []).map(s => ({ key: s.spec_key, value: s.spec_value }));
 
   const mapL5 = (n) => ({
@@ -43,25 +40,52 @@ export default function ProductApiPreview() {
   const mapL4 = (n) => {
     const out = mapL5(n);
     const kids = (n.children || []).map(mapL5);
-    if (kids.length) out.conf_5 = kids;
+    if (kids.length) out.conf_layer_5 = kids;
     return out;
   };
   const mapL3 = (n) => {
     const out = mapL5(n);
     const kids = (n.children || []).map(mapL4);
-    if (kids.length) out.conf_4 = kids;
+    if (kids.length) out.conf_layer_4 = kids;
     return out;
+  };
+
+  // Mirror External's _media_type — extension-based dispatch.
+  const mediaType = (url) => {
+    const u = (url || '').toLowerCase();
+    if (/\.(mp4|webm|mov)(\?|$)/.test(u)) return 'video';
+    if (/\.(glb|usdz)(\?|$)/.test(u))     return 'model';
+    return 'image';
   };
 
   const buildPreview = () => {
     if (!product) return null;
-    const conf_1 = (product.variations || []).map(v => {
-      const conf_2 = (v.configurations || []).map(c => {
+    const nowIso = new Date().toISOString();
+    const conf_layer_1 = (product.variations || []).map(v => {
+      const conf_layer_2 = (v.configurations || []).map(c => {
+        // Sale-active mirrors External: substitute price + push original to compare_at_price for strikethrough.
+        const sp = c.sale_price;
+        const ss = c.sale_starts_at;
+        const se = c.sale_ends_at;
+        const saleActive = !!(sp && sp > 0 &&
+          (!ss || ss <= nowIso) && (!se || se >= nowIso));
+        const ownPrice = c.price ?? c.effective_price ?? 0;
+        const finalPrice = saleActive ? sp : (c.effective_price ?? ownPrice ?? 0);
+        const cmpAt = saleActive ? ownPrice : (c.compare_at_price ?? null);
         const out = {
           id: c.id,
           name: c.name || c.configuration_name || '',
-          price: c.effective_price != null ? c.effective_price : 0,
+          price: finalPrice,
           effective_price: c.effective_price ?? null,
+          compare_at_price: cmpAt,
+          on_sale: saleActive,
+          sku_code:   c.sku_code ?? '',
+          barcode:    c.barcode  ?? '',
+          cost_price: c.cost_price ?? null,
+          weight_g:   c.weight_g  ?? null,
+          length_cm:  c.length_cm ?? null,
+          width_cm:   c.width_cm  ?? null,
+          height_cm:  c.height_cm ?? null,
           stock_quantity: c.stock_quantity || 0,
           sold_quantity: c.sold_quantity || 0,
           is_in_cart: false,
@@ -70,14 +94,19 @@ export default function ProductApiPreview() {
           specifications: mapSpecs(c.specifications),
         };
         const kids = (c.children || []).map(mapL3);
-        if (kids.length) out.conf_3 = kids;
+        if (kids.length) out.conf_layer_3 = kids;
         return out;
       });
       const images = Array.isArray(v.images) ? v.images : [];
+      const altArr = Array.isArray(v.media_alt) ? v.media_alt : [];
+      const media  = images.map((u, i) => ({
+        url: u, type: mediaType(u), alt: altArr[i] || '',
+      }));
       const out = {
         id: v.id,
         name: v.variation_name,
         images,                        // full per-variation gallery
+        media,                         // typed: image | video | model + alt
         image: images[0] || null,      // back-compat: cover URL
         price: v.price ?? null,
         effective_price: v.effective_price ?? null,
@@ -86,23 +115,21 @@ export default function ProductApiPreview() {
         is_in_cart: false,
         specifications: mapSpecs(v.specifications),
       };
-      if (conf_2.length) out.conf_2 = conf_2;
+      if (conf_layer_2.length) out.conf_layer_2 = conf_layer_2;
       return out;
     });
 
-    // Aggregate top-level summary fields the same way External does
-    // (image = first variation cover, images = union of all variation galleries
-    // deduped, price = lowest L2 effective_price or first variation's).
-    const summaryImage = conf_1[0]?.image ?? null;
+    // Top-level summary mirrors External: cover from V1, deduped union of galleries, price from first L2 / V1.
+    const summaryImage = conf_layer_1[0]?.image ?? null;
     const summaryImages = [];
     const seen = new Set();
-    for (const v of conf_1) {
+    for (const v of conf_layer_1) {
       for (const u of (v.images || [])) {
         if (u && !seen.has(u)) { summaryImages.push(u); seen.add(u); }
       }
     }
-    const firstL2 = conf_1[0]?.conf_2?.[0] || null;
-    const summaryPrice = firstL2?.effective_price ?? conf_1[0]?.effective_price ?? 0;
+    const firstL2 = conf_layer_1[0]?.conf_layer_2?.[0] || null;
+    const summaryPrice = firstL2?.effective_price ?? conf_layer_1[0]?.effective_price ?? 0;
 
     return {
       id: product.id,
@@ -126,15 +153,35 @@ export default function ProductApiPreview() {
       reviews_count: (product.reviews || []).length,
       average_rating: 0,
       initial_variation_index: 0,
-      initial_configuration_id: conf_1[0]?.conf_2?.[0]?.id ?? null,
+      initial_configuration_id: conf_layer_1[0]?.conf_layer_2?.[0]?.id ?? null,
       image:  summaryImage,                // back-compat: cover URL
       images: summaryImages,               // full union of all variation galleries
       price:  summaryPrice,                // summary price
-      // Modifier groups — preserved as-is from CRM admin payload. Same shape:
-      // [{ id, name, control_type, min_select, max_select, is_required,
-      //    default_item_id, position, items: [{id, name, price_delta, position}] }]
+      // Modifier groups — preserved as-is from CRM admin payload (same shape: id/name/control_type/items[]).
       modifier_groups: product.modifier_groups || [],
-      conf_1,
+      // Phase 1 — SaaS-grade physical product fields exposed to storefront.
+      sku:                    product.sku || '',
+      barcode:                product.barcode || '',
+      brand:                  product.brand || '',
+      manufacturer:           product.manufacturer || '',
+      country_of_origin:      product.country_of_origin || '',
+      og_image_url:           product.og_image_url ?? null,
+      requires_shipping:      product.requires_shipping !== false,
+      ships_internationally:  !!product.ships_internationally,
+      shipping_class:         product.shipping_class || 'standard',
+      lead_time_days:         product.lead_time_days || 0,
+      continue_selling_oos:   !!product.continue_selling_oos,
+      moq:                    product.moq || 1,
+      order_increment:        product.order_increment || 1,
+      low_stock_threshold:    product.low_stock_threshold || 0,
+      is_pre_order:           !!product.is_pre_order,
+      pre_order_release_at:   product.pre_order_release_at ?? null,
+      tax: product.tax_category_id ? {
+        category_id:   product.tax_category_id,
+        category_name: product.tax_category_name ?? null,
+        rate:          Number(product.tax_rate) || 0,
+      } : null,
+      conf_layer_1,
       reviews: (product.reviews || []).slice(0, 2).map(r => ({
         id: r.id, user_id: r.user_id, user_name: 'User',
         rating: r.rating, comment: r.comment || '',
@@ -145,10 +192,7 @@ export default function ProductApiPreview() {
 
   const preview = buildPreview();
 
-  // /{api_key}/products returns an array of the SAME payload shape — External
-  // shares one assembler (`_assemble_product_payload`) between list and detail
-  // endpoints. We illustrate by wrapping THIS product in a 1-element array;
-  // the real endpoint returns every product in the catalog with the same shape.
+  // /{api_key}/products returns same payload shape (shared `_assemble_product_payload`); 1-element preview here.
   const listPreview = preview ? [preview] : null;
 
   return (

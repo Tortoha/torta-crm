@@ -1,0 +1,532 @@
+// Bulk Transfer Wizard — two-step modal: pick SKUs (with cascade), then plan from/to/qty per SKU; applies as one transaction.
+
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  X, CaretRight, CaretDown, Folder, Cube,
+  ArrowsLeftRight, ArrowRight, Trash, Plus,
+} from '@phosphor-icons/react';
+import { API_BASE } from '../../../api.js';
+import { Combobox } from '../Booking/BookingCreateModal.jsx';
+
+export function BulkTransferButton({ onClick, disabled }) {
+  return (
+    <button type="button" className="org-new-btn"
+      onClick={onClick} disabled={disabled}>
+      <ArrowsLeftRight weight="bold" className="org-new-icon" /> Distribute
+    </button>
+  );
+}
+
+export default function BulkTransferWizard({ projectId, onClose, onApplied, showToast }) {
+  const pq = `?project_id=${projectId}`;
+  const [step, setStep] = useState(1);
+  const [products, setProducts] = useState([]);   // hydrated tree per chevron click
+  const [warehouses, setWarehouses] = useState([]);
+  const [productList, setProductList] = useState([]);  // cheap list rows
+  const [expanded, setExpanded] = useState({});         // pid → { hydrated, data }
+  const [selected, setSelected] = useState(new Set()); // sku_ids
+  // skuMeta keeps the data we need to render Step 2: name, breadcrumb, stocks per WH.
+  const [skuMeta, setSkuMeta] = useState({}); // sku_id → { label, breadcrumb, stocks: {wh_id: qty} }
+  const [plan, setPlan] = useState({});       // sku_id → { from_wh, to_wh, qty }
+  const [busy, setBusy] = useState(false);
+
+  // ── Initial load ─────────────────────────────────────────────────────
+  useEffect(() => {
+    fetch(`${API_BASE}/api/products${pq}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(list => {
+        const visible = (Array.isArray(list) ? list : []).filter(
+          p => ['physical', 'event'].includes(p.product_type || 'physical')
+        );
+        setProductList(visible);
+      });
+    fetch(`${API_BASE}/api/warehouses${pq}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setWarehouses(Array.isArray(d) ? d.filter(w => w.is_active) : []));
+  }, [pq]);
+
+  // In-flight hydrate promises — concurrent callers share one fetch.
+  const hydratePromises = useRef({});
+
+  const hydrateProduct = useCallback((pid) => {
+    if (expanded[pid]?.hydrated) return Promise.resolve(expanded[pid].data);
+    if (hydratePromises.current[pid]) return hydratePromises.current[pid];
+
+    setExpanded(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), loading: true } }));
+    const promise = (async () => {
+      const [pd, perWh] = await Promise.all([
+        fetch(`${API_BASE}/api/products/${pid}${pq}`,                   { credentials: 'include' }).then(r => r.ok ? r.json() : null),
+        fetch(`${API_BASE}/api/products/${pid}/stock/per-warehouse${pq}`, { credentials: 'include' }).then(r => r.ok ? r.json() : []),
+      ]);
+      if (!pd) {
+        setExpanded(prev => ({ ...prev, [pid]: { hydrated: false, loading: false } }));
+        delete hydratePromises.current[pid];
+        return null;
+      }
+      // Cache stock-per-WH for every leaf SKU under this product so step 2 can show it.
+      setSkuMeta(prev => {
+        const next = { ...prev };
+        for (const row of (perWh || [])) {
+          const stocks = {};
+          for (const w of (row.warehouses || [])) stocks[w.warehouse_id] = w.quantity;
+          next[row.sku_id] = {
+            label:      `${row.variation_name} / ${row.sku_name}`,
+            breadcrumb: `${pd.title} / ${row.variation_name} / ${row.sku_name}`,
+            stocks,
+          };
+        }
+        return next;
+      });
+      setExpanded(prev => ({ ...prev, [pid]: { hydrated: true, loading: false, data: pd } }));
+      delete hydratePromises.current[pid];
+      return pd;
+    })();
+    hydratePromises.current[pid] = promise;
+    return promise;
+  }, [expanded, pq]);
+
+  // ── Selection helpers ────────────────────────────────────────────────
+  const toggleSku = (skuId) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(skuId)) next.delete(skuId); else next.add(skuId);
+      return next;
+    });
+  };
+  const skuIdsOfProduct = (pd) => {
+    const ids = [];
+    for (const v of (pd?.variations || [])) {
+      for (const c of (v.configurations || [])) ids.push(c.id);
+    }
+    return ids;
+  };
+  const skuIdsOfVariation = (v) => (v.configurations || []).map(c => c.id);
+  const setMany = (ids, on) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      for (const id of ids) { if (on) next.add(id); else next.delete(id); }
+      return next;
+    });
+  };
+
+  const productAggState = (pd) => {
+    const ids = skuIdsOfProduct(pd);
+    if (ids.length === 0) return 'none';
+    const on = ids.filter(i => selected.has(i)).length;
+    if (on === 0) return 'none';
+    if (on === ids.length) return 'all';
+    return 'some';
+  };
+  const variationAggState = (v) => {
+    const ids = skuIdsOfVariation(v);
+    if (ids.length === 0) return 'none';
+    const on = ids.filter(i => selected.has(i)).length;
+    if (on === 0) return 'none';
+    if (on === ids.length) return 'all';
+    return 'some';
+  };
+
+  // ── Step 2 plan defaults — fired the moment we transition to step 2 ──
+  const goToStep2 = () => {
+    if (selected.size === 0) { showToast('Pick at least one SKU'); return; }
+    const next = {};
+    for (const sid of selected) {
+      const meta = skuMeta[sid];
+      if (!meta) { next[sid] = { from_wh: '', to_wh: '', qty: '' }; continue; }
+      // Default From = WH with most stock; qty stays empty so merchant types it explicitly.
+      let bestWh = null;
+      let bestQty = -1;
+      for (const [whId, q] of Object.entries(meta.stocks)) {
+        if (q > bestQty) { bestQty = q; bestWh = Number(whId); }
+      }
+      next[sid] = { from_wh: bestWh ?? '', to_wh: '', qty: '' };
+    }
+    setPlan(next);
+    setStep(2);
+  };
+
+  const setAllTo = (whId) => {
+    setPlan(prev => {
+      const out = { ...prev };
+      for (const sid of Object.keys(out)) out[sid] = { ...out[sid], to_wh: whId };
+      return out;
+    });
+  };
+  const updateRow = (sid, patch) => {
+    setPlan(prev => ({ ...prev, [sid]: { ...prev[sid], ...patch } }));
+  };
+  const removeRow = (sid) => {
+    setPlan(prev => {
+      const out = { ...prev };
+      delete out[sid];
+      return out;
+    });
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.delete(sid);
+      return next;
+    });
+  };
+
+  // ── Validation for Apply ─────────────────────────────────────────────
+  const validRows = useMemo(() => {
+    const rows = [];
+    for (const [sidStr, p] of Object.entries(plan)) {
+      const sid = Number(sidStr);
+      const fromWh = p.from_wh ? Number(p.from_wh) : null;
+      const toWh   = p.to_wh   ? Number(p.to_wh)   : null;
+      const qty    = parseInt(p.qty, 10);
+      const meta   = skuMeta[sid];
+      const haveOnSource = meta && fromWh != null ? (meta.stocks[fromWh] || 0) : 0;
+      const isValid = (
+        fromWh != null && toWh != null && fromWh !== toWh &&
+        !isNaN(qty) && qty > 0 && qty <= haveOnSource
+      );
+      rows.push({ sid, fromWh, toWh, qty, haveOnSource, isValid });
+    }
+    return rows;
+  }, [plan, skuMeta]);
+
+  const allValid = validRows.length > 0 && validRows.every(r => r.isValid);
+
+  const apply = async () => {
+    if (!allValid) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/projects/${projectId}/stock/bulk-transfer`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transfers: validRows.map(r => ({
+            sku_id:            r.sid,
+            from_warehouse_id: r.fromWh,
+            to_warehouse_id:   r.toWh,
+            quantity:          r.qty,
+          })),
+        }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        showToast(`Transferred ${j.transfers_applied} lines across ${j.skus_affected} SKUs`);
+        onApplied?.();
+      } else {
+        const j = await r.json().catch(() => ({}));
+        showToast(j.detail || 'Transfer failed');
+      }
+    } finally { setBusy(false); }
+  };
+
+  // ── Render ───────────────────────────────────────────────────────────
+  return createPortal(
+    <div className="auth-modal-overlay"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="auth-modal cpm-modal po-bulk-wizard" onClick={e => e.stopPropagation()}>
+        <div className="auth-modal-head">
+          <div className="auth-modal-title-row">
+            <div>
+              <div className="auth-modal-title">
+                {step === 1 ? 'Pick SKUs to transfer' : 'Plan the transfers'}
+              </div>
+              <div className="auth-modal-subtitle-row">
+                <span className="auth-modal-subtitle">
+                  Step {step} of 2 · {selected.size} SKU{selected.size === 1 ? '' : 's'} selected
+                </span>
+              </div>
+            </div>
+          </div>
+          <button className="auth-modal-close" onClick={onClose} type="button">
+            <X className="auth-modal-close-icon" />
+          </button>
+        </div>
+
+        <div className="auth-modal-body">
+          {step === 1 ? (
+            <Step1Tree
+              productList={productList}
+              expanded={expanded}
+              hydrate={hydrateProduct}
+              selected={selected}
+              toggleSku={toggleSku}
+              setMany={setMany}
+              productAggState={productAggState}
+              variationAggState={variationAggState}
+              skuIdsOfProduct={skuIdsOfProduct}
+              skuIdsOfVariation={skuIdsOfVariation}
+            />
+          ) : (
+            <Step2Plan
+              warehouses={warehouses}
+              skuMeta={skuMeta}
+              plan={plan}
+              validRows={validRows}
+              setAllTo={setAllTo}
+              updateRow={updateRow}
+              removeRow={removeRow}
+            />
+          )}
+
+          <div className="auth-actions po-bulk-wizard-actions">
+            {step === 1 ? (
+              <>
+                <button type="button" className="crm-submit-btn"
+                  disabled={selected.size === 0} onClick={goToStep2}>
+                  Next <ArrowRight weight="bold" />
+                </button>
+                <button type="button" className="crm-submit-btn auth-btn-secondary po-disc-cancel-btn"
+                  onClick={onClose}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="crm-submit-btn auth-btn-secondary"
+                  onClick={() => setStep(1)} disabled={busy}>
+                  ← Back
+                </button>
+                <button type="button" className="crm-submit-btn"
+                  disabled={!allValid || busy} onClick={apply}>
+                  {busy ? 'Applying…' : `Apply ${validRows.length} transfer${validRows.length === 1 ? '' : 's'}`}
+                </button>
+                <button type="button" className="crm-submit-btn auth-btn-secondary po-disc-cancel-btn"
+                  onClick={onClose} disabled={busy}>Cancel</button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Step 1: Tree with cascading checkboxes ─────────────────────────────
+
+function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMany,
+                      productAggState, variationAggState,
+                      skuIdsOfProduct, skuIdsOfVariation }) {
+  const [openProducts, setOpenProducts] = useState(new Set());
+  const [openVars, setOpenVars] = useState(new Set());
+  // Products whose checkbox was clicked while still hydrating — shows brief loading state.
+  const [busyPid, setBusyPid] = useState(new Set());
+
+  const togglePid = (pid) => {
+    setOpenProducts(prev => {
+      const n = new Set(prev);
+      if (n.has(pid)) n.delete(pid);
+      else { n.add(pid); hydrate(pid); }
+      return n;
+    });
+  };
+  const toggleVid = (key) => {
+    setOpenVars(prev => {
+      const n = new Set(prev);
+      if (n.has(key)) n.delete(key); else n.add(key);
+      return n;
+    });
+  };
+
+  // Product checkbox: hydrate if needed, cascade to all SKUs, auto-open the branch.
+  const onProductCheck = async (p, checked) => {
+    let pd = expanded[p.id]?.data;
+    if (!pd) {
+      setBusyPid(prev => { const n = new Set(prev); n.add(p.id); return n; });
+      try {
+        pd = await hydrate(p.id);
+      } finally {
+        setBusyPid(prev => { const n = new Set(prev); n.delete(p.id); return n; });
+      }
+    }
+    if (!pd) return;
+    setMany(skuIdsOfProduct(pd), checked);
+    if (checked) {
+      // Reveal the freshly-selected branch.
+      setOpenProducts(prev => {
+        const n = new Set(prev);
+        n.add(p.id);
+        return n;
+      });
+    }
+  };
+
+  if (productList.length === 0) {
+    return <p className="crm-placeholder">No products to transfer.</p>;
+  }
+
+  return (
+    <div className="po-bulk-tree">
+      {productList.map(p => {
+        const pdState = expanded[p.id];
+        const pd = pdState?.data;
+        const isOpen = openProducts.has(p.id);
+        const aggState = pd ? productAggState(pd) : 'none';
+        const isBusy = busyPid.has(p.id);
+        return (
+          <div key={p.id} className="po-bulk-tree-node">
+            <div className="po-bulk-tree-row">
+              <button type="button" className="po-tree-chevron"
+                onClick={() => togglePid(p.id)}>
+                {isOpen ? <CaretDown weight="bold" /> : <CaretRight weight="bold" />}
+              </button>
+              <TriCheckbox state={aggState}
+                disabled={isBusy}
+                onChange={(checked) => onProductCheck(p, checked)} />
+              <Folder weight="duotone" className="po-disc-cell--strong" />
+              <span className="po-set-strong">{p.title}</span>
+              <span className="po-set-note po-tree-meta">
+                · {p.variations_count || 0} variation{p.variations_count === 1 ? '' : 's'}
+                {isBusy && <span className="po-bulk-tree-loading-inline"> · loading…</span>}
+              </span>
+            </div>
+            {isOpen && !pdState?.hydrated && (
+              <div className="po-bulk-tree-loading">Loading…</div>
+            )}
+            {isOpen && pd && (pd.variations || []).map(v => {
+              const vKey = `${p.id}-${v.id}`;
+              const vOpen = openVars.has(vKey);
+              const vState = variationAggState(v);
+              return (
+                <div key={v.id} className="po-bulk-tree-subnode">
+                  <div className="po-bulk-tree-row po-bulk-tree-row--depth-1">
+                    <button type="button" className="po-tree-chevron"
+                      onClick={() => toggleVid(vKey)}>
+                      {vOpen ? <CaretDown weight="bold" /> : <CaretRight weight="bold" />}
+                    </button>
+                    <TriCheckbox state={vState}
+                      onChange={(checked) => setMany(skuIdsOfVariation(v), checked)} />
+                    <span className="po-set-strong">{v.variation_name || v.name || '—'}</span>
+                    <span className="po-set-note po-tree-meta">
+                      · {(v.configurations || []).length} SKU{(v.configurations || []).length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  {vOpen && (v.configurations || []).map(c => (
+                    <div key={c.id} className="po-bulk-tree-row po-bulk-tree-row--depth-2">
+                      <span className="po-tree-chevron-spacer" />
+                      <TriCheckbox
+                        state={selected.has(c.id) ? 'all' : 'none'}
+                        onChange={() => toggleSku(c.id)} />
+                      <Cube className="po-disc-cell--muted" />
+                      <span>{c.configuration_name || c.name || '—'}</span>
+                      <span className="po-set-note po-tree-meta">
+                        · stock {c.stock_quantity ?? 0}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Step 2: per-SKU planner table ──────────────────────────────────────
+
+function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, removeRow }) {
+  const planEntries = Object.entries(plan);
+  if (planEntries.length === 0) {
+    return <p className="crm-placeholder">Nothing selected — go back and pick SKUs.</p>;
+  }
+  return (
+    <>
+      <div className="po-bulk-plan-toolbar">
+        <span className="cpm-section-hint">Quick action:</span>
+        <span className="po-cb-wrap po-bulk-plan-quick-cb">
+          <Combobox value="" placeholder="Set all destinations to…"
+            options={warehouses.map(w => ({
+              value: w.id,
+              label: w.is_default ? `${w.name} · default` : w.name,
+            }))}
+            onChange={(v) => v && setAllTo(Number(v))} />
+        </span>
+      </div>
+
+      <div className="po-bulk-plan-table">
+        <div className="po-bulk-plan-row po-bulk-plan-row--head">
+          <span>SKU</span>
+          <span>From</span>
+          <span></span>
+          <span>To</span>
+          <span>Qty</span>
+          <span>Avail.</span>
+          <span></span>
+        </div>
+        {planEntries.map(([sidStr, p]) => {
+          const sid = Number(sidStr);
+          const meta = skuMeta[sid];
+          const validRow = validRows.find(r => r.sid === sid);
+          const havStr = meta && p.from_wh
+            ? (meta.stocks[Number(p.from_wh)] ?? 0)
+            : '—';
+          return (
+            <div key={sid}
+              className={`po-bulk-plan-row${validRow?.isValid === false ? ' po-bulk-plan-row--invalid' : ''}`}>
+              <span className="po-bulk-plan-sku">
+                <span className="po-set-strong">{meta?.label || `#${sid}`}</span>
+                <span className="po-set-note po-bulk-plan-bc">{meta?.breadcrumb}</span>
+              </span>
+              <span className="po-cb-wrap">
+                <Combobox value={p.from_wh === '' ? '' : Number(p.from_wh)}
+                  placeholder="From"
+                  options={warehouses.map(w => ({ value: w.id, label: w.name }))}
+                  onChange={(v) => updateRow(sid, { from_wh: v === '' ? '' : Number(v) })} />
+              </span>
+              <ArrowRight weight="bold" className="po-bulk-plan-arrow" />
+              <span className="po-cb-wrap">
+                <Combobox value={p.to_wh === '' ? '' : Number(p.to_wh)}
+                  placeholder="To"
+                  options={warehouses
+                    .filter(w => w.id !== Number(p.from_wh))
+                    .map(w => ({ value: w.id, label: w.name }))}
+                  onChange={(v) => updateRow(sid, { to_wh: v === '' ? '' : Number(v) })} />
+              </span>
+              <input type="number" min="1" className="crm-input po-bulk-plan-qty"
+                placeholder="0"
+                value={p.qty}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === '') { updateRow(sid, { qty: '' }); return; }
+                  const n = parseInt(raw, 10);
+                  if (isNaN(n) || n < 0) return;
+                  // Auto-clamp to available stock at source WH.
+                  const max = meta && p.from_wh
+                    ? (meta.stocks[Number(p.from_wh)] ?? 0)
+                    : null;
+                  const clamped = max !== null ? Math.min(n, max) : n;
+                  updateRow(sid, { qty: clamped });
+                }} />
+              <span className="po-bulk-plan-avail">
+                {havStr === '—' ? '—' : `/ ${havStr}`}
+              </span>
+              <button type="button" className="po-tier-row-del"
+                aria-label="Remove" onClick={() => removeRow(sid)}>
+                <Trash weight="bold" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {validRows.some(r => !r.isValid) && (
+        <p className="po-bulk-plan-warning">
+          Some rows are invalid: pick from/to (different warehouses) and qty ≤ available.
+        </p>
+      )}
+    </>
+  );
+}
+
+// ── Tri-state checkbox (none / some / all) ─────────────────────────────
+
+function TriCheckbox({ state, onChange, disabled = false }) {
+  const checked = state === 'all';
+  const indet   = state === 'some';
+  return (
+    <input type="checkbox" className="cat-prod-checkbox po-include-cb"
+      checked={checked}
+      ref={el => { if (el) el.indeterminate = indet; }}
+      disabled={disabled}
+      onChange={e => onChange(e.target.checked)}
+      onClick={e => e.stopPropagation()} />
+  );
+}

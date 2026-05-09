@@ -5,6 +5,7 @@ import {
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Cube, ChatCircleText, Code,
   Package, ChatCircleDots, CalendarBlank, Plug,
+  ListBullets, Question,
 } from '@phosphor-icons/react';
 
 // ── Nav configs ────────────────────────────────────────────────
@@ -41,13 +42,13 @@ function buildSections(apiKey) {
 
 function buildProductItems(productHash) {
   const base = `/product/${productHash}`;
-  // After the product-page redesign the old Info / Variations / SEO /
-  // Custom Fields tabs were merged into a single Product Overview page.
-  // Only Reviews and API Preview remain as separate routes.
   return [
     { to: base,                  label: 'Product Overview', Icon: Cube,            exact: true },
+    { to: `${base}/inventory`,   label: 'Inventory',        Icon: ListBullets    },
     { to: `${base}/reviews`,     label: 'Reviews',          Icon: ChatCircleText },
+    { to: `${base}/qa`,          label: 'Q & A',            Icon: Question       },
     { to: `${base}/api-preview`, label: 'API Preview',      Icon: Code           },
+    { to: `${base}/settings`,    label: 'Settings',         Icon: GearSix        },
   ];
 }
 
@@ -198,8 +199,7 @@ export default function Sidebar({ collapsed, onToggle }) {
   const location   = useLocation();
   const { apiKey } = useParams();
 
-  // Detect product detail page so the sidebar swaps its nav from project
-  // sections → flat product nav.
+  // Detect product detail page so sidebar swaps project sections → flat product nav.
   const productMatch = useMemo(
     () => location.pathname.match(/^\/product\/([^/]+)/),
     [location.pathname]

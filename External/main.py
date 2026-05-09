@@ -17,8 +17,7 @@ except ImportError:
     class ZoneInfoNotFoundError(Exception): pass
 
 def _tz(name: str):
-    """Resolve an IANA timezone name (e.g. 'Asia/Almaty') to a tzinfo object,
-    falling back to UTC if invalid or unavailable."""
+    """Resolve IANA timezone name to tzinfo, falling back to UTC if invalid."""
     if not name or ZoneInfo is None:
         return timezone.utc
     try:
@@ -364,8 +363,7 @@ def _revoke_chain_from(cur, root_id: int, reason: str):
             if r["id"] not in visited: queue.append(r["id"])
 
 def consume_refresh_token(raw: str, project_id: int, request: Request):
-    """Returns (user_id, new_raw) or None. Rotates the token; revokes the
-    whole chain if a previously-rotated token is presented (reuse attack)."""
+    """Returns (user_id, new_raw) or None. Rotates token; revokes chain on reuse attack."""
     if not raw: return None
     h = hashlib.sha256(raw.encode()).hexdigest()
     with db_cursor() as (conn, cur):
@@ -491,7 +489,7 @@ def _build_layer_subtree(rows, layer, parent_eff,
             "sold_quantity":   r.get("sold_quantity")  or 0,
             "specifications":  specifications_by_node.get((layer, r["id"]), []),
         }
-        if nested: node[f"conf_{next_layer}"] = nested
+        if nested: node[f"conf_layer_{next_layer}"] = nested
         out.append(node)
     return out
 
@@ -500,6 +498,79 @@ def _split_keywords(value):
     # DB stores comma-separated string; API returns a clean array.
     if not value: return []
     return [t.strip() for t in str(value).split(",") if t.strip()]
+
+
+def _media_type(url):
+    """Classify URL ext as video/model/image (default 'image') for storefront rendering."""
+    if not url: return "image"
+    u = str(url).lower().split("?", 1)[0]   # drop query string
+    if u.endswith((".mp4", ".webm", ".mov", ".m4v")): return "video"
+    if u.endswith((".glb", ".usdz", ".gltf")):       return "model"
+    return "image"
+
+
+# Trusted external embed hosts for video URLs — keep narrow (SSRF/clickjack risk).
+SAFE_VIDEO_HOSTS = (
+    "youtube.com", "www.youtube.com", "youtu.be",
+    "vimeo.com",   "player.vimeo.com",
+)
+
+def _is_safe_media_url(url):
+    """True if URL is our S3 bucket or https on SAFE_VIDEO_HOSTS whitelist."""
+    if not url: return False
+    u = str(url).lower()
+    if u.startswith("https://torta-crm.s3.") or "/torta-crm." in u:
+        return True
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(u)
+    except Exception:
+        return False
+    if p.scheme != "https": return False
+    return p.hostname in SAFE_VIDEO_HOSTS
+
+
+def _resolve_active_sale(now, *layers):
+    """Walk-up sale resolver: first (sale_type, sale_value, starts, ends) layer with open window wins."""
+    for layer in layers:
+        if not layer: continue
+        st, sv, ss, se = layer
+        if not st or sv is None: continue
+        if isinstance(ss, str): ss = datetime.fromisoformat(ss.replace('Z', '+00:00'))
+        if isinstance(se, str): se = datetime.fromisoformat(se.replace('Z', '+00:00'))
+        if ss is not None and ss > now: continue
+        if se is not None and se < now: continue
+        return (st, float(sv), ss, se)
+    return (None, None, None, None)
+
+
+def _apply_sale(base_price, sale_type, sale_value):
+    if not sale_type or sale_value is None or base_price is None: return base_price
+    bp = float(base_price)
+    if sale_type == 'percent': return max(0.0, round(bp * (1 - sale_value / 100), 2))
+    if sale_type == 'amount':  return max(0.0, round(bp - sale_value, 2))
+    if sale_type == 'fixed':   return max(0.0, round(sale_value, 2))
+    return bp
+
+
+def _fetch_tier_pricing(sku_ids):
+    """One query → dict { sku_id → [{min_qty, price}, ...] sorted by min_qty }."""
+    if not sku_ids: return {}
+    try:
+        rows = db_all(
+            "SELECT sku_id, min_qty, price FROM product_tier_pricing"
+            " WHERE sku_id = ANY(%s) ORDER BY sku_id ASC, min_qty ASC",
+            (list(sku_ids),)
+        )
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        out.setdefault(r["sku_id"], []).append({
+            "min_qty": int(r["min_qty"]),
+            "price":   float(r["price"] or 0),
+        })
+    return out
 
 
 def _assemble_product_payload(
@@ -515,10 +586,24 @@ def _assemble_product_payload(
     custom_fields, reviews_raw,
     user_id,
     modifier_groups=None,    # list of pre-shaped groups for THIS product (or None)
+    tier_pricing_by_sku=None,  # { l2_id → [{min_qty, price}, ...] } pre-fetched
 ):
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    # Product-level sale tuple — used as the lowest-priority fallback for every L2.
+    prod_sale = (
+        product.get("sale_type"), product.get("sale_value"),
+        product.get("sale_starts_at"), product.get("sale_ends_at"),
+    )
+
     final_variations = []
     for v in variations:
         var_eff = _eff_price(v.get("price"), None)
+        # L1-level sale tuple (for this variation specifically).
+        var_sale = (
+            v.get("sale_type"), v.get("sale_value"),
+            v.get("sale_starts_at"), v.get("sale_ends_at"),
+        )
         cfg_rows = cfg_by_variation_id.get(v["id"], [])
         conf_2_out = []
         for c in cfg_rows:
@@ -531,16 +616,46 @@ def _assemble_product_payload(
             # `price` on L2 falls back to effective when own price is NULL.
             display_price = (float(c["price"]) if c.get("price") is not None
                              else (cfg_eff if cfg_eff is not None else 0.0))
+            # Sale resolution: L2 own (new sale_type/value, then legacy sale_price)
+            # → L1 own → product own. First active window wins.
+            l2_sale = (c.get("sale_type"), c.get("sale_value"),
+                       c.get("sale_starts_at"), c.get("sale_ends_at"))
+            # Legacy fallback: l2.sale_price counts as a 'fixed' L2-level sale if
+            # the new sale_type/sale_value haven't been set yet.
+            if not l2_sale[0] and c.get("sale_price") is not None:
+                l2_sale = ('fixed', float(c["sale_price"]),
+                           c.get("sale_starts_at"), c.get("sale_ends_at"))
+            st, sv, _ss, _se = _resolve_active_sale(now, l2_sale, var_sale, prod_sale)
+            sale_active = st is not None and sv is not None
+
+            compare_at = c.get("compare_at_price")
+            if sale_active:
+                effective_compare = display_price                  # original = pre-sale effective
+                final_price       = _apply_sale(display_price, st, sv)
+            else:
+                effective_compare = float(compare_at) if compare_at is not None else None
+                final_price       = display_price
+
             node_l2 = {
                 "id": c["id"], "name": c["configuration_name"],
-                "price": display_price, "effective_price": cfg_eff,
+                "price": final_price, "effective_price": cfg_eff,
+                "compare_at_price": effective_compare,                   # for strikethrough; None = no discount
+                "on_sale":          sale_active,
+                "sku_code":         c.get("sku_code") or "",
+                "barcode":          c.get("barcode")  or "",             # per-SKU EAN-13 / UPC
+                "cost_price":       float(c["cost_price"]) if c.get("cost_price") is not None else None,
+                "tier_pricing":     (tier_pricing_by_sku or {}).get(c["id"], []),
+                "weight_g":         float(c["weight_g"])  if c.get("weight_g")  is not None else None,
+                "length_cm":        float(c["length_cm"]) if c.get("length_cm") is not None else None,
+                "width_cm":         float(c["width_cm"])  if c.get("width_cm")  is not None else None,
+                "height_cm":        float(c["height_cm"]) if c.get("height_cm") is not None else None,
                 "stock_quantity": c["stock_quantity"], "sold_quantity": c["sold_quantity"],
                 "is_in_cart":   cart_item is not None,
                 "cart_item_id": cart_item["cart_item_id"] if cart_item else None,
                 "cart_quantity": cart_item["quantity"]    if cart_item else 0,
                 "specifications": specifications_by_node.get((2, c["id"]), []),
             }
-            if l3_tree: node_l2["conf_3"] = l3_tree
+            if l3_tree: node_l2["conf_layer_3"] = l3_tree
             conf_2_out.append(node_l2)
 
         # Skip variations with no L2 rows AND no own L1 price/stock (placeholder).
@@ -549,9 +664,20 @@ def _assemble_product_payload(
         if not has_purchasable: continue
 
         images = list(v.get("images") or [])
+        media_alt = list(v.get("media_alt") or [])
+        # Build typed media[] array — storefront renders video/model differently from image.
+        media_typed = [
+            {
+                "url":  u,
+                "type": _media_type(u),
+                "alt":  (media_alt[i] if i < len(media_alt) else "") or "",
+            }
+            for i, u in enumerate(images)
+        ]
         node_l1 = {
             "id": v["id"], "name": v["variation_name"],
             "images": images,                    # full per-variation gallery
+            "media":  media_typed,               # typed — { url, type, alt } per slot
             "image":  images[0] if images else None,   # cover (back-compat alias for clients using `image`)
             "price": float(v["price"]) if v.get("price") is not None else None,
             "effective_price": var_eff,
@@ -560,21 +686,28 @@ def _assemble_product_payload(
             "is_in_cart": any(c["is_in_cart"] for c in conf_2_out),
             "specifications": specifications_by_node.get((1, v["id"]), []),
         }
-        if conf_2_out: node_l1["conf_2"] = conf_2_out
+        if conf_2_out: node_l1["conf_layer_2"] = conf_2_out
         final_variations.append(node_l1)
 
     reviews = [
         {
             "id": r["id"], "user_id": r["user_id"], "user_name": r["user_name"],
             "rating": r["rating"], "comment": r["comment"] or "",
-            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "created_at":     r["created_at"].isoformat() if r.get("created_at") else None,
+            # Phase 3 — photos, helpful votes, merchant reply.
+            "photos":         r.get("photos") or [],
+            "helpful_count":   r.get("helpful_count")   or 0,
+            "unhelpful_count": r.get("unhelpful_count") or 0,
+            "merchant_reply":      r.get("merchant_reply"),
+            "merchant_reply_at":   r["merchant_reply_at"].isoformat()
+                                   if r.get("merchant_reply_at") else None,
         }
         for r in reviews_raw
     ]
     reviews_count  = len(reviews)
     average_rating = round(sum(r["rating"] for r in reviews) / reviews_count, 1) if reviews_count else 0.0
 
-    first_l2 = (final_variations[0].get("conf_2") if final_variations else None) or []
+    first_l2 = (final_variations[0].get("conf_layer_2") if final_variations else None) or []
     initial_configuration_id = first_l2[0]["id"] if first_l2 else None
 
     # Storefront cover (= cover of first variation). Aggregated full gallery
@@ -586,8 +719,18 @@ def _assemble_product_payload(
         for u in (v.get("images") or []):
             if u and u not in seen_imgs:
                 aggregated_images.append(u); seen_imgs.add(u)
-    summary_price = (first_l2[0]["effective_price"] if first_l2
-                     else (final_variations[0]["effective_price"] if final_variations else 0)) or 0
+    # Summary uses first leaf SKU's resolved price; compare_at + discount_percent only when on sale.
+    if first_l2:
+        summary_price       = first_l2[0]["price"]
+        summary_compare_at  = first_l2[0].get("compare_at_price")
+        summary_on_sale     = bool(first_l2[0].get("on_sale"))
+    else:
+        summary_price       = (final_variations[0]["effective_price"] if final_variations else 0) or 0
+        summary_compare_at  = None
+        summary_on_sale     = False
+    summary_discount_pct = None
+    if summary_on_sale and summary_compare_at and summary_compare_at > 0:
+        summary_discount_pct = round((1 - summary_price / summary_compare_at) * 100)
 
     product_hash = hashids.encode(product["id"])
     return {
@@ -612,19 +755,41 @@ def _assemble_product_payload(
         "image":  summary_image,                                      # back-compat: cover URL
         "images": aggregated_images,                                  # full union of all variation galleries
         "price":  summary_price,
+        # Sale summary — populated only when the first SKU is currently on sale.
+        "compare_at_price": summary_compare_at,                       # null when not on sale
+        "on_sale":          summary_on_sale,                          # bool
+        "discount_percent": summary_discount_pct,                     # int 1..99, or null
         "modifier_groups": modifier_groups or [],                     # checkbox/radio add-on groups
-        "conf_1": final_variations,
+        # ── Phase 1: SaaS-grade physical fields exposed to storefront ──
+        "sku":                   product.get("sku") or "",
+        "barcode":               product.get("barcode") or "",
+        "brand":                 product.get("brand") or "",
+        "manufacturer":          product.get("manufacturer") or "",
+        "country_of_origin":     product.get("country_of_origin") or "",
+        "og_image_url":          product.get("og_image_url"),
+        "requires_shipping":     bool(product.get("requires_shipping", True)),
+        "ships_internationally": bool(product.get("ships_internationally")),
+        "shipping_class":        product.get("shipping_class") or "standard",
+        "lead_time_days":        int(product.get("lead_time_days") or 0),
+        "continue_selling_oos":  bool(product.get("continue_selling_oos")),
+        "moq":                   int(product.get("moq") or 1),
+        "order_increment":       int(product.get("order_increment") or 1),
+        "low_stock_threshold":   int(product.get("low_stock_threshold") or 0),
+        "is_pre_order":          bool(product.get("is_pre_order")),
+        "pre_order_release_at":  product["pre_order_release_at"].isoformat() if product.get("pre_order_release_at") else None,
+        "tax": {
+            "category_id":   product.get("tax_category_id"),
+            "category_name": product.get("tax_category_name"),
+            "rate":          float(product.get("tax_rate") or 0),
+        } if product.get("tax_category_id") else None,
+        "conf_layer_1": final_variations,
         "reviews": reviews,
     }
 
 
 # ── Modifier groups: shared fetch helper used by both list and single endpoints ────
 def _fetch_modifier_groups_for_products(product_ids):
-    """Returns dict: { product_id → [ {group fields + items[]} ] } sorted by position.
-
-    Two queries (groups + items) regardless of how many products — avoids N+1.
-    Guarded so a missing migration doesn't break the entire product-list endpoint.
-    """
+    """Returns dict: { product_id → [ {group fields + items[]} ] } sorted by position."""
     if not product_ids: return {}
     try:
         groups = db_all(
@@ -671,17 +836,7 @@ def _fetch_modifier_groups_for_products(product_ids):
 
 
 def _validate_modifier_selection(product_id, selected_item_ids):
-    """Validate that selected_item_ids respect this product's group constraints.
-
-    Raises HTTPException(400) on:
-      - any id that doesn't belong to a group of this product
-      - exceeding max_select within a group
-      - falling below min_select for a required group
-      - selecting >1 item in a radio group
-
-    Returns the same set of ids (deduped) plus a list of {id, name, price_delta, group_id}
-    rows for downstream snapshotting in cart/order.
-    """
+    """Validate selected_item_ids vs group constraints; returns (deduped_ids, item_rows)."""
     selected = sorted(set(int(x) for x in (selected_item_ids or []) if x is not None))
     if not selected:
         # Still need to verify required groups have selections — fetch groups regardless.
@@ -894,10 +1049,24 @@ class FrontConfNode(BaseModel):
     is_in_cart: bool = False
     cart_item_id: Optional[int] = None
     cart_quantity: int = 0
-    conf_2: Optional[List["FrontConfNode"]] = None
-    conf_3: Optional[List["FrontConfNode"]] = None
-    conf_4: Optional[List["FrontConfNode"]] = None
-    conf_5: Optional[List["FrontConfNode"]] = None
+    # L1-only — full gallery + typed media (image / video / model)
+    images: Optional[List[str]] = None
+    media:  Optional[List[dict]] = None
+    # L2-only — per-SKU physical attributes + sale/cost pricing
+    sku_code:         Optional[str]   = None
+    barcode:          Optional[str]   = None
+    compare_at_price: Optional[float] = None
+    cost_price:       Optional[float] = None
+    on_sale:          Optional[bool]  = None
+    weight_g:         Optional[float] = None
+    length_cm:        Optional[float] = None
+    width_cm:         Optional[float] = None
+    height_cm:        Optional[float] = None
+    tier_pricing:     Optional[List[dict]] = None  # [{min_qty, price}, ...] sorted asc
+    conf_layer_2: Optional[List["FrontConfNode"]] = None
+    conf_layer_3: Optional[List["FrontConfNode"]] = None
+    conf_layer_4: Optional[List["FrontConfNode"]] = None
+    conf_layer_5: Optional[List["FrontConfNode"]] = None
 
 class ProductPageResponse(BaseModel):
     id: int; product_hash: str; title: str
@@ -916,15 +1085,39 @@ class ProductPageResponse(BaseModel):
     initial_variation_index: int; initial_configuration_id: Optional[int] = None
     image: Optional[str] = None         # cover URL (= images[0]); back-compat
     images: List[str] = []              # union of all variation galleries
-    price: float = 0                    # summary price (lowest L2 or first variation)
+    price: float = 0                    # summary price (sale-applied if active)
+    compare_at_price: Optional[float] = None   # original price when on_sale = True
+    on_sale: bool = False
+    discount_percent: Optional[int] = None     # for storefront badges
     modifier_groups: List[dict] = []    # checkbox/radio add-on groups with items
-    conf_1: List[FrontConfNode]; reviews: List[FrontReview]
+    # Phase 1: SaaS-grade physical fields exposed to storefront.
+    sku: str = ""
+    barcode: str = ""
+    brand: str = ""
+    manufacturer: str = ""
+    country_of_origin: str = ""
+    og_image_url: Optional[str] = None
+    requires_shipping: bool = True
+    ships_internationally: bool = False
+    shipping_class: str = "standard"
+    lead_time_days: int = 0
+    continue_selling_oos: bool = False
+    moq: int = 1
+    order_increment: int = 1
+    low_stock_threshold: int = 0
+    is_pre_order: bool = False
+    pre_order_release_at: Optional[str] = None
+    tax: Optional[dict] = None
+    conf_layer_1: List[FrontConfNode]; reviews: List[FrontReview]
 
 class CartPageItem(BaseModel):
     cart_item_id: int; quantity: int; product_id: int; product_hash: str
     variation_id: Optional[int] = None; configuration_id: Optional[int] = None
     title: str; subtitle: Optional[str] = ""; price: float
     base_price: Optional[float] = None     # SKU price w/o modifiers (for UI breakdown)
+    tier_price: Optional[float] = None     # set when wholesale tier kicked in (< base_price)
+    compare_at_price: Optional[float] = None  # original price when tier or sale active (strikethrough)
+    on_sale: bool = False                  # true when an active sale was applied on top
     configuration_name: Optional[str] = None; variation_name: Optional[str] = None
     image_url: Optional[str] = None; is_favorite: bool = False
     modifiers: List[dict] = []             # [{id, name, price_delta, group_id, group_name}]
@@ -979,10 +1172,7 @@ def send_reset_email(email: str, token: str, project_id: int = None) -> bool:
     return send_email(email, "Password Reset", html, from_name, from_email)
 
 
-# ── WEBHOOK DISPATCHER ───────────────────────────────────
-# Mirrors CRM/backend/main.py — both share the same DB and tables. Kept tiny
-# (no retry queue, just fire-and-forget) so calls inside request handlers don't
-# block the response. Wrapped in BackgroundTasks at the call sites.
+# WEBHOOK DISPATCHER — mirrors CRM/backend; fire-and-forget via BackgroundTasks at call sites.
 
 def _build_slack_message(event: str, data: dict) -> dict:
     label_map = {
@@ -1084,9 +1274,7 @@ def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> di
 
 
 def dispatch_event(project_id: int, event: str, data: dict):
-    """Look up active subscriptions on `project_id` that listen to `event`,
-    fire each one, log to crm_webhook_deliveries. Never raises — silent on
-    failure (failures show up in the Logs tab in CRM)."""
+    """Fire active webhook subs for (project_id, event), log to crm_webhook_deliveries. Never raises."""
     try:
         rows = db_all(
             "SELECT * FROM crm_webhook_subscriptions WHERE project_id=%s AND is_active=TRUE",
@@ -1162,10 +1350,7 @@ def _reset_del(token_hash):    kvstore.delete(_reset_key(token_hash))
 @app.get("/{api_key}/csrf")
 def get_csrf_token(api_key: str, request: Request, response: Response,
                    api_key_record: dict = Depends(resolve_api_key)):
-    """Issue (or reuse) a CSRF token cookie for the store frontend.
-    The SDK calls this once on init so that subsequent state-changing
-    requests can include X-CSRF-Token header.
-    """
+    """Issue (or reuse) a CSRF token cookie for the store frontend (SDK calls once on init)."""
     token = request.cookies.get("csrf_token", "")
     if not token:
         token = secrets.token_hex(32)
@@ -1538,9 +1723,17 @@ def get_products(request: Request,
         cursor.execute(
             "SELECT p.id, p.title, p.subtitle, p.description, p.product_type, "
             "p.seo_title, p.seo_description, p.seo_keywords, "
-            "p.category_id, c.name AS category_name, c.slug AS category_slug "
+            "p.category_id, c.name AS category_name, c.slug AS category_slug, "
+            "p.sku, p.barcode, p.brand, p.manufacturer, p.vendor, "
+            "p.country_of_origin, p.hs_code, p.og_image_url, "
+            "p.requires_shipping, p.ships_internationally, p.shipping_class, p.lead_time_days, "
+            "p.continue_selling_oos, p.moq, p.order_increment, p.low_stock_threshold, "
+            "p.is_pre_order, p.pre_order_release_at, p.tax_category_id, "
+            "p.sale_type, p.sale_value, p.sale_starts_at, p.sale_ends_at, "
+            "tc.name AS tax_category_name, tc.rate AS tax_rate "
             "FROM products p "
             "LEFT JOIN product_categories c ON c.id = p.category_id "
+            "LEFT JOIN product_tax_categories tc ON tc.id = p.tax_category_id "
             f"WHERE {' AND '.join(where)} "
             "ORDER BY p.id ASC",
             params
@@ -1553,7 +1746,8 @@ def get_products(request: Request,
 
         # ── 2. Layer 1 (variations) for ALL products ───────────────────
         cursor.execute(
-            f"SELECT id, product_id, variation_name, images, price, stock_quantity, sold_quantity, position "
+            f"SELECT id, product_id, variation_name, images, price, stock_quantity, sold_quantity, position, "
+            f"       sale_type, sale_value, sale_starts_at, sale_ends_at "
             f"FROM product_configurations_l1 WHERE product_id IN ({fmt}) "
             f"ORDER BY position ASC, id ASC",
             product_ids
@@ -1570,7 +1764,9 @@ def get_products(request: Request,
         if l1_ids:
             l1fmt = ",".join(["%s"] * len(l1_ids))
             cursor.execute(
-                f"SELECT id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position "
+                f"SELECT id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position, "
+                f"       sku_code, barcode, compare_at_price, cost_price, sale_price, sale_starts_at, sale_ends_at,"
+                f"       weight_g, length_cm, width_cm, height_cm "
                 f"FROM product_configurations_l2 WHERE variation_id IN ({l1fmt}) "
                 f"ORDER BY position ASC, id ASC",
                 l1_ids
@@ -1636,6 +1832,9 @@ def get_products(request: Request,
                 spec_params
             )
             for row in cursor.fetchall():
+                # Phase 1: skip placeholder rows (empty value).
+                if not (row.get("spec_value") or "").strip():
+                    continue
                 layer_v = row.get("layer") or 1
                 parent_id = row["parent_id"] if row.get("parent_id") is not None else row["variation_id"]
                 specifications_by_node.setdefault((layer_v, parent_id), []).append({
@@ -1708,6 +1907,8 @@ def get_products(request: Request,
                     can_review_set.add(r["product_id"])
 
     modifier_groups_by_product = _fetch_modifier_groups_for_products(product_ids)
+    # Tier pricing — single batched query for every L2 SKU across the whole list.
+    tier_pricing_by_sku = _fetch_tier_pricing(l2_ids)
 
     return [
         _assemble_product_payload(
@@ -1725,6 +1926,7 @@ def get_products(request: Request,
             reviews_raw=reviews_by_product.get(p["id"], []),
             user_id=user_id,
             modifier_groups=modifier_groups_by_product.get(p["id"], []),
+            tier_pricing_by_sku=tier_pricing_by_sku,
         )
         for p in products
     ]
@@ -1745,9 +1947,17 @@ def get_product_page(product_hash: str, request: Request,
         cursor.execute(
             "SELECT p.id, p.title, p.subtitle, p.description, p.product_type, "
             "p.seo_title, p.seo_description, p.seo_keywords, "
-            "p.category_id, c.name AS category_name, c.slug AS category_slug "
+            "p.category_id, c.name AS category_name, c.slug AS category_slug, "
+            "p.sku, p.barcode, p.brand, p.manufacturer, p.vendor, "
+            "p.country_of_origin, p.hs_code, p.og_image_url, "
+            "p.requires_shipping, p.ships_internationally, p.shipping_class, p.lead_time_days, "
+            "p.continue_selling_oos, p.moq, p.order_increment, p.low_stock_threshold, "
+            "p.is_pre_order, p.pre_order_release_at, p.tax_category_id, "
+            "p.sale_type, p.sale_value, p.sale_starts_at, p.sale_ends_at, "
+            "tc.name AS tax_category_name, tc.rate AS tax_rate "
             "FROM products p "
             "LEFT JOIN product_categories c ON c.id = p.category_id "
+            "LEFT JOIN product_tax_categories tc ON tc.id = p.tax_category_id "
             "WHERE p.id = %s AND p.project_id = %s "
             "  AND COALESCE(p.is_archived, FALSE) = FALSE "
             "  AND COALESCE(p.is_paused, FALSE) = FALSE",
@@ -1758,7 +1968,8 @@ def get_product_page(product_hash: str, request: Request,
 
         cursor.execute(
             # Honour CRM drag-and-drop ordering via the `position` column.
-            "SELECT id, product_id, variation_name, images, price, stock_quantity, sold_quantity "
+            "SELECT id, product_id, variation_name, images, price, stock_quantity, sold_quantity, "
+            "       sale_type, sale_value, sale_starts_at, sale_ends_at "
             "FROM product_configurations_l1 "
             "WHERE product_id = %s ORDER BY position ASC, id ASC",
             (product_id,)
@@ -1774,7 +1985,9 @@ def get_product_page(product_hash: str, request: Request,
             vids = [v["id"] for v in variations]
             vfmt = ",".join(["%s"] * len(vids))
             cursor.execute(
-                f"SELECT id, product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position "
+                f"SELECT id, product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position, "
+                f"       sku_code, barcode, compare_at_price, cost_price, sale_price, sale_starts_at, sale_ends_at,"
+                f"       weight_g, length_cm, width_cm, height_cm "
                 f"FROM product_configurations_l2 WHERE variation_id IN ({vfmt}) "
                 f"ORDER BY position ASC, id ASC",
                 vids
@@ -1829,6 +2042,10 @@ def get_product_page(product_hash: str, request: Request,
                 vids
             )
             for row in cursor.fetchall():
+                # Phase 1: skip placeholder rows (empty value) — they're seed
+                # suggestions rendered in CRM only; storefront never sees blanks.
+                if not (row.get("spec_value") or "").strip():
+                    continue
                 layer_v = row.get("layer") or 1
                 parent_id = row.get("parent_id") if row.get("parent_id") is not None else row.get("variation_id")
                 specifications_by_node.setdefault((layer_v, parent_id), []).append({
@@ -1837,12 +2054,44 @@ def get_product_page(product_hash: str, request: Request,
                 })
 
         cursor.execute(
-            "SELECT pr.id, pr.user_id, pr.rating, pr.comment, pr.created_at, u.name AS user_name "
+            "SELECT pr.id, pr.user_id, pr.rating, pr.comment, pr.created_at, "
+            "       pr.merchant_reply, pr.merchant_reply_at, u.name AS user_name "
             "FROM product_reviews pr JOIN users u ON pr.user_id = u.id AND u.project_id = %s "
             "WHERE pr.product_id = %s AND pr.project_id = %s ORDER BY pr.created_at DESC",
             (project_id, product_id, project_id)
         )
         reviews_raw = cursor.fetchall()
+        # Phase 3: bulk-fetch photos + vote tallies for these reviews (avoids N+1).
+        rids = [r["id"] for r in reviews_raw]
+        photos_by_review = {}
+        votes_by_review  = {}
+        if rids:
+            cursor.execute(
+                "SELECT review_id, url, position FROM product_review_photos"
+                " WHERE review_id = ANY(%s) ORDER BY position ASC, id ASC",
+                (rids,)
+            )
+            for ph in cursor.fetchall():
+                photos_by_review.setdefault(ph["review_id"], []).append(ph["url"])
+            cursor.execute(
+                "SELECT review_id,"
+                "       SUM(CASE WHEN is_helpful THEN 1 ELSE 0 END) AS helpful,"
+                "       SUM(CASE WHEN is_helpful THEN 0 ELSE 1 END) AS unhelpful"
+                "  FROM product_review_votes WHERE review_id = ANY(%s)"
+                " GROUP BY review_id",
+                (rids,)
+            )
+            for v in cursor.fetchall():
+                votes_by_review[v["review_id"]] = {
+                    "helpful":   int(v["helpful"]   or 0),
+                    "unhelpful": int(v["unhelpful"] or 0),
+                }
+        # Attach to each review row for downstream payload assembly.
+        for r in reviews_raw:
+            r["photos"]       = photos_by_review.get(r["id"], [])
+            v                 = votes_by_review.get(r["id"], {"helpful": 0, "unhelpful": 0})
+            r["helpful_count"]   = v["helpful"]
+            r["unhelpful_count"] = v["unhelpful"]
 
         cursor.execute(
             "SELECT field_key, field_value FROM product_custom_fields WHERE project_id = %s AND product_id = %s",
@@ -1889,6 +2138,7 @@ def get_product_page(product_hash: str, request: Request,
         cfg_by_variation_id.setdefault(c["variation_id"], []).append(c)
 
     modifier_groups = _fetch_modifier_groups_for_products([product_id]).get(product_id, [])
+    tier_pricing_by_sku = _fetch_tier_pricing([c["id"] for c in configurations])
 
     return _assemble_product_payload(
         product,
@@ -1903,24 +2153,123 @@ def get_product_page(product_hash: str, request: Request,
         custom_fields=custom_fields, reviews_raw=reviews_raw,
         user_id=user_id,
         modifier_groups=modifier_groups,
+        tier_pricing_by_sku=tier_pricing_by_sku,
     )
 
 
 # ── КОРЗИНА ──────────────────────────────────────────────
+
+# ── Tier pricing helper ─────────────────────────────────────────────
+def _resolve_unit_price(cursor, sku_id, base_price, quantity):
+    """Apply tier pricing (highest min_qty ≤ quantity); base_price if no tier matches."""
+    cursor.execute(
+        "SELECT min_qty, price FROM product_tier_pricing"
+        " WHERE sku_id=%s AND min_qty<=%s ORDER BY min_qty DESC LIMIT 1",
+        (sku_id, max(1, int(quantity)))
+    )
+    row = cursor.fetchone()
+    if row and row.get("price") is not None:
+        return float(row["price"])
+    return float(base_price or 0)
+
+
+def _resolve_sku_sale_walkup(cursor, sku_id, now):
+    """Walk-up sale resolver for a SKU: L2 → L1 → product. Pricing: base → tier → sale → modifiers."""
+    cursor.execute(
+        "SELECT c.sale_type AS c_st, c.sale_value AS c_sv,"
+        "       c.sale_starts_at AS c_ss, c.sale_ends_at AS c_se,"
+        "       c.sale_price AS c_sp,"
+        "       v.sale_type AS v_st, v.sale_value AS v_sv,"
+        "       v.sale_starts_at AS v_ss, v.sale_ends_at AS v_se,"
+        "       p.sale_type AS p_st, p.sale_value AS p_sv,"
+        "       p.sale_starts_at AS p_ss, p.sale_ends_at AS p_se"
+        "  FROM product_configurations_l2 c"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "  JOIN products p ON v.product_id = p.id"
+        " WHERE c.id = %s",
+        (sku_id,)
+    )
+    row = cursor.fetchone() or {}
+    l2_sale  = (row.get("c_st"), row.get("c_sv"), row.get("c_ss"), row.get("c_se"))
+    # Legacy l2.sale_price fallback when new sale_type/value haven't been set.
+    if not l2_sale[0] and row.get("c_sp") is not None:
+        l2_sale = ('fixed', float(row["c_sp"]), row.get("c_ss"), row.get("c_se"))
+    var_sale = (row.get("v_st"), row.get("v_sv"), row.get("v_ss"), row.get("v_se"))
+    prod_sale= (row.get("p_st"), row.get("p_sv"), row.get("p_ss"), row.get("p_se"))
+    return _resolve_active_sale(now, l2_sale, var_sale, prod_sale)
+
+
+# Stock reservation TTL: window during which a cart line soft-locks the SKU for the buyer.
+RESERVATION_TTL_MINUTES = 15
+
+def _release_expired_reservations(cursor):
+    """Free reservations older than TTL_MINUTES (called opportunistically); returns rows freed."""
+    cursor.execute(
+        "UPDATE cart_items SET reserved_until = NULL"
+        " WHERE reserved_until IS NOT NULL AND reserved_until < NOW()"
+    )
+    return cursor.rowcount
+
+def _available_stock(cursor, sku_id, exclude_cart_id=None):
+    """Returns (stock_quantity, available) where available = stock - reserved on OTHER carts."""
+    cursor.execute("SELECT stock_quantity FROM product_configurations_l2 WHERE id=%s", (sku_id,))
+    row = cursor.fetchone()
+    if not row: return 0, 0
+    total = int(row["stock_quantity"] or 0)
+    cursor.execute(
+        "SELECT COALESCE(SUM(quantity), 0) AS reserved"
+        "  FROM cart_items"
+        " WHERE configuration_id=%s"
+        "   AND reserved_until IS NOT NULL AND reserved_until > NOW()"
+        + ("   AND cart_id <> %s" if exclude_cart_id else ""),
+        (sku_id, exclude_cart_id) if exclude_cart_id else (sku_id,)
+    )
+    reserved = int(cursor.fetchone()["reserved"] or 0)
+    return total, max(0, total - reserved)
+
 
 @app.post("/{api_key}/cart/add")
 def add_to_cart(item: AddToCart, request: Request,
                 api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
-    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s",
-                  (item.product_id, project_id)):
-        raise HTTPException(403, "Product not in this store")
+    # Validate product belongs + fetch flags relevant to inventory checks.
+    product_row = db_one(
+        "SELECT id, continue_selling_oos, moq, order_increment, is_paused, is_archived"
+        "  FROM products WHERE id=%s AND project_id=%s",
+        (item.product_id, project_id)
+    )
+    if not product_row: raise HTTPException(403, "Product not in this store")
+    if product_row.get("is_paused") or product_row.get("is_archived"):
+        raise HTTPException(403, "Product not currently for sale")
+    # IDOR guard: variation_id MUST belong to product, configuration_id MUST belong to variation.
+    # Without this, place_order's per-WH stock writes would mutate another store's counters.
+    if not db_one(
+        "SELECT 1 FROM product_configurations_l1 v"
+        "  JOIN product_configurations_l2 c ON c.variation_id = v.id"
+        " WHERE v.product_id=%s AND v.id=%s AND c.id=%s",
+        (item.product_id, item.variation_id, item.configuration_id)
+    ):
+        raise HTTPException(404, "Variation / configuration not found for this product")
+    # DOS guard: hard cap to keep cart sums + reservation math sane.
+    if item.quantity > 10000:
+        raise HTTPException(400, "Quantity per line is capped at 10000")
+    # Phase 8 — B2B validation: MOQ + order increment.
+    moq = int(product_row.get("moq") or 1)
+    inc = int(product_row.get("order_increment") or 1)
+    if item.quantity < moq:
+        raise HTTPException(400, f"Minimum order quantity is {moq}")
+    if inc > 1 and (item.quantity - moq) % inc != 0:
+        raise HTTPException(400, f"Quantity must be {moq} or {moq}+{inc}, {moq}+{2*inc}, ...")
     # Validate selected modifier ids belong to this product and respect group rules.
     sel_ids, _ = _validate_modifier_selection(item.product_id, item.selected_modifier_item_ids)
     sel_ids_sorted = sorted(sel_ids)
 
     with db_cursor() as (conn, cursor):
+        # Step 1: opportunistic cleanup of expired reservations — keeps the
+        # available_stock calculation accurate without a separate cron job.
+        _release_expired_reservations(cursor)
+
         cursor.execute("SELECT id FROM carts WHERE user_id = %s AND project_id = %s", (user_id, project_id))
         cart = cursor.fetchone()
         if not cart:
@@ -1930,9 +2279,14 @@ def add_to_cart(item: AddToCart, request: Request,
         else:
             cart_id = cart["id"]
 
-        # Merge with existing line ONLY if the modifier selection matches exactly
-        # (sorted comparison). Different modifier sets stay as separate cart lines —
-        # same SKU + different sauces = two visually distinct customer choices.
+        # Step 2: enforce stock availability EXCEPT when continue_selling_oos
+        # is set on the product (made-to-order or backorder allowed).
+        if not product_row.get("continue_selling_oos"):
+            total, avail = _available_stock(cursor, item.configuration_id, exclude_cart_id=cart_id)
+            if avail < item.quantity:
+                raise HTTPException(400, f"Only {avail} item(s) available right now (others reserved by active checkouts)")
+
+        # Merge with existing line ONLY if modifier selection matches exactly (sorted comparison).
         cursor.execute(
             "SELECT id, quantity, selected_modifier_item_ids FROM cart_items"
             " WHERE cart_id=%s AND product_id=%s AND variation_id=%s AND configuration_id=%s",
@@ -1944,15 +2298,22 @@ def add_to_cart(item: AddToCart, request: Request,
                 existing = row
                 break
 
+        # Reservation window: (NOW() + RESERVATION_TTL_MINUTES). Every add_to_cart
+        # extends the timer so an active shopper doesn't lose their hold mid-checkout.
         if existing:
-            cursor.execute("UPDATE cart_items SET quantity=%s WHERE id=%s",
-                           (existing["quantity"] + item.quantity, existing["id"]))
+            cursor.execute(
+                "UPDATE cart_items SET quantity=%s,"
+                "       reserved_until = NOW() + INTERVAL '%s minutes' WHERE id=%s",
+                (existing["quantity"] + item.quantity, RESERVATION_TTL_MINUTES, existing["id"])
+            )
         else:
             cursor.execute(
-                "INSERT INTO cart_items (cart_id, product_id, variation_id, configuration_id, quantity, selected_modifier_item_ids)"
-                " VALUES (%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO cart_items"
+                "  (cart_id, product_id, variation_id, configuration_id, quantity,"
+                "   selected_modifier_item_ids, reserved_until)"
+                " VALUES (%s,%s,%s,%s,%s,%s, NOW() + INTERVAL '%s minutes')",
                 (cart_id, item.product_id, item.variation_id, item.configuration_id,
-                 item.quantity, sel_ids_sorted)
+                 item.quantity, sel_ids_sorted, RESERVATION_TTL_MINUTES)
             )
         conn.commit()
     return {"success": True}
@@ -2024,6 +2385,8 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
     user_id    = get_current_user_id(request)
 
     with db_cursor() as (_, cursor):
+        # Phase 2: opportunistic cleanup of expired reservations on every cart load.
+        _release_expired_reservations(cursor)
         cursor.execute(
             "SELECT shipping_cost, free_shipping_threshold FROM shipping_settings WHERE project_id=%s LIMIT 1",
             (project_id,)
@@ -2081,20 +2444,46 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
                     "group_name":  m["group_name"],
                 }
 
+    # Pricing layer for each cart line: base → tier → sale → modifiers.
+    # All resolved in a single helper cursor so we don't N+1 over rows.
+    from datetime import timezone as _tz
+    _cart_now = datetime.now(_tz.utc)
+    line_pricing = {}  # cart_item_id → { tier_price, after_sale, on_sale }
+    if rows:
+        with db_cursor() as (_, c2):
+            for r in rows:
+                sku_id   = r.get("configuration_id")
+                sku_base = float(r["price"] or 0)
+                if not sku_id:
+                    line_pricing[r["cart_item_id"]] = (sku_base, sku_base, False)
+                    continue
+                tier   = _resolve_unit_price(c2, sku_id, sku_base, r["quantity"])
+                after  = tier
+                on_sl  = False
+                st, sv, _, _ = _resolve_sku_sale_walkup(c2, sku_id, _cart_now)
+                if st:
+                    after = _apply_sale(tier, st, sv)
+                    on_sl = True
+                line_pricing[r["cart_item_id"]] = (tier, after, on_sl)
+
     items = []; subtotal = 0.0
     for row in rows:
-        # Per-line modifier snapshot — only items still alive in DB show up.
         mods = [mod_meta[mid] for mid in (row["selected_modifier_item_ids"] or []) if mid in mod_meta]
         mods_total = sum(m["price_delta"] for m in mods)
-        line_unit = float(row["price"] or 0) + mods_total
-        subtotal += line_unit * row["quantity"]
+        sku_base   = float(row["price"] or 0)
+        tier_unit, after_sale, on_sale = line_pricing.get(row["cart_item_id"], (sku_base, sku_base, False))
+        line_unit  = after_sale + mods_total
+        subtotal  += line_unit * row["quantity"]
         items.append({
             **row,
-            "price": line_unit,                          # unit price including modifiers
-            "base_price": float(row["price"] or 0),      # SKU price without modifiers
-            "modifiers": mods,                           # [{id, name, price_delta, group_id, group_name}]
-            "product_hash": hashids.encode(row["product_id"]),
-            "is_favorite": row["product_id"] in favorites_set,
+            "price":            line_unit,                                            # unit (tier + sale + mods)
+            "base_price":       sku_base,                                             # raw SKU price
+            "tier_price":       tier_unit if tier_unit < sku_base else None,          # set when tier kicked in
+            "compare_at_price": sku_base if (on_sale or tier_unit < sku_base) else None,  # for strikethrough
+            "on_sale":          on_sale,
+            "modifiers":        mods,
+            "product_hash":     hashids.encode(row["product_id"]),
+            "is_favorite":      row["product_id"] in favorites_set,
         })
 
     # Digital-only carts skip shipping (no physical address required).
@@ -2220,6 +2609,187 @@ def delete_review(review_id: int, request: Request,
     return {"success": True}
 
 
+# ── ОТЗЫВЫ — Phase 3 enhancements: photos, votes ────────────
+
+class AttachReviewPhoto(BaseModel):
+    review_id: int
+    url: str
+
+@app.post("/{api_key}/reviews/photos")
+def attach_review_photo(data: AttachReviewPhoto, request: Request,
+                         api_key_record: dict = Depends(resolve_api_key)):
+    """Attach S3 photo URL to user's own review (rejects external URLs via _is_safe_media_url)."""
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    review = db_one(
+        "SELECT id, user_id FROM product_reviews WHERE id=%s AND project_id=%s",
+        (data.review_id, project_id)
+    )
+    if not review:                  raise HTTPException(404, "Review not found")
+    if review["user_id"] != user_id: raise HTTPException(403, "Not authorized")
+    if not _is_safe_media_url(data.url):
+        raise HTTPException(400, "Photo URL must be from this storefront's S3 bucket")
+    # Cross-project info-disclosure guard: the URL must point at THIS project's S3 prefix.
+    if f"/projects/{project_id}/" not in data.url:
+        raise HTTPException(400, "Photo URL must be in this project's S3 prefix")
+    with db_cursor() as (conn, cursor):
+        # Cap at 5 photos per review (typical product page limit).
+        cursor.execute("SELECT COUNT(*) AS n FROM product_review_photos WHERE review_id=%s", (data.review_id,))
+        if int(cursor.fetchone()["n"]) >= 5:
+            raise HTTPException(400, "Max 5 photos per review")
+        cursor.execute("SELECT COALESCE(MAX(position), -1)+1 AS p FROM product_review_photos WHERE review_id=%s",
+                       (data.review_id,))
+        pos = cursor.fetchone()["p"]
+        cursor.execute(
+            "INSERT INTO product_review_photos (review_id, url, position)"
+            " VALUES (%s, %s, %s) RETURNING id",
+            (data.review_id, data.url, pos)
+        )
+        new_id = cursor.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id, "url": data.url, "position": pos}
+
+
+@app.delete("/{api_key}/reviews/photos/{photo_id}")
+def delete_review_photo(photo_id: int, request: Request,
+                         api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    row = db_one(
+        "SELECT p.id, p.url, r.user_id"
+        "  FROM product_review_photos p JOIN product_reviews r ON p.review_id = r.id"
+        " WHERE p.id=%s AND r.project_id=%s",
+        (photo_id, project_id)
+    )
+    if not row:                  raise HTTPException(404, "Photo not found")
+    if row["user_id"] != user_id: raise HTTPException(403, "Not authorized")
+    with db_cursor() as (conn, cursor):
+        cursor.execute("DELETE FROM product_review_photos WHERE id=%s", (photo_id,))
+        conn.commit()
+    s3_delete_url(row["url"], f"projects/{project_id}/reviews/")  # best-effort
+    return {"success": True}
+
+
+class VoteReview(BaseModel):
+    review_id: int
+    is_helpful: bool
+
+@app.post("/{api_key}/reviews/vote")
+def vote_review(data: VoteReview, request: Request,
+                 api_key_record: dict = Depends(resolve_api_key)):
+    """Cast/change a helpful vote on another user's review (one user = one vote per review)."""
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    review = db_one(
+        "SELECT id, user_id FROM product_reviews WHERE id=%s AND project_id=%s",
+        (data.review_id, project_id)
+    )
+    if not review: raise HTTPException(404, "Review not found")
+    if review["user_id"] == user_id:
+        raise HTTPException(400, "Cannot vote on your own review")
+    with db_cursor() as (conn, cursor):
+        cursor.execute(
+            "INSERT INTO product_review_votes (review_id, user_id, is_helpful)"
+            " VALUES (%s, %s, %s)"
+            " ON CONFLICT (review_id, user_id)"
+            " DO UPDATE SET is_helpful = EXCLUDED.is_helpful",
+            (data.review_id, user_id, bool(data.is_helpful))
+        )
+        conn.commit()
+    return {"success": True}
+
+
+@app.delete("/{api_key}/reviews/vote/{review_id}")
+def unvote_review(review_id: int, request: Request,
+                   api_key_record: dict = Depends(resolve_api_key)):
+    user_id = get_current_user_id(request)
+    with db_cursor() as (conn, cursor):
+        cursor.execute(
+            "DELETE FROM product_review_votes WHERE review_id=%s AND user_id=%s",
+            (review_id, user_id)
+        )
+        conn.commit()
+    return {"success": True}
+
+
+# ── Q&A ─────────────────────────────────────────────────────
+
+class AskQuestion(BaseModel):
+    product_id: int
+    question: str
+
+@app.post("/{api_key}/questions")
+def post_question(data: AskQuestion, request: Request,
+                   api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    user_id    = get_current_user_id(request)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s",
+                  (data.product_id, project_id)):
+        raise HTTPException(403, "Product not in this store")
+    q = sanitize(data.question.strip())[:1000]
+    if not q: raise HTTPException(400, "Question cannot be empty")
+    with db_cursor() as (conn, cursor):
+        cursor.execute(
+            "INSERT INTO product_questions (project_id, product_id, user_id, question)"
+            " VALUES (%s, %s, %s, %s) RETURNING id",
+            (project_id, data.product_id, user_id, q)
+        )
+        new_id = cursor.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id}
+
+
+# ── Restock waitlist ────────────────────────────────────────
+
+class RestockSubscription(BaseModel):
+    product_id: int
+    sku_id: Optional[int] = None
+    email: Optional[str] = None      # required when not authenticated
+
+@app.post("/{api_key}/restock/subscribe")
+def subscribe_restock(data: RestockSubscription, request: Request,
+                       api_key_record: dict = Depends(resolve_api_key)):
+    """Add visitor (anon or logged in) to restock waitlist; dedupes on (product_id, sku_id, email)."""
+    project_id = api_key_record["id"]
+    user_id = try_get_current_user_id(request)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s",
+                  (data.product_id, project_id)):
+        raise HTTPException(403, "Product not in this store")
+    # IDOR guard: when sku_id is supplied, verify it belongs to this product.
+    if data.sku_id is not None:
+        if not db_one(
+            "SELECT 1 FROM product_configurations_l2 c"
+            "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+            " WHERE c.id=%s AND v.product_id=%s",
+            (data.sku_id, data.product_id)
+        ):
+            raise HTTPException(404, "SKU not found for this product")
+    email = (data.email or '').strip().lower()
+    if user_id and not email:
+        # Logged-in users — pull email from users table.
+        u = db_one("SELECT email FROM users WHERE id=%s", (user_id,))
+        if u: email = (u.get("email") or '').strip().lower()
+    if not email or '@' not in email:
+        raise HTTPException(400, "Email is required")
+    with db_cursor() as (conn, cursor):
+        cursor.execute(
+            "SELECT id FROM product_restock_subscriptions"
+            " WHERE product_id=%s AND COALESCE(sku_id, 0)=COALESCE(%s, 0)"
+            "   AND email=%s AND notified_at IS NULL",
+            (data.product_id, data.sku_id, email)
+        )
+        if cursor.fetchone():
+            return {"success": True, "deduped": True}
+        cursor.execute(
+            "INSERT INTO product_restock_subscriptions"
+            "  (project_id, product_id, sku_id, email, user_id)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (project_id, data.product_id, data.sku_id, email, user_id)
+        )
+        conn.commit()
+    return {"success": True}
+
+
 # ── ПРОМОКОДЫ ────────────────────────────────────────────
 
 @app.post("/{api_key}/promo-code/apply")
@@ -2255,6 +2825,34 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
             raise HTTPException(400, f"Minimum order amount is {promo['min_order_amount']}")
         if promo["usage_limit"] and promo["times_used"] >= promo["usage_limit"]:
             raise HTTPException(400, "Usage limit reached")
+
+        # Phase 1 — per-user usage limit (anonymous users can't be tracked, so
+        # per_user_limit only applies to authenticated checkouts).
+        per_user = promo.get("per_user_limit")
+        if per_user is not None:
+            user_id_for_check = try_get_current_user_id(request)
+            if user_id_for_check:
+                cursor.execute(
+                    "SELECT COUNT(*) AS n FROM promo_code_uses WHERE promo_id=%s AND user_id=%s",
+                    (promo["id"], user_id_for_check)
+                )
+                used_by_user = int((cursor.fetchone() or {}).get("n") or 0)
+                if used_by_user >= int(per_user):
+                    raise HTTPException(400, f"You've already used this code {used_by_user} time(s) — limit reached")
+
+        # Phase 1 — category restriction: if category_ids set, every cart item must belong to one.
+        cat_ids = list(promo.get("category_ids") or [])
+        if cat_ids:
+            cursor.execute(
+                "SELECT DISTINCT p.category_id FROM cart_items ci"
+                "  JOIN products p ON ci.product_id = p.id"
+                " WHERE ci.cart_id=%s",
+                (cart["id"],)
+            )
+            cart_cat_ids = {r["category_id"] for r in cursor.fetchall()}
+            # Cart must have NO uncovered categories AND no NULL-category items.
+            if None in cart_cat_ids or not cart_cat_ids.issubset(set(cat_ids)):
+                raise HTTPException(400, "This code only applies to specific categories — your cart has items outside that scope")
 
         dv = float(promo["discount_value"])
         if promo["discount_type"] == "percentage":
@@ -2318,9 +2916,15 @@ def place_order(data: PlaceOrderRequest, request: Request,
         if not items:
             raise HTTPException(400, "Cart is empty")
 
-        # Проверяем наличие
+        # Stock check: continue_selling_oos = row-level bypass; checkout uses raw stock_quantity.
+        product_flags = {}
+        if items:
+            ids = list({it["product_id"] for it in items})
+            cursor.execute("SELECT id, continue_selling_oos FROM products WHERE id = ANY(%s)", (ids,))
+            for r in cursor.fetchall():
+                product_flags[r["id"]] = bool(r.get("continue_selling_oos"))
         for it in items:
-            if it["stock_quantity"] < it["quantity"]:
+            if not product_flags.get(it["product_id"]) and it["stock_quantity"] < it["quantity"]:
                 raise HTTPException(400, f"Not enough stock for {it['title']}")
 
         # Per-line modifier price deltas (carried into order_items unit price snapshot).
@@ -2333,17 +2937,30 @@ def place_order(data: PlaceOrderRequest, request: Request,
             )
             for r in cursor.fetchall():
                 mod_delta_by_id[r["id"]] = float(r["price_delta"] or 0)
+        from datetime import timezone as _tz
+        _checkout_now = datetime.now(_tz.utc)
         for it in items:
             it["mod_delta_total"] = sum(
                 mod_delta_by_id.get(mid, 0)
                 for mid in (it["selected_modifier_item_ids"] or [])
             )
-            it["unit_price"] = float(it["price"] or 0) + it["mod_delta_total"]
+            # Pricing layer: base → tier → sale → modifiers (sale walks L2 → L1 → product).
+            sku_id = it.get("configuration_id")
+            base_price = float(it["price"] or 0)
+            tier_price = _resolve_unit_price(cursor, sku_id, base_price, it["quantity"]) if sku_id else base_price
+            after_sale = tier_price
+            if sku_id:
+                st, sv, _, _ = _resolve_sku_sale_walkup(cursor, sku_id, _checkout_now)
+                if st:
+                    after_sale = _apply_sale(tier_price, st, sv)
+            it["tier_price"] = tier_price
+            it["unit_price"] = after_sale + it["mod_delta_total"]
 
         subtotal = sum(it["unit_price"] * it["quantity"] for it in items)
 
-        # РџСЂРѕРјРѕРєРѕРґ
+        # Промокод
         discount = 0.0
+        applied_promo_id = None
         if data.promo_code:
             cursor.execute(
                 "SELECT * FROM promo_codes WHERE code=%s AND project_id=%s AND is_active=TRUE",
@@ -2351,11 +2968,37 @@ def place_order(data: PlaceOrderRequest, request: Request,
             )
             promo = cursor.fetchone()
             if promo:
-                now = datetime.utcnow()
-                if (not promo["valid_from"] or promo["valid_from"] <= now) and \
-                   (not promo["valid_until"] or promo["valid_until"] >= now) and \
-                   subtotal >= float(promo["min_order_amount"]) and \
-                   (not promo["usage_limit"] or promo["times_used"] < promo["usage_limit"]):
+                from datetime import timezone as _tz
+                now = datetime.now(_tz.utc)
+                # Phase 1: per-user limit & category restriction.
+                per_user_ok = True
+                if promo.get("per_user_limit"):
+                    cursor.execute(
+                        "SELECT COUNT(*) AS n FROM promo_code_uses WHERE promo_id=%s AND user_id=%s",
+                        (promo["id"], user_id)
+                    )
+                    if int((cursor.fetchone() or {}).get("n") or 0) >= int(promo["per_user_limit"]):
+                        per_user_ok = False
+                cat_ok = True
+                cat_ids = list(promo.get("category_ids") or [])
+                if cat_ids:
+                    cart_cats = {it["category_id"] for it in items if "category_id" in it}
+                    if not cart_cats:
+                        # category_id not pre-fetched on items; recompute now
+                        cursor.execute(
+                            "SELECT DISTINCT p.category_id FROM cart_items ci"
+                            "  JOIN products p ON ci.product_id = p.id"
+                            " WHERE ci.cart_id=%s",
+                            (cart["id"],)
+                        )
+                        cart_cats = {r["category_id"] for r in cursor.fetchall()}
+                    if None in cart_cats or not cart_cats.issubset(set(cat_ids)):
+                        cat_ok = False
+                if (per_user_ok and cat_ok and
+                    (not promo["valid_from"] or promo["valid_from"] <= now) and
+                    (not promo["valid_until"] or promo["valid_until"] >= now) and
+                    subtotal >= float(promo["min_order_amount"]) and
+                    (not promo["usage_limit"] or promo["times_used"] < promo["usage_limit"])):
                     dv = float(promo["discount_value"])
                     if promo["discount_type"] == "percentage":
                         discount = subtotal * (dv / 100)
@@ -2365,6 +3008,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
                     cursor.execute(
                         "UPDATE promo_codes SET times_used = times_used + 1 WHERE id=%s", (promo["id"],)
                     )
+                    applied_promo_id = promo["id"]
 
         # Стоимость доставки
         cursor.execute(
@@ -2391,6 +3035,15 @@ def place_order(data: PlaceOrderRequest, request: Request,
         )
         order_id = cursor.fetchone()["id"]
 
+        # Phase 1: log promo_code_uses for per_user_limit enforcement on
+        # subsequent attempts. Only when promo was actually applied to this order.
+        if applied_promo_id is not None:
+            cursor.execute(
+                "INSERT INTO promo_code_uses (promo_id, project_id, user_id, order_id)"
+                " VALUES (%s, %s, %s, %s)",
+                (applied_promo_id, project_id, user_id, order_id)
+            )
+
         # Позиции заказа — price snapshots the unit price INCLUDING modifier deltas
         # so order history shows the price the customer actually paid per unit.
         for it in items:
@@ -2401,10 +3054,39 @@ def place_order(data: PlaceOrderRequest, request: Request,
                  it["quantity"], round(it["unit_price"], 2),
                  sorted(it["selected_modifier_item_ids"] or []))
             )
-            # Уменьшаем остаток
+            # Phase A — write through to product_stock (default WH); re-sync l2.stock_quantity aggregate.
             cursor.execute(
-                "UPDATE product_configurations_l2 SET stock_quantity = stock_quantity - %s WHERE id=%s",
-                (it["quantity"], it["configuration_id"])
+                "SELECT id FROM warehouses WHERE project_id=%s AND is_default LIMIT 1",
+                (project_id,)
+            )
+            wh_row = cursor.fetchone()
+            wh_id = wh_row["id"] if wh_row else None
+            if wh_id:
+                cursor.execute(
+                    "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+                    " VALUES (%s, %s, %s, %s)"
+                    " ON CONFLICT (sku_id, warehouse_id)"
+                    " DO UPDATE SET quantity      = product_stock.quantity      - EXCLUDED.quantity,"
+                    "               sold_quantity = product_stock.sold_quantity + EXCLUDED.sold_quantity",
+                    (it["configuration_id"], wh_id, -int(it["quantity"]), int(it["quantity"]))
+                )
+            cursor.execute(
+                "UPDATE product_configurations_l2"
+                "   SET stock_quantity = COALESCE("
+                "         (SELECT SUM(quantity) FROM product_stock WHERE sku_id=%s),"
+                "         stock_quantity - %s),"
+                "       sold_quantity  = sold_quantity + %s"
+                " WHERE id=%s",
+                (it["configuration_id"], it["quantity"],
+                 it["quantity"], it["configuration_id"])
+            )
+            # Phase 6: stock log entry for audit (user_id NULL — customer-driven, not CRM operator).
+            cursor.execute(
+                "INSERT INTO product_stock_log"
+                "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, note)"
+                " VALUES (%s, %s, %s, %s, 'sale', %s, %s)",
+                (project_id, it["configuration_id"], wh_id, -int(it["quantity"]),
+                 order_id, f"Order #{order_id}")
             )
 
         # Очищаем корзину
@@ -2449,9 +3131,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
             from_email=from_email,
         )
 
-    # Outbound webhooks: order is created and considered paid the moment it's placed
-    # in this CRM (no async payment provider yet). Fire both events; integrations
-    # filter on the ones they care about.
+    # Outbound webhooks: fire both order.created and order.paid (no async payment provider yet).
     event_data = {
         "order_id": order_id,
         "amount":   float(total),
@@ -2469,8 +3149,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
 
 
 def _build_digital_html(project_id: int, items: list) -> str:
-    """Render a 'Your downloads' block listing every file URL stored as a Custom Field
-    of type=file on each digital product. Returns '' when there are no digital items."""
+    """Render 'Your downloads' block from product_custom_fields(field_type='file'); '' if none."""
     digital_ids = [it["product_id"] for it in items if it.get("product_type") == "digital"]
     if not digital_ids: return ""
     fmt = ",".join(["%s"] * len(digital_ids))
@@ -2498,8 +3177,7 @@ def _build_digital_html(project_id: int, items: list) -> str:
 
 
 def _build_event_html(api_key: str, items: list, order_id: int) -> str:
-    """Render a 'Your tickets' block — one QR code per event item (signed token).
-    QR is embedded inline as base64 PNG so the email client renders without external fetches."""
+    """Render 'Your tickets' block — one QR per event item (inline base64 PNG, signed token)."""
     event_items = [it for it in items if it.get("product_type") == "event"]
     if not event_items: return ""
     try:
@@ -4272,9 +4950,7 @@ def _build_booking_reminder_html(service_name: str, staff_name: Optional[str],
 
 @app.post("/internal/booking/process-reminders")
 def internal_process_booking_reminders(request: Request):
-    """Send 1-hour reminders for confirmed bookings. Cron expected every 5 min.
-    Selects bookings with starts_at in [now+50min, now+70min] that haven't been
-    reminded yet, marks reminder_sent_at on success. Returns count for monitoring."""
+    """Send T-1h booking reminders (cron every 5 min); idempotent via reminder_sent_at column."""
     if request.headers.get("X-Internal-Key") != INTERNAL_API_KEY:
         raise HTTPException(401, "Unauthorized")
     now_utc = _utcnow()
@@ -4369,9 +5045,7 @@ def public_create_booking_payment_intent(
         raise HTTPException(502, f"Payment provider unavailable: {e}")
 
 
-# ── PDF DOCUMENTS ────────────────────────────────────────
-# Invoice / Act / Receipt / Ticket — all rendered by pdf_documents.render_document
-# from per-project branding stored in crm_document_settings.
+# PDF DOCUMENTS — Invoice/Act/Receipt/Ticket rendered by pdf_documents.render_document from crm_document_settings.
 
 def _get_branding(project_id: int) -> dict:
     row = db_one("SELECT * FROM crm_document_settings WHERE project_id=%s", (project_id,))
@@ -4395,8 +5069,7 @@ def _pdf_response(pdf_bytes: bytes, filename: str):
 def order_invoice_pdf(order_id: int, request: Request,
                       style: Optional[str] = Query(None),
                       api_key_record: dict = Depends(resolve_api_key)):
-    """Return a PDF invoice for one order. Customer must be authenticated and
-    own the order (or pass an `?internal_key=` for staff access — TODO)."""
+    """Return PDF invoice for one order; customer must own it (or staff via internal_key — TODO)."""
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
     order = db_one(
