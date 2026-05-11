@@ -281,9 +281,12 @@ def run_migrations():
                     text             TEXT NOT NULL DEFAULT '',
                     sender_user_id   INTEGER DEFAULT NULL REFERENCES crm_users(id) ON DELETE SET NULL,
                     external_msg_id  VARCHAR(128) DEFAULT NULL,
+                    attachments      JSONB NOT NULL DEFAULT '[]'::jsonb,
                     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Backfill column for installations that pre-date the attachments support.
+            cur.execute("ALTER TABLE crm_chat_messages ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_conv_project ON crm_chat_conversations(project_id, is_active, last_message_at DESC)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON crm_chat_messages(conversation_id, created_at)")
             conn.commit()
@@ -6879,14 +6882,17 @@ chat_hub = ChatHub()
 
 async def _handle_inbound_message(project_id: int, channel: str,
                                   external_chat_id: str, text: str,
-                                  external_msg_id: str = ""):
-    """Channel-agnostic inbound: upsert conversation + insert message + broadcast via WebSocket."""
-    if not external_chat_id or not text:
+                                  external_msg_id: str = "",
+                                  attachments: list | None = None):
+    """Channel-agnostic inbound: upsert conversation, insert message (+attachments), broadcast."""
+    attachments = attachments or []
+    # Drop empty messages — but keep ones that ONLY have an attachment (e.g. Telegram voice with no caption).
+    if not external_chat_id or (not text and not attachments):
         return
 
     contact_uid = make_contact_uid(channel, external_chat_id, project_id)
-    preview     = sanitize(text[:200])
-    safe_text   = sanitize(text[:4000])
+    preview     = sanitize(text[:200]) if text else _attachment_preview(attachments)
+    safe_text   = sanitize(text[:4000]) if text else ""
 
     loop = asyncio.get_event_loop()
 
@@ -6908,10 +6914,10 @@ async def _handle_inbound_message(project_id: int, channel: str,
             )
             conv = cur.fetchone()
             cur.execute(
-                """INSERT INTO crm_chat_messages (conversation_id, direction, text, external_msg_id)
-                   VALUES (%s, 'in', %s, %s)
-                   RETURNING id, conversation_id, direction, text, sender_user_id, created_at""",
-                (conv["id"], safe_text, str(external_msg_id))
+                """INSERT INTO crm_chat_messages (conversation_id, direction, text, external_msg_id, attachments)
+                   VALUES (%s, 'in', %s, %s, %s::jsonb)
+                   RETURNING id, conversation_id, direction, text, sender_user_id, attachments, created_at""",
+                (conv["id"], safe_text, str(external_msg_id), json.dumps(attachments))
             )
             message = cur.fetchone()
             conn.commit()
@@ -6921,14 +6927,157 @@ async def _handle_inbound_message(project_id: int, channel: str,
     await chat_hub.broadcast(project_id, {
         "type":         "message.created",
         "conversation": _serialize_conv(conv),
-        "message":      _serialize_msg(message),
+        "message":      _serialize_msg(message, project_id),
     })
+
+
+# Short label shown in the conversation list when the message has no text body.
+_ATT_PREVIEW = {"image": "📷 Photo", "video": "🎬 Video", "audio": "🎵 Audio",
+                "voice": "🎤 Voice message", "file": "📎 File"}
+
+def _attachment_preview(attachments: list) -> str:
+    if not attachments: return ""
+    a = attachments[0]
+    label = _ATT_PREVIEW.get(a.get("type"), "📎 Attachment")
+    name  = a.get("filename")
+    return f"{label}: {name}"[:200] if name and a.get("type") == "file" else label
+
+
+# ── Per-channel attachment extractors ────────────────────────────────────────
+# Each takes the raw inbound payload and returns a list of dicts with shape:
+#   {type, url?, ref?, mime?, filename?, duration?, size?, thumb?}
+# `url`  — direct media URL renderable in <img>/<video>/<audio>; if missing, frontend hits /api/chat/messages/{id}/media/{idx}.
+# `ref`  — channel-specific lookup token (Telegram file_id, WhatsApp media_id) used by the proxy.
+
+def _extract_telegram_attachments(msg: dict) -> list:
+    out = []
+    # Telegram sends multiple photo sizes; we keep the largest.
+    if msg.get("photo"):
+        biggest = max(msg["photo"], key=lambda p: p.get("file_size") or 0)
+        out.append({"type": "image", "ref": biggest.get("file_id"),
+                    "mime": "image/jpeg", "size": biggest.get("file_size")})
+    if msg.get("video"):
+        v = msg["video"]
+        out.append({"type": "video", "ref": v.get("file_id"),
+                    "mime": v.get("mime_type") or "video/mp4",
+                    "duration": v.get("duration"), "size": v.get("file_size"),
+                    "filename": v.get("file_name")})
+    if msg.get("voice"):
+        v = msg["voice"]
+        out.append({"type": "voice", "ref": v.get("file_id"),
+                    "mime": v.get("mime_type") or "audio/ogg",
+                    "duration": v.get("duration"), "size": v.get("file_size")})
+    if msg.get("audio"):
+        a = msg["audio"]
+        out.append({"type": "audio", "ref": a.get("file_id"),
+                    "mime": a.get("mime_type") or "audio/mpeg",
+                    "duration": a.get("duration"), "size": a.get("file_size"),
+                    "filename": a.get("file_name") or a.get("title")})
+    if msg.get("document"):
+        d = msg["document"]
+        # Documents can also be stickers/animations — bucket by MIME.
+        mime = d.get("mime_type") or "application/octet-stream"
+        kind = "image" if mime.startswith("image/") else "video" if mime.startswith("video/") else "file"
+        out.append({"type": kind, "ref": d.get("file_id"),
+                    "mime": mime, "filename": d.get("file_name"),
+                    "size": d.get("file_size")})
+    if msg.get("sticker"):
+        s = msg["sticker"]
+        out.append({"type": "image", "ref": s.get("file_id"),
+                    "mime": "image/webp", "size": s.get("file_size")})
+    return out
+
+
+def _extract_discord_attachments(msg: dict) -> list:
+    """Discord CDN URLs are public-ish; store directly so the browser can render them."""
+    out = []
+    for a in (msg.get("attachments") or []):
+        mime = a.get("content_type") or "application/octet-stream"
+        kind = ("image" if mime.startswith("image/") else
+                "video" if mime.startswith("video/") else
+                "voice" if a.get("waveform") else
+                "audio" if mime.startswith("audio/") else
+                "file")
+        out.append({"type": kind, "url": a.get("url"),
+                    "mime": mime, "filename": a.get("filename"),
+                    "size": a.get("size"), "duration": a.get("duration_secs")})
+    return out
+
+
+def _extract_vk_attachments(msg: dict) -> list:
+    out = []
+    for att in (msg.get("attachments") or []):
+        t = att.get("type")
+        if t == "photo":
+            sizes = (att.get("photo") or {}).get("sizes") or []
+            if sizes:
+                best = max(sizes, key=lambda s: (s.get("width") or 0) * (s.get("height") or 0))
+                out.append({"type": "image", "url": best.get("url"), "mime": "image/jpeg"})
+        elif t == "video":
+            v = att.get("video") or {}
+            # VK doesn't always give a direct mp4 URL — fall back to the player URL.
+            url = v.get("player") or (v.get("files") or {}).get("mp4_480") or (v.get("files") or {}).get("mp4_360")
+            out.append({"type": "video", "url": url, "mime": "video/mp4",
+                        "duration": v.get("duration"), "thumb": (v.get("image") or [{}])[-1].get("url")})
+        elif t == "audio_message":
+            a = att.get("audio_message") or {}
+            out.append({"type": "voice", "url": a.get("link_ogg") or a.get("link_mp3"),
+                        "mime": "audio/ogg", "duration": a.get("duration")})
+        elif t == "doc":
+            d = att.get("doc") or {}
+            mime = d.get("ext") and f"application/{d['ext']}" or "application/octet-stream"
+            out.append({"type": "file", "url": d.get("url"),
+                        "mime": mime, "filename": d.get("title"), "size": d.get("size")})
+    return out
+
+
+def _extract_whatsapp_attachments(msg: dict) -> list:
+    """WhatsApp media must be fetched via /{media_id} with token — store ref, proxy resolves at request time."""
+    out = []
+    for kind in ("image", "video", "audio", "document"):
+        m = msg.get(kind)
+        if not m: continue
+        t = ("file" if kind == "document" else
+             "voice" if kind == "audio" and m.get("voice") else
+             kind)
+        out.append({"type": t, "ref": m.get("id"),
+                    "mime": m.get("mime_type"), "filename": m.get("filename")})
+    if msg.get("sticker"):
+        out.append({"type": "image", "ref": msg["sticker"].get("id"), "mime": "image/webp"})
+    return out
+
+
+def _extract_meta_attachments(msg: dict) -> list:
+    """Instagram + Facebook share the same attachment shape — direct CDN URLs in payload.url."""
+    out = []
+    for a in (msg.get("attachments") or []):
+        t = a.get("type")
+        url = (a.get("payload") or {}).get("url")
+        if not url: continue
+        kind = ("image" if t == "image" else
+                "video" if t == "video" else
+                "audio" if t == "audio" else
+                "voice" if t == "audio" else
+                "file")
+        out.append({"type": kind, "url": url, "mime": None})
+    return out
+
+
+def _extract_viber_attachments(msg: dict) -> list:
+    """Viber inlines media URL in the message body — each message has at most one media item."""
+    t = msg.get("type")
+    if t in ("picture", "video", "file"):
+        kind = {"picture": "image", "video": "video", "file": "file"}[t]
+        return [{"type": kind, "url": msg.get("media"),
+                 "filename": msg.get("file_name"), "size": msg.get("size"),
+                 "duration": msg.get("duration")}]
+    return []
 
 
 # ── Telegram long-poll background poller (works on localhost without HTTPS) ───
 
 async def _process_telegram_update(project_id: int, update: dict):
-    """Handle one Telegram update: upsert conversation + message, broadcast."""
+    """Handle one Telegram update: upsert conversation + message (+attachments), broadcast."""
     msg = update.get("message") or update.get("edited_message")
     if not msg:
         return
@@ -6938,6 +7087,7 @@ async def _process_telegram_update(project_id: int, update: dict):
     await _handle_inbound_message(
         project_id, "telegram", external_chat_id, text,
         external_msg_id=str(msg.get("message_id", "")),
+        attachments=_extract_telegram_attachments(msg),
     )
 
 
@@ -7131,6 +7281,7 @@ class DiscordPoller:
         await _handle_inbound_message(
             project_id, "discord", external_chat_id, text,
             external_msg_id=str(msg.get("id", "")),
+            attachments=_extract_discord_attachments(msg),
         )
 
 
@@ -7257,6 +7408,7 @@ class VKPoller:
                                 await _handle_inbound_message(
                                     project_id, "vk", external_chat_id, text,
                                     external_msg_id=str(msg.get("id", "")),
+                                    attachments=_extract_vk_attachments(msg),
                                 )
                             except Exception as e:
                                 print(f"[vk poller] process error: {e}")
@@ -7399,13 +7551,24 @@ def _serialize_conv(row: dict) -> dict:
     }
 
 
-def _serialize_msg(row: dict) -> dict:
+def _serialize_msg(row: dict, project_id: int | None = None) -> dict:
+    # Sign the proxy URL for token-protected attachments so the browser can render them via <img>/<video>/<audio>.
+    atts = list(row.get("attachments") or [])
+    if project_id:
+        signed = []
+        for i, a in enumerate(atts):
+            a = dict(a)
+            if a.get("ref") and not a.get("url"):
+                a["url"] = _sign_chat_media_url(row["id"], i, project_id)
+            signed.append(a)
+        atts = signed
     return {
         "id":              row["id"],
         "conversation_id": row["conversation_id"],
         "direction":       row["direction"],
         "text":            row["text"],
         "sender_user_id":  row.get("sender_user_id"),
+        "attachments":     atts,
         "created_at":      row["created_at"].isoformat() if row.get("created_at") else None,
     }
 
@@ -7644,6 +7807,83 @@ def mark_conversation_read(conv_id: int,
 
 # ── Messages ──────────────────────────────────────────────────────────────────
 
+# Persistent secret for signing chat-media proxy URLs — same secret survives restarts in prod via env, generated at boot for dev.
+MEDIA_SIG_SECRET = os.getenv("MEDIA_SIG_SECRET") or secrets.token_hex(32)
+
+# 24h signed URL — long enough that an opened conversation keeps working all day, short enough to limit scrape windows if leaked.
+def _sign_chat_media_url(msg_id: int, idx: int, project_id: int, ttl_seconds: int = 86400) -> str:
+    exp = int(time.time()) + ttl_seconds
+    payload  = f"{msg_id}.{idx}.{project_id}.{exp}"
+    sig      = hmac.new(MEDIA_SIG_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{CRM_BACKEND_URL}/api/chat/media/{msg_id}/{idx}?pid={project_id}&exp={exp}&sig={sig}"
+
+
+def _verify_chat_media_sig(msg_id: int, idx: int, project_id: int, exp: int, sig: str) -> bool:
+    if exp < int(time.time()): return False
+    payload  = f"{msg_id}.{idx}.{project_id}.{exp}"
+    expected = hmac.new(MEDIA_SIG_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return hmac.compare_digest(expected, sig)
+
+
+# Fetches the actual media bytes from the channel's CDN/API — kept server-side so bot tokens never reach the browser.
+def _fetch_channel_media(channel: str, ref: str, cfg: dict) -> tuple[bytes, str] | None:
+    if channel == "telegram":
+        token = cfg.get("bot_token")
+        if not (token and ref): return None
+        result = _telegram_call(token, "getFile", {"file_id": ref})
+        path = ((result.get("result") or {}).get("file_path") or "") if result.get("ok") else ""
+        if not path: return None
+        try:
+            with urllib.request.urlopen(f"https://api.telegram.org/file/bot{token}/{path}", timeout=30) as r:
+                return r.read(), r.headers.get("Content-Type", "application/octet-stream")
+        except Exception: return None
+    if channel == "whatsapp":
+        token = cfg.get("access_token")
+        if not (token and ref): return None
+        try:
+            req = urllib.request.Request(f"https://graph.facebook.com/v19.0/{ref}",
+                                          headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                meta_url = (json.loads(r.read()) or {}).get("url")
+            if not meta_url: return None
+            req2 = urllib.request.Request(meta_url, headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req2, timeout=30) as r:
+                return r.read(), r.headers.get("Content-Type", "application/octet-stream")
+        except Exception: return None
+    return None
+
+
+@app.get("/api/chat/media/{msg_id}/{idx}")
+def get_chat_media(msg_id: int, idx: int,
+                   pid: int = Query(...), exp: int = Query(...), sig: str = Query(...)):
+    """Streams a chat attachment's bytes — auth via signed URL so <img>/<video> tags work cross-origin."""
+    if not _verify_chat_media_sig(msg_id, idx, pid, exp, sig):
+        raise HTTPException(403, "Invalid or expired signature")
+    row = db_one(
+        """SELECT m.attachments, c.channel
+             FROM crm_chat_messages m
+             JOIN crm_chat_conversations c ON c.id = m.conversation_id
+            WHERE m.id=%s AND c.project_id=%s""",
+        (msg_id, pid)
+    )
+    if not row: raise HTTPException(404, "Message not found")
+    atts = row.get("attachments") or []
+    if idx < 0 or idx >= len(atts): raise HTTPException(404, "Attachment not found")
+    att = atts[idx]
+    if att.get("url") and not att.get("ref"):
+        return RedirectResponse(att["url"])  # CDN-hosted — fast path, no streaming
+    integ = db_one(
+        "SELECT config FROM crm_chat_integrations WHERE project_id=%s AND channel=%s AND is_active=TRUE",
+        (pid, row["channel"])
+    )
+    if not integ: raise HTTPException(503, "Channel disconnected")
+    fetched = _fetch_channel_media(row["channel"], att.get("ref") or "", integ.get("config") or {})
+    if not fetched: raise HTTPException(502, "Media unavailable")
+    data, mime = fetched
+    return Response(content=data, media_type=mime,
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.get("/api/chat/conversations/{conv_id}/messages")
 def list_messages(conv_id: int,
                   project_id: int = Query(...),
@@ -7654,13 +7894,13 @@ def list_messages(conv_id: int,
     if not conv:
         raise HTTPException(404, "Conversation not found")
     rows = db_all(
-        """SELECT id, conversation_id, direction, text, sender_user_id, created_at
+        """SELECT id, conversation_id, direction, text, sender_user_id, attachments, created_at
            FROM crm_chat_messages
            WHERE conversation_id=%s
            ORDER BY id ASC""",
         (conv_id,)
     )
-    return {"messages": [_serialize_msg(r) for r in rows]}
+    return {"messages": [_serialize_msg(r, project_id) for r in rows]}
 
 
 @app.post("/api/chat/conversations/{conv_id}/messages")
@@ -7794,7 +8034,7 @@ async def send_message(conv_id: int,
         cur.execute(
             """INSERT INTO crm_chat_messages (conversation_id, direction, text, sender_user_id, external_msg_id)
                VALUES (%s, 'out', %s, %s, %s)
-               RETURNING id, conversation_id, direction, text, sender_user_id, created_at""",
+               RETURNING id, conversation_id, direction, text, sender_user_id, attachments, created_at""",
             (conv_id, text, user["id"], external_msg_id)
         )
         msg = cur.fetchone()
@@ -7806,13 +8046,38 @@ async def send_message(conv_id: int,
         )
         conn.commit()
 
-    payload = _serialize_msg(msg)
+    payload = _serialize_msg(msg, project_id)
     await chat_hub.broadcast(project_id, {
         "type":            "message.created",
         "conversation_id": conv_id,
         "message":         payload,
     })
     return {"ok": True, "message": payload}
+
+
+@app.delete("/api/chat/messages/{msg_id}")
+async def delete_chat_message(msg_id: int,
+                              project_id: int = Query(...),
+                              user: dict = Depends(get_current_user)):
+    """Hard-deletes a single chat message (CRM-side only — does not unsend on the messenger)."""
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        """SELECT m.id, m.conversation_id
+             FROM crm_chat_messages m
+             JOIN crm_chat_conversations c ON c.id = m.conversation_id
+            WHERE m.id=%s AND c.project_id=%s""",
+        (msg_id, project_id)
+    )
+    if not row: raise HTTPException(404, "Message not found")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_chat_messages WHERE id=%s", (msg_id,))
+        conn.commit()
+    await chat_hub.broadcast(project_id, {
+        "type":            "message.deleted",
+        "conversation_id": row["conversation_id"],
+        "message_id":      msg_id,
+    })
+    return {"ok": True}
 
 
 # Inbound webhooks: HTTPS-only messengers (Meta family, Viber, Telegram in prod) hit these endpoints; long-poll/Gateway channels go through pollers instead.
@@ -7841,6 +8106,7 @@ async def telegram_webhook(project_id: int, request: Request):
         str(chat.get("id", "")),
         (msg.get("text") or msg.get("caption") or "").strip(),
         external_msg_id=str(msg.get("message_id", "")),
+        attachments=_extract_telegram_attachments(msg),
     )
     return {"ok": True}
 
@@ -7913,6 +8179,7 @@ async def channel_webhook_inbound(channel: str, project_id: int, request: Reques
                     await _handle_inbound_message(
                         project_id, "whatsapp", chat_id, text,
                         external_msg_id=str(msg.get("id", "")),
+                        attachments=_extract_whatsapp_attachments(msg),
                     )
 
     elif channel in ("instagram", "facebook"):
@@ -7926,6 +8193,7 @@ async def channel_webhook_inbound(channel: str, project_id: int, request: Reques
                 await _handle_inbound_message(
                     project_id, channel, chat_id, text,
                     external_msg_id=str(msg.get("mid", "")),
+                    attachments=_extract_meta_attachments(msg),
                 )
 
     elif channel == "viber":
@@ -7938,6 +8206,7 @@ async def channel_webhook_inbound(channel: str, project_id: int, request: Reques
             await _handle_inbound_message(
                 project_id, "viber", chat_id, text,
                 external_msg_id=str(payload.get("message_token", "")),
+                attachments=_extract_viber_attachments(msg),
             )
         # `webhook`, `subscribed`, `delivered`, `seen` events are acknowledged silently
 

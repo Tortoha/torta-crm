@@ -4,7 +4,9 @@ import { useOutletContext } from 'react-router-dom';
 import {
   Plug, X, XCircle, CaretRight, CaretDown, CheckCircle, ChatCircleDots,
   PaperPlaneRight, ChatsCircle, ArrowCounterClockwise,
-  Copy, Trash, CircleNotch,
+  Copy, Trash, CircleNotch, MagnifyingGlass, FileText, Microphone, Play,
+  Pause, DownloadSimple, MagnifyingGlassPlus, MagnifyingGlassMinus, Eye,
+  PencilSimple,
 } from '@phosphor-icons/react';
 import { Icon as IconifyIcon } from '@iconify/react';
 import { API_BASE } from '../../api.js';
@@ -213,21 +215,8 @@ function TabSwitcher({ tab, setTab }) {
 
 // ─── Conversation Folder (Sidebar NavSection-style + Dynamic Block) ───────────
 
-function ConvFolder({ title, count, conversations, selectedId, onSelect, open, onToggle, emptyHint }) {
-  const itemsEl = useRef(null);
-  const itemEls = useRef({});
-  const [hovered, setHovered] = useState(null);
-  const [ind, setInd] = useState({ opacity: 0, y: 0, h: 0 });
-
-  const currentKey = hovered ?? (selectedId && conversations.some(c => c.id === selectedId) ? selectedId : null);
-
-  useLayoutEffect(() => {
-    const container = itemsEl.current;
-    const el = currentKey ? itemEls.current[currentKey] : null;
-    if (!container || !el || !open) { setInd(p => ({ ...p, opacity: 0 })); return; }
-    setInd({ opacity: 1, y: el.offsetTop, h: el.offsetHeight });
-  }, [currentKey, open, conversations.length]);
-
+function ConvFolder({ title, count, conversations, selectedId, onSelect, open, onToggle,
+                       emptyHint, onCloseConv, onReopenConv, onMarkRead, showToast }) {
   return (
     <div className="chat-folder">
       <button type="button" className="chat-folder-header" onClick={onToggle}>
@@ -236,47 +225,357 @@ function ConvFolder({ title, count, conversations, selectedId, onSelect, open, o
         <span className="chat-folder-count">{count}</span>
       </button>
       <div className={`chat-folder-body${open ? ' chat-folder-body--open' : ''}`}>
-        <div className="chat-folder-items" ref={itemsEl} onMouseLeave={() => setHovered(null)}>
-          <div className="chat-folder-indicator"
-            style={{ opacity: ind.opacity, height: `${ind.h}px`, transform: `translateY(${ind.y}px)` }} />
+        <div className="chat-folder-items">
           {conversations.length === 0 ? (
             <div className="chat-folder-empty">{emptyHint}</div>
-          ) : conversations.map(c => {
-            const meta = channelMeta(c.channel);
-            const ChannelIcon = meta.Icon;
-            const active = currentKey === c.id;
-            return (
-              <div key={c.id}
-                ref={el => { if (el) itemEls.current[c.id] = el; else delete itemEls.current[c.id]; }}
-                className={`chat-conv-row${active ? ' chat-conv-row--current' : ''}`}
-                onMouseEnter={() => setHovered(c.id)}
-                onClick={() => onSelect(c.id)}
-              >
-                <div className="chat-conv-avatar">
-                  <ChannelIcon size={20} />
-                </div>
-                <div className="chat-conv-text">
-                  <div className="chat-conv-top">
-                    <span className="chat-conv-uid">{c.contact_uid}</span>
-                    <span className="chat-conv-time">{fmtTime(c.last_message_at)}</span>
-                  </div>
-                  <div className="chat-conv-bottom">
-                    <span className="chat-conv-preview">{c.last_message_preview || '—'}</span>
-                    {c.unread_count > 0 && <span className="chat-conv-unread">{c.unread_count}</span>}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          ) : conversations.map(c => (
+            <ConvRow key={c.id} c={c} active={selectedId === c.id} onSelect={onSelect}
+              onCloseConv={onCloseConv} onReopenConv={onReopenConv}
+              onMarkRead={onMarkRead} showToast={showToast} />
+          ))}
         </div>
       </div>
     </div>
   );
 }
 
+// One conversation row — InteractiveSection 3D tilt (Products-row style) + right-click context menu.
+const ROW_TILT_CONV = {
+  maxAngleX: 6, maxAngleY: 3, lerp: 0.05, lerpOut: 0.07,
+  scale: 1.03, perspective: 900,
+  gloss: { opacity: 0.10, spread: 40 },
+};
+
+function ConvRow({ c, active, onSelect, onCloseConv, onReopenConv, onMarkRead, showToast }) {
+  const [menu, setMenu] = useState(null);
+  const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT_CONV, !!menu);
+  const meta = channelMeta(c.channel);
+  const ChannelIcon = meta.Icon;
+
+  const items = [
+    ...(c.unread_count > 0 ? [{ icon: Eye, label: 'Mark as read', onClick: () => onMarkRead?.(c.id) }] : []),
+    { icon: Copy, label: 'Copy ID', onClick: () => {
+        navigator.clipboard?.writeText(c.contact_uid);
+        showToast?.('ID copied');
+      } },
+    'sep',
+    c.is_active
+      ? { icon: XCircle, label: 'Close chat',  onClick: () => onCloseConv?.(c.id),  danger: true }
+      : { icon: ArrowCounterClockwise, label: 'Reopen chat', onClick: () => onReopenConv?.(c.id) },
+  ];
+
+  return (
+    <>
+      <div ref={ref}
+        className={`chat-conv-row${active ? ' chat-conv-row--current' : ''}`}
+        onClick={() => onSelect(c.id)}
+        onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
+        {...handlers}>
+        <div ref={glossRef} className="chat-conv-gloss" />
+        <div className="chat-conv-avatar">
+          <ChannelIcon size={20} />
+        </div>
+        <div className="chat-conv-text">
+          <div className="chat-conv-top">
+            <span className="chat-conv-uid">{c.contact_uid}</span>
+            <span className="chat-conv-time">{fmtTime(c.last_message_at)}</span>
+          </div>
+          <div className="chat-conv-bottom">
+            <span className="chat-conv-preview">{c.last_message_preview || '—'}</span>
+            {c.unread_count > 0 && <span className="chat-conv-unread">{c.unread_count}</span>}
+          </div>
+        </div>
+      </div>
+      {menu && <ContextMenu pos={menu} items={items} onClose={() => setMenu(null)} />}
+    </>
+  );
+}
+
+// Generic right-click menu — items: [{ icon, label, onClick, danger? }, ...].
+function ContextMenu({ pos, items, onClose }) {
+  useEffect(() => {
+    const onKey   = (e) => { if (e.key === 'Escape') onClose(); };
+    const onDown  = (e) => { if (!e.target.closest?.('.chat-ctx-menu')) onClose(); };
+    const onScroll = () => onClose();
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [onClose]);
+
+  // Clamp inside viewport.
+  const margin = 8;
+  const width  = 200;
+  const height = 30 + items.length * 36;
+  const left = Math.max(margin, Math.min(pos.x, window.innerWidth  - width  - margin));
+  const top  = Math.max(margin, Math.min(pos.y, window.innerHeight - height - margin));
+
+  return createPortal(
+    <div className="org-card-dropdown chat-ctx-menu"
+      style={{ top, left, minWidth: width }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}>
+      {items.map((it, i) => it === 'sep'
+        ? <div key={`sep-${i}`} className="org-card-dropdown-sep" />
+        : (
+          <button key={i} type="button"
+            className={`org-card-dropdown-item${it.danger ? ' org-card-dropdown-item--danger' : ''}`}
+            onClick={() => { it.onClick(); onClose(); }}>
+            <it.icon weight="bold" className="org-card-dropdown-icon" />
+            {it.label}
+          </button>
+        )
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+// Deterministic pseudo-random waveform — 32 bar heights (15..100) seeded by msgId+idx so each voice msg gets a stable visual.
+function generateWaveform(seed) {
+  const bars = 32;
+  const out = new Array(bars);
+  let s = (seed || 1) >>> 0;
+  for (let i = 0; i < bars; i++) {
+    s = (s * 9301 + 49297) % 233280;
+    out[i] = 15 + Math.floor((s / 233280) * 85);
+  }
+  return out;
+}
+
+// Instagram-style voice/audio player — purple gradient pill with play button + waveform + duration. Bars fill white as audio plays.
+function VoicePlayer({ src, duration, msgId, idx }) {
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);   // 0..1
+  const [actualDur, setActualDur] = useState(duration || 0);
+  const audioRef = useRef(null);
+  const bars = useMemo(() => generateWaveform((msgId || 0) * 31 + (idx || 0)), [msgId, idx]);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const onTime = () => setProgress(a.duration ? a.currentTime / a.duration : 0);
+    const onMeta = () => { if (a.duration && !duration) setActualDur(a.duration); };
+    const onEnd  = () => { setPlaying(false); setProgress(0); };
+    a.addEventListener('timeupdate', onTime);
+    a.addEventListener('loadedmetadata', onMeta);
+    a.addEventListener('ended', onEnd);
+    return () => {
+      a.removeEventListener('timeupdate', onTime);
+      a.removeEventListener('loadedmetadata', onMeta);
+      a.removeEventListener('ended', onEnd);
+    };
+  }, [src, duration]);
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) { a.play().catch(() => {}); setPlaying(true); }
+    else          { a.pause();                setPlaying(false); }
+  };
+
+  const seek = (e) => {
+    const a = audioRef.current;
+    if (!a || !a.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct  = (e.clientX - rect.left) / rect.width;
+    a.currentTime = Math.max(0, Math.min(a.duration, pct * a.duration));
+  };
+
+  const fmt = (sec) => {
+    if (!sec || isNaN(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
+  const remaining = playing && actualDur ? actualDur - actualDur * progress : actualDur;
+
+  return (
+    <div className="chat-voice">
+      <audio ref={audioRef} src={src} preload="metadata" />
+      <button type="button" className="chat-voice-btn" onClick={toggle}
+              aria-label={playing ? 'Pause' : 'Play'}>
+        {playing ? <Pause weight="fill" size={16} /> : <Play weight="fill" size={16} />}
+      </button>
+      <div className="chat-voice-bars" onClick={seek}>
+        {bars.map((h, i) => {
+          const filled = (i / bars.length) <= progress;
+          return (
+            <span key={i}
+              className={`chat-voice-bar${filled ? ' chat-voice-bar--filled' : ''}`}
+              style={{ height: `${h}%` }} />
+          );
+        })}
+      </div>
+      <span className="chat-voice-time">{fmt(remaining)}</span>
+    </div>
+  );
+}
+
+// WhatsApp/Telegram-style image lightbox — wheel to zoom, drag to pan, download/close buttons.
+function ImageLightbox({ src, alt, filename, onClose }) {
+  const [scale, setScale] = useState(1);
+  const [pan,   setPan]   = useState({ x: 0, y: 0 });
+  const dragRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const onWheel = (e) => {
+    e.preventDefault();
+    setScale(s => Math.max(0.5, Math.min(5, s - e.deltaY * 0.002)));
+  };
+
+  const onMouseDown = (e) => {
+    if (scale <= 1) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, baseX: pan.x, baseY: pan.y };
+  };
+  const onMouseMove = (e) => {
+    if (!dragRef.current) return;
+    const d = dragRef.current;
+    setPan({ x: d.baseX + (e.clientX - d.startX), y: d.baseY + (e.clientY - d.startY) });
+  };
+  const onMouseUp = () => { dragRef.current = null; };
+
+  const downloadAs = async (ext) => {
+    try {
+      const r = await fetch(src);
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (filename || `image.${ext}`).replace(/\.[^.]+$/, '') + `.${ext}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch {}
+  };
+
+  return createPortal(
+    <div className="chat-lightbox"
+      onMouseDown={(e) => e.target.classList.contains('chat-lightbox') && onClose()}
+      onWheel={onWheel}>
+      <div className="chat-lightbox-toolbar" onMouseDown={(e) => e.stopPropagation()}>
+        <button type="button" onClick={() => setScale(s => Math.max(0.5, s - 0.25))} title="Zoom out">
+          <MagnifyingGlassMinus weight="bold" size={18} />
+        </button>
+        <span className="chat-lightbox-zoom">{Math.round(scale * 100)}%</span>
+        <button type="button" onClick={() => setScale(s => Math.min(5, s + 0.25))} title="Zoom in">
+          <MagnifyingGlassPlus weight="bold" size={18} />
+        </button>
+        <button type="button" onClick={() => downloadAs('png')} title="Download as PNG">
+          <DownloadSimple weight="bold" size={18} /> PNG
+        </button>
+        <button type="button" onClick={onClose} title="Close" className="chat-lightbox-close">
+          <X weight="bold" size={18} />
+        </button>
+      </div>
+      <img src={src} alt={alt || ''}
+        className="chat-lightbox-img"
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+          cursor: scale > 1 ? (dragRef.current ? 'grabbing' : 'grab') : 'zoom-in',
+        }}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
+        onClick={(e) => { if (scale === 1) { setScale(2); e.stopPropagation(); } }} />
+    </div>,
+    document.body,
+  );
+}
+
+// Backend always sets att.url — either direct CDN (Discord/VK/Meta/Viber) or a signed CRM proxy URL (Telegram/WhatsApp).
+function AttachmentItem({ msg, idx, att, onImageClick }) {
+  const src = att.url;
+  if (!src) return null;
+  if (att.type === 'image') {
+    return (
+      <button type="button" className="chat-att chat-att--image"
+        onClick={() => onImageClick?.(src, att.filename)}>
+        <img src={src} alt={att.filename || 'image'} loading="lazy" />
+      </button>
+    );
+  }
+  if (att.type === 'video') {
+    return <video controls preload="metadata" className="chat-att chat-att--video"
+                  poster={att.thumb || undefined} src={src} />;
+  }
+  if (att.type === 'voice' || att.type === 'audio') {
+    return <VoicePlayer src={src} duration={att.duration} msgId={msg.id} idx={idx} />;
+  }
+  // Files / unknown — download link with icon + filename + size.
+  const sizeKb = att.size ? `${Math.round(att.size / 1024)} KB` : '';
+  return (
+    <a href={src} target="_blank" rel="noreferrer" download={att.filename || true}
+       className="chat-att chat-att--file">
+      <FileText size={20} weight="duotone" />
+      <span className="chat-att-name">{att.filename || 'attachment'}</span>
+      {sizeKb && <span className="chat-att-size">{sizeKb}</span>}
+      <DownloadSimple size={14} />
+    </a>
+  );
+}
+
+function MessageAttachments({ msg, onImageClick }) {
+  const atts = msg.attachments || [];
+  if (atts.length === 0) return null;
+  return (
+    <div className="chat-msg-attachments">
+      {atts.map((a, i) => <AttachmentItem key={i} msg={msg} idx={i} att={a} onImageClick={onImageClick} />)}
+    </div>
+  );
+}
+
+// One message bubble — handles its own right-click menu (Copy/Download/Delete).
+function MessageBubble({ msg, onImageClick, onDelete, onDownloadPng, showToast }) {
+  const [menu, setMenu] = useState(null);
+
+  const firstImg = (msg.attachments || []).find(a => a.type === 'image');
+  const items = [
+    ...(msg.text ? [{
+      icon: Copy, label: 'Copy text', onClick: () => {
+        navigator.clipboard?.writeText(msg.text);
+        showToast?.('Copied');
+      }
+    }] : []),
+    ...(firstImg ? [{
+      icon: DownloadSimple, label: 'Download as PNG',
+      onClick: () => onDownloadPng?.(firstImg.url, firstImg.filename),
+    }] : []),
+    ...(msg.attachments?.length ? [{
+      icon: DownloadSimple, label: 'Open original',
+      onClick: () => window.open(msg.attachments[0].url, '_blank'),
+    }] : []),
+    'sep',
+    { icon: Trash, label: 'Delete', onClick: () => onDelete?.(msg.id), danger: true },
+  ];
+
+  return (
+    <>
+      <div className={`chat-msg chat-msg--${msg.direction}`}>
+        <div className="chat-msg-bubble"
+          onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}>
+          <MessageAttachments msg={msg} onImageClick={onImageClick} />
+          {msg.text && <div className="chat-msg-text">{msg.text}</div>}
+          <div className="chat-msg-time">{fmtTime(msg.created_at)}</div>
+        </div>
+      </div>
+      {menu && <ContextMenu pos={menu} items={items} onClose={() => setMenu(null)} />}
+    </>
+  );
+}
+
 // ─── Message Thread ───────────────────────────────────────────────────────────
 
-function MessageThread({ projectId, conversation, onClosed, onReopened, onSent }) {
+function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, showToast }) {
   const [messages, setMessages] = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [text,     setText]     = useState('');
@@ -284,6 +583,7 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent }
   const [err,      setErr]      = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [copied,    setCopied]      = useState(false);
+  const [lightbox,  setLightbox]    = useState(null);   // { src, filename }
   const scrollRef = useRef(null);
   const pq = `?project_id=${projectId}`;
 
@@ -300,7 +600,7 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent }
     return () => { stop = true; };
   }, [conversation?.id, projectId]);
 
-  // Subscribe to WS events scoped to this thread
+  // Subscribe to WS events scoped to this thread (created + deleted).
   useEffect(() => {
     if (!conversation) return;
     const handler = e => {
@@ -310,11 +610,35 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent }
         const cid = data.conversation_id ?? data.conversation?.id;
         if (cid !== conversation.id) return;
         setMessages(prev => prev.some(m => m.id === data.message.id) ? prev : [...prev, data.message]);
+      } else if (data.type === 'message.deleted') {
+        if (data.conversation_id !== conversation.id) return;
+        setMessages(prev => prev.filter(m => m.id !== data.message_id));
       }
     };
     window.addEventListener('chat:event', handler);
     return () => window.removeEventListener('chat:event', handler);
   }, [conversation?.id]);
+
+  const deleteMessage = async (msgId) => {
+    if (!confirm('Delete this message? This only removes it from your CRM, not from the messenger.')) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/chat/messages/${msgId}${pq}`,
+                            { method: 'DELETE', credentials: 'include' });
+      if (r.ok) setMessages(prev => prev.filter(m => m.id !== msgId));
+      else      showToast?.('Failed to delete');
+    } catch { showToast?.('Network error'); }
+  };
+
+  const downloadImageAsPng = async (src, filename) => {
+    try {
+      const blob = await (await fetch(src)).blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (filename || 'image').replace(/\.[^.]+$/, '') + '.png';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch { showToast?.('Download failed'); }
+  };
 
   useLayoutEffect(() => {
     const sc = scrollRef.current;
@@ -413,12 +737,11 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent }
         ) : messages.length === 0 ? (
           <div className="chat-thread-empty-msgs">No messages yet.</div>
         ) : messages.map(m => (
-          <div key={m.id} className={`chat-msg chat-msg--${m.direction}`}>
-            <div className="chat-msg-bubble">
-              <div className="chat-msg-text">{m.text}</div>
-              <div className="chat-msg-time">{fmtTime(m.created_at)}</div>
-            </div>
-          </div>
+          <MessageBubble key={m.id} msg={m}
+            onImageClick={(src, filename) => setLightbox({ src, filename })}
+            onDelete={deleteMessage}
+            onDownloadPng={downloadImageAsPng}
+            showToast={showToast} />
         ))}
       </div>
 
@@ -440,6 +763,11 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent }
       )}
 
       {err && <div className="chat-thread-err">{err}</div>}
+
+      {lightbox && (
+        <ImageLightbox src={lightbox.src} filename={lightbox.filename}
+          onClose={() => setLightbox(null)} />
+      )}
     </div>
   );
 }
@@ -452,8 +780,10 @@ function ChatPanel({ projectId }) {
   const [selectedId, setSelectedId] = useState(null);
   const [openFolders, setOpenFolders] = useState({ active: true, inactive: false });
   const [filter, setFilter] = useState('');
+  const [toast, setToast] = useState('');
 
   const pq = `?project_id=${projectId}`;
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2400); };
 
   const reload = async () => {
     try {
@@ -547,35 +877,70 @@ function ChatPanel({ projectId }) {
     });
   };
 
+  // Context-menu actions on a conversation row.
+  const closeConv = async (id) => {
+    try {
+      await fetch(`${API_BASE}/api/chat/conversations/${id}/close${pq}`,
+                  { method: 'POST', credentials: 'include' });
+      handleClosed(id);
+      showToast('Chat closed');
+    } catch { showToast('Failed'); }
+  };
+  const reopenConv = async (id) => {
+    try {
+      await fetch(`${API_BASE}/api/chat/conversations/${id}/reopen${pq}`,
+                  { method: 'POST', credentials: 'include' });
+      handleReopened(id);
+      showToast('Chat reopened');
+    } catch { showToast('Failed'); }
+  };
+  const markRead = async (id) => {
+    try {
+      await fetch(`${API_BASE}/api/chat/conversations/${id}/read${pq}`,
+                  { method: 'POST', credentials: 'include' });
+      setConversations(prev => prev.map(c => c.id === id ? { ...c, unread_count: 0 } : c));
+    } catch {}
+  };
+
   return (
-    <div className="chat-shell">
-      <aside className="chat-aside">
-        <div className="chat-aside-search">
-          <input className="crm-input chat-search-input" placeholder="Search…"
-            value={filter} onChange={e => setFilter(e.target.value)} />
-        </div>
-        <div className="chat-aside-scroll">
-          {loading ? (
-            <div className="chat-aside-loading"><CircleNotch className="chat-spin" size={20} /></div>
-          ) : (
-            <>
-              <ConvFolder title="Active" count={active.length}
-                conversations={active} selectedId={selectedId} onSelect={handleSelect}
-                open={openFolders.active}
-                onToggle={() => setOpenFolders(p => ({ ...p, active: !p.active }))}
-                emptyHint="No active chats yet" />
-              <ConvFolder title="Inactive" count={inactive.length}
-                conversations={inactive} selectedId={selectedId} onSelect={handleSelect}
-                open={openFolders.inactive}
-                onToggle={() => setOpenFolders(p => ({ ...p, inactive: !p.inactive }))}
-                emptyHint="Closed chats appear here" />
-            </>
-          )}
-        </div>
-      </aside>
-      <MessageThread projectId={projectId} conversation={selected}
-        onClosed={handleClosed} onReopened={handleReopened} onSent={handleSent} />
-    </div>
+    <>
+      <h1 className="crm-page-title">Chat with Customers</h1>
+      <div className="chat-shell">
+        <aside className="chat-aside">
+          <div className="chat-aside-search">
+            <MagnifyingGlass className="chat-search-icon" weight="bold" />
+            <input className="chat-search-input" placeholder="Search conversations…"
+              value={filter} onChange={e => setFilter(e.target.value)} />
+          </div>
+          <div className="chat-aside-scroll">
+            {loading ? (
+              <div className="chat-aside-loading"><CircleNotch className="chat-spin" size={20} /></div>
+            ) : (
+              <>
+                <ConvFolder title="Active" count={active.length}
+                  conversations={active} selectedId={selectedId} onSelect={handleSelect}
+                  open={openFolders.active}
+                  onToggle={() => setOpenFolders(p => ({ ...p, active: !p.active }))}
+                  emptyHint="No active chats yet"
+                  onCloseConv={closeConv} onReopenConv={reopenConv}
+                  onMarkRead={markRead} showToast={showToast} />
+                <ConvFolder title="Inactive" count={inactive.length}
+                  conversations={inactive} selectedId={selectedId} onSelect={handleSelect}
+                  open={openFolders.inactive}
+                  onToggle={() => setOpenFolders(p => ({ ...p, inactive: !p.inactive }))}
+                  emptyHint="Closed chats appear here"
+                  onCloseConv={closeConv} onReopenConv={reopenConv}
+                  onMarkRead={markRead} showToast={showToast} />
+              </>
+            )}
+          </div>
+        </aside>
+        <MessageThread projectId={projectId} conversation={selected}
+          onClosed={handleClosed} onReopened={handleReopened} onSent={handleSent}
+          showToast={showToast} />
+      </div>
+      {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
+    </>
   );
 }
 
