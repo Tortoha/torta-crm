@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import "./Style/Login.css";
-import { client } from "./api.js"
+import { client, pickError } from "./api.js"
 
 function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -39,7 +39,7 @@ function ForgotPassword() {
           data?.message || "If the account exists, a password reset email has been sent."
         );
       } else {
-        setGeneralError(data?.detail || "Failed to send reset email");
+        setGeneralError(pickError(data, "Failed to send reset email"));
       }
     } catch {
       setGeneralError("Network error");

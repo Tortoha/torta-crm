@@ -298,10 +298,12 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
     if (!isValidUrl(trimUrl)) return setErr('Enter a valid URL: http://... or https://...');
     setSaving(true); setErr('');
     try {
+      // Send merchant's browser TZ so booking_settings.timezone seeds correctly
+      const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
       const res  = await fetch(`${API_BASE}/api/orgs/${orgId}/projects`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimName, frontend_url: trimUrl }),
+        body: JSON.stringify({ name: trimName, frontend_url: trimUrl, timezone: browserTz }),
       });
       const data = await res.json();
       if (!res.ok) return setErr(data.detail || 'Error');

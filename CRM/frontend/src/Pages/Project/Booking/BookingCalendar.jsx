@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretLeft, CaretRight, CaretDown, User, UserGear, Phone, ChatText, Users } from '@phosphor-icons/react';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
@@ -18,9 +18,14 @@ const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // Both values are also exposed to CSS via custom properties (--cell-h on each
 // cell) so the actual `height` rule lives in Booking.css, not inline style.
 const ROW_MIN  = 48;     // empty hour
-const ROW_BUSY = 100;    // hour with at least one booking start
+const ROW_BUSY = 100;    // hour with at least one booking start (legacy — used only as initial estimate)
 // Block height floor — shorter bookings still get enough room to be readable.
 const BLOCK_MIN_HEIGHT = 96;
+// Fallback used on the first render before useLayoutEffect measures actual
+// card heights. Picked to be close to typical content height so the initial
+// layout doesn't reshuffle visibly when measurements come in.
+const FALLBACK_CARD_H = 120;
+const STACK_GAP       = 4;
 const DEFAULT_FIRST_HOUR = 8;
 const DEFAULT_LAST_HOUR  = 22;     // exclusive — i.e. 8..21 visible
 
@@ -244,12 +249,12 @@ function WeekPicker({ anchorDate, onPickWeek, label }) {
 
 // One slot cell — own component so the InteractiveSection hook can run at
 // component top-level (not inside a .map). Renders the gloss overlay too.
-function CalendarCell({ top, busy }) {
+function CalendarCell({ top, busy, height }) {
   const { ref, glossRef, handlers } = InteractiveSection(CELL_TILT, false);
   return (
     <div ref={ref}
       className={`bk-cal-cell ${busy ? 'bk-cal-cell--busy' : 'bk-cal-cell--empty'}`}
-      style={{ top: `${top}px` }}
+      style={{ top: `${top}px`, height: height != null ? `${height}px` : undefined }}
       {...handlers}>
       <div ref={glossRef} className="bk-cal-cell-gloss" />
     </div>
@@ -271,6 +276,29 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, w
     ? bookings
     : bookings.filter(b => String(b.staff_id) === String(staffFilter));
 
+  // Measured card heights — booking_id → px. Filled in useLayoutEffect after each
+  // render. Used by rowHeights + blockStyle so the slot row shrinks/grows to fit
+  // the cards' natural content height (instead of a fixed STACKED_CARD_H).
+  const cardRefs = useRef({});
+  const [cardH, setCardH] = useState({});
+  useLayoutEffect(() => {
+    const next = {};
+    let changed = false;
+    for (const id of Object.keys(cardRefs.current)) {
+      const el = cardRefs.current[id];
+      if (!el) continue;
+      next[id] = el.offsetHeight;
+      if (cardH[id] !== next[id]) changed = true;
+    }
+    // Detect removed entries too
+    if (!changed) {
+      for (const id of Object.keys(cardH)) {
+        if (!(id in next)) { changed = true; break; }
+      }
+    }
+    if (changed) setCardH(next);
+  });
+
   // Slot step (minutes) — clamped so a sub-15min interval doesn't produce a
   // 100-row vertical noodle. Anything finer is still allowed for booking math
   // but the calendar ticks are at least 15min apart.
@@ -291,20 +319,32 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, w
     return out;
   }, [firstHour, lastHour, SLOT_MIN]);
 
-  // Per-slot row heights — expanded when a booking starts in that exact slot
-  // (across ALL visible days, so columns stay aligned with the gutter).
+  // Per-slot row heights, driven by MEASURED card heights so the row is exactly
+  // as tall as its content needs (no empty space below, no clipping). MAX across
+  // the 7 visible days so the gutter labels stay aligned column-by-column.
   const rowHeights = useMemo(() => {
-    // Snap each booking's start to the nearest slot index it occupies.
-    const busy = new Set(visibleBookings
-      .filter(b => b.starts_at)
-      .map(b => {
-        const p = partsInTz(new Date(b.starts_at), tz);
-        const totalMin = parseInt(p.hour, 10) * 60 + parseInt(p.minute, 10);
-        // Slot index that contains this start (floor toward earlier slot).
-        return Math.floor((totalMin - firstHour * 60) / SLOT_MIN);
-      }));
-    return SLOTS.map((_, idx) => busy.has(idx) ? ROW_BUSY : ROW_MIN);
-  }, [visibleBookings, SLOTS, tz, firstHour, SLOT_MIN]);
+    const perDaySlot = {};   // 'YYYY-MM-DD|slotIdx' → { sum, count }
+    for (const b of visibleBookings) {
+      if (!b.starts_at) continue;
+      const p = partsInTz(new Date(b.starts_at), tz);
+      const totalMin = parseInt(p.hour, 10) * 60 + parseInt(p.minute, 10);
+      const slotIdx  = Math.floor((totalMin - firstHour * 60) / SLOT_MIN);
+      const dayKey   = `${p.year}-${p.month}-${p.day}`;
+      const k        = `${dayKey}|${slotIdx}`;
+      const h        = cardH[b.id] || FALLBACK_CARD_H;
+      if (!perDaySlot[k]) perDaySlot[k] = { sum: 0, count: 0 };
+      perDaySlot[k].sum   += h;
+      perDaySlot[k].count += 1;
+    }
+    const maxPerSlot = {};
+    for (const [k, v] of Object.entries(perDaySlot)) {
+      const idx   = parseInt(k.split('|')[1], 10);
+      // +6 = 3px top + 3px bottom cell inset (see CalendarCell positioning).
+      const total = v.sum + Math.max(0, v.count - 1) * STACK_GAP + 6;
+      maxPerSlot[idx] = Math.max(maxPerSlot[idx] || 0, total);
+    }
+    return SLOTS.map((_, idx) => maxPerSlot[idx] || ROW_MIN);
+  }, [visibleBookings, SLOTS, tz, firstHour, SLOT_MIN, cardH]);
 
   // Cumulative offset (px from top of grid) to the start of each slot row.
   const rowOffsets = useMemo(() => {
@@ -371,15 +411,63 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, w
     };
   }), [visibleBookings, tz]);
 
-  // Group bookings by their LOCAL business date
+  // Group bookings by their LOCAL business date + assign vertical-stack indices
+  // for bookings that share the same starting slot.
+  //
+  // Multiple bookings at the same time (customer books "aa" and "bb" both at 10:30
+  // — services are independent resources) used to stack on top of each other with
+  // the same `top` — only the first was visible.
+  //
+  // Strategy: full-width cards, stacked vertically. For each starting-slot we
+  // assign `_stackIndex` (0..N-1) and `_stackTotal`. The slot row height is
+  // multiplied by N so all cards fit. blockStyle uses these to position each card
+  // at `top + stackIndex * cardHeight`.
   const byDay = useMemo(() => {
     const m = {};
     for (const b of localised) {
       if (!b._localDate) continue;
       (m[b._localDate] = m[b._localDate] || []).push(b);
     }
+    for (const dayKey of Object.keys(m)) {
+      // Stable order: by start time, then by id — so the layout is deterministic.
+      const dayList = m[dayKey].slice().sort((a, b) => {
+        const ts = new Date(a.starts_at) - new Date(b.starts_at);
+        return ts !== 0 ? ts : (a.id - b.id);
+      });
+      // Group by exact start time (HH:MM in local TZ)
+      const byStart = {};
+      for (const b of dayList) {
+        const key = b._localTime || '';
+        (byStart[key] = byStart[key] || []).push(b);
+      }
+      for (const arr of Object.values(byStart)) {
+        // Cumulative pixel offset within slot — card N starts below the sum of
+        // measured heights (or fallback) of cards 0..N-1 plus the per-card gap.
+        let runningTop = 0;
+        arr.forEach((b, i) => {
+          b._stackIndex = i;
+          b._stackTotal = arr.length;
+          b._stackTopOffset = runningTop;
+          runningTop += (cardH[b.id] || FALLBACK_CARD_H) + STACK_GAP;
+        });
+      }
+      m[dayKey] = dayList;
+    }
     return m;
-  }, [localised]);
+  }, [localised, cardH]);
+
+  // For each slot row, count how many bookings START in that slot. Row height is
+  // multiplied so all stacked cards fit at full width.
+  const slotStackCounts = useMemo(() => {
+    const counts = {};
+    for (const b of localised) {
+      if (!b.starts_at || b._localHour == null) continue;
+      const totalMin = b._localHour * 60 + b._localMin;
+      const idx = Math.floor((totalMin - firstHour * 60) / SLOT_MIN);
+      counts[idx] = (counts[idx] || 0) + 1;
+    }
+    return counts;
+  }, [localised, firstHour, SLOT_MIN]);
 
   // "Today" computed in business TZ (not browser local)
   const todayISO = useMemo(() => {
@@ -392,12 +480,18 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, w
   const goToday = () => setAnchor(startOfWeekInTz(tz));
 
   const blockStyle = (b) => {
-    const start = new Date(b.starts_at);
-    const end   = new Date(b.ends_at || b.starts_at);
-    const top   = offsetPx(b._localHour ?? 0, b._localMin ?? 0);
-    const dur   = (end - start) / 60000;
-    const h     = Math.max(BLOCK_MIN_HEIGHT, (dur / 60) * ROW_BUSY - 2);
-    return { top: `${top}px`, height: `${h}px` };
+    const slotTop = offsetPx(b._localHour ?? 0, b._localMin ?? 0);
+    // Match cell exactly: same left/right/top/radius. No fixed height — cards
+    // size themselves to their actual content (CSS `height: auto`). useLayoutEffect
+    // measures each card and feeds the heights back into rowHeights + this
+    // function's `_stackTopOffset` so the slot row + sibling cards stay aligned.
+    return {
+      left:         '0',
+      right:        '0',
+      borderRadius: '10px',
+      top:          `${slotTop + 3 + (b._stackTopOffset || 0)}px`,
+      // height intentionally not set — let content drive
+    };
   };
 
   // Click on a free area → create booking snapped to slot interval
@@ -511,9 +605,14 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, w
           <div className="bk-cal-gutter-spacer" />
           {SLOTS.map((min, idx) => {
             const h = Math.floor(min / 60), m = min % 60;
+            // Drive height inline from rowHeights — it may exceed ROW_BUSY when
+            // multiple bookings share a starting slot (vertical stack mode).
+            // The "--busy" class is kept for styling fidelity (background, font weight).
+            const isBusy = rowHeights[idx] > ROW_MIN;
             return (
               <div key={min}
-                className={`bk-cal-hour ${rowHeights[idx] === ROW_BUSY ? 'bk-cal-hour--busy' : 'bk-cal-hour--empty'}`}>
+                className={`bk-cal-hour ${isBusy ? 'bk-cal-hour--busy' : 'bk-cal-hour--empty'}`}
+                style={{ height: `${rowHeights[idx]}px` }}>
                 <div className="bk-cal-hour-pill">{pad(h)}:{pad(m)}</div>
               </div>
             );
@@ -545,7 +644,10 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, w
                   {SLOTS.map((_, idx) => (
                     <CalendarCell key={idx}
                       top={rowOffsets[idx] + 3}
-                      busy={rowHeights[idx] === ROW_BUSY} />
+                      busy={rowHeights[idx] > ROW_MIN}
+                      // When the row is expanded to fit stacked bookings (rowHeight > ROW_BUSY),
+                      // the cell pill also grows so it visually wraps both cards.
+                      height={rowHeights[idx] > ROW_BUSY ? rowHeights[idx] - 6 : undefined} />
                   ))}
 
                   {/* Booking cards — copy of org-card visual: white pill with
@@ -557,6 +659,13 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, w
                     const dragCls   = draggingId === b.id ? ' bk-cal-card--dragging' : '';
                     return (
                       <div key={b.id}
+                        ref={(el) => {
+                          // Track card refs by booking id so useLayoutEffect can
+                          // measure each card's natural content height and feed
+                          // it into rowHeights + stack-top calculations.
+                          if (el) cardRefs.current[b.id] = el;
+                          else    delete cardRefs.current[b.id];
+                        }}
                         className={`bk-cal-card bk-cal-card--${b.status}${dragCls}`}
                         style={blockStyle(b)}
                         draggable={!!onMoveBooking}

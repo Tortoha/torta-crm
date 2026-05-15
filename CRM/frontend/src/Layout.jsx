@@ -38,6 +38,28 @@ function Layout() {
     .then(([userData, projectData]) => {
       setUser(userData);
       setProject(projectData);
+      // One-shot per-session TZ correction: if this project's booking_settings.timezone
+      // is still the default 'UTC' and the merchant is browsing from a different TZ,
+      // auto-update so customer-facing slots use the merchant's actual local time.
+      // Runs at Layout mount = ANY project page (not just /bookings) — so the merchant
+      // can never miss it. Idempotent: backend silently skips if timezone is already set.
+      const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      if (browserTz && browserTz !== 'UTC') {
+        const pq = `?project_id=${projectData.id}`;
+        fetch(`${API_BASE}/api/booking/settings${pq}`, { credentials: 'include' })
+          .then(r => r.ok ? r.json() : null)
+          .then(s => {
+            if (!s || (s.timezone && s.timezone !== 'UTC')) return;
+            const { configured, ...payload } = s;
+            payload.timezone = browserTz;
+            return fetch(`${API_BASE}/api/booking/settings${pq}`, {
+              method: 'PUT', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+          })
+          .catch(() => { /* not fatal — booking might be unused */ });
+      }
     })
     .catch(() => navigate('/dashboard'))
     .finally(() => setLoading(false));

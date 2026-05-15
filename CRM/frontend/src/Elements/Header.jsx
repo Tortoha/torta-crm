@@ -4,6 +4,7 @@ import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus } from '@phosphor-ic
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
 import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
+import NotificationsBell from './NotificationsBell.jsx';
 import { encodeId } from '../Utils/hashids.js';
 import '../Style/Header.css';
 
@@ -284,10 +285,13 @@ function ProjectSwitcher({ project }) {
     if (!isValidUrl(url)) return setErr('Enter a valid URL: http://... or https://...');
     setSaving(true); setErr('');
     try {
+      // Send the merchant's browser TZ so booking slot times default to their
+      // real operating timezone (not UTC). Backend seeds booking_settings.timezone.
+      const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
       const res  = await fetch(`${API_BASE}/api/orgs/${project.org_id}/projects`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, frontend_url: url }),
+        body: JSON.stringify({ name, frontend_url: url, timezone: browserTz }),
       });
       const data = await res.json();
       if (!res.ok) { setErr(data.detail || 'Error'); return; }
@@ -620,6 +624,7 @@ function Header({ user, project, org, productContext, settingsMode }) {
         )}
       </div>
       <div className="hdr-right">
+        {user && <NotificationsBell />}
         {user && <UserMenu user={user} project={project} />}
       </div>
     </header>

@@ -1,6 +1,32 @@
 export const API_BASE   = "http://localhost:8001";
 export const MAGAZ_BASE = "http://localhost:8000";
 
+
+/**
+ * Safely extract a renderable string from a backend error response.
+ *
+ * Backstop for the case where `data.detail` is an array of Pydantic validation
+ * error objects ({type, loc, msg, input}) — rendering that directly into JSX
+ * crashes React with "Objects are not valid as a React child". The CRM backend
+ * overrides this globally (see _crm_format_validation_error in main.py),
+ * but defence-in-depth: route all error rendering through this helper.
+ */
+export function pickError(data, fallback = "Something went wrong") {
+  if (!data) return fallback;
+  const d = data.detail ?? data.error ?? data.message;
+  if (!d) return fallback;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    const parts = d.map((e) => {
+      if (typeof e === "string") return e;
+      const field = Array.isArray(e?.loc) ? e.loc.filter(x => x !== "body").join(".") : "input";
+      return `${field}: ${e?.msg || "Invalid value"}`;
+    });
+    return parts.join("; ") || fallback;
+  }
+  try { return JSON.stringify(d); } catch { return fallback; }
+}
+
 /**
  * AUTO-REFRESH MIDDLEWARE
  *

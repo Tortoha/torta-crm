@@ -487,6 +487,33 @@ export function createClient(baseUrl, publishableKey) {
       async list() {
         return req("GET", "/orders");
       },
+
+      /**
+       * Request a return for items from a delivered order. 14-day window.
+       * @param {number} order_id
+       * @param {object} payload
+       * @param {string} payload.reason - damaged|wrong_item|not_as_described|changed_mind|arrived_late|quality_issue|other
+       * @param {string} [payload.customer_message]
+       * @param {Array<{order_item_id:number, quantity:number}>} payload.items
+       * @param {string[]} [payload.customer_photos] - URLs (uploaded separately)
+       */
+      async requestReturn(order_id, payload) {
+        return req("POST", `/orders/${order_id}/request-return`, payload);
+      },
+
+      /** List all return requests the customer has submitted for one of their orders. */
+      async listReturns(order_id) {
+        return req("GET", `/orders/${order_id}/returns`);
+      },
+
+      /**
+       * Cancel a return request the customer themselves submitted. Only works
+       * while status='requested' — once the merchant has approved/rejected/etc,
+       * the customer must contact the store directly.
+       */
+      async cancelReturn(order_id, return_id) {
+        return req("POST", `/orders/${order_id}/returns/${return_id}/cancel`);
+      },
     },
 
     // ── Track ────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import { PoListRow } from '../../../Utils/PoListRow.jsx';
 import { Combobox } from '../Booking/BookingCreateModal.jsx';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
 import BulkTransferWizard, { BulkTransferButton } from './BulkTransferWizard.jsx';
+import BulkReceiveWizard,  { BulkReceiveButton  } from './BulkReceiveWizard.jsx';
 import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 import '../../../Style/Organization.css';
@@ -27,12 +28,20 @@ const SORT_OPTIONS = [
 ];
 const DEFAULT_DIR = { name: 'asc', stock: 'desc', variations: 'desc' };
 
+// Unified with BulkReceiveWizard.REASON_OPTIONS + a few "outgoing" reasons that
+// only make sense for manual adjustments. Order is intentional: incoming reasons
+// at the top (most common), outgoing reasons below the divider.
 const REASON_OPTIONS = [
-  { value: 'restock', label: 'Restock' },
-  { value: 'manual',  label: 'Manual correction' },
-  { value: 'damage',  label: 'Damage / write-off' },
-  { value: 'transfer',label: 'Transfer' },
-  { value: 'return',  label: 'Customer return' },
+  { value: 'supplier_delivery', label: 'Supplier delivery' },
+  { value: 'initial_inventory', label: 'Initial inventory' },
+  { value: 'customer_return',   label: 'Customer return' },
+  { value: 'production',        label: 'Production' },
+  { value: 'recount_adjust',    label: 'Recount adjustment' },
+  { value: 'transfer_in',       label: 'External transfer in' },
+  { value: 'damage',            label: 'Damage / write-off' },
+  { value: 'transfer_out',      label: 'External transfer out' },
+  { value: 'manual',            label: 'Manual correction' },
+  { value: 'other',             label: 'Other' },
 ];
 
 const COLS = '2.6fr 1fr 1fr 1fr 110px';
@@ -55,7 +64,8 @@ function ProductsInventory() {
 
   const [editTarget, setEditTarget] = useState(null);
   const [toast, setToast] = useState('');
-  const [showWizard, setShowWizard] = useState(false);
+  const [showWizard,  setShowWizard]  = useState(false);  // Distribute
+  const [showReceive, setShowReceive] = useState(false);  // Add stock
   const [warehouses, setWarehouses] = useState([]);
   // summary[i] = { warehouse_id, sku_id, quantity, sku_name, sku_code,
   //                variation_id, variation_name, product_id, product_title }
@@ -229,6 +239,8 @@ function ProductsInventory() {
           <CategoryFilter value={categoryFilter} categories={categories}
             onChange={setCategoryFilter} />
           <FilterToggle value={filter} onChange={setFilter} counters={counters} />
+          <BulkReceiveButton onClick={() => setShowReceive(true)}
+            disabled={products.length === 0} />
           <BulkTransferButton onClick={() => setShowWizard(true)}
             disabled={products.length === 0} />
         </div>
@@ -238,6 +250,13 @@ function ProductsInventory() {
         <BulkTransferWizard projectId={projectId}
           onClose={() => setShowWizard(false)}
           onApplied={() => { setShowWizard(false); loadProducts(); }}
+          showToast={showToast} />
+      )}
+
+      {showReceive && (
+        <BulkReceiveWizard projectId={projectId}
+          onClose={() => setShowReceive(false)}
+          onApplied={() => { setShowReceive(false); loadProducts(); }}
           showToast={showToast} />
       )}
 
@@ -265,6 +284,8 @@ function ProductsInventory() {
         <EditStockModal
           target={editTarget}
           pq={pq}
+          projectId={projectId}
+          warehouses={warehouses}
           onClose={() => setEditTarget(null)}
           onSaved={() => {
             // Re-hydrate just that product so the row updates without full reload.
@@ -956,20 +977,65 @@ function FlatMatchList({ rows, onEdit }) {
 
 // ── Edit stock modal ─────────────────────────────────────────────────
 
-function EditStockModal({ target, pq, onClose, onSaved, showToast }) {
-  const [delta, setDelta]   = useState('');
-  const [reason, setReason] = useState('restock');
-  const [note, setNote]     = useState('');
-  const [busy, setBusy]     = useState(false);
+function EditStockModal({ target, pq, projectId, warehouses, onClose, onSaved, showToast }) {
+  const [delta,     setDelta]     = useState('');
+  const [reason,    setReason]    = useState('supplier_delivery');
+  const [note,      setNote]      = useState('');
+  // Warehouse: preselect from target if known, else project default, else first active.
+  const initialWh = target.warehouse_id
+    ?? (warehouses.find(w => w.is_default)?.id ?? warehouses[0]?.id ?? '');
+  const [warehouse, setWarehouse] = useState(initialWh);
+  // Edit stock is EDIT only — can't create new batches here. Batch is REQUIRED and
+  // must reference an existing inventory_batches row at (sku, warehouse).
+  const [batchChoice, setBatchChoice] = useState('');         // '' | 'existing:<id>'
+  const [batchOpts,   setBatchOpts]   = useState([]);
+  const [busy,        setBusy]        = useState(false);
+
+  const dInt = parseInt(delta, 10);
+  const isPositive = Number.isFinite(dInt) && dInt > 0;
+  const isNegative = Number.isFinite(dInt) && dInt < 0;
+
+  // Refetch existing batches whenever (warehouse, sku) changes.
+  useEffect(() => {
+    if (!warehouse) { setBatchOpts([]); setBatchChoice(''); return; }
+    let cancelled = false;
+    fetch(
+      `${API_BASE}/api/projects/${projectId}/batches/lookup?sku_id=${target.sku_id}&warehouse_id=${warehouse}`,
+      { credentials: 'include' }
+    ).then(r => r.ok ? r.json() : [])
+     .then(list => {
+       if (cancelled) return;
+       const arr = Array.isArray(list) ? list : [];
+       setBatchOpts(arr);
+       // Reset the picker — old batch_id may not exist at the new warehouse.
+       setBatchChoice('');
+     });
+    return () => { cancelled = true; };
+  }, [projectId, target.sku_id, warehouse]);
+
+  // Pick currently-selected batch (for clamping negative delta).
+  const selectedBatch = batchChoice.startsWith('existing:')
+    ? batchOpts.find(b => b.id === Number(batchChoice.slice(9)))
+    : null;
 
   const submit = async () => {
-    const d = parseInt(delta, 10);
-    if (!d || isNaN(d)) { showToast('Change must be a non-zero integer'); return; }
+    if (!dInt || isNaN(dInt)) { showToast('Change must be a non-zero integer'); return; }
+    if (!warehouse) { showToast('Pick a warehouse'); return; }
+    if (!batchChoice.startsWith('existing:')) { showToast('Pick a batch'); return; }
+    // Client-side guard — backend also rejects this but a clear message is nicer.
+    if (isNegative && selectedBatch && Math.abs(dInt) > selectedBatch.quantity_remaining) {
+      showToast(`Only ${selectedBatch.quantity_remaining} units left in this batch`); return;
+    }
     setBusy(true);
     try {
-      const body = { sku_id: target.sku_id, delta: d, reason, note };
-      // Pin change to specific WH when modal opened from a WH-scoped row; else default WH.
-      if (target.warehouse_id != null) body.warehouse_id = target.warehouse_id;
+      const body = {
+        sku_id:       target.sku_id,
+        delta:        dInt,
+        reason,
+        note,
+        warehouse_id: Number(warehouse),
+        batch_id:     Number(batchChoice.slice(9)),
+      };
       const r = await fetch(`${API_BASE}/api/products/${target.product_id}/stock/adjust${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -981,10 +1047,19 @@ function EditStockModal({ target, pq, onClose, onSaved, showToast }) {
   };
 
   const preview = (() => {
-    const d = parseInt(delta, 10);
-    if (!d || isNaN(d)) return null;
-    return Math.max(0, target.current_stock + d);
+    if (!Number.isFinite(dInt)) return null;
+    return Math.max(0, target.current_stock + dInt);
   })();
+
+  // Only existing batches — Edit stock doesn't create new ones (use Plan stock receipt for that).
+  const batchSelectOptions = batchOpts.map(b => {
+    const verb = isNegative ? 'Take from' : isPositive ? 'Add to' : 'Edit';
+    return {
+      value: `existing:${b.id}`,
+      label: `${verb}: ${b.batch_name} (${b.quantity_remaining} left)`,
+    };
+  });
+  const noBatches = warehouse && batchOpts.length === 0;
 
   return createPortal(
     <div className="auth-modal-overlay"
@@ -997,7 +1072,6 @@ function EditStockModal({ target, pq, onClose, onSaved, showToast }) {
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {target.product_title} · {target.variation_name} · {target.configuration_name}
-                  {target.warehouse_name && <> · <strong>{target.warehouse_name}</strong></>}
                   {' · current '}<strong>{target.current_stock}</strong>
                 </span>
               </div>
@@ -1013,18 +1087,45 @@ function EditStockModal({ target, pq, onClose, onSaved, showToast }) {
             onSubmit={(e) => { e.preventDefault(); submit(); }}
             autoComplete="off">
 
+            <div className="cpm-datetime-row">
+              <div className="cpm-section">
+                <label className="po-field-label">Warehouse</label>
+                <Combobox value={warehouse === '' ? '' : Number(warehouse)}
+                  placeholder="Pick a warehouse"
+                  options={warehouses.map(w => ({
+                    value: w.id,
+                    label: w.is_default ? `${w.name} · default` : w.name,
+                  }))}
+                  onChange={(v) => setWarehouse(v === '' ? '' : Number(v))} />
+              </div>
+              <div className="cpm-section">
+                <label className="po-field-label">Change</label>
+                <input className="crm-input" type="number" autoFocus
+                  placeholder="e.g. +1000 or -3"
+                  value={delta} onChange={e => setDelta(e.target.value)} />
+                <span className="cpm-section-hint">
+                  Positive adds stock, negative removes.
+                  {preview !== null && (
+                    <> &nbsp;·&nbsp; new stock:{' '}
+                      <strong className="po-disc-cell--strong">{preview}</strong>
+                    </>
+                  )}
+                </span>
+              </div>
+            </div>
+
             <div className="cpm-section">
-              <label className="po-field-label">Change</label>
-              <input className="crm-input" type="number" autoFocus
-                placeholder="e.g. +1000 or -3"
-                value={delta} onChange={e => setDelta(e.target.value)} />
+              <label className="po-field-label">Batch <span className="po-field-required">*</span></label>
+              <Combobox value={batchChoice}
+                options={batchSelectOptions}
+                placeholder={noBatches ? 'No batches at this warehouse' : 'Pick a batch to edit'}
+                onChange={(v) => setBatchChoice(v)} />
               <span className="cpm-section-hint">
-                Positive adds stock, negative removes it.
-                {preview !== null && (
-                  <> &nbsp;·&nbsp; new stock:{' '}
-                    <strong className="po-disc-cell--strong">{preview}</strong>
-                  </>
-                )}
+                {noBatches
+                  ? <>This SKU has no batches at this warehouse yet. Open <b>Plan stock receipt</b> first to create one.</>
+                  : isNegative
+                    ? <>Stock can't go below zero in the chosen batch.{selectedBatch ? ` (${selectedBatch.quantity_remaining} available)` : ''}</>
+                    : <>Edit stock works on an existing batch only. New batches are created via <b>Plan stock receipt</b>.</>}
               </span>
             </div>
 

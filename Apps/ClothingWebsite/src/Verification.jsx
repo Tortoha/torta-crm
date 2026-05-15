@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import "./Style/Login.css";
-import { client } from "./api.js"
+import { client, pickError } from "./api.js"
 
 function Verification() {
   const [code, setCode] = useState("");
@@ -78,7 +78,7 @@ function Verification() {
         navigate("/");
         window.location.reload();
       } else {
-        setGeneralError(data?.detail || "Verification failed");
+        setGeneralError(pickError(data, "Verification failed"));
       }
     } catch {
       setGeneralError("Network error");
@@ -112,7 +112,7 @@ function Verification() {
           setCooldown(seconds);
         }
 
-        setGeneralError(data?.detail || "Failed to resend");
+        setGeneralError(pickError(data, "Failed to resend"));
       }
     } catch {
       setGeneralError("Network error");

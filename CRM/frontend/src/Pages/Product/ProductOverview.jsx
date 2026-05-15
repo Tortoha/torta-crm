@@ -15,6 +15,7 @@ import { useUndoableSave } from '../../Utils/useUndoableSave.js';
 import { RowContextMenu } from '../../Utils/RowContextMenu.jsx';
 import LayerBlock, { snapshotLayerNode } from './LayerBlock.jsx';
 import SpecificationsBlock from './SpecificationsBlock.jsx';
+import PrintBarcodesModal from '../Project/Products/PrintBarcodesModal.jsx';
 import { CpmCategorySelect } from '../Project/Products/CreateProductModal.jsx';
 import { Combobox } from '../Project/Booking/BookingCreateModal.jsx';
 import '../../Style/Authentication.css';
@@ -43,6 +44,26 @@ export default function ProductOverview() {
   // Bulk-select: single source of truth; switching scope auto-clears the previous one.
   const [bulk, setBulk] = useState({ scope: null, ids: [], actions: null });
   const clearBulk = useCallback(() => setBulk({ scope: null, ids: [], actions: null }), []);
+
+  // Print barcodes: ctx-menu on L1/L2 rows sets this; modal resolves SKUs from the target shape.
+  const [printTarget, setPrintTarget] = useState(null);
+  const openPrintBarcode = useCallback((target) => setPrintTarget(target), []);
+
+  // Project-level pricing display setting — affects the L2 table layout (Price column visible? auto-derive price from cost?).
+  const [pricingCfg, setPricingCfg] = useState({ hidePrice: false, marginPct: 50 });
+  useEffect(() => {
+    if (!projectId) return;
+    fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        setPricingCfg({
+          hidePrice: !!d.hide_price_in_overview,
+          marginPct: parseFloat(d.default_margin_percent || 50),
+        });
+      })
+      .catch(() => {});
+  }, [projectId]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -126,7 +147,7 @@ export default function ProductOverview() {
   // Walk the tree per chain → items at each layer + parent's effective_price for placeholder.
   const layers = useMemo(() => {
     if (!product) return null;
-    const out = [{ items: product.variations || [], parentId: null, parentEffectivePrice: null }];
+    const out = [{ items: product.variations || [], parentId: null, parentEffectivePrice: null, parentName: null }];
     let level = product.variations || [];
     for (let i = 0; i < 5; i++) {
       const sel = level.find(x => x.id === chain[i]);
@@ -136,6 +157,8 @@ export default function ProductOverview() {
         items: nextItems,
         parentId: sel.id,
         parentEffectivePrice: sel.effective_price ?? null,
+        // Name shown after the layer title (e.g. "Configuration Layer 2 | White").
+        parentName: sel.variation_name || sel.configuration_name || sel.name || null,
       });
       level = nextItems;
     }
@@ -239,6 +262,7 @@ export default function ProductOverview() {
             layer={n}
             items={layerData.items}
             parentId={layerData.parentId}
+            parentName={layerData.parentName}
             inheritedPrice={layerData.parentEffectivePrice}
             productId={productId} pq={pq}
             reloadProduct={reloadProduct}
@@ -248,6 +272,9 @@ export default function ProductOverview() {
             onDeleteLayer={showDelete ? deleteLastLayer : null}
             registerUndo={registerUndo}
             bulk={bulk} setBulk={setBulk} clearBulk={clearBulk}
+            onPrintBarcode={openPrintBarcode}
+            hidePrice={pricingCfg.hidePrice}
+            marginPct={pricingCfg.marginPct}
             productType={product.product_type} />
         );
       })}
@@ -305,6 +332,18 @@ export default function ProductOverview() {
       {bulk.ids.length > 0 && createPortal(
         <BulkBar bulk={bulk} clearBulk={clearBulk} />,
         document.body
+      )}
+
+      {printTarget && (
+        <PrintBarcodesModal
+          open={!!printTarget}
+          pq={pq}
+          mode="sku"
+          productIds={printTarget.variationId ? [productId] : null}
+          skuIds={printTarget.skuId ? [printTarget.skuId] : null}
+          filterVariationId={printTarget.variationId || null}
+          onClose={() => setPrintTarget(null)}
+        />
       )}
     </Shell>
   );

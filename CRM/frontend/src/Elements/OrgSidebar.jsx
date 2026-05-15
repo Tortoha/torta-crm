@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { FolderSimple, ChartBar, GearSix, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
+import { FolderSimple, ChartBar, ArrowLineLeft, ArrowLineRight,
+         CreditCard } from '@phosphor-icons/react';
 
 function buildItems(orgSlug) {
   const base = `/org/${orgSlug}`;
   return [
     { to: base,                  label: 'Projects',  Icon: FolderSimple, exact: true },
     { to: `${base}/analytics`,   label: 'Analytics', Icon: ChartBar },
-    { to: `${base}/settings`,    label: 'Settings',  Icon: GearSix  },
+    { to: `${base}/payments`,    label: 'Payments',  Icon: CreditCard },
   ];
 }
 

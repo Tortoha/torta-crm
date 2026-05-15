@@ -1,6 +1,7 @@
 // Custom date+time picker — replaces native datetime-local; "YYYY-MM-DDTHH:MM" wire format.
 
 import { DatePicker, TimePicker } from '../Pages/Project/Booking/BookingCreateModal.jsx';
+import { todayLocalIsoDay } from './date.js';
 // Pull in bk-date-pop/bk-time-pop styles so consumers don't need to remember the import.
 import '../Style/Booking.css';
 
@@ -16,8 +17,9 @@ export function DateTimePicker({ value, onChange, slotInterval = 15 }) {
   };
   const setTime = (t) => {
     if (!datePart) {
-      const today = new Date().toISOString().slice(0, 10);
-      onChange(`${today}T${t}`);
+      // Local date — using toISOString() here would roll to the wrong day for
+      // users east of UTC during evening hours.
+      onChange(`${todayLocalIsoDay()}T${t}`);
     } else {
       onChange(`${datePart}T${t}`);
     }

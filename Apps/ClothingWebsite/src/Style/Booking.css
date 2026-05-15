@@ -130,6 +130,18 @@
   color: #111;
 }
 
+/* Timezone disclosure under "Available times" — small, muted, never wraps oddly. */
+.bk-pkr-tz-note {
+  font-size: 12px;
+  color: #6e6e73;
+  margin: -4px 0 12px;
+  text-align: center;
+}
+.bk-pkr-tz-note b {
+  color: #1d1d1f;
+  font-weight: 600;
+}
+
 /* Staff picker */
 .bk-pkr-staff-row {
   display: flex;

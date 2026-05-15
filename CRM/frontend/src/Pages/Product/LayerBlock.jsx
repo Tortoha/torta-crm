@@ -1,7 +1,7 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
-  Plus, Trash, Image as ImageIcon, DotsThreeOutline, PencilSimple, X, DotsSixVertical,
+  Plus, Trash, Image as ImageIcon, DotsThreeOutline, PencilSimple, X, DotsSixVertical, CheckCircle, Barcode,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
@@ -62,7 +62,8 @@ export default function LayerBlock(props) {
 // ─── Layer 1: card grid (3 cols, image + inline editable price/stock/sold) ──
 
 function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect, registerUndo,
-                       bulk, setBulk, clearBulk, productType }) {
+                       bulk, setBulk, clearBulk, productType, onPrintBarcode,
+                       hidePrice = false, marginPct = 50 }) {
   const [editVar, setEditVar] = useState(null);
   // Press-and-hold (300ms) drag activation lets users grab from anywhere including over inputs.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
@@ -225,7 +226,9 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
                 registerUndo={registerUndo}
                 bulkSelected={bulkIds.includes(v.id)}
                 bulkActive={inScope}
-                onBulkToggle={() => toggleInBulk(v.id)} />
+                onBulkToggle={() => toggleInBulk(v.id)}
+                hidePrice={hidePrice}
+                marginPct={marginPct} />
             ))}
           </div>
         </SortableContext>
@@ -240,11 +243,24 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
           onSaved={() => { setEditVar(null); reloadProduct(); }} />
       )}
 
-      {ctxMenu && (
-        <RowContextMenu pos={ctxMenu}
-          onSelect={() => toggleInBulk(ctxMenu.id)}
-          onClose={() => setCtxMenu(null)} />
-      )}
+      {ctxMenu && (() => {
+        const target = items.find(v => v.id === ctxMenu.id);
+        const menuItems = [
+          { label: 'Edit',          icon: <PencilSimple className="org-card-dropdown-icon" />,
+            onClick: () => setEditVar(target) },
+          { label: 'Print barcode', icon: <Barcode      className="org-card-dropdown-icon" />,
+            onClick: () => onPrintBarcode?.({ variationId: ctxMenu.id }) },
+          { label: 'Select',        icon: <CheckCircle  className="org-card-dropdown-icon" />,
+            onClick: () => toggleInBulk(ctxMenu.id) },
+          { label: 'Delete',        icon: <Trash        className="org-card-dropdown-icon" />,
+            onClick: () => deleteItem(ctxMenu.id), danger: true },
+        ];
+        return (
+          <RowContextMenu pos={ctxMenu}
+            items={menuItems}
+            onClose={() => setCtxMenu(null)} />
+        );
+      })()}
     </section>
   );
 }
@@ -271,14 +287,15 @@ function SortableLayer1Card(props) {
 
 function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, onSelect, onCardClick,
                        onEdit, onDelete, onContextMenu, dragRef, dragStyle, dragHandleProps, isDragging,
-                       bulkSelected, bulkActive, onBulkToggle }) {
+                       bulkSelected, bulkActive, onBulkToggle,
+                       hidePrice = false, marginPct = 50 }) {
   const menuBtnRef = useRef(null);
   const imgWrapRef = useRef(null);
   const [menuOpen,    setMenuOpen]    = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [name,  setName]  = useState(v.variation_name || '');
   const [price, setPrice] = useState(v.price != null ? String(v.price) : '');
-  const [stock, setStock] = useState(String(v.stock_quantity || 0));
+  const [cost,  setCost]  = useState(v.cost_price != null ? String(v.cost_price) : '');
   // Disable tilt while dragging or while gallery popover is open so cursor moves don't fight the popup.
   const { ref, glossRef, handlers } = InteractiveSection(LAYER1_TILT, menuOpen || galleryOpen || isDragging);
 
@@ -322,12 +339,21 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
     save: (val) => save({ price: val === '' ? null : parseFloat(val) }),
     registerUndo, label: `"${v.variation_name || 'Variation'}" price`,
   });
+  // Cost — same auto-derive behaviour as L2 rows. When hidePrice is on, setting cost auto-fills price.
   useUndoableSave({
-    value: stock, setValue: setStock,
-    serverValue: String(v.stock_quantity || 0),
-    save: (val) => save({ stock_quantity: parseInt(val, 10) || 0 }),
-    registerUndo, label: `"${v.variation_name || 'Variation'}" stock`,
-    shouldSave: () => !hasChildren,
+    value: cost, setValue: setCost,
+    serverValue: v.cost_price != null ? String(v.cost_price) : '',
+    save: (val) => {
+      const body = { cost_price: val === '' ? null : parseFloat(val) };
+      if (hidePrice && val !== '' && isFinite(parseFloat(val))) {
+        const c = parseFloat(val);
+        const p = Math.round(c * (1 + (marginPct || 0) / 100) * 100) / 100;
+        body.price = p;
+        setPrice(String(p));
+      }
+      return save(body);
+    },
+    registerUndo, label: `"${v.variation_name || 'Variation'}" cost`,
   });
 
   // Multi-photo gallery is managed in <VariationGalleryPopover/> — drop targets,
@@ -389,31 +415,26 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
             placeholder="Variation name *"
             title={!name.trim() ? 'Variation name is required' : undefined}
             maxLength={100} />
+          {!hidePrice && (
+            <div className="layer1-meta-row">
+              <span className="layer1-meta-label">Price</span>
+              <input className="layer1-meta-input"
+                type="number" min="0" step="0.01"
+                value={price}
+                onChange={e => setPrice(e.target.value)}
+                onClick={e => e.stopPropagation()}
+                placeholder="0.00" />
+            </div>
+          )}
           <div className="layer1-meta-row">
-            <span className="layer1-meta-label">Price</span>
+            <span className="layer1-meta-label">Cost</span>
             <input className="layer1-meta-input"
               type="number" min="0" step="0.01"
-              value={price}
-              onChange={e => setPrice(e.target.value)}
+              value={cost}
+              onChange={e => setCost(e.target.value)}
               onClick={e => e.stopPropagation()}
-              placeholder="0.00" />
-          </div>
-          <div className="layer1-meta-row">
-            <span className="layer1-meta-label">Stock</span>
-            {hasChildren ? (
-              <span className="layer1-meta-value">{totalStock}</span>
-            ) : (
-              <input className="layer1-meta-input"
-                type="number" min="0"
-                value={stock}
-                onChange={e => setStock(e.target.value)}
-                onClick={e => e.stopPropagation()}
-                placeholder="0" />
-            )}
-          </div>
-          <div className="layer1-meta-row">
-            <span className="layer1-meta-label">Sold</span>
-            <span className="layer1-meta-value">{totalSold}</span>
+              placeholder="0.00"
+              title={hidePrice ? `Price will be auto-set to cost × ${(1 + marginPct/100).toFixed(2)}` : 'Cost — used for margin reporting'} />
           </div>
         </div>
       </div>
@@ -434,6 +455,9 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
 
 function CardMenu({ btnRef, onEdit, onDelete, onClose }) {
   const [pos, setPos] = useState(null);
+  const [hovered, setHovered] = useState(null);
+  const indRef  = useRef(null);
+  const itemEls = useRef({});
 
   useEffect(() => {
     if (btnRef.current) {
@@ -445,17 +469,40 @@ function CardMenu({ btnRef, onEdit, onDelete, onClose }) {
     return () => document.removeEventListener('keydown', onKey);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      if (!ind) return;
+      const el = hovered != null ? itemEls.current[hovered] : null;
+      if (!el) { ind.style.opacity = '0'; ind.style.height = '0'; return; }
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateY(${el.offsetTop}px)`;
+      ind.style.height    = `${el.offsetHeight}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [hovered, pos]);
+
   if (!pos) return null;
+  const items = [
+    { key: 'edit',   label: 'Edit',   icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: onEdit },
+    { key: 'delete', label: 'Delete', icon: <Trash       className="org-card-dropdown-icon" />, onClick: onDelete, danger: true },
+  ];
   return createPortal(
     <div className="org-card-dropdown" style={{ top: pos.top, left: pos.left }}
       onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
-      <button className="org-card-dropdown-item" onClick={onEdit}>
-        <PencilSimple className="org-card-dropdown-icon" /> Edit
-      </button>
-      <div className="org-card-dropdown-sep" />
-      <button className="org-card-dropdown-item org-card-dropdown-item--danger" onClick={onDelete}>
-        <Trash className="org-card-dropdown-icon" /> Delete
-      </button>
+      <div className="org-menu-block" onMouseLeave={() => setHovered(null)}>
+        <div ref={indRef}
+          className={`org-menu-indicator${hovered && items.find(x => x.key === hovered)?.danger ? ' org-menu-indicator--danger' : ''}`} />
+        {items.map(it => (
+          <button key={it.key} type="button"
+            ref={el => { if (el) itemEls.current[it.key] = el; else delete itemEls.current[it.key]; }}
+            className={`org-card-dropdown-item org-menu-item${it.danger ? ' org-card-dropdown-item--danger' : ''}${hovered === it.key ? ' org-menu-item--current' : ''}`}
+            onMouseEnter={() => setHovered(it.key)}
+            onClick={it.onClick}>
+            {it.icon} {it.label}
+          </button>
+        ))}
+      </div>
     </div>,
     document.body
   );
@@ -531,9 +578,10 @@ function Layer1EditModal({ productId, variation, pq, onClose, onSaved }) {
 
 // ─── Layer 2-5: table view (Name | Price | Stock | Sold | Delete) ────────
 
-function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
+function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadProduct,
                       selectedId, onSelect, isLeaf, inheritedPrice, onDeleteLayer, registerUndo,
-                      bulk, setBulk, clearBulk }) {
+                      bulk, setBulk, clearBulk, onPrintBarcode,
+                      hidePrice = false, marginPct = 50 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
 
   const SCOPE = `layer-${layer}`;
@@ -636,7 +684,10 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
   return (
     <section className="po-block">
       <div className="po-block-head">
-        <h2 className="po-block-title">Configuration Layer {layer}</h2>
+        <h2 className="po-block-title">
+          Configuration Layer {layer}
+          {parentName && <span className="po-block-title-context"> | {parentName}</span>}
+        </h2>
         {onDeleteLayer && (
           <button className="po-layer-delete-btn" onClick={onDeleteLayer} type="button" title="Delete this layer">
             <Trash weight="bold" /> Delete layer
@@ -645,12 +696,11 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
       </div>
       <div className="cfg-block-body">
         <div className="cfg-list">
-          <div className={`cfg-list-head${inScope ? ' cfg-list-head--bulk-mode' : ''}`}>
+          <div className={`cfg-list-head${inScope ? ' cfg-list-head--bulk-mode' : ''}${hidePrice ? ' cfg-list-head--hide-price' : ''}`}>
             {inScope && <span className="cfg-col cfg-col-bulk" />}
             <span className="cfg-col cfg-col-name">Configuration Name</span>
-            <span className="cfg-col cfg-col-price">Price</span>
-            <span className="cfg-col cfg-col-stock">Stock</span>
-            <span className="cfg-col cfg-col-sold">Sold</span>
+            {!hidePrice && <span className="cfg-col cfg-col-price">Price</span>}
+            <span className="cfg-col cfg-col-cost">Cost</span>
             <span className="cfg-col cfg-col-actions" />
           </div>
 
@@ -672,6 +722,8 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
                   bulkSelected={bulkIds.includes(item.id)}
                   bulkActive={inScope}
                   onBulkToggle={() => toggleInBulk(item.id)}
+                  hidePrice={hidePrice}
+                  marginPct={marginPct}
                   onDelete={async () => {
                     const snapshot = snapshotLayerNode(item);
                     const r = await fetch(`${API_BASE}/api/products/${productId}/layers/${layer}/${item.id}${pq}`,
@@ -718,11 +770,22 @@ function LayerTable({ layer, items, parentId, productId, pq, reloadProduct,
         )}
       </div>
 
-      {ctxMenu && (
-        <RowContextMenu pos={ctxMenu}
-          onSelect={() => toggleInBulk(ctxMenu.id)}
-          onClose={() => setCtxMenu(null)} />
-      )}
+      {ctxMenu && (() => {
+        // Only Layer 2 ids map directly to product_configurations_l2 (the SKU table). Deeper layers reuse the L2 leaf they roll up into — frontend currently exposes Print barcode on layer 2.
+        const canPrint = layer === 2;
+        const menuItems = [
+          { label: 'Select',        icon: <CheckCircle  className="org-card-dropdown-icon" />,
+            onClick: () => toggleInBulk(ctxMenu.id) },
+          ...(canPrint ? [{ label: 'Print barcode',
+            icon: <Barcode className="org-card-dropdown-icon" />,
+            onClick: () => onPrintBarcode?.({ skuId: ctxMenu.id }) }] : []),
+        ];
+        return (
+          <RowContextMenu pos={ctxMenu}
+            items={menuItems}
+            onClose={() => setCtxMenu(null)} />
+        );
+      })()}
     </section>
   );
 }
@@ -750,9 +813,11 @@ function SortableLayerTableRow(props) {
 function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo,
                           selected, onSelect, isLeaf, inheritedPrice, onDelete,
                           dragRef, dragStyle, dragHandleProps, onRowClick, onContextMenu,
-                          bulkSelected, bulkActive, onBulkToggle }) {
+                          bulkSelected, bulkActive, onBulkToggle,
+                          hidePrice = false, marginPct = 50 }) {
   const [name,  setName]  = useState(item.name || '');
   const [price, setPrice] = useState(item.price != null ? String(item.price) : '');
+  const [cost,  setCost]  = useState(item.cost_price != null ? String(item.cost_price) : '');
   const [stock, setStock] = useState(String(item.stock_quantity || 0));
 
   const save = useCallback(async (body) => {
@@ -781,6 +846,23 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
     registerUndo, label: `"${item.name || 'Row'}" price`,
     debounceMs: 400,
   });
+  // Cost — when hidePrice is on, saving also auto-derives the public price = cost × (1 + margin/100).
+  useUndoableSave({
+    value: cost, setValue: setCost,
+    serverValue: item.cost_price != null ? String(item.cost_price) : '',
+    save: (val) => {
+      const body = { cost_price: val === '' ? null : parseFloat(val) };
+      if (hidePrice && val !== '' && isFinite(parseFloat(val))) {
+        const c = parseFloat(val);
+        const p = Math.round(c * (1 + (marginPct || 0) / 100) * 100) / 100;
+        body.price = p;
+        setPrice(String(p));
+      }
+      return save(body);
+    },
+    registerUndo, label: `"${item.name || 'Row'}" cost`,
+    debounceMs: 400,
+  });
   useUndoableSave({
     value: stock, setValue: setStock,
     serverValue: String(item.stock_quantity || 0),
@@ -799,7 +881,7 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
 
   return (
     <div ref={dragRef} style={dragStyle}
-      className={`cfg-row cfg-row--grabbable${selected ? ' cfg-row--selected' : ''}${!isLeaf ? ' cfg-row--clickable' : ''}${bulkSelected ? ' cfg-row--bulk' : ''}${bulkActive ? ' cfg-row--bulk-mode' : ''}`}
+      className={`cfg-row cfg-row--grabbable${selected ? ' cfg-row--selected' : ''}${!isLeaf ? ' cfg-row--clickable' : ''}${bulkSelected ? ' cfg-row--bulk' : ''}${bulkActive ? ' cfg-row--bulk-mode' : ''}${hidePrice ? ' cfg-row--hide-price' : ''}`}
       onClick={(e) => {
         if (onRowClick?.(e, item.id)) return;
         onSelect?.();
@@ -816,22 +898,17 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
       )}
       <input className="crm-input cfg-cell" value={name}
         onChange={e => setName(e.target.value)} placeholder="S / 30 cm / 1 L" />
-      <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
-        value={price}
-        onChange={e => setPrice(e.target.value)}
-        placeholder={pricePlaceholder} />
-      {hasChildren ? (
-        <input type="text" readOnly tabIndex={-1}
-          className="crm-input cfg-cell cfg-sold-num"
-          value={displayStock} />
-      ) : (
-        <input className="crm-input cfg-cell" type="number" min="0"
-          value={stock}
-          onChange={e => setStock(e.target.value)} />
+      {!hidePrice && (
+        <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
+          value={price}
+          onChange={e => setPrice(e.target.value)}
+          placeholder={pricePlaceholder} />
       )}
-      <input type="text" readOnly tabIndex={-1}
-        className="crm-input cfg-cell cfg-sold-num"
-        value={displaySold} />
+      <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
+        value={cost}
+        onChange={e => setCost(e.target.value)}
+        placeholder="0.00"
+        title={hidePrice ? `Price will be auto-set to cost × ${(1 + marginPct/100).toFixed(2)}` : 'Cost (for margin reporting)'} />
       <button type="button" className="cfg-col-actions cfg-delete-btn"
         onClick={e => { e.stopPropagation(); onDelete?.(); }}
         title="Delete">
@@ -844,9 +921,9 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
 function LayerTableNewRow({ layer, parentId, productId, pq, onAdded }) {
   const [name,  setName]  = useState('');
   const [price, setPrice] = useState('');
-  const [stock, setStock] = useState('');
   const busyRef = useRef(false);
 
+  // New L2-L5 rows are created with stock=0; merchant adds stock by receiving a batch in Inventory.
   useEffect(() => {
     if (!name.trim() || busyRef.current) return;
     const t = setTimeout(async () => {
@@ -858,16 +935,16 @@ function LayerTableNewRow({ layer, parentId, productId, pq, onAdded }) {
           parent_id: parentId,
           name: name.trim(),
           price: price === '' ? null : parseFloat(price),
-          stock_quantity: parseInt(stock, 10) || 0,
+          stock_quantity: 0,
         }),
       });
       busyRef.current = false;
       if (!res.ok) return;
       onAdded?.();
-      setName(''); setPrice(''); setStock('');
+      setName(''); setPrice('');
     }, 600);
     return () => clearTimeout(t);
-  }, [name, price, stock, parentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [name, price, parentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="cfg-row cfg-row--new">
@@ -875,9 +952,6 @@ function LayerTableNewRow({ layer, parentId, productId, pq, onAdded }) {
         onChange={e => setName(e.target.value)} placeholder="New configuration" />
       <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
         value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" />
-      <input className="crm-input cfg-cell" type="number" min="0"
-        value={stock} onChange={e => setStock(e.target.value)} placeholder="0" />
-      <span className="cfg-cell cfg-col-sold" />
       <span className="cfg-col-actions" />
     </div>
   );

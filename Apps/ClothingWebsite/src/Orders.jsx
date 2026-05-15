@@ -1,10 +1,38 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle, CaretDown, CaretUp } from "@phosphor-icons/react";
+import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle, CaretDown, CaretUp,
+         ArrowUUpLeft } from "@phosphor-icons/react";
 import Header from "./Header";
+import ReturnRequestModal from "./ReturnRequestModal";
 import { client } from "./api.js";
 import "./Style/Orders.css";
 import "./Style/Load.css";
+
+const RETURN_WINDOW_DAYS = 14;
+
+const RETURN_STATUS_LABEL = {
+  requested: "Awaiting approval",
+  approved:  "Approved · ship items back",
+  rejected:  "Rejected",
+  received:  "Goods received · being inspected",
+  inspected: "Inspected · refund pending",
+  refunded:  "Refunded",
+  cancelled: "Cancelled",
+};
+
+function daysSince(ts) {
+  if (!ts) return null;
+  const d = (Date.now() - new Date(ts).getTime()) / (1000 * 60 * 60 * 24);
+  return Math.floor(d);
+}
+
+function isWithinReturnWindow(order) {
+  if (order.status !== "delivered") return false;
+  // delivered_at exists on order_history; fall back to created_at
+  const anchor = order.delivered_at || order.created_at;
+  const days = daysSince(anchor);
+  return days != null && days <= RETURN_WINDOW_DAYS;
+}
 
 // ── Status metadata ────────────────────────────────────────────
 
@@ -34,9 +62,18 @@ const fmtDate = (ts) => ts
 
 function Orders() {
   const navigate = useNavigate();
-  const [orders,   setOrders]   = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [expanded, setExpanded] = useState(null);
+  const [orders,    setOrders]    = useState([]);
+  const [returns,   setReturns]   = useState({});   // {order_id: [return,…]}
+  const [loading,   setLoading]   = useState(true);
+  const [expanded,  setExpanded]  = useState(null);
+  const [returnFor, setReturnFor] = useState(null); // currently-open order in return modal
+
+  const loadReturnsFor = useCallback(async (order_id) => {
+    const res = await client.orders.listReturns(order_id);
+    if (res.ok && Array.isArray(res.data)) {
+      setReturns(prev => ({ ...prev, [order_id]: res.data }));
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -49,7 +86,15 @@ function Orders() {
         const result = await client.orders.list();
         if (!mounted) return;
         if (result.status === 401) { navigate("/login"); return; }
-        if (result.ok && Array.isArray(result.data)) setOrders(result.data);
+        if (result.ok && Array.isArray(result.data)) {
+          setOrders(result.data);
+          // Fan out fetching returns for delivered orders (in parallel)
+          for (const o of result.data) {
+            if (o.status === "delivered" || o.status === "refunded") {
+              loadReturnsFor(o.id);
+            }
+          }
+        }
       } catch (e) {
         console.error("Orders load error:", e);
       } finally {
@@ -57,9 +102,13 @@ function Orders() {
       }
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [loadReturnsFor]);
 
   const toggle = (id) => setExpanded(prev => prev === id ? null : id);
+
+  const onReturnSubmitted = (order_id) => {
+    loadReturnsFor(order_id);
+  };
 
   // ── Loading ──────────────────────────────────────────────────
   if (loading) return (
@@ -147,6 +196,53 @@ function Orders() {
                         </div>
                       ))}
                     </div>
+
+                    {/* ── Existing return requests ── */}
+                    {(returns[order.id] || []).length > 0 && (
+                      <div className="os-returns">
+                        <h4 className="os-returns-title">Returns</h4>
+                        {(returns[order.id] || []).map(r => (
+                          <div key={r.id} className="os-return">
+                            <span className="os-return-id">Return #{r.id}</span>
+                            <span className={`os-return-status os-return-status--${r.status}`}>
+                              {RETURN_STATUS_LABEL[r.status] || r.status}
+                            </span>
+                            {r.status === "refunded" && r.refund_amount > 0 && (
+                              <span className="os-return-refund">
+                                Refunded ${fmt(r.refund_amount)}
+                              </span>
+                            )}
+                            {r.status === "rejected" && r.rejected_reason && (
+                              <span className="os-return-reason">{r.rejected_reason}</span>
+                            )}
+                            {/* Cancel button — only while still 'requested'. After
+                                merchant has acted, customer must contact the store. */}
+                            {r.status === "requested" && (
+                              <button className="os-return-cancel"
+                                type="button"
+                                onClick={async () => {
+                                  if (!confirm("Cancel this return request?")) return;
+                                  const res = await client.orders.cancelReturn(order.id, r.id);
+                                  if (res.ok) loadReturnsFor(order.id);
+                                }}>
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ── Request Return button ── */}
+                    {isWithinReturnWindow(order) && (
+                      <div className="os-actions">
+                        <button className="os-action-btn os-action-btn--return"
+                          onClick={() => setReturnFor(order)}
+                          type="button">
+                          <ArrowUUpLeft weight="bold" /> Request a return
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -155,6 +251,16 @@ function Orders() {
           </div>
         )}
       </div>
+
+      {/* Return-request modal */}
+      {returnFor && (
+        <ReturnRequestModal
+          order={returnFor}
+          existingReturns={returns[returnFor.id] || []}
+          onClose={() => setReturnFor(null)}
+          onSubmitted={() => onReturnSubmitted(returnFor.id)}
+        />
+      )}
     </>
   );
 }

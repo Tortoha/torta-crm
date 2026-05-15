@@ -271,3 +271,110 @@
   font-size: 11px;
   color: #888;
 }
+
+/* ── Existing returns inline ───────────────────────────────── */
+
+.os-returns {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.os-returns-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.os-return {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.os-return-id {
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.os-return-status {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+  background: rgba(0, 113, 227, 0.08);
+  color: #0058B0;
+}
+.os-return-status--rejected,
+.os-return-status--cancelled {
+  background: rgba(255, 59, 48, 0.12);
+  color: #b32417;
+}
+.os-return-status--refunded {
+  background: rgba(52, 199, 89, 0.16);
+  color: #1e7a3a;
+}
+
+.os-return-refund {
+  font-weight: 500;
+  color: #1e7a3a;
+}
+
+.os-return-reason {
+  color: #6e6e73;
+  font-style: italic;
+}
+
+.os-return-cancel {
+  margin-left: auto;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid #d1d1d6;
+  background: #fff;
+  color: #b32417;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.os-return-cancel:hover {
+  background: rgba(255, 59, 48, 0.08);
+  border-color: rgba(255, 59, 48, 0.3);
+}
+
+/* ── Request-return button ─────────────────────────────────── */
+
+.os-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.os-action-btn {
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid #d1d1d6;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1d1d1f;
+  font-family: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.os-action-btn--return:hover {
+  background: rgba(0, 113, 227, 0.08);
+  border-color: #0071E3;
+  color: #0071E3;
+}

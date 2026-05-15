@@ -1,36 +1,56 @@
-// Bulk Transfer Wizard — two-step modal: pick SKUs (with cascade), then plan from/to/qty per SKU; applies as one transaction.
+// Bulk Receive Wizard — two-step modal: pick SKUs (with cascade), then plan
+// warehouse + batch + qty + reason per SKU; applies as one transaction via
+// /inventory/bulk-receive. This is where NEW batches are created — the Transfer
+// wizard only moves stock between existing batches.
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X, CaretRight, CaretDown, Folder, Cube,
-  ArrowsLeftRight, ArrowRight, Trash,
+  Stack, ArrowRight, Trash,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
-import { Combobox } from '../Booking/BookingCreateModal.jsx';
+import { Combobox, DatePicker } from '../Booking/BookingCreateModal.jsx';
+import '../../../Style/Booking.css';   // .bk-date-pop / calendar grid styles for DatePicker
 
-export function BulkTransferButton({ onClick, disabled }) {
+// User's browser tz — DatePicker uses it to highlight "today" correctly.
+const USER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+// Must match RECEIVE_REASONS in backend main.py.
+const REASON_OPTIONS = [
+  { value: 'supplier_delivery', label: 'Supplier delivery' },
+  { value: 'initial_inventory', label: 'Initial inventory' },
+  { value: 'customer_return',   label: 'Customer return' },
+  { value: 'production',        label: 'Production' },
+  { value: 'recount_adjust',    label: 'Recount adjustment' },
+  { value: 'transfer_in',       label: 'External transfer in' },
+  { value: 'other',             label: 'Other' },
+];
+
+export function BulkReceiveButton({ onClick, disabled }) {
   return (
     <button type="button" className="org-new-btn"
       onClick={onClick} disabled={disabled}>
-      <ArrowsLeftRight weight="bold" className="org-new-icon" /> Distribute
+      <Stack weight="bold" className="org-new-icon" /> Add stock
     </button>
   );
 }
 
-export default function BulkTransferWizard({ projectId, onClose, onApplied, showToast }) {
+export default function BulkReceiveWizard({ projectId, onClose, onApplied, showToast }) {
   const pq = `?project_id=${projectId}`;
   const [step, setStep] = useState(1);
-  const [products, setProducts] = useState([]);   // hydrated tree per chevron click
   const [warehouses, setWarehouses] = useState([]);
-  const [productList, setProductList] = useState([]);  // cheap list rows
-  const [expanded, setExpanded] = useState({});         // pid → { hydrated, data }
-  const [selected, setSelected] = useState(new Set()); // sku_ids
-  // skuMeta keeps the data we need to render Step 2: name, breadcrumb, stocks per WH.
-  const [skuMeta, setSkuMeta] = useState({}); // sku_id → { label, breadcrumb, stocks: {wh_id: qty} }
-  const [plan, setPlan] = useState({});       // sku_id → { from_wh, to_wh, qty, batch_choice, batch_custom }
+  const [productList, setProductList] = useState([]);
+  const [expanded, setExpanded] = useState({});
+  const [selected, setSelected] = useState(new Set());
+  const [skuMeta, setSkuMeta] = useState({});           // sku_id → { label, breadcrumb }
+  const [plan, setPlan] = useState({});                 // sku_id → row state
   const [busy, setBusy] = useState(false);
-  // Cache of existing-batch options per (sku, to_wh) for the Combobox.
+  const [batchNaming, setBatchNaming] = useState({ mode: 'auto', format: 'B-{YYYY}{MM}-{seq:03}' });
+  // Grouping mode controls auto-name sharing + date auto-fill across rows in this receipt.
+  // 'config' (default) → each row independent; 'product' → same parent product shares;
+  // 'global' → everyone shares. Custom-named rows (batch_choice='manual') are exempt.
+  const [groupingMode, setGroupingMode] = useState('config');
   const [batchOptionsBySkuWh, setBatchOptionsBySkuWh] = useState({});
 
   // ── Initial load ─────────────────────────────────────────────────────
@@ -47,9 +67,20 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
     fetch(`${API_BASE}/api/warehouses${pq}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : [])
       .then(d => setWarehouses(Array.isArray(d) ? d.filter(w => w.is_active) : []));
+    fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d) {
+          setBatchNaming({
+            mode:   d.batch_naming_mode   || 'auto',
+            format: d.batch_naming_format || 'B-{YYYY}{MM}-{seq:03}',
+          });
+          setGroupingMode(d.batch_grouping_mode || 'config');
+        }
+      });
   }, [pq, projectId]);
 
-  // Lazy-load existing batches for (sku, to_wh) pair whenever a row's destination changes.
+  // Lazy-load existing batches at (sku, wh) so the merchant can ADD to one instead of creating new.
   const loadBatchesFor = useCallback(async (sid, whId) => {
     if (!whId) return;
     const key = `${sid}:${whId}`;
@@ -62,7 +93,6 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
     setBatchOptionsBySkuWh(prev => ({ ...prev, [key]: list }));
   }, [projectId, batchOptionsBySkuWh]);
 
-  // In-flight hydrate promises — concurrent callers share one fetch.
   const hydratePromises = useRef({});
 
   const hydrateProduct = useCallback((pid) => {
@@ -71,26 +101,25 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
 
     setExpanded(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), loading: true } }));
     const promise = (async () => {
-      const [pd, perWh] = await Promise.all([
-        fetch(`${API_BASE}/api/products/${pid}${pq}`,                   { credentials: 'include' }).then(r => r.ok ? r.json() : null),
-        fetch(`${API_BASE}/api/products/${pid}/stock/per-warehouse${pq}`, { credentials: 'include' }).then(r => r.ok ? r.json() : []),
-      ]);
+      const pd = await fetch(`${API_BASE}/api/products/${pid}${pq}`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null);
       if (!pd) {
         setExpanded(prev => ({ ...prev, [pid]: { hydrated: false, loading: false } }));
         delete hydratePromises.current[pid];
         return null;
       }
-      // Cache stock-per-WH for every leaf SKU under this product so step 2 can show it.
+      // Cache breadcrumb + label + product_id per SKU for step 2 (product_id is what
+      // the 'product' grouping mode uses to decide which rows share dates/auto-name).
       setSkuMeta(prev => {
         const next = { ...prev };
-        for (const row of (perWh || [])) {
-          const stocks = {};
-          for (const w of (row.warehouses || [])) stocks[w.warehouse_id] = w.quantity;
-          next[row.sku_id] = {
-            label:      `${row.variation_name} / ${row.sku_name}`,
-            breadcrumb: `${pd.title} / ${row.variation_name} / ${row.sku_name}`,
-            stocks,
-          };
+        for (const v of (pd.variations || [])) {
+          for (const c of (v.configurations || [])) {
+            next[c.id] = {
+              label:      `${v.variation_name} / ${c.configuration_name}`,
+              breadcrumb: `${pd.title} / ${v.variation_name} / ${c.configuration_name}`,
+              product_id: pd.id,
+            };
+          }
         }
         return next;
       });
@@ -102,7 +131,7 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
     return promise;
   }, [expanded, pq]);
 
-  // ── Selection helpers ────────────────────────────────────────────────
+  // ── Selection helpers (same as Transfer wizard) ──────────────────────
   const toggleSku = (skuId) => {
     setSelected(prev => {
       const next = new Set(prev);
@@ -110,14 +139,8 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
       return next;
     });
   };
-  const skuIdsOfProduct = (pd) => {
-    const ids = [];
-    for (const v of (pd?.variations || [])) {
-      for (const c of (v.configurations || [])) ids.push(c.id);
-    }
-    return ids;
-  };
-  const skuIdsOfVariation = (v) => (v.configurations || []).map(c => c.id);
+  const skuIdsOfProduct   = (pd) => (pd?.variations || []).flatMap(v => (v.configurations || []).map(c => c.id));
+  const skuIdsOfVariation = (v)  => (v.configurations || []).map(c => c.id);
   const setMany = (ids, on) => {
     setSelected(prev => {
       const next = new Set(prev);
@@ -125,88 +148,96 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
       return next;
     });
   };
-
-  const productAggState = (pd) => {
-    const ids = skuIdsOfProduct(pd);
+  const aggState = (ids) => {
     if (ids.length === 0) return 'none';
     const on = ids.filter(i => selected.has(i)).length;
     if (on === 0) return 'none';
     if (on === ids.length) return 'all';
     return 'some';
   };
-  const variationAggState = (v) => {
-    const ids = skuIdsOfVariation(v);
-    if (ids.length === 0) return 'none';
-    const on = ids.filter(i => selected.has(i)).length;
-    if (on === 0) return 'none';
-    if (on === ids.length) return 'all';
-    return 'some';
-  };
+  const productAggState   = (pd) => aggState(skuIdsOfProduct(pd));
+  const variationAggState = (v)  => aggState(skuIdsOfVariation(v));
 
-  // ── Step 2 plan defaults — fired the moment we transition to step 2 ──
   const goToStep2 = () => {
     if (selected.size === 0) { showToast('Pick at least one SKU'); return; }
+    const defaultWh = warehouses.find(w => w.is_default)?.id ?? warehouses[0]?.id ?? '';
     const next = {};
     for (const sid of selected) {
-      const meta = skuMeta[sid];
-      if (!meta) { next[sid] = { from_wh: '', to_wh: '', qty: '' }; continue; }
-      // Default From = WH with most stock; qty stays empty so merchant types it explicitly.
-      let bestWh = null;
-      let bestQty = -1;
-      for (const [whId, q] of Object.entries(meta.stocks)) {
-        if (q > bestQty) { bestQty = q; bestWh = Number(whId); }
-      }
-      next[sid] = { from_wh: bestWh ?? '', to_wh: '', qty: '' };
+      next[sid] = {
+        warehouse: defaultWh,
+        batch_choice: 'auto',        // 'auto' | 'manual' | 'existing:<id>'
+        batch_custom: '',
+        qty: '',
+        reason: 'supplier_delivery',
+        note: '',
+        production_date: '',
+        expiry_date:     '',
+      };
     }
     setPlan(next);
     setStep(2);
   };
 
-  const setAllTo = (whId) => {
+  // Auto-propagate a date field to other rows in the same group. The rules
+  // mirror the backend's _group_key_for():
+  //   global  → every other row
+  //   product → rows whose SKU has the same parent product_id
+  //   config  → no propagation (each row is its own group)
+  // Skipped on rows where batch_choice !== 'auto' (custom name = explicit user intent).
+  const propagateDate = (originSid, field, value) => {
+    if (!value) return;
+    if (groupingMode === 'config') return;
+    const originMeta = skuMeta[originSid];
+    const originPid  = originMeta?.product_id;
     setPlan(prev => {
       const out = { ...prev };
-      for (const sid of Object.keys(out)) out[sid] = { ...out[sid], to_wh: whId };
+      for (const [sidStr, row] of Object.entries(out)) {
+        const sid = Number(sidStr);
+        if (sid === originSid) continue;
+        if (row.batch_choice !== 'auto') continue;
+        if (row[field]) continue;                 // don't clobber explicit values
+        if (groupingMode === 'product') {
+          const pid = skuMeta[sid]?.product_id;
+          if (!pid || !originPid || pid !== originPid) continue;
+        }
+        out[sid] = { ...row, [field]: value };
+      }
       return out;
     });
   };
+
   const updateRow = (sid, patch) => {
     setPlan(prev => ({ ...prev, [sid]: { ...prev[sid], ...patch } }));
   };
   const removeRow = (sid) => {
-    setPlan(prev => {
-      const out = { ...prev };
-      delete out[sid];
-      return out;
-    });
-    setSelected(prev => {
-      const next = new Set(prev);
-      next.delete(sid);
-      return next;
-    });
+    setPlan(prev => { const out = { ...prev }; delete out[sid]; return out; });
+    setSelected(prev => { const next = new Set(prev); next.delete(sid); return next; });
   };
 
-  // ── Validation for Apply ─────────────────────────────────────────────
+  // ── Validation ───────────────────────────────────────────────────────
   const validRows = useMemo(() => {
     const rows = [];
     for (const [sidStr, p] of Object.entries(plan)) {
       const sid = Number(sidStr);
-      const fromWh = p.from_wh ? Number(p.from_wh) : null;
-      const toWh   = p.to_wh   ? Number(p.to_wh)   : null;
-      const qty    = parseInt(p.qty, 10);
-      const meta   = skuMeta[sid];
-      const haveOnSource = meta && fromWh != null ? (meta.stocks[fromWh] || 0) : 0;
-      // Transfer requires an existing batch at the destination — no new-batch flow here.
-      const batchChoice = p.batch_choice || '';
-      const batchValid  = batchChoice.startsWith('existing:');
+      const wh  = p.warehouse ? Number(p.warehouse) : null;
+      const qty = parseInt(p.qty, 10);
+      const choice = p.batch_choice || 'auto';
+      const custom = (p.batch_custom || '').trim();
+      let batchValid = true;
+      if (choice === 'manual') batchValid = custom.length > 0;
       const isValid = (
-        fromWh != null && toWh != null && fromWh !== toWh &&
-        !isNaN(qty) && qty > 0 && qty <= haveOnSource &&
-        batchValid
+        wh != null && !isNaN(qty) && qty > 0 && batchValid &&
+        REASON_OPTIONS.some(o => o.value === p.reason)
       );
-      rows.push({ sid, fromWh, toWh, qty, haveOnSource, isValid, batchChoice });
+      rows.push({
+        sid, wh, qty, isValid, choice, custom,
+        reason: p.reason, note: p.note,
+        production_date: p.production_date || '',
+        expiry_date:     p.expiry_date     || '',
+      });
     }
     return rows;
-  }, [plan, skuMeta]);
+  }, [plan]);
 
   const allValid = validRows.length > 0 && validRows.every(r => r.isValid);
 
@@ -214,31 +245,34 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
     if (!allValid) return;
     setBusy(true);
     try {
-      const r = await fetch(`${API_BASE}/api/projects/${projectId}/stock/bulk-transfer`, {
+      const r = await fetch(`${API_BASE}/api/projects/${projectId}/inventory/bulk-receive`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          transfers: validRows.map(r => {
+          items: validRows.map(r => {
             const out = {
-              sku_id:            r.sid,
-              from_warehouse_id: r.fromWh,
-              to_warehouse_id:   r.toWh,
-              quantity:          r.qty,
+              sku_id:       r.sid,
+              warehouse_id: r.wh,
+              quantity:     r.qty,
+              batch_choice: r.choice.startsWith('existing:') ? 'existing' : r.choice,
+              reason:       r.reason,
+              note:         (r.note || '').trim() || null,
+              production_date: r.production_date || null,
+              expiry_date:     r.expiry_date     || null,
             };
-            if (r.batchChoice?.startsWith('existing:')) {
-              out.target_batch_id = Number(r.batchChoice.slice(9));
-            }
+            if (r.choice.startsWith('existing:')) out.target_batch_id = Number(r.choice.slice(9));
+            else if (r.choice === 'manual')      out.batch_name = r.custom;
             return out;
           }),
         }),
       });
       if (r.ok) {
         const j = await r.json();
-        showToast(`Transferred ${j.transfers_applied} lines across ${j.skus_affected} SKUs`);
+        showToast(`Received ${j.total_units} units · ${j.batches_created} new batch${j.batches_created === 1 ? '' : 'es'}, ${j.batches_updated} updated`);
         onApplied?.();
       } else {
         const j = await r.json().catch(() => ({}));
-        showToast(j.detail || 'Transfer failed');
+        showToast(j.detail || 'Receive failed');
       }
     } finally { setBusy(false); }
   };
@@ -247,12 +281,14 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
   return createPortal(
     <div className="auth-modal-overlay"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="auth-modal cpm-modal po-bulk-wizard" onClick={e => e.stopPropagation()}>
+      <div
+        className={`auth-modal cpm-modal po-bulk-wizard${step === 1 ? ' po-bulk-wizard--narrow' : ''}`}
+        onClick={e => e.stopPropagation()}>
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
               <div className="auth-modal-title">
-                {step === 1 ? 'Pick SKUs to transfer' : 'Plan the transfers'}
+                {step === 1 ? 'Pick SKUs to receive stock for' : 'Plan stock receipt'}
               </div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
@@ -286,9 +322,11 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
               skuMeta={skuMeta}
               plan={plan}
               validRows={validRows}
-              setAllTo={setAllTo}
               updateRow={updateRow}
               removeRow={removeRow}
+              batchNaming={batchNaming}
+              groupingMode={groupingMode}
+              propagateDate={propagateDate}
               batchOptionsBySkuWh={batchOptionsBySkuWh}
               loadBatchesFor={loadBatchesFor}
             />
@@ -307,12 +345,10 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
             ) : (
               <>
                 <button type="button" className="crm-submit-btn auth-btn-secondary"
-                  onClick={() => setStep(1)} disabled={busy}>
-                  ← Back
-                </button>
+                  onClick={() => setStep(1)} disabled={busy}>← Back</button>
                 <button type="button" className="crm-submit-btn"
                   disabled={!allValid || busy} onClick={apply}>
-                  {busy ? 'Applying…' : `Apply ${validRows.length} transfer${validRows.length === 1 ? '' : 's'}`}
+                  {busy ? 'Receiving…' : `Receive ${validRows.length} row${validRows.length === 1 ? '' : 's'}`}
                 </button>
                 <button type="button" className="crm-submit-btn auth-btn-secondary po-disc-cancel-btn"
                   onClick={onClose} disabled={busy}>Cancel</button>
@@ -326,14 +362,13 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
   );
 }
 
-// ── Step 1: Tree with cascading checkboxes ─────────────────────────────
+// ── Step 1: Tree with cascading checkboxes (same as Transfer wizard) ─────
 
 function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMany,
                       productAggState, variationAggState,
                       skuIdsOfProduct, skuIdsOfVariation }) {
   const [openProducts, setOpenProducts] = useState(new Set());
   const [openVars, setOpenVars] = useState(new Set());
-  // Products whose checkbox was clicked while still hydrating — shows brief loading state.
   const [busyPid, setBusyPid] = useState(new Set());
 
   const togglePid = (pid) => {
@@ -345,38 +380,22 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
     });
   };
   const toggleVid = (key) => {
-    setOpenVars(prev => {
-      const n = new Set(prev);
-      if (n.has(key)) n.delete(key); else n.add(key);
-      return n;
-    });
+    setOpenVars(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   };
-
-  // Product checkbox: hydrate if needed, cascade to all SKUs, auto-open the branch.
   const onProductCheck = async (p, checked) => {
     let pd = expanded[p.id]?.data;
     if (!pd) {
       setBusyPid(prev => { const n = new Set(prev); n.add(p.id); return n; });
-      try {
-        pd = await hydrate(p.id);
-      } finally {
-        setBusyPid(prev => { const n = new Set(prev); n.delete(p.id); return n; });
-      }
+      try { pd = await hydrate(p.id); }
+      finally { setBusyPid(prev => { const n = new Set(prev); n.delete(p.id); return n; }); }
     }
     if (!pd) return;
     setMany(skuIdsOfProduct(pd), checked);
-    if (checked) {
-      // Reveal the freshly-selected branch.
-      setOpenProducts(prev => {
-        const n = new Set(prev);
-        n.add(p.id);
-        return n;
-      });
-    }
+    if (checked) setOpenProducts(prev => { const n = new Set(prev); n.add(p.id); return n; });
   };
 
   if (productList.length === 0) {
-    return <p className="crm-placeholder">No products to transfer.</p>;
+    return <p className="crm-placeholder">No products to receive stock for.</p>;
   }
 
   return (
@@ -385,7 +404,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
         const pdState = expanded[p.id];
         const pd = pdState?.data;
         const isOpen = openProducts.has(p.id);
-        const aggState = pd ? productAggState(pd) : 'none';
+        const state  = pd ? productAggState(pd) : 'none';
         const isBusy = busyPid.has(p.id);
         return (
           <div key={p.id} className="po-bulk-tree-node">
@@ -394,8 +413,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
                 onClick={() => togglePid(p.id)}>
                 {isOpen ? <CaretDown weight="bold" /> : <CaretRight weight="bold" />}
               </button>
-              <TriCheckbox state={aggState}
-                disabled={isBusy}
+              <TriCheckbox state={state} disabled={isBusy}
                 onChange={(checked) => onProductCheck(p, checked)} />
               <Folder weight="duotone" className="po-disc-cell--strong" />
               <span className="po-set-strong">{p.title}</span>
@@ -428,8 +446,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
                   {vOpen && (v.configurations || []).map(c => (
                     <div key={c.id} className="po-bulk-tree-row po-bulk-tree-row--depth-2">
                       <span className="po-tree-chevron-spacer" />
-                      <TriCheckbox
-                        state={selected.has(c.id) ? 'all' : 'none'}
+                      <TriCheckbox state={selected.has(c.id) ? 'all' : 'none'}
                         onChange={() => toggleSku(c.id)} />
                       <Cube className="po-disc-cell--muted" />
                       <span>{c.configuration_name || c.name || '—'}</span>
@@ -448,113 +465,127 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
   );
 }
 
-// ── Step 2: per-SKU planner table ──────────────────────────────────────
+// ── Step 2: per-SKU receive planner ──────────────────────────────────────
 
-function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, removeRow,
+function Step2Plan({ warehouses, skuMeta, plan, validRows,
+                     updateRow, removeRow, batchNaming, groupingMode, propagateDate,
                      batchOptionsBySkuWh, loadBatchesFor }) {
   const planEntries = Object.entries(plan);
   if (planEntries.length === 0) {
     return <p className="crm-placeholder">Nothing selected — go back and pick SKUs.</p>;
   }
 
+  const groupingLabel = {
+    config:  'Per configuration — each SKU is its own batch.',
+    product: 'Per product — variations of the same product share one batch + dates.',
+    global:  'Global — the whole receipt is one batch; dates propagate to every row.',
+  }[groupingMode] || '';
+
   return (
     <>
-      <div className="po-bulk-plan-toolbar">
-        <span className="cpm-section-hint">Quick action:</span>
-        <span className="po-cb-wrap po-bulk-plan-quick-cb">
-          <Combobox value="" placeholder="Set all destinations to…"
-            options={warehouses.map(w => ({
-              value: w.id,
-              label: w.is_default ? `${w.name} · default` : w.name,
-            }))}
-            onChange={(v) => v && setAllTo(Number(v))} />
-        </span>
-      </div>
+      <p className="po-bulk-plan-hint">
+        This wizard only <b>adds</b> stock. To remove or write off stock, open a
+        SKU's <b>Edit stock</b> dialog and use a negative change.
+        <br />
+        <span className="po-bulk-plan-hint-grouping">Grouping: <b>{groupingLabel}</b></span>
+      </p>
 
-      <div className="po-bulk-plan-table po-bulk-plan-table--batch">
-        <div className="po-bulk-plan-row po-bulk-plan-row--head po-bulk-plan-row--batch">
+      <div className="po-bulk-plan-table po-bulk-plan-table--receive">
+        <div className="po-bulk-plan-row po-bulk-plan-row--head po-bulk-plan-row--receive">
           <span>SKU</span>
-          <span>From</span>
-          <span></span>
-          <span>To</span>
+          <span>Warehouse</span>
           <span>Batch</span>
-          <span>Qty</span>
-          <span>Avail.</span>
+          <span>Units added</span>
+          <span>Production</span>
+          <span>Expiry</span>
+          <span>Reason</span>
+          <span>Note</span>
           <span></span>
         </div>
         {planEntries.map(([sidStr, p]) => {
           const sid = Number(sidStr);
           const meta = skuMeta[sid];
           const validRow = validRows.find(r => r.sid === sid);
-          const havStr = meta && p.from_wh
-            ? (meta.stocks[Number(p.from_wh)] ?? 0)
-            : '—';
-          // Transfer can ONLY add to an existing batch at the destination — never create
-          // a new one. (New batches are created via the Add stock wizard.) If no batches
-          // exist at the chosen destination, the dropdown stays empty and the row reads
-          // as invalid until the merchant picks a different destination.
-          const toWhNum = p.to_wh === '' ? null : Number(p.to_wh);
-          const batchOpts = toWhNum != null ? (batchOptionsBySkuWh[`${sid}:${toWhNum}`] || []) : [];
-          const choice = p.batch_choice || '';
-          const batchSelectOptions = batchOpts.map(b => ({
-            value: `existing:${b.id}`,
-            label: `${b.batch_name} (${b.quantity_remaining} left)`,
-          }));
+          const whNum = p.warehouse === '' ? null : Number(p.warehouse);
+          const batchOpts = whNum != null ? (batchOptionsBySkuWh[`${sid}:${whNum}`] || []) : [];
+          const batchSelectOptions = [
+            { value: 'auto',   label: batchNaming.mode === 'auto'
+                ? `New batch (auto: ${batchNaming.format})`
+                : 'New batch (auto)' },
+            { value: 'manual', label: 'New batch · custom name…' },
+            ...batchOpts.map(b => ({
+              value: `existing:${b.id}`,
+              label: `Add to: ${b.batch_name} (${b.quantity_remaining} left)`,
+            })),
+          ];
 
           return (
             <div key={sid}
-              className={`po-bulk-plan-row po-bulk-plan-row--batch${validRow?.isValid === false ? ' po-bulk-plan-row--invalid' : ''}`}>
+              className={`po-bulk-plan-row po-bulk-plan-row--receive${validRow?.isValid === false ? ' po-bulk-plan-row--invalid' : ''}`}>
               <span className="po-bulk-plan-sku">
                 <span className="po-set-strong">{meta?.label || `#${sid}`}</span>
                 <span className="po-set-note po-bulk-plan-bc">{meta?.breadcrumb}</span>
               </span>
               <span className="po-cb-wrap">
-                <Combobox value={p.from_wh === '' ? '' : Number(p.from_wh)}
-                  placeholder="From"
+                <Combobox value={p.warehouse === '' ? '' : Number(p.warehouse)}
+                  placeholder="Warehouse"
                   options={warehouses.map(w => ({ value: w.id, label: w.name }))}
-                  onChange={(v) => updateRow(sid, { from_wh: v === '' ? '' : Number(v) })} />
-              </span>
-              <ArrowRight weight="bold" className="po-bulk-plan-arrow" />
-              <span className="po-cb-wrap">
-                <Combobox value={p.to_wh === '' ? '' : Number(p.to_wh)}
-                  placeholder="To"
-                  options={warehouses
-                    .filter(w => w.id !== Number(p.from_wh))
-                    .map(w => ({ value: w.id, label: w.name }))}
                   onChange={(v) => {
                     const next = v === '' ? '' : Number(v);
-                    updateRow(sid, { to_wh: next });
+                    updateRow(sid, { warehouse: next });
                     if (next) loadBatchesFor?.(sid, next);
                   }} />
               </span>
               <span className="po-bulk-plan-batch-cell">
-                <Combobox value={choice}
+                <Combobox value={p.batch_choice}
                   options={batchSelectOptions}
-                  placeholder={toWhNum == null
-                    ? 'Pick destination first'
-                    : batchOpts.length === 0
-                      ? 'No batches here — pick another WH'
-                      : 'Pick a batch'}
+                  placeholder="Batch"
                   onChange={(v) => updateRow(sid, { batch_choice: v })} />
+                {p.batch_choice === 'manual' && (
+                  <input className="crm-input crm-input--sm po-bulk-plan-batch-input"
+                    placeholder="Batch name"
+                    value={p.batch_custom || ''}
+                    onChange={(e) => updateRow(sid, { batch_custom: e.target.value })}
+                    maxLength={80} />
+                )}
               </span>
-              <input type="number" min="1" className="crm-input po-bulk-plan-qty"
-                placeholder="0"
-                value={p.qty}
+              <input type="number" min="1" step="1"
+                className="crm-input po-bulk-plan-qty"
+                placeholder="0" value={p.qty}
                 onChange={(e) => {
                   const raw = e.target.value;
                   if (raw === '') { updateRow(sid, { qty: '' }); return; }
                   const n = parseInt(raw, 10);
+                  // Negatives are not allowed here — that's the Edit stock flow.
                   if (isNaN(n) || n < 0) return;
-                  // Auto-clamp to available stock at source WH.
-                  const max = meta && p.from_wh
-                    ? (meta.stocks[Number(p.from_wh)] ?? 0)
-                    : null;
-                  const clamped = max !== null ? Math.min(n, max) : n;
-                  updateRow(sid, { qty: clamped });
+                  updateRow(sid, { qty: n });
                 }} />
-              <span className="po-bulk-plan-avail">
-                {havStr === '—' ? '—' : `/ ${havStr}`}
+              {/* Production date — auto-propagates within the same group when set */}
+              <div className="po-bulk-plan-date">
+                <DatePicker value={p.production_date || ''} tz={USER_TZ}
+                  onChange={(v) => {
+                    updateRow(sid, { production_date: v });
+                    propagateDate(sid, 'production_date', v);
+                  }} />
+              </div>
+              {/* Expiry date — same auto-propagation rules */}
+              <div className="po-bulk-plan-date">
+                <DatePicker value={p.expiry_date || ''} tz={USER_TZ}
+                  onChange={(v) => {
+                    updateRow(sid, { expiry_date: v });
+                    propagateDate(sid, 'expiry_date', v);
+                  }} />
+              </div>
+              <span className="po-cb-wrap">
+                <Combobox value={p.reason} placeholder="Reason"
+                  options={REASON_OPTIONS}
+                  onChange={(v) => updateRow(sid, { reason: v })} />
               </span>
+              <input type="text" className="crm-input po-bulk-plan-note"
+                placeholder="optional"
+                value={p.note || ''}
+                onChange={(e) => updateRow(sid, { note: e.target.value })}
+                maxLength={500} />
               <button type="button" className="po-tier-row-del"
                 aria-label="Remove" onClick={() => removeRow(sid)}>
                 <Trash weight="bold" />
@@ -566,14 +597,14 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, 
 
       {validRows.some(r => !r.isValid) && (
         <p className="po-bulk-plan-warning">
-          Some rows are invalid: pick From / To / Batch (existing at destination) and qty ≤ available.
+          Some rows are invalid: pick a warehouse, a batch, qty &gt; 0, and a reason.
         </p>
       )}
     </>
   );
 }
 
-// ── Tri-state checkbox (none / some / all) ─────────────────────────────
+// ── Tri-state checkbox ─────────────────────────────────────────────────
 
 function TriCheckbox({ state, onChange, disabled = false }) {
   const checked = state === 'all';

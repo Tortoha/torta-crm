@@ -653,10 +653,52 @@ function RulesEditor({ projectId, showToast, onSaved }) {
   const pq = `?project_id=${projectId}`;
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  // List of IANA names from browser if available, otherwise a curated short list.
+  // Used to populate the timezone <select>; merchant can also type any IANA name.
+  const tzList = (() => {
+    try {
+      if (typeof Intl.supportedValuesOf === 'function') {
+        return Intl.supportedValuesOf('timeZone');
+      }
+    } catch { /* unsupported */ }
+    return [
+      'UTC',
+      'Europe/London', 'Europe/Berlin', 'Europe/Paris', 'Europe/Moscow', 'Europe/Istanbul',
+      'Asia/Almaty', 'Asia/Tashkent', 'Asia/Bishkek', 'Asia/Yerevan', 'Asia/Tbilisi', 'Asia/Baku',
+      'Asia/Dubai', 'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Kolkata',
+      'America/New_York', 'America/Chicago', 'America/Los_Angeles',
+      'Australia/Sydney', 'Pacific/Auckland',
+    ];
+  })();
 
   useEffect(() => {
     fetch(`${API_BASE}/api/booking/settings${pq}`, { credentials: 'include' })
-      .then(r => r.json()).then(setForm);
+      .then(r => r.json())
+      .then(async d => {
+        if (!d) { setForm(d); return; }
+        // Auto-default to browser TZ when project was created without explicit setting
+        // (backend default is 'UTC' which trips up merchants outside that zone).
+        // We also AUTO-SAVE this one-time correction so the merchant doesn't have to
+        // remember to click Save — the slot filtering on the storefront depends on it.
+        const stuckOnUtc = (!d.timezone || d.timezone === 'UTC');
+        const browserIsElsewhere = browserTz && browserTz !== 'UTC';
+        if (stuckOnUtc && browserIsElsewhere) {
+          d.timezone = browserTz;
+          // Persist silently — this is a correction, not a user edit
+          try {
+            const { configured, ...payload } = d;
+            await fetch(`${API_BASE}/api/booking/settings${pq}`, {
+              method: 'PUT', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            showToast?.(`Business timezone set to ${browserTz}`);
+            onSaved?.();
+          } catch { /* will save next time merchant edits */ }
+        }
+        setForm(d);
+      });
   }, [projectId]);
 
   if (!form) return <p className="crm-placeholder">Loading…</p>;
@@ -708,6 +750,23 @@ function RulesEditor({ projectId, showToast, onSaved }) {
         <input className="crm-input" type="number" min={0}
           value={form.cancellation_window_minutes}
           onChange={e => upd('cancellation_window_minutes', parseInt(e.target.value, 10) || 0)} />
+      </div>
+
+      <div className="auth-field" style={{ gridColumn: '1 / -1' }}>
+        <label className="auth-label">Business timezone</label>
+        <p className="auth-field-hint">
+          Working hours and slot times are interpreted in this timezone. If left as <code>UTC</code>,
+          a 16:30 slot means 16:30 UTC — which can confuse customers in other regions. Set this
+          to your business's actual local timezone. Default is your browser's TZ
+          (<code>{browserTz}</code>).
+        </p>
+        <input className="crm-input" type="text" list="bk-tz-list"
+          value={form.timezone || ''} placeholder={browserTz}
+          onChange={e => upd('timezone', e.target.value.trim())}
+          spellCheck={false} autoComplete="off" />
+        <datalist id="bk-tz-list">
+          {tzList.map(z => <option key={z} value={z} />)}
+        </datalist>
       </div>
 
       <div className="auth-toggle-row" style={{ gridColumn: '1 / -1' }}>
@@ -861,7 +920,30 @@ function Booking() {
       if (sRes.ok)   setServices(await sRes.json());
       if (stRes.ok)  setStaff(await stRes.json());
       if (hRes.ok)   setHours(await hRes.json());
-      if (setRes.ok) setSettings(await setRes.json());
+      if (setRes.ok) {
+        const s = await setRes.json();
+        setSettings(s);
+        // Auto-correct existing UTC-stuck projects to the merchant's browser TZ.
+        // Without this, the customer-facing slot times stay anchored to UTC and look
+        // like "16:30 UTC · your local 21:30" — visually confusing for everyone outside UTC.
+        // Runs once per page mount (per merchant visit), silently persists.
+        const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        if (s && (!s.timezone || s.timezone === 'UTC') && browserTz && browserTz !== 'UTC') {
+          const { configured, ...payload } = s;
+          payload.timezone = browserTz;
+          try {
+            const r = await fetch(`${API_BASE}/api/booking/settings${pq}`, {
+              method: 'PUT', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            if (r.ok) {
+              setSettings({ ...s, timezone: browserTz });
+              showToast?.(`Business timezone set to ${browserTz}`);
+            }
+          } catch { /* will retry next time */ }
+        }
+      }
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, [projectId]);

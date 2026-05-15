@@ -1,13 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useOutletContext } from 'react-router-dom';
-import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown } from '@phosphor-icons/react';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
+import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown,
+         Receipt, ArrowUUpLeft } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
+import { useInfiniteList } from '../../Utils/useInfiniteList.js';
+import { useInfiniteScroll } from '../../Utils/useInfiniteScroll.js';
 import Modal from '../../Elements/Modal.jsx';
+import Returns from './Returns.jsx';
 import '../../Style/Organization.css';
 import '../../Style/Products.css';
 import '../../Style/Orders.css';
+import '../../Style/Authentication.css';
 
 // ── Constants ──────────────────────────────────────────────────
 
@@ -432,14 +437,106 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
   );
 }
 
-// ── Orders page ────────────────────────────────────────────────
+// ── Top-level Orders/Returns tab switcher ─────────────────────
+// Same pill switcher pattern as Authentication page. URL state via `?tab=`.
+
+function OrdersTopTabs({ tab, setTab, returnsActionCount }) {
+  const indRef  = useRef(null);
+  const btnRefs = useRef({});
+  const [hovered, setHovered] = useState(null);
+  const curTab = hovered ?? tab;
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = btnRefs.current[curTab];
+      if (!ind || !el) return;
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [curTab, tab]);
+
+  const TABS = [
+    { key: 'orders',  label: 'Orders',  Icon: Receipt },
+    { key: 'returns', label: 'Returns', Icon: ArrowUUpLeft },
+  ];
+
+  return (
+    <div className="auth-tab-wrapper">
+      <div className="auth-tab-switcher" onMouseLeave={() => setHovered(null)}>
+        <div ref={indRef} className="auth-tab-indicator" />
+        {TABS.map(({ key, label, Icon }) => (
+          <button key={key} ref={el => { btnRefs.current[key] = el; }}
+            className={`auth-tab-btn${curTab === key ? ' auth-tab-btn--active' : ''}`}
+            onMouseEnter={() => setHovered(key)}
+            onClick={() => setTab(key)} type="button">
+            <Icon className="auth-tab-icon" />
+            {label}
+            {key === 'returns' && returnsActionCount > 0 && (
+              <span className="ord-filter-badge" style={{ marginLeft: 4 }}>
+                {returnsActionCount}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Top-level page: Orders ↔ Returns ──────────────────────────
 
 function Orders() {
   const { projectId } = useOutletContext();
+  const [params, setParams] = useSearchParams();
+  const initialTab = params.get('tab') === 'returns' ? 'returns' : 'orders';
+  const [topTab, setTopTab] = useState(initialTab);
+  const [returnsActionCount, setReturnsActionCount] = useState(0);
+
+  // Sync URL with tab (preserves ?open=… on Returns deep-link)
+  const switchTab = (key) => {
+    setTopTab(key);
+    const next = new URLSearchParams(params);
+    if (key === 'returns') next.set('tab', 'returns');
+    else                    next.delete('tab');
+    if (key === 'orders')   next.delete('open');
+    setParams(next, { replace: true });
+  };
+
+  // Poll the Returns "action needed" badge while either tab is mounted.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      fetch(`${API_BASE}/api/projects/${projectId}/returns/stats`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(j => { if (!cancelled && j) setReturnsActionCount(j.action_count || 0); })
+        .catch(() => {});
+    };
+    tick();
+    const iv = setInterval(tick, 30000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [projectId]);
+
+  return (
+    <div className="auth-page">
+      <OrdersTopTabs tab={topTab} setTab={switchTab}
+                      returnsActionCount={returnsActionCount} />
+      {topTab === 'orders'  && <OrdersTab />}
+      {topTab === 'returns' && <Returns onActionCountChange={setReturnsActionCount} />}
+    </div>
+  );
+}
+
+
+// ── Orders tab (the original orders list) ─────────────────────
+
+function OrdersTab() {
+  const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
 
-  const [orders,    setOrders]    = useState([]);
-  const [loading,   setLoading]   = useState(true);
   const [tab,       setTab]       = useState('all');
   const [search,    setSearch]    = useState('');
   const [view,      setView]      = useState('table');
@@ -447,16 +544,14 @@ function Orders() {
   const [sort,      setSort]      = useState({ field: 'date', dir: 'desc' });
   const [openOrder, setOpenOrder] = useState(null);
 
-  const fetchOrders = useCallback(async () => {
-    try {
-      const res  = await fetch(`${API_BASE}/api/orders${pq}`, { credentials: 'include' });
-      const data = await res.json();
-      if (res.ok) setOrders(data);
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
-  }, [projectId]);
-
-  useEffect(() => { fetchOrders(); }, [fetchOrders]);
+  // Infinite-scroll orders feed — 100 per page (table rows are denser than cards).
+  const {
+    items: orders, hasMore, loading, loadMore, reload: fetchOrders, setItems: setOrders,
+  } = useInfiniteList({
+    url: `${API_BASE}/api/orders${pq}`,
+    pageSize: 100,
+  });
+  const ordersSentinelRef = useInfiniteScroll(loadMore);
 
   // SSE — refetch when a new order arrives (last_id increases = new row in DB)
   useEffect(() => {
@@ -590,6 +685,7 @@ function Orders() {
                   onOpen={setOpenOrder}
                 />
               ))}
+              {hasMore && <div ref={ordersSentinelRef} className="inf-sentinel">Loading more…</div>}
             </div>
           )}
         </div>
@@ -597,7 +693,7 @@ function Orders() {
 
       {/* ── Cards view ── */}
       {view === 'cards' && (
-        loading ? (
+        loading && orders.length === 0 ? (
           <p className="crm-placeholder">Loading orders…</p>
         ) : isEmpty ? (
           <div className="ord-empty">
@@ -615,6 +711,7 @@ function Orders() {
                 onOpen={setOpenOrder}
               />
             ))}
+            {hasMore && <div ref={ordersSentinelRef} className="inf-sentinel">Loading more…</div>}
           </div>
         )
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { Tag, FolderSimple, Archive, Ticket, Percent, ChartBar, Warehouse, ListBullets, GearSix } from '@phosphor-icons/react';
+import { Tag, FolderSimple, Archive, Ticket, Percent, ChartBar, Warehouse, ListBullets, GearSix, Stack } from '@phosphor-icons/react';
 import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 
@@ -15,6 +15,7 @@ export default function Products() {
     { key: 'list',          to: base,                     label: 'Products',     Icon: Tag          },
     { key: 'categories',    to: `${base}/categories`,     label: 'Categories',   Icon: FolderSimple },
     { key: 'inventory',     to: `${base}/inventory`,      label: 'Inventory',    Icon: ListBullets  },
+    { key: 'batches',       to: `${base}/batches`,        label: 'Batches',      Icon: Stack        },
     { key: 'promo-codes',   to: `${base}/promo-codes`,    label: 'Promo codes',  Icon: Ticket       },
     { key: 'discounts',     to: `${base}/discounts`,      label: 'Discount',     Icon: Percent      },
     { key: 'tier-pricing',  to: `${base}/tier-pricing`,   label: 'Tier pricing', Icon: ChartBar     },
@@ -26,6 +27,7 @@ export default function Products() {
   const activeKey =
     path.endsWith('/categories')   ? 'categories'   :
     path.endsWith('/inventory')    ? 'inventory'    :
+    path.endsWith('/batches')      ? 'batches'      :
     path.endsWith('/promo-codes')  ? 'promo-codes'  :
     path.endsWith('/discounts')    ? 'discounts'    :
     path.endsWith('/tier-pricing') ? 'tier-pricing' :
@@ -35,6 +37,7 @@ export default function Products() {
   const titleByKey = {
     list: 'Products', categories: 'Categories', archive: 'Archive',
     inventory: 'Inventory', settings: 'Product settings',
+    batches: 'Batches',
     'promo-codes': 'Promo codes', discounts: 'Discount',
     'tier-pricing': 'Tier pricing', warehouses: 'Warehouses',
   };

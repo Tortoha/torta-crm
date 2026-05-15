@@ -13,17 +13,39 @@ import { PoListRow } from '../../Utils/PoListRow.jsx';
 import '../../Style/Authentication.css';
 import '../../Style/Products.css';
 
+// Unified with ProductsInventory.REASON_OPTIONS + BulkReceiveWizard.REASON_OPTIONS.
+// Single source of truth → all three Edit-stock / Receive flows show the same labels.
 const REASON_OPTIONS = [
-  { value: 'restock', label: 'Restock' },
-  { value: 'manual',  label: 'Manual correction' },
-  { value: 'damage',  label: 'Damage / write-off' },
-  { value: 'transfer',label: 'Transfer' },
-  { value: 'return',  label: 'Customer return' },
+  { value: 'supplier_delivery', label: 'Supplier delivery' },
+  { value: 'initial_inventory', label: 'Initial inventory' },
+  { value: 'customer_return',   label: 'Customer return' },
+  { value: 'production',        label: 'Production' },
+  { value: 'recount_adjust',    label: 'Recount adjustment' },
+  { value: 'transfer_in',       label: 'External transfer in' },
+  { value: 'damage',            label: 'Damage / write-off' },
+  { value: 'transfer_out',      label: 'External transfer out' },
+  { value: 'manual',            label: 'Manual correction' },
+  { value: 'other',             label: 'Other' },
 ];
 
+// Audit-log label map — needs every reason that's been used historically so the
+// log still renders even for old rows. New reasons are listed first; legacy values
+// (restock, return, transfer, reservation, batch_receive) kept at the bottom for
+// back-compat.
 const REASON_LABELS = {
-  sale: 'Sale', restock: 'Restock', manual: 'Manual', return: 'Return',
-  damage: 'Damage', transfer: 'Transfer', reservation: 'Reservation',
+  supplier_delivery: 'Supplier delivery',
+  initial_inventory: 'Initial inventory',
+  customer_return:   'Customer return',
+  production:        'Production',
+  recount_adjust:    'Recount adjust',
+  transfer_in:       'Transfer in',
+  transfer_out:      'Transfer out',
+  damage:            'Damage',
+  manual:            'Manual',
+  other:             'Other',
+  // Legacy values that may still appear in product_stock_log rows:
+  sale: 'Sale', restock: 'Restock', return: 'Return',
+  transfer: 'Transfer', reservation: 'Reservation', batch_receive: 'Batch receive',
 };
 
 // Same column set as Products → Inventory so the trees feel like the same widget.
@@ -333,7 +355,7 @@ function NameCell({ depth = 0, chevron, onChevron, icon, children }) {
 
 function CellEditModal({ target, pq, productId, onClose, onSaved, showToast }) {
   const [newQty, setNewQty]   = useState(String(target.current_quantity));
-  const [reason, setReason]   = useState('manual');
+  const [reason, setReason]   = useState('supplier_delivery');
   const [note,   setNote]     = useState('');
   const [busy,   setBusy]     = useState(false);
 

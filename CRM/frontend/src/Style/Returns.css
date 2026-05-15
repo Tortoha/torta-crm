@@ -1,0 +1,457 @@
+/* Returns / Refunds page — grouped cards, status badges, 5-stage stepper, inspect editor. */
+
+/* ── Group sections ────────────────────────────────────────── */
+
+.ret-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 64px;
+}
+
+.ret-group {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+}
+
+.ret-group-head {
+  display: grid;
+  grid-template-columns: 36px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 4px 4px;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 12px;
+  transition: background 0.2s var(--ease-smooth);
+}
+
+.ret-group-head:hover {
+  background: var(--accent-tint);
+}
+
+.ret-group-icon {
+  width: 28px; height: 28px;
+  color: var(--accent);
+}
+
+.ret-group-title-wrap {
+  display: flex; flex-direction: column;
+  line-height: 1.2;
+}
+
+.ret-group-title {
+  font-size: 14px; font-weight: 600; color: var(--text);
+}
+
+.ret-group-sub {
+  font-size: 12px; color: var(--muted);
+}
+
+.ret-group-count {
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: 600; font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  min-width: 24px;
+  text-align: center;
+}
+
+.ret-group-caret {
+  width: 16px; height: 16px;
+  color: var(--muted);
+  transition: transform 0.25s var(--ease-smooth);
+}
+
+.ret-group-caret--open {
+  transform: rotate(180deg);
+}
+
+.ret-group-empty {
+  margin: 12px 4px 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.ret-group-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* ── Card ──────────────────────────────────────────────────── */
+
+.ret-card {
+  position: relative;
+  background: #fff;
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.25s var(--ease-smooth);
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.ret-card:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+.ret-card-gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.ret-card > * {
+  position: relative;
+  z-index: 2;
+}
+
+.ret-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.ret-card-id {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ret-card-cust {
+  display: flex; flex-direction: column;
+  line-height: 1.25;
+}
+
+.ret-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ret-card-email {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ret-card-meta {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ret-card-dot { color: var(--muted); }
+
+.ret-card-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.ret-card-reason {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.ret-card-date {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── Status badges ─────────────────────────────────────────── */
+
+.ret-badge {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ret-badge--requested  { background: rgba(255, 159, 10, 0.14); color: #c46a00; }
+.ret-badge--approved   { background: var(--accent-tint);        color: var(--accent); }
+.ret-badge--received   { background: rgba(0, 122, 255, 0.16);   color: #004ec3; }
+.ret-badge--inspected  { background: rgba(88, 86, 214, 0.14);   color: #4341a3; }
+.ret-badge--refunded   { background: rgba(52, 199, 89, 0.16);   color: #1e7a3a; }
+.ret-badge--rejected   { background: rgba(255, 59, 48, 0.14);   color: #b32417; }
+.ret-badge--cancelled  { background: rgba(142, 142, 147, 0.18); color: #555; }
+
+/* ── 5-stage stepper ───────────────────────────────────────── */
+
+.ret-stepper {
+  display: flex;
+  gap: 0;
+  padding: 16px;
+  background: var(--accent-tint);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  align-items: stretch;
+}
+
+.ret-step {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  padding: 0 6px;
+}
+
+.ret-step-dot {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700;
+  background: #fff;
+  color: var(--muted);
+  border: 2px solid var(--muted);
+  z-index: 2;
+  transition: all 0.25s var(--ease-smooth);
+}
+
+.ret-step--done .ret-step-dot {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.ret-step--current .ret-step-dot {
+  background: #fff;
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.15);
+}
+
+.ret-step-info {
+  display: flex; flex-direction: column;
+  gap: 2px;
+}
+
+.ret-step-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ret-step--done .ret-step-label,
+.ret-step--current .ret-step-label {
+  color: var(--text);
+}
+
+.ret-step-desc {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.3;
+  max-width: 110px;
+}
+
+.ret-step-bar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  right: -50%;
+  height: 2px;
+  background: var(--muted);
+  opacity: 0.3;
+  z-index: 1;
+}
+
+.ret-step--done .ret-step-bar,
+.ret-step--current ~ .ret-step .ret-step-bar {
+  /* The bar belongs to the step it sits on; "done" bars fill blue. */
+}
+
+.ret-step--done .ret-step-bar { background: var(--accent); opacity: 1; }
+
+.ret-stepper--rejected .ret-step-dot {
+  border-color: rgba(255, 59, 48, 0.5);
+  color: rgba(255, 59, 48, 0.8);
+}
+
+/* ── Detail modal sections ─────────────────────────────────── */
+
+.ret-detail-reason {
+  margin-top: 8px;
+}
+
+.ret-detail-msg {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--accent-tint);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-style: italic;
+}
+
+.ret-detail-photos {
+  display: flex; gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.ret-detail-photos img {
+  width: 64px; height: 64px;
+  border-radius: 8px;
+  object-fit: cover;
+  cursor: zoom-in;
+  transition: transform 0.15s var(--ease-smooth);
+}
+
+.ret-detail-photos img:hover {
+  transform: scale(1.05);
+}
+
+.ret-detail-provider {
+  display: flex; gap: 12px;
+  background: rgba(0, 113, 227, 0.05);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.ret-detail-provider svg {
+  flex-shrink: 0;
+  color: var(--accent);
+  width: 22px; height: 22px;
+}
+
+.ret-detail-provider p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ret-detail-provider strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* ── Inspect editor ────────────────────────────────────────── */
+
+.ret-inspect-list {
+  display: flex; flex-direction: column;
+  gap: 12px;
+}
+
+.ret-inspect-item {
+  display: flex; gap: 12px;
+  background: var(--bg);
+  padding: 12px;
+  border-radius: 12px;
+}
+
+.ret-inspect-img {
+  width: 64px; height: 64px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ret-inspect-info {
+  flex: 1;
+  display: flex; flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ret-inspect-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ret-inspect-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ret-inspect-row {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.ret-inspect-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.ret-inspect-notes {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+/* ── Refund grid ───────────────────────────────────────────── */
+
+.ret-refund-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+  margin-top: 4px;
+}
+
+.ret-refund-field {
+  display: flex; flex-direction: column;
+  gap: 4px;
+}
+
+.ret-refund-field > span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* ── Modal actions ─────────────────────────────────────────── */
+
+.ret-modal-actions {
+  display: flex; gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  margin-top: 4px;
+}
+
+.ret-modal-actions .crm-submit-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+}
+
+.ret-reject-row {
+  display: flex; gap: 8px;
+  flex: 1;
+  align-items: center;
+}
+
+.ret-reject-row .crm-input {
+  flex: 1;
+}

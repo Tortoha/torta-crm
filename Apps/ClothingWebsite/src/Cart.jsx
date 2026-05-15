@@ -5,7 +5,7 @@ import CartItem from "./Elements/CartItem";
 import CartSummary from "./Elements/CartSummary";
 import "./Style/Cart.css";
 import "./Style/Load.css";
-import { client } from "./api.js"
+import { client, pickError } from "./api.js"
 
 function Cart() {
     // API STATE
@@ -58,7 +58,7 @@ function Cart() {
             setPromoError("");
         } else {
             setAppliedPromo(null);
-            setPromoError(data?.detail || "Invalid promo code");
+            setPromoError(pickError(data, "Invalid promo code"));
         }
     };
 

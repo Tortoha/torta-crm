@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
-import { client } from "./api.js"
+import { client, pickError } from "./api.js"
 import PasswordInput from "./Elements/PasswordInput";
 import GoogleAuthButton from "./Elements/GoogleAuthButton";
 
@@ -91,7 +91,7 @@ function Regis() {
 
         navigate("/registration/verification");
       } else {
-        setGeneralError(data?.detail || "Registration failed");
+        setGeneralError(pickError(data, "Registration failed"));
       }
     } catch {
       setGeneralError("Network error");

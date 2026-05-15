@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { GearSix, FileText, Warning, UploadSimple } from '@phosphor-icons/react';
+import { GearSix, FileText, Warning, UploadSimple, Stack, Barcode } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import '../../Style/Authentication.css';
 import '../../Style/Booking.css';
@@ -30,6 +30,8 @@ function TabSwitcher({ tab, setTab }) {
 
   const TABS = [
     { key: 'general',   label: 'General',     Icon: GearSix  },
+    { key: 'inventory', label: 'Inventory',   Icon: Stack    },
+    { key: 'barcode',   label: 'Barcode defaults', Icon: Barcode },
     { key: 'documents', label: 'Documents',   Icon: FileText },
     { key: 'danger',    label: 'Danger Zone', Icon: Warning  },
   ];
@@ -274,6 +276,14 @@ export default function ProjectSettings() {
         </>
       )}
 
+      {tab === 'inventory' && (
+        <InventoryConfigTab projectId={projectId} showToast={showToast} />
+      )}
+
+      {tab === 'barcode' && (
+        <BarcodeDefaultsTab projectId={projectId} showToast={showToast} />
+      )}
+
       {tab === 'documents' && (
         <DocumentsTab projectId={projectId} showToast={showToast} />
       )}
@@ -289,6 +299,152 @@ export default function ProjectSettings() {
       )}
 
       {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
+      </div>
+    </>
+  );
+}
+
+// ── Inventory tab: FIFO/LIFO consumption ────────────────
+
+function InventoryConfigTab({ projectId, showToast }) {
+  const [mode, setMode] = useState('fifo');
+  const [hidePrice, setHidePrice] = useState(false);
+  const [marginPct, setMarginPct] = useState(50);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (j) {
+          setMode(j.batch_consumption_mode || 'fifo');
+          setHidePrice(!!j.hide_price_in_overview);
+          setMarginPct(parseFloat(j.default_margin_percent || 50));
+        }
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [projectId]);
+
+  const save = async (patch) => {
+    const r = await fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (r.ok) showToast('Saved');
+  };
+
+  return (
+    <>
+      <h1 className="crm-page-title">Inventory</h1>
+      <p className="auth-page-subtitle">
+        Batch consumption order + how prices are entered for SKUs.
+        Batch-name format lives in <b>Products → Settings</b>.
+      </p>
+
+      <div className="crm-section">
+        <h3 className="crm-section-title" style={{ marginBottom: 12 }}>Batch consumption</h3>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <input type="radio" name="cmode" checked={mode === 'fifo'}
+            onChange={() => { setMode('fifo'); save({ batch_consumption_mode: 'fifo' }); }} disabled={!loaded} />
+          <span style={{ fontWeight: 500 }}>FIFO — first in, first out (default)</span>
+          <span className="cpm-section-hint">Oldest batches sell first. Best for food, cosmetics, anything with an expiry date.</span>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
+          <input type="radio" name="cmode" checked={mode === 'lifo'}
+            onChange={() => { setMode('lifo'); save({ batch_consumption_mode: 'lifo' }); }} disabled={!loaded} />
+          <span style={{ fontWeight: 500 }}>LIFO — last in, first out</span>
+          <span className="cpm-section-hint">Newest batches sell first. Uncommon — use only if you have a specific reason.</span>
+        </label>
+      </div>
+
+      <div className="crm-section" style={{ marginTop: 16 }}>
+        <h3 className="crm-section-title" style={{ marginBottom: 12 }}>Pricing entry</h3>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <input type="checkbox" checked={hidePrice} disabled={!loaded}
+            onChange={(e) => { setHidePrice(e.target.checked); save({ hide_price_in_overview: e.target.checked }); }} />
+          <span>
+            <span style={{ fontWeight: 500 }}>Hide Price column — enter Cost only</span>
+            <span className="cpm-section-hint">
+              Product Overview hides the Price column for L2 SKUs. Merchant types <b>Cost</b>;
+              public price is auto-set to <b>Cost × (1 + margin/100)</b>.
+            </span>
+          </span>
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14, opacity: hidePrice ? 1 : 0.5 }}>
+          <span style={{ fontWeight: 500, minWidth: 160 }}>Default margin (%)</span>
+          <input className="crm-input" type="number" min="0" max="10000" step="0.1"
+            style={{ width: 120 }}
+            value={marginPct}
+            disabled={!hidePrice || !loaded}
+            onChange={(e) => setMarginPct(parseFloat(e.target.value) || 0)}
+            onBlur={(e) => save({ default_margin_percent: parseFloat(e.target.value) || 0 })} />
+          <span className="cpm-section-hint">
+            E.g. <b>50</b> → price = cost × 1.5. A cost of 100 produces price 150.
+          </span>
+        </label>
+      </div>
+    </>
+  );
+}
+
+// ── Barcode defaults tab: include date/batch/qty/serial ──
+
+function BarcodeDefaultsTab({ projectId, showToast }) {
+  const [s, setS] = useState({
+    barcode_include_date:   false,
+    barcode_include_batch:  false,
+    barcode_include_qty:    false,
+    barcode_include_serial: false,
+  });
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j) setS({
+        barcode_include_date:   !!j.barcode_include_date,
+        barcode_include_batch:  !!j.barcode_include_batch,
+        barcode_include_qty:    !!j.barcode_include_qty,
+        barcode_include_serial: !!j.barcode_include_serial,
+      }); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }, [projectId]);
+
+  const toggle = async (key) => {
+    const next = { ...s, [key]: !s[key] };
+    setS(next);
+    const r = await fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [key]: next[key] }),
+    });
+    if (r.ok) showToast('Saved');
+  };
+
+  const ROW = ({ k, label, sub }) => (
+    <label className="print-bc-check-row" style={{ padding: '8px 0' }}>
+      <input type="checkbox" checked={s[k]} disabled={!loaded} onChange={() => toggle(k)} />
+      <span style={{ flex: 1 }}>
+        <div style={{ fontWeight: 500 }}>{label}</div>
+        <div className="cpm-section-hint">{sub}</div>
+      </span>
+    </label>
+  );
+
+  return (
+    <>
+      <h1 className="crm-page-title">Barcode defaults</h1>
+      <p className="auth-page-subtitle">
+        These toggles pre-fill the "Advanced encoding" section in Print barcodes. Save once — they apply everywhere.
+      </p>
+      <div className="crm-section">
+        <ROW k="barcode_include_date"   label="Include production date" sub="Appends -YYYYMMDD to the encoded value" />
+        <ROW k="barcode_include_batch"  label="Include batch name"      sub="Appends -B<batch> — useful for recall traceability" />
+        <ROW k="barcode_include_qty"    label="Include quantity in batch" sub="Appends -Q<n> — for production reporting" />
+        <ROW k="barcode_include_serial" label="Include serial counter"  sub="Each printed sticker gets a unique -NNNN suffix" />
       </div>
     </>
   );

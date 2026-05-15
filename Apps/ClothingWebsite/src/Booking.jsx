@@ -1,14 +1,24 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import Header from "./Header";
-import { client } from "./api.js";
+import { client, pickError } from "./api.js";
 import "./Style/Booking.css";
 
 // Format helpers reused inside the picker.
 const fmtMoney    = (n) => `$${(+n || 0).toFixed(2)}`;
 const fmtDateLong = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-const isoDay      = (d) => d.toISOString().slice(0, 10);
-const todayStart  = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+
+// Local-date ISO. Using d.toISOString() here is a TZ bug: after setHours(0,0,0,0)
+// the Date represents midnight LOCAL, which for UTC+N (e.g. UTC+5 Almaty) falls
+// into the PREVIOUS UTC day — so the backend gets the wrong date and returns
+// the wrong day's slots. We assemble the YYYY-MM-DD from local components.
+const isoDay = (d) => {
+  const y  = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const da = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${da}`;
+};
+const todayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 
 export default function Booking() {
   const navigate = useNavigate();
@@ -22,6 +32,7 @@ export default function Booking() {
   const [chosenDate,    setChosenDate]    = useState(todayStart());
   const [slots,         setSlots]         = useState([]);
   const [slotsDetailed, setSlotsDetailed] = useState([]);
+  const [businessTz,    setBusinessTz]    = useState("");   // shop's TZ, returned in /slots
   const [loadingSlots,  setLoadingSlots]  = useState(false);
   const [chosenSlot,    setChosenSlot]    = useState(null);
 
@@ -72,6 +83,7 @@ export default function Booking() {
       if (ok) {
         setSlots(data?.slots || []);
         setSlotsDetailed(data?.slots_detailed || []);
+        setBusinessTz(data?.timezone || "");
       }
       setLoadingSlots(false);
     })();
@@ -100,19 +112,22 @@ export default function Booking() {
     try {
       const { ok, data } = await client.booking.bookings.create({
         service_id:     chosenService.id,
+        // staff_id is Optional[int] = None on the backend — null is fine here.
         staff_id:       chosenStaffId || null,
         starts_at:      chosenSlot,
         customer_name:  name.trim(),
+        // The string fields below are `str = ""` (NOT Optional) on the backend —
+        // sending null would fail Pydantic validation with 422. Send empty string.
         customer_phone: phone.trim(),
-        customer_email: email.trim() || null,
-        notes:          notes.trim() || null,
+        customer_email: email.trim(),
+        notes:          notes.trim(),
       });
       if (ok) {
         navigate("/booking/success", {
           state: { booking: data, service: chosenService, slot: chosenSlot },
         });
       } else {
-        setError(data?.detail || "Failed to create booking");
+        setError(pickError(data, "Failed to create booking"));
       }
     } finally {
       setSubmitting(false);
@@ -135,7 +150,7 @@ export default function Booking() {
             staffId={chosenStaffId} setStaffId={setChosenStaffId}
             dateStrip={dateStrip}
             chosenDate={chosenDate} setChosenDate={setChosenDate}
-            slots={slots} slotsDetailed={slotsDetailed} loadingSlots={loadingSlots}
+            slots={slots} slotsDetailed={slotsDetailed} businessTz={businessTz} loadingSlots={loadingSlots}
             chosenSlot={chosenSlot} setChosenSlot={setChosenSlot}
             onBack={() => { setChosenService(null); setChosenSlot(null); }}
             name={name} setName={setName}
@@ -187,13 +202,18 @@ function ServicesGrid({ services, loading, onPick }) {
 function BookingFlow({
   service, detail, staffId, setStaffId,
   dateStrip, chosenDate, setChosenDate,
-  slots, slotsDetailed = [], loadingSlots, chosenSlot, setChosenSlot,
+  slots, slotsDetailed = [], businessTz = "", loadingSlots, chosenSlot, setChosenSlot,
   onBack,
   name, setName, phone, setPhone, email, setEmail, notes, setNotes,
   error, submitting, onSubmit,
 }) {
   const eligibleStaff = detail?.staff || [];
   const requiresStaff = detail?.requires_staff;
+
+  // If the customer's browser TZ differs from the shop's, show a "your local time" hint.
+  // Compare IANA names directly (Intl returns a canonical name).
+  const customerTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const tzMismatch = !!businessTz && businessTz !== customerTz;
 
   return (
     <>
@@ -247,6 +267,20 @@ function BookingFlow({
       {/* Slot grid */}
       <section className="bk-pkr-section">
         <h2 className="bk-pkr-h2">Available times</h2>
+        {/* Timezone hint — critical so customer knows whether "16:30" means
+            shop-local time or their local time. Most of the time the shop
+            and customer share a TZ and this is silent; when they differ,
+            we surface the shop TZ explicitly. */}
+        {/* Slot times are ALWAYS in shop-local TZ. The customer is physically going
+            to the shop, so the only relevant time is what the shop clock will say
+            when they arrive. We surface the shop TZ as a small disclosure so an
+            out-of-region customer knows the context — but never convert. */}
+        {businessTz && (
+          <p className="bk-pkr-tz-note">
+            All times in <b>{businessTz}</b>
+            {tzMismatch && <> · your local: {customerTz}</>}
+          </p>
+        )}
         {loadingSlots ? (
           <p className="bk-pkr-loading">Loading slots…</p>
         ) : slots.length === 0 ? (

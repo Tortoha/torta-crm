@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
-import { client } from "./api.js"
+import { client, pickError } from "./api.js"
 import PasswordInput from "./Elements/PasswordInput";
 import GoogleAuthButton from "./Elements/GoogleAuthButton";
 
@@ -57,7 +57,7 @@ function Login() {
         localStorage.setItem("pendingResendUntil", String(Date.now() + resendSeconds * 1000));
         navigate("/login/verification");
       } else {
-        setGeneralError(data?.detail || "Login failed");
+        setGeneralError(pickError(data, "Login failed"));
       }
     } catch {
       setGeneralError("Network error");

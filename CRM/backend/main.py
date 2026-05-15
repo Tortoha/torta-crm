@@ -158,6 +158,29 @@ def s3_delete_prefix(prefix: str) -> None:
 
 app = FastAPI()
 
+
+# ── VALIDATION-ERROR FORMATTER ───────────────────────────
+# FastAPI returns Pydantic validation errors as {"detail": [{...}, ...]} by default.
+# Frontends usually do setError(json.detail) → <p>{error}</p>, which crashes React
+# ("Objects are not valid as a React child"). Flatten to a single string so every
+# endpoint is safe and the frontend never has to type-check the response shape.
+from fastapi.exceptions import RequestValidationError as _RVE
+
+@app.exception_handler(_RVE)
+async def _crm_format_validation_error(request: Request, exc: _RVE):
+    from starlette.responses import JSONResponse as _J
+    errors = exc.errors() or []
+    if not errors:
+        return _J({"detail": "Invalid request"}, status_code=422)
+    parts = []
+    for e in errors:
+        loc = e.get("loc") or ()
+        field = ".".join(str(x) for x in loc if x != "body") or "input"
+        msg = e.get("msg") or "Invalid value"
+        parts.append(f"{field}: {msg}")
+    return _J({"detail": "; ".join(parts)}, status_code=422)
+
+
 # ── STARTUP MIGRATIONS ───────────────────────────────────
 
 @app.on_event("startup")
@@ -1258,6 +1281,535 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] crm_document_settings failed: {e}")
 
+    # Stock audit trigger: catches manual SQL writes to l2.stock_quantity. App-level writes set torta.skip_audit='on' to avoid double-logging.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION log_l2_stock_change()
+                RETURNS TRIGGER AS $func$
+                DECLARE
+                    v_project_id INTEGER;
+                    v_skip TEXT;
+                BEGIN
+                    BEGIN
+                        v_skip := current_setting('torta.skip_audit', true);
+                    EXCEPTION WHEN OTHERS THEN
+                        v_skip := NULL;
+                    END;
+                    IF v_skip = 'on' THEN RETURN NEW; END IF;
+                    IF OLD.stock_quantity IS NOT DISTINCT FROM NEW.stock_quantity THEN RETURN NEW; END IF;
+
+                    SELECT p.project_id INTO v_project_id
+                      FROM products p
+                      JOIN product_configurations_l1 l1 ON l1.product_id = p.id
+                     WHERE l1.id = NEW.variation_id;
+                    IF v_project_id IS NULL THEN RETURN NEW; END IF;
+
+                    INSERT INTO product_stock_log
+                        (project_id, sku_id, warehouse_id, delta, reason, reference_id, user_id, note)
+                    VALUES
+                        (v_project_id, NEW.id, NULL,
+                         NEW.stock_quantity - OLD.stock_quantity,
+                         'manual_sql', NULL, NULL,
+                         'External SQL change detected by trigger');
+                    RETURN NEW;
+                END;
+                $func$ LANGUAGE plpgsql;
+            """)
+            cur.execute("DROP TRIGGER IF EXISTS trg_l2_stock_audit ON product_configurations_l2")
+            cur.execute("""
+                CREATE TRIGGER trg_l2_stock_audit
+                AFTER UPDATE OF stock_quantity ON product_configurations_l2
+                FOR EACH ROW
+                EXECUTE FUNCTION log_l2_stock_change()
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] stock audit trigger failed: {e}")
+
+    # Duplicate-product machinery, abandoned-cart tracking, notifications: see crm_notifications table below.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_notifications (
+                    id          BIGSERIAL PRIMARY KEY,
+                    user_id     INTEGER NOT NULL REFERENCES crm_users(id) ON DELETE CASCADE,
+                    project_id  INTEGER REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    type        VARCHAR(40) NOT NULL,
+                    title       VARCHAR(200) NOT NULL,
+                    message     TEXT NOT NULL DEFAULT '',
+                    link        VARCHAR(500),
+                    is_read     BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_notifications_user_unread "
+                        "ON crm_notifications(user_id, is_read, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_notifications_project "
+                        "ON crm_notifications(project_id, created_at DESC) WHERE project_id IS NOT NULL")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_notifications failed: {e}")
+
+    # Abandoned cart tracking: timestamp last reminder sent so cron doesn't spam the same cart twice.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE carts ADD COLUMN IF NOT EXISTS abandoned_email_sent_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE cart_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_carts_abandoned_scan "
+                        "ON carts(abandoned_email_sent_at) WHERE abandoned_email_sent_at IS NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_l2_low_stock "
+                        "ON product_configurations_l2(stock_quantity)")
+            # Auto-touch updated_at on any cart_items row change so abandoned-cart cron sees fresh timestamps.
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION touch_cart_items_updated_at()
+                RETURNS TRIGGER AS $func$
+                BEGIN
+                    NEW.updated_at := NOW();
+                    -- Clear the abandoned flag on the parent cart so the user can re-trigger after fresh activity.
+                    UPDATE carts SET abandoned_email_sent_at = NULL WHERE id = NEW.cart_id;
+                    RETURN NEW;
+                END;
+                $func$ LANGUAGE plpgsql;
+            """)
+            cur.execute("DROP TRIGGER IF EXISTS trg_cart_items_touch ON cart_items")
+            cur.execute("""
+                CREATE TRIGGER trg_cart_items_touch
+                BEFORE INSERT OR UPDATE ON cart_items
+                FOR EACH ROW
+                EXECUTE FUNCTION touch_cart_items_updated_at()
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] abandoned-cart / low-stock indexes failed: {e}")
+
+    # Inventory batches — every stock receipt creates a batch row. Source of truth for the new Batches page; product_stock now references which batches a SKU's quantity came from.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS inventory_batches (
+                    id                  BIGSERIAL PRIMARY KEY,
+                    project_id          INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    sku_id              INTEGER NOT NULL REFERENCES product_configurations_l2(id) ON DELETE CASCADE,
+                    warehouse_id        INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+                    batch_name          VARCHAR(80) NOT NULL,
+                    production_date     DATE,
+                    expiry_date         DATE,
+                    quantity_received   INTEGER NOT NULL CHECK (quantity_received >= 0),
+                    quantity_remaining  INTEGER NOT NULL CHECK (quantity_remaining >= 0),
+                    cost_per_unit       NUMERIC(12, 2),
+                    is_frozen           BOOLEAN NOT NULL DEFAULT FALSE,
+                    notes               TEXT NOT NULL DEFAULT '',
+                    received_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    received_by_user_id INTEGER REFERENCES crm_users(id) ON DELETE SET NULL
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inventory_batches_sku_active "
+                        "ON inventory_batches(sku_id, is_frozen, received_at) "
+                        "WHERE quantity_remaining > 0")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inventory_batches_project "
+                        "ON inventory_batches(project_id, received_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inventory_batches_warehouse "
+                        "ON inventory_batches(warehouse_id, received_at DESC)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] inventory_batches failed: {e}")
+
+    # Batch-related project + organization settings.
+    try:
+        with db_cursor() as (conn, cur):
+            # Org-level: how batch names are generated when the merchant enables auto-naming.
+            cur.execute("ALTER TABLE crm_organizations "
+                        "ADD COLUMN IF NOT EXISTS batch_naming_mode VARCHAR(10) NOT NULL DEFAULT 'auto'")
+            cur.execute("ALTER TABLE crm_organizations "
+                        "ADD COLUMN IF NOT EXISTS batch_naming_format VARCHAR(80) NOT NULL DEFAULT 'B-{YYYY}{MM}-{seq:03}'")
+            # Project-level: consumption order (FIFO is dairy/skincare-style; LIFO is rare).
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS batch_consumption_mode VARCHAR(10) NOT NULL DEFAULT 'fifo'")
+            # Project-level barcode defaults — applied when opening PrintBarcodesModal.
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS barcode_include_date    BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS barcode_include_batch   BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS barcode_include_qty     BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS barcode_include_serial  BOOLEAN NOT NULL DEFAULT FALSE")
+            # Barcode binding: 'batch' (default — the encoded value resolves to a
+            # specific inventory_batches row so a scan picks the exact batch) or
+            # 'sku' (legacy — the encoded value resolves to a product_configurations_l2
+            # row and consumption falls back to FIFO across batches). Default 'batch'
+            # because batches are now first-class — see Batches page.
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS barcode_binding VARCHAR(10) NOT NULL DEFAULT 'batch'")
+            # Pricing display: hide_price_in_overview swaps Price column in L2 table for a Cost column (price gets auto-derived from cost × (1 + margin%)). default_margin_percent feeds the auto-derivation.
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS hide_price_in_overview BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS default_margin_percent NUMERIC(6,2) NOT NULL DEFAULT 50.00")
+            # Batch naming moved from org-level to project-level (different shops in one org want different batch templates).
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS batch_naming_mode VARCHAR(10) NOT NULL DEFAULT 'auto'")
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS batch_naming_format VARCHAR(80) NOT NULL DEFAULT 'B-{YYYY}{MM}-{seq:03}'")
+            # Batch grouping mode — controls how auto-named batches are scoped during a
+            # multi-row receive. 'config' = each (product × variation × sku) row gets its
+            # own auto-name (current behavior). 'product' = all rows of the same parent
+            # product share one auto-name. 'global' = the whole receive shares one name.
+            # Production/expiry dates auto-propagate using the same scope.
+            cur.execute("ALTER TABLE crm_projects "
+                        "ADD COLUMN IF NOT EXISTS batch_grouping_mode VARCHAR(10) NOT NULL DEFAULT 'config'")
+            # One-time copy of the org-level template into projects that still have the default. Idempotent — only updates rows with default values, so re-running won't clobber edits.
+            cur.execute("""
+                UPDATE crm_projects pr
+                   SET batch_naming_mode   = o.batch_naming_mode,
+                       batch_naming_format = o.batch_naming_format
+                  FROM crm_organizations o
+                 WHERE pr.org_id = o.id
+                   AND pr.batch_naming_mode   = 'auto'
+                   AND pr.batch_naming_format = 'B-{YYYY}{MM}-{seq:03}'
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] batch settings columns failed: {e}")
+
+    # Backfill cost_price for existing L2 rows that have a price but no cost (33% below price ≈ 50% margin). Idempotent — only touches NULL cost_price.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("SET LOCAL torta.skip_audit = 'on'")
+            cur.execute(
+                "UPDATE product_configurations_l2"
+                "   SET cost_price = ROUND(price * 0.67, 2)"
+                " WHERE cost_price IS NULL"
+                "   AND price IS NOT NULL AND price > 0"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] cost_price backfill failed: {e}")
+
+    # Per-batch sequence counter for auto-naming (`{seq:03}` placeholder).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS inventory_batch_counters (
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    period_key  VARCHAR(20) NOT NULL,
+                    counter     INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (project_id, period_key)
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] inventory_batch_counters failed: {e}")
+
+    # Order items: access codes for event tickets — short human-readable backup if QR doesn't scan.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE order_items "
+                        "ADD COLUMN IF NOT EXISTS access_code VARCHAR(20)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_order_items_access_code "
+                        "ON order_items(access_code) WHERE access_code IS NOT NULL")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] order_items.access_code failed: {e}")
+
+    # Backfill EAN-13 barcodes on every product / L2 SKU that doesn't have one.
+    # Uses the in-store prefix range (200-299) which never collides with real
+    # registered GS1 codes — safe to mint without GS1 membership.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "SELECT id FROM products"
+                " WHERE barcode IS NULL OR barcode = '' OR barcode !~ '^[0-9]{13}$'"
+            )
+            for r in cur.fetchall():
+                pid = r['id']
+                minted = _internal_ean13(EAN13_PREFIX_PRODUCT, pid)
+                cur.execute("UPDATE products SET barcode = %s WHERE id = %s", (minted, pid))
+
+            cur.execute(
+                "SELECT id FROM product_configurations_l2"
+                " WHERE barcode IS NULL OR barcode = '' OR barcode !~ '^[0-9]{13}$'"
+            )
+            for r in cur.fetchall():
+                sid = r['id']
+                minted = _internal_ean13(EAN13_PREFIX_SKU, sid)
+                cur.execute("UPDATE product_configurations_l2 SET barcode = %s WHERE id = %s",
+                            (minted, sid))
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] ean13 backfill failed: {e}")
+
+    # Initial inventory backfill: any SKU that has product_stock.quantity > 0 but zero batches gets a synthetic "Initial inventory" batch so the new Inventory model holds true everywhere.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                INSERT INTO inventory_batches
+                  (project_id, sku_id, warehouse_id, batch_name, quantity_received, quantity_remaining, notes)
+                SELECT
+                  p.project_id,
+                  ps.sku_id,
+                  ps.warehouse_id,
+                  'Initial inventory',
+                  ps.quantity,
+                  ps.quantity,
+                  'Auto-created at migration — represents pre-existing stock'
+                FROM product_stock ps
+                JOIN product_configurations_l2 l2 ON ps.sku_id = l2.id
+                JOIN product_configurations_l1 l1 ON l2.variation_id = l1.id
+                JOIN products p ON l1.product_id = p.id
+                WHERE ps.quantity > 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM inventory_batches b
+                       WHERE b.sku_id = ps.sku_id AND b.warehouse_id = ps.warehouse_id
+                  )
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] initial inventory batch backfill failed: {e}")
+
+    # Low-stock alert cooldown: one alert per (project, sku) per day, no spam.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_low_stock_alerts (
+                    id          BIGSERIAL PRIMARY KEY,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    sku_id      INTEGER NOT NULL,
+                    alerted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    stock_at_alert INTEGER NOT NULL,
+                    threshold   INTEGER NOT NULL
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_low_stock_alerts_lookup "
+                        "ON crm_low_stock_alerts(project_id, sku_id, alerted_at DESC)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_low_stock_alerts failed: {e}")
+
+    # Returns/Refunds workflow. Customer-initiated within 14 days of delivery.
+    # Lifecycle: requested → approved → received → inspected → refunded (+ terminal rejected/cancelled).
+    # Refund is record-only — merchant processes actual money refund through their own payment provider.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS order_returns (
+                    id                  BIGSERIAL PRIMARY KEY,
+                    order_id            INTEGER     NOT NULL REFERENCES order_history(id) ON DELETE CASCADE,
+                    project_id          INTEGER     NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    customer_user_id    INTEGER,
+                    status              VARCHAR(20) NOT NULL DEFAULT 'requested',
+                    reason              VARCHAR(40) NOT NULL DEFAULT 'other',
+                    customer_message    TEXT        NOT NULL DEFAULT '',
+                    customer_photos     JSONB       NOT NULL DEFAULT '[]'::jsonb,
+                    approved_by         INTEGER,
+                    approved_at         TIMESTAMPTZ,
+                    rejected_reason     TEXT        NOT NULL DEFAULT '',
+                    received_by         INTEGER,
+                    received_at         TIMESTAMPTZ,
+                    inspected_by        INTEGER,
+                    inspected_at        TIMESTAMPTZ,
+                    refund_amount       NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    refund_method       VARCHAR(40) NOT NULL DEFAULT '',
+                    refund_reference    VARCHAR(120) NOT NULL DEFAULT '',
+                    refund_processed_by INTEGER,
+                    refund_processed_at TIMESTAMPTZ,
+                    restocking_fee      NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    internal_notes      TEXT        NOT NULL DEFAULT '',
+                    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='order_returns_status_check') THEN
+                ALTER TABLE order_returns ADD CONSTRAINT order_returns_status_check
+                  CHECK (status IN ('requested','approved','rejected','received','inspected','refunded','cancelled'));
+              END IF;
+            END $$;""")
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='order_returns_reason_check') THEN
+                ALTER TABLE order_returns ADD CONSTRAINT order_returns_reason_check
+                  CHECK (reason IN ('damaged','wrong_item','not_as_described','changed_mind','arrived_late','quality_issue','other'));
+              END IF;
+            END $$;""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_order_returns_project_status "
+                        "ON order_returns(project_id, status, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_order_returns_order "
+                        "ON order_returns(order_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_order_returns_customer "
+                        "ON order_returns(customer_user_id)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS order_return_items (
+                    id                   BIGSERIAL PRIMARY KEY,
+                    return_id            BIGINT      NOT NULL REFERENCES order_returns(id) ON DELETE CASCADE,
+                    order_item_id        INTEGER     NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
+                    quantity             INTEGER     NOT NULL DEFAULT 1,
+                    condition            VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    restock_warehouse_id INTEGER     REFERENCES warehouses(id) ON DELETE SET NULL,
+                    restock_batch_id     BIGINT      REFERENCES inventory_batches(id) ON DELETE SET NULL,
+                    restocked_at         TIMESTAMPTZ,
+                    unit_refund_amount   NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    item_notes           TEXT        NOT NULL DEFAULT ''
+                )
+            """)
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='order_return_items_condition_check') THEN
+                ALTER TABLE order_return_items ADD CONSTRAINT order_return_items_condition_check
+                  CHECK (condition IN ('pending','resellable','damaged','unrecoverable'));
+              END IF;
+            END $$;""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_return_items_return "
+                        "ON order_return_items(return_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_return_items_order_item "
+                        "ON order_return_items(order_item_id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] order_returns failed: {e}")
+
+    # Payment provider at organization level. Variant A — direct merchant payment (CRM never touches money).
+    # Merchant connects their own Stripe/Tinkoff/etc. account at the customer storefront level;
+    # refunds are processed in their dashboard and recorded here for audit + customer messaging.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS payment_provider VARCHAR(30) NOT NULL DEFAULT 'manual'")
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS payment_account_label VARCHAR(160) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS payment_dashboard_url VARCHAR(600) NOT NULL DEFAULT ''")
+            # Drop old constraint if it exists with old provider set, then recreate
+            # with the expanded list. Safe to run repeatedly.
+            cur.execute("ALTER TABLE crm_organizations DROP CONSTRAINT IF EXISTS crm_organizations_payment_provider_check")
+            cur.execute("""
+                ALTER TABLE crm_organizations ADD CONSTRAINT crm_organizations_payment_provider_check
+                  CHECK (payment_provider IN (
+                    'stripe','tinkoff','cloudpayments','yookassa','paypal',
+                    'adyen','braintree','square','mollie','razorpay','paddle','paybox',
+                    'manual','other'
+                  ))
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_organizations.payment_provider failed: {e}")
+
+    # Encrypted payment-provider credentials (Stripe/Tinkoff/etc. API keys).
+    # One row per org. credentials_encrypted is a Fernet-encrypted JSON dict — see payment_crypto.py.
+    # is_test_mode toggles between provider's test/live API endpoints (Stripe sk_test_ vs sk_live_).
+    # Stripe Connect: stripe_account_id is set when merchant connected via OAuth — refunds use
+    # the Stripe-Account header to act on behalf of the connected account.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_payment_credentials (
+                    id                  BIGSERIAL PRIMARY KEY,
+                    org_id              INTEGER     NOT NULL UNIQUE
+                                                  REFERENCES crm_organizations(id) ON DELETE CASCADE,
+                    provider            VARCHAR(30) NOT NULL,
+                    credentials_encrypted TEXT      NOT NULL DEFAULT '',
+                    is_test_mode        BOOLEAN     NOT NULL DEFAULT TRUE,
+                    is_connected        BOOLEAN     NOT NULL DEFAULT FALSE,
+                    connected_at        TIMESTAMPTZ,
+                    last_verified_at    TIMESTAMPTZ,
+                    last_error          TEXT        NOT NULL DEFAULT '',
+                    stripe_account_id   VARCHAR(120) NOT NULL DEFAULT '',
+                    connect_method      VARCHAR(20) NOT NULL DEFAULT 'manual',
+                    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("ALTER TABLE crm_payment_credentials DROP CONSTRAINT IF EXISTS crm_payment_credentials_provider_check")
+            cur.execute("""
+                ALTER TABLE crm_payment_credentials ADD CONSTRAINT crm_payment_credentials_provider_check
+                  CHECK (provider IN (
+                    'stripe','tinkoff','cloudpayments','yookassa','paypal',
+                    'adyen','braintree','square','mollie','razorpay','paddle','paybox',
+                    'manual','other'
+                  ))
+            """)
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='crm_payment_credentials_method_check') THEN
+                ALTER TABLE crm_payment_credentials ADD CONSTRAINT crm_payment_credentials_method_check
+                  CHECK (connect_method IN ('manual','oauth'));
+              END IF;
+            END $$;""")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_payment_credentials failed: {e}")
+
+    # Webhook event log — idempotency + audit trail. UNIQUE(provider, event_id) makes replays no-ops.
+    # Stripe/Tinkoff/etc. retry webhooks on 5xx, so we INSERT first then process; if conflict, skip.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS payment_webhook_events (
+                    id                  BIGSERIAL PRIMARY KEY,
+                    provider            VARCHAR(30) NOT NULL,
+                    event_id            VARCHAR(160) NOT NULL,
+                    project_id          INTEGER REFERENCES crm_projects(id) ON DELETE SET NULL,
+                    order_id            INTEGER,
+                    payment_intent_id   VARCHAR(160),
+                    event_type          VARCHAR(80) NOT NULL,
+                    payload             JSONB       NOT NULL DEFAULT '{}'::jsonb,
+                    signature_valid     BOOLEAN     NOT NULL DEFAULT FALSE,
+                    processed_ok        BOOLEAN     NOT NULL DEFAULT FALSE,
+                    processing_error    TEXT        NOT NULL DEFAULT '',
+                    received_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (provider, event_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_webhook_project "
+                        "ON payment_webhook_events(project_id, received_at DESC) "
+                        "WHERE project_id IS NOT NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_webhook_intent "
+                        "ON payment_webhook_events(payment_intent_id) "
+                        "WHERE payment_intent_id IS NOT NULL")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] payment_webhook_events failed: {e}")
+
+    # Payment-tracking columns on order_history. payment_status drives Order Lifecycle gates:
+    #  • 'pending' — intent created, awaiting webhook OR client confirmation
+    #  • 'paid' — webhook payment_intent.succeeded received OR confirmed directly
+    #  • 'failed' — provider rejected; STRICT mode means order should NOT exist in this state
+    #              (we delete the row on confirm-payment failure) — kept only for webhook-driven races.
+    #  • 'refunded' — full refund landed (sum of refunds ≥ total)
+    #  • 'partial_refunded' — some refunds, not full
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS payment_intent_id      VARCHAR(160) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS payment_charge_id      VARCHAR(160) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS payment_status         VARCHAR(20)  NOT NULL DEFAULT 'pending'")
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS payment_provider       VARCHAR(30)  NOT NULL DEFAULT 'manual'")
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS payment_currency       VARCHAR(3)   NOT NULL DEFAULT 'USD'")
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS payment_amount_paid    NUMERIC(10,2) NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS payment_amount_refunded NUMERIC(10,2) NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS payment_paid_at        TIMESTAMPTZ")
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='order_history_payment_status_check') THEN
+                ALTER TABLE order_history ADD CONSTRAINT order_history_payment_status_check
+                  CHECK (payment_status IN ('pending','paid','failed','refunded','partial_refunded','manual'));
+              END IF;
+            END $$;""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_order_history_payment_intent "
+                        "ON order_history(payment_intent_id) WHERE payment_intent_id <> ''")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_order_history_payment_status "
+                        "ON order_history(project_id, payment_status, created_at DESC)")
+            # Backfill: orders that existed before this migration are treated as 'manual' (no provider involved).
+            cur.execute("UPDATE order_history SET payment_status='manual' WHERE payment_status='pending' AND created_at < NOW() - INTERVAL '1 hour'")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] order_history payment columns failed: {e}")
+
+    # Real provider-driven refund tracking on order_returns. provider_refund_id is the
+    # actual ID returned by Stripe.Refund.create() / etc. — distinct from the merchant-typed
+    # `refund_reference` (which was only an audit field in the record-only flow).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE order_returns ADD COLUMN IF NOT EXISTS provider_refund_id     VARCHAR(160) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE order_returns ADD COLUMN IF NOT EXISTS provider_refund_status VARCHAR(30)  NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE order_returns ADD COLUMN IF NOT EXISTS provider_error         TEXT         NOT NULL DEFAULT ''")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] order_returns provider refund columns failed: {e}")
+
 # ── DB POOL ──────────────────────────────────────────────
 
 _pool = ThreadedConnectionPool(1, 10, **DB_CONFIG)
@@ -1287,6 +1839,41 @@ def db_all(sql: str, params: tuple = ()):
     with db_cursor() as (_, cur):
         cur.execute(sql, params)
         return cur.fetchall()
+
+
+# ── PAGINATION HELPERS ──────────────────────────────────
+# Offset-based pagination wrapper. Frontend hook (`useInfiniteList`) signals "I want pagination" by sending a `cursor` query param (defaults to 0); without it the endpoint stays backward-compat and returns a bare array.
+
+def _paginate(rows: list, limit: int) -> dict:
+    """Trim `rows` to `limit` (assumes caller fetched `limit + 1` to peek the next page)."""
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    return {"items": page, "has_more": has_more}
+
+
+def _wrap_paginated(want_pagination: bool, rows: list, cursor: Optional[int], limit: int):
+    """Format response — paginated wrapper {items, next_cursor, has_more} OR legacy bare array."""
+    if not want_pagination:
+        return rows[:limit]   # legacy callers still get just the array
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = (cursor or 0) + len(page) if has_more else None
+    return {"items": page, "next_cursor": next_cursor, "has_more": has_more}
+
+
+def _pagination_params(cursor: Optional[str], limit_q: Optional[int], default_limit: int = 50, max_limit: int = 200):
+    """Parse + clamp pagination params. Returns (want_pagination, offset, limit). want_pagination=True if cursor was explicitly passed (even '0')."""
+    want = cursor is not None
+    offset = 0
+    if cursor is not None:
+        try: offset = max(0, int(cursor))
+        except (TypeError, ValueError): offset = 0
+    limit = default_limit
+    if limit_q is not None:
+        try: limit = max(1, min(int(limit_q), max_limit))
+        except (TypeError, ValueError): limit = default_limit
+    return want, offset, limit
+
 
 # ── EMAIL ────────────────────────────────────────────────
 
@@ -1329,33 +1916,170 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 # Rate-limit / verification storage — Redis if REDIS_URL set, else in-memory (see kvstore.py).
 import time as _time
-import kvstore
+# ── Inlined: kvstore (Redis-backed K/V with in-memory fallback) ──
+import os, time, json, threading, fnmatch
+from typing import Any, Iterable
+
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+
+_redis = None
+_backend_name = "memory"
+
+if REDIS_URL:
+    try:
+        import redis  # type: ignore
+        _redis = redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
+        _redis.ping()
+        _backend_name = "redis"
+        print(f"[kvstore] Connected to Redis: {REDIS_URL.split('@')[-1]}")
+    except ImportError:
+        print("[kvstore] redis-py not installed — falling back to in-memory store")
+        _redis = None
+    except Exception as e:
+        print(f"[kvstore] Redis unreachable ({e}) — falling back to in-memory store")
+        _redis = None
+
+def backend() -> str:
+    """Returns 'redis' or 'memory'. Useful for /health endpoints."""
+    return _backend_name
+
+# ─── In-memory fallback ─────────────────────────────────────────────────────
+_mem: dict[str, Any] = {}
+_mem_expires: dict[str, float] = {}
+_mem_lock = threading.RLock()
+
+def _mem_purge_expired():
+    """Best-effort sweep — called on every read so memory doesn't bloat."""
+    now = time.time()
+    expired = [k for k, t in _mem_expires.items() if t <= now]
+    for k in expired:
+        _mem.pop(k, None)
+        _mem_expires.pop(k, None)
+
+# ─── Public API ─────────────────────────────────────────────────────────────
+
+def _kv_get(key: str) -> Any | None:
+    """Returns the deserialised JSON value, or None if missing/expired."""
+    if _redis:
+        v = _redis.get(key)
+        if v is None: return None
+        try:    return json.loads(v)
+        except Exception: return None
+    with _mem_lock:
+        _mem_purge_expired()
+        return _mem.get(key)
+
+def _kv_set(key: str, value: Any, ttl: int | None = None) -> None:
+    """Set a JSON value. ttl in seconds (None = no expiry)."""
+    if _redis:
+        payload = json.dumps(value)
+        if ttl: _redis.setex(key, int(ttl), payload)
+        else:   _redis.set(key, payload)
+        return
+    with _mem_lock:
+        _mem[key] = value
+        if ttl is not None:
+            _mem_expires[key] = time.time() + int(ttl)
+        else:
+            _mem_expires.pop(key, None)
+
+def _kv_delete(key: str) -> None:
+    if _redis:
+        _redis.delete(key)
+        return
+    with _mem_lock:
+        _mem.pop(key, None)
+        _mem_expires.pop(key, None)
+
+def exists(key: str) -> bool:
+    if _redis:
+        return bool(_redis.exists(key))
+    with _mem_lock:
+        _mem_purge_expired()
+        return key in _mem
+
+def _kv_incr(key: str, ttl: int | None = None) -> int:
+    """
+    Atomically increment an integer counter and return the new value.
+    If the key didn't exist, it's created with value=1 and TTL applied.
+    If the key already had a TTL, it is NOT extended — the window stays
+    fixed (so a sliding-window attack can't keep the key alive forever).
+    """
+    if _redis:
+        # Pipeline: INCR + (EXPIRE NX) — only set TTL on first increment.
+        # The NX flag (Redis 7+) is the cleanest way; for older versions we
+        # check ttl<0 and conditionally EXPIRE.
+        with _redis.pipeline() as p:
+            p.incr(key)
+            results = p.execute()
+        new_val = int(results[0])
+        if ttl is not None and new_val == 1:
+            try:
+                _redis.expire(key, int(ttl))
+            except Exception:
+                pass
+        return new_val
+    with _mem_lock:
+        _mem_purge_expired()
+        cur = int(_mem.get(key, 0)) + 1
+        _mem[key] = cur
+        if ttl is not None and key not in _mem_expires:
+            _mem_expires[key] = time.time() + int(ttl)
+        return cur
+
+def _kv_ttl(key: str) -> int:
+    """Returns seconds remaining until expiry. -1 if no TTL, -2 if missing."""
+    if _redis:
+        return int(_redis.ttl(key))
+    with _mem_lock:
+        if key not in _mem: return -2
+        if key not in _mem_expires: return -1
+        left = int(_mem_expires[key] - time.time())
+        return max(left, 0)
+
+def _kv_keys_matching(pattern: str) -> list[str]:
+    """
+    Glob-style key pattern (e.g. 'pw_reset:*'). Used for sweep-and-delete
+    operations like 'invalidate all reset tokens for this email'. Avoid in
+    hot paths — Redis SCAN is O(N) over keyspace.
+    """
+    if _redis:
+        return list(_redis.scan_iter(match=pattern))
+    with _mem_lock:
+        _mem_purge_expired()
+        return [k for k in list(_mem.keys()) if fnmatch.fnmatch(k, pattern)]
+
 
 # Email OTP (pending verifications)
 def _pv_key(email: str) -> str: return f"pv:{email}"
-def _pv_get(email):    return kvstore.get(_pv_key(email))
+def _pv_get(email):    return _kv_get(_pv_key(email))
 def _pv_set(email, v, ttl=None):
-    kvstore.set(_pv_key(email), v, ttl=ttl or CODE_TTL_MINUTES * 60)
-def _pv_del(email):    kvstore.delete(_pv_key(email))
+    _kv_set(_pv_key(email), v, ttl=ttl or CODE_TTL_MINUTES * 60)
+def _pv_del(email):    _kv_delete(_pv_key(email))
 
 # Failed-attempt counters (logins, reset, etc.) — atomic INCR with TTL window
 def _fail_key(bucket: str, ident: str) -> str: return f"fail:{bucket}:{ident}"
 def _fail_check(bucket: str, ident: str):
     key = _fail_key(bucket, ident)
-    count = int(kvstore.get(key) or 0)
+    count = int(_kv_get(key) or 0)
     if count >= MAX_FAILED_ATTEMPTS:
-        return True, max(kvstore.ttl(key), 1)
+        return True, max(_kv_ttl(key), 1)
     return False, 0
 def _fail_record(bucket: str, ident: str) -> int:
-    return kvstore.incr(_fail_key(bucket, ident), ttl=BLOCK_MINUTES * 60)
+    return _kv_incr(_fail_key(bucket, ident), ttl=BLOCK_MINUTES * 60)
 def _fail_clear(bucket: str, ident: str):
-    kvstore.delete(_fail_key(bucket, ident))
+    _kv_delete(_fail_key(bucket, ident))
 
 # Password reset tokens
 def _reset_key(token_hash: str) -> str: return f"pw_reset:{token_hash}"
-def _reset_get(h):    return kvstore.get(_reset_key(h))
-def _reset_set(h, v): kvstore.set(_reset_key(h), v, ttl=RESET_TTL_MINUTES * 60)
-def _reset_del(h):    kvstore.delete(_reset_key(h))
+def _reset_get(h):    return _kv_get(_reset_key(h))
+def _reset_set(h, v): _kv_set(_reset_key(h), v, ttl=RESET_TTL_MINUTES * 60)
+def _reset_del(h):    _kv_delete(_reset_key(h))
 
 # CSRF double-submit cookie: GET /api/csrf sets readable cookie, frontend echoes it as X-CSRF-Token, middleware compares; exempt: inbound webhooks and X-Internal-Key chat endpoint.
 _CSRF_SAFE_METHODS  = {"GET", "HEAD", "OPTIONS", "TRACE"}
@@ -1411,6 +2135,10 @@ class RenameOrgRequest(BaseModel):
 class CreateProjectRequest(BaseModel):
     name: str
     frontend_url: str
+    # Optional — frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+    # Used to seed booking_settings.timezone so customer-facing slot times match
+    # the merchant's actual operating timezone from day 1.
+    timezone: Optional[str] = None
 
 class RenameProjectRequest(BaseModel):
     name: str
@@ -1433,6 +2161,7 @@ class CreateProductRequest(BaseModel):
     seo_description: Optional[str] = None
     seo_keywords: Optional[str] = None
     product_type: Optional[str] = "physical"  # physical | digital | service | event
+    sku: Optional[str] = None             # optional manual override; blank = auto-generate from org settings
 
 class UpdateProductRequest(BaseModel):
     title: Optional[str] = None
@@ -1486,9 +2215,15 @@ class TierPricingRequest(BaseModel):
 class StockAdjustRequest(BaseModel):
     sku_id: int
     delta: int                              # signed: +50 = restock, -2 = manual write-off
-    reason: str                             # 'restock' | 'manual' | 'damage' | 'transfer' | etc.
+    reason: str                             # see ADJUST_REASONS below — unified with bulk-receive
     note: Optional[str] = ''
     warehouse_id: Optional[int] = None
+    # Optional batch routing. When batch_id is set the delta is applied to that specific
+    # batch's quantity_remaining (positive bumps received+remaining, negative reduces
+    # remaining). When new_batch_name is set (positive delta only) a new batch is created.
+    # When neither is set, the legacy path runs: just bump product_stock, no batch touched.
+    batch_id:       Optional[int] = None
+    new_batch_name: Optional[str] = None
 
 class WarehouseRequest(BaseModel):
     name: Optional[str] = None
@@ -1916,7 +2651,7 @@ def record_fail(keys: list, now: datetime):
     for key in keys:
         cnt = _fail_record("login", key)
         if cnt >= MAX_FAILED_ATTEMPTS:
-            left = max(kvstore.ttl(_fail_key("login", key)), 1)
+            left = max(_kv_ttl(_fail_key("login", key)), 1)
             raise HTTPException(429, f"Too many attempts. Retry in {left}s.")
 
 def require_owner(user: dict, project_id: int):
@@ -2236,10 +2971,10 @@ def forgot_password(request: ForgotPasswordRequest, req: Request):
     # Always return generic success — never differentiate existence.
     if db_one("SELECT id FROM crm_users WHERE email = %s", (email,)):
         # Sweep prior tokens for this email (cheap; they auto-expire anyway)
-        for k in kvstore.keys_matching("pw_reset:*"):
-            d = kvstore.get(k)
+        for k in _kv_keys_matching("pw_reset:*"):
+            d = _kv_get(k)
             if d and d.get("email") == email:
-                kvstore.delete(k)
+                _kv_delete(k)
         raw = secrets.token_urlsafe(32)
         h   = hashlib.sha256(raw.encode()).hexdigest()
         _reset_set(h, {"email": email, "used": False})
@@ -2479,6 +3214,1409 @@ def regenerate_org_skus(org_id: int, user: dict = Depends(get_current_user)):
     return {"ok": True, "products_updated": products_updated, "skus_updated": skus_updated}
 
 
+# Org-wide payment provider settings. Variant A model — CRM never touches money.
+# Merchant connects their own Stripe/Tinkoff/etc. account on their storefront; this records
+# which provider they use so the Returns workflow can show the right refund instructions.
+PAYMENT_PROVIDERS = ("stripe", "tinkoff", "cloudpayments", "yookassa", "paypal",
+                      "adyen", "braintree", "square", "mollie", "razorpay", "paddle", "paybox",
+                      "manual", "other")
+
+@app.get("/api/orgs/{org_id}/payment-settings")
+def get_org_payment_settings(org_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    row = db_one(
+        "SELECT payment_provider, payment_account_label, payment_dashboard_url"
+        " FROM crm_organizations WHERE id=%s",
+        (org_id,)
+    )
+    if not row: raise HTTPException(404, "Org not found")
+    return {
+        "provider":      row["payment_provider"] or "manual",
+        "account_label": row["payment_account_label"] or "",
+        "dashboard_url": row["payment_dashboard_url"] or "",
+    }
+
+
+@app.put("/api/orgs/{org_id}/payment-settings")
+def update_org_payment_settings(org_id: int, body: dict = Body(...),
+                                  user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    provider = (body.get("provider") or "manual").strip().lower()
+    if provider not in PAYMENT_PROVIDERS:
+        raise HTTPException(400, f"Invalid provider. Allowed: {PAYMENT_PROVIDERS}")
+    account_label = sanitize((body.get("account_label") or "").strip())[:160]
+    dashboard_url = (body.get("dashboard_url") or "").strip()[:600]
+    if dashboard_url and not dashboard_url.startswith(("http://", "https://")):
+        raise HTTPException(400, "Dashboard URL must start with http:// or https://")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_organizations"
+            "   SET payment_provider=%s, payment_account_label=%s, payment_dashboard_url=%s"
+            " WHERE id=%s",
+            (provider, account_label, dashboard_url, org_id)
+        )
+        conn.commit()
+    return {"ok": True, "provider": provider,
+            "account_label": account_label, "dashboard_url": dashboard_url}
+
+
+# ── Payment credentials (encrypted at rest) ───────────────────────────────
+# Per-org Stripe/Tinkoff/etc. API keys. Only org owners can read/write.
+# Secret fields are NEVER returned in plaintext — only the last 4 chars + a
+# masked indicator. The full secret can only be read internally by code that
+# imports payment_crypto.decrypt_credentials() and is gated by require_org_owner.
+#
+# Security checklist:
+#  • secret_key never leaves the DB except via payment_providers.* helpers
+#  • all writes require org owner (require_org_owner)
+#  • prefix validation prevents pasting a publishable key into the secret field
+#  • test endpoint pings the real provider API to catch bad keys before saving
+#  • DELETE clears credentials AND resets is_connected (so refund attempts fail loudly)
+
+# ── Inlined: payment_crypto (Fernet AES-128 encryption of merchant creds) ──
+
+import json
+import os
+from typing import Any
+
+from cryptography.fernet import Fernet, InvalidToken
+
+
+_ENV_KEY = "PAYMENT_ENCRYPTION_KEY"
+
+
+def _load_fernet() -> Fernet | None:
+    raw = os.getenv(_ENV_KEY, "").strip()
+    if not raw:
+        return None
+    try:
+        return Fernet(raw.encode())
+    except (ValueError, TypeError):
+        return None
+
+
+def is_encryption_configured() -> bool:
+    """True if the master key is set and valid (use in /health checks)."""
+    return _load_fernet() is not None
+
+
+def encrypt_credentials(data: dict[str, Any]) -> str:
+    """Serialize a credentials dict to JSON, encrypt with Fernet, return as str.
+
+    Raises RuntimeError if PAYMENT_ENCRYPTION_KEY is missing or malformed —
+    never silently store plaintext.
+    """
+    f = _load_fernet()
+    if f is None:
+        raise RuntimeError(
+            f"{_ENV_KEY} is not configured. Set it in the backend .env "
+            "(generate via: python -c 'from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())')"
+        )
+    if not isinstance(data, dict):
+        raise TypeError("encrypt_credentials expects a dict")
+    raw = json.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return f.encrypt(raw).decode("ascii")
+
+
+def decrypt_credentials(token: str) -> dict[str, Any]:
+    """Decrypt a Fernet token and parse the JSON payload.
+
+    Raises RuntimeError if the key is unset.
+    Raises ValueError if the token is malformed, tampered with, or not the
+    expected JSON shape — callers should treat that as a credential being broken.
+    """
+    f = _load_fernet()
+    if f is None:
+        raise RuntimeError(f"{_ENV_KEY} is not configured")
+    if not token:
+        return {}
+    try:
+        raw = f.decrypt(token.encode("ascii"))
+    except (InvalidToken, ValueError) as e:
+        raise ValueError(f"Credentials decryption failed: {e}") from e
+    try:
+        out = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Decrypted payload is not JSON: {e}") from e
+    if not isinstance(out, dict):
+        raise ValueError("Decrypted payload is not a dict")
+    return out
+
+
+def mask_secret(value: str | None, keep: int = 4) -> str:
+    """Returns "••••••••1234" — only last `keep` chars exposed.
+
+    Use anywhere a secret would otherwise be in an API response.
+    Never includes the original value in the masked form's length.
+    """
+    if not value:
+        return ""
+    s = str(value)
+    if len(s) <= keep:
+        return "•" * len(s)
+    return "•" * 8 + s[-keep:]
+
+# ── Inlined: payment_providers (CRM-side: test_connection + create_refund) ──
+
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
+
+
+# ── Provider catalogue ─────────────────────────────────────────────────────
+# Required credential fields per provider. Used by CRM endpoints to validate
+# the request body shape and by the frontend to render the form.
+
+PROVIDER_FIELDS: dict[str, list[dict[str, Any]]] = {
+    "stripe": [
+        {"key": "publishable_key", "label": "Publishable key", "type": "text",
+         "placeholder": "pk_test_…",     "secret": False, "required": True,
+         "validate_prefix": ["pk_test_", "pk_live_"]},
+        {"key": "secret_key",      "label": "Secret key",      "type": "password",
+         "placeholder": "sk_test_…",     "secret": True,  "required": True,
+         "validate_prefix": ["sk_test_", "sk_live_", "rk_test_", "rk_live_"]},
+        {"key": "webhook_secret",  "label": "Webhook signing secret", "type": "password",
+         "placeholder": "whsec_…",      "secret": True,  "required": False,
+         "validate_prefix": ["whsec_"]},
+    ],
+    "tinkoff": [
+        {"key": "terminal_key", "label": "Terminal key", "type": "text",
+         "placeholder": "1234567890123", "secret": False, "required": True},
+        {"key": "password",     "label": "Terminal password", "type": "password",
+         "placeholder": "",              "secret": True,  "required": True},
+    ],
+    "cloudpayments": [
+        {"key": "public_id", "label": "Public ID",     "type": "text",
+         "placeholder": "pk_…",          "secret": False, "required": True},
+        {"key": "api_secret", "label": "API secret",   "type": "password",
+         "placeholder": "",              "secret": True,  "required": True},
+    ],
+    "yookassa": [
+        {"key": "shop_id",    "label": "Shop ID",      "type": "text",
+         "placeholder": "123456",        "secret": False, "required": True},
+        {"key": "secret_key", "label": "Secret key",   "type": "password",
+         "placeholder": "live_…/test_…", "secret": True,  "required": True},
+    ],
+    "paypal": [
+        {"key": "client_id",     "label": "Client ID",     "type": "text",
+         "placeholder": "",              "secret": False, "required": True},
+        {"key": "client_secret", "label": "Client secret", "type": "password",
+         "placeholder": "",              "secret": True,  "required": True},
+        {"key": "webhook_id",    "label": "Webhook ID",    "type": "text",
+         "placeholder": "WH-…",          "secret": False, "required": False},
+    ],
+    # Adyen — API key + HMAC key for webhook signatures + merchant account name.
+    # client_key is the frontend-safe key (Drop-in JS uses it).
+    "adyen": [
+        {"key": "api_key",          "label": "API key",          "type": "password",
+         "placeholder": "AQE…",       "secret": True,  "required": True},
+        {"key": "merchant_account", "label": "Merchant account", "type": "text",
+         "placeholder": "TortaECOM",  "secret": False, "required": True},
+        {"key": "client_key",       "label": "Client key",       "type": "text",
+         "placeholder": "test_…/live_…", "secret": False, "required": False},
+        {"key": "hmac_key",         "label": "HMAC key (webhooks)", "type": "password",
+         "placeholder": "",           "secret": True,  "required": False},
+    ],
+    # Braintree — public/private key pair + merchant_id. webhook signature uses private_key.
+    "braintree": [
+        {"key": "merchant_id", "label": "Merchant ID", "type": "text",
+         "placeholder": "abc123xyz",       "secret": False, "required": True},
+        {"key": "public_key",  "label": "Public key",  "type": "text",
+         "placeholder": "",                "secret": False, "required": True},
+        {"key": "private_key", "label": "Private key", "type": "password",
+         "placeholder": "",                "secret": True,  "required": True},
+    ],
+    # Square — bearer access_token + application_id + location_id (per-location pricing).
+    "square": [
+        {"key": "access_token",   "label": "Access token",   "type": "password",
+         "placeholder": "EAAAEE…",     "secret": True,  "required": True,
+         "validate_prefix": ["EAAA"]},
+        {"key": "application_id", "label": "Application ID", "type": "text",
+         "placeholder": "sandbox-sq0idb-…/sq0idp-…", "secret": False, "required": True},
+        {"key": "location_id",    "label": "Location ID",    "type": "text",
+         "placeholder": "L…",         "secret": False, "required": True},
+        {"key": "webhook_signature_key", "label": "Webhook signature key", "type": "password",
+         "placeholder": "",            "secret": True,  "required": False},
+    ],
+    # Mollie — single API key carries the test/live mode in its prefix.
+    "mollie": [
+        {"key": "api_key", "label": "API key", "type": "password",
+         "placeholder": "test_…/live_…", "secret": True, "required": True,
+         "validate_prefix": ["test_", "live_"]},
+    ],
+    # Razorpay — key_id + key_secret + webhook secret (HMAC-SHA256).
+    "razorpay": [
+        {"key": "key_id",         "label": "Key ID",         "type": "text",
+         "placeholder": "rzp_test_…/rzp_live_…", "secret": False, "required": True,
+         "validate_prefix": ["rzp_test_", "rzp_live_"]},
+        {"key": "key_secret",     "label": "Key secret",     "type": "password",
+         "placeholder": "",         "secret": True,  "required": True},
+        {"key": "webhook_secret", "label": "Webhook secret", "type": "password",
+         "placeholder": "",         "secret": True,  "required": False},
+    ],
+    # Paddle Billing (new API) — bearer api_key + notification secret.
+    "paddle": [
+        {"key": "api_key",        "label": "API key",        "type": "password",
+         "placeholder": "pdl_…",    "secret": True,  "required": True,
+         "validate_prefix": ["pdl_", "apikey_"]},
+        {"key": "webhook_secret", "label": "Notification secret", "type": "password",
+         "placeholder": "pdl_ntfset_…", "secret": True, "required": False},
+    ],
+    # PayBox.money — Kazakhstan-focused. Signature-based auth (no header).
+    "paybox": [
+        {"key": "merchant_id", "label": "Merchant ID", "type": "text",
+         "placeholder": "525447",   "secret": False, "required": True},
+        {"key": "secret_key",  "label": "Secret key",  "type": "password",
+         "placeholder": "",         "secret": True,  "required": True},
+    ],
+    "manual": [],
+    "other":  [],
+}
+
+# Which fields are SECRET — used by mask_credentials() to redact before API responses.
+# Note: builtin `set` is shadowed at module level by _kv_set(), so we use a
+# string-form annotation here (PEP 563-style forward ref) which evaluates lazily.
+SECRET_FIELDS: "dict[str, set[str]]" = {
+    p: {f["key"] for f in fields if f.get("secret")}
+    for p, fields in PROVIDER_FIELDS.items()
+}
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+_TIMEOUT = 15  # seconds, hard cap on every outbound call
+
+
+def _ok(data: dict, raw: dict | None = None) -> dict:
+    return {"ok": True, "data": data, "error": "", "raw": raw or {}}
+
+
+def _err(message: str, raw: dict | None = None) -> dict:
+    return {"ok": False, "data": {}, "error": message, "raw": raw or {}}
+
+
+def _http_request(method: str, url: str, *, headers: dict | None = None,
+                   body: bytes | None = None, basic_auth: tuple[str, str] | None = None,
+                   bearer: str | None = None) -> dict:
+    """Minimal urllib wrapper. Returns {"status": int, "body": dict|str}.
+    Never raises on HTTP errors — body is captured for both success and error responses
+    so the provider's error message can be surfaced.
+    """
+    req = urllib.request.Request(url, method=method, data=body)
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
+    if basic_auth:
+        token = base64.b64encode(f"{basic_auth[0]}:{basic_auth[1]}".encode()).decode("ascii")
+        req.add_header("Authorization", f"Basic {token}")
+    if bearer:
+        req.add_header("Authorization", f"Bearer {bearer}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            try:
+                parsed: Any = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                parsed = raw
+            return {"status": resp.status, "body": parsed}
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            parsed = raw
+        return {"status": e.code, "body": parsed}
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+        return {"status": 0, "body": {"error": str(e)}}
+
+
+def validate_credentials_shape(provider: str, creds: dict) -> tuple[bool, str]:
+    """Quick structural check before encrypt+save. Does NOT hit the network.
+    Verifies required keys exist + match their expected prefix (if defined).
+    """
+    if provider not in PROVIDER_FIELDS:
+        return False, f"Unknown provider: {provider}"
+    for spec in PROVIDER_FIELDS[provider]:
+        key = spec["key"]
+        if spec["required"] and not str(creds.get(key, "")).strip():
+            return False, f"Missing required field: {spec['label']}"
+        val = str(creds.get(key, "")).strip()
+        prefixes = spec.get("validate_prefix")
+        if val and prefixes and not any(val.startswith(p) for p in prefixes):
+            return False, f"{spec['label']} must start with one of: {', '.join(prefixes)}"
+    return True, ""
+
+
+def mask_credentials(provider: str, creds: dict) -> dict:
+    """Redact secret fields for safe display. Public fields stay readable;
+    secrets become '••••••••<last4>'.
+    """
+    if not creds:
+        return {}
+    secrets_set = SECRET_FIELDS.get(provider, set())
+    out: dict[str, str] = {}
+    for k, v in creds.items():
+        if k in secrets_set:
+            s = str(v) if v else ""
+            out[k] = ("•" * 8 + s[-4:]) if len(s) > 4 else ("•" * len(s) if s else "")
+            out[k + "_present"] = bool(s)
+        else:
+            out[k] = v
+    return out
+
+
+# ── Stripe ─────────────────────────────────────────────────────────────────
+# Uses dashboard.stripe.com REST API directly (no `stripe` SDK).
+# For Connect: pass connected account ID via Stripe-Account header.
+
+_STRIPE_BASE = "https://api.stripe.com/v1"
+
+
+def _stripe_headers(secret_key: str, stripe_account_id: str = "") -> dict:
+    h = {"Content-Type": "application/x-www-form-urlencoded"}
+    if stripe_account_id:
+        h["Stripe-Account"] = stripe_account_id
+    return h
+
+
+def stripe_test_connection(creds: dict, stripe_account_id: str = "") -> dict:
+    """Ping GET /v1/balance — the cheapest API call that requires a valid secret key.
+    For Connect mode also tries GET /v1/accounts/{acct_id} to verify the connected
+    account is still active.
+    """
+    sk = creds.get("secret_key", "").strip()
+    if not sk:
+        return _err("Missing secret_key")
+    r = _http_request("GET", f"{_STRIPE_BASE}/balance",
+                      headers=_stripe_headers(sk, stripe_account_id), bearer=sk)
+    if r["status"] == 200:
+        # Sanity-check that publishable_key (if present) matches the same mode (test/live)
+        pk = creds.get("publishable_key", "").strip()
+        if pk:
+            pk_test = pk.startswith("pk_test_")
+            sk_test = sk.startswith("sk_test_") or sk.startswith("rk_test_")
+            if pk_test != sk_test:
+                return _err("Publishable and secret keys are in different modes (one test, one live)")
+        return _ok({"livemode": not sk.startswith(("sk_test_", "rk_test_"))}, r["body"])
+    if r["status"] == 401:
+        return _err("Invalid Stripe secret key (401 from /v1/balance)", r["body"])
+    if r["status"] == 0:
+        return _err(f"Network error: {r['body'].get('error', 'unknown')}")
+    return _err(f"Stripe rejected the key (HTTP {r['status']})", r["body"])
+
+
+def stripe_create_refund(creds: dict, charge_or_intent_id: str, amount_cents: int,
+                          idempotency_key: str, stripe_account_id: str = "") -> dict:
+    """POST /v1/refunds.
+    Pass payment_intent= (for PaymentIntents flow) — Stripe accepts either ch_ or pi_.
+    """
+    sk = creds.get("secret_key", "").strip()
+    if not sk:
+        return _err("Missing secret_key")
+    if amount_cents <= 0:
+        return _err("Refund amount must be positive")
+    if charge_or_intent_id.startswith("pi_"):
+        payload = {"payment_intent": charge_or_intent_id, "amount": str(amount_cents)}
+    else:
+        payload = {"charge": charge_or_intent_id, "amount": str(amount_cents)}
+    body = urllib.parse.urlencode(payload).encode("utf-8")
+
+    headers = _stripe_headers(sk, stripe_account_id)
+    headers["Idempotency-Key"] = idempotency_key
+
+    r = _http_request("POST", f"{_STRIPE_BASE}/refunds",
+                      headers=headers, body=body, bearer=sk)
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        rid = r["body"].get("id", "")
+        status = r["body"].get("status", "")
+        return _ok({"refund_id": rid, "status": status, "amount": r["body"].get("amount", 0)}, r["body"])
+    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"Stripe refund failed (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── Tinkoff ────────────────────────────────────────────────────────────────
+# https://www.tinkoff.ru/kassa/dev/payments/
+# Tinkoff signs requests via Token = SHA256 of concatenated values of all
+# top-level params (sorted by key) + Password. We add Token field server-side.
+
+_TINKOFF_BASE = "https://securepay.tinkoff.ru/v2"
+
+
+def _tinkoff_sign(params: dict, password: str) -> str:
+    """Token = sha256 of values of {sorted top-level params + Password}, hex digest."""
+    items = {k: v for k, v in params.items() if not isinstance(v, (dict, list))}
+    items["Password"] = password
+    concat = "".join(str(items[k]) for k in sorted(items))
+    return hashlib.sha256(concat.encode("utf-8")).hexdigest()
+
+
+def tinkoff_test_connection(creds: dict) -> dict:
+    """Tinkoff has no read-only endpoint — we ping GetState with a fake PaymentId.
+    A valid terminal+password returns INVALID_REQUEST_PARAMETERS error code,
+    while invalid creds return BAD_TOKEN — that's how we distinguish."""
+    tk = creds.get("terminal_key", "").strip()
+    pw = creds.get("password", "").strip()
+    if not tk or not pw:
+        return _err("Missing terminal_key or password")
+    payload = {"TerminalKey": tk, "PaymentId": "0"}
+    payload["Token"] = _tinkoff_sign(payload, pw)
+    body = json.dumps(payload).encode("utf-8")
+    r = _http_request("POST", f"{_TINKOFF_BASE}/GetState",
+                       headers={"Content-Type": "application/json"}, body=body)
+    if r["status"] != 200 or not isinstance(r["body"], dict):
+        return _err(f"Tinkoff API unavailable (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+    if r["body"].get("Success") is True:
+        # Unlikely with PaymentId=0, but accept it
+        return _ok({}, r["body"])
+    code = str(r["body"].get("ErrorCode", ""))
+    # Bad credentials → ErrorCode "8" or message "Неверный токен"; we treat anything
+    # other than auth-failure codes as "creds OK, just bad request params"
+    if code in ("8",) or "Token" in str(r["body"].get("Message", "")) or "токен" in str(r["body"].get("Details", "")).lower():
+        return _err("Invalid Tinkoff terminal_key or password", r["body"])
+    return _ok({}, r["body"])
+
+
+def tinkoff_create_refund(creds: dict, payment_id: str, amount_kopecks: int,
+                           idempotency_key: str) -> dict:
+    """POST /v2/Cancel — refunds the (paid) payment. Tinkoff uses 'Cancel' for both
+    void (pre-capture) and refund (post-capture)."""
+    tk = creds.get("terminal_key", "").strip()
+    pw = creds.get("password", "").strip()
+    if not tk or not pw:
+        return _err("Missing terminal_key or password")
+    if amount_kopecks <= 0:
+        return _err("Refund amount must be positive")
+    payload = {"TerminalKey": tk, "PaymentId": payment_id, "Amount": amount_kopecks,
+               "IP": "", "Receipt": ""}
+    payload = {k: v for k, v in payload.items() if v not in ("", None)}
+    payload["Token"] = _tinkoff_sign(payload, pw)
+    body = json.dumps(payload).encode("utf-8")
+    r = _http_request("POST", f"{_TINKOFF_BASE}/Cancel",
+                       headers={"Content-Type": "application/json",
+                                "Idempotency-Key": idempotency_key}, body=body)
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
+        return _ok({"refund_id": str(r["body"].get("PaymentId", "")), "status": r["body"].get("Status", "")}, r["body"])
+    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else f"HTTP {r['status']}"
+    return _err(msg or f"Tinkoff refund failed (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── CloudPayments ──────────────────────────────────────────────────────────
+# https://developers.cloudpayments.ru/
+# HTTP Basic auth: public_id : api_secret.
+
+_CLOUDPAYMENTS_BASE = "https://api.cloudpayments.ru"
+
+
+def cloudpayments_test_connection(creds: dict) -> dict:
+    """Calls /test — explicit credential-check endpoint."""
+    pid = creds.get("public_id", "").strip()
+    sec = creds.get("api_secret", "").strip()
+    if not pid or not sec:
+        return _err("Missing public_id or api_secret")
+    r = _http_request("POST", f"{_CLOUDPAYMENTS_BASE}/test",
+                       headers={"Content-Type": "application/json"},
+                       body=b"{}", basic_auth=(pid, sec))
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
+        return _ok({}, r["body"])
+    if r["status"] == 401:
+        return _err("Invalid CloudPayments public_id or api_secret", r["body"] if isinstance(r["body"], dict) else {})
+    return _err(f"CloudPayments rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+def cloudpayments_create_refund(creds: dict, transaction_id: str, amount: float,
+                                 idempotency_key: str) -> dict:
+    """POST /payments/refund. Amount in major units (rubles)."""
+    pid = creds.get("public_id", "").strip()
+    sec = creds.get("api_secret", "").strip()
+    if not pid or not sec:
+        return _err("Missing public_id or api_secret")
+    if amount <= 0:
+        return _err("Refund amount must be positive")
+    body = json.dumps({"TransactionId": int(transaction_id), "Amount": round(float(amount), 2)}).encode("utf-8")
+    r = _http_request("POST", f"{_CLOUDPAYMENTS_BASE}/payments/refund",
+                       headers={"Content-Type": "application/json",
+                                "X-Request-ID": idempotency_key},
+                       body=body, basic_auth=(pid, sec))
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
+        m = r["body"].get("Model") or {}
+        return _ok({"refund_id": str(m.get("TransactionId", "")), "status": "succeeded"}, r["body"])
+    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else f"HTTP {r['status']}"
+    return _err(msg or f"CloudPayments refund failed", r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── YooKassa ───────────────────────────────────────────────────────────────
+# https://yookassa.ru/developers/api
+# HTTP Basic auth: shop_id : secret_key. Idempotence-Key header required on POSTs.
+
+_YOOKASSA_BASE = "https://api.yookassa.ru/v3"
+
+
+def yookassa_test_connection(creds: dict) -> dict:
+    """GET /me returns the shop info — minimum read call."""
+    shop = creds.get("shop_id", "").strip()
+    sec  = creds.get("secret_key", "").strip()
+    if not shop or not sec:
+        return _err("Missing shop_id or secret_key")
+    r = _http_request("GET", f"{_YOOKASSA_BASE}/me", basic_auth=(shop, sec))
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        return _ok({"shop": r["body"].get("name", "")}, r["body"])
+    if r["status"] == 401:
+        return _err("Invalid YooKassa shop_id or secret_key", r["body"] if isinstance(r["body"], dict) else {})
+    return _err(f"YooKassa rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+def yookassa_create_refund(creds: dict, payment_id: str, amount: float,
+                            currency: str, idempotency_key: str) -> dict:
+    """POST /refunds. payment_id is YooKassa's payment.id (UUID)."""
+    shop = creds.get("shop_id", "").strip()
+    sec  = creds.get("secret_key", "").strip()
+    if not shop or not sec:
+        return _err("Missing shop_id or secret_key")
+    if amount <= 0:
+        return _err("Refund amount must be positive")
+    payload = {
+        "payment_id": payment_id,
+        "amount": {"value": f"{round(float(amount), 2):.2f}", "currency": currency or "RUB"},
+    }
+    body = json.dumps(payload).encode("utf-8")
+    r = _http_request("POST", f"{_YOOKASSA_BASE}/refunds",
+                       headers={"Content-Type": "application/json",
+                                "Idempotence-Key": idempotency_key},
+                       body=body, basic_auth=(shop, sec))
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        return _ok({"refund_id": r["body"].get("id", ""), "status": r["body"].get("status", "")}, r["body"])
+    if r["status"] == 401:
+        return _err("Invalid YooKassa credentials", r["body"] if isinstance(r["body"], dict) else {})
+    desc = (r["body"] or {}).get("description", "") if isinstance(r["body"], dict) else ""
+    return _err(desc or f"YooKassa refund failed (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── PayPal ─────────────────────────────────────────────────────────────────
+# https://developer.paypal.com/api/rest/
+# OAuth2 client_credentials grant for an access_token, then API calls with Bearer.
+
+_PAYPAL_BASE_LIVE    = "https://api-m.paypal.com"
+_PAYPAL_BASE_SANDBOX = "https://api-m.sandbox.paypal.com"
+
+
+def _paypal_base(is_test: bool) -> str:
+    return _PAYPAL_BASE_SANDBOX if is_test else _PAYPAL_BASE_LIVE
+
+
+def _paypal_token(creds: dict, is_test: bool) -> tuple[str, str]:
+    """Returns (access_token, error). One of the two will be empty."""
+    cid  = creds.get("client_id", "").strip()
+    csec = creds.get("client_secret", "").strip()
+    if not cid or not csec:
+        return "", "Missing client_id or client_secret"
+    r = _http_request("POST", f"{_paypal_base(is_test)}/v1/oauth2/token",
+                       headers={"Content-Type": "application/x-www-form-urlencoded"},
+                       body=b"grant_type=client_credentials",
+                       basic_auth=(cid, csec))
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        tok = r["body"].get("access_token", "")
+        if tok:
+            return tok, ""
+    return "", f"PayPal token request failed (HTTP {r['status']})"
+
+
+def paypal_test_connection(creds: dict, is_test: bool = True) -> dict:
+    """Token-acquisition is itself the test — if creds are bad, oauth2/token returns 401."""
+    token, err = _paypal_token(creds, is_test)
+    if err:
+        return _err(err)
+    return _ok({"mode": "sandbox" if is_test else "live"})
+
+
+def paypal_create_refund(creds: dict, capture_id: str, amount: float,
+                          currency: str, idempotency_key: str,
+                          is_test: bool = True) -> dict:
+    """POST /v2/payments/captures/{capture_id}/refund."""
+    if amount <= 0:
+        return _err("Refund amount must be positive")
+    token, err = _paypal_token(creds, is_test)
+    if err:
+        return _err(err)
+    payload = {"amount": {"value": f"{round(float(amount), 2):.2f}", "currency_code": (currency or "USD").upper()}}
+    body = json.dumps(payload).encode("utf-8")
+    r = _http_request("POST", f"{_paypal_base(is_test)}/v2/payments/captures/{capture_id}/refund",
+                       headers={"Content-Type": "application/json",
+                                "PayPal-Request-Id": idempotency_key},
+                       body=body, bearer=token)
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        return _ok({"refund_id": r["body"].get("id", ""), "status": r["body"].get("status", "")}, r["body"])
+    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else f"HTTP {r['status']}"
+    return _err(msg or "PayPal refund failed", r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── Adyen ──────────────────────────────────────────────────────────────────
+# https://docs.adyen.com/api-explorer
+# Auth: X-API-Key header. Different endpoints for test/live.
+
+def _adyen_base(is_test: bool) -> str:
+    return "https://checkout-test.adyen.com/v71" if is_test else "https://checkout-live.adyen.com/v71"
+
+
+def adyen_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
+    """POST /paymentMethods with merchantAccount — minimum auth-check call."""
+    api_key = creds.get("api_key", "").strip()
+    mac     = creds.get("merchant_account", "").strip()
+    if not api_key or not mac:
+        return _err("Missing api_key or merchant_account")
+    body = json.dumps({"merchantAccount": mac}).encode("utf-8")
+    r = _http_request("POST", f"{_adyen_base(is_test_mode)}/paymentMethods",
+                       headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+                       body=body)
+    if r["status"] == 200:
+        return _ok({}, r["body"] if isinstance(r["body"], dict) else {})
+    if r["status"] in (401, 403):
+        return _err("Invalid Adyen API key or merchant account", r["body"] if isinstance(r["body"], dict) else {})
+    return _err(f"Adyen rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+def adyen_create_refund(creds: dict, psp_reference: str, amount_minor: int,
+                         currency: str, idempotency_key: str,
+                         is_test_mode: bool = True) -> dict:
+    """POST /payments/{pspReference}/refunds. amount_minor in cents."""
+    api_key = creds.get("api_key", "").strip()
+    mac     = creds.get("merchant_account", "").strip()
+    if not api_key or not mac:
+        return _err("Missing api_key or merchant_account")
+    if amount_minor <= 0:
+        return _err("Refund amount must be positive")
+    body = json.dumps({
+        "merchantAccount": mac,
+        "amount": {"value": amount_minor, "currency": (currency or "USD").upper()},
+    }).encode("utf-8")
+    r = _http_request("POST", f"{_adyen_base(is_test_mode)}/payments/{psp_reference}/refunds",
+                       headers={"X-API-Key": api_key, "Content-Type": "application/json",
+                                "Idempotency-Key": idempotency_key},
+                       body=body)
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        return _ok({"refund_id": r["body"].get("pspReference", ""),
+                     "status": r["body"].get("status", "received")}, r["body"])
+    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"Adyen refund failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── Braintree (GraphQL) ────────────────────────────────────────────────────
+# https://graphql.braintreepayments.com/
+# Auth: HTTP Basic public_key:private_key.
+
+def _braintree_url(is_test: bool) -> str:
+    return ("https://payments.sandbox.braintree-api.com/graphql" if is_test
+            else "https://payments.braintree-api.com/graphql")
+
+
+def _braintree_headers() -> dict:
+    return {"Content-Type": "application/json",
+            "Braintree-Version": "2019-01-01",
+            "Accept": "application/json"}
+
+
+def braintree_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
+    """GraphQL `ping` field returns "pong" — minimum auth check."""
+    pub = creds.get("public_key", "").strip()
+    pri = creds.get("private_key", "").strip()
+    mid = creds.get("merchant_id", "").strip()
+    if not pub or not pri or not mid:
+        return _err("Missing merchant_id, public_key or private_key")
+    body = json.dumps({"query": "query { ping }"}).encode("utf-8")
+    r = _http_request("POST", _braintree_url(is_test_mode),
+                       headers=_braintree_headers(), body=body,
+                       basic_auth=(pub, pri))
+    if r["status"] == 200 and isinstance(r["body"], dict) and not r["body"].get("errors"):
+        return _ok({"ping": r["body"].get("data", {}).get("ping")}, r["body"])
+    if r["status"] == 401:
+        return _err("Invalid Braintree credentials", r["body"] if isinstance(r["body"], dict) else {})
+    err = (r["body"] or {}).get("errors", [{}])[0].get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(err or f"Braintree rejected (HTTP {r['status']})",
+                 r["body"] if isinstance(r["body"], dict) else {})
+
+
+def braintree_create_refund(creds: dict, transaction_id: str, amount: float,
+                             idempotency_key: str, is_test_mode: bool = True) -> dict:
+    """GraphQL refundTransaction mutation."""
+    pub = creds.get("public_key", "").strip()
+    pri = creds.get("private_key", "").strip()
+    if not pub or not pri:
+        return _err("Missing public_key or private_key")
+    if amount <= 0:
+        return _err("Refund amount must be positive")
+    # Braintree GraphQL refunds use { transactionId, amount }. The amount is decimal-string.
+    body = json.dumps({
+        "query": "mutation r($i: RefundTransactionInput!) { refundTransaction(input: $i) { refund { id status } } }",
+        "variables": {"i": {"transactionId": transaction_id,
+                              "refund": {"amount": f"{round(amount, 2):.2f}"}}},
+    }).encode("utf-8")
+    r = _http_request("POST", _braintree_url(is_test_mode),
+                       headers={**_braintree_headers(), "Braintree-Idempotency": idempotency_key},
+                       body=body, basic_auth=(pub, pri))
+    if r["status"] == 200 and isinstance(r["body"], dict) and not r["body"].get("errors"):
+        d = r["body"].get("data", {}).get("refundTransaction", {}).get("refund", {})
+        return _ok({"refund_id": d.get("id", ""), "status": d.get("status", "")}, r["body"])
+    err = (r["body"] or {}).get("errors", [{}])[0].get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(err or "Braintree refund failed",
+                 r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── Square ─────────────────────────────────────────────────────────────────
+# https://developer.squareup.com/reference/square
+# Auth: Bearer access_token.
+
+def _square_base(is_test: bool) -> str:
+    return "https://connect.squareupsandbox.com/v2" if is_test else "https://connect.squareup.com/v2"
+
+
+def square_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
+    """GET /v2/locations returns merchant's locations (auth check)."""
+    tok = creds.get("access_token", "").strip()
+    if not tok:
+        return _err("Missing access_token")
+    r = _http_request("GET", f"{_square_base(is_test_mode)}/locations",
+                       headers={"Square-Version": "2024-10-17", "Accept": "application/json"},
+                       bearer=tok)
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        locs = r["body"].get("locations") or []
+        return _ok({"locations_count": len(locs)}, r["body"])
+    if r["status"] == 401:
+        return _err("Invalid Square access token", r["body"] if isinstance(r["body"], dict) else {})
+    return _err(f"Square rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+def square_create_refund(creds: dict, payment_id: str, amount_minor: int,
+                          currency: str, idempotency_key: str,
+                          is_test_mode: bool = True) -> dict:
+    """POST /v2/refunds. amount_minor in smallest unit."""
+    tok = creds.get("access_token", "").strip()
+    if not tok:
+        return _err("Missing access_token")
+    if amount_minor <= 0:
+        return _err("Refund amount must be positive")
+    body = json.dumps({
+        "idempotency_key": idempotency_key,
+        "amount_money": {"amount": amount_minor, "currency": (currency or "USD").upper()},
+        "payment_id": payment_id,
+    }).encode("utf-8")
+    r = _http_request("POST", f"{_square_base(is_test_mode)}/refunds",
+                       headers={"Square-Version": "2024-10-17",
+                                "Content-Type": "application/json"},
+                       body=body, bearer=tok)
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        ref = r["body"].get("refund") or {}
+        return _ok({"refund_id": ref.get("id", ""), "status": ref.get("status", "")}, r["body"])
+    errors = (r["body"] or {}).get("errors", []) if isinstance(r["body"], dict) else []
+    msg = errors[0].get("detail", "") if errors else f"HTTP {r['status']}"
+    return _err(msg or "Square refund failed", r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── Mollie ─────────────────────────────────────────────────────────────────
+# https://docs.mollie.com/reference
+# Auth: Bearer api_key (test_/live_ prefix selects mode).
+
+_MOLLIE_BASE = "https://api.mollie.com/v2"
+
+
+def mollie_test_connection(creds: dict) -> dict:
+    """GET /v2/methods returns enabled methods for the account."""
+    key = creds.get("api_key", "").strip()
+    if not key:
+        return _err("Missing api_key")
+    r = _http_request("GET", f"{_MOLLIE_BASE}/methods", bearer=key)
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        return _ok({"is_test": key.startswith("test_")}, r["body"])
+    if r["status"] == 401:
+        return _err("Invalid Mollie API key", r["body"] if isinstance(r["body"], dict) else {})
+    return _err(f"Mollie rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+def mollie_create_refund(creds: dict, payment_id: str, amount: float,
+                          currency: str, idempotency_key: str) -> dict:
+    """POST /v2/payments/{id}/refunds. amount in major units (decimal string)."""
+    key = creds.get("api_key", "").strip()
+    if not key:
+        return _err("Missing api_key")
+    if amount <= 0:
+        return _err("Refund amount must be positive")
+    body = json.dumps({"amount": {"value": f"{round(amount, 2):.2f}",
+                                    "currency": (currency or "EUR").upper()}}).encode("utf-8")
+    r = _http_request("POST", f"{_MOLLIE_BASE}/payments/{payment_id}/refunds",
+                       headers={"Content-Type": "application/json",
+                                "Idempotency-Key": idempotency_key},
+                       body=body, bearer=key)
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        return _ok({"refund_id": r["body"].get("id", ""),
+                     "status": r["body"].get("status", "")}, r["body"])
+    msg = (r["body"] or {}).get("detail", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or "Mollie refund failed", r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── Razorpay ───────────────────────────────────────────────────────────────
+# https://razorpay.com/docs/api/
+# Auth: HTTP Basic key_id:key_secret.
+
+_RAZORPAY_BASE = "https://api.razorpay.com/v1"
+
+
+def razorpay_test_connection(creds: dict) -> dict:
+    """GET /v1/payments?count=1 returns up to 1 payment — auth check."""
+    kid = creds.get("key_id", "").strip()
+    ksec = creds.get("key_secret", "").strip()
+    if not kid or not ksec:
+        return _err("Missing key_id or key_secret")
+    r = _http_request("GET", f"{_RAZORPAY_BASE}/payments?count=1", basic_auth=(kid, ksec))
+    if r["status"] == 200:
+        return _ok({"is_test": kid.startswith("rzp_test_")}, r["body"] if isinstance(r["body"], dict) else {})
+    if r["status"] == 401:
+        return _err("Invalid Razorpay key_id or key_secret", r["body"] if isinstance(r["body"], dict) else {})
+    return _err(f"Razorpay rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+def razorpay_create_refund(creds: dict, payment_id: str, amount_minor: int,
+                            idempotency_key: str) -> dict:
+    """POST /v1/payments/{id}/refund. amount in paise."""
+    kid = creds.get("key_id", "").strip()
+    ksec = creds.get("key_secret", "").strip()
+    if not kid or not ksec:
+        return _err("Missing key_id or key_secret")
+    if amount_minor <= 0:
+        return _err("Refund amount must be positive")
+    body = json.dumps({"amount": amount_minor}).encode("utf-8")
+    r = _http_request("POST", f"{_RAZORPAY_BASE}/payments/{payment_id}/refund",
+                       headers={"Content-Type": "application/json",
+                                "X-Idempotency-Key": idempotency_key},
+                       body=body, basic_auth=(kid, ksec))
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        return _ok({"refund_id": r["body"].get("id", ""),
+                     "status": r["body"].get("status", "")}, r["body"])
+    desc = (r["body"] or {}).get("error", {}).get("description", "") if isinstance(r["body"], dict) else ""
+    return _err(desc or "Razorpay refund failed", r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── Paddle Billing (new API) ───────────────────────────────────────────────
+# https://developer.paddle.com/api-reference/
+# Auth: Bearer api_key. Refunds are issued via `adjustments`.
+
+def _paddle_base(is_test: bool) -> str:
+    return "https://sandbox-api.paddle.com" if is_test else "https://api.paddle.com"
+
+
+def paddle_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
+    """GET /event-types returns webhook event types catalog — auth check."""
+    tok = creds.get("api_key", "").strip()
+    if not tok:
+        return _err("Missing api_key")
+    r = _http_request("GET", f"{_paddle_base(is_test_mode)}/event-types", bearer=tok)
+    if r["status"] == 200:
+        return _ok({}, r["body"] if isinstance(r["body"], dict) else {})
+    if r["status"] in (401, 403):
+        return _err("Invalid Paddle API key", r["body"] if isinstance(r["body"], dict) else {})
+    return _err(f"Paddle rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
+
+
+def paddle_create_refund(creds: dict, transaction_id: str, amount: float,
+                          currency: str, idempotency_key: str,
+                          is_test_mode: bool = True) -> dict:
+    """POST /adjustments — Paddle's refund mechanism. Requires line item details
+    in real refunds, but a simple full-transaction refund can be issued by passing
+    `action='refund'` + items=[{...}]. For diploma we use a simplified payload."""
+    tok = creds.get("api_key", "").strip()
+    if not tok:
+        return _err("Missing api_key")
+    if amount <= 0:
+        return _err("Refund amount must be positive")
+    # Paddle adjustments require per-item details; without them we can't issue a refund
+    # via API alone. For now we return an instruction to use the dashboard. Future:
+    # fetch the transaction's items first, then build the adjustments payload.
+    body = json.dumps({
+        "action": "refund",
+        "transaction_id": transaction_id,
+        "reason": f"Refund {round(amount, 2)} {(currency or 'USD').upper()}",
+    }).encode("utf-8")
+    r = _http_request("POST", f"{_paddle_base(is_test_mode)}/adjustments",
+                       headers={"Content-Type": "application/json",
+                                "Paddle-Idempotency-Key": idempotency_key},
+                       body=body, bearer=tok)
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        d = r["body"].get("data") or {}
+        return _ok({"refund_id": d.get("id", ""), "status": d.get("status", "pending")}, r["body"])
+    err = (r["body"] or {}).get("error", {}).get("detail", "") if isinstance(r["body"], dict) else ""
+    return _err(err or "Paddle refund failed — line-item details may be required",
+                 r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── PayBox.money (Kazakhstan) ──────────────────────────────────────────────
+# https://paybox.money/docs
+# Auth: signature in body (no header). All requests sign params via SHA1.
+# Sort top-level params by key, prepend the endpoint name, append secret_key,
+# SHA1 the result, hex digest → pg_sig field.
+
+_PAYBOX_BASE = "https://api.paybox.money"
+
+
+def _paybox_sign(endpoint: str, params: dict, secret_key: str) -> str:
+    """sig = sha1(endpoint;v1;v2;...;secret) where v* are values of sorted params."""
+    parts = [endpoint]
+    for k in sorted(params.keys()):
+        parts.append(str(params[k]))
+    parts.append(secret_key)
+    return hashlib.sha1(";".join(parts).encode("utf-8")).hexdigest()
+
+
+def paybox_test_connection(creds: dict) -> dict:
+    """POST /get_status with a fake payment id — a valid creds+signature gets
+    response error_code=10 (payment not found), invalid signature gets 1."""
+    mid = creds.get("merchant_id", "").strip()
+    sec = creds.get("secret_key", "").strip()
+    if not mid or not sec:
+        return _err("Missing merchant_id or secret_key")
+    params = {
+        "pg_merchant_id": mid,
+        "pg_payment_id":  "0",
+        "pg_salt":        secrets.token_hex(8),
+    }
+    params["pg_sig"] = _paybox_sign("get_status.php", params, sec)
+    body = urllib.parse.urlencode(params).encode("utf-8")
+    r = _http_request("POST", f"{_PAYBOX_BASE}/get_status.php",
+                       headers={"Content-Type": "application/x-www-form-urlencoded"},
+                       body=body)
+    # PayBox returns XML; we don't parse it here — just check HTTP and look for
+    # "wrong signature" markers in the response body.
+    if r["status"] == 200:
+        text = json.dumps(r["body"]) if isinstance(r["body"], dict) else str(r["body"])
+        if "wrong signature" in text.lower() or "неверная подпись" in text.lower():
+            return _err("Invalid PayBox merchant_id or secret_key", {})
+        return _ok({}, {})
+    return _err(f"PayBox rejected (HTTP {r['status']})", {})
+
+
+def paybox_create_refund(creds: dict, payment_id: str, amount: float,
+                          currency: str, idempotency_key: str) -> dict:
+    """POST /revoke.php to refund a successful payment. amount in major units."""
+    mid = creds.get("merchant_id", "").strip()
+    sec = creds.get("secret_key", "").strip()
+    if not mid or not sec:
+        return _err("Missing merchant_id or secret_key")
+    if amount <= 0:
+        return _err("Refund amount must be positive")
+    params = {
+        "pg_merchant_id": mid,
+        "pg_payment_id":  payment_id,
+        "pg_refund_amount": f"{round(amount, 2):.2f}",
+        "pg_salt":        idempotency_key[:32],
+    }
+    params["pg_sig"] = _paybox_sign("revoke.php", params, sec)
+    body = urllib.parse.urlencode(params).encode("utf-8")
+    r = _http_request("POST", f"{_PAYBOX_BASE}/revoke.php",
+                       headers={"Content-Type": "application/x-www-form-urlencoded"},
+                       body=body)
+    if r["status"] == 200:
+        # PayBox returns XML, but we treat 200 with body containing pg_status=ok as success
+        text = json.dumps(r["body"]) if isinstance(r["body"], dict) else str(r["body"])
+        if "pg_status=ok" in text or "<pg_status>ok</pg_status>" in text:
+            return _ok({"refund_id": payment_id, "status": "succeeded"}, {})
+        if "wrong signature" in text.lower():
+            return _err("Invalid PayBox signature", {})
+        # Otherwise — likely declined / error response
+        return _err(f"PayBox refund declined: {text[:200]}", {})
+    return _err(f"PayBox refund failed (HTTP {r['status']})", {})
+
+
+# ── Dispatcher ─────────────────────────────────────────────────────────────
+
+def test_connection(provider: str, creds: dict, *, is_test_mode: bool = True,
+                     stripe_account_id: str = "") -> dict:
+    """Single entry point for all providers. Returns canonical {ok, data, error, raw}."""
+    if provider == "manual" or provider == "other":
+        return _ok({"note": "Manual / Other providers don't have a remote check — credentials are saved as-is."})
+    if provider == "stripe":         return stripe_test_connection(creds, stripe_account_id)
+    if provider == "tinkoff":        return tinkoff_test_connection(creds)
+    if provider == "cloudpayments":  return cloudpayments_test_connection(creds)
+    if provider == "yookassa":       return yookassa_test_connection(creds)
+    if provider == "paypal":         return paypal_test_connection(creds, is_test_mode)
+    if provider == "adyen":          return adyen_test_connection(creds, is_test_mode)
+    if provider == "braintree":      return braintree_test_connection(creds, is_test_mode)
+    if provider == "square":         return square_test_connection(creds, is_test_mode)
+    if provider == "mollie":         return mollie_test_connection(creds)
+    if provider == "razorpay":       return razorpay_test_connection(creds)
+    if provider == "paddle":         return paddle_test_connection(creds, is_test_mode)
+    if provider == "paybox":         return paybox_test_connection(creds)
+    return _err(f"Unknown provider: {provider}")
+
+
+def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
+                   amount: float, currency: str = "USD",
+                   idempotency_key: str | None = None,
+                   is_test_mode: bool = True,
+                   stripe_account_id: str = "") -> dict:
+    """Single entry point. amount is in MAJOR units (dollars/rubles); we convert to
+    minor units (cents/kopecks) for providers that require it.
+
+    `idempotency_key` MUST be stable across retries for the same logical refund —
+    the caller (typically POST /returns/{rid}/refund) should derive it from
+    (return_id, attempt_count) so a retry doesn't double-refund.
+    """
+    if not idempotency_key:
+        idempotency_key = "refund-" + secrets.token_urlsafe(16)
+    if provider == "manual" or provider == "other":
+        # No real API call — just succeed. CRM stores reference manually entered.
+        return _ok({"refund_id": "", "status": "manual"})
+    amount_minor = int(round(amount * 100))
+    if provider == "stripe":
+        return stripe_create_refund(creds, charge_or_intent_id, amount_minor,
+                                     idempotency_key, stripe_account_id)
+    if provider == "tinkoff":
+        return tinkoff_create_refund(creds, charge_or_intent_id, amount_minor, idempotency_key)
+    if provider == "cloudpayments":
+        return cloudpayments_create_refund(creds, charge_or_intent_id, amount, idempotency_key)
+    if provider == "yookassa":
+        return yookassa_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key)
+    if provider == "paypal":
+        return paypal_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key, is_test_mode)
+    if provider == "adyen":
+        return adyen_create_refund(creds, charge_or_intent_id, amount_minor, currency, idempotency_key, is_test_mode)
+    if provider == "braintree":
+        return braintree_create_refund(creds, charge_or_intent_id, amount, idempotency_key, is_test_mode)
+    if provider == "square":
+        return square_create_refund(creds, charge_or_intent_id, amount_minor, currency, idempotency_key, is_test_mode)
+    if provider == "mollie":
+        return mollie_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key)
+    if provider == "razorpay":
+        return razorpay_create_refund(creds, charge_or_intent_id, amount_minor, idempotency_key)
+    if provider == "paddle":
+        return paddle_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key, is_test_mode)
+    if provider == "paybox":
+        return paybox_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key)
+    return _err(f"Unknown provider: {provider}")
+
+
+
+@app.get("/api/orgs/{org_id}/payment-credentials")
+def get_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
+    """Returns provider catalog (which fields are needed for each) + current state.
+    Secret values are masked (`••••••••<last4>`) — full plaintext is never exposed."""
+    require_org_owner(user, org_id)
+
+    row = db_one(
+        "SELECT provider, credentials_encrypted, is_test_mode, is_connected,"
+        "       connected_at, last_verified_at, last_error, stripe_account_id,"
+        "       connect_method"
+        "  FROM crm_payment_credentials WHERE org_id=%s",
+        (org_id,)
+    )
+
+    org = db_one("SELECT payment_provider FROM crm_organizations WHERE id=%s", (org_id,))
+    selected_provider = (row or {}).get("provider") or (org or {}).get("payment_provider") or "manual"
+
+    masked: dict = {}
+    if row and row["credentials_encrypted"]:
+        try:
+            decrypted = decrypt_credentials(row["credentials_encrypted"])
+            masked = mask_credentials(row["provider"], decrypted)
+        except (ValueError, RuntimeError) as e:
+            masked = {"_error": f"Decryption failed: {e}"}
+
+    return {
+        "provider":            selected_provider,
+        "is_test_mode":        bool((row or {}).get("is_test_mode", True)),
+        "is_connected":        bool((row or {}).get("is_connected", False)),
+        "connect_method":      (row or {}).get("connect_method") or "manual",
+        "stripe_account_id":   (row or {}).get("stripe_account_id") or "",
+        "connected_at":        row["connected_at"].isoformat() if row and row.get("connected_at") else None,
+        "last_verified_at":    row["last_verified_at"].isoformat() if row and row.get("last_verified_at") else None,
+        "last_error":          (row or {}).get("last_error") or "",
+        "credentials_masked":  masked,
+        "encryption_ok":       is_encryption_configured(),
+        # Catalog: full provider list with their required-field specs (for UI)
+        "provider_catalog": {
+            p: [{k: v for k, v in spec.items() if k != "validate_prefix"} for spec in fields]
+            for p, fields in PROVIDER_FIELDS.items()
+        },
+        # Stripe Connect availability
+        "stripe_connect_available": bool(os.getenv("STRIPE_CONNECT_CLIENT_ID", "").strip()),
+    }
+
+
+@app.put("/api/orgs/{org_id}/payment-credentials")
+def put_org_payment_credentials(org_id: int, body: dict = Body(...),
+                                 user: dict = Depends(get_current_user)):
+    """Save (or update) credentials for the org's selected payment provider.
+    Body shape:
+        {"provider": "stripe",
+         "is_test_mode": true,
+         "credentials": {"publishable_key": "pk_test_…", "secret_key": "sk_test_…", ...}}
+
+    Validation:
+      • encryption must be configured (otherwise refuse — we never store plaintext)
+      • provider must be one of the known set
+      • required fields per provider must be non-empty (validate_credentials_shape)
+      • prefix check (e.g. secret_key must start with sk_test_ or sk_live_)
+
+    Does NOT auto-verify with provider — that requires a separate POST .../test call
+    so the merchant gets explicit "Connected ✓" feedback.
+    """
+    require_org_owner(user, org_id)
+    if not is_encryption_configured():
+        raise HTTPException(500, "Payment encryption is not configured on the server. "
+                                  "Set PAYMENT_ENCRYPTION_KEY in .env.")
+
+    provider = (body.get("provider") or "").strip().lower()
+    if provider not in PROVIDER_FIELDS:
+        raise HTTPException(400, f"Unknown provider: {provider}")
+    is_test_mode = bool(body.get("is_test_mode", True))
+    creds = body.get("credentials") or {}
+    if not isinstance(creds, dict):
+        raise HTTPException(400, "credentials must be an object")
+
+    # Strip whitespace + drop blank-string entries
+    creds_clean: dict[str, str] = {}
+    for k, v in creds.items():
+        if not isinstance(k, str):
+            continue
+        s = str(v or "").strip()
+        if s:
+            creds_clean[k] = s
+
+    # When updating, merchant may want to keep the existing secret_key (sent as masked
+    # value, e.g. "••••••••abcd"). Detect that case and preserve the stored value.
+    masked_indicator = "•"
+    existing = db_one(
+        "SELECT credentials_encrypted, provider FROM crm_payment_credentials WHERE org_id=%s",
+        (org_id,)
+    )
+    if existing and existing["credentials_encrypted"] and existing["provider"] == provider:
+        try:
+            previous = decrypt_credentials(existing["credentials_encrypted"])
+        except (ValueError, RuntimeError):
+            previous = {}
+        secrets_set = SECRET_FIELDS.get(provider, set())
+        for key in secrets_set:
+            if key in creds_clean and masked_indicator in creds_clean[key]:
+                # Keep the previous value verbatim
+                if previous.get(key):
+                    creds_clean[key] = previous[key]
+                else:
+                    creds_clean.pop(key, None)
+
+    ok, msg = validate_credentials_shape(provider, creds_clean)
+    if not ok:
+        raise HTTPException(400, msg)
+
+    encrypted = encrypt_credentials(creds_clean)
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_payment_credentials"
+            "  (org_id, provider, credentials_encrypted, is_test_mode, is_connected,"
+            "   last_error, connect_method, updated_at)"
+            " VALUES (%s, %s, %s, %s, FALSE, '', 'manual', NOW())"
+            " ON CONFLICT (org_id) DO UPDATE SET"
+            "   provider=EXCLUDED.provider,"
+            "   credentials_encrypted=EXCLUDED.credentials_encrypted,"
+            "   is_test_mode=EXCLUDED.is_test_mode,"
+            "   is_connected=FALSE,"
+            "   last_error='',"
+            "   updated_at=NOW()",
+            (org_id, provider, encrypted, is_test_mode)
+        )
+        # Keep crm_organizations.payment_provider in sync (used by Returns refund UI)
+        cur.execute(
+            "UPDATE crm_organizations SET payment_provider=%s WHERE id=%s",
+            (provider, org_id)
+        )
+        conn.commit()
+    return {"ok": True, "provider": provider, "is_test_mode": is_test_mode,
+            "is_connected": False}
+
+
+@app.post("/api/orgs/{org_id}/payment-credentials/test")
+def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
+    """Ping the provider API with stored credentials. Updates is_connected + last_verified_at."""
+    require_org_owner(user, org_id)
+    row = db_one(
+        "SELECT provider, credentials_encrypted, is_test_mode, stripe_account_id"
+        "  FROM crm_payment_credentials WHERE org_id=%s",
+        (org_id,)
+    )
+    if not row or not row["credentials_encrypted"]:
+        raise HTTPException(404, "No credentials saved for this organization")
+    try:
+        creds = decrypt_credentials(row["credentials_encrypted"])
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(500, f"Failed to decrypt credentials: {e}")
+
+    result = test_connection(
+        row["provider"], creds,
+        is_test_mode=bool(row["is_test_mode"]),
+        stripe_account_id=row.get("stripe_account_id") or "",
+    )
+    with db_cursor() as (conn, cur):
+        if result["ok"]:
+            cur.execute(
+                "UPDATE crm_payment_credentials"
+                "   SET is_connected=TRUE, connected_at=COALESCE(connected_at, NOW()),"
+                "       last_verified_at=NOW(), last_error=''"
+                " WHERE org_id=%s",
+                (org_id,)
+            )
+        else:
+            cur.execute(
+                "UPDATE crm_payment_credentials"
+                "   SET is_connected=FALSE, last_error=%s, last_verified_at=NOW()"
+                " WHERE org_id=%s",
+                (result["error"][:1000], org_id)
+            )
+        conn.commit()
+    return {"ok": result["ok"], "error": result["error"], "data": result["data"]}
+
+
+@app.delete("/api/orgs/{org_id}/payment-credentials")
+def delete_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
+    """Disconnect: clears stored credentials but keeps the provider selection.
+    Existing orders + returns retain their snapshot of which provider was used."""
+    require_org_owner(user, org_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s", (org_id,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── Stripe Connect OAuth flow (optional) ──────────────────────────────────
+# Standard OAuth2 — merchant clicks "Connect with Stripe" → redirected to Stripe →
+# returns with `code` → CRM exchanges for access_token + stripe_user_id (acct_…).
+# Refunds for that org then use Stripe-Account header to act on behalf of the
+# connected account, instead of needing the merchant's actual secret_key.
+
+import hashlib as _hashlib_oa
+
+@app.get("/api/orgs/{org_id}/payment-credentials/oauth/stripe/start")
+def stripe_connect_oauth_start(org_id: int, request: Request,
+                                user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    client_id    = os.getenv("STRIPE_CONNECT_CLIENT_ID", "").strip()
+    redirect_uri = os.getenv("STRIPE_CONNECT_REDIRECT_URI", "").strip()
+    if not client_id or not redirect_uri:
+        raise HTTPException(503, "Stripe Connect is not configured on this server. "
+                                   "Set STRIPE_CONNECT_CLIENT_ID + STRIPE_CONNECT_REDIRECT_URI in .env.")
+
+    # CSRF state: bind to (user_id, org_id) so the callback can verify
+    nonce = secrets.token_urlsafe(24)
+    state = f"{user['id']}.{org_id}.{nonce}"
+    state_hash = _hashlib_oa.sha256((state + SECRET_KEY).encode()).hexdigest()
+    state_token = f"{state}.{state_hash}"
+
+    params = {
+        "response_type": "code",
+        "client_id":     client_id,
+        "scope":         "read_write",
+        "redirect_uri":  redirect_uri,
+        "state":         state_token,
+    }
+    url = "https://connect.stripe.com/oauth/authorize?" + urllib.parse.urlencode(params)
+    return {"redirect_url": url}
+
+
+@app.get("/api/orgs/payment-credentials/oauth/stripe/callback")
+def stripe_connect_oauth_callback(request: Request,
+                                    code: str = Query(...),
+                                    state: str = Query(...),
+                                    user: dict = Depends(get_current_user)):
+    """Exchange Stripe OAuth code for access_token + connected account ID."""
+    # Verify state signature
+    try:
+        user_id_str, org_id_str, nonce, sig = state.split(".")
+        state_payload = f"{user_id_str}.{org_id_str}.{nonce}"
+        expected = _hashlib_oa.sha256((state_payload + SECRET_KEY).encode()).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            raise ValueError("bad sig")
+        org_id = int(org_id_str)
+        if user["id"] != int(user_id_str):
+            raise ValueError("user mismatch")
+    except (ValueError, AttributeError):
+        raise HTTPException(400, "Invalid OAuth state token")
+
+    require_org_owner(user, org_id)
+
+    client_id = os.getenv("STRIPE_CONNECT_CLIENT_ID", "").strip()
+    # Stripe expects POST to /oauth/token with secret key auth
+    # We need the PLATFORM's secret key (Torta's own), not the merchant's.
+    platform_sk = os.getenv("STRIPE_PLATFORM_SECRET_KEY", "").strip()
+    if not platform_sk:
+        raise HTTPException(503, "Platform secret key not configured")
+
+    body = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code":       code,
+        "client_id":  client_id,
+    }).encode("utf-8")
+    req = urllib.request.Request("https://connect.stripe.com/oauth/token",
+                                  method="POST", data=body)
+    req.add_header("Authorization", f"Bearer {platform_sk}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        raise HTTPException(400, f"Stripe rejected the OAuth code: {err_body[:300]}")
+    except Exception as e:
+        raise HTTPException(500, f"Stripe OAuth exchange failed: {e}")
+
+    stripe_user_id  = data.get("stripe_user_id", "")
+    stripe_pub_key  = data.get("stripe_publishable_key", "")
+    access_token    = data.get("access_token", "")
+    livemode        = bool(data.get("livemode", False))
+    if not stripe_user_id or not access_token:
+        raise HTTPException(500, "Stripe OAuth response missing fields")
+
+    # Store: access_token is treated as the secret_key for refund calls.
+    creds = {
+        "publishable_key": stripe_pub_key,
+        "secret_key":      access_token,
+        "webhook_secret":  "",   # merchant configures webhooks via Stripe dashboard
+    }
+    encrypted = encrypt_credentials(creds)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_payment_credentials"
+            "  (org_id, provider, credentials_encrypted, is_test_mode, is_connected,"
+            "   connected_at, last_verified_at, last_error, stripe_account_id,"
+            "   connect_method, updated_at)"
+            " VALUES (%s, 'stripe', %s, %s, TRUE, NOW(), NOW(), '', %s, 'oauth', NOW())"
+            " ON CONFLICT (org_id) DO UPDATE SET"
+            "   provider='stripe',"
+            "   credentials_encrypted=EXCLUDED.credentials_encrypted,"
+            "   is_test_mode=EXCLUDED.is_test_mode,"
+            "   is_connected=TRUE,"
+            "   connected_at=COALESCE(crm_payment_credentials.connected_at, NOW()),"
+            "   last_verified_at=NOW(),"
+            "   last_error='',"
+            "   stripe_account_id=EXCLUDED.stripe_account_id,"
+            "   connect_method='oauth',"
+            "   updated_at=NOW()",
+            (org_id, encrypted, not livemode, stripe_user_id)
+        )
+        cur.execute(
+            "UPDATE crm_organizations SET payment_provider='stripe' WHERE id=%s",
+            (org_id,)
+        )
+        conn.commit()
+
+    # Redirect back to OrgSettings → Payments
+    org_slug_row = db_one("SELECT slug FROM crm_organizations WHERE id=%s", (org_id,))
+    slug = (org_slug_row or {}).get("slug") or ""
+    target = f"{CRM_FRONTEND_URL}/org/{slug}/payments?connected=stripe"
+    return RedirectResponse(target)
+
+
 @app.post("/api/orgs/{org_id}/projects")
 def create_project(org_id: int, request: CreateProjectRequest, req: Request, user: dict = Depends(get_current_user)):
     require_org_owner(user, org_id)
@@ -2519,6 +4657,23 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
         )
         cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (new_id, frontend_url))
         cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s) ON CONFLICT DO NOTHING", (new_id, frontend_url))
+
+        # Seed booking_settings.timezone from the merchant's browser TZ (if supplied).
+        # Without this, the default 'UTC' silently breaks slot-time intuition for the
+        # 95% of merchants who don't operate in UTC. We only seed if the merchant
+        # passed a valid IANA name — invalid values fall back to the backend default.
+        seed_tz = (request.timezone or "").strip()
+        if seed_tz and seed_tz != "UTC":
+            try:
+                from zoneinfo import ZoneInfo
+                ZoneInfo(seed_tz)   # validate IANA name
+                cur.execute(
+                    "INSERT INTO booking_settings (project_id, timezone) VALUES (%s, %s)"
+                    " ON CONFLICT (project_id) DO UPDATE SET timezone = EXCLUDED.timezone",
+                    (new_id, seed_tz)
+                )
+            except Exception:
+                pass   # ignore — merchant can set it later in Booking → Settings
         conn.commit()
 
     return {"id": new_id, "name": name, "api_key": new_key, "publishable_key": new_pk, "is_active": True}
@@ -2931,9 +5086,12 @@ def list_products(project_id: int = Query(...),
                   include_uncategorized: bool = Query(False),
                   product_type: Optional[str] = Query(None),
                   archived: bool = Query(False),
+                  cursor: Optional[str] = Query(None),
+                  limit: Optional[int]  = Query(None),
                   user: dict = Depends(get_current_user)):
-    """List products. Filters: category_id, uncategorized, product_type, archived (default false)."""
+    """List products. Filters: category_id, uncategorized, product_type, archived. Cursor pagination (opt-in via `cursor` param) for large catalogs — backward-compat when client doesn't ask."""
     require_team_member_or_owner(user, project_id)
+    want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where  = ["p.project_id=%s"]
     params = [project_id]
     if uncategorized:
@@ -2974,6 +5132,10 @@ def list_products(project_id: int = Query(...),
         " LEFT JOIN product_reviews pr ON pr.product_id=p.id"
         f" WHERE {' AND '.join(where)} GROUP BY p.id, c.name, c.slug ORDER BY p.id DESC"
     )
+    # Fetch limit+1 when paginated → lets us peek next page's existence.
+    if want_pagination:
+        sql += " LIMIT %s OFFSET %s"
+        params.extend([page_size + 1, offset])
     rows = db_all(sql, tuple(params))
     for r in rows:
         r["avg_rating"]  = round(float(r["avg_rating"] or 0), 1)
@@ -2988,7 +5150,7 @@ def list_products(project_id: int = Query(...),
             if r.get(tk) is not None:
                 r[tk] = r[tk].isoformat()
         r["tier_count"] = int(r.get("tier_count") or 0)
-    return rows
+    return _wrap_paginated(want_pagination, rows, offset, page_size)
 
 
 @app.post("/api/products")
@@ -3021,6 +5183,9 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
             if generated:
                 cur.execute("UPDATE products SET sku=%s WHERE id=%s",
                             (generated, new_id))
+        # Auto-mint an internal EAN-13 (prefix 200) into products.barcode so the
+        # product can be scanned + tracked from day one without manual entry.
+        _ensure_product_ean13(cur, new_id)
         # type=service → also seed a booking_services row linked 1:1 to the product.
         if ptype == "service":
             cur.execute(
@@ -3396,6 +5561,1157 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
     return {"ok": True}
 
 
+# ── DUPLICATE ────────────────────────────────────────────
+
+@app.post("/api/products/{product_id}/duplicate")
+def duplicate_product(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Clone product tree (L1-L5 + specs + custom_fields + modifier_groups/items). Skips reviews, orders, cart, stock_log."""
+    require_team_member_or_owner(user, project_id)
+    src = db_one("SELECT * FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
+    if not src: raise HTTPException(404, "Product not found")
+
+    with db_cursor() as (conn, cur):
+        # 1. Clone product row with " (copy)" suffix; reset sku/barcode so auto-SKU regenerates uniquely.
+        new_title = (src.get("title") or "") + " (copy)"
+        cur.execute(
+            "INSERT INTO products"
+            "  (project_id, title, subtitle, description, category_id, seo_title, seo_description, seo_keywords,"
+            "   product_type, sku, barcode, brand, manufacturer, vendor, country_of_origin, hs_code, og_image_url,"
+            "   requires_shipping, ships_internationally, continue_selling_oos, is_pre_order, allow_po,"
+            "   shipping_class, lead_time_days, moq, order_increment, low_stock_threshold, net_terms_days,"
+            "   pre_order_release_at, tax_category_id)"
+            " SELECT project_id, %s, subtitle, description, category_id, seo_title, seo_description, seo_keywords,"
+            "        product_type, '', '', brand, manufacturer, vendor, country_of_origin, hs_code, og_image_url,"
+            "        requires_shipping, ships_internationally, continue_selling_oos, is_pre_order, allow_po,"
+            "        shipping_class, lead_time_days, moq, order_increment, low_stock_threshold, net_terms_days,"
+            "        pre_order_release_at, tax_category_id"
+            "   FROM products WHERE id=%s RETURNING id",
+            (sanitize(new_title), product_id)
+        )
+        new_pid = cur.fetchone()["id"]
+
+        # 2. Regenerate product-level auto-SKU under org settings.
+        mode, length = _resolve_sku_settings(project_id)
+        new_sku = _gen_unique_product_sku(cur, project_id, mode, length)
+        if new_sku:
+            cur.execute("UPDATE products SET sku=%s WHERE id=%s", (new_sku, new_pid))
+        # Mint a fresh EAN-13 for the duplicate (we don't copy the source's
+        # barcode because every product needs its own unique scannable code).
+        cur.execute("UPDATE products SET barcode = '' WHERE id = %s", (new_pid,))
+        _ensure_product_ean13(cur, new_pid)
+
+        # 3. Clone Layer 1 → Layer 5 tree. Maintain id-map at each level so child rows point to new parents.
+        l1_map = {}
+        cur.execute("SELECT * FROM product_configurations_l1 WHERE product_id=%s ORDER BY position", (product_id,))
+        for r in cur.fetchall():
+            cur.execute(
+                "INSERT INTO product_configurations_l1"
+                "  (product_id, variation_name, images, media_alt, price, stock_quantity, sold_quantity, position,"
+                "   sale_type, sale_value, sale_starts_at, sale_ends_at)"
+                " VALUES (%s, %s, %s, %s, %s, 0, 0, %s, %s, %s, %s, %s) RETURNING id",
+                (new_pid, r["variation_name"], r.get("images") or [], r.get("media_alt") or [],
+                 r.get("price"), r["position"],
+                 r.get("sale_type"), r.get("sale_value"), r.get("sale_starts_at"), r.get("sale_ends_at"))
+            )
+            l1_map[r["id"]] = cur.fetchone()["id"]
+
+        l2_map = {}
+        if l1_map:
+            cur.execute("SELECT * FROM product_configurations_l2 WHERE variation_id = ANY(%s) ORDER BY position",
+                        (list(l1_map.keys()),))
+            for r in cur.fetchall():
+                # Regenerate SKU code so we don't clash with parent's uq_l2_project_sku_code.
+                new_sku_code = _gen_unique_l2_sku_code(cur, new_pid, mode, length) if r.get("sku_code") else ''
+                cur.execute(
+                    "INSERT INTO product_configurations_l2"
+                    "  (product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position,"
+                    "   sku_code, barcode, compare_at_price, cost_price, weight_g, length_cm, width_cm, height_cm,"
+                    "   sale_type, sale_value, sale_starts_at, sale_ends_at)"
+                    " VALUES (%s, %s, %s, %s, 0, 0, %s, %s, '', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (new_pid, l1_map[r["variation_id"]], r["configuration_name"], r.get("price"), r["position"],
+                     new_sku_code, r.get("compare_at_price"), r.get("cost_price"),
+                     r.get("weight_g"), r.get("length_cm"), r.get("width_cm"), r.get("height_cm"),
+                     r.get("sale_type"), r.get("sale_value"), r.get("sale_starts_at"), r.get("sale_ends_at"))
+                )
+                new_l2_id = cur.fetchone()["id"]
+                l2_map[r["id"]] = new_l2_id
+                # Mint a fresh EAN-13 for the duplicate SKU (we passed '' for
+                # barcode in the INSERT above so _ensure mints a new one).
+                _ensure_sku_ean13(cur, new_l2_id)
+
+        def _clone_layer(layer_n: int, parent_map: dict) -> dict:
+            if not parent_map: return {}
+            new_map = {}
+            cur.execute(
+                f"SELECT * FROM product_configurations_l{layer_n} WHERE parent_id = ANY(%s) ORDER BY position",
+                (list(parent_map.keys()),)
+            )
+            for r in cur.fetchall():
+                cur.execute(
+                    f"INSERT INTO product_configurations_l{layer_n}"
+                    "  (parent_id, name, price, stock_quantity, sold_quantity, position)"
+                    " VALUES (%s, %s, %s, 0, 0, %s) RETURNING id",
+                    (parent_map[r["parent_id"]], r["name"], r.get("price"), r["position"])
+                )
+                new_map[r["id"]] = cur.fetchone()["id"]
+            return new_map
+
+        l3_map = _clone_layer(3, l2_map)
+        l4_map = _clone_layer(4, l3_map)
+        l5_map = _clone_layer(5, l4_map)
+
+        # 4. Specifications: rewrite parent_id + variation_id pointing into new tree.
+        full_map = {1: l1_map, 2: l2_map, 3: l3_map, 4: l4_map, 5: l5_map}
+        for layer, pmap in full_map.items():
+            if not pmap: continue
+            cur.execute(
+                "SELECT * FROM product_specifications WHERE layer=%s AND parent_id = ANY(%s)",
+                (layer, list(pmap.keys()))
+            )
+            for r in cur.fetchall():
+                v_id = l1_map.get(r["variation_id"]) if r.get("variation_id") else None
+                cur.execute(
+                    "INSERT INTO product_specifications (variation_id, layer, parent_id, spec_key, spec_value, position)"
+                    " VALUES (%s, %s, %s, %s, %s, %s)",
+                    (v_id, layer, pmap[r["parent_id"]], r["spec_key"], r["spec_value"], r.get("position", 0))
+                )
+
+        # 5. Custom fields (global rows are duplicated, but Global=true keeps key→all-products invariant).
+        cur.execute("SELECT * FROM product_custom_fields WHERE product_id=%s ORDER BY position", (product_id,))
+        for r in cur.fetchall():
+            cur.execute(
+                "INSERT INTO product_custom_fields"
+                "  (project_id, product_id, field_key, field_value, field_type, is_global, position)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT DO NOTHING",
+                (project_id, new_pid, r["field_key"], r["field_value"], r["field_type"],
+                 r.get("is_global", False), r.get("position", 0))
+            )
+
+        # 6. Modifier groups + items (preserve item-id map so default_item_id rewrites correctly).
+        cur.execute("SELECT * FROM product_modifier_groups WHERE product_id=%s ORDER BY position", (product_id,))
+        groups = cur.fetchall()
+        group_map = {}
+        for g in groups:
+            cur.execute(
+                "INSERT INTO product_modifier_groups"
+                "  (product_id, name, control_type, min_select, max_select, is_required, position)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (new_pid, g["name"], g["control_type"], g["min_select"], g.get("max_select"),
+                 g["is_required"], g["position"])
+            )
+            group_map[g["id"]] = cur.fetchone()["id"]
+
+        item_map = {}
+        if group_map:
+            cur.execute("SELECT * FROM product_modifier_items WHERE group_id = ANY(%s) ORDER BY position",
+                        (list(group_map.keys()),))
+            for it in cur.fetchall():
+                cur.execute(
+                    "INSERT INTO product_modifier_items (group_id, name, price_delta, position)"
+                    " VALUES (%s, %s, %s, %s) RETURNING id",
+                    (group_map[it["group_id"]], it["name"], it["price_delta"], it["position"])
+                )
+                item_map[it["id"]] = cur.fetchone()["id"]
+
+        # Re-link default_item_id on groups (we now have item_map).
+        for g in groups:
+            d = g.get("default_item_id")
+            if d and d in item_map:
+                cur.execute("UPDATE product_modifier_groups SET default_item_id=%s WHERE id=%s",
+                            (item_map[d], group_map[g["id"]]))
+
+        conn.commit()
+    return {"id": new_pid, "title": new_title}
+
+
+# ── BULK ACTIONS ─────────────────────────────────────────
+
+class BulkActionRequest(BaseModel):
+    action:       str
+    product_ids:  List[int]
+    category_id:  Optional[int] = None
+    price_delta_pct: Optional[float] = None      # e.g. -10 = drop 10%
+    set_stock:    Optional[int] = None
+    is_paused:    Optional[bool] = None
+    is_archived:  Optional[bool] = None
+
+
+@app.post("/api/projects/{project_id}/products/bulk")
+def bulk_action(project_id: int, request: BulkActionRequest, user: dict = Depends(get_current_user)):
+    """Atomic batch on N products (max 500). Verifies every id belongs to the project before any write."""
+    require_team_member_or_owner(user, project_id)
+    if not request.product_ids:
+        return {"ok": True, "affected": 0}
+    if len(request.product_ids) > 500:
+        raise HTTPException(400, "Too many products in one batch (max 500)")
+    ids = [int(x) for x in request.product_ids]
+
+    # Cross-tenant guard: re-fetch and require every id maps to this project.
+    rows = db_all(
+        "SELECT id FROM products WHERE id = ANY(%s) AND project_id=%s",
+        (ids, project_id)
+    )
+    valid_ids = [r["id"] for r in rows]
+    if len(valid_ids) != len(ids):
+        raise HTTPException(403, "Some products do not belong to this project")
+
+    action = request.action
+    with db_cursor() as (conn, cur):
+        if action == "delete":
+            # Mirror delete_product but batched (avoid 500 round-trips).
+            cur.execute("DELETE FROM product_specifications WHERE variation_id IN "
+                        "(SELECT id FROM product_configurations_l1 WHERE product_id = ANY(%s))", (valid_ids,))
+            cur.execute("DELETE FROM product_configurations_l2 WHERE variation_id IN "
+                        "(SELECT id FROM product_configurations_l1 WHERE product_id = ANY(%s))", (valid_ids,))
+            cur.execute("DELETE FROM product_configurations_l1 WHERE product_id = ANY(%s)", (valid_ids,))
+            cur.execute("DELETE FROM product_custom_fields WHERE product_id = ANY(%s)", (valid_ids,))
+            cur.execute("DELETE FROM product_reviews WHERE product_id = ANY(%s) AND project_id=%s", (valid_ids, project_id))
+            cur.execute("DELETE FROM favorites WHERE product_id = ANY(%s) AND project_id=%s", (valid_ids, project_id))
+            cur.execute("DELETE FROM cart_items WHERE product_id = ANY(%s)", (valid_ids,))
+            cur.execute("DELETE FROM product_page_views WHERE product_id = ANY(%s) AND project_id=%s", (valid_ids, project_id))
+            cur.execute("DELETE FROM products WHERE id = ANY(%s) AND project_id=%s", (valid_ids, project_id))
+        elif action == "archive":
+            cur.execute("UPDATE products SET is_archived=TRUE, is_paused=FALSE WHERE id = ANY(%s) AND project_id=%s",
+                        (valid_ids, project_id))
+        elif action == "unarchive":
+            cur.execute("UPDATE products SET is_archived=FALSE WHERE id = ANY(%s) AND project_id=%s",
+                        (valid_ids, project_id))
+        elif action == "pause":
+            cur.execute("UPDATE products SET is_paused=TRUE WHERE id = ANY(%s) AND project_id=%s",
+                        (valid_ids, project_id))
+        elif action == "resume":
+            cur.execute("UPDATE products SET is_paused=FALSE WHERE id = ANY(%s) AND project_id=%s",
+                        (valid_ids, project_id))
+        elif action == "set_category":
+            cat = request.category_id
+            if cat is not None:
+                if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
+                              (cat, project_id)):
+                    raise HTTPException(400, "Category does not belong to this project")
+            cur.execute("UPDATE products SET category_id=%s WHERE id = ANY(%s) AND project_id=%s",
+                        (cat, valid_ids, project_id))
+        elif action == "price_delta_pct":
+            pct = request.price_delta_pct
+            if pct is None: raise HTTPException(400, "price_delta_pct required")
+            if pct <= -100 or pct >= 1000:
+                raise HTTPException(400, "price_delta_pct out of range (-100..1000)")
+            factor = 1.0 + (float(pct) / 100.0)
+            # Apply on Layer 2 (SKU) price only — Layer 1 inherit semantics keep tree consistent.
+            cur.execute(
+                "UPDATE product_configurations_l2 SET price = GREATEST(price * %s, 0)"
+                " WHERE variation_id IN (SELECT id FROM product_configurations_l1 WHERE product_id = ANY(%s))"
+                "   AND price IS NOT NULL",
+                (factor, valid_ids)
+            )
+        elif action == "set_stock":
+            if request.set_stock is None or request.set_stock < 0:
+                raise HTTPException(400, "set_stock must be ≥ 0")
+            # Adjust via product_stock at default WH; _sync_l2_stock keeps the aggregate in sync.
+            wh_id = _default_warehouse_id(cur, project_id)
+            cur.execute(
+                "SELECT c.id AS sku_id FROM product_configurations_l2 c"
+                " JOIN product_configurations_l1 l1 ON c.variation_id = l1.id"
+                " WHERE l1.product_id = ANY(%s)",
+                (valid_ids,)
+            )
+            sku_ids = [r["sku_id"] for r in cur.fetchall()]
+            for sid in sku_ids:
+                cur.execute(
+                    "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+                    " VALUES (%s, %s, %s, 0)"
+                    " ON CONFLICT (sku_id, warehouse_id) DO UPDATE SET quantity = EXCLUDED.quantity",
+                    (sid, wh_id, request.set_stock)
+                )
+                cur.execute(
+                    "INSERT INTO product_stock_log (project_id, sku_id, warehouse_id, delta, reason, user_id, note)"
+                    " VALUES (%s, %s, %s, 0, 'bulk_set', %s, %s)",
+                    (project_id, sid, wh_id, user["id"], f"Bulk set to {request.set_stock}")
+                )
+                _sync_l2_stock(cur, sid)
+        else:
+            raise HTTPException(400, f"Unknown action: {action}")
+        conn.commit()
+    return {"ok": True, "affected": len(valid_ids), "action": action}
+
+
+# ── BARCODE PRINTING ─────────────────────────────────────
+
+# Label format presets: dimensions in mm, fits printer rolls + A4 sheet variants.
+LABEL_FORMATS = {
+    "50x30":     {"w_mm": 50, "h_mm": 30, "per_page": 1,  "page_w_mm": 50,  "page_h_mm": 30 },
+    "70x40":     {"w_mm": 70, "h_mm": 40, "per_page": 1,  "page_w_mm": 70,  "page_h_mm": 40 },
+    "a4_24":     {"w_mm": 64, "h_mm": 33, "per_page": 24, "page_w_mm": 210, "page_h_mm": 297, "cols": 3, "rows": 8 },
+    "a4_30":     {"w_mm": 70, "h_mm": 29, "per_page": 30, "page_w_mm": 210, "page_h_mm": 297, "cols": 3, "rows": 10},
+}
+
+
+def _generate_barcode_svg(value: str, symbology: str = "code128") -> str:
+    """Return barcode SVG fragment. Symbology dispatches to the right
+    python-barcode class. Each symbology has a strict payload — we coerce the
+    input to fit so the library doesn't refuse to render. Falls back to plain
+    text on any error. Bars are tall + wide so they actually scan from the printout."""
+    if not value:
+        return '<text x="0" y="14" font-family="monospace" font-size="10">no-code</text>'
+    try:
+        import barcode as _bc
+        from barcode.writer import SVGWriter
+        from io import BytesIO
+        buf = BytesIO()
+        digits = ''.join(c for c in value if c.isdigit())
+
+        if symbology == "ean13":
+            # 12 digit payload — python-barcode computes the 13th check digit.
+            payload = digits[:12] if len(digits) >= 12 else digits.zfill(12)
+            code = _bc.EAN13(payload, writer=SVGWriter())
+        elif symbology == "ean8":
+            # 7 digit payload — python-barcode computes the 8th check digit.
+            payload = digits[:7] if len(digits) >= 7 else digits.zfill(7)
+            code = _bc.EAN8(payload, writer=SVGWriter())
+        elif symbology == "upca":
+            # 11 digit payload — python-barcode computes the 12th check digit.
+            payload = digits[:11] if len(digits) >= 11 else digits.zfill(11)
+            code = _bc.UPCA(payload, writer=SVGWriter())
+        elif symbology == "code39":
+            # Code 39: uppercase letters + digits + few specials. Strip the rest.
+            payload = ''.join(c for c in value.upper() if c.isalnum() or c in '-. $/+%')
+            if not payload: payload = digits or 'X'
+            code = _bc.Code39(payload, writer=SVGWriter(), add_checksum=False)
+        elif symbology == "itf":
+            # Interleaved 2 of 5: digits only, even length (library pads).
+            payload = digits if len(digits) % 2 == 0 else '0' + digits
+            if not payload: payload = '00'
+            code = _bc.ITF(payload, writer=SVGWriter())
+        elif symbology == "gs1_128":
+            # GS1-128 — Code 128 with Application Identifiers. python-barcode
+            # exposes Gs1_128 which respects the AI grammar (FNC1 separators).
+            try:
+                code = _bc.Gs1_128(value, writer=SVGWriter())
+            except Exception:
+                # Library version without Gs1_128 → degrade to plain Code 128.
+                code = _bc.Code128(value, writer=SVGWriter())
+        else:
+            code = _bc.Code128(value, writer=SVGWriter())
+
+        # Render ONLY the bars — we draw digits + extended guard bars in
+        # _decorate_ean_svg with full control over layout. Module height 13mm
+        # gives the standard EAN-13 aspect (about 2:1 wide:tall, matches
+        # tec-it.com renderings).
+        code.write(buf, options={
+            "write_text":   False,
+            "module_height": 13.0,
+            "module_width":   0.33,
+            "quiet_zone":     3,
+        })
+        raw = buf.getvalue().decode("utf-8", errors="replace")
+        m = re.search(r"<svg[\s\S]*?</svg>", raw)
+        if not m:
+            return f'<text x="0" y="14" font-family="monospace" font-size="10">{sanitize(value)}</text>'
+        svg = m.group(0)
+        # python-barcode 0.15 quirk: rects use absolute mm units in attributes
+        # (`x="2.000mm" width="0.400mm"`) AND the <svg> has no viewBox. With
+        # CSS-sized SVG, the browser converts those mm values via DPI which
+        # doesn't match the viewBox grid → bars end up at wrong positions.
+        # Strip the "mm" suffix from every coordinate so they become bare
+        # user-units matching the viewBox we inject.
+        dim = re.search(r'<svg[^>]*?width="([^"]+)"[^>]*?height="([^"]+)"', svg)
+        if dim:
+            w_mm = float(re.sub(r'[^0-9.]', '', dim.group(1)) or '0')
+            h_mm = float(re.sub(r'[^0-9.]', '', dim.group(2)) or '0')
+            if w_mm > 0 and h_mm > 0:
+                # Strip "mm" from every numeric-followed-by-mm attribute value
+                # GLOBALLY (not just first per rect). Pattern: `="2.000mm"` → `="2.000"`.
+                svg = re.sub(r'(="[\d.]+)mm(")', r'\1\2', svg)
+                # Inject viewBox matching the (now unit-less) coordinate space.
+                # Preserve aspect ratio so the bars don't stretch — gives the
+                # squarer tec-it-style proportions instead of the wide-stretched
+                # look that `preserveAspectRatio="none"` produces.
+                if 'viewBox' not in svg:
+                    svg = re.sub(r'<svg', f'<svg viewBox="0 0 {w_mm} {h_mm}" preserveAspectRatio="xMidYMid meet"', svg, count=1)
+        return svg
+    except Exception:
+        return f'<text x="0" y="14" font-family="monospace" font-size="10">{sanitize(value)}</text>'
+
+
+class PrintBarcodesRequest(BaseModel):
+    items:           List[dict]                    # [{sku_id: int, qty: int}] OR [{product_id: int, qty: int}]
+    format:          str   = "50x30"
+    show_sku:        bool  = True
+    show_barcode:    bool  = True
+    show_title:      bool  = True
+    show_price:      bool  = False
+    copies_per_sku:  int   = 1                     # multiplier on top of per-item qty
+    auto_print:      bool  = False                 # add window.print() on iframe load — disabled by default so users can review first
+    # Advanced encoding — when set, these values are appended to the SKU/barcode string before Code128 encoding.
+    include_date:        bool  = False
+    production_date:     Optional[str]   = None       # YYYY-MM-DD or empty for "today"
+    include_batch:       bool  = False
+    batch_name:          Optional[str]   = None
+    include_qty:         bool  = False
+    qty_in_batch:        Optional[int]   = None
+    include_serial:      bool  = False
+    # Symbology — "code128" (default, alphanumeric) or "ean13" (numeric, 13 digits with check digit).
+    symbology:           str   = "code128"
+    qr_mode:             bool  = False               # render QR Code instead of Code128 (for event tickets)
+
+
+def _ean13_check_digit(twelve: str) -> str:
+    """GS1 EAN-13 algorithm: sum odd-position digits + 3 × even-position digits, then 10 - (sum % 10) mod 10."""
+    if not twelve or not twelve.isdigit() or len(twelve) != 12:
+        return ''
+    s = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(twelve))
+    return str((10 - (s % 10)) % 10)
+
+
+def _normalize_ean13(raw: str) -> Optional[str]:
+    """Accepts 12 or 13 digits. Returns the canonical 13-digit value or None if invalid."""
+    s = (raw or '').strip()
+    if not s.isdigit(): return None
+    if len(s) == 12:
+        return s + _ean13_check_digit(s)
+    if len(s) == 13:
+        return s if _ean13_check_digit(s[:12]) == s[12] else None
+    return None
+
+
+# Internal EAN-13 generation. Prefixes 200-299 are reserved by GS1 for
+# "in-store / restricted distribution" — they never collide with real registered
+# manufacturer codes, so it's safe to mint these without GS1 membership.
+# Layout: PPP (3-digit prefix) + IIIIIIIII (9-digit entity id, zero-padded) + C (check)
+EAN13_PREFIX_PRODUCT = '200'   # products
+EAN13_PREFIX_SKU     = '201'   # product_configurations_l2 (L2 SKUs)
+
+def _internal_ean13(prefix: str, entity_id: int) -> str:
+    """Mint a 13-digit EAN-13 from a 3-digit prefix + 9-digit entity id +
+    check digit. Caller picks the prefix (product / sku / etc.) so a scan can
+    disambiguate the entity type just from the first 3 digits."""
+    if entity_id is None or entity_id < 0:
+        return ''
+    twelve = f"{prefix}{int(entity_id):09d}"[:12].zfill(12)
+    return twelve + _ean13_check_digit(twelve)
+
+
+def _ensure_product_ean13(cur, product_id: int) -> str:
+    """If products.barcode for `product_id` is empty/null/invalid, mint a fresh
+    EAN-13 and persist it. Returns the canonical barcode (existing or new)."""
+    cur.execute("SELECT barcode FROM products WHERE id = %s", (product_id,))
+    row = cur.fetchone()
+    existing = (row or {}).get('barcode') or ''
+    if _normalize_ean13(existing):
+        return existing
+    minted = _internal_ean13(EAN13_PREFIX_PRODUCT, product_id)
+    cur.execute("UPDATE products SET barcode = %s WHERE id = %s", (minted, product_id))
+    return minted
+
+
+def _ensure_sku_ean13(cur, sku_id: int) -> str:
+    """Same as _ensure_product_ean13 but for product_configurations_l2 (L2 SKUs)."""
+    cur.execute("SELECT barcode FROM product_configurations_l2 WHERE id = %s", (sku_id,))
+    row = cur.fetchone()
+    existing = (row or {}).get('barcode') or ''
+    if _normalize_ean13(existing):
+        return existing
+    minted = _internal_ean13(EAN13_PREFIX_SKU, sku_id)
+    cur.execute("UPDATE product_configurations_l2 SET barcode = %s WHERE id = %s",
+                (minted, sku_id))
+    return minted
+
+
+def _format_ean_text(value: str, symbology: str) -> str:
+    """Format a barcode value as the standard human-readable layout for EAN-13
+    ("9 780201 379624"), EAN-8 ("1234 5678") or UPC-A ("0 12345 67890 5").
+    Returns the raw digit string for non-EAN symbologies."""
+    digits = ''.join(c for c in value if c.isdigit())
+    if symbology == "ean13" and len(digits) >= 13:
+        return f"{digits[0]} {digits[1:7]} {digits[7:13]}"
+    if symbology == "ean8"  and len(digits) >= 8:
+        return f"{digits[0:4]} {digits[4:8]}"
+    if symbology == "upca"  and len(digits) >= 12:
+        return f"{digits[0]} {digits[1:6]} {digits[6:11]} {digits[11]}"
+    return value
+
+
+def _decorate_ean_svg(svg: str, value: str, symbology: str) -> str:
+    """Post-process a python-barcode EAN/UPC SVG so it looks like a real retail
+    barcode: extends start/middle/end guard bars downward AND draws the
+    human-readable digits in their canonical 3-group layout (e.g. `9 780201
+    379624` for EAN-13). All done inside the SVG so it scales as one unit
+    when the label CSS resizes it.
+
+    Coordinate system after `_generate_barcode_svg` strips `mm` from rects:
+    bars run from x ≈ 2.0 to x ≈ W-2.0, all at the same y/height.
+    """
+    digits = ''.join(c for c in value if c.isdigit())
+    if symbology == "ean13" and len(digits) >= 13:
+        groups = (digits[0], digits[1:7], digits[7:13])
+    elif symbology == "ean8" and len(digits) >= 8:
+        groups = (digits[0:4], digits[4:8])
+    elif symbology == "upca" and len(digits) >= 12:
+        groups = (digits[0], digits[1:6], digits[6:11], digits[11])
+    else:
+        return svg
+
+    # Read the SVG's viewBox to know the bar zone in user units.
+    vb = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+    if not vb:
+        return svg
+    w = float(vb.group(1))
+    h = float(vb.group(2))
+
+    # These constants MUST match the options passed to python-barcode in
+    # _generate_barcode_svg (quiet_zone, module_height) so guard zones land
+    # on the right rects.
+    QUIET = 3.0
+    BAR_TOP = 1.0
+    BAR_BOT = BAR_TOP + 13.0   # module_height=13 → bars end at y=14
+    EXTEND = 2.5               # how far guards drop below regular bars
+    TEXT_Y = BAR_BOT + EXTEND + 0.5   # baseline for digits, just past guard tips
+    NEW_H = TEXT_Y + 1.0
+
+    # Guard-bar X ranges (in user units) by symbology. Numbers come from the
+    # fixed EAN/UPC bar grammar (3-bar start guard, 5-bar middle, 3-bar end).
+    bar_area = w - 2 * QUIET     # the actual bar zone width
+    if symbology == "ean13":
+        # 95-module pattern. Module width = bar_area / 95.
+        m = bar_area / 95.0
+        # Start at QUIET, end at QUIET+95m.
+        start_lo, start_hi = QUIET, QUIET + 3 * m
+        mid_lo,   mid_hi   = QUIET + 45 * m, QUIET + 50 * m
+        end_lo,   end_hi   = QUIET + 92 * m, QUIET + 95 * m
+        guards = [(start_lo, start_hi), (mid_lo, mid_hi), (end_lo, end_hi)]
+    elif symbology == "upca":
+        m = bar_area / 95.0   # UPC-A also 95 modules
+        guards = [(QUIET, QUIET + 3*m), (QUIET + 45*m, QUIET + 50*m), (QUIET + 92*m, QUIET + 95*m)]
+    elif symbology == "ean8":
+        m = bar_area / 67.0   # EAN-8 has 67 modules
+        guards = [(QUIET, QUIET + 3*m), (QUIET + 31*m, QUIET + 36*m), (QUIET + 64*m, QUIET + 67*m)]
+    else:
+        guards = []
+
+    def is_guard(x, rw):
+        cx = x + rw / 2.0
+        return any(lo - 0.05 <= cx <= hi + 0.05 for lo, hi in guards)
+
+    def bump(match):
+        tag = match.group(0)
+        # Skip the background fill rect (width=100%).
+        if '100%' in tag:
+            return tag
+        xm = re.search(r'x="([\d.]+)"', tag)
+        wm = re.search(r'width="([\d.]+)"', tag)
+        hm = re.search(r'height="([\d.]+)"', tag)
+        if not (xm and wm and hm):
+            return tag
+        x = float(xm.group(1)); rw = float(wm.group(1)); rh = float(hm.group(1))
+        if not is_guard(x, rw):
+            return tag
+        return tag.replace(f'height="{hm.group(1)}"', f'height="{rh + EXTEND:.3f}"', 1)
+
+    svg = re.sub(r'<rect[^/]*?/>', bump, svg)
+
+    # Bump the SVG's viewBox + height attribute so the new tall guards + the
+    # digit text below them stay visible.
+    svg = re.sub(r'viewBox="0 0 ([\d.]+) ([\d.]+)"',
+                 f'viewBox="0 0 {w} {NEW_H}"', svg, count=1)
+    svg = re.sub(r'(<svg[^>]*?height=")[\d.]+(")',
+                 f'\\g<1>{NEW_H}\\g<2>', svg, count=1)
+
+    # Compose the digit text. Positions match the bar grammar so each group
+    # sits directly under its half. font-size 2.0 user units ≈ 6pt at our scale.
+    text_parts = []
+    font = ('font-family="OCR-B, Courier New, monospace" '
+            'font-size="3.2" font-weight="600" text-anchor="middle"')
+    if symbology == "ean13":
+        # "9" — left of start guard (in the quiet zone), left-anchored.
+        text_parts.append(
+            f'<text x="{QUIET - 0.5:.3f}" y="{TEXT_Y:.3f}" '
+            f'font-family="OCR-B, Courier New, monospace" font-size="3.2" '
+            f'font-weight="600" text-anchor="end">{groups[0]}</text>'
+        )
+        # 6 digits centered under the left half.
+        m = bar_area / 95.0
+        left_cx  = QUIET + 3*m + (42*m) / 2.0   # center of left half (42 mods)
+        right_cx = QUIET + 50*m + (42*m) / 2.0
+        text_parts.append(f'<text x="{left_cx:.3f}"  y="{TEXT_Y:.3f}" {font} letter-spacing="0.5">{groups[1]}</text>')
+        text_parts.append(f'<text x="{right_cx:.3f}" y="{TEXT_Y:.3f}" {font} letter-spacing="0.5">{groups[2]}</text>')
+    elif symbology == "upca":
+        m = bar_area / 95.0
+        text_parts.append(
+            f'<text x="{QUIET - 0.5:.3f}" y="{TEXT_Y:.3f}" '
+            f'font-family="OCR-B, Courier New, monospace" font-size="3.0" '
+            f'font-weight="600" text-anchor="end">{groups[0]}</text>'
+        )
+        left_cx  = QUIET + 3*m + (42*m) / 2.0
+        right_cx = QUIET + 50*m + (42*m) / 2.0
+        text_parts.append(f'<text x="{left_cx:.3f}"  y="{TEXT_Y:.3f}" {font} letter-spacing="0.5">{groups[1]}</text>')
+        text_parts.append(f'<text x="{right_cx:.3f}" y="{TEXT_Y:.3f}" {font} letter-spacing="0.5">{groups[2]}</text>')
+        text_parts.append(
+            f'<text x="{w - QUIET + 0.5:.3f}" y="{TEXT_Y:.3f}" '
+            f'font-family="OCR-B, Courier New, monospace" font-size="3.0" '
+            f'font-weight="600" text-anchor="start">{groups[3]}</text>'
+        )
+    elif symbology == "ean8":
+        # EAN-8: two groups of 4, centered under each half.
+        m = bar_area / 67.0
+        left_cx  = QUIET + 3*m + (28*m) / 2.0
+        right_cx = QUIET + 36*m + (28*m) / 2.0
+        text_parts.append(f'<text x="{left_cx:.3f}"  y="{TEXT_Y:.3f}" {font} letter-spacing="0.5">{groups[0]}</text>')
+        text_parts.append(f'<text x="{right_cx:.3f}" y="{TEXT_Y:.3f}" {font} letter-spacing="0.5">{groups[1]}</text>')
+
+    # Inject text elements before </svg>.
+    svg = svg.replace('</svg>', ''.join(text_parts) + '</svg>')
+    return svg
+
+
+def _generate_qr_svg(value: str, symbology: str = "qr") -> str:
+    """2D barcode SVG fragment. Real `qrcode` lib renders QR. Data Matrix /
+    GS1 Data Matrix / GS1 QR all fall through to QR because the GS1
+    Application-Identifier wrapping is what scanners decode — the visual
+    symbol (square QR vs Data Matrix) doesn't change the payload. Adding
+    real Data Matrix would need the `pylibdmtx` system library.
+
+    For GS1 variants we prepend the FNC1 symbology indicator (`]Q3` for QR,
+    `]d2` for Data Matrix) so a barcode scanner reports the right type.
+    """
+    if not value: return '<text x="0" y="14" font-family="monospace" font-size="10">no-code</text>'
+
+    # GS1 prefix marker — scanners interpret `]Q3` / `]d2` as "this 2D code
+    # carries GS1 AIs". Without the prefix it's just an opaque string.
+    payload = value
+    if symbology == 'gs1_qr':         payload = ']Q3' + value
+    elif symbology == 'gs1_datamatrix': payload = ']d2' + value
+    elif symbology == 'data_matrix':   payload = value   # rendered as QR — visually different real symbol needs libdmtx
+
+    try:
+        import qrcode as _qr
+        from qrcode.image.svg import SvgPathImage
+        from io import BytesIO
+        img = _qr.make(payload, image_factory=SvgPathImage, box_size=8, border=2)
+        buf = BytesIO()
+        img.save(buf)
+        raw = buf.getvalue().decode('utf-8', errors='replace')
+        m = re.search(r"<svg[\s\S]*?</svg>", raw)
+        return m.group(0) if m else f'<text>{sanitize(value)}</text>'
+    except Exception:
+        return f'<text x="0" y="14" font-family="monospace" font-size="10">{sanitize(value)}</text>'
+
+
+@app.get("/api/skus/lookup")
+def lookup_skus(project_id: int = Query(...), ids: str = Query(""),
+                user: dict = Depends(get_current_user)):
+    """Batched sku_id → {product_id, title, variation_name, configuration_name} lookup. Used by PrintBarcodesModal to render labels for arbitrary SKU lists."""
+    require_team_member_or_owner(user, project_id)
+    try:
+        id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()][:500]
+    except ValueError:
+        raise HTTPException(400, "Invalid ids")
+    if not id_list:
+        return []
+    rows = db_all(
+        "SELECT c.id AS sku_id, c.configuration_name, c.sku_code, c.barcode,"
+        "       l1.id AS variation_id, l1.variation_name,"
+        "       p.id AS product_id, p.title"
+        "  FROM product_configurations_l2 c"
+        "  JOIN product_configurations_l1 l1 ON c.variation_id = l1.id"
+        "  JOIN products p ON l1.product_id = p.id"
+        " WHERE c.id = ANY(%s) AND p.project_id = %s",
+        (id_list, project_id)
+    )
+    return rows
+
+
+@app.post("/api/projects/{project_id}/print-barcodes")
+def print_barcodes(project_id: int, request: PrintBarcodesRequest,
+                   user: dict = Depends(get_current_user)):
+    """Returns a self-contained HTML page (with @media print rules). Frontend embeds it in an iframe — actual printer dispatch happens only when the user clicks Print (which triggers iframe.contentWindow.print())."""
+    require_team_member_or_owner(user, project_id)
+    fmt = LABEL_FORMATS.get(request.format)
+    if not fmt: raise HTTPException(400, "Unknown label format")
+    if not request.items: raise HTTPException(400, "No items to print")
+    if len(request.items) > 2000:
+        raise HTTPException(400, "Too many labels (max 2000)")
+
+    # Items can mix three kinds: SKU-level, product-level, or batch-level.
+    sku_ids     = [int(x["sku_id"])     for x in request.items if str(x.get("sku_id"))     not in (None, "") and str(x.get("sku_id")).isdigit()]
+    product_ids = [int(x["product_id"]) for x in request.items if str(x.get("product_id")) not in (None, "") and str(x.get("product_id")).isdigit()]
+    batch_ids   = [int(x["batch_id"])   for x in request.items if str(x.get("batch_id"))   not in (None, "") and str(x.get("batch_id")).isdigit()]
+    if not sku_ids and not product_ids and not batch_ids:
+        raise HTTPException(400, "items must contain sku_id, product_id or batch_id")
+
+    # Cross-tenant guard: each id must belong to the caller's project.
+    by_sku, by_product, by_batch = {}, {}, {}
+    if sku_ids:
+        rows = db_all(
+            "SELECT c.id AS sku_id, c.sku_code, c.barcode AS sku_barcode, c.price,"
+            "       p.id AS product_id, p.title"
+            "  FROM product_configurations_l2 c"
+            "  JOIN product_configurations_l1 l1 ON c.variation_id = l1.id"
+            "  JOIN products p ON l1.product_id = p.id"
+            " WHERE c.id = ANY(%s) AND p.project_id = %s",
+            (sku_ids, project_id)
+        )
+        by_sku = {r["sku_id"]: r for r in rows}
+        if len(by_sku) != len(set(sku_ids)):
+            raise HTTPException(403, "Some SKUs do not belong to this project")
+    if product_ids:
+        rows = db_all(
+            "SELECT id AS product_id, title, sku AS product_sku, barcode AS product_barcode"
+            "  FROM products WHERE id = ANY(%s) AND project_id = %s",
+            (product_ids, project_id)
+        )
+        by_product = {r["product_id"]: r for r in rows}
+        if len(by_product) != len(set(product_ids)):
+            raise HTTPException(403, "Some products do not belong to this project")
+    if batch_ids:
+        rows = db_all(
+            "SELECT b.id AS batch_id, b.batch_name, b.sku_id,"
+            "       l2.sku_code, l2.configuration_name AS sku_name, l2.price,"
+            "       l1.variation_name, p.title"
+            "  FROM inventory_batches b"
+            "  JOIN product_configurations_l2 l2 ON b.sku_id = l2.id"
+            "  JOIN product_configurations_l1 l1 ON l2.variation_id = l1.id"
+            "  JOIN products p ON l1.product_id = p.id"
+            " WHERE b.id = ANY(%s) AND b.project_id = %s",
+            (batch_ids, project_id)
+        )
+        by_batch = {r["batch_id"]: r for r in rows}
+        if len(by_batch) != len(set(batch_ids)):
+            raise HTTPException(403, "Some batches do not belong to this project")
+
+    copies = max(1, min(int(request.copies_per_sku), 50))
+
+    # Resolve "date" placeholder once for the entire batch.
+    date_value = ''
+    if request.include_date:
+        d = (request.production_date or '').strip()
+        if d:
+            date_value = d.replace('-', '')   # YYYYMMDD compact form
+        else:
+            date_value = _utcnow().strftime('%Y%m%d')
+
+    # Static text appended to every label's base code: -YYYYMMDD-Bxxx-Qxxx (without serial; serial is per-unit).
+    static_suffix = ''
+    if request.include_date and date_value:
+        static_suffix += f"-{date_value}"
+    if request.include_batch and request.batch_name:
+        # Sanitize batch into the encoded set (Code128 accepts everything; for EAN-13 we strip non-digits at the end).
+        bn = re.sub(r'[^A-Za-z0-9]', '', request.batch_name)[:12]
+        if bn: static_suffix += f"-B{bn}"
+    if request.include_qty and request.qty_in_batch and int(request.qty_in_batch) > 0:
+        static_suffix += f"-Q{int(request.qty_in_batch)}"
+
+    # Build flat list of labels — one entry per individual sticker. Serial counters are assigned now so each unit gets a unique encoded value when include_serial is on.
+    flat = []
+    serial_counter = 0
+    # We need a cursor open for any on-the-fly EAN-13 minting below.
+    with db_cursor() as (mint_conn, mint_cur):
+      for x in request.items:
+        qty = max(1, int(x.get("qty") or 1)) * copies
+        encode_field = x.get("encode_field") or 'auto'   # 'auto' | 'ean13'
+        if x.get("sku_id") is not None and str(x.get("sku_id")).isdigit():
+            r = by_sku.get(int(x["sku_id"]));
+            if not r: continue
+            if encode_field == 'ean13':
+                # Force the canonical EAN-13. Mint one if the column is empty so
+                # the print never fails just because a row was created pre-backfill.
+                ean = r.get("sku_barcode") or ''
+                if not _normalize_ean13(ean):
+                    ean = _ensure_sku_ean13(mint_cur, int(r['sku_id']))
+                base_code = ean or f"SKU-{r['sku_id']}"
+            else:
+                base_code = r.get("sku_barcode") or r.get("sku_code") or f"SKU-{r['sku_id']}"
+            sku_label = r.get("sku_code") or ""
+            title     = r.get("title") or ""
+            price     = r.get("price")
+        elif x.get("product_id") is not None and str(x.get("product_id")).isdigit():
+            r = by_product.get(int(x["product_id"]))
+            if not r: continue
+            if encode_field == 'ean13':
+                ean = r.get("product_barcode") or ''
+                if not _normalize_ean13(ean):
+                    ean = _ensure_product_ean13(mint_cur, int(r['product_id']))
+                base_code = ean or f"P-{r['product_id']}"
+            else:
+                base_code = r.get("product_barcode") or r.get("product_sku") or f"P-{r['product_id']}"
+            sku_label = r.get("product_sku") or ""
+            title     = r.get("title") or ""
+            price     = None
+        elif x.get("batch_id") is not None and str(x.get("batch_id")).isdigit():
+            r = by_batch.get(int(x["batch_id"]))
+            if not r: continue
+            # Encode the batch_name as the barcode value. Scanner → batch_name →
+            # frontend looks up the inventory_batches row in O(1) on the project.
+            base_code = r.get("batch_name") or f"BATCH-{r['batch_id']}"
+            sku_label = r.get("sku_code") or ""
+            title     = f"{r.get('title','')} · {r.get('variation_name','')} / {r.get('sku_name','')}"
+            # Use the SKU's price (joined above) — batches inherit pricing from their SKU.
+            price     = r.get("price")
+        else:
+            continue
+
+        for _ in range(qty):
+            serial_counter += 1
+            encoded = str(base_code) + static_suffix
+            if request.include_serial:
+                # 0-padded to 4 digits so values sort lexically and look uniform.
+                encoded += f"-{serial_counter:04d}"
+            # EAN-13 mode: encoded value must be 12 or 13 digits — fall back to Code128 otherwise.
+            if request.symbology == "ean13":
+                normalized = _normalize_ean13(encoded.replace('-', ''))
+                if normalized:
+                    encoded = normalized
+            flat.append({
+                "code":  encoded,
+                "sku":   sku_label,
+                "title": title,
+                "price": price,
+                "serial": serial_counter if request.include_serial else None,
+            })
+
+    if not flat: raise HTTPException(400, "Nothing to print")
+
+    # HTML structure: grid of label divs, each holding inline SVG (Code128/EAN-13 OR QR). window.print() dispatches the system printer dialog when the user explicitly asks.
+    label_html_parts = []
+    for lab in flat:
+        if request.qr_mode:
+            svg = _generate_qr_svg(lab["code"], symbology=request.symbology)
+        else:
+            svg = _generate_barcode_svg(lab["code"], symbology=request.symbology)
+            # For EAN/UPC families, decorate the SVG with extended guard bars +
+            # the canonical 3-group human-readable digits (e.g. "9 780201 379624"
+            # for EAN-13). Done inside the SVG so it scales with CSS as one unit.
+            if request.symbology in ("ean13", "ean8", "upca"):
+                svg = _decorate_ean_svg(svg, lab["code"], request.symbology)
+        # EAN/UPC bake digits directly into the SVG (via _decorate_ean_svg),
+        # so no separate caption row is needed. Other 1D codes get the raw
+        # encoded value shown below the bars.
+        ean_family = request.symbology in ("ean13", "ean8", "upca")
+        title  = f'<div class="lbl-title">{sanitize(lab["title"][:80])}</div>' if request.show_title  and lab["title"] else ""
+        sku    = f'<div class="lbl-sku">{sanitize(lab["sku"])}</div>'           if request.show_sku    and lab["sku"]   else ""
+        price  = f'<div class="lbl-price">${float(lab["price"]):.2f}</div>'     if request.show_price  and lab.get("price") is not None else ""
+        bc_cap = f'<div class="lbl-code">{sanitize(lab["code"])}</div>'         if request.show_barcode and not request.qr_mode and not ean_family else ""
+        bc_svg = f'<div class="lbl-svg{" lbl-svg--qr" if request.qr_mode else ""}">{svg}</div>' if request.show_barcode else ""
+        label_html_parts.append(
+            f'<div class="lbl">{title}{bc_svg}{bc_cap}{sku}{price}</div>'
+        )
+
+    label_html = "".join(label_html_parts)
+    grid_cols = fmt.get("cols", 1)
+    page_w = fmt["page_w_mm"]; page_h = fmt["page_h_mm"]
+    lbl_w  = fmt["w_mm"];      lbl_h  = fmt["h_mm"]
+
+    # SVG sizing — fill ~85% of the label width. Height is auto in CSS so the
+    # barcode keeps its natural aspect ratio (otherwise EAN-13's guard bars
+    # squish into uniform lines instead of extending below).
+    svg_w = max(24, lbl_w - 8)
+    svg_h = max(10, int(lbl_h * 0.45))   # max height when content is full
+
+    auto_print_script = (
+        "<script>window.addEventListener('load', () => "
+        "{ setTimeout(() => { try { window.focus(); window.print(); } catch(e){} }, 200); });</script>"
+        if request.auto_print else ""
+    )
+
+    # For thermal (1-col) formats every label gets its own page; for A4 sheet
+    # formats the labels fill the grid and the page itself is the entire sheet.
+    is_sheet = grid_cols > 1
+    page_break_rule = ".lbl + .lbl { page-break-before: always; }" if not is_sheet else \
+                      ".sheet + .sheet { page-break-before: always; }"
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Print barcodes</title>
+<style>
+  @page {{ size: {page_w}mm {page_h}mm; margin: 0; }}
+  html, body {{ margin: 0; padding: 0; background: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
+  .sheet {{ display: grid; grid-template-columns: repeat({grid_cols}, {lbl_w}mm); gap: 0; }}
+  .lbl   {{ width: {lbl_w}mm; height: {lbl_h}mm; padding: 1mm; box-sizing: border-box;
+            display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+            page-break-inside: avoid; overflow: hidden; gap: 0.3mm; }}
+  .lbl-title {{ font-size: 6.5pt; font-weight: 600; text-align: center; line-height: 1.1;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+                flex-shrink: 0; }}
+  /* SVG container fills available label space via flex. The SVG itself takes
+     100%×100% — its embedded viewBox + preserveAspectRatio="xMidYMid meet"
+     handles proportional scaling like `object-fit: contain` on an <img>. */
+  .lbl-svg   {{ flex: 1 1 auto; min-height: 0; width: 100%;
+                display: flex; justify-content: center; align-items: center; }}
+  .lbl-svg svg {{ width: 100%; height: 100%; display: block; }}
+  .lbl-svg--qr {{ flex: 0 0 auto; }}
+  .lbl-svg--qr svg {{ width: {min(svg_w, svg_h)}mm; height: {min(svg_w, svg_h)}mm; }}
+  .lbl-code  {{ font-family: 'Courier New', monospace; font-size: 6pt; letter-spacing: 0.3px;
+                flex-shrink: 0; }}
+  /* EAN human-readable digit row — wider letter-spacing to space out the
+     "9 780201 379624" groups, slightly bigger so each digit is legible. */
+  .lbl-code--ean {{ font-family: 'OCR-B', 'Courier New', monospace;
+                    font-size: 7pt; letter-spacing: 1px; font-weight: 600; }}
+  .lbl-sku   {{ font-size: 5.5pt; color: #555; flex-shrink: 0; }}
+  .lbl-price {{ font-size: 8.5pt; font-weight: 700; flex-shrink: 0; }}
+  @media print {{
+    {page_break_rule}
+    /* Hide any browser-added margin so the printer renders exactly the label. */
+    html, body {{ width: {page_w}mm; height: {page_h}mm; }}
+  }}
+</style></head>
+<body><div class="sheet">{label_html}</div>{auto_print_script}</body></html>"""
+
+    return Response(content=html, media_type="text/html")
+
+
+# ── CSV IMPORT / EXPORT ──────────────────────────────────
+
+@app.get("/api/projects/{project_id}/products/export.csv")
+def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    """Streams a CSV with one row per Layer 2 SKU (project's full catalog or filtered by ?ids=). Used by the CRM Products page Export button."""
+    require_team_member_or_owner(user, project_id)
+    import csv as _csv
+    from io import StringIO
+
+    where_extra = ""
+    params = [project_id]
+    if ids:
+        try:
+            id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()][:1000]
+        except ValueError:
+            raise HTTPException(400, "Invalid ids")
+        if not id_list: raise HTTPException(400, "No valid ids")
+        where_extra = " AND p.id = ANY(%s)"
+        params.append(id_list)
+
+    rows = db_all(
+        "SELECT p.id AS product_id, p.title, p.subtitle, p.description,"
+        "       p.product_type, p.sku AS product_sku, p.barcode AS product_barcode,"
+        "       p.brand, p.manufacturer, p.country_of_origin,"
+        "       pc.name AS category, p.is_paused, p.is_archived,"
+        "       l1.variation_name, l2.configuration_name, l2.sku_code, l2.barcode,"
+        "       l2.price, l2.stock_quantity, l2.cost_price, l2.compare_at_price,"
+        "       l2.weight_g, l2.length_cm, l2.width_cm, l2.height_cm"
+        "  FROM products p"
+        "  LEFT JOIN product_categories pc        ON p.category_id = pc.id"
+        "  LEFT JOIN product_configurations_l1 l1 ON l1.product_id = p.id"
+        "  LEFT JOIN product_configurations_l2 l2 ON l2.variation_id = l1.id"
+        " WHERE p.project_id = %s" + where_extra +
+        " ORDER BY p.id, l1.position, l2.position",
+        tuple(params)
+    )
+
+    buf = StringIO()
+    w = _csv.writer(buf, dialect="excel")
+    w.writerow([
+        "product_id", "title", "subtitle", "description", "product_type", "product_sku", "product_barcode",
+        "brand", "manufacturer", "country_of_origin", "category", "is_paused", "is_archived",
+        "variation_name", "configuration_name", "sku_code", "sku_barcode", "price", "stock_quantity",
+        "cost_price", "compare_at_price", "weight_g", "length_cm", "width_cm", "height_cm",
+    ])
+    for r in rows:
+        w.writerow([
+            r["product_id"], r.get("title", ""), r.get("subtitle") or "", r.get("description") or "",
+            r.get("product_type") or "physical", r.get("product_sku") or "", r.get("product_barcode") or "",
+            r.get("brand") or "", r.get("manufacturer") or "", r.get("country_of_origin") or "",
+            r.get("category") or "",
+            "yes" if r.get("is_paused") else "", "yes" if r.get("is_archived") else "",
+            r.get("variation_name") or "", r.get("configuration_name") or "",
+            r.get("sku_code") or "", r.get("barcode") or "",
+            r["price"] if r.get("price") is not None else "",
+            r["stock_quantity"] if r.get("stock_quantity") is not None else "",
+            r["cost_price"] if r.get("cost_price") is not None else "",
+            r["compare_at_price"] if r.get("compare_at_price") is not None else "",
+            r["weight_g"] if r.get("weight_g") is not None else "",
+            r["length_cm"] if r.get("length_cm") is not None else "",
+            r["width_cm"] if r.get("width_cm") is not None else "",
+            r["height_cm"] if r.get("height_cm") is not None else "",
+        ])
+    data = buf.getvalue().encode("utf-8-sig")   # BOM so Excel opens UTF-8 correctly
+    return Response(
+        content=data, media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="products_{project_id}.csv"'}
+    )
+
+
+class CsvImportRow(BaseModel):
+    title:               Optional[str] = None
+    subtitle:            Optional[str] = None
+    description:         Optional[str] = None
+    product_type:        Optional[str] = None
+    category:            Optional[str] = None
+    variation_name:      Optional[str] = None
+    configuration_name:  Optional[str] = None
+    sku_code:            Optional[str] = None
+    sku_barcode:         Optional[str] = None
+    price:               Optional[float] = None
+    stock_quantity:      Optional[int]   = None
+
+
+class CsvImportRequest(BaseModel):
+    rows:    List[CsvImportRow]
+    dry_run: bool = False
+
+
+@app.post("/api/projects/{project_id}/products/import")
+def import_products_csv(project_id: int, request: CsvImportRequest,
+                        user: dict = Depends(get_current_user)):
+    """Parses validated CsvImportRow batch and upserts products + L1/L2 + categories. dry_run=true returns counters without writing."""
+    require_team_member_or_owner(user, project_id)
+    if not request.rows: return {"ok": True, "created": 0, "updated": 0}
+    if len(request.rows) > 5000:
+        raise HTTPException(400, "Too many rows (max 5000 per import)")
+
+    counters = {"products_created": 0, "products_matched": 0, "skus_created": 0, "skus_updated": 0, "errors": []}
+    if request.dry_run:
+        # Light scan: title required, dedupe by title.
+        seen = set()
+        for i, row in enumerate(request.rows):
+            t = (row.title or "").strip()
+            if not t:
+                counters["errors"].append({"row": i + 1, "error": "title required"})
+                continue
+            if t in seen:
+                counters["skus_created"] += 1
+            else:
+                seen.add(t); counters["products_created"] += 1; counters["skus_created"] += 1
+        counters["ok"] = True
+        return counters
+
+    with db_cursor() as (conn, cur):
+        # Cache title→product_id within this batch so multiple SKU rows merge into one product.
+        title_to_pid = {}
+        cat_cache = {}
+
+        for i, row in enumerate(request.rows):
+            try:
+                title = sanitize((row.title or "").strip())[:200]
+                if not title:
+                    counters["errors"].append({"row": i + 1, "error": "title required"}); continue
+
+                ptype = (row.product_type or "physical").strip()
+                if ptype not in ("physical", "digital", "service", "event"):
+                    ptype = "physical"
+
+                # Resolve category by name (case-insensitive); auto-create if missing.
+                cat_id = None
+                cname = (row.category or "").strip()
+                if cname:
+                    if cname.lower() in cat_cache:
+                        cat_id = cat_cache[cname.lower()]
+                    else:
+                        cur.execute("SELECT id FROM product_categories WHERE project_id=%s AND LOWER(name)=LOWER(%s)",
+                                    (project_id, cname))
+                        c = cur.fetchone()
+                        if c: cat_id = c["id"]
+                        else:
+                            slug = re.sub(r"[^a-z0-9]+", "-", cname.lower()).strip("-")[:80] or f"cat-{secrets.token_hex(3)}"
+                            cur.execute(
+                                "INSERT INTO product_categories (project_id, name, slug)"
+                                " VALUES (%s, %s, %s) RETURNING id",
+                                (project_id, sanitize(cname)[:100], slug)
+                            )
+                            cat_id = cur.fetchone()["id"]
+                        cat_cache[cname.lower()] = cat_id
+
+                # Upsert product (matched by title within this project, within this import).
+                if title in title_to_pid:
+                    pid = title_to_pid[title]
+                    counters["products_matched"] += 1
+                else:
+                    cur.execute("SELECT id FROM products WHERE project_id=%s AND title=%s LIMIT 1",
+                                (project_id, title))
+                    existing = cur.fetchone()
+                    if existing:
+                        pid = existing["id"]; counters["products_matched"] += 1
+                    else:
+                        cur.execute(
+                            "INSERT INTO products (project_id, title, subtitle, description, category_id, product_type, sku)"
+                            " VALUES (%s, %s, %s, %s, %s, %s, '') RETURNING id",
+                            (project_id, title,
+                             sanitize((row.subtitle or "").strip())[:300],
+                             sanitize((row.description or "").strip())[:5000],
+                             cat_id, ptype)
+                        )
+                        pid = cur.fetchone()["id"]
+                        mode, length = _resolve_sku_settings(project_id)
+                        gen = _gen_unique_product_sku(cur, project_id, mode, length)
+                        if gen: cur.execute("UPDATE products SET sku=%s WHERE id=%s", (gen, pid))
+                        # Auto-mint EAN-13 so the imported product is scannable immediately.
+                        _ensure_product_ean13(cur, pid)
+                        counters["products_created"] += 1
+                    title_to_pid[title] = pid
+
+                # Variation (Layer 1) row — required: at minimum, use "Default" if missing.
+                # Match case-insensitively so reimporting "Red" / "red" / "RED"
+                # doesn't silently create duplicate variations.
+                vname = sanitize((row.variation_name or "Default").strip())[:120]
+                cur.execute("SELECT id FROM product_configurations_l1"
+                            " WHERE product_id=%s AND LOWER(variation_name)=LOWER(%s) LIMIT 1",
+                            (pid, vname))
+                lv = cur.fetchone()
+                if lv: vid = lv["id"]
+                else:
+                    cur.execute(
+                        "INSERT INTO product_configurations_l1 (product_id, variation_name, images, price, stock_quantity, sold_quantity, position)"
+                        " VALUES (%s, %s, '{}', NULL, 0, 0, 0) RETURNING id",
+                        (pid, vname)
+                    )
+                    vid = cur.fetchone()["id"]
+
+                # SKU (Layer 2) row — upsert by configuration_name (case-insensitive too).
+                cname2 = sanitize((row.configuration_name or "Default").strip())[:120]
+                price = row.price if row.price is not None and row.price >= 0 else None
+                stock = max(0, int(row.stock_quantity)) if row.stock_quantity is not None else 0
+                sku_code = sanitize((row.sku_code or "").strip())[:80]
+                sku_bar  = sanitize((row.sku_barcode or "").strip())[:80]
+
+                # Invalid EAN-13 input → drop it so the auto-mint kicks in below.
+                # A malformed user-supplied barcode shouldn't poison the SKU.
+                if sku_bar and not _normalize_ean13(sku_bar):
+                    sku_bar = ''
+                # SKU-code collision check — another product's L2 already owns this code
+                # in the same project. Drop the imported value to avoid the unique-index
+                # crash (`uq_l2_project_sku_code`); let auto-gen mint a fresh one.
+                if sku_code:
+                    cur.execute(
+                        "SELECT 1 FROM product_configurations_l2 c"
+                        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+                        "  JOIN products p ON v.product_id = p.id"
+                        " WHERE p.project_id=%s AND c.sku_code=%s AND c.variation_id <> %s LIMIT 1",
+                        (project_id, sku_code, vid)
+                    )
+                    if cur.fetchone():
+                        sku_code = ''
+
+                cur.execute("SELECT id FROM product_configurations_l2"
+                            " WHERE variation_id=%s AND LOWER(configuration_name)=LOWER(%s) LIMIT 1",
+                            (vid, cname2))
+                lc = cur.fetchone()
+                if lc:
+                    cur.execute(
+                        "SET LOCAL torta.skip_audit = 'on';"
+                        "UPDATE product_configurations_l2"
+                        "   SET price=COALESCE(%s, price), stock_quantity=%s, sku_code=COALESCE(NULLIF(%s,''), sku_code),"
+                        "       barcode=COALESCE(NULLIF(%s,''), barcode)"
+                        " WHERE id=%s",
+                        (price, stock, sku_code, sku_bar, lc["id"])
+                    )
+                    counters["skus_updated"] += 1
+                else:
+                    cur.execute(
+                        "INSERT INTO product_configurations_l2"
+                        "  (product_id, variation_id, configuration_name, price, stock_quantity, sku_code, barcode, sold_quantity, position)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, 0, 0) RETURNING id",
+                        (pid, vid, cname2, price, stock, sku_code, sku_bar)
+                    )
+                    new_sku_id = cur.fetchone()["id"]
+                    # Auto-mint EAN-13 only if the CSV didn't supply one — caller's
+                    # explicit barcode wins (might be a real GS1-registered code).
+                    _ensure_sku_ean13(cur, new_sku_id)
+                    counters["skus_created"] += 1
+            except Exception as e:
+                counters["errors"].append({"row": i + 1, "error": str(e)[:200]})
+        conn.commit()
+
+    counters["ok"] = True
+    return counters
+
+
 # ── VARIATIONS ───────────────────────────────────────────
 
 @app.post("/api/products/{product_id}/variations")
@@ -3591,9 +6907,13 @@ def create_configuration(product_id: int, var_id: int, request: CreateConfigurat
             (product_id, var_id, name, request.price, request.stock_quantity)
         )
         new_id = cur.fetchone()["id"]
+        # Auto-mint an internal EAN-13 (prefix 201) so this SKU is scannable
+        # from creation. Existing barcode on the row (if any) is preserved.
+        sku_ean13 = _ensure_sku_ean13(cur, new_id)
         conn.commit()
         return {"id": new_id, "variation_id": var_id, "configuration_name": name,
-                "price": request.price, "stock_quantity": request.stock_quantity, "sold_quantity": 0}
+                "price": request.price, "stock_quantity": request.stock_quantity, "sold_quantity": 0,
+                "barcode": sku_ean13}
 
 
 @app.put("/api/products/{product_id}/variations/{var_id}/configurations/{cfg_id}")
@@ -4841,23 +8161,31 @@ class PromoCodeRequest(BaseModel):
 
 
 @app.get("/api/promo-codes")
-def list_promo_codes(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+def list_promo_codes(project_id: int = Query(...),
+                     cursor: Optional[str] = Query(None),
+                     limit:  Optional[int] = Query(None),
+                     user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     _ensure_promo_codes_table()
-    rows = db_all(
+    want_pagination, offset, page_size = _pagination_params(cursor, limit)
+    sql = (
         "SELECT id, code, discount_type, discount_value, min_order_amount, max_discount,"
         "       usage_limit, times_used, per_user_limit, category_ids,"
         "       is_active, valid_from, valid_until, created_at"
-        "  FROM promo_codes WHERE project_id=%s ORDER BY created_at DESC",
-        (project_id,)
+        "  FROM promo_codes WHERE project_id=%s ORDER BY created_at DESC"
     )
+    params: list = [project_id]
+    if want_pagination:
+        sql += " LIMIT %s OFFSET %s"
+        params.extend([page_size + 1, offset])
+    rows = db_all(sql, tuple(params))
     for r in rows:
         for nf in ('discount_value', 'min_order_amount', 'max_discount'):
             if r.get(nf) is not None: r[nf] = float(r[nf])
         for tf in ('valid_from', 'valid_until', 'created_at'):
             if r.get(tf) is not None: r[tf] = r[tf].isoformat()
         r["category_ids"] = list(r.get("category_ids") or [])
-    return rows
+    return _wrap_paginated(want_pagination, rows, offset, page_size)
 
 
 @app.post("/api/promo-codes")
@@ -5127,6 +8455,718 @@ def delete_tier_pricing(product_id: int, tier_id: int,
     return {"ok": True}
 
 
+# ── INVENTORY BATCHES ────────────────────────────────────
+# Batches = physical receipts of stock. The new source of truth for "how did this stock get here?". product_stock.quantity = SUM(inventory_batches.quantity_remaining) for active (non-frozen) batches.
+
+def _resolve_batch_naming(project_id: int, cur, sku_id: Optional[int] = None) -> tuple[str, str]:
+    """Look up project's batch_naming_mode/format (moved from org-level)."""
+    row = db_one(
+        "SELECT batch_naming_mode, batch_naming_format FROM crm_projects WHERE id = %s",
+        (project_id,)
+    )
+    if not row:
+        return ('auto', 'B-{YYYY}{MM}-{seq:03}')
+    return (row.get('batch_naming_mode') or 'auto',
+            row.get('batch_naming_format') or 'B-{YYYY}{MM}-{seq:03}')
+
+
+def _generate_batch_name(cur, project_id: int, sku_id: Optional[int] = None,
+                         quantity: Optional[int] = None) -> str:
+    """Render the project's batch_naming_format template into a unique batch name.
+
+    Supported placeholders:
+      {YYYY}        4-digit year                {YY}    2-digit year
+      {MM}          month (01-12)               {DD}    day (01-31)
+      {sku}         L2 sku_code                 {qty}   quantity received
+      {seq}         monthly counter (resets 1st of each month)
+      {seq_day}     daily counter   (resets midnight)
+      {seq_year}    yearly counter  (resets Jan 1)
+      {seq_all}     all-time counter (never resets)
+
+    Any seq token accepts ":NN" for zero-padding, e.g. {seq:03}, {seq_day:04}, {qty:04}.
+    Each scope has its own atomic counter — separate period_key prefixes prevent collision.
+    Counters are only bumped if the token actually appears in the template (lazy — no
+    wasted IDs).
+    """
+    mode, fmt = _resolve_batch_naming(project_id, cur, sku_id)
+    if mode != 'auto':
+        return ''      # caller will supply manually
+    now = _utcnow()
+
+    # Map placeholder name → period_key (so each scope buckets its own counter).
+    seq_buckets = {
+        'seq':      f"M-{now.strftime('%Y%m')}",     # backward-compat — monthly
+        'seq_day':  f"D-{now.strftime('%Y%m%d')}",   # daily
+        'seq_year': f"Y-{now.strftime('%Y')}",       # yearly
+        'seq_all':  "ALL",                            # never resets
+    }
+    # Lazy counter cache — bump only the buckets that actually appear in the template.
+    seq_cache: dict[str, int] = {}
+
+    def _bump(bucket_name: str) -> int:
+        if bucket_name in seq_cache:
+            return seq_cache[bucket_name]
+        period_key = seq_buckets[bucket_name]
+        cur.execute(
+            "INSERT INTO inventory_batch_counters (project_id, period_key, counter)"
+            " VALUES (%s, %s, 1)"
+            " ON CONFLICT (project_id, period_key) DO UPDATE SET counter = inventory_batch_counters.counter + 1"
+            " RETURNING counter",
+            (project_id, period_key)
+        )
+        seq_cache[bucket_name] = cur.fetchone()["counter"]
+        return seq_cache[bucket_name]
+
+    sku_code = ''
+    if sku_id:
+        r = db_one("SELECT sku_code FROM product_configurations_l2 WHERE id=%s", (sku_id,))
+        if r: sku_code = r.get('sku_code') or ''
+
+    qty_str = str(quantity) if quantity is not None else ''
+
+    def _pad(n: int, raw: str) -> str:
+        # {token:NN} → zero-pad. Clamp width 1..10 to avoid runaway names.
+        try:
+            width = int(raw)
+            return str(n).zfill(max(1, min(width, 10)))
+        except ValueError:
+            return str(n)
+
+    def _replace(match):
+        token = match.group(1)
+        # Strip ":NN" suffix to look up base token.
+        base, _, width_raw = token.partition(':')
+        if base == 'YYYY': return now.strftime('%Y')
+        if base == 'YY':   return now.strftime('%y')
+        if base == 'MM':   return now.strftime('%m')
+        if base == 'DD':   return now.strftime('%d')
+        if base == 'sku':  return sku_code
+        if base == 'qty':
+            if quantity is None: return ''
+            return _pad(quantity, width_raw) if width_raw else qty_str
+        if base in seq_buckets:
+            n = _bump(base)
+            return _pad(n, width_raw) if width_raw else str(n)
+        return match.group(0)
+
+    # Note: regex now allows underscores in the base token so {seq_day} / {seq_year} / {seq_all} match.
+    return re.sub(r'\{([A-Za-z_]+(?::[0-9]+)?)\}', _replace, fmt)
+
+
+class ReceiveBatchRequest(BaseModel):
+    sku_id:             int
+    warehouse_id:       Optional[int] = None
+    quantity_received:  int
+    batch_name:         Optional[str] = None
+    production_date:    Optional[str] = None   # YYYY-MM-DD
+    expiry_date:        Optional[str] = None   # YYYY-MM-DD
+    cost_per_unit:      Optional[float] = None
+    notes:              Optional[str]   = None
+
+
+@app.post("/api/projects/{project_id}/inventory/receive")
+def receive_batch(project_id: int, req: ReceiveBatchRequest,
+                  user: dict = Depends(get_current_user)):
+    """Receive a new stock batch — bumps product_stock + creates inventory_batches row + audit log entry."""
+    require_team_member_or_owner(user, project_id)
+    if req.quantity_received <= 0:
+        raise HTTPException(400, "quantity_received must be > 0")
+    with db_cursor() as (conn, cur):
+        _verify_sku_in_project(cur, req.sku_id, project_id)
+        wh_id = req.warehouse_id or _default_warehouse_id(cur, project_id)
+        if not wh_id: raise HTTPException(400, "No active warehouses in this project")
+        _verify_warehouse_in_project(cur, wh_id, project_id)
+
+        name = (req.batch_name or '').strip()[:80]
+        if not name:
+            name = _generate_batch_name(cur, project_id, req.sku_id, req.quantity_received) or f"B-{secrets.token_hex(3).upper()}"
+
+        cur.execute(
+            "INSERT INTO inventory_batches"
+            "  (project_id, sku_id, warehouse_id, batch_name, quantity_received, quantity_remaining,"
+            "   production_date, expiry_date, cost_per_unit, notes, received_by_user_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id, received_at",
+            (project_id, req.sku_id, wh_id, name,
+             req.quantity_received, req.quantity_received,
+             req.production_date or None, req.expiry_date or None,
+             req.cost_per_unit, sanitize((req.notes or '')[:1000]),
+             user["id"])
+        )
+        new_row = cur.fetchone()
+
+        cur.execute(
+            "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+            " VALUES (%s, %s, %s, 0)"
+            " ON CONFLICT (sku_id, warehouse_id)"
+            " DO UPDATE SET quantity = product_stock.quantity + EXCLUDED.quantity",
+            (req.sku_id, wh_id, req.quantity_received)
+        )
+        cur.execute(
+            "INSERT INTO product_stock_log"
+            "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, user_id, note)"
+            " VALUES (%s, %s, %s, %s, 'batch_receive', %s, %s, %s)",
+            (project_id, req.sku_id, wh_id, req.quantity_received,
+             new_row["id"], user["id"], f'Batch "{name}" received ({req.quantity_received} units)')
+        )
+        _sync_l2_stock(cur, req.sku_id)
+        conn.commit()
+    return {"ok": True, "batch_id": new_row["id"], "batch_name": name}
+
+
+# Reasons accepted on the bulk-receive endpoint — anything else is rejected so the
+# audit log stays clean. Free-form text goes in the `note` field instead.
+RECEIVE_REASONS = {
+    'supplier_delivery', 'initial_inventory', 'customer_return',
+    'production', 'recount_adjust', 'transfer_in', 'other',
+}
+
+# Reasons accepted by the per-SKU stock-adjust endpoint. Superset of RECEIVE_REASONS
+# (every receive reason is a valid +delta on adjust too) plus a few that only make
+# sense as manual corrections: damage, transfer_out, manual. Legacy values
+# (restock/return/transfer) are kept as aliases for back-compat — anything already
+# in the audit log will still render. Frontend always picks from the new set.
+ADJUST_REASONS = RECEIVE_REASONS | {
+    'damage', 'transfer_out', 'manual',
+    # Legacy aliases — kept so old saved values keep validating:
+    'restock', 'return', 'transfer',
+}
+
+
+class BulkReceiveItem(BaseModel):
+    sku_id:           int
+    warehouse_id:     int
+    quantity:         int
+    # Batch routing: 'auto' (template), 'manual' (use batch_name), 'existing' (use target_batch_id).
+    batch_choice:     str   = 'auto'
+    batch_name:       Optional[str] = None
+    target_batch_id:  Optional[int] = None
+    reason:           Optional[str] = 'supplier_delivery'
+    note:             Optional[str] = None
+    # YYYY-MM-DD strings (or None). Auto-propagate within a group on the server when
+    # batch_choice='auto' and the project's batch_grouping_mode is 'global' / 'product'.
+    production_date:  Optional[str] = None
+    expiry_date:      Optional[str] = None
+
+
+class BulkReceiveRequest(BaseModel):
+    items: list[BulkReceiveItem]
+
+
+@app.post("/api/projects/{project_id}/inventory/bulk-receive")
+def bulk_receive(project_id: int, req: BulkReceiveRequest,
+                 user: dict = Depends(get_current_user)):
+    """Receive stock for many SKUs at once. Each row either adds quantity to an
+    existing batch, or creates a new one (auto-named or merchant-named). Mirrors
+    /stock/bulk-transfer's all-or-nothing pattern: any single invalid row aborts
+    the whole transaction so the merchant can fix and retry.
+    """
+    require_team_member_or_owner(user, project_id)
+    if not req.items:
+        raise HTTPException(400, "items must be non-empty")
+
+    # ── Pre-flight validation (cheap, no writes) ─────────────────────────────
+    def _parse_date(s: Optional[str], idx: int, label: str) -> Optional[str]:
+        if not s: return None
+        # Accept YYYY-MM-DD only. Keep as string — PostgreSQL parses on insert.
+        try:
+            datetime.strptime(s, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, f"row {idx+1}: {label} must be YYYY-MM-DD")
+        return s
+
+    cleaned: list[dict] = []
+    for idx, it in enumerate(req.items):
+        if it.quantity <= 0:
+            raise HTTPException(400, f"row {idx+1}: quantity must be > 0")
+        if it.batch_choice not in ('auto', 'manual', 'existing'):
+            raise HTTPException(400, f"row {idx+1}: invalid batch_choice")
+        if it.batch_choice == 'manual' and not (it.batch_name or '').strip():
+            raise HTTPException(400, f"row {idx+1}: batch_name required when batch_choice='manual'")
+        if it.batch_choice == 'existing' and not it.target_batch_id:
+            raise HTTPException(400, f"row {idx+1}: target_batch_id required when batch_choice='existing'")
+        reason = (it.reason or 'supplier_delivery').strip()
+        if reason not in RECEIVE_REASONS:
+            raise HTTPException(400, f"row {idx+1}: unknown reason '{reason}'")
+        cleaned.append({
+            "sku_id":          it.sku_id,
+            "warehouse_id":    it.warehouse_id,
+            "qty":             it.quantity,
+            "batch_choice":    it.batch_choice,
+            "batch_name":      (it.batch_name or '').strip()[:80] or None,
+            "target_batch_id": it.target_batch_id,
+            "reason":          reason,
+            # NOTE: store as string (never None) — inventory_batches.notes is NOT NULL.
+            # We track "no note" downstream by checking `if p['note']:`, not by None.
+            "note":            sanitize((it.note or '')[:500]),
+            "production_date": _parse_date(it.production_date, idx, 'production_date'),
+            "expiry_date":     _parse_date(it.expiry_date,     idx, 'expiry_date'),
+        })
+
+    # ── Resolve project's batch_grouping_mode (default 'config' = current behaviour). ─
+    # Used below to: (a) share one auto-generated batch name across rows in the same
+    # group, and (b) propagate production/expiry dates inside the same group when the
+    # merchant only filled them on one row.
+    proj = db_one("SELECT batch_grouping_mode FROM crm_projects WHERE id=%s", (project_id,))
+    grouping = (proj or {}).get('batch_grouping_mode') or 'config'
+
+    # ── Apply in one transaction ─────────────────────────────────────────────
+    batches_created = 0
+    batches_updated = 0
+    total_units     = 0
+    with db_cursor() as (conn, cur):
+        # Pre-compute group keys for every row + cache product_id per sku_id.
+        sku_to_product: dict[int, int] = {}
+
+        def _group_key_for(row: dict) -> str:
+            if grouping == 'global':  return 'G'
+            if grouping == 'product':
+                sid = row["sku_id"]
+                if sid not in sku_to_product:
+                    r = db_one(
+                        "SELECT v.product_id FROM product_configurations_l2 c"
+                        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+                        " WHERE c.id=%s", (sid,)
+                    )
+                    sku_to_product[sid] = int((r or {}).get('product_id') or 0)
+                return f"P{sku_to_product[sid]}"
+            # 'config' or anything unknown → unique per row (use sku+wh as key).
+            return f"C{row['sku_id']}-{row['warehouse_id']}"
+
+        # Build group → first-seen dates + shared auto-name slot (lazy-filled when
+        # the first 'auto' row in that group reaches the loop body).
+        group_dates: dict[str, dict] = {}
+        group_auto_name: dict[str, str] = {}
+        for p in cleaned:
+            key = _group_key_for(p)
+            p["_group_key"] = key
+            d = group_dates.setdefault(key, {"production_date": None, "expiry_date": None})
+            if p["production_date"] and not d["production_date"]:
+                d["production_date"] = p["production_date"]
+            if p["expiry_date"]     and not d["expiry_date"]:
+                d["expiry_date"]     = p["expiry_date"]
+
+        for idx, p in enumerate(cleaned):
+            _verify_sku_in_project(cur, p["sku_id"], project_id)
+            _verify_warehouse_in_project(cur, p["warehouse_id"], project_id)
+
+            # Pull group-shared dates as fallbacks — only if the row didn't supply its own.
+            gkey = p["_group_key"]
+            prod_date = p["production_date"] or group_dates[gkey]["production_date"]
+            exp_date  = p["expiry_date"]     or group_dates[gkey]["expiry_date"]
+
+            if p["batch_choice"] == 'existing':
+                # Add quantity to an existing batch row. Lock it to avoid the
+                # race where two concurrent receivers fight over remaining/received.
+                cur.execute(
+                    "SELECT id, sku_id, warehouse_id, batch_name FROM inventory_batches"
+                    " WHERE id=%s AND project_id=%s FOR UPDATE",
+                    (p["target_batch_id"], project_id)
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(400, f"row {idx+1}: target batch not found")
+                if row["sku_id"] != p["sku_id"] or row["warehouse_id"] != p["warehouse_id"]:
+                    raise HTTPException(400, f"row {idx+1}: target batch belongs to a different SKU/warehouse")
+                cur.execute(
+                    "UPDATE inventory_batches"
+                    "   SET quantity_received  = quantity_received  + %s,"
+                    "       quantity_remaining = quantity_remaining + %s"
+                    " WHERE id=%s",
+                    (p["qty"], p["qty"], row["id"])
+                )
+                used_batch_id   = row["id"]
+                used_batch_name = row["batch_name"]
+                batches_updated += 1
+            else:
+                # Create a new batch row. For batch_choice='auto' we reuse the
+                # group's shared name (and shared dates) when grouping is global/product.
+                name = p["batch_name"]
+                if not name:
+                    # Reuse the auto-name generated for the first 'auto' row of this group.
+                    if gkey in group_auto_name:
+                        name = group_auto_name[gkey]
+                    else:
+                        name = _generate_batch_name(cur, project_id, p["sku_id"], p["qty"]) \
+                               or f"B-{secrets.token_hex(3).upper()}"
+                        group_auto_name[gkey] = name
+                cur.execute(
+                    "INSERT INTO inventory_batches"
+                    "  (project_id, sku_id, warehouse_id, batch_name,"
+                    "   quantity_received, quantity_remaining,"
+                    "   production_date, expiry_date,"
+                    "   notes, received_by_user_id)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (project_id, p["sku_id"], p["warehouse_id"], name,
+                     p["qty"], p["qty"],
+                     prod_date, exp_date,
+                     p["note"], user["id"])
+                )
+                used_batch_id   = cur.fetchone()["id"]
+                used_batch_name = name
+                batches_created += 1
+
+            # Bump warehouse-level stock + write the audit row. The audit `note`
+            # captures both the user-typed reason and any free-text note.
+            cur.execute(
+                "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+                " VALUES (%s, %s, %s, 0)"
+                " ON CONFLICT (sku_id, warehouse_id)"
+                " DO UPDATE SET quantity = product_stock.quantity + EXCLUDED.quantity",
+                (p["sku_id"], p["warehouse_id"], p["qty"])
+            )
+            audit_note = f'Batch "{used_batch_name}" · reason: {p["reason"]}'
+            if p["note"]: audit_note += f' · {p["note"]}'
+            cur.execute(
+                "INSERT INTO product_stock_log"
+                "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, user_id, note)"
+                " VALUES (%s, %s, %s, %s, 'batch_receive', %s, %s, %s)",
+                (project_id, p["sku_id"], p["warehouse_id"], p["qty"],
+                 used_batch_id, user["id"], audit_note)
+            )
+            _sync_l2_stock(cur, p["sku_id"])
+            total_units += p["qty"]
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "batches_created": batches_created,
+        "batches_updated": batches_updated,
+        "rows_applied":    len(cleaned),
+        "total_units":     total_units,
+    }
+
+
+@app.get("/api/projects/{project_id}/batches")
+def list_batches(project_id: int, sku_id: Optional[int] = Query(None),
+                 warehouse_id: Optional[int] = Query(None),
+                 frozen: Optional[bool] = Query(None),
+                 cursor: Optional[str] = Query(None),
+                 limit:  Optional[int] = Query(None),
+                 user: dict = Depends(get_current_user)):
+    """List batches with optional filters + cursor pagination. Returns joined product/warehouse names."""
+    require_team_member_or_owner(user, project_id)
+    want_pagination, offset, page_size = _pagination_params(cursor, limit)
+    where = ["b.project_id = %s"]
+    params: list = [project_id]
+    if sku_id is not None:       where.append("b.sku_id = %s");       params.append(sku_id)
+    if warehouse_id is not None: where.append("b.warehouse_id = %s"); params.append(warehouse_id)
+    if frozen is not None:       where.append("b.is_frozen = %s");    params.append(frozen)
+    sql = (
+        "SELECT b.id, b.batch_name, b.quantity_received, b.quantity_remaining,"
+        "       b.production_date, b.expiry_date, b.cost_per_unit, b.is_frozen,"
+        "       b.notes, b.received_at, b.received_by_user_id,"
+        "       b.sku_id, l2.configuration_name AS sku_name, l2.sku_code,"
+        "       l1.id AS variation_id, l1.variation_name,"
+        "       p.id AS product_id, p.title AS product_title,"
+        "       b.warehouse_id, w.name AS warehouse_name, w.code AS warehouse_code,"
+        "       u.name AS received_by_name"
+        "  FROM inventory_batches b"
+        "  JOIN product_configurations_l2 l2 ON b.sku_id = l2.id"
+        "  JOIN product_configurations_l1 l1 ON l2.variation_id = l1.id"
+        "  JOIN products p                  ON l1.product_id = p.id"
+        "  JOIN warehouses w                ON b.warehouse_id = w.id"
+        "  LEFT JOIN crm_users u            ON b.received_by_user_id = u.id"
+        " WHERE " + " AND ".join(where) +
+        " ORDER BY b.received_at DESC"
+    )
+    if want_pagination:
+        sql += " LIMIT %s OFFSET %s"
+        params.extend([page_size + 1, offset])
+    rows = db_all(sql, tuple(params))
+    return _wrap_paginated(want_pagination, rows, offset, page_size)
+
+
+@app.get("/api/projects/{project_id}/batches/lookup")
+def lookup_batches_for_target(project_id: int, sku_id: int = Query(...),
+                              warehouse_id: int = Query(...),
+                              user: dict = Depends(get_current_user)):
+    """Used by the BulkTransferWizard Batch column — returns active (non-frozen) batches available as a target for adding more stock at (sku, warehouse)."""
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT id, batch_name, quantity_remaining, quantity_received, production_date, expiry_date"
+        "  FROM inventory_batches"
+        " WHERE project_id=%s AND sku_id=%s AND warehouse_id=%s AND is_frozen = FALSE"
+        " ORDER BY received_at DESC LIMIT 50",
+        (project_id, sku_id, warehouse_id)
+    )
+    return rows
+
+
+@app.get("/api/projects/{project_id}/batches/{batch_id}")
+def get_batch(project_id: int, batch_id: int, user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT b.*, l2.configuration_name AS sku_name, l2.sku_code,"
+        "       l1.variation_name, p.title AS product_title,"
+        "       w.name AS warehouse_name, u.name AS received_by_name"
+        "  FROM inventory_batches b"
+        "  JOIN product_configurations_l2 l2 ON b.sku_id = l2.id"
+        "  JOIN product_configurations_l1 l1 ON l2.variation_id = l1.id"
+        "  JOIN products p                  ON l1.product_id = p.id"
+        "  JOIN warehouses w                ON b.warehouse_id = w.id"
+        "  LEFT JOIN crm_users u            ON b.received_by_user_id = u.id"
+        " WHERE b.id = %s AND b.project_id = %s",
+        (batch_id, project_id)
+    )
+    if not row: raise HTTPException(404, "Batch not found")
+    return row
+
+
+class BatchUpdateRequest(BaseModel):
+    batch_name:      Optional[str]   = None
+    production_date: Optional[str]   = None
+    expiry_date:     Optional[str]   = None
+    cost_per_unit:   Optional[float] = None
+    notes:           Optional[str]   = None
+    is_frozen:       Optional[bool]  = None
+
+
+@app.put("/api/projects/{project_id}/batches/{batch_id}")
+def update_batch(project_id: int, batch_id: int, req: BatchUpdateRequest,
+                 user: dict = Depends(get_current_user)):
+    """Edit batch metadata. Freezing a batch removes its quantity_remaining from the SKU's available stock; un-freezing restores it."""
+    require_team_member_or_owner(user, project_id)
+    sent = req.model_dump(exclude_unset=True)
+    if not sent: return {"ok": True}
+
+    with db_cursor() as (conn, cur):
+        # Lock the batch row up front so the read of quantity_remaining is a
+        # consistent snapshot until commit. Without FOR UPDATE a concurrent
+        # purchase could decrement quantity_remaining between this SELECT and
+        # the UPDATE product_stock below — freeze would subtract units that
+        # were ALSO just decremented by the sale, double-counting them.
+        cur.execute("SELECT sku_id, warehouse_id, is_frozen, quantity_remaining"
+                    "  FROM inventory_batches WHERE id=%s AND project_id=%s"
+                    "  FOR UPDATE",
+                    (batch_id, project_id))
+        cur_row = cur.fetchone()
+        if not cur_row: raise HTTPException(404, "Batch not found")
+
+        fields, vals = [], []
+        if 'batch_name'      in sent: fields.append("batch_name=%s");      vals.append(sanitize(sent['batch_name'])[:80])
+        if 'production_date' in sent: fields.append("production_date=%s"); vals.append(sent['production_date'])
+        if 'expiry_date'     in sent: fields.append("expiry_date=%s");     vals.append(sent['expiry_date'])
+        if 'cost_per_unit'   in sent: fields.append("cost_per_unit=%s");   vals.append(sent['cost_per_unit'])
+        if 'notes'           in sent: fields.append("notes=%s");           vals.append(sanitize(sent['notes'] or '')[:1000])
+        freeze_changed = False
+        if 'is_frozen'       in sent and bool(sent['is_frozen']) != bool(cur_row['is_frozen']):
+            fields.append("is_frozen=%s"); vals.append(bool(sent['is_frozen']))
+            freeze_changed = True
+
+        if fields:
+            vals.extend([batch_id, project_id])
+            cur.execute("UPDATE inventory_batches SET " + ", ".join(fields) +
+                        " WHERE id=%s AND project_id=%s", vals)
+
+        # If freeze flipped, propagate to product_stock (frozen quantity becomes unavailable).
+        if freeze_changed:
+            # Also lock the product_stock row to serialise any concurrent
+            # checkout writing to the same (sku, warehouse). Without this the
+            # checkout's INSERT ... ON CONFLICT can interleave with our UPDATE
+            # and leave product_stock out of sync with batch totals.
+            cur.execute(
+                "SELECT quantity FROM product_stock"
+                " WHERE sku_id=%s AND warehouse_id=%s FOR UPDATE",
+                (cur_row['sku_id'], cur_row['warehouse_id'])
+            )
+            delta = -int(cur_row['quantity_remaining']) if sent['is_frozen'] else int(cur_row['quantity_remaining'])
+            cur.execute(
+                "UPDATE product_stock SET quantity = GREATEST(quantity + %s, 0)"
+                " WHERE sku_id=%s AND warehouse_id=%s",
+                (delta, cur_row['sku_id'], cur_row['warehouse_id'])
+            )
+            cur.execute(
+                "INSERT INTO product_stock_log"
+                "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, user_id, note)"
+                " VALUES (%s, %s, %s, %s, 'batch_freeze', %s, %s, %s)",
+                (project_id, cur_row['sku_id'], cur_row['warehouse_id'], delta,
+                 batch_id, user["id"],
+                 f"Batch {'frozen' if sent['is_frozen'] else 'unfrozen'}")
+            )
+            _sync_l2_stock(cur, cur_row['sku_id'])
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/projects/{project_id}/batches/{batch_id}")
+def delete_batch(project_id: int, batch_id: int, user: dict = Depends(get_current_user)):
+    """Delete a batch — only allowed when quantity_remaining == quantity_received (i.e. nothing has been sold from it). Otherwise audit trail would be broken."""
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT sku_id, warehouse_id, quantity_remaining, quantity_received"
+        "  FROM inventory_batches WHERE id=%s AND project_id=%s",
+        (batch_id, project_id)
+    )
+    if not row: raise HTTPException(404, "Batch not found")
+    if row["quantity_remaining"] != row["quantity_received"]:
+        raise HTTPException(400, "Cannot delete a batch that has already been partially consumed — freeze it instead")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE product_stock SET quantity = GREATEST(quantity - %s, 0)"
+            " WHERE sku_id=%s AND warehouse_id=%s",
+            (row["quantity_received"], row["sku_id"], row["warehouse_id"])
+        )
+        cur.execute("DELETE FROM inventory_batches WHERE id=%s AND project_id=%s",
+                    (batch_id, project_id))
+        _sync_l2_stock(cur, row["sku_id"])
+        cur.execute(
+            "INSERT INTO product_stock_log"
+            "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, user_id, note)"
+            " VALUES (%s, %s, %s, %s, 'batch_delete', %s, %s, %s)",
+            (project_id, row["sku_id"], row["warehouse_id"],
+             -row["quantity_received"], batch_id, user["id"],
+             'Batch deleted — never consumed')
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+# Org-level: batch naming format (template the user types) + project-level: consumption mode + barcode defaults. Two endpoints because they live in different tables.
+@app.get("/api/orgs/{org_id}/batch-settings")
+def get_org_batch_settings(org_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    row = db_one(
+        "SELECT batch_naming_mode, batch_naming_format FROM crm_organizations WHERE id=%s",
+        (org_id,)
+    )
+    if not row: raise HTTPException(404, "Org not found")
+    return row
+
+
+class OrgBatchSettingsRequest(BaseModel):
+    batch_naming_mode:   Optional[str] = None    # 'auto' | 'manual'
+    batch_naming_format: Optional[str] = None
+
+
+@app.put("/api/orgs/{org_id}/batch-settings")
+def update_org_batch_settings(org_id: int, req: OrgBatchSettingsRequest,
+                              user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    sent = req.model_dump(exclude_unset=True)
+    if 'batch_naming_mode' in sent and sent['batch_naming_mode'] not in ('auto', 'manual'):
+        raise HTTPException(400, "batch_naming_mode must be 'auto' or 'manual'")
+    if not sent: return {"ok": True}
+    fields, vals = [], []
+    if 'batch_naming_mode'   in sent: fields.append("batch_naming_mode=%s");   vals.append(sent['batch_naming_mode'])
+    if 'batch_naming_format' in sent: fields.append("batch_naming_format=%s"); vals.append(sanitize(sent['batch_naming_format'] or '')[:80])
+    vals.append(org_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_organizations SET " + ", ".join(fields) + " WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/api/projects/{project_id}/batch-settings")
+def get_project_batch_settings(project_id: int, user: dict = Depends(get_current_user)):
+    """Project-level consumption + barcode encoding defaults + pricing display + batch naming (all project-level now)."""
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT pr.batch_consumption_mode,"
+        "       pr.barcode_include_date, pr.barcode_include_batch,"
+        "       pr.barcode_include_qty,  pr.barcode_include_serial,"
+        "       pr.barcode_binding,"
+        "       pr.hide_price_in_overview, pr.default_margin_percent,"
+        "       pr.batch_naming_mode, pr.batch_naming_format,"
+        "       pr.batch_grouping_mode"
+        "  FROM crm_projects pr"
+        " WHERE pr.id = %s",
+        (project_id,)
+    )
+    if not row: raise HTTPException(404, "Project not found")
+    return row
+
+
+class ProjectBatchSettingsRequest(BaseModel):
+    batch_consumption_mode: Optional[str]   = None     # 'fifo' | 'lifo'
+    barcode_include_date:   Optional[bool]  = None
+    barcode_include_batch:  Optional[bool]  = None
+    barcode_include_qty:    Optional[bool]  = None
+    barcode_include_serial: Optional[bool]  = None
+    barcode_binding:        Optional[str]   = None     # 'batch' | 'sku'
+    hide_price_in_overview: Optional[bool]  = None
+    default_margin_percent: Optional[float] = None
+    batch_naming_mode:      Optional[str]   = None     # 'auto' | 'manual'
+    batch_naming_format:    Optional[str]   = None
+    batch_grouping_mode:    Optional[str]   = None     # 'global' | 'product' | 'config'
+
+
+@app.put("/api/projects/{project_id}/batch-settings")
+def update_project_batch_settings(project_id: int, req: ProjectBatchSettingsRequest,
+                                  user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    sent = req.model_dump(exclude_unset=True)
+    if 'batch_consumption_mode' in sent and sent['batch_consumption_mode'] not in ('fifo', 'lifo'):
+        raise HTTPException(400, "batch_consumption_mode must be 'fifo' or 'lifo'")
+    if 'default_margin_percent' in sent and sent['default_margin_percent'] is not None:
+        m = float(sent['default_margin_percent'])
+        if m < 0 or m > 10000:
+            raise HTTPException(400, "default_margin_percent must be in 0..10000")
+    if 'batch_naming_mode' in sent and sent['batch_naming_mode'] not in ('auto', 'manual'):
+        raise HTTPException(400, "batch_naming_mode must be 'auto' or 'manual'")
+    if 'batch_grouping_mode' in sent and sent['batch_grouping_mode'] not in ('global', 'product', 'config'):
+        raise HTTPException(400, "batch_grouping_mode must be 'global', 'product' or 'config'")
+    if 'barcode_binding' in sent and sent['barcode_binding'] not in ('batch', 'sku'):
+        raise HTTPException(400, "barcode_binding must be 'batch' or 'sku'")
+    if not sent: return {"ok": True}
+    fields, vals = [], []
+    for k in ('batch_consumption_mode', 'barcode_include_date', 'barcode_include_batch',
+              'barcode_include_qty', 'barcode_include_serial', 'barcode_binding',
+              'hide_price_in_overview', 'default_margin_percent',
+              'batch_naming_mode', 'batch_naming_format',
+              'batch_grouping_mode'):
+        if k in sent:
+            val = sent[k]
+            if k == 'batch_naming_format': val = sanitize(val or '')[:80]
+            fields.append(f"{k}=%s"); vals.append(val)
+    vals.append(project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_projects SET " + ", ".join(fields) + " WHERE id=%s", vals)
+        conn.commit()
+    return {"ok": True}
+
+
+# ── EVENT TICKETS (CRM-side) ─────────────────────────────
+# Lists issued tickets per project. Source = order_items where product.product_type='event'. Used by /project/:apiKey/tickets.
+
+@app.get("/api/projects/{project_id}/tickets/issued")
+def list_issued_tickets(project_id: int, search: Optional[str] = Query(None),
+                        status: Optional[str] = Query(None),
+                        cursor: Optional[str] = Query(None),
+                        limit:  Optional[int] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    """List event tickets sold through this project — joined order/customer info + access code. Cursor pagination."""
+    require_team_member_or_owner(user, project_id)
+    want_pagination, offset, page_size = _pagination_params(cursor, limit)
+    where = ["p.project_id = %s", "p.product_type = 'event'"]
+    params: list = [project_id]
+    if status:
+        where.append("oh.status = %s"); params.append(status)
+    if search:
+        where.append("(oh.recipient_name ILIKE %s OR oi.access_code ILIKE %s OR p.title ILIKE %s)")
+        s = f"%{search.strip()}%"
+        params += [s, s, s]
+    sql = (
+        "SELECT oi.id AS item_id, oi.quantity, oi.access_code, oi.price,"
+        "       oh.id AS order_id, oh.status, oh.recipient_name, oh.phone, oh.created_at,"
+        "       p.id AS product_id, p.title,"
+        "       pv.variation_name"
+        "  FROM order_items oi"
+        "  JOIN order_history oh ON oi.order_id = oh.id"
+        "  JOIN products p ON oi.product_id = p.id"
+        "  LEFT JOIN product_configurations_l1 pv ON oi.variation_id = pv.id"
+        " WHERE " + " AND ".join(where) +
+        " ORDER BY oh.created_at DESC"
+    )
+    fetch_limit = (page_size + 1) if want_pagination else 500
+    sql += " LIMIT %s" + (" OFFSET %s" if want_pagination else "")
+    params.append(fetch_limit)
+    if want_pagination:
+        params.append(offset)
+    rows = db_all(sql, tuple(params))
+    return _wrap_paginated(want_pagination, rows, offset, page_size)
+
+
 # Stock adjust + audit log: manual restock/write-off/damage; updates stock + emits product_stock_log row.
 
 @app.post("/api/products/{product_id}/stock/adjust")
@@ -5142,10 +9182,17 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
         (req.sku_id, product_id, project_id)
     )
     if not sku: raise HTTPException(404, "SKU not found in this product")
-    if req.reason not in ('restock', 'manual', 'damage', 'transfer', 'return'):
+    # Unified reason set — same as RECEIVE_REASONS plus a few that only make sense for
+    # manual adjustments (damage, transfer_out, manual, other). Old values are still
+    # accepted so historical UI and existing audit-log rows keep working.
+    if req.reason not in ADJUST_REASONS:
         raise HTTPException(400, "Invalid reason")
     delta = int(req.delta)
     if delta == 0: raise HTTPException(400, "Delta must be non-zero")
+    if req.batch_id is not None and req.new_batch_name:
+        raise HTTPException(400, "Pass either batch_id OR new_batch_name, not both")
+    if req.new_batch_name and delta < 0:
+        raise HTTPException(400, "new_batch_name is only valid for positive deltas")
     with db_cursor() as (conn, cur):
         # Resolve target warehouse (request value, or project's default).
         if req.warehouse_id is not None:
@@ -5172,6 +9219,59 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
             (req.sku_id,)
         )
         was_zero = int((cur.fetchone() or {}).get("total") or 0) == 0
+        # ── Batch routing (optional) ─────────────────────────────────────
+        # When batch_id or new_batch_name is supplied, also adjust an inventory_batches
+        # row so the Batches page reflects the manual change. Without these fields the
+        # legacy path runs — product_stock is bumped but no batch is touched.
+        touched_batch_id   = None
+        touched_batch_name = None
+        if req.batch_id is not None:
+            cur.execute(
+                "SELECT id, batch_name, sku_id, warehouse_id, quantity_remaining"
+                "  FROM inventory_batches"
+                " WHERE id=%s AND project_id=%s FOR UPDATE",
+                (req.batch_id, project_id)
+            )
+            brow = cur.fetchone()
+            if not brow:
+                raise HTTPException(400, "Batch not found in this project")
+            if brow["sku_id"] != req.sku_id or brow["warehouse_id"] != wh_id:
+                raise HTTPException(400, "Batch belongs to a different SKU/warehouse")
+            new_remaining = int(brow["quantity_remaining"]) + delta
+            if new_remaining < 0:
+                raise HTTPException(400, "Resulting batch remaining would be negative")
+            if delta > 0:
+                cur.execute(
+                    "UPDATE inventory_batches"
+                    "   SET quantity_received  = quantity_received  + %s,"
+                    "       quantity_remaining = quantity_remaining + %s"
+                    " WHERE id=%s",
+                    (delta, delta, brow["id"])
+                )
+            else:
+                cur.execute(
+                    "UPDATE inventory_batches"
+                    "   SET quantity_remaining = quantity_remaining + %s"
+                    " WHERE id=%s",
+                    (delta, brow["id"])   # delta is negative, so this subtracts
+                )
+            touched_batch_id   = brow["id"]
+            touched_batch_name = brow["batch_name"]
+        elif req.new_batch_name:
+            # delta>0 enforced above. Create a fresh batch row at this WH.
+            name = (req.new_batch_name or '').strip()[:80] \
+                   or (_generate_batch_name(cur, project_id, req.sku_id, delta)
+                       or f"B-{secrets.token_hex(3).upper()}")
+            cur.execute(
+                "INSERT INTO inventory_batches"
+                "  (project_id, sku_id, warehouse_id, batch_name,"
+                "   quantity_received, quantity_remaining, received_by_user_id)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (project_id, req.sku_id, wh_id, name, delta, delta, user["id"])
+            )
+            touched_batch_id   = cur.fetchone()["id"]
+            touched_batch_name = name
+
         # Upsert per-WH stock.
         cur.execute(
             "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
@@ -5182,12 +9282,16 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
         )
         # Sync L2 aggregate so callers reading l2.stock_quantity see the new sum.
         _sync_l2_stock(cur, req.sku_id)
+        audit_note = sanitize(req.note or '')[:1000]
+        if touched_batch_name:
+            tag = f'[batch: {touched_batch_name}]'
+            audit_note = f"{tag} {audit_note}".strip() if audit_note else tag
         cur.execute(
             "INSERT INTO product_stock_log"
-            "  (project_id, sku_id, warehouse_id, delta, reason, user_id, note)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, user_id, note)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (project_id, req.sku_id, wh_id, delta, req.reason,
-             user["id"], sanitize(req.note or '')[:1000])
+             touched_batch_id, user["id"], audit_note)
         )
         # Recompute new aggregate for the response (so the UI doesn't need a refetch).
         cur.execute(
@@ -5337,7 +9441,14 @@ def get_project_stock_summary(project_id: int,
 @app.post("/api/projects/{project_id}/stock/bulk-transfer")
 def bulk_transfer_stock(project_id: int, body: dict = Body(...),
                          user: dict = Depends(get_current_user)):
-    """Atomic multi-line warehouse transfer (max 500 rows). Body: { transfers: [{ sku_id, from_warehouse_id, to_warehouse_id, quantity, note? }, ...] }."""
+    """Atomic multi-line warehouse transfer + batch assignment (max 500 rows).
+    Body: { transfers: [{ sku_id, from_warehouse_id, to_warehouse_id, quantity, note?,
+                          target_batch_id?: int, target_batch_name?: str }, ...] }.
+    Batch assignment rules per row:
+      - target_batch_id set → append qty to that existing inventory_batches row
+      - target_batch_name set → create a NEW inventory_batches row with that name (multi-SKU batches share a name but get one row per (sku, warehouse))
+      - neither → auto-generate a name from the project's batch_naming_format (auto mode) or fall back to "B-XXXXXX"
+    """
     require_team_member_or_owner(user, project_id)
     raw = body.get("transfers") if isinstance(body, dict) else None
     if not isinstance(raw, list) or not raw:
@@ -5360,7 +9471,17 @@ def bulk_transfer_stock(project_id: int, body: dict = Body(...),
         if from_wh == to_wh: raise HTTPException(400, f"transfers[{i}]: from and to are the same warehouse")
         if qty <= 0:         raise HTTPException(400, f"transfers[{i}]: quantity must be > 0")
         note = sanitize(str(row.get("note") or ''))[:500]
-        parsed.append({"sku_id": sku_id, "from_wh": from_wh, "to_wh": to_wh, "qty": qty, "note": note})
+        # Batch target (optional).
+        target_batch_id   = row.get("target_batch_id")
+        target_batch_name = (row.get("target_batch_name") or '').strip()[:80]
+        if target_batch_id is not None:
+            try: target_batch_id = int(target_batch_id)
+            except (TypeError, ValueError): raise HTTPException(400, f"transfers[{i}].target_batch_id must be int")
+        parsed.append({
+            "sku_id": sku_id, "from_wh": from_wh, "to_wh": to_wh, "qty": qty, "note": note,
+            "target_batch_id":   target_batch_id,
+            "target_batch_name": target_batch_name,
+        })
 
     affected_skus = set()
     with db_cursor() as (conn, cur):
@@ -5423,6 +9544,43 @@ def bulk_transfer_stock(project_id: int, body: dict = Body(...),
                 " DO UPDATE SET quantity = product_stock.quantity + EXCLUDED.quantity",
                 (p["sku_id"], p["to_wh"], p["qty"])
             )
+
+            # Batch assignment on destination side.
+            target_batch_id = p["target_batch_id"]
+            if target_batch_id is not None:
+                # Append to existing inventory_batches row — must belong to this project AND this (sku, warehouse).
+                cur.execute(
+                    "SELECT quantity_remaining FROM inventory_batches"
+                    " WHERE id=%s AND project_id=%s AND sku_id=%s AND warehouse_id=%s"
+                    " FOR UPDATE",
+                    (target_batch_id, project_id, p["sku_id"], p["to_wh"])
+                )
+                ex = cur.fetchone()
+                if not ex:
+                    raise HTTPException(404,
+                        f"target_batch_id {target_batch_id} not found for (sku={p['sku_id']}, wh={p['to_wh']}) in this project")
+                cur.execute(
+                    "UPDATE inventory_batches"
+                    "   SET quantity_received = quantity_received + %s,"
+                    "       quantity_remaining = quantity_remaining + %s"
+                    " WHERE id=%s",
+                    (p["qty"], p["qty"], target_batch_id)
+                )
+                used_batch_label = f"batch #{target_batch_id}"
+            else:
+                # Create a new batch row. Either the caller named it, or we auto-generate from the project's template.
+                name = p["target_batch_name"]
+                if not name:
+                    name = _generate_batch_name(cur, project_id, p["sku_id"], p["qty"]) or f"B-{secrets.token_hex(3).upper()}"
+                cur.execute(
+                    "INSERT INTO inventory_batches"
+                    "  (project_id, sku_id, warehouse_id, batch_name, quantity_received, quantity_remaining,"
+                    "   notes, received_by_user_id)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (project_id, p["sku_id"], p["to_wh"], name, p["qty"], p["qty"], p["note"], user["id"])
+                )
+                used_batch_label = f'batch "{name}"'
+
             # Two audit log rows — keeps the chronological trail readable per WH.
             cur.execute(
                 "INSERT INTO product_stock_log (project_id, sku_id, warehouse_id, delta, reason, user_id, note)"
@@ -5432,7 +9590,8 @@ def bulk_transfer_stock(project_id: int, body: dict = Body(...),
             cur.execute(
                 "INSERT INTO product_stock_log (project_id, sku_id, warehouse_id, delta, reason, user_id, note)"
                 " VALUES (%s, %s, %s, %s, 'transfer', %s, %s)",
-                (project_id, p["sku_id"], p["to_wh"], p["qty"], user["id"], p["note"])
+                (project_id, p["sku_id"], p["to_wh"], p["qty"], user["id"],
+                 f"{p['note']} → {used_batch_label}".strip(' →'))
             )
             affected_skus.add(p["sku_id"])
         # Re-sync L2 aggregate per touched SKU (UPSERT may have created quantity=0 rows).
@@ -5536,7 +9695,8 @@ def _verify_sku_in_project(cur, sku_id, project_id):
 
 
 def _sync_l2_stock(cur, sku_id):
-    """Recompute l2.stock_quantity = SUM(product_stock.quantity) for this SKU."""
+    """Recompute l2.stock_quantity = SUM(product_stock.quantity) for this SKU. Skips trg_l2_stock_audit since app already logs via product_stock_log."""
+    cur.execute("SET LOCAL torta.skip_audit = 'on'")
     cur.execute(
         "UPDATE product_configurations_l2"
         "   SET stock_quantity = COALESCE("
@@ -6624,16 +10784,19 @@ class UpdateOrderStatus(BaseModel):
 @app.get("/api/orders")
 def get_orders(project_id: int = Query(...),
                status: Optional[str] = Query(None),
+               cursor: Optional[str] = Query(None),
+               limit:  Optional[int] = Query(None),
                user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
+    want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where = "WHERE oh.project_id=%s"
     params: list = [project_id]
     if status and status in ORDER_STATUSES:
         where += " AND oh.status=%s"
         params.append(status)
 
-    orders = db_all(
-        f"""SELECT oh.id, oh.total_amount, oh.status, oh.delivery_method,
+    fetch_limit = (page_size + 1) if want_pagination else 200
+    sql = f"""SELECT oh.id, oh.total_amount, oh.status, oh.delivery_method,
                    oh.recipient_name, oh.phone, oh.address, oh.comment,
                    oh.payment_method, oh.created_at, oh.updated_at,
                    u.name AS customer_name, u.email AS customer_email,
@@ -6642,10 +10805,14 @@ def get_orders(project_id: int = Query(...),
             LEFT JOIN users u ON oh.user_id=u.id
             {where}
             ORDER BY oh.created_at DESC
-            LIMIT 200""",
-        tuple(params)
-    )
-    return [
+            LIMIT %s"""
+    params.append(fetch_limit)
+    if want_pagination:
+        sql += " OFFSET %s"
+        params.append(offset)
+
+    orders = db_all(sql, tuple(params))
+    serialized = [
         {
             "id":              o["id"],
             "total_amount":    o["total_amount"],
@@ -6664,6 +10831,7 @@ def get_orders(project_id: int = Query(...),
         }
         for o in orders
     ]
+    return _wrap_paginated(want_pagination, serialized, offset, page_size)
 
 
 @app.get("/api/orders/stats")
@@ -6807,6 +10975,646 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
         conn.commit()
 
     return {"ok": True, "status": body.status}
+
+
+# ── RETURNS / REFUNDS ─────────────────────────────────────
+# Lifecycle: requested → approved → received → inspected → refunded
+# Terminal: rejected | cancelled
+# Stock is returned to a specific inventory_batch on inspection (merchant picks per item).
+# Refund is record-only (Variant A) — merchant processes actual money refund elsewhere.
+
+RETURN_STATUSES = ("requested", "approved", "rejected", "received", "inspected", "refunded", "cancelled")
+RETURN_REASONS  = ("damaged", "wrong_item", "not_as_described", "changed_mind",
+                   "arrived_late", "quality_issue", "other")
+ITEM_CONDITIONS = ("pending", "resellable", "damaged", "unrecoverable")
+
+# Status groupings shown in the Returns UI
+RETURN_GROUP_ACTION    = {"requested", "received"}        # 🔔 merchant must act now
+RETURN_GROUP_PROGRESS  = {"approved", "inspected"}        # ⏳ in progress (awaiting goods or refund)
+RETURN_GROUP_DONE      = {"refunded"}                     # ✅ completed
+RETURN_GROUP_CLOSED    = {"rejected", "cancelled"}        # ❌ closed (no refund)
+
+
+class RejectReturnBody(BaseModel):
+    reason: str
+
+
+class InspectItemEntry(BaseModel):
+    return_item_id: int
+    condition: str
+    restock_warehouse_id: Optional[int] = None
+    restock_batch_id: Optional[int] = None
+    item_notes: Optional[str] = ""
+
+
+class InspectReturnBody(BaseModel):
+    items: List[InspectItemEntry]
+    internal_notes: Optional[str] = ""
+
+
+class RefundReturnBody(BaseModel):
+    refund_amount: float
+    refund_method: Optional[str] = ""
+    refund_reference: Optional[str] = ""
+    restocking_fee: Optional[float] = 0
+
+
+def _serialize_return(r: dict) -> dict:
+    """Shared serializer for a return row."""
+    return {
+        "id":                  r["id"],
+        "order_id":            r["order_id"],
+        "project_id":          r["project_id"],
+        "customer_user_id":    r["customer_user_id"],
+        "status":              r["status"],
+        "reason":              r["reason"],
+        "customer_message":    r.get("customer_message") or "",
+        "customer_photos":     r.get("customer_photos") or [],
+        "approved_at":         r["approved_at"].isoformat() if r.get("approved_at") else None,
+        "rejected_reason":     r.get("rejected_reason") or "",
+        "received_at":         r["received_at"].isoformat() if r.get("received_at") else None,
+        "inspected_at":        r["inspected_at"].isoformat() if r.get("inspected_at") else None,
+        "refund_amount":       float(r.get("refund_amount") or 0),
+        "refund_method":       r.get("refund_method") or "",
+        "refund_reference":    r.get("refund_reference") or "",
+        "refund_processed_at": r["refund_processed_at"].isoformat() if r.get("refund_processed_at") else None,
+        "restocking_fee":      float(r.get("restocking_fee") or 0),
+        "internal_notes":      r.get("internal_notes") or "",
+        "created_at":          r["created_at"].isoformat() if r.get("created_at") else None,
+        "updated_at":          r["updated_at"].isoformat() if r.get("updated_at") else None,
+    }
+
+
+def _notify_return_event(project_id: int, return_id: int, title: str, message: str):
+    """Push notification to project owner + every team member."""
+    rows = db_all(
+        "SELECT crm_user_id FROM crm_projects WHERE id=%s"
+        " UNION"
+        " SELECT crm_user_id FROM crm_team_members WHERE project_id=%s",
+        (project_id, project_id)
+    )
+    proj = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
+    link = f"/project/{proj['api_key']}/orders?tab=returns&open={return_id}" if proj else None
+    for r in rows:
+        if r.get("crm_user_id"):
+            push_notification(r["crm_user_id"], project_id, "return", title, message, link)
+
+
+def _email_customer_about_return(project_id: int, return_id: int,
+                                   subject: str, body_html: str) -> None:
+    """Best-effort email the customer when their return changes state.
+    Silent on failure — merchant bell still fires via _notify_return_event so the
+    audit trail is preserved even if SMTP is down."""
+    try:
+        # Pull the customer's email + project's branded sender in one query
+        row = db_one(
+            "SELECT u.email AS to_email, u.name AS to_name,"
+            "       ed.from_name, ed.from_email, ed.is_verified,"
+            "       uc.frontend_url"
+            "  FROM order_returns r"
+            "  JOIN users u             ON u.id = r.customer_user_id"
+            "  LEFT JOIN crm_email_domains ed ON ed.project_id = r.project_id"
+            "  LEFT JOIN crm_url_config uc    ON uc.project_id = r.project_id"
+            " WHERE r.id=%s AND r.project_id=%s",
+            (return_id, project_id)
+        )
+        if not row or not row.get("to_email"):
+            return
+        # Use verified branded sender if available, else default
+        if row.get("is_verified") and row.get("from_email"):
+            from_email = row["from_email"]
+            from_name  = row.get("from_name") or "Store"
+        else:
+            from_email = EMAIL_FROM
+            from_name  = "Store"
+        # Sanitize customer name for the greeting
+        customer_name = sanitize(row.get("to_name") or "there")
+        frontend = (row.get("frontend_url") or "").rstrip("/")
+        link_html = (f'<p style="margin:16px 0"><a href="{frontend}/orders" '
+                      f'style="color:#0071E3">View order status →</a></p>') if frontend else ""
+        html = (
+            "<div style='font-family:sans-serif;max-width:520px;margin:auto'>"
+            f"<p>Hi {customer_name},</p>"
+            f"{body_html}"
+            f"{link_html}"
+            "<p style='color:#888;font-size:12px;margin-top:24px'>"
+            f"Return #{return_id}"
+            "</p></div>"
+        )
+        send_email(row["to_email"], subject, html, from_email=from_email, from_name=from_name)
+    except Exception as e:
+        # Never break the lifecycle transition because of an email problem
+        print(f"[return email] best-effort failed for return {return_id}: {e}")
+
+
+@app.get("/api/projects/{project_id}/returns")
+def list_returns(project_id: int,
+                 status: Optional[str] = Query(None),
+                 group: Optional[str] = Query(None),
+                 cursor: Optional[str] = Query(None),
+                 limit: Optional[int] = Query(None),
+                 user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    want_pagination, offset, page_size = _pagination_params(cursor, limit)
+
+    where = "WHERE r.project_id=%s"
+    params: list = [project_id]
+
+    if status and status in RETURN_STATUSES:
+        where += " AND r.status=%s"
+        params.append(status)
+    elif group:
+        group_map = {
+            "action":   tuple(RETURN_GROUP_ACTION),
+            "progress": tuple(RETURN_GROUP_PROGRESS),
+            "done":     tuple(RETURN_GROUP_DONE),
+            "closed":   tuple(RETURN_GROUP_CLOSED),
+        }
+        if group in group_map:
+            where += f" AND r.status = ANY(%s)"
+            params.append(list(group_map[group]))
+
+    fetch_limit = (page_size + 1) if want_pagination else 200
+    sql = f"""SELECT r.*, oh.total_amount AS order_total,
+                     oh.recipient_name, oh.created_at AS order_created_at,
+                     u.name AS customer_name, u.email AS customer_email,
+                     (SELECT COUNT(*) FROM order_return_items ri WHERE ri.return_id=r.id) AS items_count,
+                     (SELECT COALESCE(SUM(ri.quantity), 0) FROM order_return_items ri WHERE ri.return_id=r.id) AS units_count
+              FROM order_returns r
+              JOIN order_history oh ON r.order_id = oh.id
+              LEFT JOIN users u ON r.customer_user_id = u.id
+              {where}
+              ORDER BY r.created_at DESC
+              LIMIT %s"""
+    params.append(fetch_limit)
+    if want_pagination:
+        sql += " OFFSET %s"
+        params.append(offset)
+
+    rows = db_all(sql, tuple(params))
+    serialized = []
+    for r in rows:
+        d = _serialize_return(r)
+        d["order_total"]      = float(r["order_total"] or 0)
+        d["recipient_name"]   = r["recipient_name"]
+        d["order_created_at"] = r["order_created_at"].isoformat() if r["order_created_at"] else None
+        d["customer_name"]    = r["customer_name"]
+        d["customer_email"]   = r["customer_email"]
+        d["items_count"]      = int(r["items_count"] or 0)
+        d["units_count"]      = int(r["units_count"] or 0)
+        serialized.append(d)
+    return _wrap_paginated(want_pagination, serialized, offset, page_size)
+
+
+@app.get("/api/projects/{project_id}/returns/stats")
+def returns_stats(project_id: int, user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        """SELECT
+             COUNT(*) FILTER (WHERE status = ANY(%s)) AS action_count,
+             COUNT(*) FILTER (WHERE status = ANY(%s)) AS progress_count,
+             COUNT(*) FILTER (WHERE status = ANY(%s)) AS done_count,
+             COUNT(*) FILTER (WHERE status = ANY(%s)) AS closed_count,
+             COUNT(*)                                 AS total
+           FROM order_returns
+           WHERE project_id = %s""",
+        (list(RETURN_GROUP_ACTION), list(RETURN_GROUP_PROGRESS),
+         list(RETURN_GROUP_DONE), list(RETURN_GROUP_CLOSED), project_id)
+    )
+    return {
+        "action_count":   int(row["action_count"]   or 0) if row else 0,
+        "progress_count": int(row["progress_count"] or 0) if row else 0,
+        "done_count":     int(row["done_count"]     or 0) if row else 0,
+        "closed_count":   int(row["closed_count"]   or 0) if row else 0,
+        "total":          int(row["total"]          or 0) if row else 0,
+    }
+
+
+@app.get("/api/projects/{project_id}/returns/{return_id}")
+def get_return(project_id: int, return_id: int, user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    r = db_one(
+        """SELECT r.*, oh.total_amount AS order_total, oh.status AS order_status,
+                  oh.recipient_name, oh.phone, oh.address, oh.payment_method,
+                  oh.created_at AS order_created_at, oh.delivered_at,
+                  u.name AS customer_name, u.email AS customer_email,
+                  org.payment_provider, org.payment_account_label, org.payment_dashboard_url
+           FROM order_returns r
+           JOIN order_history oh ON r.order_id = oh.id
+           JOIN crm_projects p ON p.id = r.project_id
+           LEFT JOIN crm_organizations org ON org.id = p.org_id
+           LEFT JOIN users u ON r.customer_user_id = u.id
+           WHERE r.id=%s AND r.project_id=%s""",
+        (return_id, project_id)
+    )
+    if not r:
+        raise HTTPException(404, "Return not found")
+
+    items = db_all(
+        """SELECT ri.*, oi.product_id, oi.variation_id, oi.configuration_id,
+                  oi.price AS unit_price, oi.quantity AS ordered_quantity,
+                  p.title, pv.variation_name, pc.configuration_name,
+                  (pv.images)[1] AS image_url,
+                  w.name AS restock_warehouse_name,
+                  b.batch_name AS restock_batch_name
+           FROM order_return_items ri
+           JOIN order_items oi ON ri.order_item_id = oi.id
+           JOIN products p ON oi.product_id = p.id
+           JOIN product_configurations_l1 pv ON oi.variation_id = pv.id
+           JOIN product_configurations_l2 pc ON oi.configuration_id = pc.id
+           LEFT JOIN warehouses w ON ri.restock_warehouse_id = w.id
+           LEFT JOIN inventory_batches b ON ri.restock_batch_id = b.id
+           WHERE ri.return_id=%s
+           ORDER BY ri.id""",
+        (return_id,)
+    )
+
+    d = _serialize_return(r)
+    d["order_total"]      = float(r["order_total"] or 0)
+    d["order_status"]     = r["order_status"]
+    d["recipient_name"]   = r["recipient_name"]
+    d["phone"]            = r["phone"]
+    d["address"]          = r["address"]
+    d["payment_method"]   = r["payment_method"]
+    d["order_created_at"] = r["order_created_at"].isoformat() if r["order_created_at"] else None
+    d["delivered_at"]     = r["delivered_at"].isoformat() if r["delivered_at"] else None
+    d["customer_name"]    = r["customer_name"]
+    d["customer_email"]   = r["customer_email"]
+    d["payment_provider"] = r.get("payment_provider") or "manual"
+    d["payment_account_label"] = r.get("payment_account_label") or ""
+    d["payment_dashboard_url"] = r.get("payment_dashboard_url") or ""
+    d["items"] = [
+        {
+            "id":                    it["id"],
+            "order_item_id":         it["order_item_id"],
+            "product_id":            it["product_id"],
+            "variation_id":          it["variation_id"],
+            "configuration_id":      it["configuration_id"],
+            "quantity":              int(it["quantity"]),
+            "ordered_quantity":      int(it["ordered_quantity"]),
+            "condition":             it["condition"],
+            "restock_warehouse_id":  it["restock_warehouse_id"],
+            "restock_warehouse_name":it["restock_warehouse_name"],
+            "restock_batch_id":      it["restock_batch_id"],
+            "restock_batch_name":    it["restock_batch_name"],
+            "restocked_at":          it["restocked_at"].isoformat() if it["restocked_at"] else None,
+            "unit_refund_amount":    float(it["unit_refund_amount"] or 0),
+            "item_notes":            it["item_notes"] or "",
+            "title":                 it["title"],
+            "variation_name":        it["variation_name"],
+            "configuration_name":    it["configuration_name"],
+            "image_url":             it["image_url"],
+            "unit_price":            float(it["unit_price"] or 0),
+        }
+        for it in items
+    ]
+    return d
+
+
+@app.post("/api/projects/{project_id}/returns/{return_id}/approve")
+def approve_return(project_id: int, return_id: int, user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
+               (return_id, project_id))
+    if not r: raise HTTPException(404, "Return not found")
+    if r["status"] != "requested":
+        raise HTTPException(400, f"Cannot approve from status '{r['status']}'")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE order_returns SET status='approved', approved_by=%s, approved_at=NOW(),"
+            "  updated_at=NOW() WHERE id=%s",
+            (user["id"], return_id)
+        )
+        conn.commit()
+    _notify_return_event(project_id, return_id,
+                         f"Return #{return_id} approved",
+                         "Awaiting customer to ship items back.")
+    _email_customer_about_return(project_id, return_id,
+        subject="Your return request was approved",
+        body_html=(
+            "<p>Your return has been <b>approved</b>. Please send the items back "
+            "using the shipping method we agreed on.</p>"
+            "<p>We'll process your refund once the items are received and inspected.</p>"
+        ))
+    return {"ok": True, "status": "approved"}
+
+
+@app.post("/api/projects/{project_id}/returns/{return_id}/reject")
+def reject_return(project_id: int, return_id: int, body: RejectReturnBody,
+                  user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
+               (return_id, project_id))
+    if not r: raise HTTPException(404, "Return not found")
+    if r["status"] not in ("requested", "approved", "received"):
+        raise HTTPException(400, f"Cannot reject from status '{r['status']}'")
+    reason = sanitize((body.reason or "").strip())[:1000]
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE order_returns SET status='rejected', rejected_reason=%s, updated_at=NOW()"
+            " WHERE id=%s",
+            (reason, return_id)
+        )
+        conn.commit()
+    _notify_return_event(project_id, return_id,
+                         f"Return #{return_id} rejected", reason or "Rejected by merchant.")
+    _email_customer_about_return(project_id, return_id,
+        subject="Your return request was rejected",
+        body_html=(
+            "<p>Unfortunately, your return request was <b>rejected</b>.</p>"
+            f"<p style='background:#fff3f3;padding:12px;border-radius:8px;color:#b32417'>"
+            f"<b>Reason:</b> {sanitize(reason) or 'No reason provided'}</p>"
+            "<p>If you believe this was a mistake, please reply to this email or "
+            "contact our support team.</p>"
+        ))
+    return {"ok": True, "status": "rejected"}
+
+
+@app.post("/api/projects/{project_id}/returns/{return_id}/receive")
+def receive_return(project_id: int, return_id: int, user: dict = Depends(get_current_user)):
+    """Goods physically arrived at warehouse — mark as received, ready for inspection."""
+    require_team_member_or_owner(user, project_id)
+    r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
+               (return_id, project_id))
+    if not r: raise HTTPException(404, "Return not found")
+    if r["status"] != "approved":
+        raise HTTPException(400, f"Cannot receive from status '{r['status']}'")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE order_returns SET status='received', received_by=%s, received_at=NOW(),"
+            "  updated_at=NOW() WHERE id=%s",
+            (user["id"], return_id)
+        )
+        conn.commit()
+    _notify_return_event(project_id, return_id,
+                         f"Return #{return_id} received",
+                         "Inspect items and decide on restocking.")
+    return {"ok": True, "status": "received"}
+
+
+@app.post("/api/projects/{project_id}/returns/{return_id}/inspect")
+def inspect_return(project_id: int, return_id: int, body: InspectReturnBody,
+                   user: dict = Depends(get_current_user)):
+    """Per-item condition + restock decisions. Resellable items get added back to chosen batch."""
+    require_team_member_or_owner(user, project_id)
+    r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
+               (return_id, project_id))
+    if not r: raise HTTPException(404, "Return not found")
+    if r["status"] != "received":
+        raise HTTPException(400, f"Cannot inspect from status '{r['status']}'")
+
+    with db_cursor() as (conn, cur):
+        for entry in body.items:
+            if entry.condition not in ITEM_CONDITIONS:
+                raise HTTPException(400, f"Invalid condition '{entry.condition}'")
+            cur.execute(
+                "SELECT ri.id, ri.quantity, ri.order_item_id, oi.configuration_id"
+                "  FROM order_return_items ri"
+                "  JOIN order_items oi ON ri.order_item_id = oi.id"
+                " WHERE ri.id=%s AND ri.return_id=%s",
+                (entry.return_item_id, return_id)
+            )
+            ri = cur.fetchone()
+            if not ri:
+                raise HTTPException(404, f"Return item {entry.return_item_id} not found")
+
+            restock_wh = entry.restock_warehouse_id
+            restock_batch = entry.restock_batch_id
+
+            # If resellable: must have warehouse + batch. Restock inventory.
+            if entry.condition == "resellable":
+                if not restock_wh:
+                    raise HTTPException(400, "Resellable items require restock_warehouse_id")
+                # If batch chosen: top it up. Otherwise create a "Returns" batch.
+                if restock_batch:
+                    cur.execute(
+                        "SELECT id, project_id, sku_id, warehouse_id FROM inventory_batches"
+                        " WHERE id=%s FOR UPDATE",
+                        (restock_batch,)
+                    )
+                    b = cur.fetchone()
+                    if not b or b["project_id"] != project_id:
+                        raise HTTPException(404, "Batch not found in this project")
+                    if b["sku_id"] != ri["configuration_id"] or b["warehouse_id"] != restock_wh:
+                        raise HTTPException(400, "Batch SKU/warehouse mismatch")
+                    cur.execute(
+                        "UPDATE inventory_batches"
+                        "   SET quantity_remaining = quantity_remaining + %s"
+                        " WHERE id=%s",
+                        (int(ri["quantity"]), restock_batch)
+                    )
+                else:
+                    cur.execute(
+                        "INSERT INTO inventory_batches"
+                        "  (project_id, sku_id, warehouse_id, batch_name,"
+                        "   quantity_received, quantity_remaining, notes)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                        (project_id, ri["configuration_id"], restock_wh,
+                         f"Returns · R#{return_id}", int(ri["quantity"]), int(ri["quantity"]),
+                         f"Auto-created from return #{return_id}")
+                    )
+                    restock_batch = cur.fetchone()["id"]
+
+                # product_stock aggregate top-up
+                cur.execute(
+                    "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+                    " VALUES (%s, %s, %s, 0)"
+                    " ON CONFLICT (sku_id, warehouse_id)"
+                    " DO UPDATE SET quantity = product_stock.quantity + EXCLUDED.quantity",
+                    (ri["configuration_id"], restock_wh, int(ri["quantity"]))
+                )
+                # l2 aggregate
+                cur.execute("SET LOCAL torta.skip_audit = 'on'")
+                cur.execute(
+                    "UPDATE product_configurations_l2"
+                    "   SET stock_quantity = COALESCE("
+                    "         (SELECT SUM(quantity) FROM product_stock WHERE sku_id=%s),"
+                    "         stock_quantity)"
+                    " WHERE id=%s",
+                    (ri["configuration_id"], ri["configuration_id"])
+                )
+                # Audit trail
+                cur.execute(
+                    "INSERT INTO product_stock_log"
+                    "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, note)"
+                    " VALUES (%s, %s, %s, %s, 'return', %s, %s)",
+                    (project_id, ri["configuration_id"], restock_wh, int(ri["quantity"]),
+                     return_id, f"Return #{return_id} · restocked")
+                )
+
+            cur.execute(
+                "UPDATE order_return_items"
+                "   SET condition=%s, restock_warehouse_id=%s, restock_batch_id=%s,"
+                "       restocked_at=%s, item_notes=%s"
+                " WHERE id=%s",
+                (entry.condition, restock_wh, restock_batch,
+                 datetime.utcnow() if entry.condition == "resellable" else None,
+                 sanitize(entry.item_notes or "")[:1000],
+                 entry.return_item_id)
+            )
+
+        cur.execute(
+            "UPDATE order_returns"
+            "   SET status='inspected', inspected_by=%s, inspected_at=NOW(),"
+            "       internal_notes = CASE WHEN %s = '' THEN internal_notes ELSE %s END,"
+            "       updated_at=NOW()"
+            " WHERE id=%s",
+            (user["id"], (body.internal_notes or ""),
+             sanitize(body.internal_notes or "")[:5000], return_id)
+        )
+        conn.commit()
+
+    _notify_return_event(project_id, return_id,
+                         f"Return #{return_id} inspected",
+                         "Ready to issue refund.")
+    return {"ok": True, "status": "inspected"}
+
+
+@app.post("/api/projects/{project_id}/returns/{return_id}/refund")
+def refund_return(project_id: int, return_id: int, body: RefundReturnBody,
+                  user: dict = Depends(get_current_user)):
+    """Process a refund. If the org has a configured payment provider AND the order
+    was paid through that provider, this calls the provider's refund API (Stripe.Refund.create
+    / Tinkoff Cancel / etc.) and records the real `provider_refund_id`. Otherwise
+    falls back to record-only mode (merchant did the refund manually in their dashboard;
+    we just store their reference for audit).
+
+    Idempotency: idempotency_key derived from (return_id, refund_amount, refund_reference)
+    so retrying the same logical refund doesn't double-charge the merchant's account.
+    """
+    require_team_member_or_owner(user, project_id)
+    r = db_one(
+        "SELECT r.id, r.status, r.order_id, r.refund_amount AS prior_refund_amount,"
+        "       oh.payment_intent_id, oh.payment_charge_id, oh.payment_status,"
+        "       oh.payment_provider, oh.payment_currency, oh.payment_amount_paid,"
+        "       oh.total_amount AS order_total, oh.id AS oh_id,"
+        "       p.org_id"
+        "  FROM order_returns r"
+        "  JOIN order_history oh ON oh.id = r.order_id"
+        "  JOIN crm_projects p   ON p.id  = r.project_id"
+        " WHERE r.id=%s AND r.project_id=%s",
+        (return_id, project_id)
+    )
+    if not r: raise HTTPException(404, "Return not found")
+    if r["status"] != "inspected":
+        raise HTTPException(400, f"Cannot refund from status '{r['status']}'")
+    if body.refund_amount < 0:
+        raise HTTPException(400, "Refund amount cannot be negative")
+    if body.refund_amount > float(r["payment_amount_paid"] or r["order_total"] or 0) + 0.01:
+        raise HTTPException(400, "Refund cannot exceed what was paid")
+
+    # Determine if we should call the provider API
+    provider_refund_id = ""
+    provider_refund_status = ""
+    provider_error = ""
+    refund_reference = sanitize(body.refund_method or "")[:40]
+    real_ref = sanitize(body.refund_reference or "")[:120]
+
+    cred = db_one(
+        "SELECT credentials_encrypted, is_test_mode, provider, stripe_account_id"
+        "  FROM crm_payment_credentials"
+        " WHERE org_id=%s",
+        (r["org_id"],)
+    )
+    can_call_api = (
+        cred and cred["credentials_encrypted"]
+        and cred["provider"] not in ("manual", "other")
+        and r["payment_provider"] == cred["provider"]
+        and r["payment_status"] in ("paid", "partial_refunded")
+        and r["payment_charge_id"]
+    )
+
+    if can_call_api:
+        try:
+            creds = decrypt_credentials(cred["credentials_encrypted"])
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(500, f"Failed to decrypt credentials: {e}")
+        idemp = f"return-{return_id}-{int(round(float(body.refund_amount) * 100))}"
+        result = create_refund(
+            cred["provider"], creds,
+            charge_or_intent_id=r["payment_charge_id"] or r["payment_intent_id"],
+            amount=float(body.refund_amount),
+            currency=r["payment_currency"] or "USD",
+            idempotency_key=idemp,
+            is_test_mode=bool(cred["is_test_mode"]),
+            stripe_account_id=cred.get("stripe_account_id") or "",
+        )
+        if not result["ok"]:
+            # STRICT: do NOT mark return as refunded if provider rejected
+            provider_error = result["error"]
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    "UPDATE order_returns SET provider_error=%s, updated_at=NOW() WHERE id=%s",
+                    (provider_error[:1000], return_id)
+                )
+                conn.commit()
+            raise HTTPException(502, f"Provider refund failed: {provider_error}")
+        provider_refund_id = result["data"].get("refund_id", "") or ""
+        provider_refund_status = result["data"].get("status", "succeeded") or "succeeded"
+        if not real_ref:
+            real_ref = provider_refund_id
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE order_returns"
+            "   SET status='refunded',"
+            "       refund_amount=%s, refund_method=%s, refund_reference=%s,"
+            "       restocking_fee=%s, refund_processed_by=%s, refund_processed_at=NOW(),"
+            "       provider_refund_id=%s, provider_refund_status=%s, provider_error='',"
+            "       updated_at=NOW()"
+            " WHERE id=%s",
+            (round(float(body.refund_amount), 2),
+             refund_reference,
+             real_ref,
+             round(float(body.restocking_fee or 0), 2),
+             user["id"], provider_refund_id, provider_refund_status, return_id)
+        )
+        # Mirror onto order_history payment_amount_refunded + payment_status
+        cur.execute(
+            "SELECT total_amount, payment_amount_refunded, payment_status"
+            "  FROM order_history WHERE id=%s FOR UPDATE",
+            (r["order_id"],)
+        )
+        oh = cur.fetchone()
+        if oh:
+            new_total = float(oh["payment_amount_refunded"] or 0) + float(body.refund_amount)
+            full_refund = new_total >= float(oh["total_amount"] or 0) - 0.01
+            new_pay_status = "refunded" if full_refund else "partial_refunded"
+            # Don't downgrade — keep 'paid' if amount is zero, only update if we have a real refund
+            if float(body.refund_amount) > 0:
+                cur.execute(
+                    "UPDATE order_history"
+                    "   SET payment_amount_refunded=%s, payment_status=%s,"
+                    "       status=CASE WHEN %s THEN 'refunded' ELSE status END,"
+                    "       updated_at=NOW()"
+                    " WHERE id=%s",
+                    (round(new_total, 2), new_pay_status, full_refund, r["order_id"])
+                )
+        conn.commit()
+
+    msg_extra = f" via {cred['provider']}" if can_call_api else " (manual)"
+    _notify_return_event(project_id, return_id,
+                         f"Return #{return_id} refunded{msg_extra}",
+                         f"Refund of {round(float(body.refund_amount), 2)} recorded.")
+    refund_amount_fmt = round(float(body.refund_amount), 2)
+    currency_short = (r["payment_currency"] or "USD").upper()
+    _email_customer_about_return(project_id, return_id,
+        subject=f"Refund processed — {refund_amount_fmt} {currency_short}",
+        body_html=(
+            f"<p>Your refund of <b>{refund_amount_fmt} {currency_short}</b> has been processed.</p>"
+            + (f"<p style='color:#666;font-size:13px'>Provider reference: <code>{sanitize(real_ref)}</code></p>"
+                if real_ref else "")
+            + ("<p style='color:#666;font-size:13px'>Funds may take 3-5 business days to appear on your statement.</p>"
+                if can_call_api else
+                "<p style='color:#666;font-size:13px'>Funds were sent through our payment partner. Please allow time for processing.</p>")
+        ))
+    return {
+        "ok": True,
+        "status": "refunded",
+        "provider_refund_id": provider_refund_id,
+        "provider_refund_status": provider_refund_status,
+        "called_provider_api": bool(can_call_api),
+    }
 
 
 # ── CHAT WITH CUSTOMERS ──────────────────────────────────
@@ -7754,17 +12562,28 @@ async def delete_chat_integration(channel: str,
 
 @app.get("/api/chat/conversations")
 def list_conversations(project_id: int = Query(...),
+                       cursor: Optional[str] = Query(None),
+                       limit:  Optional[int] = Query(None),
                        user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
-    rows = db_all(
-        """SELECT id, channel, external_chat_id, contact_uid, is_active,
-                  unread_count, last_message_at, last_message_preview, created_at
-           FROM crm_chat_conversations
-           WHERE project_id=%s
-           ORDER BY (last_message_at IS NULL), last_message_at DESC, id DESC""",
-        (project_id,)
+    want_pagination, offset, page_size = _pagination_params(cursor, limit)
+    sql = (
+        "SELECT id, channel, external_chat_id, contact_uid, is_active,"
+        "       unread_count, last_message_at, last_message_preview, created_at"
+        "  FROM crm_chat_conversations"
+        " WHERE project_id=%s"
+        " ORDER BY (last_message_at IS NULL), last_message_at DESC, id DESC"
     )
-    return {"conversations": [_serialize_conv(r) for r in rows]}
+    params: list = [project_id]
+    if want_pagination:
+        sql += " LIMIT %s OFFSET %s"
+        params.extend([page_size + 1, offset])
+    rows = db_all(sql, tuple(params))
+    serialized = [_serialize_conv(r) for r in rows]
+    if want_pagination:
+        return _wrap_paginated(True, serialized, offset, page_size)
+    # Legacy callers expect the outer {conversations: [...]} envelope.
+    return {"conversations": serialized}
 
 
 @app.post("/api/chat/conversations/{conv_id}/close")
@@ -8686,6 +13505,15 @@ def booking_save_settings(req: BookingSettingsRequest,
         raise HTTPException(400, "default_status must be 'pending' or 'confirmed'")
     if req.slot_interval_minutes < 5 or req.slot_interval_minutes > 240:
         raise HTTPException(400, "slot_interval_minutes must be 5–240")
+    # Validate the timezone string — if invalid, slots would silently fall back to UTC
+    # and the merchant wouldn't realise their config is broken.
+    if req.timezone and req.timezone != "UTC":
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(req.timezone)
+        except Exception:
+            raise HTTPException(400, f"Unknown timezone: '{req.timezone}'. "
+                                       "Use a valid IANA name like 'Asia/Almaty' or 'Europe/Berlin'.")
     cols = ["slot_interval_minutes","min_advance_minutes","max_advance_days",
             "cancellation_window_minutes","auto_confirm","default_status","timezone"]
     vals = tuple(getattr(req, c) for c in cols)
@@ -8787,8 +13615,11 @@ def booking_list(project_id: int = Query(...),
                  from_date: Optional[str] = Query(None),
                  to_date:   Optional[str] = Query(None),
                  status:    Optional[str] = Query(None),
+                 cursor:    Optional[str] = Query(None),
+                 limit:     Optional[int] = Query(None),
                  user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
+    want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where = ["project_id=%s"]; params: list = [project_id]
     # Accept date filters as YYYY-MM-DD (business-local midnight→UTC) or full ISO 8601 with TZ offset.
     biz_tz = None
@@ -8815,11 +13646,13 @@ def booking_list(project_id: int = Query(...),
         if status not in BOOKING_STATUSES:
             raise HTTPException(400, "Unknown status")
         where.append("status=%s"); params.append(status)
-    rows = db_all(
-        f"SELECT * FROM bookings WHERE {' AND '.join(where)} ORDER BY starts_at DESC",
-        tuple(params)
-    )
-    return _enrich_booking(rows)
+    sql = f"SELECT * FROM bookings WHERE {' AND '.join(where)} ORDER BY starts_at DESC"
+    if want_pagination:
+        sql += " LIMIT %s OFFSET %s"
+        params.extend([page_size + 1, offset])
+    rows = db_all(sql, tuple(params))
+    enriched = _enrich_booking(rows)
+    return _wrap_paginated(want_pagination, enriched, offset, page_size)
 
 @app.post("/api/booking/bookings")
 def booking_create_admin(req: CreateBookingRequest,
@@ -9456,3 +14289,344 @@ def document_settings_save(req: DocumentSettingsRequest,
         )
         conn.commit()
     return {"ok": True}
+
+
+# ── NOTIFICATIONS ────────────────────────────────────────
+
+@app.get("/api/notifications")
+def list_notifications(project_id: Optional[int] = Query(None), unread_only: bool = Query(False),
+                       limit: int = Query(50), user: dict = Depends(get_current_user)):
+    """Latest notifications for the current user; optionally project-scoped + unread-only filter."""
+    where = ["user_id = %s"]
+    params: list = [user["id"]]
+    if project_id is not None:
+        require_team_member_or_owner(user, project_id)
+        where.append("(project_id = %s OR project_id IS NULL)")
+        params.append(project_id)
+    if unread_only:
+        where.append("is_read = FALSE")
+    limit = min(max(1, int(limit)), 200)
+
+    rows = db_all(
+        "SELECT id, project_id, type, title, message, link, is_read, created_at"
+        "  FROM crm_notifications"
+        " WHERE " + " AND ".join(where) +
+        " ORDER BY created_at DESC LIMIT %s",
+        tuple(params + [limit])
+    )
+    unread = db_one(
+        "SELECT COUNT(*) AS c FROM crm_notifications WHERE user_id=%s AND is_read=FALSE",
+        (user["id"],)
+    )
+    return {"items": rows, "unread": unread["c"] if unread else 0}
+
+
+@app.post("/api/notifications/{notif_id}/read")
+def mark_notification_read(notif_id: int, user: dict = Depends(get_current_user)):
+    """Owner-scoped: only the recipient can mark a notification read."""
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_notifications SET is_read=TRUE WHERE id=%s AND user_id=%s",
+            (notif_id, user["id"])
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/notifications/read-all")
+def mark_all_read(user: dict = Depends(get_current_user)):
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_notifications SET is_read=TRUE WHERE user_id=%s AND is_read=FALSE",
+                    (user["id"],))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/notifications/{notif_id}")
+def delete_notification(notif_id: int, user: dict = Depends(get_current_user)):
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_notifications WHERE id=%s AND user_id=%s",
+                    (notif_id, user["id"]))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── ANALYTICS ────────────────────────────────────────────
+# All endpoints aggregate read-only data — safe to call repeatedly. project access verified up-front.
+
+def _date_range_for_period(period: str):
+    """period in {7d, 30d, 90d, year}; returns (start, end) tuples in UTC."""
+    end = _utcnow()
+    if   period == "7d":   start = end - timedelta(days=7)
+    elif period == "30d":  start = end - timedelta(days=30)
+    elif period == "90d":  start = end - timedelta(days=90)
+    elif period == "year": start = end - timedelta(days=365)
+    else:                  start = end - timedelta(days=30)
+    return start, end
+
+
+@app.get("/api/analytics/overview")
+def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
+                       user: dict = Depends(get_current_user)):
+    """5 KPI cards + daily revenue series + same-length previous-period deltas. Single endpoint for the Overview dashboard tile."""
+    require_team_member_or_owner(user, project_id)
+    start, end = _date_range_for_period(period)
+    prev_start = start - (end - start)
+
+    def _agg(s, e):
+        # Aggregate revenue / orders / customers in a single round trip.
+        row = db_one(
+            "SELECT COUNT(*) AS orders,"
+            "       COALESCE(SUM(total_amount), 0) AS revenue,"
+            "       COUNT(DISTINCT user_id) AS customers"
+            "  FROM order_history"
+            " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
+            "   AND status NOT IN ('cancelled', 'refunded')",
+            (project_id, s, e)
+        )
+        visitors = db_one(
+            "SELECT COUNT(DISTINCT ip_address) AS v FROM site_visits"
+            " WHERE project_id=%s AND visit_date >= %s AND visit_date < %s",
+            (project_id, s.date(), e.date())
+        )
+        return {
+            "revenue":   float(row["revenue"] or 0),
+            "orders":    int(row["orders"] or 0),
+            "aov":       float(row["revenue"] or 0) / max(1, int(row["orders"] or 0)),
+            "customers": int(row["customers"] or 0),
+            "visitors":  int((visitors or {}).get("v") or 0),
+        }
+
+    cur = _agg(start, end)
+    prev = _agg(prev_start, start)
+    cur["conversion"] = (cur["orders"] / cur["visitors"] * 100) if cur["visitors"] else 0
+    prev["conversion"] = (prev["orders"] / prev["visitors"] * 100) if prev["visitors"] else 0
+
+    def pct(c, p):
+        if not p: return None
+        return round((c - p) / p * 100, 1)
+
+    deltas = {
+        "revenue":    pct(cur["revenue"],    prev["revenue"]),
+        "orders":     pct(cur["orders"],     prev["orders"]),
+        "aov":        pct(cur["aov"],        prev["aov"]),
+        "customers":  pct(cur["customers"],  prev["customers"]),
+        "visitors":   pct(cur["visitors"],   prev["visitors"]),
+        "conversion": pct(cur["conversion"], prev["conversion"]),
+    }
+
+    # Daily revenue chart (day-bucketed; UTC).
+    series = db_all(
+        "SELECT DATE(created_at) AS day,"
+        "       COALESCE(SUM(total_amount), 0) AS revenue,"
+        "       COUNT(*) AS orders"
+        "  FROM order_history"
+        " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
+        "   AND status NOT IN ('cancelled', 'refunded')"
+        " GROUP BY day ORDER BY day ASC",
+        (project_id, start, end)
+    )
+    return {
+        "current":  cur,
+        "previous": prev,
+        "delta":    deltas,
+        "series":   [{"day": str(r["day"]), "revenue": float(r["revenue"]), "orders": int(r["orders"])} for r in series],
+        "period":   period,
+    }
+
+
+@app.get("/api/analytics/funnel")
+def analytics_funnel(project_id: int = Query(...), period: str = Query("30d"),
+                     user: dict = Depends(get_current_user)):
+    """visitors → product_views → ATC → paid. Each step is a count, frontend computes drop-off %."""
+    require_team_member_or_owner(user, project_id)
+    start, end = _date_range_for_period(period)
+    visitors = db_one(
+        "SELECT COUNT(DISTINCT ip_address) AS v FROM site_visits"
+        " WHERE project_id=%s AND visit_date >= %s AND visit_date < %s",
+        (project_id, start.date(), end.date())
+    )
+    views = db_one(
+        "SELECT COUNT(*) AS v FROM product_page_views"
+        " WHERE project_id=%s AND view_date >= %s AND view_date < %s",
+        (project_id, start.date(), end.date())
+    )
+    atc = db_one(
+        "SELECT COUNT(DISTINCT ci.cart_id) AS v"
+        "  FROM cart_items ci JOIN carts c ON ci.cart_id = c.id"
+        " WHERE c.project_id=%s AND ci.updated_at >= %s AND ci.updated_at < %s",
+        (project_id, start, end)
+    )
+    paid = db_one(
+        "SELECT COUNT(*) AS v FROM order_history"
+        " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
+        "   AND status NOT IN ('cancelled', 'refunded', 'new')",
+        (project_id, start, end)
+    )
+    return {
+        "visitors":      int((visitors or {}).get("v") or 0),
+        "product_views": int((views    or {}).get("v") or 0),
+        "atc":           int((atc      or {}).get("v") or 0),
+        "paid":          int((paid     or {}).get("v") or 0),
+    }
+
+
+@app.get("/api/analytics/top-products")
+def analytics_top_products(project_id: int = Query(...), period: str = Query("30d"),
+                           by: str = Query("revenue"),  # revenue | margin | units
+                           limit: int = Query(10),
+                           user: dict = Depends(get_current_user)):
+    """Top N products by revenue / margin / units sold within the period."""
+    require_team_member_or_owner(user, project_id)
+    start, end = _date_range_for_period(period)
+    limit = min(max(1, int(limit)), 50)
+
+    if by == "margin":
+        order_clause = "margin DESC"
+    elif by == "units":
+        order_clause = "units DESC"
+    else:
+        order_clause = "revenue DESC"
+
+    rows = db_all(
+        "SELECT p.id, p.title,"
+        "       SUM(oi.quantity)                                  AS units,"
+        "       SUM(oi.quantity * oi.price)                       AS revenue,"
+        "       SUM(oi.quantity * (oi.price - COALESCE(l2.cost_price, 0))) AS margin"
+        "  FROM order_items oi"
+        "  JOIN products p ON oi.product_id = p.id"
+        "  JOIN order_history oh ON oi.order_id = oh.id"
+        "  LEFT JOIN product_configurations_l2 l2 ON oi.configuration_id = l2.id"
+        " WHERE p.project_id=%s"
+        "   AND oh.created_at >= %s AND oh.created_at < %s"
+        "   AND oh.status NOT IN ('cancelled', 'refunded')"
+        " GROUP BY p.id, p.title"
+        " ORDER BY " + order_clause +
+        " LIMIT %s",
+        (project_id, start, end, limit)
+    )
+    return [
+        {
+            "id":       r["id"],
+            "title":    r["title"],
+            "units":    int(r["units"] or 0),
+            "revenue":  float(r["revenue"] or 0),
+            "margin":   float(r["margin"] or 0),
+        } for r in rows
+    ]
+
+
+@app.get("/api/analytics/inventory-health")
+def analytics_inventory_health(project_id: int = Query(...),
+                               user: dict = Depends(get_current_user)):
+    """Aggregate stock health across project: OOS / low / healthy SKU counts."""
+    require_team_member_or_owner(user, project_id)
+    row = db_one(
+        "SELECT"
+        "   COUNT(*) FILTER (WHERE l2.stock_quantity = 0)                       AS oos,"
+        "   COUNT(*) FILTER (WHERE l2.stock_quantity > 0"
+        "                     AND l2.stock_quantity <= COALESCE(p.low_stock_threshold, 5))     AS low,"
+        "   COUNT(*) FILTER (WHERE l2.stock_quantity >  COALESCE(p.low_stock_threshold, 5))    AS healthy,"
+        "   COUNT(*)                                                           AS total"
+        "  FROM product_configurations_l2 l2"
+        "  JOIN product_configurations_l1 l1 ON l2.variation_id = l1.id"
+        "  JOIN products p                  ON l1.product_id = p.id"
+        " WHERE p.project_id = %s AND p.is_archived = FALSE",
+        (project_id,)
+    )
+    return {
+        "oos":     int((row or {}).get("oos") or 0),
+        "low":     int((row or {}).get("low") or 0),
+        "healthy": int((row or {}).get("healthy") or 0),
+        "total":   int((row or {}).get("total") or 0),
+    }
+
+
+# ── NOTIFICATIONS WEBSOCKET ──────────────────────────────
+# Push channel: bell icon subscribes; backend fans out events to per-user subscribers.
+
+class NotifHub:
+    """In-memory subscriber registry by user_id. Pattern mirrors ChatHub."""
+    def __init__(self):
+        self._subs: dict[int, set] = {}
+
+    async def subscribe(self, user_id: int, ws):
+        self._subs.setdefault(user_id, set()).add(ws)
+
+    async def unsubscribe(self, user_id: int, ws):
+        s = self._subs.get(user_id)
+        if s:
+            s.discard(ws)
+            if not s: self._subs.pop(user_id, None)
+
+    async def broadcast(self, user_id: int, message: dict):
+        s = self._subs.get(user_id) or set()
+        dead = []
+        for ws in list(s):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            s.discard(ws)
+
+
+notif_hub = NotifHub()
+
+
+@app.websocket("/api/notifications/ws")
+async def notifications_ws(ws: WebSocket):
+    """Cookie-authenticated; rejects with code 4401 if JWT cookie is missing/invalid (browsers can read close codes)."""
+    await ws.accept()
+    cookie = ws.cookies.get("crm_token")
+    if not cookie:
+        await ws.close(code=4401)
+        return
+    try:
+        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub"))
+    except Exception:
+        await ws.close(code=4401)
+        return
+    await notif_hub.subscribe(user_id, ws)
+    try:
+        while True:
+            # Keep socket open; client doesn't need to send anything.
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await notif_hub.unsubscribe(user_id, ws)
+
+
+def push_notification(user_id: int, project_id: Optional[int], ntype: str,
+                      title: str, message: str = "", link: Optional[str] = None) -> None:
+    """Helper: insert notification + broadcast over WebSocket. Used by webhook fanout, order events, etc. Always sanitize() user-supplied content before passing in."""
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO crm_notifications (user_id, project_id, type, title, message, link)"
+                " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, created_at",
+                (user_id, project_id, ntype, title[:200], message[:2000], (link or "")[:500])
+            )
+            row = cur.fetchone()
+            conn.commit()
+        msg = {
+            "id":         row["id"],
+            "project_id": project_id,
+            "type":       ntype,
+            "title":      title,
+            "message":    message,
+            "link":       link,
+            "is_read":    False,
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        }
+        # Fire WebSocket broadcast in the background (we're outside an async context here).
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(notif_hub.broadcast(user_id, msg))
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[notifications] push failed: {e}")

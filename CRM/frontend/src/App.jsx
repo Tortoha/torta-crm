@@ -20,10 +20,11 @@ const Dashboard     = lazy(() => import('./Pages/Dashboard/Dashboard.jsx'));
 // Organization
 const Organization  = lazy(() => import('./Pages/Organization/Organization.jsx'));
 const OrgAnalytics  = lazy(() => import('./Pages/Organization/OrgAnalytics.jsx'));
-const OrgSettings   = lazy(() => import('./Pages/Organization/OrgSettings.jsx'));
+const OrgPayments   = lazy(() => import('./Pages/Organization/OrgPayments.jsx'));
 // Project
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Project/Revenue.jsx'));
+const Tickets       = lazy(() => import('./Pages/Project/Tickets.jsx'));
 const Products      = lazy(() => import('./Pages/Project/Products/Products.jsx'));
 const ProductsList  = lazy(() => import('./Pages/Project/Products/ProductsList.jsx'));
 const Categories    = lazy(() => import('./Pages/Project/Products/Categories.jsx'));
@@ -46,6 +47,7 @@ const Discounts         = lazy(() => import('./Pages/Project/Products/Discounts.
 const TierPricing       = lazy(() => import('./Pages/Project/Products/TierPricing.jsx'));
 const Warehouses        = lazy(() => import('./Pages/Project/Products/Warehouses.jsx'));
 const ProductsInventory = lazy(() => import('./Pages/Project/Products/ProductsInventory.jsx'));
+const Batches           = lazy(() => import('./Pages/Project/Products/Batches.jsx'));
 const ProductsSettings  = lazy(() => import('./Pages/Project/Products/ProductsSettings.jsx'));
 // Settings
 const AccountSettings  = lazy(() => import('./Pages/Settings/Settings.jsx'));
@@ -76,7 +78,8 @@ function App() {
           <Route path="/org/:orgSlug"              element={<OrgLayout />}>
             <Route index                           element={<Organization />} />
             <Route path="analytics"               element={<OrgAnalytics />} />
-            <Route path="settings"                element={<OrgSettings />} />
+            <Route path="payments"                element={<OrgPayments />} />
+            <Route path="settings"                element={<Navigate to=".." relative="path" replace />} />
           </Route>
           <Route path="/project/:apiKey"           element={<Layout />}>
             <Route index            element={<Project />} />
@@ -85,6 +88,7 @@ function App() {
               <Route index                element={<ProductsList />} />
               <Route path="categories"    element={<Categories />} />
               <Route path="inventory"     element={<ProductsInventory />} />
+              <Route path="batches"       element={<Batches />} />
               <Route path="archive"       element={<ProductsList archived />} />
               <Route path="promo-codes"   element={<PromoCodes />} />
               <Route path="discounts"     element={<Discounts />} />
@@ -93,6 +97,7 @@ function App() {
               <Route path="settings"      element={<ProductsSettings />} />
             </Route>
             <Route path="revenue"    element={<Revenue />} />
+            <Route path="tickets"    element={<Tickets />} />
             <Route path="authentication" element={<Authentication />} />
             <Route path="email"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />

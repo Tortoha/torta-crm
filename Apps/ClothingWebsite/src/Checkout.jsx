@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle } from "@phosphor-icons/react";
 import Header from "./Header";
-import { client } from "./api.js";
+import { client, pickError } from "./api.js";
 import "./Style/Checkout.css";
 import "./Style/Load.css";
 
@@ -77,7 +77,7 @@ function Checkout() {
       setPromoError("");
     } else {
       setPromoApplied(null);
-      setPromoError(data?.detail || "Invalid promo code");
+      setPromoError(pickError(data, "Invalid promo code"));
     }
     setPromoChecking(false);
   };
@@ -110,7 +110,7 @@ function Checkout() {
     if (ok) {
       navigate("/order-success", { state: { orderId: data.order_id } });
     } else {
-      setError(data?.detail || "Failed to place order. Please try again.");
+      setError(pickError(data, "Failed to place order. Please try again."));
       setSubmitting(false);
     }
   };

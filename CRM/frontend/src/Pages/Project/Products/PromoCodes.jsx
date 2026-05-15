@@ -6,10 +6,13 @@ import {
   ArrowDown, SquaresFour, List, X,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { todayLocalIsoDay } from '../../../Utils/date.js';
 import { Combobox, DatePicker, TimePicker } from '../Booking/BookingCreateModal.jsx';
 import { CpmOptionSelect } from './CreateProductModal.jsx';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
+import { useInfiniteList } from '../../../Utils/useInfiniteList.js';
+import { useInfiniteScroll } from '../../../Utils/useInfiniteScroll.js';
 import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 import '../../../Style/Organization.css';
@@ -45,7 +48,6 @@ const TILT = {
 export default function PromoCodes() {
   const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
-  const [codes, setCodes] = useState([]);
   const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState('');
   const [typeF, setTypeF] = useState('all');
@@ -58,16 +60,19 @@ export default function PromoCodes() {
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2400); };
 
-  const load = useCallback(async () => {
-    const [c, cat] = await Promise.all([
-      fetch(`${API_BASE}/api/promo-codes${pq}`, { credentials: 'include' }).then(r => r.ok ? r.json() : []),
-      fetch(`${API_BASE}/api/categories${pq}`,  { credentials: 'include' }).then(r => r.ok ? r.json() : []),
-    ]);
-    setCodes(Array.isArray(c) ? c : []);
-    setCategories(Array.isArray(cat) ? cat : []);
-  }, [pq]);
+  const {
+    items: codes, hasMore, loading, loadMore, reload: load,
+  } = useInfiniteList({
+    url: `${API_BASE}/api/promo-codes${pq}`,
+    pageSize: 100,
+  });
+  const sentinelRef = useInfiniteScroll(loadMore);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/categories${pq}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setCategories(Array.isArray(d) ? d : []));
+  }, [pq]);
 
   const persist = async (body, id) => {
     const url = id
@@ -178,6 +183,7 @@ export default function PromoCodes() {
               onDelete={() => remove(c.id)}
               onToggleActive={() => persist({ is_active: !c.is_active }, c.id)} />
           ))}
+          {hasMore && <div ref={sentinelRef} className="inf-sentinel">Loading more…</div>}
         </div>
       ) : (
         <div className="promo-grid">
@@ -187,6 +193,7 @@ export default function PromoCodes() {
               onDelete={() => remove(c.id)}
               onToggleActive={() => persist({ is_active: !c.is_active }, c.id)} />
           ))}
+          {hasMore && <div ref={sentinelRef} className="inf-sentinel">Loading more…</div>}
         </div>
       )}
 
@@ -592,9 +599,9 @@ function DateTimePicker({ value, onChange }) {
   };
   const setTime = (t) => {
     if (!datePart) {
-      // Default to today if user picks time first.
-      const today = new Date().toISOString().slice(0, 10);
-      onChange(`${today}T${t}`);
+      // Default to today if user picks time first. Use local date components —
+      // toISOString() would roll to the wrong day for users east of UTC.
+      onChange(`${todayLocalIsoDay()}T${t}`);
     } else {
       onChange(`${datePart}T${t}`);
     }
