@@ -12,8 +12,8 @@ import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 import '../../../Style/Organization.css';
 
-// Inventory shows physical+event only — digital/service have no warehouse stock.
-const VISIBLE_TYPES = new Set(['physical', 'event']);
+// Inventory shows physical only — digital/service have no warehouse stock.
+const VISIBLE_TYPES = new Set(['physical']);
 
 const FILTERS = [
   { key: 'all', label: 'All' },

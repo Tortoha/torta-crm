@@ -62,7 +62,29 @@ JWT_HOURS        = ACCESS_TOKEN_MINUTES / 60
 CRM_FRONTEND_URL = os.getenv("CRM_FRONTEND_URL", "http://localhost:5174")
 CRM_BACKEND_URL  = os.getenv("CRM_BACKEND_URL",  "http://localhost:8001")
 MAGAZ_BACKEND_URL= os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "torta-internal-dev-key")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+
+# Production-only fail-closed. Empty / well-known defaults for these two
+# secrets are catastrophic in prod (empty SECRET_KEY → forge any JWT;
+# known INTERNAL_API_KEY default → the internet hits internal cron endpoints
+# at will). But in dev they're just inconvenient, so dev gets a stable
+# placeholder + a warning instead of a hard crash.
+_IS_PROD = os.getenv("ENVIRONMENT", "development").lower() == "production"
+if _IS_PROD:
+    assert SECRET_KEY and len(SECRET_KEY) >= 32, \
+        "SECRET_KEY env var is required in production and must be at least 32 chars long (used to sign JWTs)"
+    assert INTERNAL_API_KEY and len(INTERNAL_API_KEY) >= 24, \
+        "INTERNAL_API_KEY env var is required in production and must be at least 24 chars long (gates internal cron + webhook endpoints)"
+else:
+    # Stable dev placeholders — same value across dev restarts so JWTs issued
+    # before a restart still validate. Not a security risk because IS_PRODUCTION
+    # gates the catastrophic codepaths and dev runs on localhost only.
+    if not SECRET_KEY:
+        SECRET_KEY = "dev-only-do-not-use-in-prod-32chars-padding-xxxxxxxxxxxxxxxx"
+        print("[security] WARNING: SECRET_KEY env not set — using dev-only placeholder. DO NOT deploy to prod without setting it.")
+    if not INTERNAL_API_KEY:
+        INTERNAL_API_KEY = "dev-only-internal-key-padding-xxxx"
+        print("[security] WARNING: INTERNAL_API_KEY env not set — using dev-only placeholder. DO NOT deploy to prod without setting it.")
 DB_CONFIG        = {
     "host":     os.getenv("DB_HOST",     "localhost"),
     "port":     int(os.getenv("DB_PORT", "5432")),
@@ -106,10 +128,15 @@ def _s3_client():
     )
 
 def s3_upload(data: io.BytesIO, key: str, content_type: str = "image/webp",
-              cache_control: str = "max-age=31536000") -> str:
+              cache_control: str = "max-age=31536000",
+              content_disposition: Optional[str] = None) -> str:
     s3 = _s3_client()
-    s3.upload_fileobj(data, AWS_S3_BUCKET, key,
-                      ExtraArgs={"ContentType": content_type, "CacheControl": cache_control})
+    extra = {"ContentType": content_type, "CacheControl": cache_control}
+    # Force-download header used by /api/upload/file to neutralize HTML/SVG
+    # that sneaks past the allowlist (defense-in-depth against stored XSS).
+    if content_disposition:
+        extra["ContentDisposition"] = content_disposition
+    s3.upload_fileobj(data, AWS_S3_BUCKET, key, ExtraArgs=extra)
     if AWS_CLOUDFRONT_URL:
         return f"{AWS_CLOUDFRONT_URL.rstrip('/')}/{key}"
     return f"https://{AWS_S3_BUCKET}.s3.{AWS_S3_REGION}.amazonaws.com/{key}"
@@ -603,6 +630,10 @@ def run_migrations():
         print(f"[migration] product_categories failed: {e}")
 
     # Vertical-strategy fields: type, archive, pause.
+    # Allowed product_type values: physical | digital | service. 'event' was
+    # part of an earlier prototype that got descoped — see the cleanup migration
+    # further down which converts orphan 'event' rows back to 'physical' and
+    # tightens the CHECK constraint.
     try:
         with db_cursor() as (conn, cur):
             cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS product_type VARCHAR(16) NOT NULL DEFAULT 'physical'")
@@ -613,7 +644,7 @@ def run_migrations():
                 BEGIN
                   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='products_product_type_check') THEN
                     ALTER TABLE products ADD CONSTRAINT products_product_type_check
-                      CHECK (product_type IN ('physical','digital','service','event'));
+                      CHECK (product_type IN ('physical','digital','service'));
                   END IF;
                 END $do$;
             """)
@@ -621,6 +652,36 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] product_type/archive/pause failed: {e}")
+
+    # Cleanup migration: tighten product_type to drop 'event' on existing
+    # deployments. Steps: (1) flip any 'event' rows to 'physical' so the new
+    # CHECK doesn't reject them, (2) drop the old constraint, (3) add a fresh
+    # one without 'event'. Idempotent — second run is a no-op since there
+    # won't be any 'event' rows and the new constraint already excludes it.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE products SET product_type='physical' WHERE product_type='event'")
+            cur.execute("""
+                DO $do$
+                BEGIN
+                  -- Recreate the CHECK constraint without 'event' if the old definition is still present.
+                  IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname='products_product_type_check'
+                      AND pg_get_constraintdef(oid) LIKE '%event%'
+                  ) THEN
+                    ALTER TABLE products DROP CONSTRAINT products_product_type_check;
+                    ALTER TABLE products ADD CONSTRAINT products_product_type_check
+                      CHECK (product_type IN ('physical','digital','service'));
+                  END IF;
+                END $do$;
+            """)
+            # access_code column was used to back the event-ticket QR codes; no
+            # longer referenced anywhere now that the Events vertical is gone.
+            cur.execute("ALTER TABLE IF EXISTS order_items DROP COLUMN IF EXISTS access_code")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] drop event product_type failed: {e}")
 
     # Phase 1: SaaS-grade physical product fields (catalog ID, shipping flags, inventory, B2B, OG).
     try:
@@ -812,23 +873,20 @@ def run_migrations():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_review_votes_review ON product_review_votes(review_id)")
-            # Q&A — distinct from reviews, no rating.
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS product_questions (
-                    id           SERIAL PRIMARY KEY,
-                    project_id   INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
-                    product_id   INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-                    user_id      INTEGER NOT NULL,
-                    question     TEXT NOT NULL,
-                    answer       TEXT,
-                    answered_at  TIMESTAMPTZ,
-                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                )
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_questions_product ON product_questions(product_id)")
             conn.commit()
     except Exception as e:
         print(f"[migration] reviews enhancements failed: {e}")
+
+    # Cleanup: drop the deprecated product_questions table. Q&A as a per-product
+    # feature was removed in favour of the Chat with Customers feature — having
+    # two parallel customer-question channels was confusing. Idempotent: if the
+    # table doesn't exist (fresh install), this is a no-op.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("DROP TABLE IF EXISTS product_questions CASCADE")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] drop product_questions failed: {e}")
 
     # Phase 5: Multi-warehouse infrastructure (default WH per project, product_stock per-SKU overrides).
     try:
@@ -1810,6 +1868,72 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] order_returns provider refund columns failed: {e}")
 
+    # ── Events vertical: REMOVED (post-MVP scope) ──
+    # The Events vertical (venues, showtimes, scanner, etc.) was prototyped
+    # then descoped. Drop the related tables + columns if they exist so the
+    # schema stays clean. `IF EXISTS` makes this a no-op on fresh installs
+    # where the tables were never created. CASCADE drops the FK from
+    # event_seat_sales → order_items via the parent table.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE IF EXISTS order_items DROP COLUMN IF EXISTS event_showtime_id")
+            for tbl in ("ticket_scans", "event_seat_holds", "event_seat_sales",
+                        "event_staff", "event_extras", "event_showtimes",
+                        "venue_seats", "venue_zones", "venues"):
+                cur.execute(f"DROP TABLE IF EXISTS {tbl} CASCADE")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] events vertical drop failed: {e}")
+
+    # ── Performance indexes ──────────────────────────────────────────
+    # Added 2026-05 after audit. Each one targets a hot query path; comments
+    # describe the WHERE/JOIN that hits the column. All `IF NOT EXISTS`, so
+    # this migration is idempotent and safe to keep in the startup path.
+    try:
+        with db_cursor() as (conn, cur):
+            # require_team_member_or_owner() runs on EVERY authenticated CRM
+            # request that touches a project_id — checking membership without
+            # this composite index causes a seq scan on a growing table.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_team_members_project_user "
+                "ON crm_team_members(project_id, crm_user_id)"
+            )
+            # Org → project listings (Dashboard, Header switcher) filter on org_id.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_crm_projects_org "
+                "ON crm_projects(org_id) WHERE org_id IS NOT NULL"
+            )
+            # Orders list page sorts DESC on created_at; without this it's a
+            # full scan + sort whenever a project has > a few thousand orders.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_order_history_project_created "
+                "ON order_history(project_id, created_at DESC)"
+            )
+            # Every order-detail open + order list JOIN hits this — without the
+            # index psql does a nested loop with a per-row seq scan.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_order_items_order "
+                "ON order_items(order_id)"
+            )
+            # Cart load: SELECT … FROM cart_items WHERE cart_id=%s
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cart_items_cart "
+                "ON cart_items(cart_id)"
+            )
+            # Favorites page on storefront and "is favourited?" checks.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_favorites_user_project_product "
+                "ON favorites(user_id, project_id, product_id)"
+            )
+            # Reviews list filtered by (product_id, project_id) on every PDP.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_product_reviews_product_project "
+                "ON product_reviews(product_id, project_id)"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] perf indexes failed: {e}")
+
 # ── DB POOL ──────────────────────────────────────────────
 
 _pool = ThreadedConnectionPool(1, 10, **DB_CONFIG)
@@ -2160,7 +2284,7 @@ class CreateProductRequest(BaseModel):
     seo_title: Optional[str] = None
     seo_description: Optional[str] = None
     seo_keywords: Optional[str] = None
-    product_type: Optional[str] = "physical"  # physical | digital | service | event
+    product_type: Optional[str] = "physical"  # physical | digital | service
     sku: Optional[str] = None             # optional manual override; blank = auto-generate from org settings
 
 class UpdateProductRequest(BaseModel):
@@ -5103,7 +5227,7 @@ def list_products(project_id: int = Query(...),
             where.append("p.category_id=%s")
         params.append(category_id)
     if product_type:
-        if product_type not in ("physical", "digital", "service", "event"):
+        if product_type not in ("physical", "digital", "service"):
             raise HTTPException(400, "Invalid product_type")
         where.append("p.product_type=%s")
         params.append(product_type)
@@ -5163,7 +5287,7 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
                       (request.category_id, project_id)):
             raise HTTPException(400, "Category does not belong to this project")
     ptype = (request.product_type or "physical").strip()
-    if ptype not in ("physical", "digital", "service", "event"):
+    if ptype not in ("physical", "digital", "service"):
         raise HTTPException(400, "Invalid product_type")
     sku_explicit = sanitize((request.sku or '').strip())[:80]
     with db_cursor() as (conn, cur):
@@ -5417,7 +5541,7 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
                 raise HTTPException(400, "Category does not belong to this project")
         fields.append("category_id=%s"); vals.append(request.category_id)
     if request.product_type is not None:
-        if request.product_type not in ("physical", "digital", "service", "event"):
+        if request.product_type not in ("physical", "digital", "service"):
             raise HTTPException(400, "Invalid product_type")
         fields.append("product_type=%s"); vals.append(request.product_type)
     if request.is_archived is not None:
@@ -6584,7 +6708,7 @@ def import_products_csv(project_id: int, request: CsvImportRequest,
                     counters["errors"].append({"row": i + 1, "error": "title required"}); continue
 
                 ptype = (row.product_type or "physical").strip()
-                if ptype not in ("physical", "digital", "service", "event"):
+                if ptype not in ("physical", "digital", "service"):
                     ptype = "physical"
 
                 # Resolve category by name (case-insensitive); auto-create if missing.
@@ -9126,47 +9250,6 @@ def update_project_batch_settings(project_id: int, req: ProjectBatchSettingsRequ
     return {"ok": True}
 
 
-# ── EVENT TICKETS (CRM-side) ─────────────────────────────
-# Lists issued tickets per project. Source = order_items where product.product_type='event'. Used by /project/:apiKey/tickets.
-
-@app.get("/api/projects/{project_id}/tickets/issued")
-def list_issued_tickets(project_id: int, search: Optional[str] = Query(None),
-                        status: Optional[str] = Query(None),
-                        cursor: Optional[str] = Query(None),
-                        limit:  Optional[int] = Query(None),
-                        user: dict = Depends(get_current_user)):
-    """List event tickets sold through this project — joined order/customer info + access code. Cursor pagination."""
-    require_team_member_or_owner(user, project_id)
-    want_pagination, offset, page_size = _pagination_params(cursor, limit)
-    where = ["p.project_id = %s", "p.product_type = 'event'"]
-    params: list = [project_id]
-    if status:
-        where.append("oh.status = %s"); params.append(status)
-    if search:
-        where.append("(oh.recipient_name ILIKE %s OR oi.access_code ILIKE %s OR p.title ILIKE %s)")
-        s = f"%{search.strip()}%"
-        params += [s, s, s]
-    sql = (
-        "SELECT oi.id AS item_id, oi.quantity, oi.access_code, oi.price,"
-        "       oh.id AS order_id, oh.status, oh.recipient_name, oh.phone, oh.created_at,"
-        "       p.id AS product_id, p.title,"
-        "       pv.variation_name"
-        "  FROM order_items oi"
-        "  JOIN order_history oh ON oi.order_id = oh.id"
-        "  JOIN products p ON oi.product_id = p.id"
-        "  LEFT JOIN product_configurations_l1 pv ON oi.variation_id = pv.id"
-        " WHERE " + " AND ".join(where) +
-        " ORDER BY oh.created_at DESC"
-    )
-    fetch_limit = (page_size + 1) if want_pagination else 500
-    sql += " LIMIT %s" + (" OFFSET %s" if want_pagination else "")
-    params.append(fetch_limit)
-    if want_pagination:
-        params.append(offset)
-    rows = db_all(sql, tuple(params))
-    return _wrap_paginated(want_pagination, rows, offset, page_size)
-
-
 # Stock adjust + audit log: manual restock/write-off/damage; updates stock + emits product_stock_log row.
 
 @app.post("/api/products/{product_id}/stock/adjust")
@@ -9337,15 +9420,29 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
 @app.get("/api/products/{product_id}/stock/log")
 def get_stock_log(product_id: int, project_id: int = Query(...), limit: int = Query(100),
                    user: dict = Depends(get_current_user)):
+    """
+    Audit log for one product. Includes joined display names so the frontend
+    doesn't need a separate fetch for warehouse + batch lookups:
+    - `warehouse_name` from warehouses (LEFT JOIN — log row stays valid after WH delete).
+    - `batch_name` from inventory_batches when reference_id resolves to a batch
+      tied to the same project. Non-batch reference_id values (order_id on sale
+      events, transfer log id, etc.) silently produce NULL — that's fine since
+      the column is presentational.
+    """
     require_team_member_or_owner(user, project_id)
     rows = db_all(
         "SELECT sl.id, sl.sku_id, sl.warehouse_id, sl.delta, sl.reason,"
         "       sl.reference_id, sl.user_id, sl.note, sl.created_at,"
-        "       u.name AS user_name, c.configuration_name AS sku_name"
+        "       u.name AS user_name, c.configuration_name AS sku_name,"
+        "       w.name AS warehouse_name,"
+        "       b.batch_name AS batch_name"
         "  FROM product_stock_log sl"
         "  JOIN product_configurations_l2 c ON sl.sku_id = c.id"
         "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
         "  LEFT JOIN crm_users u ON sl.user_id = u.id"
+        "  LEFT JOIN warehouses w ON sl.warehouse_id = w.id"
+        "  LEFT JOIN inventory_batches b ON sl.reference_id = b.id"
+        "    AND b.project_id = sl.project_id"
         " WHERE v.product_id=%s AND sl.project_id=%s"
         " ORDER BY sl.created_at DESC LIMIT %s",
         (product_id, project_id, max(1, min(int(limit), 500)))
@@ -9872,50 +9969,6 @@ def list_restock_subs(product_id: int, project_id: int = Query(...),
     return rows
 
 
-# ─── Q&A management ─────────────────────────────────────────────────
-# Customers post questions via External API; merchant answers them via CRM.
-
-@app.get("/api/products/{product_id}/questions")
-def list_questions(product_id: int, project_id: int = Query(...),
-                    user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
-    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
-        raise HTTPException(404, "Product not found")
-    rows = db_all(
-        "SELECT id, user_id, question, answer, answered_at, created_at"
-        " FROM product_questions WHERE product_id=%s"
-        " ORDER BY created_at DESC LIMIT 200",
-        (product_id,)
-    )
-    for r in rows:
-        r["created_at"]  = r["created_at"].isoformat() if r["created_at"] else None
-        r["answered_at"] = r["answered_at"].isoformat() if r["answered_at"] else None
-    return rows
-
-
-class AnswerQuestionRequest(BaseModel):
-    answer: str
-
-@app.put("/api/products/{product_id}/questions/{qid}/answer")
-def answer_question(product_id: int, qid: int, req: AnswerQuestionRequest,
-                     project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
-    row = db_one(
-        "SELECT id FROM product_questions WHERE id=%s AND product_id=%s AND project_id=%s",
-        (qid, product_id, project_id)
-    )
-    if not row: raise HTTPException(404, "Question not found")
-    answer = sanitize(req.answer.strip())[:5000]
-    if not answer: raise HTTPException(400, "Answer cannot be empty")
-    with db_cursor() as (conn, cur):
-        cur.execute(
-            "UPDATE product_questions SET answer=%s, answered_at=NOW() WHERE id=%s",
-            (answer, qid)
-        )
-        conn.commit()
-    return {"ok": True}
-
-
 # ─── Review merchant reply ──────────────────────────────────────────
 
 class ReviewReplyRequest(BaseModel):
@@ -10098,6 +10151,34 @@ def add_media_url(product_id: int, var_id: int, req: AddMediaUrlRequest,
     return {"ok": True, "url": url}
 
 
+# File-upload allowlist. Anything else (.html, .svg, .js, .htm, executables)
+# could be loaded directly from CRM_BACKEND_URL/uploads/... and execute JS on
+# our own origin — stored XSS / phishing. Only document/audio/video/archive
+# MIMEs are useful here for digital-product downloads + ticket PDFs.
+_UPLOAD_ALLOWED_MIME = {
+    "application/pdf",
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/octet-stream",   # for binary downloads where extension is the truth
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "text/plain",
+    "text/csv",
+    "audio/mpeg", "audio/wav", "audio/ogg",
+    "video/mp4", "video/webm", "video/quicktime",
+    # Images are OK here too — /upload/image is the preferred path but this one accepts them as generic files.
+    "image/png", "image/jpeg", "image/webp", "image/gif",
+}
+_UPLOAD_FORBIDDEN_EXT = {
+    ".html", ".htm", ".xhtml", ".js", ".mjs", ".jsx", ".css", ".svg",
+    ".exe", ".bat", ".sh", ".cmd", ".ps1", ".jar", ".php", ".py",
+}
+
+
 @app.post("/api/upload/file")
 async def upload_file(
     file: UploadFile = File(...),
@@ -10110,13 +10191,32 @@ async def upload_file(
     if len(contents) > 50 * 1024 * 1024:
         raise HTTPException(400, "File too large (max 50MB)")
     safe_name = _re_local.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "file")
+
+    # Type whitelist — reject anything executable in the browser. The MIME
+    # header is client-controlled but combined with the extension allowlist
+    # we get defense-in-depth: even if a user lies about MIME, the .html/.svg
+    # extension is rejected outright.
+    ext = ("." + safe_name.rsplit(".", 1)[-1].lower()) if "." in safe_name else ""
+    if ext in _UPLOAD_FORBIDDEN_EXT:
+        raise HTTPException(400, f"File extension {ext} is not allowed")
+    mime = (file.content_type or "application/octet-stream").lower()
+    if mime not in _UPLOAD_ALLOWED_MIME:
+        raise HTTPException(400, f"MIME type {mime} is not allowed for generic uploads. Use /api/upload/image for images.")
+
     filename = f"{secrets.token_hex(12)}_{safe_name}"
 
     if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
         folder = f"projects/{project_id}/files" if project_id else "files"
         key = f"{folder}/{filename}"
         try:
-            url = s3_upload(io.BytesIO(contents), key, content_type=file.content_type or "application/octet-stream")
+            # `attachment` Content-Disposition forces download instead of inline
+            # render — even if a smuggled HTML/SVG slips past the allowlist it
+            # won't execute on our origin.
+            url = s3_upload(
+                io.BytesIO(contents), key,
+                content_type=mime,
+                content_disposition=f'attachment; filename="{safe_name}"',
+            )
             return {"url": url, "name": file.filename, "size": len(contents)}
         except (BotoCoreError, ClientError) as e:
             raise HTTPException(500, f"S3 upload failed: {e}")
@@ -12903,18 +13003,32 @@ async def delete_chat_message(msg_id: int,
 
 @app.post("/api/chat/webhook/telegram/{project_id}")
 async def telegram_webhook(project_id: int, request: Request):
-    """For production HTTPS deploys (setWebhook). On localhost we use long-poll instead."""
+    """For production HTTPS deploys (setWebhook). On localhost we use long-poll instead.
+
+    Authenticity: every project is expected to set a per-integration secret
+    when calling `setWebhook?secret_token=...`. Telegram echoes that value back
+    on every callback in `X-Telegram-Bot-Api-Secret-Token`. Without this check
+    anyone can POST forged "messages" by guessing `project_id` (sequential int).
+    When the integration's stored config has no `webhook_secret` we fail
+    closed — better to lose webhooks than accept spoofed traffic.
+    """
     try:
         update = await request.json()
     except Exception:
         return {"ok": True}
 
     integ = db_one(
-        "SELECT id FROM crm_chat_integrations WHERE project_id=%s AND channel='telegram' AND is_active=TRUE",
+        "SELECT id, config FROM crm_chat_integrations WHERE project_id=%s AND channel='telegram' AND is_active=TRUE",
         (project_id,)
     )
     if not integ:
         return {"ok": True}
+
+    cfg = integ.get("config") or {}
+    expected_secret = (cfg.get("webhook_secret") or "").strip()
+    provided_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not expected_secret or not hmac.compare_digest(provided_secret, expected_secret):
+        raise HTTPException(401, "Invalid or missing Telegram webhook secret")
 
     msg = update.get("message") or update.get("edited_message")
     if not msg:
@@ -12933,8 +13047,12 @@ async def telegram_webhook(project_id: int, request: Request):
 # Meta webhook (WhatsApp/Instagram/FB) — GET = hub.challenge handshake; POST = entry[].changes[].value.messages[] (WA) or entry[].messaging[] (IG/FB); optional X-Hub-Signature-256 verify.
 
 def _verify_meta_signature(app_secret: str, signature_header: str, body: bytes) -> bool:
+    """Verify Meta's X-Hub-Signature-256. Fail-closed: a missing `app_secret`
+    on the stored integration would otherwise let anyone POST forged WhatsApp /
+    Instagram / FB messages on behalf of an existing project. Force the
+    operator to set the secret at integration-save time."""
     if not app_secret or not signature_header:
-        return True  # signature check disabled
+        return False
     if not signature_header.startswith("sha256="):
         return False
     expected = hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
@@ -13875,6 +13993,46 @@ def _build_discord_message(event: str, data: dict) -> dict:
     }
 
 
+# SSRF guard for outbound webhook delivery. Any URL we POST to is supplied by
+# the merchant who created the integration — without filtering, they could
+# trigger requests to `http://169.254.169.254/...` (AWS instance metadata),
+# `http://127.0.0.1:8001/...` (loopback to our own backends), `http://10.0.0.x`
+# (internal corp network on the same VPC), and the response body is then
+# stored in crm_webhook_deliveries + readable by the merchant — full SSRF
+# read primitive. Reject anything that resolves to a private / loopback /
+# link-local / multicast IP. Public DNS (resolves to public IPv4/IPv6) only.
+_PRIVATE_NET_RE = re.compile(
+    r"^(?:127\.|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|"
+    r"::1$|fc00:|fd00:|fe80:|0\.0\.0\.0)"
+)
+def _url_is_safe_for_outbound(url: str) -> tuple[bool, str]:
+    """Returns (ok, reason). Caller blocks on ok=False with the reason as 400/422."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False, "Malformed URL"
+    if parsed.scheme not in ("http", "https"):
+        return False, "Only http/https URLs are accepted"
+    if IS_PRODUCTION and parsed.scheme != "https":
+        return False, "Production webhooks must use https"
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "URL is missing a hostname"
+    if host in ("localhost", "ip6-localhost", "ip6-loopback"):
+        return False, "Loopback URLs are not allowed"
+    # Resolve to one or more IPs and reject if any are private/internal.
+    try:
+        import socket
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return False, f"Could not resolve hostname '{host}'"
+    for fam, _t, _p, _c, sockaddr in infos:
+        ip = sockaddr[0]
+        if _PRIVATE_NET_RE.match(ip):
+            return False, f"URL resolves to a private/loopback address ({ip})"
+    return True, ""
+
+
 def _post_webhook(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
     """Synchronously POSTs an event payload to a single subscription. Returns
     a delivery dict suitable for INSERT into crm_webhook_deliveries."""
@@ -13904,6 +14062,17 @@ def _post_webhook(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
             "User-Agent":         "Torta-Webhooks/1.0",
         }
 
+    # Re-check the URL right before sending. The integration row might pre-date
+    # this guard, or its hostname's DNS record might have changed to point at a
+    # private IP since it was registered.
+    ok, reason = _url_is_safe_for_outbound(sub["url"])
+    if not ok:
+        return {
+            "subscription_id": sub["id"], "project_id": sub["project_id"],
+            "event": event, "payload": json.dumps(body_obj, default=str),
+            "attempt": attempt, "status": "failed", "status_code": 0,
+            "duration_ms": 0, "response_body": f"[blocked] {reason}",
+        }
     t0  = time.time()
     req = urllib.request.Request(sub["url"], data=ext_body, headers=ext_headers, method="POST")
     out = {
@@ -14034,6 +14203,9 @@ def integrations_create(req: IntegrationCreateRequest,
     url = (req.url or "").strip()
     if not url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
+    ok, reason = _url_is_safe_for_outbound(url)
+    if not ok:
+        raise HTTPException(400, f"Refusing to register webhook URL: {reason}")
     events = req.events or []
     invalid = [e for e in events if e not in ALL_EVENTS]
     if invalid:
@@ -14630,3 +14802,4 @@ def push_notification(user_id: int, project_id: Optional[int], ntype: str,
             pass
     except Exception as e:
         print(f"[notifications] push failed: {e}")
+

@@ -5,7 +5,7 @@ import {
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Cube, ChatCircleText, Code,
   Package, ChatCircleDots, CalendarBlank, Plug,
-  ListBullets, Question, Ticket,
+  ListBullets,
 } from '@phosphor-icons/react';
 
 // ── Nav configs ────────────────────────────────────────────────
@@ -26,7 +26,6 @@ function buildSections(apiKey) {
         { to: `${base}/products`, label: 'Products', Icon: Tag     },
         { to: `${base}/orders`,   label: 'Orders',   Icon: Package },
         { to: `${base}/booking`,  label: 'Bookings', Icon: CalendarBlank },
-        { to: `${base}/tickets`,  label: 'Tickets',  Icon: Ticket },
         { to: `${base}/chat`,     label: 'Chat with Customers', Icon: ChatCircleDots },
       ],
     },
@@ -44,12 +43,11 @@ function buildSections(apiKey) {
 function buildProductItems(productHash) {
   const base = `/product/${productHash}`;
   return [
-    { to: base,                  label: 'Product Overview', Icon: Cube,            exact: true },
-    { to: `${base}/inventory`,   label: 'Inventory',        Icon: ListBullets    },
-    { to: `${base}/reviews`,     label: 'Reviews',          Icon: ChatCircleText },
-    { to: `${base}/qa`,          label: 'Q & A',            Icon: Question       },
-    { to: `${base}/api-preview`, label: 'API Preview',      Icon: Code           },
-    { to: `${base}/settings`,    label: 'Settings',         Icon: GearSix        },
+    { to: base,                    label: 'Product Overview', Icon: Cube,            exact: true },
+    { to: `${base}/edit-history`,  label: 'Edit history',     Icon: ListBullets    },
+    { to: `${base}/reviews`,       label: 'Reviews',          Icon: ChatCircleText },
+    { to: `${base}/api-preview`,   label: 'API Preview',      Icon: Code           },
+    { to: `${base}/settings`,      label: 'Settings',         Icon: GearSix        },
   ];
 }
 

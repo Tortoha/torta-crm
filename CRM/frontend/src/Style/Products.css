@@ -4909,6 +4909,43 @@ textarea.po-set-input,
   grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr 32px;
 }
 
+/* Edit-history audit log — 8 columns, with Note allowed to consume the
+   remaining horizontal space (1.8fr). Older variants used --6 which left no
+   room for a Batch column and truncated Note onto two lines. */
+.po-set-row.po-set-row--audit {
+  grid-template-columns:
+    1.1fr   /* When */
+    0.7fr   /* SKU */
+    0.9fr   /* Warehouse */
+    0.6fr   /* Change */
+    1fr     /* Reason */
+    0.9fr   /* Batch */
+    0.9fr   /* By */
+    1.8fr;  /* Note — widest, wraps gracefully when needed */
+  /* row height grows to fit content if Note wraps to a second line */
+  height: auto;
+  min-height: 52px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.po-eh-note {
+  /* Note text wraps and truncates to 2 lines with a "…" — tooltip on hover
+     surfaces the full text via the parent <span title=…>. Standard `line-clamp`
+     declared alongside the `-webkit-` prefix to silence vendorPrefix linters
+     and stay compatible with future browsers. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+          line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 .po-set-strong {
   font-weight: 500;
 }

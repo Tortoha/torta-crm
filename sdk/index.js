@@ -444,14 +444,6 @@ export function createClient(baseUrl, publishableKey) {
       },
     },
 
-    // ── Q&A ──────────────────────────────────────────────────────────────────
-    qa: {
-      /** Submit a question for a product (visible after merchant answers). */
-      async ask(product_id, question) {
-        return req("POST", "/questions", { product_id, question });
-      },
-    },
-
     // ── Restock waitlist ────────────────────────────────────────────────────
     restock: {
       /**

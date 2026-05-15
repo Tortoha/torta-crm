@@ -34,24 +34,36 @@
   grid-template-columns: 40px 1.4fr 2fr 1.4fr 32px;
 }
 
-/* Round avatar inside prow / pcard image-wrap (instead of square service image) */
+/* Round avatar inside prow / pcard image-wrap (instead of square service image).
+   Uses !important on dimensions because the base .prow-img / .prow-img-wrap
+   rules in Products.css have equal specificity but constrain width:auto, which
+   left the avatar looking elongated. Force the wrap to a square + circle, and
+   the inner img to fill it completely with object-fit:cover. */
 .bk-stf-avatar-wrap {
   border-radius: 50% !important;
   overflow: hidden;
+  aspect-ratio: 1 / 1;
 }
 .prow .bk-stf-avatar-wrap {
-  width: 40px; height: 40px;
+  width: 40px !important;
+  height: 40px !important;
+  max-width: 40px !important;
   background: var(--accent-tint);
 }
 .pcard-img-wrap.bk-stf-avatar-wrap {
-  width: 84px; height: 84px;
+  width: 84px !important;
+  height: 84px !important;
+  max-width: 84px !important;
   margin: 4px 0 4px 4px;
 }
 .bk-stf-avatar {
   border-radius: 50% !important;
-  width: 100%;
-  height: 100%;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
   object-fit: cover;
+  display: block;
 }
 .prow-img-empty.bk-stf-avatar,
 .pcard-img-empty.bk-stf-avatar {

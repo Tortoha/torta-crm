@@ -8,7 +8,6 @@ const PRODUCT_TYPE_OPTIONS = [
   { id: 'physical', name: 'Physical' },
   { id: 'digital',  name: 'Digital'  },
   { id: 'service',  name: 'Service'  },
-  { id: 'event',    name: 'Event'    },
 ];
 
 export default function CreateProductModal({ open, pq, onClose, onCreated }) {

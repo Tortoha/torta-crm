@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Plus, Trash, PencilSimple, DotsThreeOutline, MagnifyingGlass, X, Image,
   List, SquaresFour, ArrowDown, FolderSimple, CaretDown, Archive,
-  ArrowCounterClockwise, Pause, Play, CopySimple, CheckCircle, Barcode, QrCode,
+  ArrowCounterClockwise, Pause, Play, CopySimple, CheckCircle, Barcode,
   UploadSimple, DownloadSimple
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
@@ -134,13 +134,8 @@ function ProdMenu({ btnRef, onEdit, onDelete, onClose, isArchived, isPaused, pro
   // Print options per product type:
   //   physical → single entry: "Print barcode" — scope (product / config / batch
   //              variants) is now picked inside the modal itself.
-  //   event    → single entry: QR per ticket (icon = QrCode, not Barcode)
   //   service/digital → no print entry
   const printEntries = (() => {
-    if (productType === 'event' && onPrintBarcode) {
-      return [{ key: 'print', label: 'Print QR code',
-        icon: <QrCode className="org-card-dropdown-icon" />, onClick: onPrintBarcode }];
-    }
     if (productType === 'physical' && onPrintBarcode) {
       return [{ key: 'print', label: 'Print barcode',
         icon: <Barcode className="org-card-dropdown-icon" />, onClick: onPrintBarcode }];
@@ -764,13 +759,12 @@ export default function Products({ archived = false }) {
   });
 
   // Grouped by product_type for the Active tab. Groups stay in fixed order
-  // (Physical → Digital → Services → Events) so the page reads consistently
+  // (Physical → Digital → Services) so the page reads consistently
   // regardless of how many items are in each. Empty groups are hidden.
   const TYPE_GROUPS = [
     { key: 'physical', label: 'Physical' },
     { key: 'digital',  label: 'Digital'  },
     { key: 'service',  label: 'Services' },
-    { key: 'event',    label: 'Events'   },
   ];
   const grouped = TYPE_GROUPS.map(g => ({
     ...g,
@@ -782,18 +776,13 @@ export default function Products({ archived = false }) {
   const buildCtxItems = (p) => {
     const ptype = p.product_type || 'physical';
     // Print options per type:
-    //   physical → two rows: regular barcode (product-level) + QR per L2 configuration
-    //   event    → one row: QR code per ticket (icon = QrCode)
+    //   physical → regular barcode (product-level)
     //   service/digital → nothing (no physical sticker)
     const printItems = [];
     if (ptype === 'physical') {
       printItems.push({ label: 'Print barcode',
         icon: <Barcode className="org-card-dropdown-icon" />,
         onClick: () => setPrintTarget({ mode: 'product', qrMode: false, productIds: [p.id] }) });
-    } else if (ptype === 'event') {
-      printItems.push({ label: 'Print QR code',
-        icon: <QrCode className="org-card-dropdown-icon" />,
-        onClick: () => setPrintTarget({ mode: 'product', qrMode: true, productIds: [p.id] }) });
     }
     const items = [
       { label: 'Edit',      icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: () => goToProduct(p.id) },
@@ -887,9 +876,9 @@ export default function Products({ archived = false }) {
                     onDelete={() => deleteProduct(p.id)}
                     onDuplicate={() => duplicate(p.id)}
                     onPrintBarcode={
-                      (p.product_type || 'physical') === 'physical' ? () => setPrintTarget({ mode: 'product', qrMode: false, productIds: [p.id] }) :
-                      (p.product_type === 'event')                  ? () => setPrintTarget({ mode: 'product', qrMode: true,  productIds: [p.id] }) :
-                      null
+                      (p.product_type || 'physical') === 'physical'
+                        ? () => setPrintTarget({ mode: 'product', qrMode: false, productIds: [p.id] })
+                        : null
                     }
                     onArchive={() => archive(p.id)}
                     onUnarchive={() => unarchive(p.id)}
@@ -920,9 +909,9 @@ export default function Products({ archived = false }) {
                       onDelete={() => deleteProduct(p.id)}
                       onDuplicate={() => duplicate(p.id)}
                       onPrintBarcode={
-                      (p.product_type || 'physical') === 'physical' ? () => setPrintTarget({ mode: 'product', qrMode: false, productIds: [p.id] }) :
-                      (p.product_type === 'event')                  ? () => setPrintTarget({ mode: 'product', qrMode: true,  productIds: [p.id] }) :
-                      null
+                      (p.product_type || 'physical') === 'physical'
+                        ? () => setPrintTarget({ mode: 'product', qrMode: false, productIds: [p.id] })
+                        : null
                     }
                       onArchive={() => archive(p.id)}
                       onUnarchive={() => unarchive(p.id)}

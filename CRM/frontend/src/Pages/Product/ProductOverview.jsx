@@ -238,11 +238,6 @@ export default function ProductOverview() {
           registerUndo={registerUndo} showToast={showToast} />
       )}
 
-      {/* Event details — datetime + venue. Stored as reserved Custom Fields. */}
-      {product.product_type === 'event' && (
-        <EventDetailsBlock product={product} productId={productId} pq={pq}
-          setProduct={setProduct} showToast={showToast} />
-      )}
 
       {/* Digital files — primary block for type=digital. */}
       {product.product_type === 'digital' && (
@@ -387,7 +382,6 @@ const PRODUCT_TYPE_OPTIONS = [
   { value: 'physical', label: 'Physical' },
   { value: 'digital',  label: 'Digital'  },
   { value: 'service',  label: 'Service'  },
-  { value: 'event',    label: 'Event'    },
 ];
 
 function GeneralBlock({ product, pq, setProduct, setProductContext, productHash, showToast, registerUndo }) {
@@ -1449,97 +1443,6 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
           </div>
         </div>
       )}
-    </section>
-  );
-}
-
-// ─── Event details (type=event) ──────────────────────────────────
-// Stores values in product_custom_fields under reserved keys so they're
-// part of the same data layer as everything else; the dedicated UI just
-// surfaces them as first-class form fields with a date-picker etc.
-const EVENT_RESERVED_KEYS = new Set(['event_start_at', 'event_end_at', 'venue', 'venue_address']);
-
-function EventDetailsBlock({ product, productId, pq, setProduct, showToast }) {
-  const fields = product.custom_fields || [];
-  const findVal = (key) => (fields.find(f => f.field_key === key && !f.is_placeholder)?.field_value) || '';
-
-  const [start, setStart] = useState(() => findVal('event_start_at'));
-  const [end,   setEnd]   = useState(() => findVal('event_end_at'));
-  const [venue,   setVenue]   = useState(() => findVal('venue'));
-  const [address, setAddress] = useState(() => findVal('venue_address'));
-  const skip = useRef(true);
-
-  // Re-sync when the product reloads (Undo, etc.).
-  useEffect(() => {
-    skip.current = true;
-    setStart(findVal('event_start_at'));
-    setEnd(findVal('event_end_at'));
-    setVenue(findVal('venue'));
-    setAddress(findVal('venue_address'));
-  }, [product.id, JSON.stringify(fields)]); // eslint-disable-line
-
-  const upsert = useCallback(async (key, value, fieldType) => {
-    const res = await fetch(`${API_BASE}/api/products/${productId}/custom-fields${pq}`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ field_key: key, field_value: value, field_type: fieldType, is_global: false }),
-    });
-    if (!res.ok) { showToast?.('Save failed'); return false; }
-    setProduct(p => {
-      const next = [...(p.custom_fields || [])];
-      const idx = next.findIndex(f => f.field_key === key && !f.is_placeholder);
-      const row = { field_key: key, field_value: value, field_type: fieldType, is_global: false, is_placeholder: false };
-      if (idx >= 0) next[idx] = { ...next[idx], ...row };
-      else next.push(row);
-      return { ...p, custom_fields: next };
-    });
-    return true;
-  }, [productId, pq, setProduct, showToast]);
-
-  // Debounced save per field.
-  useEffect(() => { if (skip.current) return;
-    const t = setTimeout(() => upsert('event_start_at', start, 'datetime'), 500);
-    return () => clearTimeout(t);
-  }, [start]); // eslint-disable-line
-  useEffect(() => { if (skip.current) return;
-    const t = setTimeout(() => upsert('event_end_at', end, 'datetime'), 500);
-    return () => clearTimeout(t);
-  }, [end]); // eslint-disable-line
-  useEffect(() => { if (skip.current) return;
-    const t = setTimeout(() => upsert('venue', venue, 'string'), 500);
-    return () => clearTimeout(t);
-  }, [venue]); // eslint-disable-line
-  useEffect(() => { if (skip.current) return;
-    const t = setTimeout(() => upsert('venue_address', address, 'string'), 500);
-    return () => clearTimeout(t);
-  }, [address]); // eslint-disable-line
-  useEffect(() => { skip.current = false; }, []);
-
-  return (
-    <section className="po-block">
-      <h2 className="po-block-title">Event details</h2>
-      <p className="po-block-hint">
-        When and where the event happens. Used by the storefront to render the event header
-        and by the QR ticket sent in the order confirmation email.
-      </p>
-      <div className="po-form po-svc-grid">
-        <Field label="Start" required={!start.trim()}>
-          <input className="crm-input po-input" type="datetime-local" value={start}
-            onChange={e => setStart(e.target.value)} />
-        </Field>
-        <Field label="End">
-          <input className="crm-input po-input" type="datetime-local" value={end}
-            onChange={e => setEnd(e.target.value)} />
-        </Field>
-        <Field label="Venue">
-          <input className="crm-input po-input" value={venue} maxLength={200}
-            onChange={e => setVenue(e.target.value)} placeholder="Almaty Arena" />
-        </Field>
-        <Field label="Address">
-          <input className="crm-input po-input" value={address} maxLength={300}
-            onChange={e => setAddress(e.target.value)} placeholder="Khusainova 1" />
-        </Field>
-      </div>
     </section>
   );
 }

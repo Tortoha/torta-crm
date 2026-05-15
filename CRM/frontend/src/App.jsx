@@ -24,7 +24,6 @@ const OrgPayments   = lazy(() => import('./Pages/Organization/OrgPayments.jsx'))
 // Project
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Project/Revenue.jsx'));
-const Tickets       = lazy(() => import('./Pages/Project/Tickets.jsx'));
 const Products      = lazy(() => import('./Pages/Project/Products/Products.jsx'));
 const ProductsList  = lazy(() => import('./Pages/Project/Products/ProductsList.jsx'));
 const Categories    = lazy(() => import('./Pages/Project/Products/Categories.jsx'));
@@ -39,8 +38,7 @@ const ProductOverview   = lazy(() => import('./Pages/Product/ProductOverview.jsx
 const ProductReviews    = lazy(() => import('./Pages/Product/ProductReviews.jsx'));
 const ProductApiPreview = lazy(() => import('./Pages/Product/ProductApiPreview.jsx'));
 const ProductSettings   = lazy(() => import('./Pages/Product/ProductSettings.jsx'));
-const ProductInventory  = lazy(() => import('./Pages/Product/ProductInventory.jsx'));
-const ProductQA         = lazy(() => import('./Pages/Product/ProductQA.jsx'));
+const ProductEditHistory = lazy(() => import('./Pages/Product/ProductEditHistory.jsx'));
 // Project-level Products tabs (pricing, warehouses, inventory, settings)
 const PromoCodes        = lazy(() => import('./Pages/Project/Products/PromoCodes.jsx'));
 const Discounts         = lazy(() => import('./Pages/Project/Products/Discounts.jsx'));
@@ -97,7 +95,6 @@ function App() {
               <Route path="settings"      element={<ProductsSettings />} />
             </Route>
             <Route path="revenue"    element={<Revenue />} />
-            <Route path="tickets"    element={<Tickets />} />
             <Route path="authentication" element={<Authentication />} />
             <Route path="email"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />
@@ -117,9 +114,10 @@ function App() {
           <Route path="/product/:productHash" element={<ProductLayout />}>
             <Route index                element={<ProductOverview />} />
             <Route path="settings"      element={<ProductSettings />} />
-            <Route path="inventory"     element={<ProductInventory />} />
+            <Route path="edit-history"  element={<ProductEditHistory />} />
+            <Route path="inventory"     element={<Navigate to="../edit-history" relative="path" replace />} />
+            <Route path="qa"            element={<Navigate to=".." relative="path" replace />} />
             <Route path="reviews"       element={<ProductReviews />} />
-            <Route path="qa"            element={<ProductQA />} />
             <Route path="api-preview"   element={<ProductApiPreview />} />
           </Route>
         </Routes>

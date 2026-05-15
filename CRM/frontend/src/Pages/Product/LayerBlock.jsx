@@ -202,9 +202,9 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
   return (
     <section className="po-block">
       <div className="po-block-head">
-        <h2 className="po-block-title">{productType === 'event' ? 'Ticket types' : 'Configuration Layer 1'}</h2>
+        <h2 className="po-block-title">Configuration Layer 1</h2>
         <button className="po-add-pill" onClick={addItem} type="button">
-          <Plus weight="bold" /> {productType === 'event' ? 'Add ticket type' : 'Add variation'}
+          <Plus weight="bold" /> Add variation
         </button>
       </div>
 

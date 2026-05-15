@@ -46,7 +46,26 @@ REFRESH_TOKEN_DAYS    = int(os.getenv("REFRESH_TOKEN_DAYS",   "30"))
 JWT_HOURS             = ACCESS_TOKEN_MINUTES / 60   # legacy alias
 MAGAZ_BACKEND_URL     = os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
 CRM_BACKEND_URL       = os.getenv("CRM_BACKEND_URL",   "http://localhost:8001")
-INTERNAL_API_KEY      = os.getenv("INTERNAL_API_KEY",  "torta-internal-dev-key")
+INTERNAL_API_KEY      = os.getenv("INTERNAL_API_KEY",  "")
+
+# Production-only fail-closed (same as CRM backend — keep in sync). In dev,
+# fall back to a stable placeholder + log a warning. The catastrophic JWT-
+# forgery path requires ENVIRONMENT=production to be in effect.
+_IS_PROD = os.getenv("ENVIRONMENT", "development").lower() == "production"
+if _IS_PROD:
+    assert SECRET_KEY and len(SECRET_KEY) >= 32, \
+        "SECRET_KEY env var is required in production and must be at least 32 chars long (used to sign auth JWTs)"
+    assert INTERNAL_API_KEY and len(INTERNAL_API_KEY) >= 24, \
+        "INTERNAL_API_KEY env var is required in production and must be at least 24 chars long (gates internal cron + webhook endpoints)"
+else:
+    # Must match the placeholder in CRM/backend/main.py — both backends sign
+    # tokens with the same secret so they can validate each other's JWTs.
+    if not SECRET_KEY:
+        SECRET_KEY = "dev-only-do-not-use-in-prod-32chars-padding-xxxxxxxxxxxxxxxx"
+        print("[security] WARNING: SECRET_KEY env not set — using dev-only placeholder. DO NOT deploy to prod without setting it.")
+    if not INTERNAL_API_KEY:
+        INTERNAL_API_KEY = "dev-only-internal-key-padding-xxxx"
+        print("[security] WARNING: INTERNAL_API_KEY env not set — using dev-only placeholder. DO NOT deploy to prod without setting it.")
 SES_API_URL           = os.getenv("SES_API_URL",       "https://ses.tortacrm.com")
 SES_INTERNAL_KEY      = os.getenv("SES_INTERNAL_KEY",  "")
 EMAIL_FROM            = os.getenv("EMAIL_FROM",        "support@tortacrm.com")
@@ -763,7 +782,7 @@ def _assemble_product_payload(
         "title": product["title"],
         "subtitle":    product.get("subtitle")    or "",
         "description": product.get("description") or "",
-        "product_type": product.get("product_type") or "physical",   # physical | digital | service | event
+        "product_type": product.get("product_type") or "physical",   # physical | digital | service
         "category_id":   product.get("category_id"),
         "category_name": product.get("category_name"),
         "category_slug": product.get("category_slug"),
@@ -1101,7 +1120,7 @@ class ProductPageResponse(BaseModel):
     hash: Optional[str] = None          # legacy alias, same value as product_hash
     subtitle: Optional[str] = ""        # short tagline shown under title
     description: Optional[str] = ""     # long body text
-    product_type: str = "physical"      # physical | digital | service | event
+    product_type: str = "physical"      # physical | digital | service
     category_id: Optional[int]   = None
     category_name: Optional[str] = None
     category_slug: Optional[str] = None
@@ -3242,33 +3261,6 @@ def unvote_review(review_id: int, request: Request,
         )
         conn.commit()
     return {"success": True}
-
-
-# ── Q&A ─────────────────────────────────────────────────────
-
-class AskQuestion(BaseModel):
-    product_id: int
-    question: str
-
-@app.post("/{api_key}/questions")
-def post_question(data: AskQuestion, request: Request,
-                   api_key_record: dict = Depends(resolve_api_key)):
-    project_id = api_key_record["id"]
-    user_id    = get_current_user_id(request)
-    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s",
-                  (data.product_id, project_id)):
-        raise HTTPException(403, "Product not in this store")
-    q = sanitize(data.question.strip())[:1000]
-    if not q: raise HTTPException(400, "Question cannot be empty")
-    with db_cursor() as (conn, cursor):
-        cursor.execute(
-            "INSERT INTO product_questions (project_id, product_id, user_id, question)"
-            " VALUES (%s, %s, %s, %s) RETURNING id",
-            (project_id, data.product_id, user_id, q)
-        )
-        new_id = cursor.fetchone()["id"]
-        conn.commit()
-    return {"id": new_id}
 
 
 # ── Restock waitlist ────────────────────────────────────────
@@ -5667,18 +5659,12 @@ def place_order(data: PlaceOrderRequest, request: Request,
         # Позиции заказа — price snapshots the unit price INCLUDING modifier deltas
         # so order history shows the price the customer actually paid per unit.
         for it in items:
-            # Event-type products get a human-readable access code (XXXX-XXXX) saved alongside the order_item — backup if QR doesn't scan. Attached to `it` so the order-email builder can render it.
-            access_code = None
-            if it.get("product_type") == "event":
-                access_code = _generate_access_code(cursor)
-                it["access_code"] = access_code
             cursor.execute(
-                "INSERT INTO order_items (order_id, product_id, variation_id, configuration_id, quantity, price, selected_modifier_item_ids, access_code) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                "INSERT INTO order_items (order_id, product_id, variation_id, configuration_id, quantity, price, selected_modifier_item_ids) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                 (order_id, it["product_id"], it["variation_id"], it["configuration_id"],
                  it["quantity"], round(it["unit_price"], 2),
-                 sorted(it["selected_modifier_item_ids"] or []),
-                 access_code)
+                 sorted(it["selected_modifier_item_ids"] or []))
             )
             it["id"] = cursor.fetchone()["id"]
             # Phase 5b — write through to product_stock at the proximity-matched WH; re-sync l2.stock_quantity aggregate.
@@ -5778,7 +5764,6 @@ def place_order(data: PlaceOrderRequest, request: Request,
         ) if final_shipping else ""
 
         digital_html = _build_digital_html(project_id, items)
-        event_html   = _build_event_html(api_key_record["api_key"], items, order_id)
 
         send_email(
             to=user["email"],
@@ -5790,7 +5775,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
                 "<table style='width:100%;border-collapse:collapse'>" + items_html + shipping_row + "</table>"
                 "<hr style='margin:16px 0'>"
                 "<p><b>Total: $" + f"{float(total):.2f}" + "</b></p>"
-                + digital_html + event_html +
+                + digital_html +
                 "<p>We will notify you when the status changes.</p>"
                 "</div>"
             ),
@@ -5841,177 +5826,6 @@ def _build_digital_html(project_id: int, items: list) -> str:
         "<h3 style='margin:0 0 8px;color:#111'>Your downloads</h3>"
         "<ul style='padding-left:18px;margin:0'>" + "".join(lines) + "</ul>"
     )
-
-
-def _build_event_html(api_key: str, items: list, order_id: int) -> str:
-    """Render 'Your tickets' block — one QR per event item + access code + order number. Backup if QR doesn't scan: support can verify by reading the code aloud."""
-    event_items = [it for it in items if it.get("product_type") == "event"]
-    if not event_items: return ""
-    try:
-        import qrcode, io as _io, base64 as _b64
-    except Exception:
-        return ""
-    parts = [f"<hr style='margin:16px 0'><h3 style='margin:0 0 8px;color:#111'>Your tickets · Order #{order_id}</h3>"]
-    for it in event_items:
-        access_code = (it.get("access_code") or "").strip()
-        for n in range(int(it["quantity"])):
-            token = _sign_ticket(order_id, it["id"], n)
-            url = f"{MAGAZ_BACKEND_URL}/{api_key}/tickets/verify?t={token}"
-            buf = _io.BytesIO()
-            qrcode.make(url).save(buf, format="PNG")
-            b64 = _b64.b64encode(buf.getvalue()).decode("ascii")
-            title = sanitize(it["title"])
-            sub   = sanitize(it["variation_name"] or "")
-            ac_html = (
-                f"<div style='margin-top:8px;font-family:monospace;letter-spacing:2px;font-size:14px;color:#111'>"
-                f"Access code: <b>{sanitize(access_code)}</b></div>"
-            ) if access_code else ""
-            parts.append(
-                "<div style='margin:12px 0;padding:12px;border:1px solid #eee;border-radius:12px;text-align:center'>"
-                f"<div style='font-weight:600;margin-bottom:8px'>{title}</div>"
-                f"<div style='color:#666;font-size:13px;margin-bottom:8px'>{sub} &middot; ticket {n+1} of {it['quantity']}</div>"
-                f"<img src='data:image/png;base64,{b64}' alt='QR' style='width:140px;height:140px' />"
-                f"{ac_html}"
-                "</div>"
-            )
-    return "".join(parts)
-
-
-# Access codes: human-readable 8-char backup for event tickets (alphabet avoids O/0/I/1/L for legibility). Stored on order_items.access_code; emailed alongside the QR.
-_ACCESS_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-
-def _generate_access_code(cursor) -> str:
-    """Pick a unique 8-char code (4-4 grouped). Retries up to 25 times — the alphabet space is ~30^8 ≈ 6.5e11, collisions are vanishingly rare."""
-    for _ in range(25):
-        raw = ''.join(secrets.choice(_ACCESS_CODE_ALPHABET) for _ in range(8))
-        code = f"{raw[:4]}-{raw[4:]}"
-        cursor.execute("SELECT 1 FROM order_items WHERE access_code=%s LIMIT 1", (code,))
-        if not cursor.fetchone():
-            return code
-    return None   # caller falls back to QR-only
-
-
-def _sign_ticket(order_id: int, order_item_id: int, idx: int) -> str:
-    """HMAC-SHA256 signed token: base64url('{order_id}.{item_id}.{idx}.{sig8}')."""
-    import hmac as _hmac, hashlib as _hl, base64 as _b64
-    msg = f"{order_id}.{order_item_id}.{idx}".encode()
-    sig = _hmac.new(SECRET_KEY.encode(), msg, _hl.sha256).hexdigest()[:16]
-    raw = f"{order_id}.{order_item_id}.{idx}.{sig}".encode()
-    return _b64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-@app.get("/{api_key}/tickets/verify")
-def verify_ticket(api_key: str, t: str = "",
-                  api_key_record: dict = Depends(resolve_api_key_public)):
-    """Public endpoint — staff scans QR with phone, browser hits this URL, gets a JSON status."""
-    import hmac as _hmac, hashlib as _hl, base64 as _b64
-    try:
-        pad = "=" * ((4 - len(t) % 4) % 4)
-        raw = _b64.urlsafe_b64decode(t + pad).decode()
-        order_id, item_id, idx, sig = raw.split(".")
-        msg = f"{order_id}.{item_id}.{idx}".encode()
-        expected = _hmac.new(SECRET_KEY.encode(), msg, _hl.sha256).hexdigest()[:16]
-        if not _hmac.compare_digest(sig, expected):
-            return {"ok": False, "error": "invalid_signature"}
-    except Exception:
-        return {"ok": False, "error": "malformed"}
-    project_id = api_key_record["id"]
-    row = db_one(
-        "SELECT oh.status, oh.recipient_name, p.title, pv.variation_name "
-        "FROM order_items oi JOIN order_history oh ON oi.order_id=oh.id "
-        "JOIN products p ON oi.product_id=p.id "
-        "LEFT JOIN product_configurations_l1 pv ON oi.variation_id=pv.id "
-        "WHERE oi.id=%s AND oh.id=%s AND oh.project_id=%s",
-        (int(item_id), int(order_id), project_id)
-    )
-    if not row: return {"ok": False, "error": "not_found"}
-    valid = row["status"] not in ("cancelled", "refunded")
-    return {
-        "ok": valid,
-        "order_id": int(order_id),
-        "ticket_idx": int(idx),
-        "title": row["title"],
-        "variation": row["variation_name"],
-        "recipient": row["recipient_name"],
-        "status": row["status"],
-    }
-
-
-@app.get("/{api_key}/tickets/verify-code")
-def verify_ticket_by_code(api_key: str, code: str = "",
-                          api_key_record: dict = Depends(resolve_api_key_public)):
-    """Same JSON shape as /tickets/verify, but matched by the human-readable access code instead of the QR token. Used at the door if scanner can't read the QR."""
-    project_id = api_key_record["id"]
-    c = (code or "").strip().upper()[:16]
-    if not c:
-        return {"ok": False, "error": "missing_code"}
-    row = db_one(
-        "SELECT oi.id AS item_id, oh.id AS order_id, oh.status, oh.recipient_name,"
-        "       p.title, pv.variation_name"
-        "  FROM order_items oi"
-        "  JOIN order_history oh ON oi.order_id = oh.id"
-        "  JOIN products p ON oi.product_id = p.id"
-        "  LEFT JOIN product_configurations_l1 pv ON oi.variation_id = pv.id"
-        " WHERE oi.access_code = %s AND oh.project_id = %s",
-        (c, project_id)
-    )
-    if not row: return {"ok": False, "error": "not_found"}
-    valid = row["status"] not in ("cancelled", "refunded")
-    return {
-        "ok": valid,
-        "order_id": row["order_id"],
-        "item_id":  row["item_id"],
-        "title":    row["title"],
-        "variation": row["variation_name"],
-        "recipient": row["recipient_name"],
-        "status":   row["status"],
-    }
-
-
-@app.get("/{api_key}/orders/{order_id}/tickets")
-def get_order_tickets(api_key: str, order_id: int, request: Request,
-                      api_key_record: dict = Depends(resolve_api_key)):
-    """Storefront/mobile-app endpoint: returns ticket payloads (QR URL + access code) for displaying on a customer's screen. Customer must own the order."""
-    project_id = api_key_record["id"]
-    token = request.cookies.get("authx_token")
-    if not token:
-        raise HTTPException(401, "Not authenticated")
-    try:
-        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
-    except Exception:
-        raise HTTPException(401, "Invalid or expired token")
-
-    order = db_one(
-        "SELECT id, status, user_id FROM order_history WHERE id=%s AND project_id=%s",
-        (order_id, project_id)
-    )
-    if not order or order["user_id"] != user_id:
-        raise HTTPException(404, "Order not found")
-
-    rows = db_all(
-        "SELECT oi.id AS item_id, oi.quantity, oi.access_code,"
-        "       p.title, p.product_type, pv.variation_name"
-        "  FROM order_items oi"
-        "  JOIN products p ON oi.product_id = p.id"
-        "  LEFT JOIN product_configurations_l1 pv ON oi.variation_id = pv.id"
-        " WHERE oi.order_id = %s",
-        (order_id,)
-    )
-    tickets = []
-    for r in rows:
-        if r.get("product_type") != "event": continue
-        for n in range(int(r["quantity"])):
-            token_s = _sign_ticket(order_id, r["item_id"], n)
-            tickets.append({
-                "item_id":     r["item_id"],
-                "title":       r["title"],
-                "variation":   r["variation_name"],
-                "ticket_idx":  n,
-                "qr_url":      f"{MAGAZ_BACKEND_URL}/{api_key}/tickets/verify?t={token_s}",
-                "verify_token": token_s,
-                "access_code":  r["access_code"],
-            })
-    return {"order_id": order_id, "status": order["status"], "tickets": tickets}
 
 
 @app.get("/{api_key}/orders")
@@ -8605,3 +8419,4 @@ def order_receipt_pdf(order_id: int, request: Request,
     }
     pdf = render_document("receipt", branding["style"], branding, data)
     return _pdf_response(pdf, f"receipt-{order_id}.pdf")
+

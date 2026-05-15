@@ -138,7 +138,7 @@ export default function ProductApiPreview() {
       title: product.title,
       subtitle: product.subtitle || '',
       description: product.description || '',
-      product_type: product.product_type || 'physical',  // physical | digital | service | event
+      product_type: product.product_type || 'physical',  // physical | digital | service
       category_id:   product.category_id ?? null,
       category_name: product.category_name ?? null,
       category_slug: product.category_slug ?? null,
