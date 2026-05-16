@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
-import { client, pickError } from "./api.js"
+import { client } from "./api.js"
 import PasswordInput from "./Elements/PasswordInput";
 import GoogleAuthButton from "./Elements/GoogleAuthButton";
 
@@ -79,7 +79,7 @@ function Regis() {
     setLoading(true);
 
     try {
-      const { ok, data } = await client.auth.sendCode({ name, email, password, type: "register" });
+      const { ok, data, error } = await client.auth.sendCode({ name, email, password, type: "register" });
 
       if (ok) {
         localStorage.setItem("pendingEmail", email);
@@ -91,7 +91,7 @@ function Regis() {
 
         navigate("/registration/verification");
       } else {
-        setGeneralError(pickError(data, "Registration failed"));
+        setGeneralError(error || "Registration failed");
       }
     } catch {
       setGeneralError("Network error");

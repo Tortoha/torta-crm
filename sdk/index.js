@@ -13,6 +13,53 @@
  *   import { createClient } from 'https://cdn.jsdelivr.net/npm/torta-js/+esm';
  */
 
+// Normalises any backend error response into a single plain string. Handles
+// every shape FastAPI / Pydantic / custom endpoints can emit:
+//   • plain string ("Invalid promo code")
+//   • Pydantic-style array `[{type, loc, msg, input}]` → "email: field required; password: too short"
+//   • objects with .detail / .error / .message fields
+//   • anything else — falls back to JSON.stringify or the fallback string
+//
+// Exported so library users CAN pass a raw `data` blob through it themselves
+// (e.g. when reading from cached responses), but in 99% of cases they'll
+// just read the pre-computed `error` field on the response object instead.
+export function pickError(data, fallback = "Something went wrong") {
+  if (!data) return fallback;
+  const d = data.detail ?? data.error ?? data.message ?? data;
+  if (!d) return fallback;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    // Pydantic validation errors are arrays of { type, loc, msg, input }.
+    // Surface as "field: msg; field: msg" — readable inside a toast.
+    const parts = d.map((e) => {
+      if (typeof e === "string") return e;
+      const loc = Array.isArray(e?.loc) ? e.loc.filter((x) => x !== "body").join(".") : "input";
+      return `${loc}: ${e?.msg || "Invalid value"}`;
+    });
+    return parts.join("; ") || fallback;
+  }
+  try { return JSON.stringify(d); } catch { return fallback; }
+}
+
+// Auto-enrichment for tracking calls — pulled from the browser's
+// document / location / navigator on every send. Storefronts running in
+// SSR (Node) get an empty object since `document`/`navigator` aren't
+// defined; trackers still work, just with less data.
+function _autoEnrich() {
+  if (typeof window === 'undefined') return {};
+  const out = {};
+  try { out.referrer = document.referrer || null; } catch (e) { /* CSP-locked */ }
+  try {
+    const p = new URLSearchParams(window.location.search);
+    out.utm_source   = p.get('utm_source')   || null;
+    out.utm_medium   = p.get('utm_medium')   || null;
+    out.utm_campaign = p.get('utm_campaign') || null;
+  } catch (e) { /* no URL access */ }
+  try { out.language     = navigator.language || null; } catch (e) {}
+  try { out.screen_width = window.innerWidth || null; } catch (e) {}
+  return out;
+}
+
 export function createClient(baseUrl, publishableKey) {
   // baseUrl already contains the short public key in the path,
   // e.g. "http://localhost:8000/0c39355b5b6b5ac05bbc"
@@ -119,7 +166,14 @@ export function createClient(baseUrl, publishableKey) {
         data = await res.json();
       }
     } catch { /* ignore */ }
-    return { ok: res.ok, status: res.status, data };
+    // Pre-compute a plain-string `error` field for callers — eliminates the
+    // need for a per-app pickError helper. `null` when the request succeeded.
+    // On non-2xx without JSON body we synthesise a sensible default from
+    // the HTTP status so something always renders in a toast.
+    const error = res.ok
+      ? null
+      : pickError(data, `Request failed (HTTP ${res.status})`);
+    return { ok: res.ok, status: res.status, data, error };
   }
 
   async function req(method, path, body, extraHeaders) {
@@ -506,6 +560,19 @@ export function createClient(baseUrl, publishableKey) {
       async cancelReturn(order_id, return_id) {
         return req("POST", `/orders/${order_id}/returns/${return_id}/cancel`);
       },
+
+      /**
+       * Cancel the order itself (customer-initiated). Allowed while the order
+       * is in 'new' / 'confirmed' / 'shipped'. Reverses stock side-effects:
+       *  - new / confirmed → cancelled  : reservation released
+       *  - shipped         → cancelled  : units restocked, sold_quantity rolled back
+       *  - delivered                    : not cancellable — use requestReturn()
+       *
+       * @param {number} order_id
+       */
+      async cancel(order_id) {
+        return req("POST", `/orders/${order_id}/cancel`);
+      },
     },
 
     // ── Shipping / pickup ────────────────────────────────────────────────────
@@ -528,15 +595,46 @@ export function createClient(baseUrl, publishableKey) {
     },
 
     // ── Track ────────────────────────────────────────────────────────────────
+    //
+    // All track methods are fire-and-forget — failures never propagate to the
+    // page (analytics shouldn't break shopping). When called from the browser
+    // the SDK auto-enriches the payload with referrer / UTM / language /
+    // screen width so the merchant doesn't have to think about it.
     track: {
-      /** Record a site visit (fire-and-forget). */
       visit() {
-        req("POST", "/track/visit").catch(() => {});
+        const payload = _autoEnrich();
+        req("POST", "/track/visit", payload).catch(() => {});
       },
 
-      /** Record a product page view (fire-and-forget). */
       productView(product_id) {
-        req("POST", "/track/product-view", { product_id }).catch(() => {});
+        const payload = { product_id, ..._autoEnrich() };
+        req("POST", "/track/product-view", payload).catch(() => {});
+      },
+
+      /** Log a search query the user typed in the storefront search bar.
+       *  Pass results_count=0 to highlight zero-result queries (catalog gap). */
+      search(query, results_count = 0) {
+        if (!query || !String(query).trim()) return;
+        req("POST", "/track/search", { query: String(query), results_count }).catch(() => {});
+      },
+
+      /** Record a fine-grained cart event. `action` ∈ add | remove |
+       *  update_qty | apply_promo | remove_promo. */
+      cartEvent(action, payload = {}) {
+        req("POST", "/track/cart-event", { action, ...payload }).catch(() => {});
+      },
+
+      /** Record a checkout step. `step` ∈ started | address_filled |
+       *  promo_tried | submitted | failed. Pass fail_reason for `failed`. */
+      checkout(step, payload = {}) {
+        req("POST", "/track/checkout", { step, ...payload }).catch(() => {});
+      },
+
+      /** Fire a custom goal event. The event_name must match an active
+       *  custom-event goal configured in the merchant's CRM, otherwise the
+       *  call is silently ignored. */
+      goal(event_name, value = null, metadata = null) {
+        req("POST", "/track/goal", { event_name, value, metadata }).catch(() => {});
       },
     },
 
@@ -642,7 +740,7 @@ export function createClient(baseUrl, publishableKey) {
        */
       async list(since_id = 0) {
         const web_chat_id = _getWebChatId();
-        if (!web_chat_id) return { ok: true, status: 200, data: { messages: [] } };
+        if (!web_chat_id) return { ok: true, status: 200, data: { messages: [] }, error: null };
         return req("GET",
           `/chat/messages?web_chat_id=${encodeURIComponent(web_chat_id)}&since_id=${since_id}`);
       },

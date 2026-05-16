@@ -21,6 +21,12 @@ const FILTERS = [
   { key: 'oos', label: 'Out of stock' },
 ];
 
+// Low-stock threshold for the toolbar pills + per-SKU filter. A SKU is
+// "low" when 0 < total_quantity ≤ LOW_STOCK_THRESHOLD. Made a constant so
+// it's easy to tune later, or move to a per-project setting if merchants
+// want different defaults. User asked for ≤10 here.
+const LOW_STOCK_THRESHOLD = 10;
+
 const SORT_OPTIONS = [
   { field: 'name',       label: 'Sort by name'  },
   { field: 'stock',      label: 'Sort by stock' },
@@ -141,13 +147,35 @@ function ProductsInventory() {
     });
   };
 
-  // Filter Low/OOS — hydrate every product so we can flatten + match.
-  useEffect(() => {
-    if (filter === 'all') return;
-    const toLoad = products.filter(p => !expanded[p.id]?.hydrated && !expanded[p.id]?.loading);
-    if (toLoad.length === 0) return;
-    Promise.all(toLoad.map(p => hydrateProduct(p.id)));
-  }, [filter, products, expanded, hydrateProduct]);
+  // Aggregate `summary` (per-warehouse rows) into per-SKU totals once.
+  // Used by both the toolbar counters and the Low/OOS filter view, so
+  // they don't depend on the user expanding every product first.
+  const skuTotals = useMemo(() => {
+    // bySku: sku_id → { quantity, sold, sku_code, sku_name,
+    //                   variation_id, variation_name,
+    //                   product_id, product_title }
+    const bySku = new Map();
+    for (const r of summary) {
+      const id = r.sku_id;
+      const prev = bySku.get(id);
+      if (prev) {
+        prev.quantity += (+r.quantity      || 0);
+        prev.sold     += (+r.sold_quantity || 0);
+      } else {
+        bySku.set(id, {
+          quantity:       +r.quantity      || 0,
+          sold:           +r.sold_quantity || 0,
+          sku_code:       r.sku_code || '',
+          sku_name:       r.sku_name || '—',
+          variation_id:   r.variation_id,
+          variation_name: r.variation_name || '—',
+          product_id:     r.product_id,
+          product_title:  r.product_title || '',
+        });
+      }
+    }
+    return bySku;
+  }, [summary]);
 
   const filteredProducts = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -165,60 +193,52 @@ function ProductsInventory() {
     return arr;
   }, [products, search, sort]);
 
-  // For Low/OOS — collect matching leaf SKUs across all hydrated products.
+  // For Low/OOS — render the matching SKUs straight from skuTotals,
+  // no product-hydration needed. The summary endpoint already returns
+  // every (sku, warehouse) pair with quantity.
   const flatMatches = useMemo(() => {
     if (filter === 'all') return null;
+    // Optional search/category filter applied to product_id set so the
+    // toolbar search box also constrains the Low/OOS view.
+    const allowedProductIds = new Set(filteredProducts.map(p => p.id));
     const out = [];
-    for (const p of filteredProducts) {
-      const detail = expanded[p.id]?.data;
-      if (!detail) continue;
-      const lst = detail.low_stock_threshold || 0;
-      for (const v of (detail.variations || [])) {
-        for (const c of (v.configurations || [])) {
-          const stock = c.stock_quantity || 0;
-          if (filter === 'oos' && stock > 0) continue;
-          if (filter === 'low') {
-            if (lst <= 0) continue;
-            if (stock <= 0 || stock > lst) continue;
-          }
-          out.push({
-            product_id:    p.id,
-            product_title: p.title,
-            variation_name: v.variation_name || v.name || '—',
-            configuration_name: c.configuration_name || c.name || '—',
-            sku_id:    c.id,
-            sku_code:  c.sku_code || '',
-            stock,
-            sold:      c.sold_quantity || 0,
-            threshold: lst,
-          });
-        }
-      }
+    for (const [sku_id, info] of skuTotals) {
+      if (!allowedProductIds.has(info.product_id)) continue;
+      const stock = info.quantity;
+      if (filter === 'oos' && stock > 0) continue;
+      if (filter === 'low' && !(stock > 0 && stock <= LOW_STOCK_THRESHOLD)) continue;
+      out.push({
+        product_id:         info.product_id,
+        product_title:      info.product_title,
+        variation_name:     info.variation_name,
+        configuration_name: info.sku_name,
+        sku_id,
+        sku_code:           info.sku_code,
+        stock,
+        sold:               info.sold,
+        threshold:          LOW_STOCK_THRESHOLD,
+      });
     }
+    // Stable order: product title, then SKU code.
+    out.sort((a, b) =>
+      (a.product_title || '').localeCompare(b.product_title || '') ||
+      (a.sku_code || '').localeCompare(b.sku_code || '')
+    );
     return out;
-  }, [filter, filteredProducts, expanded]);
+  }, [filter, filteredProducts, skuTotals]);
 
-  // Live counters for filter pills (require hydration to be exact).
+  // Live counters for filter pills — computed from skuTotals (already
+  // loaded for every SKU at page mount), so they're correct BEFORE the
+  // user expands any product.
   const counters = useMemo(() => {
-    let total = 0, low = 0, oos = 0;
-    for (const p of products) {
-      const detail = expanded[p.id]?.data;
-      if (detail) {
-        const lst = detail.low_stock_threshold || 0;
-        for (const v of (detail.variations || [])) {
-          for (const c of (v.configurations || [])) {
-            total += 1;
-            const s = c.stock_quantity || 0;
-            if (s <= 0) oos += 1;
-            else if (lst > 0 && s <= lst) low += 1;
-          }
-        }
-      } else {
-        total += 0; // unknown until hydrated
-      }
+    let all = skuTotals.size, low = 0, oos = 0;
+    for (const info of skuTotals.values()) {
+      const q = info.quantity;
+      if (q <= 0) oos += 1;
+      else if (q <= LOW_STOCK_THRESHOLD) low += 1;
     }
-    return { all: total, low, oos };
-  }, [products, expanded]);
+    return { all, low, oos };
+  }, [skuTotals]);
 
   return (
     <>

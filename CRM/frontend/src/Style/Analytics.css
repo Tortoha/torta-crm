@@ -1,0 +1,791 @@
+
+
+.an-page {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-bottom: 80px;
+}
+
+.an-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.an-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 24px;
+}
+.an-section-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.an-section-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.an-section-period {
+  width: 180px;
+  flex-shrink: 0;
+}
+
+.an-section-period .cpm-cat-btn {
+  /* Full-width inside .an-section-period (180px) — without this the button
+     shrinks to its content and leaves an awkward gap to the right of the
+     section header. */
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  /* Match Products .cat-filter-btn: white pill, no border / shadow,
+     hover paints with accent-tint. */
+  box-shadow: none;
+  transition: 0.4s ease;
+}
+.an-section-period .cpm-cat-btn:hover,
+.an-section-period .cpm-cat-btn--open {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.an-section-period .cpm-cat-caret {
+  color: var(--muted);
+}
+.an-section-period .cpm-cat-btn--open .cpm-cat-caret,
+.an-section-period .cpm-cat-btn:hover .cpm-cat-caret {
+  color: var(--accent);
+}
+
+.an-section-body { min-height: 1px; }
+
+/* ── Inner tile primitive (replaces the old grey-bg cells) ──────────
+   Every "cell" inside a section now uses .an-tile — white background,
+   rounded corners, soft shadow. The old per-section .an-kpi /
+   .an-mini / .an-cust-cell etc. classes are remapped here to share
+   this look while keeping their layout overrides. */
+.an-tile,
+.an-kpi,
+.an-mini,
+.an-traffic-cell,
+.an-bk-cell,
+.an-cust-cell,
+.an-ret-cell,
+.an-rev-cell,
+.an-search-cell,
+.an-small-series,
+.an-goal-row {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow-card);
+}
+.an-kpi { padding: 12px 14px; }
+.an-empty,
+.an-mini-empty {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+  margin: 6px 0;
+}
+
+/* ── Skeleton (loading placeholder) ────────────────────────────────── */
+.an-skeleton {
+  background: linear-gradient(90deg, rgba(0,0,0,0.04), rgba(0,0,0,0.08), rgba(0,0,0,0.04));
+  background-size: 200% 100%;
+  border-radius: 12px;
+  animation: an-skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes an-skeleton-pulse {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* ── Inline SVG chart canvas — uses width:100%, viewBox handles ratio ─ */
+.an-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ── Section 1 — Overview KPI grid ─────────────────────────────────── */
+.an-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+}
+@media (max-width: 1000px) {
+  .an-kpi-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 600px) {
+  .an-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+.an-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  /* background + radius now come from the shared .an-tile rule */
+  min-width: 0;
+}
+.an-kpi-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.an-kpi-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.an-delta {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.an-delta--up   { color: var(--accent); }
+.an-delta--down { color: #c92a39; }
+
+/* ── Section 2 — Revenue over time toolbar (Day/Week/Month segmented) ─ */
+.an-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.an-segmented {
+  display: inline-flex;
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.an-seg-btn {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.an-seg-btn:hover { color: var(--text); }
+.an-seg-btn--active {
+  background: var(--card);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Section 3 — Horizontal bars (reused by category/staff/reasons) ── */
+.an-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.an-bar-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 100px;
+  align-items: center;
+  gap: 12px;
+}
+.an-bar-label {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.an-bar-track {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.an-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s var(--ease-smooth);
+}
+.an-bar-value {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Section 4 — Sales funnel ──────────────────────────────────────── */
+.an-funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.an-funnel-row {
+  display: grid;
+  /* [label 200px] [count 56px] [track 1fr] [pct 140px] — the count column
+     guarantees the absolute number is always readable, even when the bar
+     is 100% wide (Site visits, in a single-test-user scenario). */
+  grid-template-columns: 200px 56px 1fr 140px;
+  align-items: center;
+  gap: 12px;
+}
+.an-funnel-label {
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.an-funnel-emoji { font-size: 16px; }
+.an-funnel-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.an-funnel-track {
+  height: 32px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 999px;        /* fully rounded ends */
+  overflow: hidden;
+}
+.an-funnel-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s var(--ease-smooth);
+}
+/* Dedicated count column — bold, right-aligned tabular numbers so the
+   values line up vertically across all four steps. */
+.an-funnel-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.an-funnel-pct {
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.an-funnel-drop {
+  color: #c92a39;
+  font-size: 11px;
+}
+
+/* ── Section 5 — Funnel dynamics (3 small charts side-by-side) ─────── */
+.an-multi-chart {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .an-multi-chart { grid-template-columns: 1fr; }
+}
+.an-small-series {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.an-small-series-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.an-small-series-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.an-small-series-chart {
+  width: 100%;
+  height: 90px;
+}
+
+/* ── Section 6 — Heatmap (7 dows × 24 hours) ───────────────────────── */
+.an-heatmap-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.an-heatmap {
+  display: grid;
+  grid-template-columns: 40px repeat(24, 1fr);
+  gap: 3px;
+}
+.an-heatmap-corner { grid-column: 1; }
+.an-heatmap-h-label,
+.an-heatmap-d-label {
+  font-size: 10px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+.an-heatmap-d-label {
+  justify-content: flex-end;
+  padding-right: 6px;
+}
+.an-heatmap-cell {
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  transition: transform 0.12s ease;
+  cursor: default;
+}
+.an-heatmap-cell:hover { transform: scale(1.18); z-index: 2; }
+.an-heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  justify-content: flex-end;
+}
+.an-heatmap-gradient {
+  width: 100px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(0,0,0,0.04), var(--accent));
+}
+
+/* ── Section 7 — Popular products 4 quadrants ──────────────────────── */
+.an-quads {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .an-quads { grid-template-columns: 1fr; }
+}
+.an-mini {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+.an-mini-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 10px;
+  font-weight: 600;
+}
+.an-mini-list {
+  list-style: none;
+  margin: 0; padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.an-mini-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  font-size: 13px;
+}
+.an-mini-row:last-child { border-bottom: none; }
+.an-mini-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.an-mini-vals {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+.an-mini-val {
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.an-mini-secondary {
+  font-size: 11px;
+  color: var(--muted);
+}
+.an-mini-warn { color: #c46a00; flex-shrink: 0; }
+
+/* ── Section 8 — Customers grid (new-vs-ret + top customers + geo) ── */
+.an-cust-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .an-cust-grid { grid-template-columns: 1fr; }
+}
+.an-cust-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+.an-cust-cell--wide {
+  grid-column: 1 / -1;
+}
+.an-cust-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.an-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.an-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.an-legend-dot--new { background: var(--accent); }
+.an-legend-dot--ret { background: var(--accent); opacity: 0.45; }
+
+/* ── Generic data table (Top customers / Top cities / Returns / Promo) ─ */
+.an-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.an-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.an-table td {
+  padding: 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  color: var(--text);
+  vertical-align: middle;
+}
+.an-table tr:last-child td { border-bottom: none; }
+.an-table-name { font-weight: 600; }
+.an-table-sub  { font-size: 11px; color: var(--muted); }
+.an-table-num  { text-align: right; font-variant-numeric: tabular-nums; }
+.an-table-mappin {
+  color: var(--accent);
+  margin-right: 6px;
+  display: inline-block;
+  vertical-align: middle;
+}
+.an-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+/* ── Section 9 — Cohort retention ──────────────────────────────────── */
+.an-cohort-wrap {
+  overflow-x: auto;
+}
+.an-cohort {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 4px;
+  font-size: 12px;
+}
+.an-cohort th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  text-align: left;
+}
+.an-cohort td {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.an-cohort td:first-child { text-align: left; font-weight: 500; color: var(--text); }
+.an-cohort-cell {
+  font-weight: 600;
+  transition: transform 0.12s ease;
+}
+.an-cohort-cell:hover { transform: scale(1.1); }
+
+/* ── Section 10 — Returns grid ─────────────────────────────────────── */
+.an-ret-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .an-ret-grid { grid-template-columns: 1fr; }
+}
+.an-ret-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+.an-ret-cell--wide { grid-column: 1 / -1; }
+.an-ret-stat-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.an-ret-stat-value {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0;
+}
+.an-ret-stat-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── Section 11 — Reviews quality grid ─────────────────────────────── */
+.an-rev-grid {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .an-rev-grid { grid-template-columns: 1fr; }
+}
+.an-rev-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+.an-rev-cell--wide { grid-column: 2 / -1; }
+@media (max-width: 800px) {
+  .an-rev-cell--wide { grid-column: 1 / -1; }
+}
+.an-rev-rating {
+  display: block;
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.an-rev-count {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+.an-rev-bar-row {
+  display: grid;
+  grid-template-columns: 36px 1fr 90px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+.an-rev-bar-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.an-rev-bar-pct {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Section 12 — Bookings grid ────────────────────────────────────── */
+.an-bk-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .an-bk-grid { grid-template-columns: repeat(2, 1fr); }
+}
+.an-bk-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+.an-bk-cell--wide { grid-column: 1 / -1; }
+
+/* ── Section 13 — Inventory health ─────────────────────────────────── */
+.an-inv-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.an-inv-bar { padding: 0; }
+.an-inv-bar-track {
+  display: flex;
+  height: 24px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.an-inv-bar-oos     { background: #c92a39; }
+.an-inv-bar-low     { background: #c46a00; }
+.an-inv-bar-healthy { background: var(--accent); }
+.an-inv-legend {
+  display: flex;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.an-inv-dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.an-inv-dot--oos     { background: #c92a39; }
+.an-inv-dot--low     { background: #c46a00; }
+.an-inv-dot--healthy { background: var(--accent); }
+
+/* ── Section 14 — Promo codes ──────────────────────────────────────── */
+.an-promo-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.an-promo-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .an-promo-summary { grid-template-columns: 1fr; }
+}
+
+/* ── Section 15 — Operations grid ──────────────────────────────────── */
+.an-ops-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .an-ops-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── Section 12.a/b/c — Traffic / Devices / Countries shared grid ──── */
+.an-traffic-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .an-traffic-grid { grid-template-columns: 1fr; }
+}
+.an-traffic-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+.an-traffic-cell--wide { grid-column: 1 / -1; }
+
+/* ── Section 12.d — Search insights ────────────────────────────────── */
+.an-search-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 800px) {
+  .an-search-grid { grid-template-columns: 1fr; }
+}
+.an-search-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+.an-search-cell--wide { grid-column: 1 / -1; }
+
+/* ── Section 12.e — Goals progress widget ──────────────────────────── */
+.an-goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.an-goal-row {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 3px solid transparent;
+}
+.an-goal-row--achieved { border-left-color: var(--accent); }
+.an-goal-row--on_track { border-left-color: rgba(0, 113, 227, 0.55); }
+.an-goal-row--behind   { border-left-color: #c46a00; }
+.an-goal-row--at_risk  { border-left-color: #c92a39; }
+.an-goal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.an-goal-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.an-goal-pct {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.an-goal-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.an-goal-fill--achieved { background: var(--accent); }
+.an-goal-fill--on_track { background: var(--accent); }
+.an-goal-fill--behind   { background: #c46a00; }
+.an-goal-fill--at_risk  { background: #c92a39; }

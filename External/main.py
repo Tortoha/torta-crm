@@ -476,8 +476,249 @@ def try_get_current_user_id(request: Request):
     except: return None
 
 def get_client_ip(request: Request) -> str:
+    # CloudFlare puts the real client IP in `CF-Connecting-IP`, otherwise the
+    # standard `X-Forwarded-For` chain. Falls back to the direct socket.
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip: return cf_ip.strip()
     fwd = request.headers.get("x-forwarded-for")
     return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+
+
+# ── Analytics enrichment helpers ───────────────────────────────────────
+# Pulled out into a separate block so they can be reused across all
+# tracking endpoints (visit, productView, search, cart, checkout, goal).
+
+# Lazy-loaded MaxMind reader. If GEOLITE_DB_PATH env var is set and the
+# file exists we use it; otherwise we only rely on CloudFlare headers.
+_GEOIP_READER = None
+def _geoip_reader():
+    global _GEOIP_READER
+    if _GEOIP_READER is False: return None        # negative cache
+    if _GEOIP_READER:          return _GEOIP_READER
+    import os as _os
+    path = _os.getenv("GEOLITE_DB_PATH", "")
+    if not path or not _os.path.exists(path):
+        _GEOIP_READER = False
+        return None
+    try:
+        import geoip2.database   # type: ignore
+        _GEOIP_READER = geoip2.database.Reader(path)
+        return _GEOIP_READER
+    except Exception:
+        _GEOIP_READER = False
+        return None
+
+
+def _extract_geo(request: Request, ip: str) -> dict:
+    """Returns {country_code, country_name, city} — never raises.
+    Priority: CloudFlare headers > MaxMind GeoLite2 > all-None."""
+    cc = (request.headers.get("cf-ipcountry") or "").upper().strip()
+    cc = cc if len(cc) == 2 and cc.isalpha() else None
+    city = (request.headers.get("cf-ipcity") or "").strip() or None
+    cname = None
+    # Try MaxMind only when CF didn't fill the country in. Keeps the helper
+    # cheap on every request when CF is present (the common production path).
+    if not cc and ip and ip != "unknown":
+        rdr = _geoip_reader()
+        if rdr:
+            try:
+                resp = rdr.country(ip)
+                cc    = (resp.country.iso_code or "").upper() or None
+                cname = resp.country.name or None
+            except Exception:
+                pass
+    return {"country_code": cc, "country_name": cname, "city": city}
+
+
+import re as _re_global
+_UA_BOT_RE     = _re_global.compile(r"bot|crawler|spider|preview", _re_global.I)
+_UA_TABLET_RE  = _re_global.compile(r"ipad|tablet|playbook|silk|(android(?!.*mobile))", _re_global.I)
+_UA_MOBILE_RE  = _re_global.compile(r"mobile|iphone|android|ipod|blackberry|opera mini|iemobile", _re_global.I)
+
+def _parse_ua(ua: str) -> dict:
+    """Returns {device_type, browser, os}. Rough heuristics — accurate enough
+    for "what % of customers are on mobile" widgets without dragging in
+    Wurfl / ua-parser (those are 50MB+ deps)."""
+    if not ua: return {"device_type": "unknown", "browser": None, "os": None}
+    low = ua.lower()
+    if _UA_BOT_RE.search(low):       device = "bot"
+    elif _UA_TABLET_RE.search(low):  device = "tablet"
+    elif _UA_MOBILE_RE.search(low):  device = "mobile"
+    else:                            device = "desktop"
+    # Browser detection — order matters (Edge/Opera identify as Chrome too).
+    if   "edg/" in low or "edge/" in low:  browser = "Edge"
+    elif "opr/" in low or "opera" in low:  browser = "Opera"
+    elif "chrome" in low and "chromium" not in low: browser = "Chrome"
+    elif "firefox" in low:                 browser = "Firefox"
+    elif "safari" in low:                  browser = "Safari"
+    elif "msie " in low or "trident" in low: browser = "IE"
+    else: browser = None
+    if   "windows nt" in low: os = "Windows"
+    elif "mac os x"   in low: os = "macOS"
+    elif "android"    in low: os = "Android"
+    elif "iphone os"  in low or "ipad" in low: os = "iOS"
+    elif "linux"      in low: os = "Linux"
+    else: os = None
+    return {"device_type": device, "browser": browser, "os": os}
+
+
+def _classify_referrer(referrer: str) -> dict:
+    """Bucket referrers into traffic-source categories storefront analytics
+    can pie-chart. Returns {traffic_source, referrer_host}."""
+    if not referrer:
+        return {"traffic_source": "direct", "referrer_host": None}
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(referrer).hostname or "").lower()
+    except Exception:
+        host = ""
+    if not host: return {"traffic_source": "direct", "referrer_host": None}
+    # Strip "www." for normalisation
+    host = host[4:] if host.startswith("www.") else host
+    # Known search engines.
+    if any(s in host for s in ("google.", "bing.", "yandex.", "duckduckgo.", "yahoo.")):
+        return {"traffic_source": "organic", "referrer_host": host}
+    # Known social platforms.
+    if any(s in host for s in ("facebook.", "instagram.", "twitter.", "x.com",
+                               "tiktok.", "vk.com", "linkedin.", "pinterest.",
+                               "youtube.", "reddit.", "t.me", "telegram.")):
+        return {"traffic_source": "social", "referrer_host": host}
+    return {"traffic_source": "referral", "referrer_host": host}
+
+
+# In-memory sliding-window rate limiter for tracking endpoints.
+# Window: 60 seconds. Limit: 20 events per (user_id || IP) per window.
+# Lost on process restart — fine, attacker just has to wait one minute.
+_TRACK_RL = {}   # key: "u:<id>" or "ip:<addr>" → list[float] (timestamps)
+def _rate_limit_track(request: Request, user_id: int | None, max_per_min: int = 20):
+    import time
+    now = time.time()
+    cutoff = now - 60.0
+    if user_id:
+        key = f"u:{user_id}"
+    else:
+        ip = get_client_ip(request)
+        key = f"ip:{ip}"
+    bucket = _TRACK_RL.get(key) or []
+    # Drop entries older than 60s — fast path uses an index search since
+    # the list is append-only ordered.
+    bucket = [t for t in bucket if t > cutoff]
+    if len(bucket) >= max_per_min:
+        raise HTTPException(429, "Too many tracking events — slow down")
+    bucket.append(now)
+    _TRACK_RL[key] = bucket
+    # Garbage-collect periodically: when the dict grows beyond 256 keys,
+    # walk every entry and drop those whose bucket (after expiry trimming)
+    # is empty. The previous version `if not _TRACK_RL[k]` was checked right
+    # after we set the current key to a non-empty bucket — so it never
+    # evicted anything and the dict grew unbounded.
+    if len(_TRACK_RL) > 256:
+        for k in list(_TRACK_RL.keys()):
+            trimmed = [t for t in (_TRACK_RL.get(k) or []) if t > cutoff]
+            if not trimmed:
+                _TRACK_RL.pop(k, None)
+            else:
+                _TRACK_RL[k] = trimmed
+
+
+# ── Goal progress helper ───────────────────────────────────────────────
+# Used by /track/goal to check if a custom-event goal just hit its target.
+# For periodic goals (period != 'all_time') we look at the current cycle
+# (last_period_start → now); for `all_time` it's lifetime.
+# Fires `goal.achieved` webhook + bell notification exactly ONCE per cycle.
+def _check_goal_progress(project_id: int, goal_id: int):
+    try:
+        goal = db_one(
+            "SELECT id, name, goal_type, target_value, period, custom_event_name,"
+            "       last_achieved_at, last_period_start"
+            "  FROM crm_goals WHERE id=%s AND project_id=%s AND is_active=TRUE",
+            (goal_id, project_id)
+        )
+        if not goal: return
+        # Compute current cycle window.
+        period_days = {
+            "1d": 1, "1w": 7, "1mo": 30, "season": 90, "1y": 365,
+        }.get(goal["period"])
+        if goal["period"] == "all_time":
+            cycle_start = None       # NULL window = lifetime
+        elif goal["last_period_start"]:
+            cycle_start = goal["last_period_start"]
+            # Roll over if cycle expired.
+            from datetime import timedelta
+            if cycle_start + timedelta(days=period_days) < _utcnow():
+                cycle_start = _utcnow() - timedelta(days=period_days)
+                with db_cursor() as (conn, cur):
+                    cur.execute(
+                        "UPDATE crm_goals SET last_period_start=%s, last_achieved_at=NULL"
+                        " WHERE id=%s",
+                        (cycle_start, goal_id)
+                    )
+                    conn.commit()
+        else:
+            from datetime import timedelta
+            cycle_start = _utcnow() - timedelta(days=period_days)
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    "UPDATE crm_goals SET last_period_start=%s WHERE id=%s",
+                    (cycle_start, goal_id)
+                )
+                conn.commit()
+
+        # Count progress for custom_event_count goals — others handled by
+        # the CRM scheduled tick.
+        if goal["goal_type"] != "custom_event_count":
+            return
+        sql_window = "AND created_at >= %s" if cycle_start else ""
+        params = [goal_id]
+        if cycle_start: params.append(cycle_start)
+        row = db_one(
+            f"SELECT COUNT(*) AS n FROM crm_goal_events"
+            f" WHERE goal_id=%s {sql_window}",
+            tuple(params)
+        )
+        current = int((row or {}).get("n") or 0)
+        target = float(goal["target_value"] or 0)
+        if current >= target and not goal["last_achieved_at"]:
+            # Achievement! Fire webhook + bell + update last_achieved_at.
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    "UPDATE crm_goals SET last_achieved_at=NOW() WHERE id=%s",
+                    (goal_id,)
+                )
+                conn.commit()
+            dispatch_event(project_id, "goal.achieved", {
+                "goal_id":   goal_id,
+                "name":      goal["name"],
+                "goal_type": goal["goal_type"],
+                "target":    target,
+                "current":   current,
+                "period":    goal["period"],
+            })
+            # Push notification to project owner (best-effort). External API
+            # doesn't have a `push_notification()` helper (that lives in
+            # CRM/backend/main.py). Write directly into `crm_notifications`
+            # if the table exists; CRM's bell UI polls it. Wrapped in try so
+            # a missing table doesn't break the goal-achievement webhook.
+            try:
+                owner = db_one(
+                    "SELECT crm_user_id FROM crm_projects WHERE id=%s",
+                    (project_id,)
+                )
+                if owner:
+                    with db_cursor() as (n_conn, n_cur):
+                        n_cur.execute(
+                            "INSERT INTO crm_notifications"
+                            " (user_id, project_id, type, title, message, link, created_at)"
+                            " VALUES (%s, %s, 'goal', %s, %s, NULL, NOW())",
+                            (owner["crm_user_id"], project_id,
+                             f"🎯 Goal achieved: {goal['name']}",
+                             f"Reached {current} of {int(target)} target.")
+                        )
+                        n_conn.commit()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[goal] _check_goal_progress({project_id},{goal_id}) failed: {e}")
 
 def resolve_api_key(api_key: str, request: Request) -> dict:
     record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = TRUE", (api_key,))
@@ -981,9 +1222,19 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
 
         try:
             response = await call_next(request)
-        except Exception:
-            from starlette.responses import Response as StarResponse
-            response = StarResponse(status_code=500)
+        except Exception as _exc:
+            # Log the traceback so a 500 doesn't disappear into the void
+            # — without this, every unhandled exception inside a route
+            # returned a bare 500 with no body and nothing in the
+            # terminal, making the order bug we just fixed invisible.
+            # Response body stays generic so we don't leak internals.
+            import traceback as _tb
+            _tb.print_exc()
+            print(f"[unhandled] {request.method} {request.url.path}: "
+                  f"{type(_exc).__name__}: {_exc}")
+            from starlette.responses import JSONResponse as _JR
+            response = _JR(status_code=500,
+                           content={"detail": "Internal server error"})
         if allow_origin:
             response.headers["Access-Control-Allow-Origin"]      = allow_origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -1062,6 +1313,46 @@ class ApplyPromoCode(BaseModel):
 
 class TrackProductView(BaseModel):
     product_id: int
+    # Optional enrichment from storefront — SDK pulls these from
+    # document.referrer / location.search / navigator.language / window.innerWidth.
+    referrer:      Optional[str] = None
+    utm_source:    Optional[str] = None
+    utm_medium:    Optional[str] = None
+    utm_campaign:  Optional[str] = None
+    language:      Optional[str] = None
+    screen_width:  Optional[int] = None
+
+class TrackVisitRequest(BaseModel):
+    """Storefront-provided enrichment payload for /track/visit. All fields
+    are optional — backend never fails the call if any are missing."""
+    referrer:      Optional[str] = None
+    utm_source:    Optional[str] = None
+    utm_medium:    Optional[str] = None
+    utm_campaign:  Optional[str] = None
+    language:      Optional[str] = None
+    screen_width:  Optional[int] = None
+
+class TrackSearchRequest(BaseModel):
+    query:         str
+    results_count: int = 0
+
+class TrackCartEventRequest(BaseModel):
+    action:           str               # add | remove | update_qty | apply_promo | remove_promo
+    product_id:       Optional[int] = None
+    variation_id:     Optional[int] = None
+    configuration_id: Optional[int] = None
+    quantity:         Optional[int] = None
+    promo_code:       Optional[str] = None
+
+class TrackCheckoutRequest(BaseModel):
+    step:         str                  # started | address_filled | promo_tried | submitted | failed
+    fail_reason:  Optional[str] = None
+    total_amount: Optional[float] = None
+
+class TrackGoalRequest(BaseModel):
+    event_name:   str                  # must match an active crm_goals.custom_event_name
+    value:        Optional[float] = None
+    metadata:     Optional[dict]  = None
 
 class PlaceOrderRequest(BaseModel):
     recipient_name: str
@@ -5301,7 +5592,12 @@ def _compute_cart_total(cursor, project_id: int, user_id: int,
         )
         p = cursor.fetchone()
         if p and p["is_active"] and subtotal >= float(p["min_order_amount"] or 0):
-            if p["discount_type"] == "percent":
+            # promo_codes.discount_type stores 'percentage' or 'fixed' (see
+            # CRM migration). The old check for 'percent' never matched, so
+            # init-payment used to compute discount=0 for percent codes
+            # while POST /orders applied the discount correctly — totals
+            # disagreed and the payment-amount validation rejected the order.
+            if p["discount_type"] == "percentage":
                 discount = subtotal * float(p["discount_value"] or 0) / 100.0
             else:
                 discount = float(p["discount_value"] or 0)
@@ -5466,10 +5762,17 @@ def place_order(data: PlaceOrderRequest, request: Request,
             raise HTTPException(400, "Cart is empty")
 
         # Stock check: continue_selling_oos = row-level bypass; checkout uses raw stock_quantity.
+        # IMPORTANT: filter by project_id — without it a malicious cart
+        # injection (product_id from another store) would read another
+        # store's continue_selling_oos flag and bypass our stock checks.
         product_flags = {}
         if items:
             ids = list({it["product_id"] for it in items})
-            cursor.execute("SELECT id, continue_selling_oos FROM products WHERE id = ANY(%s)", (ids,))
+            cursor.execute(
+                "SELECT id, continue_selling_oos FROM products"
+                " WHERE id = ANY(%s) AND project_id=%s",
+                (ids, project_id)
+            )
             for r in cursor.fetchall():
                 product_flags[r["id"]] = bool(r.get("continue_selling_oos"))
 
@@ -5478,32 +5781,58 @@ def place_order(data: PlaceOrderRequest, request: Request,
         # check on the last unit and oversell into negative stock. We sort SKU
         # ids ascending to give a deterministic lock order and avoid deadlocks
         # when two carts share some-but-not-all SKUs.
+        #
+        # Availability = SUM(quantity) - SUM(reserved_quantity). Other pending
+        # orders that haven't shipped yet already hold reservations against
+        # this stock, so we must subtract them from the visible total to
+        # avoid promising units that are spoken-for.
+        #
+        # PostgreSQL disallows `FOR UPDATE` together with `GROUP BY` in the
+        # same query (`FeatureNotSupported`), so we lock rows in a CTE and
+        # aggregate over the CTE output.
         sku_ids_sorted = sorted({int(it["configuration_id"]) for it in items})
         cursor.execute(
-            "SELECT sku_id, COALESCE(SUM(quantity), 0) AS total"
-            "  FROM product_stock"
-            " WHERE sku_id = ANY(%s)"
-            " GROUP BY sku_id"
-            " FOR UPDATE",                  # locks every product_stock row for these SKUs
+            "WITH locked AS ("
+            "  SELECT sku_id, quantity, reserved_quantity"
+            "    FROM product_stock"
+            "   WHERE sku_id = ANY(%s)"
+            "   FOR UPDATE"
+            ")"
+            "SELECT sku_id,"
+            "       COALESCE(SUM(quantity), 0)          AS total,"
+            "       COALESCE(SUM(reserved_quantity), 0) AS reserved"
+            "  FROM locked"
+            " GROUP BY sku_id",
             (sku_ids_sorted,)
         )
-        live_stock = {int(r["sku_id"]): int(r["total"] or 0) for r in cursor.fetchall()}
+        live_stock = {
+            int(r["sku_id"]): (int(r["total"] or 0), int(r["reserved"] or 0))
+            for r in cursor.fetchall()
+        }
 
         for it in items:
             sid = int(it["configuration_id"])
             # Use the live locked value, not the cart row's stale stock_quantity
             # (which was a JOIN snapshot before the lock was acquired).
-            available = live_stock.get(sid, 0)
+            total, reserved = live_stock.get(sid, (0, 0))
+            available = total - reserved
             if not product_flags.get(it["product_id"]) and available < it["quantity"]:
                 raise HTTPException(400, f"Not enough stock for {it['title']}")
 
         # Per-line modifier price deltas (carried into order_items unit price snapshot).
+        # Cross-tenant guard: JOIN through modifier_groups → products to ensure
+        # every modifier belongs to a product in THIS project. Without this a
+        # tampered cart could reference a cheap modifier from another store.
         all_mod_ids = {mid for it in items for mid in (it["selected_modifier_item_ids"] or [])}
         mod_delta_by_id = {}
         if all_mod_ids:
             cursor.execute(
-                "SELECT id, price_delta FROM product_modifier_items WHERE id = ANY(%s)",
-                (list(all_mod_ids),)
+                "SELECT mi.id, mi.price_delta"
+                "  FROM product_modifier_items mi"
+                "  JOIN product_modifier_groups mg ON mi.group_id = mg.id"
+                "  JOIN products p ON mg.product_id = p.id"
+                " WHERE mi.id = ANY(%s) AND p.project_id = %s",
+                (list(all_mod_ids), project_id)
             )
             for r in cursor.fetchall():
                 mod_delta_by_id[r["id"]] = float(r["price_delta"] or 0)
@@ -5532,8 +5861,14 @@ def place_order(data: PlaceOrderRequest, request: Request,
         discount = 0.0
         applied_promo_id = None
         if data.promo_code:
+            # FOR UPDATE: lock the promo row so two parallel orders sharing
+            # the same code can't both pass `times_used < usage_limit` before
+            # either increments — otherwise a usage-limit=1 code can be
+            # redeemed twice via a fast double-click.
             cursor.execute(
-                "SELECT * FROM promo_codes WHERE code=%s AND project_id=%s AND is_active=TRUE",
+                "SELECT * FROM promo_codes"
+                " WHERE code=%s AND project_id=%s AND is_active=TRUE"
+                " FOR UPDATE",
                 (data.promo_code.strip().upper(), project_id)
             )
             promo = cursor.fetchone()
@@ -5567,12 +5902,12 @@ def place_order(data: PlaceOrderRequest, request: Request,
                 if (per_user_ok and cat_ok and
                     (not promo["valid_from"] or promo["valid_from"] <= now) and
                     (not promo["valid_until"] or promo["valid_until"] >= now) and
-                    subtotal >= float(promo["min_order_amount"]) and
+                    subtotal >= float(promo["min_order_amount"] or 0) and
                     (not promo["usage_limit"] or promo["times_used"] < promo["usage_limit"])):
-                    dv = float(promo["discount_value"])
+                    dv = float(promo["discount_value"] or 0)
                     if promo["discount_type"] == "percentage":
                         discount = subtotal * (dv / 100)
-                        if promo["max_discount"]: discount = min(discount, float(promo["max_discount"]))
+                        if promo["max_discount"]: discount = min(discount, float(promo["max_discount"] or 0))
                     else:
                         discount = dv
                     cursor.execute(
@@ -5586,8 +5921,10 @@ def place_order(data: PlaceOrderRequest, request: Request,
             (project_id,)
         )
         ship_settings  = cursor.fetchone()
-        shipping_cost  = float(ship_settings["shipping_cost"])           if ship_settings else 0.0
-        free_threshold = float(ship_settings["free_shipping_threshold"]) if ship_settings else 0.0
+        # `or 0` guards against NULL columns in legacy rows where DEFAULTs
+        # weren't enforced; float(None) would raise TypeError.
+        shipping_cost  = float((ship_settings or {}).get("shipping_cost") or 0)
+        free_threshold = float((ship_settings or {}).get("free_shipping_threshold") or 0)
         final_shipping = 0.0 if (data.delivery_method == "postal" or subtotal >= free_threshold) else shipping_cost
 
         total = round(subtotal + final_shipping - discount, 2)
@@ -5632,7 +5969,12 @@ def place_order(data: PlaceOrderRequest, request: Request,
                 "tinkoff":       {"CONFIRMED", "AUTHORIZED"},
                 "cloudpayments": {"Completed"},
                 "yookassa":      {"succeeded"},
-                "paypal":        {"COMPLETED", "APPROVED"},
+                # PayPal: ONLY "COMPLETED" — "APPROVED" means the buyer
+                # consented but the capture step hasn't happened, so funds
+                # haven't moved. Treating APPROVED as paid would mark
+                # uncaptured orders as paid and the merchant would ship for
+                # free if capture later failed.
+                "paypal":        {"COMPLETED"},
             }
             if v.get("status") not in terminal_states.get(provider, set()):
                 raise HTTPException(402, f"Payment not completed (provider status: {v.get('status')})")
@@ -5737,86 +6079,56 @@ def place_order(data: PlaceOrderRequest, request: Request,
                  sorted(it["selected_modifier_item_ids"] or []))
             )
             it["id"] = cursor.fetchone()["id"]
-            # Phase 5b — write through to product_stock at the proximity-matched WH; re-sync l2.stock_quantity aggregate.
+            # Reservation model — at order time we RESERVE stock, we don't
+            # decrement it. The customer's order is not yet shipped, so the
+            # physical stock count and the "sold" lifetime number must not
+            # move yet. They get moved when the merchant transitions status
+            # to shipped/delivered (see CRM update_order_status). On cancel
+            # before shipment, the reservation is released back to the pool.
+            #
+            # Visible stock in the merchant inventory = quantity - reserved.
+            # Available for sale = same.
             wh_id = _pick_wh_for_sku(it["configuration_id"])
             if wh_id:
                 cursor.execute(
-                    "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
-                    " VALUES (%s, %s, %s, %s)"
+                    "INSERT INTO product_stock (sku_id, warehouse_id, quantity, reserved_quantity)"
+                    " VALUES (%s, %s, 0, %s)"
                     " ON CONFLICT (sku_id, warehouse_id)"
-                    " DO UPDATE SET quantity      = product_stock.quantity      - EXCLUDED.quantity,"
-                    "               sold_quantity = product_stock.sold_quantity + EXCLUDED.sold_quantity",
-                    (it["configuration_id"], wh_id, -int(it["quantity"]), int(it["quantity"]))
+                    " DO UPDATE SET reserved_quantity"
+                    "        = product_stock.reserved_quantity + EXCLUDED.reserved_quantity",
+                    (it["configuration_id"], wh_id, int(it["quantity"]))
                 )
-            cursor.execute("SET LOCAL torta.skip_audit = 'on'")
+            # L2 reservation mirror (keeps the l2-level reserved_quantity in
+            # sync so simple queries that don't join product_stock can still
+            # see "in-flight" orders).
             cursor.execute(
                 "UPDATE product_configurations_l2"
-                "   SET stock_quantity = COALESCE("
-                "         (SELECT SUM(quantity) FROM product_stock WHERE sku_id=%s),"
-                "         stock_quantity - %s),"
-                "       sold_quantity  = sold_quantity + %s"
-                " WHERE id=%s",
-                (it["configuration_id"], it["quantity"],
-                 it["quantity"], it["configuration_id"])
+                "   SET reserved_quantity = reserved_quantity + %s"
+                " WHERE id = %s",
+                (int(it["quantity"]), it["configuration_id"])
             )
-
-            # Batch consumption: decrement quantity_remaining on inventory_batches in order dictated by project's batch_consumption_mode (FIFO default, LIFO opt-in). Skip frozen batches.
+            # NOTE: inventory_batches are also untouched at reservation time.
+            # When status transitions to shipped/delivered, the CRM-side
+            # `_apply_stock_deduction` consumes batches FIFO/LIFO.
+            # Stock log is still written here as an audit trail for the
+            # reservation event so the merchant sees "reserved -36 for order #N".
             cursor.execute(
-                "SELECT batch_consumption_mode FROM crm_projects WHERE id=%s",
-                (project_id,)
+                "INSERT INTO product_stock_log"
+                "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, note)"
+                " VALUES (%s, %s, %s, %s, 'reservation', %s, %s)",
+                (project_id, it["configuration_id"], wh_id, -int(it["quantity"]),
+                 order_id, f"Order #{order_id} · reserved (awaiting fulfillment)")
             )
-            cmode_row = cursor.fetchone()
-            cmode = (cmode_row or {}).get("batch_consumption_mode") or 'fifo'
-            order_clause = "received_at ASC, id ASC" if cmode == 'fifo' else "received_at DESC, id DESC"
-            remaining_to_consume = int(it["quantity"])
-            cursor.execute(
-                "SELECT id, batch_name, quantity_remaining"
-                "  FROM inventory_batches"
-                " WHERE sku_id=%s AND warehouse_id=%s"
-                "   AND is_frozen = FALSE AND quantity_remaining > 0"
-                " ORDER BY " + order_clause +
-                " FOR UPDATE",
-                (it["configuration_id"], wh_id)
-            )
-            batches = cursor.fetchall()
-            consumed_from = []
-            for batch in batches:
-                if remaining_to_consume <= 0: break
-                take = min(int(batch["quantity_remaining"]), remaining_to_consume)
-                cursor.execute(
-                    "UPDATE inventory_batches"
-                    "   SET quantity_remaining = quantity_remaining - %s"
-                    " WHERE id=%s",
-                    (take, batch["id"])
-                )
-                consumed_from.append((batch["id"], batch["batch_name"], take))
-                remaining_to_consume -= take
-
-            # Phase 6: stock log entry for audit. One row per batch consumed so the trail is auditable per partition.
-            if consumed_from:
-                for bid, bname, take in consumed_from:
-                    cursor.execute(
-                        "INSERT INTO product_stock_log"
-                        "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, note)"
-                        " VALUES (%s, %s, %s, %s, 'sale', %s, %s)",
-                        (project_id, it["configuration_id"], wh_id, -take,
-                         order_id, f"Order #{order_id} · batch {bname}")
-                    )
-            else:
-                # No batches existed (legacy stock or untracked SKU) — still log the sale.
-                cursor.execute(
-                    "INSERT INTO product_stock_log"
-                    "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, note)"
-                    " VALUES (%s, %s, %s, %s, 'sale', %s, %s)",
-                    (project_id, it["configuration_id"], wh_id, -int(it["quantity"]),
-                     order_id, f"Order #{order_id}")
-                )
 
         # Очищаем корзину
         cursor.execute("DELETE FROM cart_items WHERE cart_id=%s", (cart["id"],))
         conn.commit()
 
-    # Email to customer
+    # Email + webhooks happen in background tasks so a slow / broken SES does
+    # not 500 the order endpoint after the row was already committed. Email
+    # body uses `it["unit_price"]` (the price the customer actually paid per
+    # unit after tier / sale / modifiers) — previously this used `it["price"]`
+    # which is the raw L2 price and disagreed with the order total.
     user = db_one("SELECT name, email FROM users WHERE id=%s", (user_id,))
     from_name, from_email = get_project_email(project_id)
     if user and user.get("email"):
@@ -5824,36 +6136,40 @@ def place_order(data: PlaceOrderRequest, request: Request,
         items_html = "".join(
             "<tr>"
             "<td style='padding:6px 0;color:#333'>" + sanitize(it["title"]) + " &mdash; " + sanitize(it["variation_name"]) + "</td>"
-            "<td style='padding:6px 0;text-align:right;color:#333'>" + str(it["quantity"]) + " &times; " + str(int(float(it["price"]))) + "</td>"
+            "<td style='padding:6px 0;text-align:right;color:#333'>" + str(it["quantity"]) + " &times; " + f"{float(it['unit_price']):.2f}" + "</td>"
             "</tr>"
             for it in items
         )
         shipping_row = (
             "<tr><td style='padding:6px 0;color:#888'>Shipping</td>"
-            "<td style='padding:6px 0;text-align:right;color:#888'>" + str(int(final_shipping)) + "</td></tr>"
+            "<td style='padding:6px 0;text-align:right;color:#888'>" + f"{float(final_shipping):.2f}" + "</td></tr>"
         ) if final_shipping else ""
 
         digital_html = _build_digital_html(project_id, items)
 
-        send_email(
+        email_html = (
+            "<div style='font-family:sans-serif;max-width:520px;margin:auto'>"
+            "<h2 style='color:#0071E3'>Order #" + str(order_id) + " confirmed!</h2>"
+            "<p>Hi " + customer_name + ", your order has been placed and is being processed.</p>"
+            "<table style='width:100%;border-collapse:collapse'>" + items_html + shipping_row + "</table>"
+            "<hr style='margin:16px 0'>"
+            "<p><b>Total: $" + f"{float(total):.2f}" + "</b></p>"
+            + digital_html +
+            "<p>We will notify you when the status changes.</p>"
+            "</div>"
+        )
+        background_tasks.add_task(
+            send_email,
             to=user["email"],
             subject="Order #" + str(order_id) + " confirmed",
-            html=(
-                "<div style='font-family:sans-serif;max-width:520px;margin:auto'>"
-                "<h2 style='color:#0071E3'>Order #" + str(order_id) + " confirmed!</h2>"
-                "<p>Hi " + customer_name + ", your order has been placed and is being processed.</p>"
-                "<table style='width:100%;border-collapse:collapse'>" + items_html + shipping_row + "</table>"
-                "<hr style='margin:16px 0'>"
-                "<p><b>Total: $" + f"{float(total):.2f}" + "</b></p>"
-                + digital_html +
-                "<p>We will notify you when the status changes.</p>"
-                "</div>"
-            ),
+            html=email_html,
             from_name=from_name,
             from_email=from_email,
         )
 
-    # Outbound webhooks: fire both order.created and order.paid (no async payment provider yet).
+    # Outbound webhooks. `order.created` always fires; `order.paid` ONLY
+    # fires when a real payment was captured — for Pay-on-Delivery (manual)
+    # we have no payment to confirm yet, so consumers shouldn't see it.
     event_data = {
         "order_id": order_id,
         "amount":   float(total),
@@ -5862,11 +6178,12 @@ def place_order(data: PlaceOrderRequest, request: Request,
                      "email": (user or {}).get("email", "")},
         "items": [{"product_id": it["product_id"], "title": it["title"],
                    "variation": it.get("variation_name"), "qty": it["quantity"],
-                   "price": float(it["price"])} for it in items],
+                   "price": float(it["unit_price"])} for it in items],
         "delivery_method": data.delivery_method,
     }
     background_tasks.add_task(dispatch_event, project_id, "order.created", event_data)
-    background_tasks.add_task(dispatch_event, project_id, "order.paid",    event_data)
+    if pay_status == "paid":
+        background_tasks.add_task(dispatch_event, project_id, "order.paid", event_data)
     return {"success": True, "order_id": order_id}
 
 
@@ -6070,6 +6387,148 @@ def get_my_order_returns(api_key: str, order_id: int, request: Request,
             ],
         })
     return result
+
+
+# ── Stock transition helper (mirrors CRM's _apply_stock_transition) ────
+# Used by customer-initiated cancel. Same state machine: a reserved order
+# releases its reservation; a deducted (shipped) order restocks.
+_X_DEDUCTED_STATES = {"shipped", "delivered"}
+_X_RESERVED_STATES = {"new", "confirmed"}
+
+def _release_or_restock_for_cancel(cur, order_id: int, project_id: int,
+                                    old_status: str, was_deducted: bool):
+    """Apply stock side-effects when an order is cancelled."""
+    cur.execute(
+        "SELECT configuration_id AS sku_id, quantity"
+        "  FROM order_items WHERE order_id=%s",
+        (order_id,)
+    )
+    items = cur.fetchall()
+    if not items:
+        return
+    cur.execute("SET LOCAL torta.skip_audit = 'on'")
+    for it in items:
+        sku_id = int(it["sku_id"]) if it["sku_id"] is not None else None
+        qty    = int(it["quantity"] or 0)
+        if not sku_id or not qty: continue
+        # Pick a warehouse: prefer one that holds reservation/stock for this SKU.
+        cur.execute(
+            "SELECT warehouse_id FROM product_stock"
+            " WHERE sku_id=%s AND (quantity > 0 OR reserved_quantity > 0)"
+            " LIMIT 1",
+            (sku_id,)
+        )
+        wh_row = cur.fetchone()
+        wh_id = wh_row["warehouse_id"] if wh_row else None
+        if not wh_id:
+            cur.execute(
+                "SELECT id FROM warehouses WHERE project_id=%s AND is_active=TRUE"
+                " ORDER BY is_default DESC NULLS LAST, id ASC LIMIT 1",
+                (project_id,)
+            )
+            row = cur.fetchone()
+            wh_id = row["id"] if row else None
+        if not wh_id: continue
+
+        if was_deducted:
+            # Order had already shipped — physically restock.
+            cur.execute(
+                "UPDATE product_stock"
+                "   SET quantity      = quantity      + %s,"
+                "       sold_quantity = GREATEST(0, sold_quantity - %s)"
+                " WHERE sku_id=%s AND warehouse_id=%s",
+                (qty, qty, sku_id, wh_id)
+            )
+            cur.execute(
+                "UPDATE product_configurations_l2"
+                "   SET stock_quantity = stock_quantity + %s,"
+                "       sold_quantity  = GREATEST(0, sold_quantity - %s)"
+                " WHERE id=%s",
+                (qty, qty, sku_id)
+            )
+            cur.execute(
+                "INSERT INTO product_stock_log"
+                " (project_id, sku_id, warehouse_id, delta, reason, reference_id, note)"
+                " VALUES (%s, %s, %s, %s, 'return', %s, %s)",
+                (project_id, sku_id, wh_id, qty, order_id,
+                 f"Order #{order_id} · cancelled by customer (restocked)")
+            )
+        elif old_status in _X_RESERVED_STATES:
+            # Still reserved — release the reservation only.
+            cur.execute(
+                "UPDATE product_stock"
+                "   SET reserved_quantity = GREATEST(0, reserved_quantity - %s)"
+                " WHERE sku_id=%s AND warehouse_id=%s",
+                (qty, sku_id, wh_id)
+            )
+            cur.execute(
+                "UPDATE product_configurations_l2"
+                "   SET reserved_quantity = GREATEST(0, reserved_quantity - %s)"
+                " WHERE id=%s",
+                (qty, sku_id)
+            )
+            cur.execute(
+                "INSERT INTO product_stock_log"
+                " (project_id, sku_id, warehouse_id, delta, reason, reference_id, note)"
+                " VALUES (%s, %s, %s, %s, 'reservation', %s, %s)",
+                (project_id, sku_id, wh_id, qty, order_id,
+                 f"Order #{order_id} · cancelled by customer (reservation released)")
+            )
+
+    cur.execute(
+        "UPDATE order_history SET stock_deducted=FALSE WHERE id=%s",
+        (order_id,)
+    )
+
+
+# ── Customer-initiated order cancellation ──────────────────────────────
+# Allowed while status is new / confirmed / shipped. After delivery the
+# customer must use requestReturn() instead. Reverses stock side-effects
+# in the same way as CRM's update_order_status state machine.
+_CUSTOMER_CANCELLABLE = {"new", "confirmed", "shipped"}
+
+@app.post("/{api_key}/orders/{order_id}/cancel")
+def cancel_order(api_key: str, order_id: int, request: Request,
+                 api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    token = request.cookies.get("authx_token")
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
+    except Exception:
+        raise HTTPException(401, "Invalid or expired token")
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "SELECT id, status, COALESCE(stock_deducted, FALSE) AS stock_deducted"
+            "  FROM order_history"
+            " WHERE id=%s AND project_id=%s AND user_id=%s"
+            " FOR UPDATE",
+            (order_id, project_id, user_id)
+        )
+        order = cur.fetchone()
+        if not order:
+            raise HTTPException(404, "Order not found")
+        if order["status"] not in _CUSTOMER_CANCELLABLE:
+            raise HTTPException(409,
+                f"Order in status '{order['status']}' cannot be cancelled. "
+                f"Allowed only while: {', '.join(_CUSTOMER_CANCELLABLE)}.")
+
+        # Update status first so trigger code sees the new row.
+        cur.execute(
+            "UPDATE order_history SET status='cancelled', updated_at=NOW()"
+            " WHERE id=%s",
+            (order_id,)
+        )
+        _release_or_restock_for_cancel(
+            cur, order_id, project_id,
+            old_status=order["status"],
+            was_deducted=bool(order["stock_deducted"])
+        )
+        conn.commit()
+
+    return {"success": True, "status": "cancelled"}
 
 
 @app.post("/{api_key}/orders/{order_id}/request-return")
@@ -6489,40 +6948,250 @@ def _notify_payment_event(project_id: int, order_id: int, title: str, message: s
 
 # ── ТРЕКИНГ (воронка продаж) ─────────────────────────────
 
+def _enrich_payload(request: Request, ip: str, payload) -> dict:
+    """Build the geo + UA + referrer dict used by every tracker insert. Reads
+    optional fields from the request payload (SDK adds them automatically)
+    and falls back to None when the storefront didn't send them."""
+    geo = _extract_geo(request, ip)
+    ua  = request.headers.get("user-agent") or ""
+    uap = _parse_ua(ua)
+    referrer = getattr(payload, "referrer", None) if payload else None
+    ref_class = _classify_referrer(referrer or "")
+    return {
+        **geo,                # country_code / country_name / city
+        "user_agent":      ua[:1000] if ua else None,
+        "device_type":     uap["device_type"],
+        "browser":         uap["browser"],
+        "os":              uap["os"],
+        "referrer":        (referrer or "")[:500] or None,
+        "referrer_host":   ref_class["referrer_host"],
+        "traffic_source":  ref_class["traffic_source"],
+        "utm_source":      (getattr(payload, "utm_source",   None) or None) if payload else None,
+        "utm_medium":      (getattr(payload, "utm_medium",   None) or None) if payload else None,
+        "utm_campaign":    (getattr(payload, "utm_campaign", None) or None) if payload else None,
+        "language":        (getattr(payload, "language",     None) or None) if payload else None,
+        "screen_width":    (getattr(payload, "screen_width", None) or None) if payload else None,
+    }
+
+
 @app.post("/{api_key}/track/visit")
-def track_visit(request: Request, api_key_record: dict = Depends(resolve_api_key)):
+def track_visit(request: Request,
+                data: Optional[TrackVisitRequest] = None,
+                api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
     ip         = get_client_ip(request)
-    with db_cursor() as (conn, cursor):
-        cursor.execute(
-            "SELECT id FROM site_visits WHERE ip=%s AND project_id=%s AND created_at >= NOW() - INTERVAL '30 seconds'",
-            (ip, project_id)
-        )
-        if cursor.fetchone(): return {"success": True, "skipped": True}
-        cursor.execute("INSERT INTO site_visits (user_id, ip, project_id) VALUES (%s,%s,%s)", (user_id, ip, project_id))
-        conn.commit()
+    print(f"[track-visit] project={project_id} ip={ip} user={user_id}")
+    try:
+        with db_cursor() as (conn, cursor):
+            cursor.execute(
+                "SELECT id FROM site_visits WHERE ip=%s AND project_id=%s AND created_at >= NOW() - INTERVAL '30 seconds'",
+                (ip, project_id)
+            )
+            if cursor.fetchone():
+                return {"success": True, "skipped": True}
+            e = _enrich_payload(request, ip, data)
+            # Same defensive INSERT pattern as track_product_view.
+            try:
+                cursor.execute(
+                    "INSERT INTO site_visits (user_id, ip, project_id,"
+                    "  country_code, country_name, city, user_agent, device_type, browser, os,"
+                    "  referrer, referrer_host, traffic_source,"
+                    "  utm_source, utm_medium, utm_campaign, language, screen_width)"
+                    " VALUES (%s,%s,%s, %s,%s,%s,%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,%s,%s)",
+                    (user_id, ip, project_id,
+                     e["country_code"], e["country_name"], e["city"],
+                     e["user_agent"], e["device_type"], e["browser"], e["os"],
+                     e["referrer"], e["referrer_host"], e["traffic_source"],
+                     e["utm_source"], e["utm_medium"], e["utm_campaign"],
+                     e["language"], e["screen_width"])
+                )
+            except (psycopg2.errors.UndefinedColumn, psycopg2.DataError,
+                    psycopg2.errors.StringDataRightTruncation):
+                conn.rollback()
+                cursor.execute(
+                    "INSERT INTO site_visits (user_id, ip, project_id) VALUES (%s,%s,%s)",
+                    (user_id, ip, project_id)
+                )
+            conn.commit()
+    except Exception as e:
+        print(f"[track-visit] FAILED: {type(e).__name__}: {e}")
+        return {"success": False, "error": str(e)[:200]}
     return {"success": True}
 
 
 @app.post("/{api_key}/track/product-view")
 def track_product_view(data: TrackProductView, request: Request,
                        api_key_record: dict = Depends(resolve_api_key)):
-    """Один человек (по IP) = одна запись в сутки для воронки продаж."""
+    """One row per (IP, product, day). The previous dedup was per (IP, day)
+    without product_id — so after the first product view of the day, every
+    subsequent view (even of a different product) was silently skipped and
+    the funnel reported 0 views forever after the first impression. We
+    still dedup obvious page-reloads of the SAME product on the SAME day
+    so a curious shopper hitting F5 doesn't inflate the view count."""
     project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
     ip         = get_client_ip(request)
-    with db_cursor() as (conn, cursor):
-        cursor.execute(
-            "SELECT id FROM product_page_views WHERE ip=%s AND project_id=%s AND DATE(created_at)=CURRENT_DATE",
-            (ip, project_id)
-        )
-        if cursor.fetchone(): return {"success": True, "skipped": True}
-        cursor.execute(
-            "INSERT INTO product_page_views (product_id, user_id, ip, project_id) VALUES (%s,%s,%s,%s)",
-            (data.product_id, user_id, ip, project_id)
+    print(f"[track-pv] project={project_id} product={data.product_id} ip={ip} user={user_id}")
+    try:
+        with db_cursor() as (conn, cursor):
+            cursor.execute(
+                "SELECT id FROM product_page_views"
+                " WHERE ip=%s AND project_id=%s AND product_id=%s"
+                "   AND DATE(created_at)=CURRENT_DATE",
+                (ip, project_id, data.product_id)
+            )
+            if cursor.fetchone():
+                print(f"[track-pv] skipped (dedup): product={data.product_id} ip={ip}")
+                return {"success": True, "skipped": True}
+            e = _enrich_payload(request, ip, data)
+            # Defensive INSERT: try the full enriched row first, fall back to
+            # the legacy 4-column form if any column is missing or rejects the
+            # value. Without this fallback a missing/incompatible column
+            # silently rolls back the transaction → 0 rows → 0 views in the
+            # funnel.
+            try:
+                cursor.execute(
+                    "INSERT INTO product_page_views (product_id, user_id, ip, project_id,"
+                    "  country_code, country_name, city, user_agent, device_type, browser, os,"
+                    "  referrer, referrer_host, traffic_source,"
+                    "  utm_source, utm_medium, utm_campaign, language, screen_width)"
+                    " VALUES (%s,%s,%s,%s, %s,%s,%s,%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,%s,%s)",
+                    (data.product_id, user_id, ip, project_id,
+                     e["country_code"], e["country_name"], e["city"],
+                     e["user_agent"], e["device_type"], e["browser"], e["os"],
+                     e["referrer"], e["referrer_host"], e["traffic_source"],
+                     e["utm_source"], e["utm_medium"], e["utm_campaign"],
+                     e["language"], e["screen_width"])
+                )
+                print(f"[track-pv] inserted (enriched): product={data.product_id}")
+            except (psycopg2.errors.UndefinedColumn, psycopg2.DataError,
+                    psycopg2.errors.StringDataRightTruncation) as enrich_err:
+                conn.rollback()
+                cursor.execute(
+                    "INSERT INTO product_page_views (product_id, user_id, ip, project_id)"
+                    " VALUES (%s,%s,%s,%s)",
+                    (data.product_id, user_id, ip, project_id)
+                )
+                print(f"[track-pv] inserted (basic, fallback after {type(enrich_err).__name__}): product={data.product_id}")
+            conn.commit()
+    except Exception as e:
+        # Last-line safety: tracking must never break the page. Log and
+        # return success so the SDK's fire-and-forget catches happily.
+        print(f"[track-pv] FAILED: {type(e).__name__}: {e}")
+        return {"success": False, "error": str(e)[:200]}
+    return {"success": True}
+
+
+# ── New trackers: search / cart events / checkout events / custom goals ─
+
+@app.post("/{api_key}/track/search")
+def track_search(data: TrackSearchRequest, request: Request,
+                 api_key_record: dict = Depends(resolve_api_key)):
+    """Records every search the customer fires. The zero-result-count is the
+    valuable signal — those queries tell the merchant what SKUs are missing
+    from their catalog."""
+    project_id = api_key_record["id"]
+    user_id    = try_get_current_user_id(request)
+    _rate_limit_track(request, user_id)
+    ip = get_client_ip(request)
+    q  = sanitize((data.query or "").strip())[:200]
+    if not q: return {"success": True, "skipped": True}
+    geo = _extract_geo(request, ip)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO search_queries (project_id, user_id, ip, query, results_count, country_code)"
+            " VALUES (%s,%s,%s,%s,%s,%s)",
+            (project_id, user_id, ip, q, max(0, int(data.results_count or 0)),
+             geo["country_code"])
         )
         conn.commit()
+    return {"success": True}
+
+
+@app.post("/{api_key}/track/cart-event")
+def track_cart_event(data: TrackCartEventRequest, request: Request,
+                     api_key_record: dict = Depends(resolve_api_key)):
+    """Per-action cart event log — used to build the fine-grained funnel
+    (which products got added then removed, time-to-purchase, etc)."""
+    project_id = api_key_record["id"]
+    user_id    = try_get_current_user_id(request)
+    _rate_limit_track(request, user_id)
+    action = (data.action or "").lower()
+    if action not in ("add", "remove", "update_qty", "apply_promo", "remove_promo"):
+        raise HTTPException(400, "Invalid cart event action")
+    ip = get_client_ip(request)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO cart_events (project_id, user_id, ip, action,"
+            "  product_id, variation_id, configuration_id, quantity, promo_code)"
+            " VALUES (%s,%s,%s,%s, %s,%s,%s,%s,%s)",
+            (project_id, user_id, ip, action,
+             data.product_id, data.variation_id, data.configuration_id,
+             data.quantity, (data.promo_code or "")[:40] or None)
+        )
+        conn.commit()
+    return {"success": True}
+
+
+@app.post("/{api_key}/track/checkout")
+def track_checkout(data: TrackCheckoutRequest, request: Request,
+                   api_key_record: dict = Depends(resolve_api_key)):
+    project_id = api_key_record["id"]
+    user_id    = try_get_current_user_id(request)
+    _rate_limit_track(request, user_id)
+    step = (data.step or "").lower()
+    if step not in ("started", "address_filled", "promo_tried", "submitted", "failed"):
+        raise HTTPException(400, "Invalid checkout step")
+    ip = get_client_ip(request)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO checkout_events (project_id, user_id, ip, step, fail_reason, total_amount)"
+            " VALUES (%s,%s,%s,%s,%s,%s)",
+            (project_id, user_id, ip, step,
+             sanitize(data.fail_reason or "")[:200] or None,
+             float(data.total_amount) if data.total_amount is not None else None)
+        )
+        conn.commit()
+    return {"success": True}
+
+
+@app.post("/{api_key}/track/goal")
+def track_goal(data: TrackGoalRequest, request: Request,
+               background_tasks: BackgroundTasks,
+               api_key_record: dict = Depends(resolve_api_key)):
+    """Customer fires a custom-event goal from the storefront. We accept it
+    only if the merchant pre-registered a `goal_type='custom_event_count'`
+    goal with a matching `custom_event_name` — prevents schema-spam attacks."""
+    project_id = api_key_record["id"]
+    user_id    = try_get_current_user_id(request)
+    _rate_limit_track(request, user_id)
+    name = (data.event_name or "").strip()[:120]
+    if not name: raise HTTPException(400, "event_name is required")
+    # Whitelist check — must match an active, custom-event goal in this project.
+    goal = db_one(
+        "SELECT id FROM crm_goals"
+        " WHERE project_id=%s AND is_active=TRUE"
+        "   AND goal_type='custom_event_count' AND custom_event_name=%s",
+        (project_id, name)
+    )
+    if not goal:
+        # Reject silently so attackers can't probe goal names — return 200
+        # but record nothing. Storefront treats it the same as success.
+        return {"success": True, "ignored": True}
+    metadata = data.metadata if isinstance(data.metadata, dict) else None
+    with db_cursor() as (conn, cur):
+        import json as _json
+        cur.execute(
+            "INSERT INTO crm_goal_events (project_id, goal_id, user_id, event_name, value, metadata)"
+            " VALUES (%s,%s,%s,%s,%s,%s::jsonb)",
+            (project_id, goal["id"], user_id, name,
+             float(data.value) if data.value is not None else None,
+             _json.dumps(metadata) if metadata else None)
+        )
+        conn.commit()
+    # Re-check goal progress in the background — may fire goal.achieved webhook.
+    background_tasks.add_task(_check_goal_progress, project_id, goal["id"])
     return {"success": True}
 
 

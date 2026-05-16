@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import "./Style/Login.css";
-import { client, pickError } from "./api.js"
+import { client } from "./api.js"
 import PasswordInput from "./Elements/PasswordInput";
 import GoogleAuthButton from "./Elements/GoogleAuthButton";
 
@@ -48,7 +48,7 @@ function Login() {
     setLoading(true);
 
     try {
-      const { ok, data } = await client.auth.sendCode({ email, password, type: "login" });
+      const { ok, data, error } = await client.auth.sendCode({ email, password, type: "login" });
 
       if (ok) {
         localStorage.setItem("pendingEmail", email);
@@ -57,7 +57,7 @@ function Login() {
         localStorage.setItem("pendingResendUntil", String(Date.now() + resendSeconds * 1000));
         navigate("/login/verification");
       } else {
-        setGeneralError(pickError(data, "Login failed"));
+        setGeneralError(error || "Login failed");
       }
     } catch {
       setGeneralError("Network error");

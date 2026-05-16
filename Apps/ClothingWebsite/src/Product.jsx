@@ -26,7 +26,11 @@ function Product() {
     const [deliveryEta, setDeliveryEta] = useState(null);
     useEffect(() => {
         let mounted = true;
-        client.shipping.deliveryEta()
+        // Optional-chained: if the storefront's torta-js bundle is older
+        // than the page (Vite dep cache mismatch right after SDK upgrade),
+        // `client.shipping` may be undefined. A missing delivery-ETA hint
+        // should not crash the whole product page — silently skip.
+        client.shipping?.deliveryEta?.()
             .then(r => mounted && r.ok && setDeliveryEta(r.data))
             .catch(() => {});
         return () => { mounted = false; };

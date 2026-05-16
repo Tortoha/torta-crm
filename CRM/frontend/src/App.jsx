@@ -24,6 +24,8 @@ const OrgPayments   = lazy(() => import('./Pages/Organization/OrgPayments.jsx'))
 // Project
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Project/Revenue.jsx'));
+const Analytics     = lazy(() => import('./Pages/Project/Analytics.jsx'));
+const Goals         = lazy(() => import('./Pages/Project/Goals.jsx'));
 const Products      = lazy(() => import('./Pages/Project/Products/Products.jsx'));
 const ProductsList  = lazy(() => import('./Pages/Project/Products/ProductsList.jsx'));
 const Categories    = lazy(() => import('./Pages/Project/Products/Categories.jsx'));
@@ -95,6 +97,8 @@ function App() {
               <Route path="settings"      element={<ProductsSettings />} />
             </Route>
             <Route path="revenue"    element={<Revenue />} />
+            <Route path="analytics"  element={<Analytics />} />
+            <Route path="goals"      element={<Goals />} />
             <Route path="authentication" element={<Authentication />} />
             <Route path="email"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />

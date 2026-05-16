@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle, Storefront, MapPin } from "@phosphor-icons/react";
 import Header from "./Header";
-import { client, pickError } from "./api.js";
+import { client } from "./api.js";
 import "./Style/Checkout.css";
 import "./Style/Load.css";
 
@@ -63,10 +63,14 @@ function Checkout() {
 
         // Pull pickup locations + delivery ETA in parallel. Both endpoints
         // are public — work for both logged-in and guest checkouts.
-        client.shipping.pickupLocations()
+        // Defensive: if the storefront's torta-js bundle is older than the
+        // page (e.g. Vite cache mismatch right after an SDK upgrade), the
+        // `shipping` namespace may be undefined. Crashing the whole page
+        // for an optional "delivery ETA" hint would be silly — just skip.
+        client.shipping?.pickupLocations?.()
           .then(r => mounted && r.ok && Array.isArray(r.data) && setPickupLocations(r.data))
           .catch(() => {});
-        client.shipping.deliveryEta()
+        client.shipping?.deliveryEta?.()
           .then(r => mounted && r.ok && setDeliveryEta(r.data))
           .catch(() => {});
       } catch (e) {
@@ -89,13 +93,13 @@ function Checkout() {
       return;
     }
     setPromoChecking(true);
-    const { ok, data } = await client.promos.apply(form.promo_code);
+    const { ok, data, error } = await client.promos.apply(form.promo_code);
     if (ok) {
       setPromoApplied(data);
       setPromoError("");
     } else {
       setPromoApplied(null);
-      setPromoError(pickError(data, "Invalid promo code"));
+      setPromoError(error || "Invalid promo code");
     }
     setPromoChecking(false);
   };
@@ -132,11 +136,11 @@ function Checkout() {
     if (form.comment.trim()) payload.comment     = form.comment.trim();
     if (form.promo_code.trim()) payload.promo_code = form.promo_code.trim();
 
-    const { ok, data } = await client.orders.place(payload);
+    const { ok, data, error } = await client.orders.place(payload);
     if (ok) {
       navigate("/order-success", { state: { orderId: data.order_id } });
     } else {
-      setError(pickError(data, "Failed to place order. Please try again."));
+      setError(error || "Failed to place order. Please try again.");
       setSubmitting(false);
     }
   };

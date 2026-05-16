@@ -5,7 +5,7 @@ import CartItem from "./Elements/CartItem";
 import CartSummary from "./Elements/CartSummary";
 import "./Style/Cart.css";
 import "./Style/Load.css";
-import { client, pickError } from "./api.js"
+import { client } from "./api.js"
 
 function Cart() {
     // API STATE
@@ -52,13 +52,13 @@ function Cart() {
 
     const handleApplyPromo = async () => {
         if (!promoCode.trim()) { setPromoError(""); setAppliedPromo(null); return; }
-        const { ok, data } = await client.promos.apply(promoCode);
+        const { ok, data, error } = await client.promos.apply(promoCode);
         if (ok) {
             setAppliedPromo(data);
             setPromoError("");
         } else {
             setAppliedPromo(null);
-            setPromoError(pickError(data, "Invalid promo code"));
+            setPromoError(error || "Invalid promo code");
         }
     };
 

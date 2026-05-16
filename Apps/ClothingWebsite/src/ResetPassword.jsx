@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, Link, useParams } from "react-router-dom";
 import "./Style/Login.css";
 import PasswordInput from "./Elements/PasswordInput";
-import { client, pickError } from "./api.js"
+import { client } from "./api.js"
 
 function ResetPassword() {
   const { token } = useParams();
@@ -29,10 +29,10 @@ function ResetPassword() {
   useEffect(() => {
     let ignore = false;
     client.auth.validateResetToken(token)
-      .then(({ ok, data }) => {
+      .then(({ ok, data, error }) => {
         if (ignore) return;
         if (ok) setEmail(data.email || "");
-        else setGeneralError(pickError(data, "Invalid or expired reset link"));
+        else setGeneralError(error || "Invalid or expired reset link");
       })
       .catch(() => { if (!ignore) setGeneralError("Network error"); })
       .finally(() => { if (!ignore) setPageLoading(false); });
@@ -67,12 +67,12 @@ function ResetPassword() {
     if (!isValid) return;
     setLoading(true);
     try {
-      const { ok, data } = await client.auth.resetPassword(token, password, repeatPassword);
+      const { ok, error } = await client.auth.resetPassword(token, password, repeatPassword);
       if (ok) {
         setSuccessMessage("Password changed successfully");
         setTimeout(() => navigate("/login"), 1200);
       } else {
-        setGeneralError(pickError(data, "Failed to reset password"));
+        setGeneralError(error || "Failed to reset password");
       }
     } catch {
       setGeneralError("Network error");

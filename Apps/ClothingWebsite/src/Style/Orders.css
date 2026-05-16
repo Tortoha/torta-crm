@@ -349,12 +349,14 @@
   border-color: rgba(255, 59, 48, 0.3);
 }
 
-/* ── Request-return button ─────────────────────────────────── */
+/* ── Order action buttons (cancel / request-return) ──────────── */
 
 .os-actions {
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .os-action-btn {
@@ -370,11 +372,21 @@
   gap: 6px;
   color: #1d1d1f;
   font-family: inherit;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .os-action-btn--return:hover {
   background: rgba(0, 113, 227, 0.08);
   border-color: #0071E3;
   color: #0071E3;
+}
+
+/* Cancel: ghost destructive — neutral by default, red on hover. The
+   irreversible action (cancellation) deserves a stronger visual cue,
+   but we keep it ghost to avoid overwhelming the more common "return"
+   path which uses the friendly accent colour. */
+.os-action-btn--cancel:hover {
+  background: rgba(220, 38, 38, 0.06);
+  border-color: #dc2626;
+  color: #dc2626;
 }

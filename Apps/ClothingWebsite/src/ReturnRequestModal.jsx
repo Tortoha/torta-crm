@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { X, CheckCircle, Warning, Check } from "@phosphor-icons/react";
-import { client, pickError } from "./api.js";
+import { client } from "./api.js";
 import "./Style/ReturnRequest.css";
 
 const REASONS = [
@@ -86,7 +86,7 @@ export default function ReturnRequestModal({ order, onClose, onSubmitted, existi
         customer_photos: [],
       });
       if (!res.ok) {
-        setError(pickError(res.data, "Failed to submit"));
+        setError(res.error || "Failed to submit");
         return;
       }
       onSubmitted?.(res.data);

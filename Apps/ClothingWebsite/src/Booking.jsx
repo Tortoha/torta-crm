@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import Header from "./Header";
-import { client, pickError } from "./api.js";
+import { client } from "./api.js";
 import "./Style/Booking.css";
 
 // Format helpers reused inside the picker.
@@ -110,7 +110,7 @@ export default function Booking() {
     }
     setSubmitting(true);
     try {
-      const { ok, data } = await client.booking.bookings.create({
+      const { ok, data, error } = await client.booking.bookings.create({
         service_id:     chosenService.id,
         // staff_id is Optional[int] = None on the backend — null is fine here.
         staff_id:       chosenStaffId || null,
@@ -127,7 +127,7 @@ export default function Booking() {
           state: { booking: data, service: chosenService, slot: chosenSlot },
         });
       } else {
-        setError(pickError(data, "Failed to create booking"));
+        setError(error || "Failed to create booking");
       }
     } finally {
       setSubmitting(false);

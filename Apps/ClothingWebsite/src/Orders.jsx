@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle, CaretDown, CaretUp,
-         ArrowUUpLeft } from "@phosphor-icons/react";
+         ArrowUUpLeft, XCircle } from "@phosphor-icons/react";
 import Header from "./Header";
 import ReturnRequestModal from "./ReturnRequestModal";
 import { client } from "./api.js";
@@ -9,6 +9,10 @@ import "./Style/Orders.css";
 import "./Style/Load.css";
 
 const RETURN_WINDOW_DAYS = 14;
+// Customer can cancel only while the order hasn't been delivered yet. After
+// 'delivered' they must use the Return flow (14-day window). Cancelled and
+// refunded are terminal.
+const CANCELLABLE_STATUSES = new Set(["new", "confirmed", "shipped"]);
 
 const RETURN_STATUS_LABEL = {
   requested: "Awaiting approval",
@@ -108,6 +112,24 @@ function Orders() {
 
   const onReturnSubmitted = (order_id) => {
     loadReturnsFor(order_id);
+  };
+
+  // ── Cancel order (customer-initiated) ────────────────────────────
+  // Allowed while status ∈ {new, confirmed, shipped}. Backend re-validates
+  // and reverses stock side-effects (releases reservation if not yet
+  // shipped, restocks if shipped). After delivered → use Return flow.
+  const onCancelOrder = async (order) => {
+    if (!CANCELLABLE_STATUSES.has(order.status)) return;
+    if (!confirm(`Cancel order #${order.id}? This cannot be undone.`)) return;
+    const res = await client.orders.cancel(order.id);
+    if (!res.ok) {
+      alert(res.error || "Couldn't cancel this order.");
+      return;
+    }
+    // Reflect cancelled status locally without a full reload.
+    setOrders(prev => prev.map(o =>
+      o.id === order.id ? { ...o, status: "cancelled" } : o
+    ));
   };
 
   // ── Loading ──────────────────────────────────────────────────
@@ -233,14 +255,23 @@ function Orders() {
                       </div>
                     )}
 
-                    {/* ── Request Return button ── */}
-                    {isWithinReturnWindow(order) && (
+                    {/* ── Action buttons row — cancel (pre-delivery) or return (post-delivery) ── */}
+                    {(CANCELLABLE_STATUSES.has(order.status) || isWithinReturnWindow(order)) && (
                       <div className="os-actions">
-                        <button className="os-action-btn os-action-btn--return"
-                          onClick={() => setReturnFor(order)}
-                          type="button">
-                          <ArrowUUpLeft weight="bold" /> Request a return
-                        </button>
+                        {CANCELLABLE_STATUSES.has(order.status) && (
+                          <button className="os-action-btn os-action-btn--cancel"
+                            onClick={() => onCancelOrder(order)}
+                            type="button">
+                            <XCircle weight="bold" /> Cancel order
+                          </button>
+                        )}
+                        {isWithinReturnWindow(order) && (
+                          <button className="os-action-btn os-action-btn--return"
+                            onClick={() => setReturnFor(order)}
+                            type="button">
+                            <ArrowUUpLeft weight="bold" /> Request a return
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

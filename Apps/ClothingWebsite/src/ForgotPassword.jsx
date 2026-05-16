@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import "./Style/Login.css";
-import { client, pickError } from "./api.js"
+import { client } from "./api.js"
 
 function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -32,14 +32,14 @@ function ForgotPassword() {
     setLoading(true);
 
     try {
-      const { ok, data } = await client.auth.forgotPassword(email);
+      const { ok, data, error } = await client.auth.forgotPassword(email);
 
       if (ok) {
         setSuccessMessage(
           data?.message || "If the account exists, a password reset email has been sent."
         );
       } else {
-        setGeneralError(pickError(data, "Failed to send reset email"));
+        setGeneralError(error || "Failed to send reset email");
       }
     } catch {
       setGeneralError("Network error");

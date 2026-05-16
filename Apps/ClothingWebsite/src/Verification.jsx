@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import "./Style/Login.css";
-import { client, pickError } from "./api.js"
+import { client } from "./api.js"
 
 function Verification() {
   const [code, setCode] = useState("");
@@ -69,7 +69,7 @@ function Verification() {
     setLoading(true);
 
     try {
-      const { ok, data } = await client.auth.verifyCode(email, code);
+      const { ok, error } = await client.auth.verifyCode(email, code);
 
       if (ok) {
         localStorage.removeItem("pendingEmail");
@@ -78,7 +78,7 @@ function Verification() {
         navigate("/");
         window.location.reload();
       } else {
-        setGeneralError(pickError(data, "Verification failed"));
+        setGeneralError(error || "Verification failed");
       }
     } catch {
       setGeneralError("Network error");
@@ -94,7 +94,7 @@ function Verification() {
     setGeneralError("");
 
     try {
-      const { ok, status, data } = await client.auth.resendCode(email);
+      const { ok, status, data, error } = await client.auth.resendCode(email);
 
       if (ok) {
         const resendSeconds = Number(data.resend_available_in || 60);
@@ -112,7 +112,7 @@ function Verification() {
           setCooldown(seconds);
         }
 
-        setGeneralError(pickError(data, "Failed to resend"));
+        setGeneralError(error || "Failed to resend");
       }
     } catch {
       setGeneralError("Network error");
