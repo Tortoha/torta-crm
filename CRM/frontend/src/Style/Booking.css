@@ -1,5 +1,10 @@
-.bk-toolbar { flex-wrap: wrap; }
-.bk-toolbar .ord-sort-toggle { margin-left: auto; }
+.bk-toolbar {
+  flex-wrap: wrap;
+}
+
+.bk-toolbar .ord-sort-toggle {
+  margin-left: auto;
+}
 
 /* ── Bookings list (5 columns) ─────────────────────────────── */
 .bk-list-head {
@@ -28,10 +33,17 @@
 .prow.bk-svc-prow {
   grid-template-columns: 40px 2fr 1fr 1fr 1fr 1.4fr 32px;
 }
+
 /* Staff list — 5 cells: avatar | name | bio | services | menu. */
 .prod-list-head.bk-stf-list-head,
 .prow.bk-stf-prow {
-  grid-template-columns: 40px 1.4fr 2fr 1.4fr 32px;
+  /* avatar · name · bio · services · cassa · bookings · hours · menu */
+  grid-template-columns: 40px 1.2fr 1.6fr 1.2fr 0.8fr 0.6fr 0.6fr 32px;
+}
+.bk-stf-row-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text);
 }
 
 /* Round avatar inside prow / pcard image-wrap (instead of square service image).
@@ -44,18 +56,21 @@
   overflow: hidden;
   aspect-ratio: 1 / 1;
 }
+
 .prow .bk-stf-avatar-wrap {
   width: 40px !important;
   height: 40px !important;
   max-width: 40px !important;
   background: var(--accent-tint);
 }
+
 .pcard-img-wrap.bk-stf-avatar-wrap {
   width: 84px !important;
   height: 84px !important;
   max-width: 84px !important;
   margin: 4px 0 4px 4px;
 }
+
 .bk-stf-avatar {
   border-radius: 50% !important;
   width: 100% !important;
@@ -65,6 +80,7 @@
   object-fit: cover;
   display: block;
 }
+
 .prow-img-empty.bk-stf-avatar,
 .pcard-img-empty.bk-stf-avatar {
   background: var(--accent-tint);
@@ -78,7 +94,9 @@
 .prow.bk-svc-prow.prow--paused,
 .prow.bk-stf-prow.prow--paused,
 .prod-card.bk-svc-pcard.prod-card--paused,
-.prod-card.bk-stf-pcard.prod-card--paused { cursor: pointer; }
+.prod-card.bk-stf-pcard.prod-card--paused {
+  cursor: pointer;
+}
 
 /* Customer cell */
 .bk-prow-customer {
@@ -90,6 +108,7 @@
   z-index: 2;
   padding-right: 12px;
 }
+
 .bk-prow-name {
   font-size: 14px;
   font-weight: 500;
@@ -98,6 +117,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .bk-prow-sub {
   font-size: 12px;
   color: var(--muted);
@@ -119,15 +139,24 @@
   align-items: center;
   gap: 6px;
 }
+
 .bk-prow-service {
   font-weight: 500;
   color: var(--text);
 }
 
 /* Three-button view toggle (List · Cards · Calendar) */
-.bk-view-toggle { width: 94px !important; }
-.bk-view-toggle .org-view-btn { width: 30px !important; }
-.bk-view-toggle .bk-view-ind { width: 30px !important; }
+.bk-view-toggle {
+  width: 94px !important;
+}
+
+.bk-view-toggle .org-view-btn {
+  width: 30px !important;
+}
+
+.bk-view-toggle .bk-view-ind {
+  width: 30px !important;
+}
 
 /* Staff chip in row / card / settings */
 .bk-staff-chip {
@@ -141,6 +170,7 @@
   font-size: 11px;
   font-weight: 500;
 }
+
 .bk-no-staff {
   color: var(--muted);
   font-size: 12px;
@@ -148,9 +178,21 @@
 }
 
 /* When-cell (date over time) */
-.bk-when-cell { display: flex; flex-direction: column; line-height: 1.3; }
-.bk-when-date { font-weight: 500; color: var(--text); }
-.bk-when-time { font-size: 12px; color: var(--muted); }
+.bk-when-cell {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.bk-when-date {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.bk-when-time {
+  font-size: 12px;
+  color: var(--muted);
+}
 
 /* Card variant — service name visible */
 .bk-card-service {
@@ -166,12 +208,11 @@
    ════════════════════════════════════════════ */
 
 .bk-section {
-  background: var(--card);
-  border-radius: 16px;
-  padding: 16px;
-  margin-bottom: 16px;
-  box-shadow: var(--shadow-card);
+  background: #00000000;
+  padding: 0px;
+  margin-bottom: 64px;
 }
+
 .bk-section-head {
   display: flex;
   align-items: center;
@@ -179,12 +220,14 @@
   gap: 12px;
   margin-bottom: 12px;
 }
+
 .bk-section-title {
   font-size: 16px;
   font-weight: 600;
   color: var(--text);
   margin: 0;
 }
+
 .bk-empty-block {
   color: var(--muted);
   font-size: 13px;
@@ -199,6 +242,7 @@
   gap: 8px;
   position: relative;
 }
+
 .bk-cfg-row {
   position: relative;
   display: flex;
@@ -211,7 +255,11 @@
   overflow: hidden;
   transition: background 0.18s ease;
 }
-.bk-cfg-row:hover { background: rgba(0, 0, 0, 0.045); }
+
+.bk-cfg-row:hover {
+  background: rgba(0, 0, 0, 0.045);
+}
+
 .bk-cfg-row-main {
   display: flex;
   align-items: center;
@@ -221,6 +269,7 @@
   position: relative;
   z-index: 2;
 }
+
 .bk-cfg-img {
   width: 44px;
   height: 44px;
@@ -228,7 +277,11 @@
   border-radius: 10px;
   flex-shrink: 0;
 }
-.bk-cfg-img--round { border-radius: 50%; }
+
+.bk-cfg-img--round {
+  border-radius: 50%;
+}
+
 .bk-cfg-img--empty {
   background: var(--accent-tint);
   color: var(--accent);
@@ -236,13 +289,19 @@
   align-items: center;
   justify-content: center;
 }
-.bk-cfg-info { min-width: 0; flex: 1; }
+
+.bk-cfg-info {
+  min-width: 0;
+  flex: 1;
+}
+
 .bk-cfg-name {
   font-weight: 600;
   color: var(--text);
   font-size: 14px;
   margin-bottom: 2px;
 }
+
 .bk-cfg-meta {
   display: flex;
   flex-wrap: wrap;
@@ -251,13 +310,18 @@
   font-size: 12px;
   color: var(--muted);
 }
-.bk-cfg-inactive { color: #d63031; }
+
+.bk-cfg-inactive {
+  color: #d63031;
+}
+
 .bk-cfg-chiplist {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 6px;
 }
+
 .bk-cfg-actions {
   display: flex;
   gap: 4px;
@@ -265,6 +329,7 @@
   z-index: 2;
   flex-shrink: 0;
 }
+
 .bk-cfg-actions--card {
   position: absolute;
   top: 12px;
@@ -272,6 +337,7 @@
   opacity: 0;
   transition: opacity 0.18s ease;
 }
+
 .bk-svc-card:hover .bk-cfg-actions--card,
 .bk-staff-card:hover .bk-cfg-actions--card {
   opacity: 1;
@@ -283,6 +349,7 @@
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px;
 }
+
 .bk-svc-card,
 .bk-staff-card {
   position: relative;
@@ -297,7 +364,11 @@
   box-shadow: var(--shadow-card);
   transition: transform 0.2s ease;
 }
-.bk-svc-card--hidden { opacity: 0.55; }
+
+.bk-svc-card--hidden {
+  opacity: 0.55;
+}
+
 .bk-svc-card-img {
   width: 100%;
   height: 140px;
@@ -307,6 +378,7 @@
   position: relative;
   z-index: 2;
 }
+
 .bk-svc-card-img--empty {
   background: var(--accent-tint);
   color: var(--accent);
@@ -314,6 +386,7 @@
   align-items: center;
   justify-content: center;
 }
+
 .bk-staff-card-avatar {
   width: 96px;
   height: 96px;
@@ -324,6 +397,7 @@
   position: relative;
   z-index: 2;
 }
+
 .bk-svc-card-body,
 .bk-staff-card-body {
   position: relative;
@@ -333,7 +407,11 @@
   gap: 6px;
   min-width: 0;
 }
-.bk-staff-card-body { text-align: center; }
+
+.bk-staff-card-body {
+  text-align: center;
+}
+
 .bk-svc-card-name {
   font-weight: 600;
   font-size: 15px;
@@ -342,6 +420,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .bk-svc-card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -350,51 +429,129 @@
   font-size: 12px;
   color: var(--muted);
 }
-.bk-staff-card-body .bk-svc-card-meta { justify-content: center; }
+
+.bk-staff-card-body .bk-svc-card-meta {
+  justify-content: center;
+}
+
 .bk-svc-card-meta--clamp {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.bk-svc-card-pipe { opacity: 0.4; }
-.bk-staff-card-body .bk-cfg-chiplist { justify-content: center; }
 
-/* Working hours editor (project-wide and per-staff) */
+.bk-svc-card-pipe {
+  opacity: 0.4;
+}
+
+.bk-staff-card-body .bk-cfg-chiplist {
+  justify-content: center;
+}
+
 .bk-hours-block {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  border-radius: 12px;
+  gap: 6px;
 }
 
 .bk-hours-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 18px 60px 1fr auto 1fr;
   align-items: center;
   gap: 12px;
-  padding: 4px 10px;
+  padding: 6px 17px;
+  padding-right: 6px;
+  border-radius: 999px;
 }
-.bk-hours-day {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 64px;
+
+.bk-hours-row:not(.cat-prod-row--checked) {
+  background: var(--card);
+}
+
+.bk-hours-row:not(.cat-prod-row--checked):hover {
+  background: var(--bg);
+}
+
+.bk-hours-day-name {
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
-  cursor: pointer;
   user-select: none;
 }
-.bk-hours-day input { cursor: pointer; }
-/* TimePicker wrapper — when the parent day is unchecked, fade + block clicks. */
+
 .bk-hours-time-wrap {
-  flex: 1;
   min-width: 0;
 }
+
 .bk-hours-time-wrap[data-disabled] {
-  opacity: 0.4;
   pointer-events: none;
 }
-.bk-hours-dash { color: var(--muted); font-size: 16px; }
+
+.bk-hours-dash {
+  color: var(--muted);
+  font-size: 16px;
+  user-select: none;
+}
+
+.bk-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.bk-stats-card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bk-stats-card--wide {
+  grid-column: 1 / -1;
+}
+
+.bk-stats-card--warn {
+  border-color: rgba(220, 53, 69, 0.4);
+}
+
+.bk-stats-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bk-stats-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.bk-stats-delta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.bk-stats-staff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.bk-stats-staff-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.bk-stats-staff-count {
+  color: var(--muted);
+}
+
 /* Grouping: vertical list of services under "Services this person can deliver" */
 .bk-staff-services {
   display: flex;
@@ -409,8 +566,35 @@
   grid-template-columns: 1fr 1fr;
   gap: 12px 16px;
 }
+
 @media (max-width: 720px) {
-  .bk-rules-grid { grid-template-columns: 1fr; }
+  .bk-rules-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Inputs inside the rules grid — base .crm-input uses var(--bg) which equals
+   the page bg, so they look transparent against the Booking Settings page.
+   Override to the same white pill the Combobox button (.cpm-cat-btn) uses,
+   so number fields visually match the timezone Combobox right below them. */
+.bk-rules-grid .crm-input {
+  background: var(--card);
+  border-radius: 999px;
+  padding: 11px 18px 11px 16px;
+  /* Hide the base .crm-input's transparent border so it can't morph into the
+     black focus ring (see .crm-input:focus in shared.css). We use shadow for
+     focus feedback instead — same elevation pattern as the Combobox button. */
+  border: none;
+  transition: box-shadow 0.18s ease;
+}
+
+.bk-rules-grid .crm-input:focus,
+.bk-rules-grid .crm-input:hover {
+  /* Soft elevation on hover/focus mirroring .cpm-cat-btn:hover — no harsh
+     1-2px outline, just a drop shadow lift. */
+  box-shadow: var(--box-shadow, 0 4px 16px rgba(0, 0, 0, 0.08));
+  border-color: transparent;
+  outline: none;
 }
 
 /* ════════════════════════════════════════════
@@ -421,6 +605,7 @@
   width: 600px;
   max-width: 90vw;
 }
+
 .bk-textarea {
   resize: vertical;
   min-height: 60px;
@@ -429,6 +614,7 @@
   font-family: inherit;
   font-size: 13px;
 }
+
 .bk-modal-avatar {
   width: 32px;
   height: 32px;
@@ -442,6 +628,7 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+
 .bk-staff-pick-btn {
   display: inline-flex;
   align-items: center;
@@ -456,19 +643,78 @@
   cursor: pointer;
   transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
-.bk-staff-pick-btn:hover { background: rgba(0, 0, 0, 0.07); }
+
+.bk-staff-pick-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
 .bk-staff-pick-btn--on {
   background: var(--accent-tint);
   color: var(--accent);
   border-color: var(--accent);
 }
+
 .bk-staff-pick-avatar {
   width: 18px;
   height: 18px;
   border-radius: 50%;
   object-fit: cover;
 }
-.bk-staff-pick-avatar--empty { background: rgba(0, 0, 0, 0.1); }
+
+.bk-staff-pick-avatar--empty {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+/* ── Mode tabs inside the New-Booking modal (Catalog / Freeform).
+   Inherits visuals from .auth-tab-switcher (same pill look as page tabs)
+   but stretches each tab to 50% width and centers the two-tab row. The
+   indicator + buttons all use the base Authentication.css styles. */
+.auth-tab-switcher.bk-mode-tabs {
+  align-self: stretch;
+  width: 100%;
+  margin-bottom: 4px;
+}
+.auth-tab-switcher.bk-mode-tabs .auth-tab-btn {
+  flex: 1 1 0;
+  justify-content: center;
+}
+.auth-tab-switcher.bk-mode-tabs .auth-tab-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Location-type picker (services modal) ──────────────────
+   Pill-row segmented control. Same shape as the staff picker
+   above but stretches each button to share width inside its
+   row so all three options stay visually balanced. */
+.bk-loc-pick {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bk-loc-pick-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.bk-loc-pick-btn:hover { background: rgba(0, 0, 0, 0.07); }
+.bk-loc-pick-btn--on {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.bk-loc-pick-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* ── Detail modal layout ─────────────────────────────────── */
 .bk-detail-summary {
@@ -476,16 +722,19 @@
   flex-direction: column;
   gap: 10px;
 }
+
 .bk-detail-row {
   display: flex;
   align-items: flex-start;
   gap: 10px;
 }
+
 .bk-detail-icon {
   color: var(--muted);
   flex-shrink: 0;
   margin-top: 2px;
 }
+
 .bk-detail-label {
   font-size: 11px;
   text-transform: uppercase;
@@ -494,13 +743,21 @@
   font-weight: 600;
   margin-bottom: 1px;
 }
+
 .bk-detail-value {
   font-size: 13px;
   color: var(--text);
   line-height: 1.4;
 }
-.bk-detail-value a { color: var(--accent); text-decoration: none; }
-.bk-detail-value a:hover { text-decoration: underline; }
+
+.bk-detail-value a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.bk-detail-value a:hover {
+  text-decoration: underline;
+}
 
 /* ════════════════════════════════════════════
    CALENDAR VIEW
@@ -511,6 +768,7 @@
   padding: 0;
   box-shadow: none;
 }
+
 .bk-cal-toolbar {
   display: flex;
   align-items: center;
@@ -540,12 +798,19 @@
   cursor: pointer;
   transition: background 0.15s ease;
 }
-.bk-cal-range-btn:hover { background: rgba(0, 0, 0, 0.04); }
+
+.bk-cal-range-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
 .bk-cal-range-caret {
   color: var(--muted);
   transition: transform 0.2s ease;
 }
-.bk-cal-range-caret--up { transform: rotate(180deg); }
+
+.bk-cal-range-caret--up {
+  transform: rotate(180deg);
+}
 
 /* Staff filter — Combobox with a leading Users icon, sits at the right */
 .bk-cal-staff-cb {
@@ -555,10 +820,12 @@
   gap: 6px;
   min-width: 140px;
 }
+
 .bk-cal-staff-cb-icon {
   color: var(--muted);
   flex-shrink: 0;
 }
+
 .bk-cal-staff-cb .cpm-cat-btn {
   height: 32px;
   padding: 0 12px;
@@ -576,12 +843,14 @@
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
   user-select: none;
 }
+
 .bk-week-grid {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
+
 /* Indicator pill — spans the whole 7-cell row that the cursor is over */
 .bk-week-indicator {
   position: absolute;
@@ -593,10 +862,11 @@
   pointer-events: none;
   opacity: 0;
   transition: transform 0.45s var(--ease-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)),
-              height 0.45s var(--ease-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)),
-              opacity 0.18s ease;
+    height 0.45s var(--ease-smooth, cubic-bezier(0.2, 0.8, 0.2, 1)),
+    opacity 0.18s ease;
   z-index: 1;
 }
+
 .bk-week-row {
   position: relative;
   z-index: 2;
@@ -605,6 +875,7 @@
   gap: 2px;
   cursor: pointer;
 }
+
 .bk-week-cell {
   height: 32px;
   display: flex;
@@ -613,14 +884,24 @@
   font-size: 13px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
-  border-radius: 999px;       /* matches indicator on edges */
+  border-radius: 999px;
+  /* matches indicator on edges */
   transition: color 0.15s ease;
 }
+
 /* Active week (anchor by default, hovered week when hovering) — text accent.
    Outside-month dates stay faded to keep the visual hierarchy. */
-.bk-week-row--current .bk-week-cell { color: var(--accent); }
-.bk-week-row--current .bk-week-cell.bk-week-cell--out { color: rgba(0, 113, 227, 0.35); }
-.bk-week-cell--out { color: rgba(0, 0, 0, 0.25); }
+.bk-week-row--current .bk-week-cell {
+  color: var(--accent);
+}
+
+.bk-week-row--current .bk-week-cell.bk-week-cell--out {
+  color: rgba(0, 113, 227, 0.35);
+}
+
+.bk-week-cell--out {
+  color: rgba(0, 0, 0, 0.25);
+}
 
 .bk-cal-grid {
   display: grid;
@@ -638,31 +919,53 @@
   display: flex;
   flex-direction: column;
 }
+
 .bk-cal-gutter-spacer {
-  height: 44px;          /* matches .bk-cal-col-head height */
-  margin-bottom: 6px;    /* matches col-head margin-bottom */
+  height: 44px;
+  /* matches .bk-cal-col-head height */
+  margin-bottom: 6px;
+  /* matches col-head margin-bottom */
 }
+
 .bk-cal-hour {
   display: flex;
   align-items: stretch;
   box-sizing: border-box;
 }
+
 /* Row-height variants — empty hour stays compact, busy hour expands so the
    booking card has room. Mirrors ROW_MIN / ROW_BUSY constants in JSX. */
-.bk-cal-hour--empty { height: 48px; }
-.bk-cal-hour--busy  { height: 100px; }
+.bk-cal-hour--empty {
+  height: 48px;
+}
+
+.bk-cal-hour--busy {
+  height: 100px;
+}
+
 .bk-cal-hour-pill {
   flex: 1;
   background: var(--card);
   border-radius: 10px;
   display: flex;
-  align-items: center;          /* vertically center the time text inside the pill */
-  justify-content: center;      /* horizontal-center too — feels balanced inside a thin gutter */
+  align-items: center;
+  /* vertically center the time text inside the pill */
+  justify-content: center;
+  /* horizontal-center too — feels balanced inside a thin gutter */
   padding: 0 10px;
-  margin: 3px 0;                /* 3px+3px = 6px visual gap, matches col-body cells + col gap */
+  margin: 3px 0;
+  /* 3px+3px = 6px visual gap, matches col-body cells + col gap */
   font-size: 11px;
   color: var(--muted);
   line-height: 1;
+}
+
+/* Wrapper holds the columns + invisible drag-to-edge zones. `position:relative`
+   so the absolutely-positioned edge zones anchor here. `overflow:hidden`
+   clips the slide-animation when the new week starts off-screen. */
+.bk-cal-cols-wrap {
+  position: relative;
+  overflow: hidden;
 }
 
 /* 7 columns, one per weekday — column itself is transparent; the day-head
@@ -671,11 +974,92 @@
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 6px;
+  /* will-change hint helps browsers compositing the slide animation. */
+  will-change: transform, opacity;
 }
+
 .bk-cal-col {
   background: transparent;
   display: flex;
   flex-direction: column;
+}
+
+/* Slide-in animations — fired by remount (key change on `.bk-cal-cols`). The
+   distance is intentionally small (40px) so the motion reads as "page swipe"
+   not "scroll" — feels like iOS app icons sliding between desktops. */
+@keyframes bk-cal-slide-from-right {
+  from {
+    transform: translateX(40px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes bk-cal-slide-from-left {
+  from {
+    transform: translateX(-40px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.bk-cal-cols--from-right {
+  animation: bk-cal-slide-from-right 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.bk-cal-cols--from-left {
+  animation: bk-cal-slide-from-left 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Drag-to-edge auto-advance zones. Default state is fully transparent +
+   pointer-events:none so the strips don't intercept regular clicks on
+   neighbouring columns (Mon's leftmost pixels, Sun's rightmost pixels) and
+   don't show any hover hint on plain mouse movement. They only become
+   reactive when JS adds the `--armed` class, which happens while a booking
+   card is being dragged. */
+.bk-cal-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  z-index: 5;
+  pointer-events: none;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.bk-cal-edge--prev {
+  left: 0;
+}
+
+.bk-cal-edge--next {
+  right: 0;
+}
+
+/* Armed — drag in progress. Capture mouse events so dragover fires, and
+   pulse a subtle gradient on hover so the user sees the zone is alive. */
+.bk-cal-edge--armed {
+  pointer-events: auto;
+}
+
+.bk-cal-edge--armed.bk-cal-edge--prev:hover {
+  background: linear-gradient(to right,
+      rgba(0, 113, 227, 0.12) 0%,
+      rgba(0, 113, 227, 0) 100%);
+}
+
+.bk-cal-edge--armed.bk-cal-edge--next:hover {
+  background: linear-gradient(to left,
+      rgba(0, 113, 227, 0.12) 0%,
+      rgba(0, 113, 227, 0) 100%);
 }
 
 .bk-cal-col-head {
@@ -692,18 +1076,26 @@
   box-sizing: border-box;
   transition: background 0.15s ease;
 }
+
 .bk-cal-col--today .bk-cal-col-head {
   background: var(--accent-tint);
   color: var(--accent);
 }
-.bk-cal-col-day  { color: var(--muted); }
+
+.bk-cal-col-day {
+  color: var(--muted);
+}
+
 .bk-cal-col-date {
   color: var(--text);
   font-weight: 600;
   font-size: 14px;
 }
+
 .bk-cal-col--today .bk-cal-col-day,
-.bk-cal-col--today .bk-cal-col-date { color: var(--accent); }
+.bk-cal-col--today .bk-cal-col-date {
+  color: var(--accent);
+}
 
 /* Body of one day column — relative for absolute-positioned cells + bookings */
 .bk-cal-col-body {
@@ -718,16 +1110,19 @@
   background: var(--card);
   border-radius: 10px;
   cursor: pointer;
-  pointer-events: auto;            /* receive hover for tilt + click bubbles up */
+  pointer-events: auto;
+  /* receive hover for tilt + click bubbles up */
   overflow: hidden;
   will-change: transform;
   transform-style: preserve-3d;
   transition: background 0.15s ease, box-shadow 0.4s ease;
 }
+
 .bk-cal-cell:hover {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07);
   z-index: 1;
 }
+
 /* Gloss overlay — same pattern as .org-card-gloss; opacity is animated by
    InteractiveSection on hover. */
 .bk-cal-cell-gloss {
@@ -738,63 +1133,214 @@
   opacity: 0;
   transition: opacity 0.3s ease;
 }
-/* Cell height variants — values pulled into CSS so DevTools shows the rule
-   (only `top` stays inline since it's a cumulative offset that depends on
-   which rows above are busy). 6px subtracted = 3px top + 3px bottom inset
-   for visual gap between rows. */
-.bk-cal-cell--empty { height: 42px; }   /* ROW_MIN  (48) − 6 */
-.bk-cal-cell--busy  { height: 94px; }   /* ROW_BUSY (100) − 6 */
+
+/* .bk-cal-cell height is set inline (= SLOT_HEIGHT − 6) so the gap between
+   adjacent slot pills is always exactly 6px. The --empty / --busy modifiers
+   are still applied for background tinting but no longer carry hardcoded
+   heights (which used to be 42 / 94 from the old variable-row system). */
+
+
+.bk-cal-cell--past {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+}
+
+.bk-cal-cell--past:hover {
+  box-shadow: none;
+  transform: none;
+}
 
 .bk-cal-col--today .bk-cal-cell {
   background: var(--accent-tint);
 }
 
-/* Booking card — copy of .org-card visual: white pill, soft shadow on hover,
-   structured info layout. Status indicated by left accent stripe + tinted badge. */
+.bk-cal-col--today .bk-cal-cell--past {
+  opacity: 0.4;
+}
+
+/* Non-working days (per Booking → Settings working_hours). Mirrors how past
+   slots are styled: the whole column fades to opacity 0.4, no diagonal
+   pattern, no double-greying. Click/drag-drop are still blocked in JS
+   (handleColClick / onColDrop short-circuit on !enabled), and per-cell
+   pointer-events:none kills the tilt-hover so the column reads as fully
+   inert at a glance. */
+.bk-cal-col--disabled {
+  opacity: 0.4;
+}
+
+.bk-cal-col--disabled .bk-cal-col-body {
+  cursor: not-allowed;
+}
+
+.bk-cal-col--disabled .bk-cal-cell {
+  pointer-events: none;
+}
+
 .bk-cal-card {
+  /* left + right + width + height come from blockStyle() (inline). The card
+     becomes a fixed-position pill inside its day column. Width spans only
+     its cluster column (e.g. 1/3 of column body when 3 bookings overlap)
+     and grows to 100% on hover to overlay its neighbours so the user can
+     actually read it. */
   position: absolute;
-  left: 4px;
-  right: 4px;
   background: var(--card);
   border-radius: 16px;
   cursor: pointer;
   overflow: hidden;
   z-index: 2;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  transition: box-shadow 0.2s ease, transform 0.15s ease;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.15s ease,
+    left 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+    height 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+    z-index 0s;
 }
+
 .bk-cal-card:hover {
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
-  transform: translateY(-1px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+  z-index: 50;
+  /* Override the inline cluster left/width so the card fills the whole
+     column body while hovered — the details panel below has room to fade in. */
+  left: 2px !important;
+  width: calc(100% - 4px) !important;
+  /* Grow tall enough to accommodate all detail lines (handled by inner
+     max-height transition below). The card's inline height stays as set
+     by duration; min-height bumps it to fit details for short bookings. */
+  min-height: 180px;
 }
 
 .bk-cal-card-stripe {
   position: absolute;
-  top: 0; bottom: 0; left: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: 3px;
   background: var(--accent);
   z-index: 1;
 }
-.bk-cal-card--pending   .bk-cal-card-stripe { background: rgba(0, 113, 227, 0.55); }
-.bk-cal-card--confirmed .bk-cal-card-stripe { background: var(--accent); }
-.bk-cal-card--completed .bk-cal-card-stripe { background: rgba(99, 99, 99, 0.55); }
-.bk-cal-card--cancelled .bk-cal-card-stripe { background: rgba(220, 53, 69, 0.55); }
-.bk-cal-card--no_show   .bk-cal-card-stripe { background: rgba(220, 53, 69, 0.85); }
+
+.bk-cal-card--pending .bk-cal-card-stripe {
+  background: rgba(0, 113, 227, 0.55);
+}
+
+.bk-cal-card--confirmed .bk-cal-card-stripe {
+  background: var(--accent);
+}
+
+.bk-cal-card--completed .bk-cal-card-stripe {
+  /* Green #13AA4D — matches the .bk-cal-card-badge--completed badge. The
+     stripe + badge are the two status indicators on the card — keep them
+     the same hue. */
+  background: #13AA4D;
+}
+
+.bk-cal-card--cancelled .bk-cal-card-stripe {
+  background: rgba(220, 53, 69, 0.55);
+}
+
+.bk-cal-card--no_show .bk-cal-card-stripe {
+  background: rgba(220, 53, 69, 0.85);
+}
 
 .bk-cal-card-inner {
   position: relative;
-  padding: 10px 12px 10px 14px;
+  padding: 6px 10px 6px 12px;
   z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* No height: 100% — keeps scrollHeight equal to natural content size so
+     useLayoutEffect can size the slot row to fit cards with lots of detail. */
 }
+
+/* Compact summary — always visible. Holds only the service name + time so a
+   card squeezed into a narrow column (3-way overlap, 30-min booking) still
+   shows the essential info. Hidden when the card is hovered + the details
+   panel takes over. */
+.bk-cal-card-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  transition: opacity 0.18s ease;
+}
+.bk-cal-card-compact-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+.bk-cal-card-compact-time {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Details panel — hidden by default (collapsed). Slides into view on hover
+   using max-height + opacity for a clean reveal. Keeping max-height: 0
+   ensures the card height isn't bloated by the hidden content. */
+.bk-cal-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition:
+    max-height 0.24s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity   0.18s ease;
+}
+.bk-cal-card:hover .bk-cal-card-compact {
+  opacity: 0;
+  /* Skip layout by collapsing height the moment hover starts. */
+  max-height: 0;
+  margin-bottom: -2px;
+  transition: opacity 0.10s ease, max-height 0.2s ease;
+}
+.bk-cal-card:hover .bk-cal-card-details {
+  max-height: 240px;
+  opacity: 1;
+  transition-delay: 0.05s;
+}
+
+/* Solo card — no concurrent bookings in this time window. With the column
+   body all to itself there's no reason to hide details behind a hover; show
+   the full layout right away. Compact summary is suppressed entirely. */
+.bk-cal-card--solo .bk-cal-card-compact {
+  display: none;
+}
+.bk-cal-card--solo .bk-cal-card-details {
+  max-height: none;
+  opacity: 1;
+  transition: none;
+}
+/* Solo cards don't need the hover-overlay treatment — they're already at
+   full width + showing everything. Cancel the hover width/min-height
+   overrides so they don't visibly snap when the mouse moves in. */
+.bk-cal-card--solo:hover {
+  left: 2px !important;
+  width: calc(100% - 4px) !important;
+  min-height: 0;
+  z-index: 2;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
+}
+
 .bk-cal-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
+
 .bk-cal-card-time {
   font-size: 11px;
   font-weight: 600;
@@ -802,6 +1348,7 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
 .bk-cal-card-badge {
   flex-shrink: 0;
   font-size: 10px;
@@ -810,11 +1357,26 @@
   border-radius: 999px;
   white-space: nowrap;
 }
+
 .bk-cal-card-badge--pending,
-.bk-cal-card-badge--confirmed { background: var(--accent-tint); color: var(--accent); }
-.bk-cal-card-badge--completed { background: rgba(99, 99, 99, 0.10); color: rgba(99, 99, 99, 0.9); }
+.bk-cal-card-badge--confirmed {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.bk-cal-card-badge--completed {
+  /* Green = job finished successfully. Matches .ord-badge--bk-completed
+     used in the list/card views — so a completed booking reads identically
+     whether the user is on Bookings list, cards, or the calendar grid. */
+  background: rgba(19, 170, 77, 0.12);
+  color: #13AA4D;
+}
+
 .bk-cal-card-badge--cancelled,
-.bk-cal-card-badge--no_show   { background: rgba(220, 53, 69, 0.10); color: #c92a39; }
+.bk-cal-card-badge--no_show {
+  background: rgba(220, 53, 69, 0.10);
+  color: #c92a39;
+}
 
 .bk-cal-card-service {
   font-size: 14px;
@@ -825,6 +1387,7 @@
   text-overflow: ellipsis;
   line-height: 1.25;
 }
+
 .bk-cal-card-line {
   display: flex;
   align-items: center;
@@ -836,6 +1399,7 @@
   text-overflow: ellipsis;
   line-height: 1.3;
 }
+
 .bk-cal-card-line span {
   white-space: nowrap;
   overflow: hidden;
@@ -843,12 +1407,18 @@
   flex: 1;
   min-width: 0;
 }
-.bk-cal-card-icon { flex-shrink: 0; color: var(--muted); }
+
+.bk-cal-card-icon {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
 .bk-cal-card-line--notes {
   color: var(--muted);
   font-style: italic;
   font-size: 11px;
 }
+
 .bk-cal-card-price {
   margin-top: 2px;
   font-size: 13px;
@@ -857,9 +1427,14 @@
 }
 
 .bk-cal-card--cancelled,
-.bk-cal-card--no_show { opacity: 0.7; }
+.bk-cal-card--no_show {
+  opacity: 0.7;
+}
+
 .bk-cal-card--cancelled .bk-cal-card-service,
-.bk-cal-card--cancelled .bk-cal-card-time { text-decoration: line-through; }
+.bk-cal-card--cancelled .bk-cal-card-time {
+  text-decoration: line-through;
+}
 
 /* Card being dragged — fade so the source row doesn't visually compete with
    the cursor preview the browser renders. */
@@ -885,9 +1460,17 @@
   z-index: 4000;
   animation: bk-drop-error-in 0.25s var(--ease-smooth, ease-out);
 }
+
 @keyframes bk-drop-error-in {
-  from { opacity: 0; transform: translate(-50%, 8px); }
-  to   { opacity: 1; transform: translate(-50%, 0);   }
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 /* Select inputs inside booking modals — match crm-input look */
@@ -913,6 +1496,7 @@
   background: rgba(0, 0, 0, 0.02);
   border-radius: 12px;
 }
+
 .bk-svc-img-preview img {
   width: 96px;
   height: 96px;
@@ -920,11 +1504,13 @@
   border-radius: 10px;
   flex-shrink: 0;
 }
+
 .bk-svc-img-actions {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
 .bk-svc-img-drop {
   display: flex;
   align-items: center;
@@ -940,6 +1526,7 @@
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
+
 .bk-svc-img-drop:hover:not(:disabled) {
   background: var(--accent-tint);
   border-color: var(--accent);
@@ -957,6 +1544,7 @@
   width: 100%;
   justify-content: space-between;
 }
+
 .bk-date-icon-row {
   display: inline-flex;
   align-items: center;
@@ -973,6 +1561,7 @@
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
   user-select: none;
 }
+
 .bk-date-head {
   display: flex;
   align-items: center;
@@ -980,11 +1569,13 @@
   margin-bottom: 8px;
   padding: 0 4px;
 }
+
 .bk-date-month {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
+
 .bk-date-nav {
   border: none;
   background: rgba(0, 0, 0, 0.04);
@@ -998,7 +1589,11 @@
   justify-content: center;
   transition: background 0.15s ease;
 }
-.bk-date-nav:hover { background: var(--accent-tint); color: var(--accent); }
+
+.bk-date-nav:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
 
 .bk-date-dow {
   display: grid;
@@ -1011,7 +1606,10 @@
   letter-spacing: 0.06em;
   margin-bottom: 4px;
 }
-.bk-date-dow span { padding: 4px 0; }
+
+.bk-date-dow span {
+  padding: 4px 0;
+}
 
 .bk-date-grid {
   position: relative;
@@ -1019,6 +1617,7 @@
   grid-template-columns: repeat(7, 1fr);
   gap: 2px;
 }
+
 /* The DynamicBlock pill that follows the cursor — same blue tint as the
    sidebar / sort indicator. */
 .bk-date-indicator {
@@ -1032,11 +1631,12 @@
   pointer-events: none;
   opacity: 0;
   transition: transform 0.45s var(--ease-smooth, ease-out),
-              height 0.45s var(--ease-smooth, ease-out),
-              width 0.45s var(--ease-smooth, ease-out),
-              opacity 0.18s ease;
+    height 0.45s var(--ease-smooth, ease-out),
+    width 0.45s var(--ease-smooth, ease-out),
+    opacity 0.18s ease;
   z-index: 1;
 }
+
 .bk-date-cell {
   position: relative;
   z-index: 2;
@@ -1051,22 +1651,31 @@
   font-variant-numeric: tabular-nums;
   transition: color 0.15s ease;
 }
-.bk-date-cell--out { color: rgba(0, 0, 0, 0.25); }
+
+.bk-date-cell--out {
+  color: rgba(0, 0, 0, 0.25);
+}
+
 .bk-date-cell--today {
   color: var(--accent);
   font-weight: 600;
 }
+
 /* Hovered cell (DynamicBlock indicator behind it) — accent text matches the
    sidebar / org-menu pattern. Excluded for the already-selected cell which
    is fully accent-painted. */
 .bk-date-cell--current {
   color: var(--accent);
 }
+
 .bk-date-cell--sel {
   background: var(--accent);
   color: #fff;
 }
-.bk-date-cell--sel:hover { color: #fff; }
+
+.bk-date-cell--sel:hover {
+  color: #fff;
+}
 
 /* ── Time picker (iPhone-alarm wheel) ──── */
 .bk-time-pop {
@@ -1078,6 +1687,7 @@
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
   user-select: none;
 }
+
 .bk-time-wheels {
   position: relative;
   display: flex;
@@ -1098,12 +1708,15 @@
   justify-content: center;
   overflow: hidden;
   cursor: grab;
-  touch-action: none;            /* allow pointer drag on touch devices */
+  touch-action: none;
+  /* allow pointer drag on touch devices */
   user-select: none;
 }
+
 .bk-time-wheel--dragging {
   cursor: grabbing;
 }
+
 .bk-time-item {
   position: absolute;
   left: 0;
@@ -1116,18 +1729,21 @@
   font-variant-numeric: tabular-nums;
   font-size: 18px;
   color: var(--text);
-  cursor: inherit;               /* matches the wheel's grab/grabbing */
+  cursor: inherit;
+  /* matches the wheel's grab/grabbing */
   display: flex;
   align-items: center;
   justify-content: center;
   transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1),
-              opacity 0.25s ease;
+    opacity 0.25s ease;
 }
+
 /* During an active drag, kill the snap-back transition so items glide with
    the cursor sub-pixel (no perceptual rubber-band lag). */
 .bk-time-wheel--dragging .bk-time-item {
   transition: none;
 }
+
 .bk-time-item--sel {
   font-weight: 700;
   color: var(--accent);
@@ -1153,4 +1769,100 @@
   color: var(--muted);
   flex-shrink: 0;
   z-index: 1;
+}
+
+/* Booking-specific "completed" badge variant — green tint #13AA4D instead of
+   the cyan .ord-badge--delivered used by Orders. Matches .bk-cal-card-badge--completed
+   so the calendar grid and the list / card views read consistently. */
+.ord-badge.ord-badge--bk-completed {
+  background: rgba(19, 170, 77, 0.12);
+  color: #13AA4D;
+}
+
+/* ── Calendar booking-card badge: hover affordance + dropdown menu ────
+   When the badge is rendered with .bk-cal-card-badge--btn it becomes
+   clickable to open a status-picker portal. Cursor + hover lift sell that
+   it's interactive; the underlying status colours come from
+   .bk-cal-card-badge--{status}. */
+.bk-cal-card-badge--btn {
+  appearance: none;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.bk-cal-card-badge--btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+/* Status picker dropdown — portal-positioned next to the clicked badge.
+   The inner .hdr-sw-items + .hdr-sw-indicator + .hdr-switcher-item come from
+   Header.css (same DynamicBlock pattern as the org/project switchers in the
+   page header). This container owns the positioning + drop-shadow chrome
+   — copied from .hdr-switcher-drop without the open/close transition since
+   the menu mounts/unmounts via React. */
+.bk-status-menu {
+  position: fixed;
+  z-index: 4500;
+  background: var(--card);
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+}
+
+/* ── Staff analytics ─────────────────────────────────────── */
+
+/* Period picker row above the staff list. Lives between the toolbar (search /
+   sort / view / new) and the grid/list. Quiet label + small combobox; the
+   period applies to every card/row below. */
+.bk-stf-analytics-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+.bk-stf-analytics-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.bk-stf-analytics-cb {
+  width: 220px;
+}
+
+/* 4-tile metrics grid inside the StaffCard body. Compact (2×2 on narrow
+   cards) but readable. Numbers use tabular-nums so columns align across
+   cards even when cassa varies wildly in magnitude. */
+.bk-stf-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+.bk-stf-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.bk-stf-metric-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bk-stf-metric-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.bk-stf-metric-commission {
+  color: var(--accent);
+  font-weight: 500;
 }

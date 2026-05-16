@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
-import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle } from "@phosphor-icons/react";
+import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle, Storefront, MapPin } from "@phosphor-icons/react";
 import Header from "./Header";
 import { client, pickError } from "./api.js";
 import "./Style/Checkout.css";
@@ -28,7 +28,16 @@ function Checkout() {
     comment:        "",
     payment_method: "cash",
     promo_code:     initPromo,
+    // Fulfillment — "courier" (default; courier delivers to address) or
+    // "pickup" (customer picks up from a specific warehouse → no shipping fee).
+    fulfillment_type:    "courier",
+    pickup_warehouse_id: null,
   });
+
+  // Pickup locations loaded once on mount — if the merchant opted at least
+  // one warehouse into pickup, the toggle becomes visible.
+  const [pickupLocations, setPickupLocations] = useState([]);
+  const [deliveryEta, setDeliveryEta] = useState(null);
 
   const [promoApplied,  setPromoApplied]  = useState(null);
   const [promoError,    setPromoError]    = useState("");
@@ -51,6 +60,15 @@ function Checkout() {
         if (result.status === 401) { navigate("/login"); return; }
         if (!result.ok || !result.data?.items?.length) { navigate("/cart"); return; }
         setCart(result.data);
+
+        // Pull pickup locations + delivery ETA in parallel. Both endpoints
+        // are public — work for both logged-in and guest checkouts.
+        client.shipping.pickupLocations()
+          .then(r => mounted && r.ok && Array.isArray(r.data) && setPickupLocations(r.data))
+          .catch(() => {});
+        client.shipping.deliveryEta()
+          .then(r => mounted && r.ok && setDeliveryEta(r.data))
+          .catch(() => {});
       } catch (e) {
         console.error("Checkout load error:", e);
         navigate("/cart");
@@ -89,8 +107,12 @@ function Checkout() {
       setError("Recipient name is required");
       return;
     }
-    if (cart.requires_shipping && form.delivery_method === "courier" && !form.address.trim()) {
+    if (cart.requires_shipping && form.fulfillment_type === "courier" && !form.address.trim()) {
       setError("Delivery address is required for courier");
+      return;
+    }
+    if (cart.requires_shipping && form.fulfillment_type === "pickup" && !form.pickup_warehouse_id) {
+      setError("Please pick a store to collect your order from");
       return;
     }
     setError("");
@@ -100,7 +122,11 @@ function Checkout() {
       recipient_name:  form.recipient_name.trim(),
       delivery_method: cart.requires_shipping ? form.delivery_method : "digital",
       payment_method:  form.payment_method,
+      fulfillment_type: cart.requires_shipping ? form.fulfillment_type : "courier",
     };
+    if (form.fulfillment_type === "pickup" && form.pickup_warehouse_id) {
+      payload.pickup_warehouse_id = form.pickup_warehouse_id;
+    }
     if (form.phone.trim())   payload.phone       = form.phone.trim();
     if (form.address.trim()) payload.address     = form.address.trim();
     if (form.comment.trim()) payload.comment     = form.comment.trim();
@@ -165,7 +191,10 @@ function Checkout() {
               </div>
             </div>
 
-            {/* Delivery — hidden for digital-only carts (no physical shipping). */}
+            {/* Delivery — hidden for digital-only carts (no physical shipping).
+                Layout: top-level toggle is fulfillment (Courier vs Pickup).
+                Courier reveals address + carrier sub-toggle; Pickup reveals
+                a location list with structured address + opening hours. */}
             {cart.requires_shipping ? (
               <div className="checkout-section">
                 <h2 className="checkout-section-title">Delivery</h2>
@@ -173,30 +202,69 @@ function Checkout() {
                 <div className="checkout-toggle">
                   <button
                     type="button"
-                    className={`checkout-toggle-btn${form.delivery_method === "courier" ? " checkout-toggle-btn--active" : ""}`}
-                    onClick={() => set("delivery_method", "courier")}
+                    className={`checkout-toggle-btn${form.fulfillment_type === "courier" ? " checkout-toggle-btn--active" : ""}`}
+                    onClick={() => set("fulfillment_type", "courier")}
                   >
                     <Truck weight="bold" /> Courier
                   </button>
-                  <button
-                    type="button"
-                    className={`checkout-toggle-btn${form.delivery_method === "postal" ? " checkout-toggle-btn--active" : ""}`}
-                    onClick={() => set("delivery_method", "postal")}
-                  >
-                    <EnvelopeSimple weight="bold" /> Postal
-                  </button>
+                  {pickupLocations.length > 0 && (
+                    <button
+                      type="button"
+                      className={`checkout-toggle-btn${form.fulfillment_type === "pickup" ? " checkout-toggle-btn--active" : ""}`}
+                      onClick={() => set("fulfillment_type", "pickup")}
+                    >
+                      <Storefront weight="bold" /> Pickup at store
+                    </button>
+                  )}
                 </div>
 
-                {form.delivery_method === "courier" && (
-                  <div className="checkout-field checkout-field--mt">
-                    <label>Delivery Address <span className="req">*</span></label>
-                    <input
-                      type="text"
-                      className="checkout-input"
-                      value={form.address}
-                      onChange={e => set("address", e.target.value)}
-                      placeholder="Street, City, ZIP"
-                    />
+                {form.fulfillment_type === "courier" && (
+                  <>
+                    {/* "Delivery in 2–4 days" ETA hint — pulled from any
+                        warehouse the merchant configured an ETA on. */}
+                    {deliveryEta?.min_days != null && deliveryEta?.max_days != null && (
+                      <div className="checkout-eta-hint">
+                        <Truck weight="bold" size={14} />
+                        {deliveryEta.min_days === deliveryEta.max_days
+                          ? `Delivery in ${deliveryEta.min_days} day${deliveryEta.min_days === 1 ? "" : "s"}`
+                          : `Delivery in ${deliveryEta.min_days}–${deliveryEta.max_days} days`}
+                      </div>
+                    )}
+                    <div className="checkout-field checkout-field--mt">
+                      <label>Delivery Address <span className="req">*</span></label>
+                      <input
+                        type="text"
+                        className="checkout-input"
+                        value={form.address}
+                        onChange={e => set("address", e.target.value)}
+                        placeholder="Street, City, ZIP"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {form.fulfillment_type === "pickup" && (
+                  <div className="checkout-pickup-list">
+                    {pickupLocations.map(loc => {
+                      const selected = form.pickup_warehouse_id === loc.id;
+                      const addrLine = [loc.street, loc.city, loc.region, loc.postal_code, loc.country]
+                        .filter(Boolean).join(", ");
+                      return (
+                        <button key={loc.id} type="button"
+                          className={`checkout-pickup-card${selected ? " checkout-pickup-card--selected" : ""}`}
+                          onClick={() => set("pickup_warehouse_id", loc.id)}>
+                          <MapPin weight={selected ? "fill" : "regular"} size={20}
+                            className="checkout-pickup-icon" />
+                          <div className="checkout-pickup-info">
+                            <span className="checkout-pickup-name">{loc.name}</span>
+                            {addrLine && <span className="checkout-pickup-addr">{addrLine}</span>}
+                            {loc.pickup_hours && (
+                              <span className="checkout-pickup-hours">{loc.pickup_hours}</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>

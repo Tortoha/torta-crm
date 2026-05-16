@@ -471,12 +471,12 @@
 }
 
 .po-svc-staff-chip--on {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .po-svc-staff-chip--on:hover {
-  background: var(--accent-hover);
+  background: var(--accent-tint-hover);
 }
 
 .po-svc-staff-avatar {
@@ -4280,8 +4280,8 @@ select.prod-field-input {
 }
 
 .cpm-modal {
-  width: 720px;
-  max-width: 720px;
+  width: 560px;
+  max-width: 560px;
 }
 
 .cpm-modal .auth-modal-head {

@@ -10,7 +10,7 @@ import { API_BASE } from '../../../api.js';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import BookingServiceModal from './BookingServiceModal.jsx';
 import BookingStaffModal   from './BookingStaffModal.jsx';
-import BookingCreateModal  from './BookingCreateModal.jsx';
+import BookingCreateModal, { TimePicker, Combobox } from './BookingCreateModal.jsx';
 import BookingDetailModal  from './BookingDetailModal.jsx';
 import BookingCalendar     from './BookingCalendar.jsx';
 import '../../../Style/Organization.css';
@@ -26,10 +26,29 @@ const ALL_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show
 const STATUS_META = {
   pending:   { label: 'Pending',   cls: 'ord-badge--new'       },
   confirmed: { label: 'Confirmed', cls: 'ord-badge--confirmed' },
-  completed: { label: 'Completed', cls: 'ord-badge--delivered' },
+  // .ord-badge--bk-completed is a green variant defined in Booking.css —
+  // we don't reuse Orders' cyan .ord-badge--delivered because a completed
+  // booking is a different kind of "done" (it's a positive outcome, not a
+  // shipment status).
+  completed: { label: 'Completed', cls: 'ord-badge--bk-completed' },
   cancelled: { label: 'Cancelled', cls: 'ord-badge--cancelled' },
   no_show:   { label: 'No-show',   cls: 'ord-badge--refunded'  },
 };
+
+// Period options for the staff-analytics combobox. Keys MUST match the
+// _STAFF_ANALYTICS_PERIODS dict in CRM/backend/main.py (booking_staff_analytics).
+const STAFF_PERIOD_OPTIONS = [
+  { value: '1d',       label: '1 day'    },
+  { value: '3d',       label: '3 days'   },
+  { value: '1w',       label: '1 week'   },
+  { value: '2w',       label: '2 weeks'  },
+  { value: '1mo',      label: '1 month'  },
+  { value: '2mo',      label: '2 months' },
+  { value: 'season',   label: '1 season (3 mo)' },
+  { value: 'halfyear', label: 'Half-year' },
+  { value: '1y',       label: '1 year'   },
+  { value: '2y',       label: '2 years'  },
+];
 
 const STATUS_TABS = [
   { key: 'all', label: 'All' },
@@ -420,7 +439,7 @@ function ServiceCard({ service, staff, onEdit, onDelete }) {
 // Staff row — mirrors ServiceRow / ProdListRow visual exactly. Round avatar
 // (bk-prow-avatar override) instead of square service image; otherwise same
 // 7-col grid + tilt + 3-dot menu.
-function StaffRow({ member, services, onEdit, onDelete }) {
+function StaffRow({ member, services, analytics, onEdit, onDelete }) {
   const menuBtnRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, menuOpen);
@@ -453,6 +472,14 @@ function StaffRow({ member, services, onEdit, onDelete }) {
       <span className="prow-name">{member.name}</span>
       <span className="prow-cell">{member.bio || <span className="prow-empty">—</span>}</span>
       <span className="prow-cell">{servicesLabel}</span>
+      <span className="prow-cell bk-stf-row-num">
+        ${(analytics?.cassa_earned ?? 0).toFixed(2)}
+        {member.commission_pct > 0 && (
+          <span className="bk-stf-metric-commission"> · {member.commission_pct}%</span>
+        )}
+      </span>
+      <span className="prow-cell bk-stf-row-num">{analytics?.bookings_count ?? 0}</span>
+      <span className="prow-cell bk-stf-row-num">{(analytics?.hours_worked ?? 0).toFixed(1)}</span>
       <button ref={menuBtnRef} className="org-list-menu-btn" type="button"
         onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
         <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
@@ -469,7 +496,7 @@ function StaffRow({ member, services, onEdit, onDelete }) {
 
 // Staff card — mirrors ServiceCard / ProductCard. Round avatar instead of
 // square image, but same prod-card shell + tilt + 3-dot menu + bottom-right badge.
-function StaffCard({ member, services, onEdit, onDelete }) {
+function StaffCard({ member, services, analytics, onEdit, onDelete }) {
   const menuBtnRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, menuOpen);
@@ -515,6 +542,33 @@ function StaffCard({ member, services, onEdit, onDelete }) {
               {linked.length > 3 && <span className="bk-staff-chip">+{linked.length - 3}</span>}
             </div>
           )}
+          {/* 4-tile analytics grid — quiet numbers, no payroll math. The
+              commission % from the staff modal is shown alongside Cassa so
+              the owner can compute the payout in their head if they want. */}
+          <div className="bk-stf-metrics">
+            <div className="bk-stf-metric">
+              <span className="bk-stf-metric-label">Cassa
+                {member.commission_pct > 0 && (
+                  <span className="bk-stf-metric-commission"> · {member.commission_pct}%</span>
+                )}
+              </span>
+              <span className="bk-stf-metric-value">
+                ${(analytics?.cassa_earned ?? 0).toFixed(2)}
+              </span>
+            </div>
+            <div className="bk-stf-metric">
+              <span className="bk-stf-metric-label">Bookings</span>
+              <span className="bk-stf-metric-value">{analytics?.bookings_count ?? 0}</span>
+            </div>
+            <div className="bk-stf-metric">
+              <span className="bk-stf-metric-label">Hours</span>
+              <span className="bk-stf-metric-value">{(analytics?.hours_worked ?? 0).toFixed(1)}</span>
+            </div>
+            <div className="bk-stf-metric">
+              <span className="bk-stf-metric-label">Avg ticket</span>
+              <span className="bk-stf-metric-value">${(analytics?.avg_ticket ?? 0).toFixed(2)}</span>
+            </div>
+          </div>
         </div>
       </div>
       {badge && <span className="pcard-cat-badge">{badge}</span>}
@@ -583,66 +637,100 @@ function StatCard({ label, value, delta, tone }) {
 }
 
 // ─── Working Hours editor (project-wide) ──────────────────────
+// Design mirrors the New-promo-code modal: cat-prod-checkbox + cat-prod-row
+// for each day, custom TimePicker (from BookingCreateModal) instead of the
+// browser's native <input type=time>, and silent auto-save 600ms after the
+// last edit — no Save button.
 
 function HoursEditor({ projectId, showToast, onSaved }) {
   const pq = `?project_id=${projectId}`;
-  const [rows, setRows] = useState(() => DAY_NAMES.map((_, i) => ({ day_of_week: i, open_time: '', close_time: '', enabled: false })));
-  const [saving, setSaving] = useState(false);
+  const [rows, setRows] = useState(() => DAY_NAMES.map((_, i) =>
+    ({ day_of_week: i, open_time: '10:00', close_time: '19:00', enabled: false })
+  ));
+  // `hydrated` flips to true after the first GET completes. Without it, the
+  // auto-save effect would fire on initial render and clobber server state
+  // with the placeholder defaults.
+  const [hydrated, setHydrated] = useState(false);
+  const skipNextSave = useRef(false);
+  // Callbacks bag stays in a ref so changes to its identity (which happen on
+  // every parent re-render — onSaved is `reload`, a fresh closure each time)
+  // don't re-trigger the auto-save effect. Without this we ended up in an
+  // infinite loop: save → reload → parent re-renders → onSaved identity
+  // changes → effect re-runs → new save → … See save-effect deps below.
+  const cbRef = useRef({ showToast, onSaved });
+  cbRef.current = { showToast, onSaved };
 
   useEffect(() => {
     fetch(`${API_BASE}/api/booking/hours${pq}`, { credentials: 'include' })
       .then(r => r.json()).then(data => {
         const next = DAY_NAMES.map((_, i) => {
-          const found = data.find(d => d.day_of_week === i);
+          const found = (data || []).find(d => d.day_of_week === i);
           return found
-            ? { day_of_week: i, open_time: found.open_time, close_time: found.close_time, enabled: true }
+            ? { day_of_week: i, open_time: found.open_time.slice(0, 5),
+                close_time: found.close_time.slice(0, 5), enabled: true }
             : { day_of_week: i, open_time: '10:00', close_time: '19:00', enabled: false };
         });
+        skipNextSave.current = true;   // first state-set after fetch isn't a user edit
         setRows(next);
+        setHydrated(true);
       });
   }, [projectId]);
 
-  const updateRow = (i, k, v) => setRows(prev => prev.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
+  const updateRow = (i, k, v) =>
+    setRows(prev => prev.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
 
-  const save = async () => {
-    setSaving(true);
-    try {
-      const body = { staff_id: null, rows: rows.filter(r => r.enabled).map(r => ({
-        day_of_week: r.day_of_week, open_time: r.open_time, close_time: r.close_time,
-      })) };
-      const res = await fetch(`${API_BASE}/api/booking/hours${pq}`, {
-        method: 'PUT', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        showToast('Hours saved');
-        onSaved?.();
-      }
-    } finally { setSaving(false); }
-  };
+  // Debounced auto-save. Fires 600ms after rows stop changing. Dependencies
+  // are restricted to (rows, hydrated, pq) — the side-effect callbacks live
+  // in cbRef so their identity changes don't trigger this effect.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (skipNextSave.current) { skipNextSave.current = false; return; }
+    const t = setTimeout(async () => {
+      try {
+        const body = {
+          staff_id: null,
+          rows: rows.filter(r => r.enabled).map(r => ({
+            day_of_week: r.day_of_week,
+            open_time:   r.open_time,
+            close_time:  r.close_time,
+          })),
+        };
+        const res = await fetch(`${API_BASE}/api/booking/hours${pq}`, {
+          method: 'PUT', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          cbRef.current.showToast?.('Working hours updated');
+          cbRef.current.onSaved?.();
+        }
+      } catch { /* silent — next edit will retry */ }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [rows, hydrated, pq]);
 
   return (
     <div className="bk-hours-block">
       {rows.map((r, i) => (
-        <div key={i} className="bk-hours-row">
-          <label className="bk-hours-day">
-            <input type="checkbox" checked={r.enabled}
-              onChange={e => updateRow(i, 'enabled', e.target.checked)} />
-            <span>{DAY_NAMES[i]}</span>
-          </label>
-          <input type="time" className="crm-input bk-hours-time"
-            value={r.open_time} disabled={!r.enabled}
-            onChange={e => updateRow(i, 'open_time', e.target.value)} />
+        <div key={i}
+          className={`cat-prod-row bk-hours-row${r.enabled ? ' cat-prod-row--checked' : ''}`}>
+          <input type="checkbox" className="cat-prod-checkbox"
+            checked={r.enabled}
+            onChange={e => updateRow(i, 'enabled', e.target.checked)} />
+          <span className="bk-hours-day-name">{DAY_NAMES[i]}</span>
+          <div className="bk-hours-time-wrap" data-disabled={r.enabled ? undefined : 'true'}>
+            <TimePicker value={r.open_time || '10:00'}
+              onChange={v => updateRow(i, 'open_time', v)}
+              slotInterval={15} />
+          </div>
           <span className="bk-hours-dash">–</span>
-          <input type="time" className="crm-input bk-hours-time"
-            value={r.close_time} disabled={!r.enabled}
-            onChange={e => updateRow(i, 'close_time', e.target.value)} />
+          <div className="bk-hours-time-wrap" data-disabled={r.enabled ? undefined : 'true'}>
+            <TimePicker value={r.close_time || '19:00'}
+              onChange={v => updateRow(i, 'close_time', v)}
+              slotInterval={15} />
+          </div>
         </div>
       ))}
-      <button className="crm-submit-btn" onClick={save} disabled={saving} type="button" style={{ marginTop: 12 }}>
-        {saving ? 'Saving…' : 'Save hours'}
-      </button>
     </div>
   );
 }
@@ -652,31 +740,103 @@ function HoursEditor({ projectId, showToast, onSaved }) {
 function RulesEditor({ projectId, showToast, onSaved }) {
   const pq = `?project_id=${projectId}`;
   const [form, setForm] = useState(null);
-  const [saving, setSaving] = useState(false);
+  // `hydrated` mirrors HoursEditor — first state set from the GET response
+  // should NOT trigger auto-save, otherwise we'd PUT back what we just GOT.
+  const [hydrated, setHydrated] = useState(false);
+  const skipNextSave = useRef(false);
+  // Stable ref to the latest callbacks — see HoursEditor for the same pattern.
+  // Without this, every parent re-render gave us new onSaved identity which
+  // re-fired the save effect → infinite loop.
+  const cbRef = useRef({ showToast, onSaved });
+  cbRef.current = { showToast, onSaved };
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  // List of IANA names from browser if available, otherwise a curated short list.
-  // Used to populate the timezone <select>; merchant can also type any IANA name.
-  const tzList = (() => {
-    try {
-      if (typeof Intl.supportedValuesOf === 'function') {
-        return Intl.supportedValuesOf('timeZone');
-      }
-    } catch { /* unsupported */ }
-    return [
+
+  // Curated list of major IANA timezones sorted east-to-west. We deliberately
+  // DO NOT show the browser's full supportedValuesOf('timeZone') (~440 entries)
+  // because scrolling through that without search is hostile UX. Common ones
+  // cover ~99% of small-business needs; any merchant in a niche zone can ask
+  // support to add it. Offsets are computed at render time so DST shifts the
+  // label automatically (e.g. London is UTC+00:00 in winter, UTC+01:00 in summer).
+  const tzOptions = useMemo(() => {
+    const NAMES = [
       'UTC',
-      'Europe/London', 'Europe/Berlin', 'Europe/Paris', 'Europe/Moscow', 'Europe/Istanbul',
-      'Asia/Almaty', 'Asia/Tashkent', 'Asia/Bishkek', 'Asia/Yerevan', 'Asia/Tbilisi', 'Asia/Baku',
-      'Asia/Dubai', 'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Kolkata',
-      'America/New_York', 'America/Chicago', 'America/Los_Angeles',
-      'Australia/Sydney', 'Pacific/Auckland',
+      // Pacific
+      'Pacific/Honolulu', 'Pacific/Auckland', 'Pacific/Fiji',
+      // Americas
+      'America/Anchorage', 'America/Los_Angeles', 'America/Denver',
+      'America/Chicago', 'America/New_York', 'America/Toronto',
+      'America/Halifax', 'America/Mexico_City', 'America/Sao_Paulo',
+      'America/Argentina/Buenos_Aires',
+      // Europe + UK
+      'Atlantic/Reykjavik', 'Europe/London', 'Europe/Lisbon',
+      'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome',
+      'Europe/Amsterdam', 'Europe/Warsaw', 'Europe/Athens',
+      'Europe/Helsinki', 'Europe/Bucharest', 'Europe/Istanbul',
+      'Europe/Kiev', 'Europe/Moscow',
+      // Middle East / Caucasus
+      'Asia/Jerusalem', 'Asia/Riyadh', 'Asia/Dubai', 'Asia/Tehran',
+      'Asia/Yerevan', 'Asia/Tbilisi', 'Asia/Baku',
+      // Central Asia (Kazakhstan + neighbours — main user region)
+      'Asia/Karachi', 'Asia/Tashkent', 'Asia/Yekaterinburg',
+      'Asia/Aqtobe', 'Asia/Aqtau', 'Asia/Atyrau', 'Asia/Oral',
+      'Asia/Bishkek', 'Asia/Almaty', 'Asia/Qyzylorda',
+      // South + South-East Asia
+      'Asia/Kolkata', 'Asia/Kathmandu', 'Asia/Dhaka',
+      'Asia/Bangkok', 'Asia/Singapore',
+      // East Asia
+      'Asia/Hong_Kong', 'Asia/Shanghai', 'Asia/Manila',
+      'Asia/Seoul', 'Asia/Tokyo',
+      // Australia
+      'Australia/Perth', 'Australia/Adelaide', 'Australia/Sydney',
+      // Africa
+      'Africa/Cairo', 'Africa/Lagos', 'Africa/Johannesburg',
     ];
-  })();
+    // Splice in the merchant's currently-saved tz if it's not in the curated
+    // set — so a niche IANA name they typed before never silently disappears
+    // from the dropdown.
+    const saved = (form?.timezone || '').trim();
+    if (saved && !NAMES.includes(saved)) NAMES.push(saved);
+    // Also splice in the browser tz so the user can pick "my local zone" with one click.
+    if (browserTz && !NAMES.includes(browserTz)) NAMES.push(browserTz);
+
+    const opts = NAMES.map(name => {
+      let offsetMin = 0;
+      try {
+        const fmt = new Intl.DateTimeFormat('en', { timeZone: name, timeZoneName: 'shortOffset' });
+        const tag = fmt.formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value || '';
+        // tag is "GMT", "GMT+5", "GMT-08:00", "GMT+05:30", etc.
+        if (tag !== 'GMT') {
+          const m = tag.match(/^GMT([+-])(\d{1,2})(?::(\d{2}))?$/);
+          if (m) {
+            const sign = m[1] === '+' ? 1 : -1;
+            offsetMin = sign * (parseInt(m[2], 10) * 60 + parseInt(m[3] || '0', 10));
+          }
+        }
+      } catch { /* fall through with offsetMin=0 */ }
+      const sign = offsetMin >= 0 ? '+' : '-';
+      const abs = Math.abs(offsetMin);
+      const offLabel = name === 'UTC'
+        ? 'UTC'
+        : `UTC${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+      // Pretty city name: last segment with underscores → spaces.
+      // "America/Argentina/Buenos_Aires" → "Buenos Aires".
+      const city = name.split('/').pop().replace(/_/g, ' ');
+      const suffix = name === browserTz ? ' (your local)' : '';
+      return {
+        value: name,
+        label: name === 'UTC' ? 'UTC' : `${offLabel} · ${city}${suffix}`,
+        _offset: offsetMin,
+      };
+    });
+    // Sort by offset (west-to-east), keeping UTC at offset 0 right where it belongs.
+    return opts.sort((a, b) => a._offset - b._offset || a.label.localeCompare(b.label));
+  }, [form?.timezone, browserTz]);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/booking/settings${pq}`, { credentials: 'include' })
       .then(r => r.json())
       .then(async d => {
-        if (!d) { setForm(d); return; }
+        if (!d) { setForm(d); setHydrated(true); return; }
         // Auto-default to browser TZ when project was created without explicit setting
         // (backend default is 'UTC' which trips up merchants outside that zone).
         // We also AUTO-SAVE this one-time correction so the merchant doesn't have to
@@ -697,29 +857,37 @@ function RulesEditor({ projectId, showToast, onSaved }) {
             onSaved?.();
           } catch { /* will save next time merchant edits */ }
         }
+        skipNextSave.current = true;   // initial setForm isn't a user edit
         setForm(d);
+        setHydrated(true);
       });
   }, [projectId]);
+
+  // Debounced auto-save 600ms after form changes — same pattern as HoursEditor.
+  // Deps deliberately exclude showToast/onSaved — they live in cbRef.
+  useEffect(() => {
+    if (!hydrated || !form) return;
+    if (skipNextSave.current) { skipNextSave.current = false; return; }
+    const t = setTimeout(async () => {
+      try {
+        const { configured, ...payload } = form;
+        const res = await fetch(`${API_BASE}/api/booking/settings${pq}`, {
+          method: 'PUT', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          cbRef.current.showToast?.('Booking rules updated');
+          cbRef.current.onSaved?.();
+        }
+      } catch { /* silent — next edit will retry */ }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [form, hydrated, pq]);
 
   if (!form) return <p className="crm-placeholder">Loading…</p>;
 
   const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const { configured, ...payload } = form;
-      const res = await fetch(`${API_BASE}/api/booking/settings${pq}`, {
-        method: 'PUT', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        showToast('Rules saved');
-        onSaved?.();
-      }
-    } finally { setSaving(false); }
-  };
 
   return (
     <div className="bk-rules-grid">
@@ -755,18 +923,15 @@ function RulesEditor({ projectId, showToast, onSaved }) {
       <div className="auth-field" style={{ gridColumn: '1 / -1' }}>
         <label className="auth-label">Business timezone</label>
         <p className="auth-field-hint">
-          Working hours and slot times are interpreted in this timezone. If left as <code>UTC</code>,
-          a 16:30 slot means 16:30 UTC — which can confuse customers in other regions. Set this
-          to your business's actual local timezone. Default is your browser's TZ
-          (<code>{browserTz}</code>).
+          Working hours and slot times are interpreted in this timezone. Pick the
+          UTC offset that matches your business's actual location — labels show the
+          current offset (incl. daylight saving). Your local zone is marked
+          "(your local)" — likely the right pick.
         </p>
-        <input className="crm-input" type="text" list="bk-tz-list"
-          value={form.timezone || ''} placeholder={browserTz}
-          onChange={e => upd('timezone', e.target.value.trim())}
-          spellCheck={false} autoComplete="off" />
-        <datalist id="bk-tz-list">
-          {tzList.map(z => <option key={z} value={z} />)}
-        </datalist>
+        <Combobox value={form.timezone || browserTz}
+          options={tzOptions}
+          placeholder="Pick a timezone"
+          onChange={v => upd('timezone', v)} />
       </div>
 
       <div className="auth-toggle-row" style={{ gridColumn: '1 / -1' }}>
@@ -781,11 +946,6 @@ function RulesEditor({ projectId, showToast, onSaved }) {
         </label>
       </div>
 
-      <div className="auth-actions" style={{ gridColumn: '1 / -1' }}>
-        <button className="crm-submit-btn" onClick={save} disabled={saving} type="button">
-          {saving ? 'Saving…' : 'Save rules'}
-        </button>
-      </div>
     </div>
   );
 }
@@ -838,6 +998,9 @@ function Booking() {
   const [stfSort,   setStfSort]   = useState({ field: 'name', dir: 'asc' });
   const [stfView,   setStfView]   = useState('list');
   const [stfViewHover, setStfViewHover] = useState(null);
+  // Analytics period (combobox) + the per-staff analytics rows fetched for it.
+  const [stfPeriod, setStfPeriod] = useState('1mo');
+  const [stfAnalytics, setStfAnalytics] = useState({});   // { [staffId]: { cassa_earned, bookings_count, hours_worked, avg_ticket } }
 
   // Modals
   const [openBooking,  setOpenBooking]  = useState(null);
@@ -916,7 +1079,35 @@ function Booking() {
         fetch(`${API_BASE}/api/booking/hours${pq}`,    { credentials: 'include' }),
         fetch(`${API_BASE}/api/booking/settings${pq}`, { credentials: 'include' }),
       ]);
-      if (bRes.ok)   setBookings(await bRes.json());
+      if (bRes.ok) {
+        const list = await bRes.json();
+        setBookings(list);
+        // Auto-flip stale bookings: anything whose end-time has fully passed
+        // and is still pending/confirmed gets marked no-show. Fires only
+        // for bookings that need it (so reload() stays cheap when up-to-date),
+        // and PATCHes them silently — the next reload() picks the new status.
+        // Without this the calendar grid showed past slots as "Confirmed",
+        // which is misleading since the appointment time is gone.
+        const now = Date.now();
+        const stale = (list || []).filter(b => {
+          if (b.status !== 'pending' && b.status !== 'confirmed') return false;
+          const end = b.ends_at ? new Date(b.ends_at).getTime() : null;
+          return end != null && end < now;
+        });
+        if (stale.length > 0) {
+          await Promise.allSettled(stale.map(b =>
+            fetch(`${API_BASE}/api/booking/bookings/${b.id}${pq}`, {
+              method: 'PATCH', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'no_show' }),
+            })
+          ));
+          // Reflect locally without a second GET round-trip.
+          setBookings(prev => prev.map(b =>
+            stale.find(s => s.id === b.id) ? { ...b, status: 'no_show' } : b
+          ));
+        }
+      }
       if (sRes.ok)   setServices(await sRes.json());
       if (stRes.ok)  setStaff(await stRes.json());
       if (hRes.ok)   setHours(await hRes.json());
@@ -949,6 +1140,27 @@ function Booking() {
   }, [projectId]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Fetch per-staff analytics for the chosen period. Re-runs whenever the
+  // staff list changes (e.g. user adds someone) or the period switches.
+  useEffect(() => {
+    if (!staff.length) { setStfAnalytics({}); return; }
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.allSettled(staff.map(m =>
+        fetch(`${API_BASE}/api/booking/staff/${m.id}/analytics${pq}&period=${stfPeriod}`,
+          { credentials: 'include' })
+          .then(r => r.ok ? r.json() : null)
+      ));
+      if (cancelled) return;
+      const next = {};
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value) next[staff[i].id] = r.value;
+      });
+      setStfAnalytics(next);
+    })();
+    return () => { cancelled = true; };
+  }, [staff, stfPeriod, projectId]);   // eslint-disable-line
 
   // ── Status counts ──
   const counts = useMemo(() => {
@@ -1169,6 +1381,7 @@ function Booking() {
                   if (res.ok) { reload(); showToast('Booking moved'); }
                   else showToast('Move failed');
                 }}
+                onStatusChange={updateBookingStatus}
               />
             )}
           </>
@@ -1272,6 +1485,16 @@ function Booking() {
                 <Plus className="org-new-icon" /> New staff
               </button>
             </div>
+            {/* Analytics period picker — drives the 4 metrics on each card/row.
+                Combobox is the same widget used everywhere else (timezone, status,
+                etc.) so the UI stays consistent. */}
+            <div className="bk-stf-analytics-bar">
+              <span className="bk-stf-analytics-label">Analytics period</span>
+              <div className="bk-stf-analytics-cb">
+                <Combobox value={stfPeriod} options={STAFF_PERIOD_OPTIONS}
+                  onChange={setStfPeriod} />
+              </div>
+            </div>
             {loading ? (
               <p className="crm-placeholder">Loading staff…</p>
             ) : staffSorted.length === 0 ? (
@@ -1284,6 +1507,7 @@ function Booking() {
               <div className="prod-grid">
                 {staffSorted.map(m => (
                   <StaffCard key={m.id} member={m} services={services}
+                    analytics={stfAnalytics[m.id]}
                     onEdit={() => setEditStaff(m)}
                     onDelete={() => deleteStaff(m.id)} />
                 ))}
@@ -1294,11 +1518,15 @@ function Booking() {
                   <span /><span className="org-list-th">Name</span>
                   <span className="org-list-th">Bio</span>
                   <span className="org-list-th">Services</span>
+                  <span className="org-list-th">Cassa</span>
+                  <span className="org-list-th">Bookings</span>
+                  <span className="org-list-th">Hours</span>
                   <span />
                 </div>
                 <div className="prod-list-block">
                   {staffSorted.map(m => (
                     <StaffRow key={m.id} member={m} services={services}
+                      analytics={stfAnalytics[m.id]}
                       onEdit={() => setEditStaff(m)}
                       onDelete={() => deleteStaff(m.id)} />
                   ))}

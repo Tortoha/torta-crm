@@ -1071,6 +1071,11 @@ class PlaceOrderRequest(BaseModel):
     comment: Optional[str] = None
     payment_method: str = "card"       # card | cash
     promo_code: Optional[str] = None
+    # Fulfillment: 'courier' delivers to address, 'pickup' = customer
+    # collects from a warehouse. When `pickup`, `pickup_warehouse_id` is
+    # required and `address` becomes optional.
+    fulfillment_type:     str = "courier"   # courier | pickup
+    pickup_warehouse_id:  Optional[int] = None
     # Strict-mode checkout: when the org has a configured payment provider, POST /orders
     # MUST be preceded by a successful POST /orders/init-payment that returned an intent_id.
     # The intent must be in `succeeded` (Stripe) / CONFIRMED (Tinkoff) / etc. state when
@@ -2252,6 +2257,47 @@ def list_categories_public(api_key_record: dict = Depends(resolve_api_key)):
     ]
 
 
+@app.get("/{api_key}/pickup-locations")
+def get_pickup_locations(api_key_record: dict = Depends(resolve_api_key)):
+    """Public-facing list of warehouses the merchant has opted into "pickup
+    at store". Returns just the customer-friendly fields — internal stuff
+    like sold_quantity / cost_price stays in the CRM endpoints."""
+    project_id = api_key_record["id"]
+    rows = db_all(
+        "SELECT id, name, country, city, street, postal_code, region,"
+        "       contact_phone, pickup_hours,"
+        "       delivery_eta_min_days, delivery_eta_max_days"
+        " FROM warehouses"
+        " WHERE project_id=%s AND is_active=TRUE AND is_pickup_enabled=TRUE"
+        " ORDER BY is_default DESC, name ASC",
+        (project_id,)
+    )
+    return rows
+
+
+@app.get("/{api_key}/delivery-eta")
+def get_delivery_eta(api_key_record: dict = Depends(resolve_api_key)):
+    """Aggregate delivery ETA the storefront uses for "Delivery in 2–4 days"
+    hints on product cards / checkout (courier fulfillment).
+    Returns the MIN-min and MAX-max across all active warehouses that have
+    ETA configured. If no warehouse has ETA, returns null fields → storefront
+    just hides the hint."""
+    project_id = api_key_record["id"]
+    row = db_one(
+        "SELECT MIN(delivery_eta_min_days) AS min_days,"
+        "       MAX(delivery_eta_max_days) AS max_days"
+        " FROM warehouses"
+        " WHERE project_id=%s AND is_active=TRUE"
+        "   AND delivery_eta_min_days IS NOT NULL"
+        "   AND delivery_eta_max_days IS NOT NULL",
+        (project_id,)
+    )
+    return {
+        "min_days": row.get("min_days") if row else None,
+        "max_days": row.get("max_days") if row else None,
+    }
+
+
 @app.get("/{api_key}/products")
 def get_products(request: Request,
                  api_key_record: dict = Depends(resolve_api_key),
@@ -2316,7 +2362,8 @@ def get_products(request: Request,
             l1fmt = ",".join(["%s"] * len(l1_ids))
             cursor.execute(
                 f"SELECT id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position, "
-                f"       sku_code, barcode, compare_at_price, cost_price, sale_price, sale_starts_at, sale_ends_at,"
+                f"       sku_code, barcode, compare_at_price, cost_price,"
+                f"       sale_type, sale_value, sale_price, sale_starts_at, sale_ends_at,"
                 f"       weight_g, length_cm, width_cm, height_cm "
                 f"FROM product_configurations_l2 WHERE variation_id IN ({l1fmt}) "
                 f"ORDER BY position ASC, id ASC",
@@ -2449,7 +2496,7 @@ def get_products(request: Request,
                 f"SELECT DISTINCT oi.product_id FROM order_history oh "
                 f"JOIN order_items oi ON oh.id = oi.order_id "
                 f"WHERE oh.user_id = %s AND oh.project_id = %s "
-                f"AND oh.status IN ('delivered','returned') "
+                f"AND oh.status IN ('delivered','returned','refunded','partial_refunded') "
                 f"AND oi.product_id IN ({fmt})",
                 [user_id, project_id] + product_ids
             )
@@ -2537,7 +2584,8 @@ def get_product_page(product_hash: str, request: Request,
             vfmt = ",".join(["%s"] * len(vids))
             cursor.execute(
                 f"SELECT id, product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position, "
-                f"       sku_code, barcode, compare_at_price, cost_price, sale_price, sale_starts_at, sale_ends_at,"
+                f"       sku_code, barcode, compare_at_price, cost_price,"
+                f"       sale_type, sale_value, sale_price, sale_starts_at, sale_ends_at,"
                 f"       weight_g, length_cm, width_cm, height_cm "
                 f"FROM product_configurations_l2 WHERE variation_id IN ({vfmt}) "
                 f"ORDER BY position ASC, id ASC",
@@ -2678,7 +2726,7 @@ def get_product_page(product_hash: str, request: Request,
                 cursor.execute(
                     "SELECT DISTINCT oh.id FROM order_history oh JOIN order_items oi ON oh.id = oi.order_id "
                     "WHERE oh.user_id = %s AND oi.product_id = %s AND oh.project_id = %s "
-                    "AND oh.status IN ('delivered','returned') LIMIT 1",
+                    "AND oh.status IN ('delivered','returned','refunded','partial_refunded') LIMIT 1",
                     (user_id, product_id, project_id)
                 )
                 can_review = cursor.fetchone() is not None
@@ -3140,7 +3188,7 @@ def can_user_review(product_id: int, request: Request,
     can = bool(db_one(
         "SELECT DISTINCT oh.id FROM order_history oh JOIN order_items oi ON oh.id=oi.order_id "
         "WHERE oh.user_id=%s AND oi.product_id=%s AND oh.project_id=%s "
-        "AND oh.status IN ('delivered','returned') LIMIT 1",
+        "AND oh.status IN ('delivered','returned','refunded','partial_refunded') LIMIT 1",
         (user_id, product_id, project_id)
     ))
     return {"can_review": can} if can else {"can_review": False, "reason": "not_purchased"}
@@ -5373,7 +5421,26 @@ def place_order(data: PlaceOrderRequest, request: Request,
     rn = sanitize(data.recipient_name.strip())
     if not rn:
         raise HTTPException(400, "Recipient name is required")
-    if data.delivery_method == "courier" and not (data.address or "").strip():
+
+    # Fulfillment validation. For `pickup` the customer collects from a
+    # specific warehouse — verify it exists, belongs to this project, is
+    # active AND opted-in for pickup. Address becomes optional in that case.
+    fulfillment_type = (data.fulfillment_type or "courier").lower()
+    if fulfillment_type not in ("courier", "pickup"):
+        raise HTTPException(400, "Invalid fulfillment_type")
+    pickup_wh_id = None
+    if fulfillment_type == "pickup":
+        if not data.pickup_warehouse_id:
+            raise HTTPException(400, "pickup_warehouse_id is required for pickup orders")
+        wh_check = db_one(
+            "SELECT id FROM warehouses WHERE id=%s AND project_id=%s"
+            " AND is_active=TRUE AND is_pickup_enabled=TRUE",
+            (int(data.pickup_warehouse_id), project_id)
+        )
+        if not wh_check:
+            raise HTTPException(400, "Selected pickup location is not available")
+        pickup_wh_id = int(data.pickup_warehouse_id)
+    elif data.delivery_method == "courier" and not (data.address or "").strip():
         raise HTTPException(400, "Address is required for courier delivery")
 
     with db_cursor() as (conn, cursor):
@@ -5599,16 +5666,19 @@ def place_order(data: PlaceOrderRequest, request: Request,
                (project_id, user_id, total_amount, status,
                 delivery_method, recipient_name, phone, address, comment, payment_method,
                 payment_intent_id, payment_charge_id, payment_status, payment_provider,
-                payment_currency, payment_amount_paid, payment_paid_at)
+                payment_currency, payment_amount_paid, payment_paid_at,
+                fulfillment_type, pickup_warehouse_id)
                VALUES (%s,%s,%s,'new',%s,%s,%s,%s,%s,%s,
-                       %s,%s,%s,%s,%s,%s, CASE WHEN %s='paid' THEN NOW() ELSE NULL END)
+                       %s,%s,%s,%s,%s,%s, CASE WHEN %s='paid' THEN NOW() ELSE NULL END,
+                       %s,%s)
                RETURNING id""",
             (project_id, user_id, round(float(total), 2),
              data.delivery_method, rn,
              sanitize(data.phone or ""), sanitize(data.address or ""),
              sanitize(data.comment or ""), data.payment_method,
              pay_intent_id, pay_charge_id, pay_status, pay_provider,
-             pay_currency, round(pay_amount_paid, 2), pay_status)
+             pay_currency, round(pay_amount_paid, 2), pay_status,
+             fulfillment_type, pickup_wh_id)
         )
         order_id = cursor.fetchone()["id"]
 
@@ -7674,7 +7744,9 @@ def _hours_for(project_id: int, staff_id: Optional[int]) -> dict:
 from pydantic import model_validator as _model_validator
 
 class PublicCreateBookingRequest(BaseModel):
-    service_id:     int
+    # service_id is now optional — freeform bookings can be created by 3rd party tools
+    # (handymen, custom services, one-offs) without first registering the service.
+    service_id:     Optional[int] = None
     staff_id:       Optional[int] = None
     starts_at:      str
     # Accept None from older storefront builds (legacy code used `field || null` patterns)
@@ -7684,13 +7756,20 @@ class PublicCreateBookingRequest(BaseModel):
     customer_name:  Optional[str] = ""
     customer_phone: Optional[str] = ""
     customer_email: Optional[str] = ""
+    customer_address: Optional[str] = ""
     notes:          Optional[str] = ""
+    # Freeform fields: used when service_id is None. Caller specifies the
+    # service name, duration and (optionally) price in the request itself.
+    freeform_service_name:     Optional[str] = ""
+    freeform_duration_minutes: Optional[int] = None
+    freeform_price:            Optional[float] = None
 
     @_model_validator(mode="before")
     @classmethod
     def _coerce_none_to_empty(cls, data):
         if isinstance(data, dict):
-            for k in ("customer_name", "customer_phone", "customer_email", "notes"):
+            for k in ("customer_name", "customer_phone", "customer_email",
+                      "customer_address", "notes", "freeform_service_name"):
                 if data.get(k) is None:
                     data[k] = ""
         return data
@@ -7855,17 +7934,49 @@ def public_create_booking(req: PublicCreateBookingRequest,
     project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
 
-    svc = db_one(
-        "SELECT * FROM booking_services WHERE id=%s AND project_id=%s AND is_active=TRUE",
-        (req.service_id, project_id)
-    )
-    if not svc: raise HTTPException(404, "Service not found")
-    if svc["requires_staff"] and not req.staff_id:
-        raise HTTPException(400, "This service requires selecting a staff member")
-    if req.staff_id:
-        st = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s AND is_active=TRUE",
-                    (req.staff_id, project_id))
-        if not st: raise HTTPException(404, "Staff not found")
+    # Two modes: service-based (caller provides service_id) or freeform
+    # (caller provides freeform_service_name + freeform_duration_minutes).
+    svc           = None
+    duration_min  = None
+    loc_type      = 'shop'
+    freeform_name = ''
+    freeform_dur  = None
+    freeform_pr   = None
+    if req.service_id is not None:
+        svc = db_one(
+            "SELECT * FROM booking_services WHERE id=%s AND project_id=%s AND is_active=TRUE",
+            (req.service_id, project_id)
+        )
+        if not svc: raise HTTPException(404, "Service not found")
+        if svc["requires_staff"] and not req.staff_id:
+            raise HTTPException(400, "This service requires selecting a staff member")
+        if req.staff_id:
+            st = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s AND is_active=TRUE",
+                        (req.staff_id, project_id))
+            if not st: raise HTTPException(404, "Staff not found")
+        duration_min = int(svc["duration_minutes"])
+        loc_type     = (svc.get("location_type") or 'shop')
+    else:
+        # Freeform booking — caller must supply name + duration.
+        if not (req.freeform_service_name or "").strip():
+            raise HTTPException(400, "Either service_id or freeform_service_name is required")
+        if not req.freeform_duration_minutes or int(req.freeform_duration_minutes) <= 0:
+            raise HTTPException(400, "freeform_duration_minutes is required for freeform bookings")
+        if int(req.freeform_duration_minutes) < 5 or int(req.freeform_duration_minutes) > 1440:
+            raise HTTPException(400, "freeform_duration_minutes must be between 5 and 1440")
+        if req.staff_id:
+            st = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s AND is_active=TRUE",
+                        (req.staff_id, project_id))
+            if not st: raise HTTPException(404, "Staff not found")
+        duration_min  = int(req.freeform_duration_minutes)
+        freeform_name = sanitize(req.freeform_service_name)[:200]
+        freeform_dur  = duration_min
+        if req.freeform_price is not None:
+            try:
+                freeform_pr = float(req.freeform_price)
+                if freeform_pr < 0: freeform_pr = 0.0
+            except Exception:
+                freeform_pr = None
 
     settings = _booking_settings(project_id)
     biz_tz   = _tz(settings.get("timezone") or "UTC")
@@ -7878,7 +7989,7 @@ def public_create_booking(req: PublicCreateBookingRequest,
     if starts.tzinfo is None:
         starts = starts.replace(tzinfo=biz_tz)
     starts = starts.astimezone(timezone.utc)
-    ends = starts + timedelta(minutes=svc["duration_minutes"])
+    ends = starts + timedelta(minutes=duration_min)
 
     # Reject bookings in the past or beyond max-advance
     now_utc = _utcnow()
@@ -7901,9 +8012,10 @@ def public_create_booking(req: PublicCreateBookingRequest,
     initial_status = settings["default_status"] if settings.get("auto_confirm", True) else "pending"
 
     # If user is logged in, use their stored name/email
-    name  = sanitize(req.customer_name or "")[:200]
-    phone = sanitize(req.customer_phone or "")[:64]
-    email = sanitize(req.customer_email or "")[:200]
+    name    = sanitize(req.customer_name or "")[:200]
+    phone   = sanitize(req.customer_phone or "")[:64]
+    email   = sanitize(req.customer_email or "")[:200]
+    address = sanitize(req.customer_address or "")[:500]
     if user_id:
         u = db_one("SELECT name, email, phone FROM users WHERE id=%s AND project_id=%s",
                    (user_id, project_id))
@@ -7913,6 +8025,10 @@ def public_create_booking(req: PublicCreateBookingRequest,
             if not phone and u.get("phone"): phone = u["phone"]
 
     if not name: raise HTTPException(400, "Name is required")
+
+    # If service is location_type='customer' the address is mandatory.
+    if loc_type == 'customer' and not address:
+        raise HTTPException(400, "This service is delivered at the customer's location — customer_address is required")
 
     # Atomic capacity check + insert: pg advisory lock on (project_id, staff_id, service_id) serialises concurrent bookings; auto-released at COMMIT/ROLLBACK.
     lock_key = (project_id * 10**12
@@ -7930,7 +8046,7 @@ def public_create_booking(req: PublicCreateBookingRequest,
             if cur.fetchone()["n"] >= 1:
                 conn.rollback()
                 raise HTTPException(409, "This time slot is no longer available")
-        else:
+        elif svc is not None:
             cur.execute(
                 """SELECT COUNT(*) AS n FROM bookings
                    WHERE project_id=%s AND service_id=%s AND status = ANY(%s)
@@ -7940,14 +8056,19 @@ def public_create_booking(req: PublicCreateBookingRequest,
             if cur.fetchone()["n"] >= int(svc["capacity"]):
                 conn.rollback()
                 raise HTTPException(409, "This time slot is no longer available")
+        # Freeform without staff: no capacity check (no service row to read capacity from)
 
         cur.execute(
             """INSERT INTO bookings
                   (project_id, service_id, staff_id, user_id, starts_at, ends_at,
-                   status, customer_name, customer_phone, customer_email, notes)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                   status, customer_name, customer_phone, customer_email,
+                   customer_address, notes,
+                   freeform_service_name, freeform_duration_minutes, freeform_price)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
             (project_id, req.service_id, req.staff_id, user_id, starts, ends,
-             initial_status, name, phone, email, sanitize(req.notes or "")[:2000])
+             initial_status, name, phone, email, address,
+             sanitize(req.notes or "")[:2000],
+             freeform_name, freeform_dur, freeform_pr)
         )
         bid = cur.fetchone()["id"]
         conn.commit()
@@ -7956,11 +8077,12 @@ def public_create_booking(req: PublicCreateBookingRequest,
     # also fire booking.confirmed in the same dispatch cycle.
     event_data = {
         "booking_id":   bid, "service_id":  req.service_id,
-        "service_name": svc["name"],
+        "service_name": (svc["name"] if svc else freeform_name) or None,
         "staff_id":     req.staff_id, "starts_at": starts.isoformat(),
         "ends_at":      ends.isoformat(), "status":   initial_status,
-        "amount":       float(svc.get("price") or 0), "currency": "USD",
-        "customer":     {"name": name, "email": email, "phone": phone},
+        "amount":       float(svc.get("price") or 0) if svc else (freeform_pr or 0.0),
+        "currency":     "USD",
+        "customer":     {"name": name, "email": email, "phone": phone, "address": address},
     }
     background_tasks.add_task(dispatch_event, project_id, "booking.created", event_data)
     if initial_status == "confirmed":
@@ -7973,26 +8095,36 @@ def public_list_my_bookings(request: Request,
                             api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
+    # LEFT JOIN booking_services because b.service_id can be NULL (freeform bookings).
     rows = db_all(
-        """SELECT b.*, s.name AS service_name, s.duration_minutes, s.price AS service_price,
+        """SELECT b.*, s.name AS svc_name, s.duration_minutes AS svc_duration,
+                  s.price AS svc_price,
                   st.name AS staff_name, st.avatar_url AS staff_avatar
            FROM bookings b
-           JOIN booking_services s ON s.id = b.service_id
+           LEFT JOIN booking_services s ON s.id = b.service_id
            LEFT JOIN booking_staff st ON st.id = b.staff_id
            WHERE b.project_id=%s AND b.user_id=%s
            ORDER BY b.starts_at DESC""",
         (project_id, user_id)
     )
-    return [{
-        "id": r["id"], "service_id": r["service_id"], "staff_id": r["staff_id"],
-        "service_name": r["service_name"], "staff_name": r["staff_name"],
-        "staff_avatar": r["staff_avatar"],
-        "service_price": float(r["service_price"]) if r["service_price"] is not None else 0.0,
-        "duration_minutes": r["duration_minutes"],
-        "starts_at": r["starts_at"].isoformat() if r["starts_at"] else None,
-        "ends_at":   r["ends_at"].isoformat()   if r["ends_at"]   else None,
-        "status": r["status"], "notes": r["notes"],
-    } for r in rows]
+    out = []
+    for r in rows:
+        svc_name  = r["svc_name"] if r["service_id"] else (r.get("freeform_service_name") or None)
+        svc_dur   = r["svc_duration"] if r["service_id"] else r.get("freeform_duration_minutes")
+        svc_price = (float(r["svc_price"]) if r["service_id"] and r["svc_price"] is not None
+                     else (float(r["freeform_price"]) if r.get("freeform_price") is not None else 0.0))
+        out.append({
+            "id": r["id"], "service_id": r["service_id"], "staff_id": r["staff_id"],
+            "service_name": svc_name, "staff_name": r["staff_name"],
+            "staff_avatar": r["staff_avatar"],
+            "service_price": svc_price,
+            "duration_minutes": svc_dur,
+            "starts_at": r["starts_at"].isoformat() if r["starts_at"] else None,
+            "ends_at":   r["ends_at"].isoformat()   if r["ends_at"]   else None,
+            "status": r["status"], "notes": r["notes"],
+            "customer_address": r.get("customer_address") or "",
+        })
+    return out
 
 @app.delete("/{api_key}/booking/bookings/{bid}")
 def public_cancel_booking(bid: int, request: Request,
@@ -8058,9 +8190,10 @@ def internal_process_booking_reminders(request: Request):
         """SELECT b.id, b.project_id, b.service_id, b.staff_id, b.customer_email,
                   b.starts_at, b.notes,
                   s.name AS service_name, s.duration_minutes,
+                  b.freeform_service_name, b.freeform_duration_minutes,
                   st.name AS staff_name
            FROM bookings b
-           JOIN booking_services s ON s.id = b.service_id
+           LEFT JOIN booking_services s ON s.id = b.service_id
            LEFT JOIN booking_staff st ON st.id = b.staff_id
            WHERE b.status='confirmed'
              AND b.reminder_sent_at IS NULL
@@ -8075,8 +8208,9 @@ def internal_process_booking_reminders(request: Request):
         starts   = r["starts_at"]
         if starts.tzinfo is None: starts = starts.replace(tzinfo=timezone.utc)
         from_name, from_email = get_project_email(r["project_id"])
+        svc_name = r["service_name"] or r.get("freeform_service_name") or "Appointment"
         html = _build_booking_reminder_html(
-            r["service_name"], r["staff_name"], starts, biz_tz, venue=None
+            svc_name, r["staff_name"], starts, biz_tz, venue=None
         )
         ok = send_email(r["customer_email"], "Reminder: your appointment is in 1 hour",
                         html, from_name, from_email)
@@ -8346,7 +8480,7 @@ def booking_act_pdf(bid: int, request: Request,
     user_id    = get_current_user_id(request)
     row = db_one(
         """SELECT b.*, s.name AS service_name, s.duration_minutes, s.price AS service_price
-           FROM bookings b JOIN booking_services s ON s.id=b.service_id
+           FROM bookings b LEFT JOIN booking_services s ON s.id=b.service_id
            WHERE b.id=%s AND b.project_id=%s AND b.user_id=%s""",
         (bid, project_id, user_id)
     )
@@ -8355,16 +8489,21 @@ def booking_act_pdf(bid: int, request: Request,
     branding["style"] = style or branding.get("style") or "modern"
     starts = row["starts_at"]
     when = starts.strftime("%Y-%m-%d %H:%M") if starts else ""
+    # Fallbacks for freeform bookings (service_id is NULL).
+    svc_title    = row["service_name"] or row.get("freeform_service_name") or "Appointment"
+    svc_duration = row["duration_minutes"] or row.get("freeform_duration_minutes") or 0
+    svc_price    = (float(row["service_price"]) if row.get("service_price") is not None
+                    else (float(row["freeform_price"]) if row.get("freeform_price") is not None else 0.0))
     data = {
         "number": bid,
         "performed_at": when,
         "currency": "USD",
         "customer": {"name": row.get("customer_name", "")},
-        "items": [{"title": row["service_name"],
-                   "variation": f"{row['duration_minutes']} min",
-                   "qty": 1, "price": float(row.get("service_price") or 0)}],
-        "subtotal": float(row.get("service_price") or 0),
-        "total":    float(row.get("service_price") or 0),
+        "items": [{"title": svc_title,
+                   "variation": f"{svc_duration} min",
+                   "qty": 1, "price": svc_price}],
+        "subtotal": svc_price,
+        "total":    svc_price,
     }
     pdf = render_document("act", branding["style"], branding, data)
     return _pdf_response(pdf, f"act-{bid}.pdf")

@@ -20,6 +20,17 @@ function Product() {
     const [addingToCart, setAddingToCart] = useState(false);
     // Modifier item ids selected by the customer; reset on product load.
     const [selectedModifiers, setSelectedModifiers] = useState([]);
+    // Delivery ETA aggregate from all merchant warehouses — drives the
+    // "Delivery in 2–4 days" hint shown beside Add to Cart. Loaded once
+    // per session; storefront hides the hint when no warehouse has ETA set.
+    const [deliveryEta, setDeliveryEta] = useState(null);
+    useEffect(() => {
+        let mounted = true;
+        client.shipping.deliveryEta()
+            .then(r => mounted && r.ok && setDeliveryEta(r.data))
+            .catch(() => {});
+        return () => { mounted = false; };
+    }, []);
 
     const initModifiersFromDefaults = (data) => {
         // Pre-select default_item_id for each radio group that has one.
@@ -349,6 +360,18 @@ function Product() {
                         onUpdateQuantity={handleUpdateQuantity}
                         onToggleFavorite={handleToggleFavorite}
                     />
+
+                    {/* Delivery ETA hint — populated only when the merchant
+                        configured ETA on at least one warehouse. Hides itself
+                        for digital products (page.product_type === 'digital'). */}
+                    {deliveryEta?.min_days != null && deliveryEta?.max_days != null
+                     && page.product_type !== 'digital' && (
+                        <p className="product-delivery-eta">
+                            {deliveryEta.min_days === deliveryEta.max_days
+                                ? `Delivery in ${deliveryEta.min_days} day${deliveryEta.min_days === 1 ? "" : "s"}`
+                                : `Delivery in ${deliveryEta.min_days}–${deliveryEta.max_days} days`}
+                        </p>
+                    )}
 
                     <div className="product-description">
                         <p>{page.description}</p>

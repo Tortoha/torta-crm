@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, CalendarPlus, CaretDown, CaretLeft, CaretRight, Calendar as CalendarIcon, Clock } from '@phosphor-icons/react';
+import { X, CalendarPlus, CaretDown, CaretLeft, CaretRight, Calendar as CalendarIcon, Clock, Briefcase, PencilSimple } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
 
@@ -53,7 +53,37 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
     const r = btnRef.current.getBoundingClientRect();
     const margin = 12;
     const width  = Math.min(r.width, window.innerWidth - margin * 2);
-    setPos({ top: r.bottom + 6, left: Math.max(margin, r.left), width });
+    // Smart up/down: if there's < 200px below the trigger (typical for the
+    // last input on a settings page), flip the dropdown above the trigger.
+    // maxHeight gets clamped to whichever side we land on so the dropdown
+    // always stays inside the viewport — no scroll-trapped popup.
+    //
+    // CRITICAL: when flipping up, we anchor the dropdown's BOTTOM edge to
+    // the trigger using a `bottom` CSS value instead of converting to a `top`.
+    // Going via `top: triggerTop - maxHeight` would leave a huge gap above
+    // when the actual dropdown is shorter than maxHeight (e.g. a 2-option
+    // status picker with maxHeight=360 → the dropdown floats 300px above
+    // the trigger, blocking the page). With `bottom` anchoring, the visual
+    // height naturally shrinks to the actual content height and the dropdown
+    // hugs the trigger.
+    const MAX_H = 360;
+    const spaceBelow = window.innerHeight - r.bottom - margin;
+    const spaceAbove = r.top - margin;
+    const flipUp = spaceBelow < 200 && spaceAbove > spaceBelow;
+    const maxHeight = flipUp ? Math.min(MAX_H, spaceAbove) : Math.min(MAX_H, spaceBelow);
+    if (flipUp) {
+      setPos({
+        bottom: window.innerHeight - r.top + 6,
+        left:   Math.max(margin, r.left),
+        width, maxHeight,
+      });
+    } else {
+      setPos({
+        top:  r.bottom + 6,
+        left: Math.max(margin, r.left),
+        width, maxHeight,
+      });
+    }
     const onKey = e => { if (e.key === 'Escape') setOpen(false); };
     const onPd  = e => {
       if (!e.target.closest?.('.bk-cb-dropdown') && !btnRef.current?.contains(e.target)) setOpen(false);
@@ -80,7 +110,11 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
       </button>
       {open && pos && createPortal(
         <div className="cat-filter-dropdown bk-cb-dropdown"
-          style={{ top: pos.top, left: pos.left, width: pos.width }}
+          style={{
+            ...(pos.top    != null ? { top:    pos.top }    : null),
+            ...(pos.bottom != null ? { bottom: pos.bottom } : null),
+            left: pos.left, width: pos.width, maxHeight: pos.maxHeight,
+          }}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
           onMouseLeave={() => setHovered(null)}>
@@ -145,7 +179,21 @@ export function DatePicker({ value, onChange, tz }) {
   useEffect(() => {
     if (!open || !btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
-    setPos({ top: r.bottom + 6, left: r.left, width: Math.max(280, r.width) });
+    const width = Math.max(280, r.width);
+    // The 6-week grid pop-up is ~320px tall — flip above the trigger when
+    // there isn't enough room below (last input on a scrolled modal).
+    // Anchoring via `bottom` instead of computing a `top` keeps the pop-up
+    // visually hugging the trigger even when the grid is shorter than max.
+    const POP_H = 340;
+    const margin = 12;
+    const spaceBelow = window.innerHeight - r.bottom - margin;
+    const spaceAbove = r.top - margin;
+    const flipUp = spaceBelow < POP_H && spaceAbove > spaceBelow;
+    if (flipUp) {
+      setPos({ bottom: window.innerHeight - r.top + 6, left: r.left, width });
+    } else {
+      setPos({ top: r.bottom + 6, left: r.left, width });
+    }
     const onKey = e => { if (e.key === 'Escape') setOpen(false); };
     const onPd  = e => {
       if (!e.target.closest?.('.bk-date-pop') && !btnRef.current?.contains(e.target)) setOpen(false);
@@ -202,7 +250,11 @@ export function DatePicker({ value, onChange, tz }) {
       </button>
       {open && pos && createPortal(
         <div className="bk-date-pop"
-          style={{ top: pos.top, left: pos.left, width: pos.width }}
+          style={{
+            ...(pos.top    != null ? { top:    pos.top }    : null),
+            ...(pos.bottom != null ? { bottom: pos.bottom } : null),
+            left: pos.left, width: pos.width,
+          }}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
           onMouseLeave={() => setHovered(null)}>
@@ -378,7 +430,19 @@ export function TimePicker({ value, onChange, workingHours, slotInterval, dayOfW
   useEffect(() => {
     if (!open || !btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
-    setPos({ top: r.bottom + 6, left: r.left, width: r.width });
+    // Wheel pop-up is ~200px tall (5 visible rows × 36 + chrome). Flip up
+    // when the trigger sits near the bottom of the viewport — same logic
+    // as the DatePicker above.
+    const POP_H = 220;
+    const margin = 12;
+    const spaceBelow = window.innerHeight - r.bottom - margin;
+    const spaceAbove = r.top - margin;
+    const flipUp = spaceBelow < POP_H && spaceAbove > spaceBelow;
+    if (flipUp) {
+      setPos({ bottom: window.innerHeight - r.top + 6, left: r.left, width: r.width });
+    } else {
+      setPos({ top: r.bottom + 6, left: r.left, width: r.width });
+    }
     const onKey = e => { if (e.key === 'Escape') setOpen(false); };
     const onPd  = e => {
       if (!e.target.closest?.('.bk-time-pop') && !btnRef.current?.contains(e.target)) setOpen(false);
@@ -407,7 +471,11 @@ export function TimePicker({ value, onChange, workingHours, slotInterval, dayOfW
       </button>
       {open && pos && createPortal(
         <div ref={popRef} className="bk-time-pop"
-          style={{ top: pos.top, left: pos.left, width: pos.width }}
+          style={{
+            ...(pos.top    != null ? { top:    pos.top }    : null),
+            ...(pos.bottom != null ? { bottom: pos.bottom } : null),
+            left: pos.left, width: pos.width,
+          }}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}>
           <div className="bk-time-wheels">
@@ -424,6 +492,52 @@ export function TimePicker({ value, onChange, workingHours, slotInterval, dayOfW
   );
 }
 
+// ── Mode tabs (Catalog / Freeform) ────────────────────────────────
+// Same pill-indicator look as the main Bookings page tabs — copy of
+// `auth-tab-switcher` so the visual language is consistent.
+function ModeTabs({ freeform, setFreeform, catalogDisabled }) {
+  const indRef  = useRef(null);
+  const btnRefs = useRef({});
+  const [hovered, setHovered] = useState(null);
+  const active = freeform ? 'freeform' : 'catalog';
+  const current = hovered ?? active;
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = btnRefs.current[current];
+      if (!ind || !el) return;
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [current, active]);
+
+  const TABS = [
+    { key: 'catalog',  label: 'From catalog', Icon: Briefcase,     disabled: catalogDisabled },
+    { key: 'freeform', label: 'Freeform',     Icon: PencilSimple,  disabled: false },
+  ];
+
+  return (
+    <div className="auth-tab-switcher bk-mode-tabs"
+         onMouseLeave={() => setHovered(null)}>
+      <div ref={indRef} className="auth-tab-indicator" />
+      {TABS.map(({ key, label, Icon, disabled }) => (
+        <button key={key} ref={el => { btnRefs.current[key] = el; }}
+          className={`auth-tab-btn${active === key ? ' auth-tab-btn--active' : ''}`}
+          onMouseEnter={() => !disabled && setHovered(key)}
+          onClick={() => !disabled && setFreeform(key === 'freeform')}
+          disabled={disabled}
+          type="button">
+          <Icon className="auth-tab-icon" />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── Modal ──────────────────────────────────────────────────────────
 
 function BookingCreateModal({ projectId, services, staff, businessTz, workingHours, slotInterval, presetStart, onClose, onCreated }) {
@@ -433,6 +547,9 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
   const presetDate = presetStart ? presetStart.slice(0, 10) : todayInTz(tz);
   const presetTime = presetStart ? presetStart.slice(11, 16) : '10:00';
 
+  // Freeform mode = no catalog service; user types the service name + duration + price.
+  // Sensible default: if there are services to pick from, start in service mode.
+  const [freeform,      setFreeform]      = useState(services.length === 0);
   const [serviceId,     setServiceId]     = useState(services[0]?.id ?? '');
   const [staffId,       setStaffId]       = useState('');
   const [date,          setDate]          = useState(presetDate);
@@ -440,15 +557,26 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
   const [customerName,  setCustomerName]  = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
   const [notes,         setNotes]         = useState('');
   const [status,        setStatus]        = useState('confirmed');
+  // Freeform fields (used only when freeform=true)
+  const [freeName,      setFreeName]      = useState('');
+  const [freeDur,       setFreeDur]       = useState(30);
+  const [freePrice,     setFreePrice]     = useState('');
   const [saving,        setSaving]        = useState(false);
   const [err,           setErr]           = useState('');
 
   const service = useMemo(
-    () => services.find(s => s.id === parseInt(serviceId, 10)),
-    [services, serviceId]
+    () => freeform ? null : services.find(s => s.id === parseInt(serviceId, 10)),
+    [freeform, services, serviceId]
   );
+  // 'shop' | 'customer' | 'either'. In freeform mode the caller decides — default 'shop'.
+  const locType = service?.location_type || 'shop';
+  // Address field is always rendered — it's useful even for in-shop services
+  // (e.g. courier add-on, follow-up visit). Only REQUIRED when the service
+  // is explicitly delivered at the customer's location.
+  const addressRequired = !freeform && locType === 'customer';
   const eligibleStaff = useMemo(() => {
     if (!service || !staff) return [];
     if (service.staff_ids && service.staff_ids.length > 0) {
@@ -471,27 +599,45 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
   }, [onClose]);
 
   const create = async () => {
-    if (!serviceId)        { setErr('Pick a service');           return; }
+    if (!freeform && !serviceId) { setErr('Pick a service'); return; }
+    if (freeform) {
+      if (!freeName.trim())           { setErr('Service name is required'); return; }
+      const d = parseInt(freeDur, 10);
+      if (!d || d < 5 || d > 1440)    { setErr('Duration must be 5–1440 minutes'); return; }
+    }
     if (!customerName.trim()) { setErr('Customer name required'); return; }
     if (service?.requires_staff && !staffId) {
       setErr('This service requires choosing a staff member'); return;
     }
+    if (addressRequired && !customerAddress.trim()) {
+      setErr('This service is delivered at the customer’s location — please add the address.');
+      return;
+    }
     setSaving(true); setErr('');
     try {
       const startsAt = buildIsoWithTz(date, time, tz);
+      const body = {
+        staff_id:        staffId ? parseInt(staffId, 10) : null,
+        starts_at:       startsAt,
+        customer_name:   customerName,
+        customer_phone:  customerPhone,
+        customer_email:  customerEmail,
+        customer_address: customerAddress,
+        notes,
+        status,
+      };
+      if (freeform) {
+        body.service_id              = null;
+        body.freeform_service_name   = freeName.trim();
+        body.freeform_duration_minutes = parseInt(freeDur, 10);
+        body.freeform_price          = freePrice === '' ? null : parseFloat(freePrice);
+      } else {
+        body.service_id = parseInt(serviceId, 10);
+      }
       const res = await fetch(`${API_BASE}/api/booking/bookings${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          service_id: parseInt(serviceId, 10),
-          staff_id:   staffId ? parseInt(staffId, 10) : null,
-          starts_at:  startsAt,
-          customer_name:  customerName,
-          customer_phone: customerPhone,
-          customer_email: customerEmail,
-          notes,
-          status,
-        }),
+        body: JSON.stringify(body),
       });
       if (res.ok) onCreated();
       else { const j = await res.json(); setErr(j.detail || 'Error creating booking'); }
@@ -533,24 +679,65 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
         </div>
 
         <div className="auth-modal-body">
-          {services.length === 0 ? (
+          {/* Mode toggle — same pill-tab look as the main Bookings page tabs.
+              "From catalog" = pick from the project's services list; "Freeform"
+              = type service name + duration + price on the fly. */}
+          <ModeTabs freeform={freeform} setFreeform={setFreeform}
+                    catalogDisabled={services.length === 0} />
+
+          {(!freeform && services.length === 0) ? (
             <p className="crm-placeholder">
-              No services configured yet. Open the Settings tab and create a service first.
+              No services configured yet — switch to <b>Freeform</b> above or open the Settings tab and create a service first.
             </p>
           ) : (
             <>
-              <div className="auth-field">
-                <label className="auth-label">Service</label>
-                <Combobox value={serviceId} options={serviceOptions}
-                  onChange={(v) => { setServiceId(v); setStaffId(''); }} />
-              </div>
+              {freeform ? (
+                <>
+                  <div className="auth-field">
+                    <label className="auth-label">Service name</label>
+                    <input className="crm-input" value={freeName}
+                      onChange={e => setFreeName(e.target.value)}
+                      placeholder="House call · Custom repair · Anything" />
+                  </div>
+                  <div className="bk-rules-grid">
+                    <div className="auth-field">
+                      <label className="auth-label">Duration (minutes)</label>
+                      <input className="crm-input" type="number" min={5} max={1440}
+                        value={freeDur} onChange={e => setFreeDur(e.target.value)} />
+                    </div>
+                    <div className="auth-field">
+                      <label className="auth-label">Price (optional)</label>
+                      <input className="crm-input" type="number" min={0} step="0.01"
+                        value={freePrice} onChange={e => setFreePrice(e.target.value)}
+                        placeholder="0.00" />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="auth-field">
+                    <label className="auth-label">Service</label>
+                    <Combobox value={serviceId} options={serviceOptions}
+                      onChange={(v) => { setServiceId(v); setStaffId(''); }} />
+                  </div>
 
-              {(service?.requires_staff || eligibleStaff.length > 0) && (
+                  {(service?.requires_staff || eligibleStaff.length > 0) && (
+                    <div className="auth-field">
+                      <label className="auth-label">
+                        Staff{service?.requires_staff ? '' : ' (optional)'}
+                      </label>
+                      <Combobox value={staffId} options={staffOptions}
+                        onChange={setStaffId} placeholder="— Any —" />
+                    </div>
+                  )}
+                </>
+              )}
+
+              {freeform && (
                 <div className="auth-field">
-                  <label className="auth-label">
-                    Staff{service?.requires_staff ? '' : ' (optional)'}
-                  </label>
-                  <Combobox value={staffId} options={staffOptions}
+                  <label className="auth-label">Staff (optional)</label>
+                  <Combobox value={staffId}
+                    options={[{ value: '', label: '— Any —' }, ...staff.map(s => ({ value: s.id, label: s.name }))]}
                     onChange={setStaffId} placeholder="— Any —" />
                 </div>
               )}
@@ -589,6 +776,20 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
                     onChange={e => setCustomerEmail(e.target.value)}
                     placeholder="jane@example.com" />
                 </div>
+              </div>
+
+              <div className="auth-field">
+                <label className="auth-label">
+                  Customer address{addressRequired ? '' : ' (optional)'}
+                </label>
+                {addressRequired && (
+                  <p className="auth-field-hint">
+                    This service is delivered at the customer's location.
+                  </p>
+                )}
+                <input className="crm-input" value={customerAddress}
+                  onChange={e => setCustomerAddress(e.target.value)}
+                  placeholder="221B Baker Street, London" />
               </div>
 
               <div className="auth-field">

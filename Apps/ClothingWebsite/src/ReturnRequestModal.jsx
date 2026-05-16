@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { X, CheckCircle, Warning } from "@phosphor-icons/react";
+import { X, CheckCircle, Warning, Check } from "@phosphor-icons/react";
 import { client, pickError } from "./api.js";
 import "./Style/ReturnRequest.css";
 
@@ -101,85 +101,101 @@ export default function ReturnRequestModal({ order, onClose, onSubmitted, existi
   return createPortal(
     <div className="rr-overlay" onClick={onClose}>
       <div className="rr-modal" onClick={e => e.stopPropagation()}>
-        <button className="rr-close" onClick={onClose} aria-label="Close">
-          <X weight="bold" />
-        </button>
+        {/* Header: title/sub + close. Sticky-ish via column flex (modal scrolls
+            the body only, header + footer stay anchored). */}
+        <div className="rr-head">
+          <div className="rr-head-text">
+            <h2 className="rr-title">Request a return</h2>
+            <p className="rr-sub">Order #{order.id} · within 14 days of delivery</p>
+          </div>
+          <button className="rr-close" onClick={onClose} aria-label="Close">
+            <X weight="bold" size={16} />
+          </button>
+        </div>
 
-        <h2 className="rr-title">Request a return</h2>
-        <p className="rr-sub">Order #{order.id} · within 14 days of delivery</p>
-
-        {/* Items selector */}
-        <div className="rr-section">
-          <h3 className="rr-section-title">Which items?</h3>
-          <div className="rr-items">
-            {items.map(it => {
-              const id = it.order_item_id;
-              const ordered = it.quantity;
-              const alreadyReturning = activeQty[id] || 0;
-              const remaining = ordered - alreadyReturning;
-              const isPicked = selection[id] != null;
-              const noneLeft = remaining <= 0;
-              return (
-                <div key={id}
-                  className={`rr-item${isPicked ? ' rr-item--picked' : ''}${noneLeft ? ' rr-item--disabled' : ''}`}
-                  onClick={() => toggleItem(it)}>
-                  <input type="checkbox" checked={isPicked} readOnly disabled={noneLeft}
-                    style={{ accentColor: 'var(--accent)' }} />
-                  {it.image_url && <img src={it.image_url} alt={it.title} className="rr-item-img" />}
-                  <div className="rr-item-info">
-                    <span className="rr-item-name">{it.title}</span>
-                    <span className="rr-item-meta">
-                      {it.variation_name} · {it.configuration_name} · purchased: {ordered}
-                      {alreadyReturning > 0 && ` · already in return: ${alreadyReturning}`}
+        <div className="rr-body">
+          {/* Items selector */}
+          <div className="rr-section">
+            <h3 className="rr-section-title">Which items?</h3>
+            <div className="rr-items">
+              {items.map(it => {
+                const id = it.order_item_id;
+                const ordered = it.quantity;
+                const alreadyReturning = activeQty[id] || 0;
+                const remaining = ordered - alreadyReturning;
+                const isPicked = selection[id] != null;
+                const noneLeft = remaining <= 0;
+                const metaParts = [it.variation_name, it.configuration_name]
+                  .filter(Boolean).join(' · ');
+                return (
+                  <div key={id}
+                    className={`rr-item${isPicked ? ' rr-item--picked' : ''}${noneLeft ? ' rr-item--disabled' : ''}`}
+                    onClick={() => toggleItem(it)}>
+                    <span className="rr-checkbox" aria-hidden>
+                      <Check weight="bold" />
                     </span>
+                    {it.image_url
+                      ? <img src={it.image_url} alt="" className="rr-item-img" />
+                      : <span className="rr-item-img rr-item-img--empty" />}
+                    <div className="rr-item-info">
+                      <span className="rr-item-name">{it.title}</span>
+                      <span className="rr-item-meta">
+                        {metaParts}
+                        {metaParts && ' · '}
+                        purchased {ordered}
+                        {alreadyReturning > 0 && ` · in return ${alreadyReturning}`}
+                      </span>
+                    </div>
+                    {isPicked && !noneLeft ? (
+                      <input type="number" min={1} max={remaining}
+                        value={selection[id]}
+                        onChange={e => setQty(id, remaining, e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        className="rr-qty" />
+                    ) : <span />}
                   </div>
-                  {isPicked && !noneLeft && (
-                    <input type="number" min={1} max={remaining}
-                      value={selection[id]}
-                      onChange={e => setQty(id, remaining, e.target.value)}
-                      onClick={e => e.stopPropagation()}
-                      className="rr-qty" />
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Reason */}
-        <div className="rr-section">
-          <h3 className="rr-section-title">Reason</h3>
-          <div className="rr-reasons">
-            {REASONS.map(r => (
-              <label key={r.value} className={`rr-reason${reason === r.value ? ' rr-reason--active' : ''}`}>
-                <input type="radio" name="reason" value={r.value}
-                  checked={reason === r.value}
-                  onChange={() => setReason(r.value)} />
-                {r.label}
-              </label>
-            ))}
+          {/* Reason */}
+          <div className="rr-section">
+            <h3 className="rr-section-title">Reason</h3>
+            <div className="rr-reasons">
+              {REASONS.map(r => (
+                <label key={r.value}
+                  className={`rr-reason${reason === r.value ? ' rr-reason--active' : ''}`}>
+                  <input type="radio" name="reason" value={r.value}
+                    checked={reason === r.value}
+                    onChange={() => setReason(r.value)} />
+                  <span className="rr-radio" aria-hidden />
+                  <span className="rr-reason-label">{r.label}</span>
+                </label>
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Message */}
-        <div className="rr-section">
-          <h3 className="rr-section-title">Tell us more (optional)</h3>
-          <textarea className="rr-textarea"
-            placeholder="Describe the issue, what you'd like to happen, etc."
-            value={message} maxLength={2000}
-            onChange={e => setMessage(e.target.value)} />
-        </div>
-
-        {error && (
-          <div className="rr-error">
-            <Warning weight="duotone" /> {error}
+          {/* Message */}
+          <div className="rr-section">
+            <h3 className="rr-section-title">Tell us more (optional)</h3>
+            <textarea className="rr-textarea"
+              placeholder="Describe the issue, what you'd like to happen, etc."
+              value={message} maxLength={2000}
+              onChange={e => setMessage(e.target.value)} />
           </div>
-        )}
+
+          {error && (
+            <div className="rr-error">
+              <Warning weight="duotone" size={16} /> {error}
+            </div>
+          )}
+        </div>
 
         <div className="rr-actions">
           <button className="rr-btn rr-btn--cancel" onClick={onClose}>Cancel</button>
           <button className="rr-btn rr-btn--submit" disabled={busy} onClick={submit}>
-            {busy ? "Submitting…" : (<><CheckCircle weight="fill" /> Submit return request</>)}
+            {busy ? "Submitting…" : (<><CheckCircle weight="fill" size={14} /> Submit return</>)}
           </button>
         </div>
       </div>

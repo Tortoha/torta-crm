@@ -417,3 +417,73 @@
   color: #1f2937;
 }
 .checkout-digital-note svg { color: #2563eb; flex-shrink: 0; }
+
+/* "Delivery in 2–4 days" hint — small pill under the Courier toggle. */
+.checkout-eta-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: #f3f6ff;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Pickup-locations list — each warehouse rendered as a selectable card.
+   Selected card flips its border to blue and the MapPin icon to filled. */
+.checkout-pickup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+.checkout-pickup-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 16px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.checkout-pickup-card:hover {
+  background: #f9fafb;
+}
+.checkout-pickup-card--selected {
+  border-color: #2563eb;
+  background: #f3f6ff;
+}
+.checkout-pickup-icon {
+  flex-shrink: 0;
+  color: #6b7280;
+  margin-top: 2px;
+}
+.checkout-pickup-card--selected .checkout-pickup-icon { color: #2563eb; }
+.checkout-pickup-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.checkout-pickup-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: #111827;
+}
+.checkout-pickup-addr {
+  font-size: 13px;
+  color: #4b5563;
+  line-height: 1.4;
+}
+.checkout-pickup-hours {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}

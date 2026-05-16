@@ -508,6 +508,25 @@ export function createClient(baseUrl, publishableKey) {
       },
     },
 
+    // ── Shipping / pickup ────────────────────────────────────────────────────
+    //
+    // Two helpers the storefront uses at checkout / on product cards:
+    //   client.shipping.pickupLocations() — list of warehouses the merchant
+    //     opted into "pickup at store". Each entry has structured address +
+    //     opening hours + contact phone.
+    //   client.shipping.deliveryEta()     — aggregate {min_days, max_days}
+    //     across the merchant's warehouses, for the "Delivery in 2–4 days"
+    //     hint on product/checkout pages. Returns null fields when no
+    //     warehouse has an ETA configured (storefront should hide the hint).
+    shipping: {
+      async pickupLocations() {
+        return req("GET", "/pickup-locations");
+      },
+      async deliveryEta() {
+        return req("GET", "/delivery-eta");
+      },
+    },
+
     // ── Track ────────────────────────────────────────────────────────────────
     track: {
       /** Record a site visit (fire-and-forget). */

@@ -490,6 +490,11 @@ function WarehouseModal({ warehouse, onSave, onClose }) {
     contact_phone: warehouse?.contact_phone || '',
     notes:         warehouse?.notes         || '',
     is_default:    !!warehouse?.is_default,
+    // Customer-facing (storefront)
+    is_pickup_enabled:     !!warehouse?.is_pickup_enabled,
+    pickup_hours:          warehouse?.pickup_hours          || '',
+    delivery_eta_min_days: warehouse?.delivery_eta_min_days ?? '',
+    delivery_eta_max_days: warehouse?.delivery_eta_max_days ?? '',
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -514,6 +519,14 @@ function WarehouseModal({ warehouse, onSave, onClose }) {
       contact_name:  form.contact_name.trim(),
       contact_phone: form.contact_phone.trim(),
       notes:         form.notes.trim(),
+      is_pickup_enabled: !!form.is_pickup_enabled,
+      pickup_hours:      form.pickup_hours.trim(),
+      // Empty input → null on backend (clears ETA). Parsing twice via Number()
+      // because parseInt('') = NaN which would be sent as 0 by JSON.stringify.
+      delivery_eta_min_days: form.delivery_eta_min_days === ''
+        ? null : parseInt(form.delivery_eta_min_days, 10),
+      delivery_eta_max_days: form.delivery_eta_max_days === ''
+        ? null : parseInt(form.delivery_eta_max_days, 10),
     };
     // Only PUT is_default on create or when turning ON — backend rejects unflagging the only default.
     if (isNew || form.is_default) body.is_default = !!form.is_default;
@@ -624,6 +637,55 @@ function WarehouseModal({ warehouse, onSave, onClose }) {
                 placeholder="Hours, access instructions, anything operations should know."
                 value={form.notes} onChange={e => set('notes', e.target.value)} />
             </div>
+
+            {/* — Customer fulfillment — pickup toggle + delivery ETA used by
+                 the storefront. Pickup makes this warehouse appear in the
+                 checkout location picker; ETA fields populate the
+                 "Delivery in 2–4 days" hint for courier orders. */}
+            <div className="po-wh-section-label">Customer fulfillment</div>
+            <div className="cpm-section">
+              <label className="po-set-field po-set-field--toggle po-wh-toggle-row">
+                <input type="checkbox" className="cat-prod-checkbox po-include-cb"
+                  checked={form.is_pickup_enabled}
+                  onChange={e => set('is_pickup_enabled', e.target.checked)} />
+                <span className="po-set-toggle-text">Allow customer pickup at this location</span>
+              </label>
+              <span className="cpm-section-hint">
+                When enabled, this warehouse shows up as a "Pickup at store"
+                option on the storefront checkout, free of any delivery fee.
+              </span>
+            </div>
+            {form.is_pickup_enabled && (
+              <div className="cpm-section">
+                <label className="po-field-label">Pickup hours</label>
+                <input className="crm-input" maxLength={200}
+                  placeholder="Mon–Fri 10:00–19:00 · Sat 11:00–17:00"
+                  value={form.pickup_hours} onChange={e => set('pickup_hours', e.target.value)} />
+                <span className="cpm-section-hint">
+                  Free-form text shown to the customer right under the pickup address.
+                </span>
+              </div>
+            )}
+            <div className="po-wh-grid">
+              <div className="cpm-section">
+                <label className="po-field-label">Delivery ETA · min days</label>
+                <input className="crm-input" type="number" min={0} max={180}
+                  placeholder="2"
+                  value={form.delivery_eta_min_days}
+                  onChange={e => set('delivery_eta_min_days', e.target.value)} />
+              </div>
+              <div className="cpm-section">
+                <label className="po-field-label">Delivery ETA · max days</label>
+                <input className="crm-input" type="number" min={0} max={180}
+                  placeholder="4"
+                  value={form.delivery_eta_max_days}
+                  onChange={e => set('delivery_eta_max_days', e.target.value)} />
+              </div>
+            </div>
+            <span className="cpm-section-hint">
+              Used for the "Delivery in 2–4 days" hint on storefront product
+              cards / checkout. Leave blank to skip the hint entirely.
+            </span>
 
             {/* Default flag only on create — when editing, "Make default" lives on row/card. */}
             {isNew && (

@@ -557,6 +557,71 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] booking tables migration failed: {e}")
 
+    # Phase 1 + 4 schema extension (2026-05) — mobile services + freeform bookings.
+    #
+    # Phase 1 — mobile/at-customer services:
+    #   • booking_services.location_type — where the service happens: 'shop'
+    #     (customer comes to us, default), 'customer' (we travel to them, address
+    #     required), 'either' (both modes accepted, address optional).
+    #   • bookings.customer_address — street address when the master is going
+    #     to the customer. Stays empty for in-shop services.
+    #
+    # Phase 4 — freeform bookings (no service / staff registration needed):
+    #   • bookings.service_id becomes NULLABLE so external systems can create a
+    #     booking without setting up the Services catalog first. When NULL, the
+    #     freeform_* columns below carry the booking's name/duration/price.
+    #   • freeform_service_name / duration / price — only used when service_id
+    #     IS NULL. Otherwise display falls through to booking_services.*.
+    #
+    # Phase 3 (lite) — staff commission %:
+    #   • booking_staff.commission_pct — informational only; CRM does not run
+    #     payroll, it just displays "this master gets N% / business keeps the rest"
+    #     in analytics. Default 0 = "no split tracked".
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "ALTER TABLE booking_services ADD COLUMN IF NOT EXISTS "
+                "location_type VARCHAR(20) NOT NULL DEFAULT 'shop'"
+            )
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='booking_services_location_type_check') THEN
+                ALTER TABLE booking_services ADD CONSTRAINT booking_services_location_type_check
+                  CHECK (location_type IN ('shop','customer','either'));
+              END IF;
+            END $$;""")
+            cur.execute(
+                "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
+                "customer_address VARCHAR(500) NOT NULL DEFAULT ''"
+            )
+            cur.execute(
+                "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
+                "freeform_service_name VARCHAR(200) NOT NULL DEFAULT ''"
+            )
+            cur.execute(
+                "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
+                "freeform_duration_minutes INTEGER"
+            )
+            cur.execute(
+                "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
+                "freeform_price NUMERIC(10,2)"
+            )
+            # Drop NOT NULL on service_id so freeform bookings can persist
+            # without a catalog entry. Idempotent — re-running is a no-op.
+            cur.execute("ALTER TABLE bookings ALTER COLUMN service_id DROP NOT NULL")
+            cur.execute(
+                "ALTER TABLE booking_staff ADD COLUMN IF NOT EXISTS "
+                "commission_pct INTEGER NOT NULL DEFAULT 0"
+            )
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='booking_staff_commission_pct_check') THEN
+                ALTER TABLE booking_staff ADD CONSTRAINT booking_staff_commission_pct_check
+                  CHECK (commission_pct BETWEEN 0 AND 100);
+              END IF;
+            END $$;""")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] booking phase-1/4 fields failed: {e}")
+
     # One-time migrate naive TIMESTAMP→TIMESTAMPTZ; existing rows interpreted as UTC; idempotent.
     try:
         with db_cursor() as (conn, cur):
@@ -915,6 +980,25 @@ def run_migrations():
             cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS contact_name  VARCHAR(120) NOT NULL DEFAULT ''")
             cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(40)  NOT NULL DEFAULT ''")
             cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS notes         TEXT NOT NULL DEFAULT ''")
+            # Pickup-at-store + delivery ETA (per warehouse).
+            # `is_pickup_enabled` toggles whether storefront customers can pick
+            # this warehouse as a pickup location at checkout. The two ETA
+            # fields drive the "Delivery in 2-4 days" hint storefronts show on
+            # product cards and at checkout (only used when fulfillment=courier).
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS is_pickup_enabled BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS pickup_hours VARCHAR(200) NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS delivery_eta_min_days INTEGER")
+            cur.execute("ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS delivery_eta_max_days INTEGER")
+            # order_history needs to remember which fulfillment path the customer
+            # picked + (for pickup) which warehouse they'll collect from.
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS fulfillment_type VARCHAR(20) NOT NULL DEFAULT 'courier'")
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='order_history_fulfillment_type_check') THEN
+                ALTER TABLE order_history ADD CONSTRAINT order_history_fulfillment_type_check
+                  CHECK (fulfillment_type IN ('courier','pickup'));
+              END IF;
+            END $$;""")
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS pickup_warehouse_id INTEGER REFERENCES warehouses(id) ON DELETE SET NULL")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS product_stock (
                     id              SERIAL PRIMARY KEY,
@@ -2365,6 +2449,16 @@ class WarehouseRequest(BaseModel):
     contact_name:  Optional[str] = None
     contact_phone: Optional[str] = None
     notes:         Optional[str] = None
+    # Customer-facing options:
+    #   • is_pickup_enabled — when true, storefront customers see this WH as
+    #     a "Pickup at store" option at checkout.
+    #   • pickup_hours      — free-form opening hours displayed to customer.
+    #   • delivery_eta_*    — used to render "Delivery in 2–4 days" hints
+    #     on product cards / checkout for courier fulfillment.
+    is_pickup_enabled:      Optional[bool] = None
+    pickup_hours:           Optional[str]  = None
+    delivery_eta_min_days:  Optional[int]  = None
+    delivery_eta_max_days:  Optional[int]  = None
 
 class CreateVariationRequest(BaseModel):
     variation_name: Optional[str]       = None
@@ -9835,7 +9929,9 @@ def list_warehouses(project_id: int = Query(...), user: dict = Depends(get_curre
     rows = db_all(
         "SELECT id, name, code, address, is_active, is_default, created_at,"
         "       country, city, street, postal_code, region,"
-        "       contact_name, contact_phone, notes"
+        "       contact_name, contact_phone, notes,"
+        "       is_pickup_enabled, pickup_hours,"
+        "       delivery_eta_min_days, delivery_eta_max_days"
         " FROM warehouses WHERE project_id=%s"
         " ORDER BY is_default DESC, name ASC",
         (project_id,)
@@ -9914,6 +10010,18 @@ def update_warehouse(wid: int, req: WarehouseRequest, project_id: int = Query(..
             if row and row.get("is_default"):
                 raise HTTPException(400, "Pick another warehouse as default before unflagging this one")
         fields.append("is_default=%s"); vals.append(bool(req.is_default))
+    # Customer-facing fields (pickup/eta) — straightforward write-through.
+    if req.is_pickup_enabled is not None:
+        fields.append("is_pickup_enabled=%s"); vals.append(bool(req.is_pickup_enabled))
+    if req.pickup_hours is not None:
+        fields.append("pickup_hours=%s"); vals.append(sanitize(req.pickup_hours)[:200])
+    if req.delivery_eta_min_days is not None:
+        # Clamp to a sane window so storefront doesn't display nonsense like "-3 days"
+        v = max(0, min(180, int(req.delivery_eta_min_days)))
+        fields.append("delivery_eta_min_days=%s"); vals.append(v)
+    if req.delivery_eta_max_days is not None:
+        v = max(0, min(180, int(req.delivery_eta_max_days)))
+        fields.append("delivery_eta_max_days=%s"); vals.append(v)
     if not fields: return {"ok": True}
     vals.append(wid)
     with db_cursor() as (conn, cur):
@@ -13221,13 +13329,17 @@ async def chat_ws(ws: WebSocket, project_id: int):
 
 BOOKING_STATUSES = ("pending", "confirmed", "cancelled", "completed", "no_show")
 
-# Allowed status transitions; terminal (cancelled/completed) cannot be revived (delete+recreate) — prevents un-cancel of rebooked slots and completed→pending undo bugs.
+# Allowed status transitions. Admins (via PATCH /api/booking/bookings/{id})
+# can move freely between any two statuses — they need to fix typos, undo
+# accidental "Complete" clicks, re-activate a wrongly-cancelled booking, etc.
+# The customer-facing External cancellation endpoint stays strict
+# (only pending/confirmed → cancelled) — see `public_cancel_booking`.
 BOOKING_STATUS_TRANSITIONS = {
-    "pending":   {"confirmed", "cancelled", "no_show"},
-    "confirmed": {"completed", "cancelled", "no_show"},
-    "cancelled": set(),
-    "completed": set(),
-    "no_show":   set(),
+    "pending":   {"confirmed", "completed", "cancelled", "no_show"},
+    "confirmed": {"pending",   "completed", "cancelled", "no_show"},
+    "cancelled": {"pending",   "confirmed", "completed", "no_show"},
+    "completed": {"pending",   "confirmed", "cancelled", "no_show"},
+    "no_show":   {"pending",   "confirmed", "completed", "cancelled"},
 }
 
 # Email/phone format regex (best-effort, prevents obvious garbage)
@@ -13245,6 +13357,9 @@ class BookingServiceRequest(BaseModel):
     requires_staff: bool = False
     capacity: int = 1
     staff_ids: Optional[List[int]] = None        # M:N — overwrite link if provided
+    # 'shop' = customer comes to us (default), 'customer' = we travel to them
+    # (address required on booking), 'either' = both modes accepted.
+    location_type: Optional[str] = 'shop'
 
 class BookingStaffRequest(BaseModel):
     name: str
@@ -13252,6 +13367,10 @@ class BookingStaffRequest(BaseModel):
     bio: Optional[str] = ""
     is_active: bool = True
     service_ids: Optional[List[int]] = None      # M:N — overwrite link if provided
+    # Optional informational split: how much the BUSINESS keeps from each
+    # completed booking (0-100). CRM only displays it as a "for-info" number
+    # in the Staff analytics — no payroll math, no auto-payouts.
+    commission_pct: Optional[int] = 0
 
 class BookingHourRow(BaseModel):
     day_of_week: int                              # 0=Mon … 6=Sun
@@ -13272,14 +13391,24 @@ class BookingSettingsRequest(BaseModel):
     timezone: str = "UTC"
 
 class CreateBookingRequest(BaseModel):
-    service_id: int
+    # service_id is now OPTIONAL — when omitted, the booking is "freeform":
+    # caller must supply freeform_service_name + freeform_duration_minutes +
+    # freeform_price. Used by integrators who don't want to set up a Services
+    # catalog (e.g. handyman, on-demand cleaning, custom one-offs).
+    service_id: Optional[int] = None
     staff_id: Optional[int] = None
     starts_at: str                                # ISO 8601, e.g. "2025-04-26T14:00"
     customer_name: str = ""
     customer_phone: str = ""
     customer_email: str = ""
+    customer_address: str = ""                    # required when service.location_type='customer'
     notes: str = ""
     status: Optional[str] = None                  # admin override; default = pending/confirmed
+    # Freeform fields — populated only when service_id is None. Ignored when
+    # service_id is set (the catalogue values win to keep snapshots consistent).
+    freeform_service_name: Optional[str] = None
+    freeform_duration_minutes: Optional[int] = None
+    freeform_price: Optional[float] = None
 
 class UpdateBookingStatusRequest(BaseModel):
     status: str
@@ -13356,15 +13485,18 @@ def booking_create_service(req: BookingServiceRequest,
     if req.price is not None and req.price < 0:
         raise HTTPException(400, "Price must be ≥ 0")
     _verify_staff_in_project(req.staff_ids or [], project_id)
+    loc_type = (req.location_type or 'shop').strip().lower()
+    if loc_type not in ('shop', 'customer', 'either'):
+        raise HTTPException(400, "location_type must be 'shop' | 'customer' | 'either'")
     with db_cursor() as (conn, cur):
         cur.execute(
             """INSERT INTO booking_services
                   (project_id, name, description, duration_minutes,
-                   price, image_url, is_active, requires_staff, capacity)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                   price, image_url, is_active, requires_staff, capacity, location_type)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
             (project_id, sanitize(req.name)[:200], sanitize(req.description or "")[:5000],
              req.duration_minutes, req.price, req.image_url,
-             req.is_active, req.requires_staff, req.capacity)
+             req.is_active, req.requires_staff, req.capacity, loc_type)
         )
         sid = cur.fetchone()["id"]
         if req.staff_ids:
@@ -13391,16 +13523,19 @@ def booking_update_service(sid: int, req: BookingServiceRequest,
         raise HTTPException(400, "Price must be ≥ 0")
     if req.staff_ids is not None:
         _verify_staff_in_project(req.staff_ids, project_id)
+    loc_type = (req.location_type or 'shop').strip().lower()
+    if loc_type not in ('shop', 'customer', 'either'):
+        raise HTTPException(400, "location_type must be 'shop' | 'customer' | 'either'")
     with db_cursor() as (conn, cur):
         cur.execute(
             """UPDATE booking_services SET
                   name=%s, description=%s, duration_minutes=%s,
                   price=%s, image_url=%s, is_active=%s,
-                  requires_staff=%s, capacity=%s
+                  requires_staff=%s, capacity=%s, location_type=%s
                WHERE id=%s""",
             (sanitize(req.name)[:200], sanitize(req.description or "")[:5000],
              req.duration_minutes, req.price, req.image_url,
-             req.is_active, req.requires_staff, req.capacity, sid)
+             req.is_active, req.requires_staff, req.capacity, loc_type, sid)
         )
         if req.staff_ids is not None:
             cur.execute("DELETE FROM booking_staff_services WHERE service_id=%s", (sid,))
@@ -13470,12 +13605,13 @@ def booking_create_staff(req: BookingStaffRequest,
     require_owner(user, project_id)
     if not req.name.strip(): raise HTTPException(400, "Name is required")
     _verify_services_in_project(req.service_ids or [], project_id)
+    commission_pct = max(0, min(100, int(req.commission_pct or 0)))
     with db_cursor() as (conn, cur):
         cur.execute(
-            """INSERT INTO booking_staff (project_id, name, avatar_url, bio, is_active)
-               VALUES (%s,%s,%s,%s,%s) RETURNING id""",
+            """INSERT INTO booking_staff (project_id, name, avatar_url, bio, is_active, commission_pct)
+               VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
             (project_id, sanitize(req.name)[:200], req.avatar_url,
-             sanitize(req.bio or "")[:5000], req.is_active)
+             sanitize(req.bio or "")[:5000], req.is_active, commission_pct)
         )
         st_id = cur.fetchone()["id"]
         if req.service_ids:
@@ -13497,12 +13633,14 @@ def booking_update_staff(st_id: int, req: BookingStaffRequest,
     if not existing: raise HTTPException(404, "Staff not found")
     if req.service_ids is not None:
         _verify_services_in_project(req.service_ids, project_id)
+    commission_pct = max(0, min(100, int(req.commission_pct or 0)))
     with db_cursor() as (conn, cur):
         cur.execute(
-            """UPDATE booking_staff SET name=%s, avatar_url=%s, bio=%s, is_active=%s
+            """UPDATE booking_staff SET
+                  name=%s, avatar_url=%s, bio=%s, is_active=%s, commission_pct=%s
                WHERE id=%s""",
             (sanitize(req.name)[:200], req.avatar_url,
-             sanitize(req.bio or "")[:5000], req.is_active, st_id)
+             sanitize(req.bio or "")[:5000], req.is_active, commission_pct, st_id)
         )
         if req.service_ids is not None:
             cur.execute("DELETE FROM booking_staff_services WHERE staff_id=%s", (st_id,))
@@ -13539,6 +13677,85 @@ def booking_delete_staff(st_id: int, project_id: int = Query(...),
                     (st_id, project_id))
         conn.commit()
     return {"ok": True}
+
+
+# Period codes (frontend combobox) → number of days back from now.
+# Keep this in sync with the StaffAnalytics period dropdown on the frontend.
+_STAFF_ANALYTICS_PERIODS = {
+    "1d":   1,
+    "3d":   3,
+    "1w":   7,
+    "2w":   14,
+    "1mo":  30,
+    "2mo":  60,
+    "season": 90,    # ≈ one season
+    "halfyear": 182,
+    "1y":   365,
+    "2y":   730,
+}
+
+@app.get("/api/booking/staff/{st_id}/analytics")
+def booking_staff_analytics(st_id: int,
+                            period: str = Query("1mo"),
+                            project_id: int = Query(...),
+                            user: dict = Depends(get_current_user)):
+    """Compute 4 lightweight metrics over a rolling window:
+      • cassa_earned   — sum of completed-booking prices (snapshot from service_price
+                          or the booking's freeform_price when service_id is NULL).
+      • bookings_count — number of bookings (any status except cancelled) in the window.
+      • hours_worked   — sum of durations (in hours) for completed bookings.
+      • avg_ticket     — cassa_earned / completed_count (0 when no completed jobs).
+    The CRM intentionally does NOT compute payroll — staff.commission_pct is shown
+    on the frontend as an info-only multiplier the owner can apply manually."""
+    require_team_member_or_owner(user, project_id)
+    days = _STAFF_ANALYTICS_PERIODS.get(period, 30)
+
+    st = db_one("SELECT id, name, commission_pct FROM booking_staff "
+                "WHERE id=%s AND project_id=%s", (st_id, project_id))
+    if not st: raise HTTPException(404, "Staff not found")
+
+    # Window: [now - days, now). starts_at is TIMESTAMPTZ in UTC.
+    rows = db_all(
+        """SELECT b.id, b.status, b.starts_at, b.ends_at,
+                  b.service_id, b.freeform_price, b.freeform_duration_minutes,
+                  s.price AS svc_price, s.duration_minutes AS svc_duration
+           FROM bookings b
+           LEFT JOIN booking_services s ON s.id = b.service_id
+           WHERE b.staff_id=%s AND b.project_id=%s
+             AND b.starts_at >= NOW() - (%s * INTERVAL '1 day')""",
+        (st_id, project_id, days)
+    )
+    cassa = 0.0
+    bookings_count = 0
+    hours_worked = 0.0
+    completed = 0
+    for r in rows:
+        # Cancelled don't count toward anything (consistent with the calendar UI).
+        if r["status"] == "cancelled":
+            continue
+        bookings_count += 1
+        if r["status"] == "completed":
+            completed += 1
+            price = (float(r["svc_price"]) if r["service_id"] and r["svc_price"] is not None
+                     else (float(r["freeform_price"]) if r["freeform_price"] is not None else 0.0))
+            duration = (int(r["svc_duration"]) if r["service_id"] and r["svc_duration"] is not None
+                        else (int(r["freeform_duration_minutes"]) if r["freeform_duration_minutes"] is not None else 0))
+            cassa += price
+            hours_worked += duration / 60.0
+
+    avg_ticket = (cassa / completed) if completed > 0 else 0.0
+    return {
+        "staff_id": st_id,
+        "staff_name": st["name"],
+        "commission_pct": int(st.get("commission_pct") or 0),
+        "period": period,
+        "period_days": days,
+        "cassa_earned":   round(cassa, 2),
+        "bookings_count": bookings_count,
+        "hours_worked":   round(hours_worked, 2),
+        "avg_ticket":     round(avg_ticket, 2),
+    }
+
 
 # ── Working hours ─────────────────────────────────────────────────────────────
 
@@ -13653,12 +13870,17 @@ def booking_save_settings(req: BookingSettingsRequest,
 # ── Bookings (the actual appointments) ────────────────────────────────────────
 
 def _enrich_booking(rows):
-    """Attach service / staff names so the front-end never has to join."""
+    """Attach service / staff names so the front-end never has to join.
+    For freeform bookings (service_id IS NULL) the snapshot fields on the
+    booking row itself (freeform_service_name / duration / price) become the
+    visible name / duration / price — caller never has to special-case the
+    null FK on the UI side."""
     if not rows: return rows
-    svc_ids   = {r["service_id"] for r in rows}
+    svc_ids   = {r["service_id"] for r in rows if r.get("service_id")}
     staff_ids = {r["staff_id"]   for r in rows if r["staff_id"]}
     svcs  = {r["id"]: r for r in db_all(
-        "SELECT id, name, duration_minutes, price FROM booking_services WHERE id = ANY(%s)",
+        "SELECT id, name, duration_minutes, price, location_type"
+        " FROM booking_services WHERE id = ANY(%s)",
         (list(svc_ids),)
     )} if svc_ids else {}
     stfs  = {r["id"]: r for r in db_all(
@@ -13666,13 +13888,25 @@ def _enrich_booking(rows):
         (list(staff_ids),)
     )} if staff_ids else {}
     for r in rows:
-        s = svcs.get(r["service_id"])
+        s = svcs.get(r["service_id"]) if r.get("service_id") else None
         st = stfs.get(r["staff_id"])
-        r["service_name"]     = s["name"] if s else None
-        r["service_duration"] = s["duration_minutes"] if s else None
-        r["service_price"]    = float(s["price"]) if (s and s["price"] is not None) else 0.0
+        if s:
+            r["service_name"]     = s["name"]
+            r["service_duration"] = s["duration_minutes"]
+            r["service_price"]    = float(s["price"]) if s["price"] is not None else 0.0
+            r["location_type"]    = s.get("location_type") or 'shop'
+        else:
+            # Freeform path: fall back to the snapshot on the booking row.
+            r["service_name"]     = r.get("freeform_service_name") or None
+            r["service_duration"] = r.get("freeform_duration_minutes")
+            r["service_price"]    = float(r["freeform_price"]) if r.get("freeform_price") is not None else 0.0
+            r["location_type"]    = 'shop'
         r["staff_name"]       = st["name"] if st else None
         r["staff_avatar"]     = st["avatar_url"] if st else None
+        # `customer_address` already comes back as a column. Cast freeform_price
+        # to native float so JSON serialization doesn't emit Decimal strings.
+        if r.get("freeform_price") is not None:
+            r["freeform_price"] = float(r["freeform_price"])
     return rows
 
 @app.get("/api/booking/stats")
@@ -13778,13 +14012,46 @@ def booking_create_admin(req: CreateBookingRequest,
                          user: dict = Depends(get_current_user)):
     """Admin-side booking creation (staff manually adding an appointment).
     Admins bypass min_advance/max_advance windows and the slot-availability
-    check (intentional — they may need to record walk-ins or move appointments)."""
+    check (intentional — they may need to record walk-ins or move appointments).
+
+    Supports two modes:
+      • service-based — req.service_id set; duration + price come from the catalog.
+      • freeform — req.service_id is None; caller supplies freeform_service_name +
+        freeform_duration_minutes + freeform_price. Used for one-off custom jobs."""
     require_team_member_or_owner(user, project_id)
-    svc = db_one("SELECT * FROM booking_services WHERE id=%s AND project_id=%s",
-                 (req.service_id, project_id))
-    if not svc: raise HTTPException(404, "Service not found")
-    if svc["requires_staff"] and not req.staff_id:
-        raise HTTPException(400, "This service requires selecting a staff member")
+
+    # Resolve duration + location requirements from either the catalog service
+    # or the caller-supplied freeform fields. Both paths end up with a normalized
+    # `duration_min`, `loc_type`, and snapshot fields ready to insert.
+    svc = None
+    duration_min = None
+    loc_type = 'shop'
+    freeform_name = ''
+    freeform_dur = None
+    freeform_pr = None
+    if req.service_id is not None:
+        svc = db_one("SELECT * FROM booking_services WHERE id=%s AND project_id=%s",
+                     (req.service_id, project_id))
+        if not svc: raise HTTPException(404, "Service not found")
+        if svc["requires_staff"] and not req.staff_id:
+            raise HTTPException(400, "This service requires selecting a staff member")
+        duration_min = int(svc["duration_minutes"])
+        loc_type = (svc.get("location_type") or 'shop')
+    else:
+        # Freeform mode — duration is required, name is required, price optional.
+        if not (req.freeform_service_name or '').strip():
+            raise HTTPException(400, "Either service_id or freeform_service_name is required")
+        dur = req.freeform_duration_minutes
+        if dur is None or int(dur) < 5 or int(dur) > 1440:
+            raise HTTPException(400, "freeform_duration_minutes must be 5–1440")
+        duration_min = int(dur)
+        freeform_name = sanitize(req.freeform_service_name)[:200]
+        freeform_dur  = duration_min
+        if req.freeform_price is not None:
+            if float(req.freeform_price) < 0:
+                raise HTTPException(400, "freeform_price must be ≥ 0")
+            freeform_pr = float(req.freeform_price)
+
     if req.staff_id:
         st = db_one("SELECT id FROM booking_staff WHERE id=%s AND project_id=%s",
                     (req.staff_id, project_id))
@@ -13802,7 +14069,7 @@ def booking_create_admin(req: CreateBookingRequest,
     if starts.tzinfo is None:
         starts = starts.replace(tzinfo=biz_tz)
     starts = starts.astimezone(timezone.utc)
-    ends   = starts + timedelta(minutes=svc["duration_minutes"])
+    ends   = starts + timedelta(minutes=duration_min)
     status = req.status or "confirmed"
     if status not in BOOKING_STATUSES: raise HTTPException(400, "Unknown status")
     # Best-effort customer contact validation
@@ -13813,6 +14080,13 @@ def booking_create_admin(req: CreateBookingRequest,
     if not (req.customer_name or "").strip():
         raise HTTPException(400, "Customer name is required")
 
+    # Mobile-services address rule: when the service goes to the customer, an
+    # address is required; the 'either' mode treats it as optional metadata.
+    customer_address = sanitize(req.customer_address or "")[:500]
+    if loc_type == 'customer' and not customer_address:
+        raise HTTPException(400,
+            "This service is delivered at the customer's location — customer_address is required")
+
     with db_cursor() as (conn, cur):
         # Same advisory lock key as the public endpoint — avoids admin/customer race for the same slot.
         lock_key = (project_id * 10**12
@@ -13822,11 +14096,15 @@ def booking_create_admin(req: CreateBookingRequest,
         cur.execute(
             """INSERT INTO bookings
                   (project_id, service_id, staff_id, user_id, starts_at, ends_at,
-                   status, customer_name, customer_phone, customer_email, notes)
-               VALUES (%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                   status, customer_name, customer_phone, customer_email,
+                   customer_address, notes,
+                   freeform_service_name, freeform_duration_minutes, freeform_price)
+               VALUES (%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
             (project_id, req.service_id, req.staff_id, starts, ends, status,
              sanitize(req.customer_name)[:200], sanitize(req.customer_phone)[:64],
-             sanitize(req.customer_email)[:200], sanitize(req.notes)[:2000])
+             sanitize(req.customer_email)[:200],
+             customer_address, sanitize(req.notes)[:2000],
+             freeform_name, freeform_dur, freeform_pr)
         )
         bid = cur.fetchone()["id"]
         conn.commit()

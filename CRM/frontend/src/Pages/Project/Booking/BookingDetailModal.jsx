@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Clock, User, CalendarBlank, Phone, EnvelopeSimple, Trash, Note } from '@phosphor-icons/react';
+import { X, Clock, User, CalendarBlank, Phone, EnvelopeSimple, Trash, Note, MapPin } from '@phosphor-icons/react';
+import { Combobox } from './BookingCreateModal.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'pending',   label: 'Pending'   },
@@ -61,9 +62,11 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete }) {
             <div className="bk-detail-row">
               <CalendarBlank size={16} className="bk-detail-icon" />
               <div>
-                <div className="bk-detail-label">Service</div>
+                <div className="bk-detail-label">
+                  {booking.service_id ? 'Service' : 'Service (freeform)'}
+                </div>
                 <div className="bk-detail-value">
-                  {booking.service_name}
+                  {booking.service_name || '—'}
                   {booking.service_duration && <> · {booking.service_duration} min</>}
                   {booking.service_price > 0 && <> · ${booking.service_price.toFixed(2)}</>}
                 </div>
@@ -114,6 +117,20 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete }) {
                 </div>
               </div>
             )}
+            {booking.customer_address && (
+              <div className="bk-detail-row">
+                <MapPin size={16} className="bk-detail-icon" />
+                <div>
+                  <div className="bk-detail-label">Address</div>
+                  <div className="bk-detail-value">
+                    <a target="_blank" rel="noreferrer"
+                       href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(booking.customer_address)}`}>
+                      {booking.customer_address}
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
             {booking.notes && (
               <div className="bk-detail-row">
                 <Note size={16} className="bk-detail-icon" />
@@ -127,13 +144,14 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete }) {
 
           <div className="auth-sep" />
 
-          {/* Status changer */}
+          {/* Status changer — custom Combobox matches every other selector in
+              the CRM (Calendar staff filter, New-promo categories, Booking
+              Settings timezone). The native <select> looked out of place. */}
           <div className="auth-field">
             <label className="auth-label">Status</label>
-            <select className="crm-input" value={booking.status}
-              onChange={e => onStatusChange(booking.id, e.target.value)}>
-              {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+            <Combobox value={booking.status}
+              options={STATUS_OPTIONS}
+              onChange={v => onStatusChange(booking.id, v)} />
           </div>
 
           <div className="auth-actions">

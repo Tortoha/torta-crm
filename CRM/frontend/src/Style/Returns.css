@@ -1,177 +1,61 @@
-/* Returns / Refunds page — grouped cards, status badges, 5-stage stepper, inspect editor. */
+/* Returns / Refunds page — grouped table view (mirrors Products list page),
+   status badges, 5-stage stepper, inspect editor. */
 
-/* ── Group sections ────────────────────────────────────────── */
-
+/* ── Page layout ───────────────────────────────────────────── */
+/* `.ret-groups` is just a wrapper around the per-status sections.
+   Sections themselves use `.prod-group` from Products.css for the
+   consistent "Heading [N]" + table look. */
 .ret-groups {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
   padding-bottom: 64px;
 }
 
-.ret-group {
-  background: var(--card);
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: var(--shadow-card);
+/* ── List row (column grid) ────────────────────────────────
+   7 columns: #id · customer · order · items · reason · status · date
+   Same `.prow` base class as Products rows so 3D tilt + gloss + hover
+   visuals are inherited automatically; we only override the grid template.
+   The status column has a fixed min-width so badge pills don't squish. */
+.prod-list-head.ret-list-head,
+.prow.ret-prow {
+  grid-template-columns: 70px 1.5fr 1.2fr 0.8fr 1fr 110px 0.9fr;
 }
 
-.ret-group-head {
-  display: grid;
-  grid-template-columns: 36px 1fr auto auto;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  border: none;
-  background: none;
-  padding: 4px 4px;
-  cursor: pointer;
-  text-align: left;
-  border-radius: 12px;
-  transition: background 0.2s var(--ease-smooth);
-}
-
-.ret-group-head:hover {
-  background: var(--accent-tint);
-}
-
-.ret-group-icon {
-  width: 28px; height: 28px;
-  color: var(--accent);
-}
-
-.ret-group-title-wrap {
-  display: flex; flex-direction: column;
-  line-height: 1.2;
-}
-
-.ret-group-title {
-  font-size: 14px; font-weight: 600; color: var(--text);
-}
-
-.ret-group-sub {
-  font-size: 12px; color: var(--muted);
-}
-
-.ret-group-count {
-  background: var(--accent-tint);
-  color: var(--accent);
-  font-weight: 600; font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 999px;
-  min-width: 24px;
-  text-align: center;
-}
-
-.ret-group-caret {
-  width: 16px; height: 16px;
+.ret-prow-id {
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
-  transition: transform 0.25s var(--ease-smooth);
+  font-weight: 600;
 }
 
-.ret-group-caret--open {
-  transform: rotate(180deg);
-}
-
-.ret-group-empty {
-  margin: 12px 4px 4px;
-  color: var(--muted);
-  font-size: 13px;
-  font-style: italic;
-}
-
-.ret-group-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-}
-
-/* ── Card ──────────────────────────────────────────────────── */
-
-.ret-card {
-  position: relative;
-  background: #fff;
-  border-radius: 14px;
-  padding: 14px;
+.ret-prow-customer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  cursor: pointer;
-  overflow: hidden;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  transition: box-shadow 0.25s var(--ease-smooth);
-  transform-style: preserve-3d;
-  will-change: transform;
-}
-
-.ret-card:hover {
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-}
-
-.ret-card-gloss {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-}
-
-.ret-card > * {
-  position: relative;
-  z-index: 2;
-}
-
-.ret-card-head {
-  display: flex; align-items: center; justify-content: space-between;
-}
-
-.ret-card-id {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.ret-card-cust {
-  display: flex; flex-direction: column;
+  gap: 2px;
+  min-width: 0;
   line-height: 1.25;
 }
 
-.ret-card-name {
+.ret-prow-name {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.ret-card-email {
+.ret-prow-email {
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.ret-card-meta {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px;
+.ret-prow-date {
   color: var(--muted);
-}
-
-.ret-card-dot { color: var(--muted); }
-
-.ret-card-foot {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.ret-card-reason {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.ret-card-date {
-  font-size: 11px;
-  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Status badges ─────────────────────────────────────────── */
@@ -187,24 +71,107 @@
   white-space: nowrap;
 }
 
+/* Note: "Refunded" is the only positive terminal state. Per system rule
+   (CLAUDE.md → "No green anywhere") we still use blue accent for it —
+   not green — so the badge palette stays cohesive with the rest of CRM. */
 .ret-badge--requested  { background: rgba(255, 159, 10, 0.14); color: #c46a00; }
 .ret-badge--approved   { background: var(--accent-tint);        color: var(--accent); }
 .ret-badge--received   { background: rgba(0, 122, 255, 0.16);   color: #004ec3; }
 .ret-badge--inspected  { background: rgba(88, 86, 214, 0.14);   color: #4341a3; }
-.ret-badge--refunded   { background: rgba(52, 199, 89, 0.16);   color: #1e7a3a; }
+.ret-badge--refunded   { background: var(--accent-tint);        color: var(--accent); }
 .ret-badge--rejected   { background: rgba(255, 59, 48, 0.14);   color: #b32417; }
 .ret-badge--cancelled  { background: rgba(142, 142, 147, 0.18); color: #555; }
 
-/* ── 5-stage stepper ───────────────────────────────────────── */
+/* ── Modal layout (cpm-modal patterns) ──────────────────────
+   The modal body has `background: var(--bg)` (light grey) inherited
+   from .auth-modal. Customer / Order / Items / Refund sections wrap
+   their content in `.ret-block` (white card) so each group reads as
+   a self-contained tile, while the section LABEL stays flat (plain
+   uppercase text from .po-field-label). */
+.ret-modal .auth-modal-body { padding: 16px; gap: 14px; }
+/* Lock the width — without this the 5-step stepper child stretches
+   the modal past 560px (the base .auth-modal default is 960). 600px
+   gives the stepper labels enough breathing room without overflow. */
+.ret-modal {
+  width: 600px !important;
+  max-width: 600px !important;
+}
 
+.ret-block {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ret-flat-value {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+/* Item list inside the modal — compact rows, no box per item. */
+.ret-items-flat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ret-item-row {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+.ret-item-img {
+  width: 48px; height: 48px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+.ret-item-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ret-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ret-item-meta {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ret-item-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 5-stage stepper ─────────────────────────────────────────
+   Compact version — sits flush inside the modal body without the
+   chunky tinted background of the old design. Step dots stay
+   small + the connector bar is a thin grey line. */
 .ret-stepper {
   display: flex;
   gap: 0;
-  padding: 16px;
-  background: var(--accent-tint);
-  border-radius: 16px;
-  margin-bottom: 16px;
+  padding: 8px 0 4px;
+  margin-bottom: 4px;
   align-items: stretch;
+  /* Clip the last step's connector bar so it doesn't spill out the
+     right edge of the modal — the bar uses right: -50% to reach into
+     the next step's column, but on the final step there is none. */
+  overflow: hidden;
 }
 
 .ret-step {
@@ -215,17 +182,20 @@
   align-items: center;
   gap: 6px;
   text-align: center;
-  padding: 0 6px;
+  /* No horizontal padding here — the dot is centred via align-items:center
+     (uses content-box), but `.ret-step-bar` is positioned with left:50% of
+     the *full* step box. Equal padding would offset those two anchors and
+     the connector bar would visually miss the dot centre. Spacing between
+     adjacent dots is handled by flex:1 instead. */
 }
 
 .ret-step-dot {
-  width: 28px; height: 28px;
+  width: 24px; height: 24px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700;
+  font-size: 12px; font-weight: 700;
   background: #fff;
   color: var(--muted);
-  border: 2px solid var(--muted);
   z-index: 2;
   transition: all 0.25s var(--ease-smooth);
 }
@@ -259,27 +229,23 @@
   color: var(--text);
 }
 
+/* Description text under each step is hidden — with 5 steps + multi-word
+   phrases ("Customer submitted return request"), the stepper would stretch
+   the modal way past 600px. Keep only the short step label. */
 .ret-step-desc {
-  font-size: 10px;
-  color: var(--muted);
-  line-height: 1.3;
-  max-width: 110px;
+  display: none;
 }
 
 .ret-step-bar {
   position: absolute;
-  top: 14px;
+  top: 10px;
   left: 50%;
   right: -50%;
-  height: 2px;
-  background: var(--muted);
-  opacity: 0.3;
+  height: 3px;
+  background: var(--card);
+  opacity: 1;
   z-index: 1;
-}
-
-.ret-step--done .ret-step-bar,
-.ret-step--current ~ .ret-step .ret-step-bar {
-  /* The bar belongs to the step it sits on; "done" bars fill blue. */
+  box-shadow: var(--box-shadow);
 }
 
 .ret-step--done .ret-step-bar { background: var(--accent); opacity: 1; }
@@ -401,14 +367,24 @@
   color: var(--muted);
 }
 
-.ret-inspect-notes {
+/* Textarea — overrides .crm-input's pill border-radius (var(--radius-item))
+   because a pill-shaped textarea looks like a giant balloon. Higher
+   specificity via the class combo so we beat both `.crm-input` and the
+   per-page `.po-form .crm-input` declarations. resize:none + width:100%
+   prevent the textarea from overflowing its parent block. */
+.ret-modal textarea.crm-input.ret-inspect-notes,
+textarea.ret-inspect-notes {
   width: 100%;
-  min-height: 56px;
-  resize: vertical;
+  min-height: 60px;
+  resize: none;
   font-family: inherit;
   font-size: 13px;
-  border-radius: 12px;
-  padding: 8px 12px;
+  border-radius: 12px !important;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: none;
+  box-sizing: border-box;
+  display: block;
 }
 
 /* ── Refund grid ───────────────────────────────────────────── */
@@ -434,16 +410,26 @@
 /* ── Modal actions ─────────────────────────────────────────── */
 
 .ret-modal-actions {
-  display: flex; gap: 10px;
+  display: flex; gap: 8px;
   align-items: center;
   flex-wrap: wrap;
-  padding-top: 12px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
   margin-top: 4px;
 }
 
-.ret-modal-actions .crm-submit-btn {
-  display: inline-flex; align-items: center; gap: 6px;
+.ret-modal-actions .crm-submit-btn,
+.ret-modal-actions .auth-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Force-match Approve and Reject buttons: same padding, font, radius.
+     Authentication.css defines auth-btn-danger with font-weight:500 and
+     crm-submit-btn with font-weight:600 — that 1-step difference made
+     the pair look uneven side-by-side, so we equalise to 600 here. */
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 999px;
+  line-height: 1.2;
 }
 
 .ret-reject-row {

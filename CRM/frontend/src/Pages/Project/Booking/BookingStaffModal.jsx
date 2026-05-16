@@ -17,6 +17,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
     bio:         member?.bio         ?? '',
     is_active:   member?.is_active   ?? true,
     service_ids: member?.service_ids ?? [],
+    commission_pct: member?.commission_pct ?? 0,
   }));
   const [hours, setHours] = useState(() =>
     DAY_NAMES.map((_, i) => ({ day_of_week: i, open_time: '10:00', close_time: '19:00', enabled: false }))
@@ -80,7 +81,11 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
       const res = await fetch(url, {
         method: isEdit ? 'PUT' : 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, avatar_url: form.avatar_url || null }),
+        body: JSON.stringify({
+          ...form,
+          avatar_url: form.avatar_url || null,
+          commission_pct: Math.max(0, Math.min(100, parseInt(form.commission_pct, 10) || 0)),
+        }),
       });
       if (!res.ok) {
         const j = await res.json();
@@ -171,6 +176,17 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
             <textarea className="crm-input bk-textarea" rows={2}
               value={form.bio} onChange={e => upd('bio', e.target.value)}
               placeholder="Senior stylist · 10 years experience" />
+          </div>
+
+          <div className="auth-field">
+            <label className="auth-label">Commission (%)</label>
+            <p className="auth-field-hint">
+              Informational. Displayed in the staff analytics so you can compute
+              this person's payout manually — the CRM does not automate payroll.
+            </p>
+            <input className="crm-input" type="number" min={0} max={100}
+              value={form.commission_pct}
+              onChange={e => upd('commission_pct', e.target.value)} />
           </div>
 
           <div className="auth-toggle-row">

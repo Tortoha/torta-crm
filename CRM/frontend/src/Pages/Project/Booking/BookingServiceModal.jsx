@@ -23,6 +23,7 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
     requires_staff:   service?.requires_staff   ?? false,
     capacity:         service?.capacity         ?? 1,
     staff_ids:        service?.staff_ids        ?? [],
+    location_type:    service?.location_type    ?? 'shop',
   }));
   const [saving,    setSaving]    = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -234,6 +235,24 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
                 value={form.capacity} onChange={e => upd('capacity', e.target.value)} />
             </div>
           )}
+
+          <div className="auth-field">
+            <label className="auth-label">Where this service is delivered</label>
+            <p className="auth-field-hint">
+              <b>Shop</b> — customer comes to your location.&nbsp;
+              <b>Customer</b> — you go to them (an address will be required at booking time).&nbsp;
+              <b>Either</b> — customer chooses.
+            </p>
+            <div className="bk-loc-pick">
+              {['shop', 'customer', 'either'].map(opt => (
+                <button key={opt} type="button"
+                  className={`bk-loc-pick-btn${form.location_type === opt ? ' bk-loc-pick-btn--on' : ''}`}
+                  onClick={() => upd('location_type', opt)}>
+                  {opt === 'shop' ? 'At the shop' : opt === 'customer' ? "At customer's place" : 'Either'}
+                </button>
+              ))}
+            </div>
+          </div>
 
           {allStaff && allStaff.length > 0 && (
             <div className="auth-field">
