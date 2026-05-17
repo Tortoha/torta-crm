@@ -456,7 +456,11 @@
 
 .bk-hours-row {
   display: grid;
-  grid-template-columns: 18px 60px 1fr auto 1fr;
+  /* 4 columns matching the 4 row children: [checkbox+day label] [open
+     time] [dash] [close time]. Previously declared 5 columns which
+     pushed the time pickers one slot left, made the day name wrap
+     under the checkbox, and left an empty trailing column. */
+  grid-template-columns: 100px 1fr auto 1fr;
   align-items: center;
   gap: 12px;
   padding: 6px 17px;
@@ -477,6 +481,23 @@
   font-weight: 500;
   color: var(--text);
   user-select: none;
+}
+/* Day-cell label: checkbox + Mon/Tue/… name on the same line, inside
+   the first grid column. Without this the <label>'s default inline
+   layout let the day name wrap under the checkbox when the column was
+   narrow — making the schedule look broken. */
+.bk-hours-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.bk-hours-day > span {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
 }
 
 .bk-hours-time-wrap {

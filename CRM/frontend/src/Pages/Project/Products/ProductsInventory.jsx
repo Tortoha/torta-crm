@@ -50,7 +50,86 @@ const REASON_OPTIONS = [
   { value: 'other',             label: 'Other' },
 ];
 
-const COLS = '2.6fr 1fr 1fr 1fr 110px';
+// Inventory table layout (9 columns):
+//   Name · Price · Cost · Profit · Margin · SKU code · Stock · Sold · Edit
+// Financial columns sit next to Name (left side of the table) so the
+// merchant's eye flows: "what is it → what it costs / earns → identifier
+// + stock counters → Edit". Edit stays on the right where it always was.
+// All 7 numeric columns share the same 0.85fr width — equal-cadence
+// march across the row.
+const COLS = '1.8fr 0.85fr 0.85fr 0.85fr 0.85fr 0.85fr 0.85fr 0.85fr 95px';
+// Single style object reused on every row (head + body) so the column
+// template AND the gap between cells stay in lock-step. 12 px gap keeps
+// right-aligned values (Margin, Sold) from kissing the cell that follows
+// (SKU code, Edit button) — without the gap they paint flush against
+// each other and read as "33.0%76792801" / "230[Edit]".
+const ROW_STYLE = { gridTemplateColumns: COLS, columnGap: 12 };
+
+// ── Inline money/percent helpers (no Intl import overhead) ───────────
+// Returns "—" for null/undefined so empty cells read clearly, never $0.
+const fmtMoney = (v) =>
+  v == null
+    ? '—'
+    : `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+const fmtPct = (v) =>
+  v == null ? '—' : `${Number(v).toFixed(1)}%`;
+// < 20 % gets the red highlight. Anything else (including healthy +
+// loss-makers ≥ 20 % which shouldn't exist in practice) reads in the
+// default text colour. Green is intentionally off the palette per the
+// project design language — only red ("bad") + blue accent ("good").
+const marginTone = (pct) => {
+  if (pct == null) return '';
+  return pct < 20 ? ' po-margin--bad' : '';
+};
+
+// Resolve the per-unit Price / Cost / Profit / Margin for a list of SKUs.
+//
+// These come straight from the product configuration (cost_price +
+// sell_price columns on product_configurations_l2). They DO NOT depend
+// on orders, sales history, or sold_quantity — a SKU with 0 sales but
+// a configured cost/price will show real numbers; a SKU with hundreds
+// of sales but no cost set will show "—" for Cost. The "Sold" column
+// is purely informational, not an input to these formulas.
+//
+// Lenient rollup: Price and Cost are computed INDEPENDENTLY. If only
+// Price is set on a SKU, the Price column still shows but Cost shows
+// "—" (and Profit/Margin follow Cost since they need both).
+//
+// Aggregation strategy (for variation / product rows that contain
+// multiple SKUs with potentially different prices):
+//   1. SKUs with stock — weighted average by quantity. This reflects
+//      the realistic per-unit economics of CURRENT inventory.
+//   2. No SKU has stock — fall back to simple average across SKUs
+//      with the value configured. The aggregate still answers
+//      "what's the typical unit-economics here?" when OOS.
+//   3. No SKU has the value configured at all — that column shows
+//      "—" so the merchant knows to fill it in on the product page.
+function rollupFinancials(skus) {
+  const avg = (key) => {
+    const have = skus.filter(s => s[key] != null);
+    if (have.length === 0) return null;
+    let weighted = 0;
+    let stockSum = 0;
+    let simple = 0;
+    for (const s of have) {
+      const qty = Number(s.quantity) || 0;
+      if (qty > 0) {
+        weighted += qty * Number(s[key]);
+        stockSum += qty;
+      }
+      simple += Number(s[key]);
+    }
+    return stockSum > 0 ? weighted / stockSum : simple / have.length;
+  };
+
+  const price = avg('sell_price');
+  const cost  = avg('cost_price');
+  const profit     = (price != null && cost != null) ? price - cost : null;
+  const margin_pct = (profit != null && price > 0)
+    ? (profit / price) * 100
+    : null;
+  return { price, cost, profit, margin_pct };
+}
 
 function ProductsInventory() {
   const { projectId } = useOutletContext();
@@ -153,7 +232,10 @@ function ProductsInventory() {
   const skuTotals = useMemo(() => {
     // bySku: sku_id → { quantity, sold, sku_code, sku_name,
     //                   variation_id, variation_name,
-    //                   product_id, product_title }
+    //                   product_id, product_title,
+    //                   cost_price, sell_price }
+    // cost_price / sell_price are per-SKU (not per-warehouse) so the
+    // first row we see for that SKU wins.
     const bySku = new Map();
     for (const r of summary) {
       const id = r.sku_id;
@@ -171,6 +253,8 @@ function ProductsInventory() {
           variation_name: r.variation_name || '—',
           product_id:     r.product_id,
           product_title:  r.product_title || '',
+          cost_price:     r.cost_price ?? null,
+          sell_price:     r.sell_price ?? null,
         });
       }
     }
@@ -216,6 +300,8 @@ function ProductsInventory() {
         sku_code:           info.sku_code,
         stock,
         sold:               info.sold,
+        cost_price:         info.cost_price,
+        sell_price:         info.sell_price,
         threshold:          LOW_STOCK_THRESHOLD,
       });
     }
@@ -501,6 +587,8 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
         sku_code:      r.sku_code,
         quantity:      r.quantity,
         sold_quantity: r.sold_quantity || 0,
+        cost_price:    r.cost_price ?? null,
+        sell_price:    r.sell_price ?? null,
       });
     }
     return byWh;
@@ -535,8 +623,16 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                 <p className="crm-placeholder">No stock in this warehouse yet.</p>
               ) : (
                 <div className="po-set-table">
-                  <div className="po-set-row po-set-row--head" style={{ gridTemplateColumns: COLS }}>
-                    <span>Name</span><span>SKU code</span><span>Stock</span><span>Sold</span><span></span>
+                  <div className="po-set-row po-set-row--head" style={ROW_STYLE}>
+                    <span>Name</span>
+                    <span className="po-num-head">Price</span>
+                    <span className="po-num-head">Cost</span>
+                    <span className="po-num-head">Profit</span>
+                    <span className="po-num-head">Margin</span>
+                    <span className="po-num-head">SKU code</span>
+                    <span className="po-num-head">Stock</span>
+                    <span className="po-num-head">Sold</span>
+                    <span></span>
                   </div>
                   {productsList.map(p => {
                     const pKey = `${w.id}:${p.product_id}`;
@@ -547,10 +643,14 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                       a + v.skus.reduce((b, s) => b + s.quantity, 0), 0);
                     const pSold = variations.reduce((a, v) =>
                       a + v.skus.reduce((b, s) => b + (s.sold_quantity || 0), 0), 0);
+                    // Roll up cost / profit / margin across every SKU in
+                    // every variation of this product (within this WH).
+                    const allSkus = variations.flatMap(v => v.skus);
+                    const pFin = rollupFinancials(allSkus);
                     return (
                       <Fragment key={pKey}>
                         <PoListRow className="po-tree-row"
-                          style={{ gridTemplateColumns: COLS }}
+                          style={ROW_STYLE}
                           onClick={() => toggleProd(pKey)}>
                           <NameCell depth={0}
                             chevron={pOpen ? 'open' : 'closed'}
@@ -562,7 +662,13 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                               {' · '}{skuCount} SKU{skuCount === 1 ? '' : 's'}
                             </span>
                           </NameCell>
-                          <span className="po-set-note">{p.product_sku || '—'}</span>
+                          <span className="po-money-cell">{fmtMoney(pFin.price)}</span>
+                          <span className="po-money-cell">{fmtMoney(pFin.cost)}</span>
+                          <span className="po-money-cell">{fmtMoney(pFin.profit)}</span>
+                          <span className={`po-money-cell po-margin${marginTone(pFin.margin_pct)}`}>
+                            {fmtPct(pFin.margin_pct)}
+                          </span>
+                          <span className="po-set-note po-id-cell">{p.product_sku || '—'}</span>
                           <span className="po-stock-cell">{pQty}</span>
                           <span className="po-numeric-muted">{pSold}</span>
                           <span></span>
@@ -573,10 +679,11 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                           const vOpen = openVar2.has(vKey);
                           const vQty = v.skus.reduce((a, s) => a + s.quantity, 0);
                           const vSold = v.skus.reduce((a, s) => a + (s.sold_quantity || 0), 0);
+                          const vFin = rollupFinancials(v.skus);
                           return (
                             <Fragment key={vKey}>
                               <PoListRow className="po-tree-row"
-                                style={{ gridTemplateColumns: COLS }}
+                                style={ROW_STYLE}
                                 onClick={() => toggleVar(vKey)}>
                                 <NameCell depth={1}
                                   chevron={vOpen ? 'open' : 'closed'}
@@ -589,6 +696,12 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                                     · {v.skus.length} SKU{v.skus.length === 1 ? '' : 's'}
                                   </span>
                                 </NameCell>
+                                <span className="po-money-cell">{fmtMoney(vFin.price)}</span>
+                                <span className="po-money-cell">{fmtMoney(vFin.cost)}</span>
+                                <span className="po-money-cell">{fmtMoney(vFin.profit)}</span>
+                                <span className={`po-money-cell po-margin${marginTone(vFin.margin_pct)}`}>
+                                  {fmtPct(vFin.margin_pct)}
+                                </span>
                                 <span></span>
                                 <span className="po-stock-cell po-tree-stock--variation">{vQty}</span>
                                 <span className="po-numeric-muted">{vSold}</span>
@@ -605,15 +718,22 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                                   warehouse_id:       w.id,
                                   warehouse_name:     w.name,
                                 };
+                                const sFin = rollupFinancials([s]);
                                 return (
                                   <PoListRow key={`${vKey}-${s.sku_id}`}
                                     className="po-tree-row"
-                                    style={{ gridTemplateColumns: COLS }}
+                                    style={ROW_STYLE}
                                     onClick={() => onEdit(payload)}>
                                     <NameCell depth={2} icon={<Cube className="po-disc-cell--muted" />}>
                                       <span>{s.sku_name || '—'}</span>
                                     </NameCell>
-                                    <span className="po-set-note">{s.sku_code || '—'}</span>
+                                    <span className="po-money-cell">{fmtMoney(sFin.price)}</span>
+                                    <span className="po-money-cell">{fmtMoney(sFin.cost)}</span>
+                                    <span className="po-money-cell">{fmtMoney(sFin.profit)}</span>
+                                    <span className={`po-money-cell po-margin${marginTone(sFin.margin_pct)}`}>
+                                      {fmtPct(sFin.margin_pct)}
+                                    </span>
+                                    <span className="po-set-note po-id-cell">{s.sku_code || '—'}</span>
                                     <span className="po-stock-cell">{s.quantity}</span>
                                     <span className="po-numeric-muted">{s.sold_quantity || 0}</span>
                                     <button type="button" className="po-edit-btn"
@@ -961,8 +1081,16 @@ function FlatMatchList({ rows, onEdit }) {
   if (rows.length === 0) return <p className="crm-placeholder">No SKUs match this filter.</p>;
   return (
     <div className="po-set-table">
-      <div className="po-set-row po-set-row--head" style={{ gridTemplateColumns: COLS }}>
-        <span>Product · Variation · SKU</span><span>SKU code</span><span>Stock</span><span>Sold</span><span></span>
+      <div className="po-set-row po-set-row--head" style={ROW_STYLE}>
+        <span>Product · Variation · SKU</span>
+        <span className="po-num-head">Price</span>
+        <span className="po-num-head">Cost</span>
+        <span className="po-num-head">Profit</span>
+        <span className="po-num-head">Margin</span>
+        <span className="po-num-head">SKU code</span>
+        <span className="po-num-head">Stock</span>
+        <span className="po-num-head">Sold</span>
+        <span></span>
       </div>
       {rows.map(r => {
         const payload = {
@@ -973,15 +1101,29 @@ function FlatMatchList({ rows, onEdit }) {
           configuration_name: r.configuration_name,
           current_stock: r.stock,
         };
+        // Same rollup helper as the tree view — single-SKU "rollup" so
+        // the columns read identically whether we're in the tree or the
+        // flat Low/OOS view.
+        const fin = rollupFinancials([{
+          quantity:   r.stock,
+          cost_price: r.cost_price,
+          sell_price: r.sell_price,
+        }]);
         return (
           <PoListRow key={r.sku_id} className="po-tree-row po-flat-row"
-            style={{ gridTemplateColumns: COLS }}
+            style={ROW_STYLE}
             onClick={() => onEdit(payload)}>
             <span className="po-flat-name-cell">
               <span className="po-set-strong">{r.product_title}</span>
               <span className="po-set-note"> · {r.variation_name} · {r.configuration_name}</span>
             </span>
-            <span className="po-set-note">{r.sku_code || '—'}</span>
+            <span className="po-money-cell">{fmtMoney(fin.price)}</span>
+            <span className="po-money-cell">{fmtMoney(fin.cost)}</span>
+            <span className="po-money-cell">{fmtMoney(fin.profit)}</span>
+            <span className={`po-money-cell po-margin${marginTone(fin.margin_pct)}`}>
+              {fmtPct(fin.margin_pct)}
+            </span>
+            <span className="po-set-note po-id-cell">{r.sku_code || '—'}</span>
             <StockCell stock={r.stock} threshold={r.threshold} />
             <span className="po-numeric-muted">{r.sold}</span>
             <button type="button" className="po-edit-btn"

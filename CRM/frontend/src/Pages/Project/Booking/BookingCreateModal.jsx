@@ -66,7 +66,11 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
     // the trigger, blocking the page). With `bottom` anchoring, the visual
     // height naturally shrinks to the actual content height and the dropdown
     // hugs the trigger.
-    const MAX_H = 360;
+    // 480 px (was 360) so 11-item lists like the analytics period
+    // dropdown (10 presets + Custom range…) fit without a scrollbar.
+    // Smaller dropdowns naturally cap to their content height via
+    // flex/auto, so this only hurts perception when the list is long.
+    const MAX_H = 480;
     const spaceBelow = window.innerHeight - r.bottom - margin;
     const spaceAbove = r.top - margin;
     const flipUp = spaceBelow < 200 && spaceAbove > spaceBelow;

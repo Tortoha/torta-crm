@@ -267,13 +267,7 @@ export default function ProjectSettings() {
       <div className="auth-page">
 
       {tab === 'general' && (
-        <>
-          <h1 className="crm-page-title">General</h1>
-          <p className="auth-page-subtitle">
-            Project name, frontend URL, currency & language live here. Coming soon.
-          </p>
-          <div className="crm-placeholder">Coming soon</div>
-        </>
+        <GeneralTab projectId={projectId} showToast={showToast} />
       )}
 
       {tab === 'inventory' && (
@@ -299,6 +293,164 @@ export default function ProjectSettings() {
       )}
 
       {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
+      </div>
+    </>
+  );
+}
+
+// ── General tab: timezone + currency ─────────────────────
+// These two settings drive how dates and money are formatted across
+// the entire CRM. Timezone is critical: without it, an Almaty merchant
+// sees orders bucketed by UTC days, so a 23:00 local order looks like
+// "yesterday" in analytics and "today" in the orders list.
+
+// Common IANA timezones — covers the bulk of e-commerce markets without
+// dumping the full 600+ list on the user. They can type a custom value
+// via the text input if their zone isn't here.
+const TIMEZONE_PRESETS = [
+  'UTC',
+  'Asia/Almaty',     'Asia/Aqtobe',    'Asia/Tashkent',
+  'Europe/Moscow',   'Europe/London',  'Europe/Berlin',
+  'Europe/Paris',    'Europe/Istanbul',
+  'America/New_York','America/Chicago','America/Denver',
+  'America/Los_Angeles','America/Toronto',
+  'Asia/Dubai',      'Asia/Singapore', 'Asia/Tokyo',
+  'Australia/Sydney',
+];
+
+// Common currencies — same triage. Bonus: shows symbol next to code.
+const CURRENCY_PRESETS = [
+  { code: 'USD', label: 'US Dollar ($)' },
+  { code: 'EUR', label: 'Euro (€)' },
+  { code: 'GBP', label: 'British Pound (£)' },
+  { code: 'KZT', label: 'Kazakhstani Tenge (₸)' },
+  { code: 'RUB', label: 'Russian Ruble (₽)' },
+  { code: 'TRY', label: 'Turkish Lira (₺)' },
+  { code: 'UZS', label: 'Uzbekistani Som' },
+  { code: 'CNY', label: 'Chinese Yuan (¥)' },
+  { code: 'JPY', label: 'Japanese Yen (¥)' },
+  { code: 'AED', label: 'UAE Dirham' },
+];
+
+function GeneralTab({ projectId, showToast }) {
+  const [tz,       setTz]       = useState('UTC');
+  const [tzAuto,   setTzAuto]   = useState(true);
+  const [currency, setCurrency] = useState('USD');
+  const [loaded,   setLoaded]   = useState(false);
+  const [savingTz, setSavingTz] = useState(false);
+  const [savingCur,setSavingCur]= useState(false);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/projects/${projectId}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (j) {
+          setTz(j.timezone || 'UTC');
+          setTzAuto(j.tz_auto !== false);
+          setCurrency(j.currency || 'USD');
+        }
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [projectId]);
+  const save = async (body, setBusy) => {
+    setBusy(true);
+    const r = await fetch(`${API_BASE}/api/projects/${projectId}`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    setBusy(false);
+    if (r.ok) {
+      showToast('Saved');
+      setTimeout(() => window.location.reload(), 500);
+    } else {
+      const j = await r.json().catch(() => ({}));
+      showToast(j.detail || 'Save failed');
+    }
+  };
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  // Manual dropdown selection → flips tz_auto off (user picked one
+  // explicitly, don't auto-overwrite next time they reload from a
+  // different machine).
+  const pickTimezone = (v) => {
+    setTz(v); setTzAuto(false);
+    save({ timezone: v, tz_auto: false }, setSavingTz);
+  };
+  // "Use browser timezone" → switches BACK to auto mode + immediately
+  // syncs to whatever the browser reports now. From this moment, the
+  // hidden polling in CRM Layout will keep tz in sync with the browser
+  // every 30 min + on every page load.
+  const useBrowser = () => {
+    setTz(browserTz); setTzAuto(true);
+    save({ timezone: browserTz, tz_auto: true }, setSavingTz);
+  };
+  return (
+    <>
+      <h1 className="crm-page-title">General</h1>
+      <p className="auth-page-subtitle">
+        Timezone and currency. Both drive how dates and money are
+        displayed across the dashboard — Analytics, Orders, Booking, etc.
+      </p>
+
+      <div className="crm-section" style={{ marginBottom: 24 }}>
+        <h3 className="crm-section-title" style={{ marginBottom: 12 }}>Timezone</h3>
+        <p className="cpm-section-hint" style={{ marginBottom: 12 }}>
+          Days in analytics are bucketed by this timezone. Orders show
+          their creation date in this timezone too.
+          <br />
+          {tzAuto ? (
+            <>
+              <b>Auto-detect mode</b> — CRM keeps the project tz in sync
+              with your browser ({browserTz}) every 30 min and on every
+              page load. Pick a zone from the dropdown to lock it.
+            </>
+          ) : (
+            <>
+              <b>Manual mode</b> — locked to {tz}. Your browser reports{' '}
+              <b>{browserTz}</b>.{' '}
+              {tz !== browserTz && (
+                <button type="button" className="auth-btn-check"
+                  style={{ marginLeft: 8 }}
+                  onClick={useBrowser}
+                  disabled={!loaded || savingTz}>
+                  Use browser timezone
+                </button>
+              )}
+              {tz === browserTz && (
+                <button type="button" className="auth-btn-check"
+                  style={{ marginLeft: 8 }}
+                  onClick={useBrowser}
+                  disabled={!loaded || savingTz}>
+                  Resume auto-detect
+                </button>
+              )}
+            </>
+          )}
+        </p>
+        <select className="crm-input" value={tz}
+          disabled={!loaded || savingTz}
+          onChange={e => pickTimezone(e.target.value)}>
+          {TIMEZONE_PRESETS.includes(tz) ? null : <option value={tz}>{tz}</option>}
+          {TIMEZONE_PRESETS.map(z => <option key={z} value={z}>{z}</option>)}
+        </select>
+      </div>
+
+      <div className="crm-section">
+        <h3 className="crm-section-title" style={{ marginBottom: 12 }}>Currency</h3>
+        <p className="cpm-section-hint" style={{ marginBottom: 12 }}>
+          All amounts on the dashboard are formatted with this currency's
+          symbol and decimal style. Per-order currency on order_history
+          still wins when it disagrees (cross-currency sales).
+        </p>
+        <select className="crm-input" value={currency}
+          disabled={!loaded || savingCur}
+          onChange={e => { setCurrency(e.target.value); save({ currency: e.target.value }, setSavingCur); }}>
+          {CURRENCY_PRESETS.some(c => c.code === currency) ? null
+            : <option value={currency}>{currency}</option>}
+          {CURRENCY_PRESETS.map(c => (
+            <option key={c.code} value={c.code}>{c.label}</option>
+          ))}
+        </select>
       </div>
     </>
   );

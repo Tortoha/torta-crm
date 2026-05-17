@@ -1,0 +1,47 @@
+Alembic migrations for the CRM backend.
+
+## Why we have both Alembic AND self-written startup migrations in main.py
+
+`main.py` already runs ~30 idempotent `CREATE TABLE IF NOT EXISTS` /
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS` blocks at FastAPI startup.
+Those are safe to keep — they bootstrap a fresh DB without needing
+Alembic to be present.
+
+Going forward, EVERY schema change goes through Alembic instead.
+Versioned, reviewable, reversible — `alembic downgrade -1` rolls
+back the most recent migration if the new code is rolled back.
+
+## Day-to-day commands
+
+```
+# Apply pending migrations
+python -m alembic upgrade head
+
+# Roll back the last applied migration
+python -m alembic downgrade -1
+
+# Show current revision
+python -m alembic current
+
+# Generate a new (empty) revision skeleton
+python -m alembic revision -m "add color column to products"
+
+# Render SQL for a migration without running it (review-only)
+python -m alembic upgrade head --sql > migration.sql
+```
+
+## Connection URL
+
+Comes from `.env` (same as main.py). `alembic/env.py` reads
+`DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` and
+builds a SQLAlchemy URL — no need to edit `alembic.ini`.
+
+## Marking an existing DB at baseline
+
+For a DB that already has the schema (pre-Alembic deployments):
+
+    python -m alembic stamp head
+
+This writes `alembic_version` table without running any migrations.
+After that, `python -m alembic upgrade head` is a no-op until a new
+revision is added.

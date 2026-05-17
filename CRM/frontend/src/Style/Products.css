@@ -2474,7 +2474,11 @@
   padding: 6px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
   border: 1px solid rgba(0, 0, 0, 0.06);
-  max-height: 360px;
+  /* 480 (was 360) so long lists like the analytics period dropdown
+     (10 presets + "Custom range…") fit without a scrollbar. JS in
+     Combobox.useEffect also caps to viewport-available space, so this
+     ceiling only applies when there's plenty of room. */
+  max-height: 480px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -5026,6 +5030,7 @@ textarea.po-set-input,
 .po-stock-cell {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .po-stock-cell--out {
@@ -5038,6 +5043,42 @@ textarea.po-set-input,
 
 .po-numeric-muted {
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Cost / Profit / Margin columns on the Inventory page ────────────
+   .po-num-head — right-aligned head label for the three financial
+                  columns so the labels sit above their numbers.
+   .po-money-cell — right-aligned tabular-nums money cell ($ / "—").
+   .po-margin   — margin % default (blue accent, bold).
+   .po-margin--bad — margin under 20 %, red. */
+.po-num-head {
+  text-align: right;
+}
+
+.po-money-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.po-margin {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.po-margin--bad {
+  color: #c92a39;
+}
+
+/* SKU code body cell on the Inventory page — same muted+small look as
+   .po-set-note but right-aligned so it lines up with adjacent numeric
+   columns (avoids the visual "MARGIN|SKUCODE" collision where Margin
+   is right-aligned and SKU code defaults to left). */
+.po-id-cell {
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 

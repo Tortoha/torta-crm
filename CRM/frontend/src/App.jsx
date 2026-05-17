@@ -25,6 +25,7 @@ const OrgPayments   = lazy(() => import('./Pages/Organization/OrgPayments.jsx'))
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
 const Revenue       = lazy(() => import('./Pages/Project/Revenue.jsx'));
 const Analytics     = lazy(() => import('./Pages/Project/Analytics.jsx'));
+const Alerts        = lazy(() => import('./Pages/Project/Alerts.jsx'));
 const Goals         = lazy(() => import('./Pages/Project/Goals.jsx'));
 const Products      = lazy(() => import('./Pages/Project/Products/Products.jsx'));
 const ProductsList  = lazy(() => import('./Pages/Project/Products/ProductsList.jsx'));
@@ -98,6 +99,7 @@ function App() {
             </Route>
             <Route path="revenue"    element={<Revenue />} />
             <Route path="analytics"  element={<Analytics />} />
+            <Route path="alerts"     element={<Alerts />} />
             <Route path="goals"      element={<Goals />} />
             <Route path="authentication" element={<Authentication />} />
             <Route path="email"      element={<Navigate to="../authentication" relative="path" replace />} />

@@ -3205,6 +3205,26 @@ def add_to_cart(item: AddToCart, request: Request,
                 (cart_id, item.product_id, item.variation_id, item.configuration_id,
                  item.quantity, sel_ids_sorted, RESERVATION_TTL_MINUTES)
             )
+        # ── Funnel analytics audit log ────────────────────────────────────
+        # `cart_items` is a live working-set table — rows get DELETED when
+        # the order is placed, so the funnel can't reconstruct "who added
+        # to cart today" after they pay. `cart_events` is a permanent log:
+        # we write one row per add/remove/qty-change so the daily funnel
+        # dynamics endpoint can count unique adders per day even after
+        # they've checked out. Try/except keeps the cart endpoint safe if
+        # the table somehow doesn't exist yet on a partially-migrated DB.
+        try:
+            cursor.execute(
+                "INSERT INTO cart_events"
+                " (project_id, user_id, ip, action,"
+                "  product_id, variation_id, configuration_id, quantity)"
+                " VALUES (%s,%s,%s, 'add', %s,%s,%s,%s)",
+                (project_id, user_id, get_client_ip(request),
+                 item.product_id, item.variation_id, item.configuration_id,
+                 item.quantity)
+            )
+        except Exception as _e:
+            print(f"[cart-event] insert failed (non-fatal): {_e}")
         conn.commit()
     return {"success": True}
 
@@ -3670,7 +3690,14 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
                      api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
-    now        = datetime.utcnow()
+    from datetime import timezone as _tz
+    now        = datetime.now(_tz.utc)
+    # Tolerate legacy promo rows where valid_from / valid_until are
+    # naive TIMESTAMP (pre-TIMESTAMPTZ schema). See same pattern in
+    # place_order.
+    def _aware(d):
+        if d is None: return None
+        return d if getattr(d, 'tzinfo', None) else d.replace(tzinfo=_tz.utc)
 
     with db_cursor() as (_, cursor):
         cursor.execute("SELECT id FROM carts WHERE user_id=%s AND project_id=%s", (user_id, project_id))
@@ -3692,8 +3719,10 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
         promo = cursor.fetchone()
         if not promo: raise HTTPException(404, "Promo code not found")
 
-        if promo["valid_from"]  and promo["valid_from"]  > now: raise HTTPException(400, "Promo code not yet valid")
-        if promo["valid_until"] and promo["valid_until"] < now: raise HTTPException(400, "Promo code expired")
+        vf = _aware(promo["valid_from"])
+        vu = _aware(promo["valid_until"])
+        if vf and vf > now: raise HTTPException(400, "Promo code not yet valid")
+        if vu and vu < now: raise HTTPException(400, "Promo code expired")
         if subtotal < float(promo["min_order_amount"]):
             raise HTTPException(400, f"Minimum order amount is {promo['min_order_amount']}")
         if promo["usage_limit"] and promo["times_used"] >= promo["usage_limit"]:
@@ -5875,6 +5904,17 @@ def place_order(data: PlaceOrderRequest, request: Request,
             if promo:
                 from datetime import timezone as _tz
                 now = datetime.now(_tz.utc)
+                # Defensive: the schema declares valid_from/valid_until as
+                # TIMESTAMPTZ, but on databases that pre-date that schema
+                # the columns are plain TIMESTAMP and psycopg2 returns
+                # naive datetimes — which can't be compared to `now`
+                # (offset-aware). Normalise both fields to tz-aware UTC
+                # before comparing so we don't 500 on legacy promos.
+                def _aware(d):
+                    if d is None: return None
+                    return d if getattr(d, 'tzinfo', None) else d.replace(tzinfo=_tz.utc)
+                promo_valid_from  = _aware(promo.get("valid_from"))
+                promo_valid_until = _aware(promo.get("valid_until"))
                 # Phase 1: per-user limit & category restriction.
                 per_user_ok = True
                 if promo.get("per_user_limit"):
@@ -5900,8 +5940,8 @@ def place_order(data: PlaceOrderRequest, request: Request,
                     if None in cart_cats or not cart_cats.issubset(set(cat_ids)):
                         cat_ok = False
                 if (per_user_ok and cat_ok and
-                    (not promo["valid_from"] or promo["valid_from"] <= now) and
-                    (not promo["valid_until"] or promo["valid_until"] >= now) and
+                    (not promo_valid_from  or promo_valid_from  <= now) and
+                    (not promo_valid_until or promo_valid_until >= now) and
                     subtotal >= float(promo["min_order_amount"] or 0) and
                     (not promo["usage_limit"] or promo["times_used"] < promo["usage_limit"])):
                     dv = float(promo["discount_value"] or 0)
@@ -6070,12 +6110,24 @@ def place_order(data: PlaceOrderRequest, request: Request,
 
         # Позиции заказа — price snapshots the unit price INCLUDING modifier deltas
         # so order history shows the price the customer actually paid per unit.
+        # cost_per_unit also snapshotted at checkout time so historical Margin
+        # analysis stays accurate when the merchant edits the SKU's cost field
+        # later. Without the snapshot, COGS computed at report time would use
+        # whatever cost_price happens to be RIGHT NOW.
         for it in items:
             cursor.execute(
-                "INSERT INTO order_items (order_id, product_id, variation_id, configuration_id, quantity, price, selected_modifier_item_ids) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                "SELECT cost_price FROM product_configurations_l2 WHERE id=%s",
+                (it["configuration_id"],)
+            )
+            _cp_row = cursor.fetchone()
+            cost_per_unit = (_cp_row or {}).get("cost_price")
+            cursor.execute(
+                "INSERT INTO order_items"
+                "  (order_id, product_id, variation_id, configuration_id,"
+                "   quantity, price, cost_per_unit, selected_modifier_item_ids) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                 (order_id, it["product_id"], it["variation_id"], it["configuration_id"],
-                 it["quantity"], round(it["unit_price"], 2),
+                 it["quantity"], round(it["unit_price"], 2), cost_per_unit,
                  sorted(it["selected_modifier_item_ids"] or []))
             )
             it["id"] = cursor.fetchone()["id"]
@@ -6184,6 +6236,24 @@ def place_order(data: PlaceOrderRequest, request: Request,
     background_tasks.add_task(dispatch_event, project_id, "order.created", event_data)
     if pay_status == "paid":
         background_tasks.add_task(dispatch_event, project_id, "order.paid", event_data)
+    # Live push to CRM dashboards via PostgreSQL NOTIFY — CRM's
+    # background LISTEN task fans out to all WebSocket subscribers
+    # watching this project. No HTTP hop, no shared secret needed
+    # since both processes hit the same DB.
+    try:
+        with db_cursor() as (_c2, _cur2):
+            _cur2.execute(
+                "SELECT pg_notify(%s, %s)",
+                ("crm_project_events", json.dumps({
+                    "type": "order_created",
+                    "project_id": int(project_id),
+                    "data": {"order_id": order_id, "total": float(total)},
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                })),
+            )
+            _c2.commit()
+    except Exception:
+        pass
     return {"success": True, "order_id": order_id}
 
 
@@ -6984,10 +7054,27 @@ def track_visit(request: Request,
     print(f"[track-visit] project={project_id} ip={ip} user={user_id}")
     try:
         with db_cursor() as (conn, cursor):
-            cursor.execute(
-                "SELECT id FROM site_visits WHERE ip=%s AND project_id=%s AND created_at >= NOW() - INTERVAL '30 seconds'",
-                (ip, project_id)
-            )
+            # Dedup is per-identity, not per-IP. If the user is logged in,
+            # match on user_id — that way several accounts on the same
+            # machine each get their own visit row (previously the second
+            # account got silently deduped because IPs match). Anonymous
+            # traffic still dedups by IP. Window of 30s prevents pure
+            # refresh-spam but is short enough that switching accounts
+            # immediately registers as a fresh visit.
+            if user_id:
+                cursor.execute(
+                    "SELECT id FROM site_visits"
+                    " WHERE user_id=%s AND project_id=%s"
+                    "   AND created_at >= NOW() - INTERVAL '30 seconds'",
+                    (user_id, project_id)
+                )
+            else:
+                cursor.execute(
+                    "SELECT id FROM site_visits"
+                    " WHERE ip=%s AND project_id=%s AND user_id IS NULL"
+                    "   AND created_at >= NOW() - INTERVAL '30 seconds'",
+                    (ip, project_id)
+                )
             if cursor.fetchone():
                 return {"success": True, "skipped": True}
             e = _enrich_payload(request, ip, data)
@@ -7035,14 +7122,27 @@ def track_product_view(data: TrackProductView, request: Request,
     print(f"[track-pv] project={project_id} product={data.product_id} ip={ip} user={user_id}")
     try:
         with db_cursor() as (conn, cursor):
-            cursor.execute(
-                "SELECT id FROM product_page_views"
-                " WHERE ip=%s AND project_id=%s AND product_id=%s"
-                "   AND DATE(created_at)=CURRENT_DATE",
-                (ip, project_id, data.product_id)
-            )
+            # Dedup is per-(identity, product, day) so that switching
+            # accounts on the same machine produces separate viewer
+            # records. The old IP-only dedup blocked every account after
+            # the first from registering any product view in a day —
+            # devastating for a multi-account test scenario.
+            if user_id:
+                cursor.execute(
+                    "SELECT id FROM product_page_views"
+                    " WHERE user_id=%s AND project_id=%s AND product_id=%s"
+                    "   AND DATE(created_at)=CURRENT_DATE",
+                    (user_id, project_id, data.product_id)
+                )
+            else:
+                cursor.execute(
+                    "SELECT id FROM product_page_views"
+                    " WHERE ip=%s AND project_id=%s AND product_id=%s"
+                    "   AND user_id IS NULL AND DATE(created_at)=CURRENT_DATE",
+                    (ip, project_id, data.product_id)
+                )
             if cursor.fetchone():
-                print(f"[track-pv] skipped (dedup): product={data.product_id} ip={ip}")
+                print(f"[track-pv] skipped (dedup): product={data.product_id} ip={ip} user={user_id}")
                 return {"success": True, "skipped": True}
             e = _enrich_payload(request, ip, data)
             # Defensive INSERT: try the full enriched row first, fall back to

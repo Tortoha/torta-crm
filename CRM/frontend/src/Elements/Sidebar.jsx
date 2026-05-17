@@ -5,7 +5,7 @@ import {
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Cube, ChatCircleText, Code,
   Package, ChatCircleDots, CalendarBlank, Plug,
-  ListBullets, ChartLine, Target,
+  ListBullets, ChartLine, Target, Bell,
 } from '@phosphor-icons/react';
 
 // ── Nav configs ────────────────────────────────────────────────
@@ -19,6 +19,7 @@ function buildSections(apiKey) {
         { to: `${base}`,           label: 'Project Overview', Icon: House,          exact: true },
         { to: `${base}/revenue`,   label: 'Revenue',          Icon: CurrencyDollar },
         { to: `${base}/analytics`, label: 'Analytics',        Icon: ChartLine      },
+        { to: `${base}/alerts`,    label: 'Alerts',           Icon: Bell           },
         { to: `${base}/goals`,     label: 'Targets',          Icon: Target         },
       ],
     },

@@ -65,6 +65,41 @@ function Layout() {
     .finally(() => setLoading(false));
   }, [apiKey, navigate]);
 
+  // Auto-timezone sync — when `project.tz_auto` is TRUE, keep the
+  // project's stored timezone in sync with whatever browser TZ the
+  // merchant is currently in. Fires on mount (catch-up) and every 30
+  // minutes after (handles long-running sessions / travel mid-session).
+  //
+  // Skips when the user has explicitly picked a tz from Settings
+  // (tz_auto=FALSE) — their manual choice wins until they click the
+  // "Use browser timezone" toggle again. Reloads the page after a
+  // successful sync so all module-level fmtDate / fmtMoney pick up the
+  // new value without the user having to navigate away.
+  useEffect(() => {
+    if (!project || !project.tz_auto) return;
+    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const syncIfDifferent = () => {
+      // Re-read project from the backend in case Settings was edited in
+      // another tab — avoids overwriting a fresh manual choice with a
+      // stale cached `project.tz_auto` from this tab's mount.
+      fetch(`${API_BASE}/api/projects/${project.id}`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(p => {
+          if (!p || !p.tz_auto) return;
+          if (p.timezone === browserTz) return;
+          return fetch(`${API_BASE}/api/projects/${project.id}`, {
+            method: 'PATCH', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timezone: browserTz, tz_auto: true }),
+          }).then(r => { if (r.ok) window.location.reload(); });
+        })
+        .catch(() => { /* offline / transient — try again next tick */ });
+    };
+    syncIfDifferent();
+    const id = setInterval(syncIfDifferent, 30 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [project?.id, project?.tz_auto]);
+
   if (loading) return (
     <div id="mask" className="mask">
       <svg><circle cx="50" cy="50" r="40" /></svg>

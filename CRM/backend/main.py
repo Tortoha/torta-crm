@@ -185,6 +185,49 @@ def s3_delete_prefix(prefix: str) -> None:
 
 app = FastAPI()
 
+# ── Rate limiting ────────────────────────────────────────────────────────
+# slowapi guards against F5-spam (one user reloading Analytics fires
+# ~15 parallel requests; without a cap, that user can DoS the DB pool)
+# and brute-force on auth endpoints. Key is `client_ip` for unauth'd
+# routes and `user_id` (from the cookie JWT) for authenticated ones —
+# logged-in attackers can't bypass by rotating IPs through a proxy.
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.util import get_remote_address
+
+    def _rate_key(request: Request) -> str:
+        # Prefer user id from cookie when available, fall back to IP.
+        # Falling back to IP-only would let one logged-in attacker
+        # rotate-IP past the rate limit.
+        try:
+            tok = request.cookies.get("crm_token")
+            if tok:
+                payload = jwt.decode(tok, SECRET_KEY, algorithms=[ALGORITHM])
+                uid = payload.get("sub")
+                if uid:
+                    return f"u:{uid}"
+        except Exception:
+            pass
+        return f"ip:{get_remote_address(request)}"
+
+    limiter = Limiter(key_func=_rate_key, default_limits=["120/minute"])
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    _RATE_LIMIT_AVAILABLE = True
+except ImportError:
+    # slowapi not installed → no-op decorator so the rest of the file
+    # still works (e.g. on dev machines that haven't run pip install).
+    class _NoopLimiter:
+        def limit(self, *a, **kw):
+            def deco(fn): return fn
+            return deco
+        def shared_limit(self, *a, **kw):
+            def deco(fn): return fn
+            return deco
+    limiter = _NoopLimiter()
+    _RATE_LIMIT_AVAILABLE = False
+
 
 # ── VALIDATION-ERROR FORMATTER ───────────────────────────
 # FastAPI returns Pydantic validation errors as {"detail": [{...}, ...]} by default.
@@ -1170,6 +1213,12 @@ def run_migrations():
             # Lets us idempotently skip re-deducting and correctly restock
             # on transitions out of shipped/delivered.
             cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS stock_deducted BOOLEAN NOT NULL DEFAULT FALSE")
+            # Timestamp of when status transitioned to 'shipped'. Drives
+            # the Operations SLA chart (order → shipped median). For
+            # orders that were marked shipped before this column existed
+            # we have no historical timestamp, so the SLA series only
+            # populates from now-forward.
+            cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS shipped_at TIMESTAMPTZ")
             # Backfill #1 (corrected): mark as already-deducted ONLY those
             # orders that lack a reservation-log entry. An order placed
             # under the new code path writes a `product_stock_log` row with
@@ -1977,19 +2026,351 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] batch settings columns failed: {e}")
 
-    # Backfill cost_price for existing L2 rows that have a price but no cost (33% below price ≈ 50% margin). Idempotent — only touches NULL cost_price.
+    # Backfill cost_price for existing L2 rows that have a price but no cost
+    # (33 % below price ≈ 50 % margin). Idempotent — only touches NULL
+    # cost_price. Uses the SKU's EFFECTIVE price (own price else inherited
+    # from its variation) — without this, SKUs that rely on variation-level
+    # pricing (very common pattern: "all Gray sizes cost $60") would never
+    # get a cost auto-filled and would render "—" on the Inventory page
+    # despite the user having configured a price upstream.
     try:
         with db_cursor() as (conn, cur):
             cur.execute("SET LOCAL torta.skip_audit = 'on'")
             cur.execute(
-                "UPDATE product_configurations_l2"
-                "   SET cost_price = ROUND(price * 0.67, 2)"
-                " WHERE cost_price IS NULL"
-                "   AND price IS NOT NULL AND price > 0"
+                "UPDATE product_configurations_l2 l2"
+                "   SET cost_price = ROUND(COALESCE(l2.price, l1.price) * 0.67, 2)"
+                "  FROM product_configurations_l1 l1"
+                " WHERE l2.variation_id = l1.id"
+                "   AND l2.cost_price IS NULL"
+                "   AND COALESCE(l2.price, l1.price) IS NOT NULL"
+                "   AND COALESCE(l2.price, l1.price) > 0"
             )
             conn.commit()
     except Exception as e:
         print(f"[migration] cost_price backfill failed: {e}")
+
+    # Fix "stale" cost_price — values that were auto-backfilled at an older,
+    # higher price point and never got updated when the merchant lowered the
+    # sell price (or applied a permanent discount).
+    #
+    # Symptom: Margin analysis shows a product with negative margin and a
+    # huge loss (e.g. Nigger: cost $80 × 41 units = $3,323, but revenue
+    # $824 because actual orders went out at ~$20/unit). The cost field
+    # got "frozen" at old-price × 0.67 while sales prices kept changing.
+    #
+    # Fix: for any SKU that's been sold, if its stored cost_price exceeds
+    # the average actual sale price, reset it to avg_sale × 0.67 (same
+    # ratio the original backfill used). Idempotent — after one run,
+    # cost <= sale_price so the WHERE clause filters subsequent runs out.
+    # Only touches SKUs that have order history; merchant-set costs on
+    # never-sold SKUs are left alone.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("SET LOCAL torta.skip_audit = 'on'")
+            # avg_sale_price is QUANTITY-WEIGHTED — `SUM(price * qty) / SUM(qty)`,
+            # NOT `AVG(oi.price)` which would treat one $80 order_item the same
+            # as one $20 order_item even if the latter sold 40 units. The
+            # unweighted form silently leaves cost stale for any SKU whose
+            # history contains a few outlier-priced rows (test sales, early
+            # full-price orders, etc.). Concrete symptom we hit: Nigger had
+            # 41 units sold at $20 plus a handful of historic $80 sales →
+            # unweighted AVG landed at ~$36, current cost was $36, so
+            # `cost > avg` was FALSE and the migration skipped the row.
+            # Quantity-weighted AVG for the same data is ~$22, comfortably
+            # below cost $36 → migration triggers, cost drops to $14.74.
+            cur.execute(
+                "UPDATE product_configurations_l2 l2"
+                "   SET cost_price = ROUND(o.avg_sale_price * 0.67, 2)"
+                "  FROM ("
+                "    SELECT oi.configuration_id AS sku_id,"
+                "           SUM(oi.price * oi.quantity)::numeric"
+                "             / NULLIF(SUM(oi.quantity), 0) AS avg_sale_price"
+                "      FROM order_items oi"
+                "      JOIN order_history oh ON oh.id = oi.order_id"
+                "     WHERE oh.status NOT IN ('cancelled', 'refunded')"
+                "       AND oi.price > 0 AND oi.quantity > 0"
+                "     GROUP BY oi.configuration_id"
+                "  ) o"
+                " WHERE l2.id = o.sku_id"
+                "   AND l2.cost_price IS NOT NULL"
+                "   AND o.avg_sale_price IS NOT NULL"
+                "   AND l2.cost_price > o.avg_sale_price * 0.67"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] stale cost_price fix failed: {e}")
+
+    # Per-order-item cost snapshot — `cost_per_unit` is the SKU's
+    # cost_price AT THE MOMENT of checkout, frozen on the order_item
+    # row. Without this, historical Margin analysis recomputes COGS
+    # against the CURRENT cost_price, so any merchant edit to the
+    # cost field silently rewrites the past. The column is nullable
+    # for legacy rows that pre-date the snapshot; the margin SQL
+    # uses COALESCE(oi.cost_per_unit, l2.cost_price) to fall back to
+    # the current SKU cost for those rows (best effort).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS"
+                " cost_per_unit NUMERIC(10, 2)"
+            )
+            # One-time backfill — for every existing row with NULL
+            # cost_per_unit, copy the SKU's current cost_price. This
+            # is only as accurate as today's cost field but it
+            # locks the past, so future cost edits stop polluting
+            # historical reports.
+            cur.execute("SET LOCAL torta.skip_audit = 'on'")
+            cur.execute(
+                "UPDATE order_items oi"
+                "   SET cost_per_unit = c.cost_price"
+                "  FROM product_configurations_l2 c"
+                " WHERE c.id = oi.configuration_id"
+                "   AND oi.cost_per_unit IS NULL"
+                "   AND c.cost_price IS NOT NULL"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] order_items.cost_per_unit failed: {e}")
+
+    # Composite indexes for analytics hot paths. Every analytics endpoint
+    # filters orders by (project_id, created_at, status) — without these
+    # composites Postgres falls back to a seq-scan or single-column scans
+    # that still need a sort/hash for the time-bucket join. At 50k+ orders
+    # the difference is ~3 s vs ~50 ms per request, which compounds badly
+    # since the dashboard fires 15+ endpoints in parallel on every load.
+    #
+    # Each `CREATE INDEX IF NOT EXISTS` is no-op on subsequent runs. Order
+    # of columns matters — leading column must be the equality filter
+    # (project_id), then the inequality / range filter (created_at), with
+    # status last as an INCLUDE-style tail or partial-filter helper.
+    try:
+        with db_cursor() as (conn, cur):
+            # ── order_history: every revenue / funnel / margin query
+            #    filters by (project_id, created_at) and most also by status.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_oh_project_created_status "
+                "ON order_history(project_id, created_at DESC, status)"
+            )
+            # User-level joins (customer types, retention cohorts).
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_oh_project_user_created "
+                "ON order_history(project_id, user_id, created_at)"
+            )
+            # ── order_items: joined by (order_id) and aggregated by
+            #    (configuration_id) — popular products, margin breakdown.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_oi_order "
+                "ON order_items(order_id)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_oi_configuration "
+                "ON order_items(configuration_id)"
+            )
+            # ── order_returns: margin SQL subqueries by (order_item_id) +
+            #    filter by (status). Two indexes since usage patterns differ.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_or_project_status "
+                "ON order_returns(project_id, status)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ori_order_item "
+                "ON order_return_items(order_item_id)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ori_return "
+                "ON order_return_items(return_id)"
+            )
+            # ── product_stock: warehouse summary + per-warehouse lookup.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ps_sku_wh "
+                "ON product_stock(sku_id, warehouse_id)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ps_wh "
+                "ON product_stock(warehouse_id)"
+            )
+            # ── product_configurations: tree traversal joins for inventory
+            #    + margin pages. Already PKed on id; need the FK direction.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_l1_product "
+                "ON product_configurations_l1(product_id, position)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_l2_variation "
+                "ON product_configurations_l2(variation_id, position)"
+            )
+            # ── site_visits / product_page_views: funnel + visitor analytics
+            #    aggregate by (project_id, day, user_id_or_ip). Composite
+            #    keeps the time-bucket scan fast.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sv_project_visited "
+                "ON site_visits(project_id, visited_at DESC)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ppv_project_viewed "
+                "ON product_page_views(project_id, viewed_at DESC)"
+            )
+            # ── product_reviews: avg-rating analytics by product.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pr_product "
+                "ON product_reviews(product_id, created_at DESC)"
+            )
+            # ── promo_code_uses: redeemed-by-code analytics.
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pcu_code_used "
+                "ON promo_code_uses(promo_code_id, used_at DESC)"
+            )
+            conn.commit()
+            print("[migration] analytics indexes OK")
+    except Exception as e:
+        # Indexes are non-fatal — if a referenced table doesn't exist on
+        # this deployment, skip silently. Production will see the indexes.
+        print(f"[migration] analytics indexes (some skipped): {e}")
+
+    # Per-project timezone — used by analytics SQL to bucket orders by
+    # the merchant's LOCAL day, not UTC. Without this, a store in
+    # Almaty (UTC+5/+6) sees orders placed at 02:00 local time bucketed
+    # as "yesterday" because that's 21:00 UTC on the previous day.
+    # Default 'UTC' preserves current behaviour for projects that
+    # don't pick a zone yet. Validated against the IANA name list at
+    # the API layer (see PATCH /api/projects/{id}).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "ALTER TABLE crm_projects "
+                "ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) "
+                "NOT NULL DEFAULT 'UTC'"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_projects.timezone failed: {e}")
+
+    # `tz_auto` — when TRUE the project follows the browser's reported
+    # timezone (frontend polls every 30 min + on every page load, PATCHes
+    # this endpoint if the browser tz differs from the stored value).
+    # Default TRUE means: brand-new projects auto-detect, but the moment
+    # the user explicitly picks a tz from the dropdown, the flag flips to
+    # FALSE and the project stays on the manually-chosen zone until they
+    # click "Use browser timezone" (which sets tz_auto=TRUE again).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "ALTER TABLE crm_projects "
+                "ADD COLUMN IF NOT EXISTS tz_auto BOOLEAN "
+                "NOT NULL DEFAULT TRUE"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_projects.tz_auto failed: {e}")
+
+    # Materialized view for cohort-retention aggregation. The base query
+    # joins order_history to itself via a CTE; at 50k+ orders the live
+    # query takes ~2-3 s per Analytics page load. Materialized to a
+    # pre-aggregated table that REFRESH CONCURRENTLY rebuilds every
+    # ~30 min (see _refresh_cohort_mv background task below), reads
+    # become ~5 ms. Unique index on (project_id, cohort_month,
+    # month_offset) is required for `REFRESH ... CONCURRENTLY`.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_cohort_retention AS
+                WITH first_order AS (
+                  SELECT project_id, user_id,
+                         DATE_TRUNC('month', MIN(created_at)) AS cohort_month
+                    FROM order_history
+                   WHERE user_id IS NOT NULL
+                     AND status NOT IN ('cancelled', 'refunded')
+                   GROUP BY project_id, user_id
+                ), activity AS (
+                  SELECT fo.project_id, fo.cohort_month, fo.user_id,
+                         DATE_TRUNC('month', oh.created_at) AS active_month
+                    FROM order_history oh
+                    JOIN first_order fo
+                      ON fo.user_id = oh.user_id AND fo.project_id = oh.project_id
+                   WHERE oh.status NOT IN ('cancelled', 'refunded')
+                )
+                SELECT project_id,
+                       cohort_month,
+                       EXTRACT(MONTH FROM AGE(active_month, cohort_month))::int
+                         + 12 * EXTRACT(YEAR FROM AGE(active_month, cohort_month))::int
+                         AS month_offset,
+                       COUNT(DISTINCT user_id)::int AS active_users
+                  FROM activity
+                 GROUP BY project_id, cohort_month, month_offset
+                WITH NO DATA;
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_cohort_unique
+                ON mv_cohort_retention (project_id, cohort_month, month_offset);
+            """)
+            # Initial population — NO DATA above leaves it empty until
+            # first REFRESH. Do a non-concurrent refresh now (blocks for
+            # a few seconds, OK at startup; subsequent ones are CONCURRENT).
+            try:
+                cur.execute("REFRESH MATERIALIZED VIEW mv_cohort_retention")
+            except Exception as e:
+                print(f"[migration] initial cohort MV refresh: {e}")
+            conn.commit()
+            print("[migration] mv_cohort_retention ready")
+    except Exception as e:
+        print(f"[migration] mv_cohort_retention failed: {e}")
+
+    # Alerts subsystem — merchant-defined thresholds that fire an email
+    # when a metric crosses a line (revenue drop, low stock, etc.).
+    # Evaluated every hour by a background task; `last_fired_at` is used
+    # to throttle so a flapping condition doesn't spam.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_alerts (
+                    id              SERIAL PRIMARY KEY,
+                    project_id      INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    type            VARCHAR(40)  NOT NULL,
+                    threshold       NUMERIC(12, 2),
+                    email           VARCHAR(160) NOT NULL DEFAULT '',
+                    is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
+                    last_fired_at   TIMESTAMPTZ,
+                    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                );
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_crm_alerts_project_active "
+                "ON crm_alerts(project_id, is_active)"
+            )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_alert_fires (
+                    id          SERIAL PRIMARY KEY,
+                    alert_id    INTEGER NOT NULL REFERENCES crm_alerts(id) ON DELETE CASCADE,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    message     TEXT    NOT NULL,
+                    metric_val  NUMERIC(14, 2),
+                    fired_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_crm_alert_fires_project_at "
+                "ON crm_alert_fires(project_id, fired_at DESC)"
+            )
+            conn.commit()
+            print("[migration] crm_alerts + crm_alert_fires ready")
+    except Exception as e:
+        print(f"[migration] crm_alerts failed: {e}")
+
+    # Per-project default currency (ISO 4217 3-letter code). All monetary
+    # values on the analytics dashboard are formatted with this code as
+    # the prefix/suffix — the order_history.currency column STILL wins
+    # per-order if it disagrees (some orders may be cross-currency), but
+    # this is the "house" currency for AOV, revenue rollups, etc.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "ALTER TABLE crm_projects "
+                "ADD COLUMN IF NOT EXISTS currency VARCHAR(3) "
+                "NOT NULL DEFAULT 'USD'"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_projects.currency failed: {e}")
 
     # Per-batch sequence counter for auto-naming (`{seq:03}` placeholder).
     try:
@@ -2440,7 +2821,12 @@ _pool = ThreadedConnectionPool(1, 20, **DB_CONFIG)
 # process restart; no Redis required.
 import time as _time
 _ANALYTICS_CACHE: dict = {}
-_ANALYTICS_CACHE_TTL = 60  # seconds
+# Cache TTL: short enough that the dashboard feels live during testing
+# and after merchant actions (status change, new order, etc.) AND long
+# enough to absorb the 22 parallel fetches that hit on Analytics-page
+# mount. 10s gives ~6× write reduction at peak load without making the
+# numbers feel "stuck" — a 10-second lag on a B2B dashboard is invisible.
+_ANALYTICS_CACHE_TTL = 10  # seconds
 
 def _analytics_cache_get(key):
     hit = _ANALYTICS_CACHE.get(key)
@@ -2466,6 +2852,11 @@ async def analytics_cache_middleware(request, call_next):
     body verbatim — no decorator changes to the 22 analytics routes."""
     path = request.url.path
     if not path.startswith("/api/analytics/") or request.method != "GET":
+        return await call_next(request)
+    # Bypass: `?fresh=1` skips both the read and the write. Used by the
+    # frontend when the user explicitly hard-refreshes (or when a
+    # mutation in another tab needs to invalidate this user's slice).
+    if request.query_params.get("fresh") == "1":
         return await call_next(request)
     # Auth cookie is unique per logged-in user, so it works as a user-scope
     # token even though we don't decode the JWT here. Sort query items so
@@ -2785,6 +3176,13 @@ app.add_middleware(
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
+# Rate-limiter middleware — applies `default_limits` (120/min) to every
+# request. Specific routes can stack a stricter limit via @limiter.limit
+# (e.g. send-code at 10/min to slow brute-force).
+if _RATE_LIMIT_AVAILABLE:
+    from slowapi.middleware import SlowAPIMiddleware
+    app.add_middleware(SlowAPIMiddleware)
+
 # ── МОДЕЛИ ───────────────────────────────────────────────
 
 class SendCodeRequest(BaseModel):
@@ -2817,7 +3215,10 @@ class CreateProjectRequest(BaseModel):
     timezone: Optional[str] = None
 
 class RenameProjectRequest(BaseModel):
-    name: str
+    name:     Optional[str] = None
+    timezone: Optional[str] = None
+    currency: Optional[str] = None
+    tz_auto:  Optional[bool] = None
 
 class CreateCategoryRequest(BaseModel):
     name: str
@@ -3434,6 +3835,7 @@ def get_csrf_token(request: Request, response: Response):
 # ── АУТЕНТИФИКАЦИЯ ───────────────────────────────────────
 
 @app.post("/api/send-code")
+@limiter.limit("10/minute")
 def send_code(request: SendCodeRequest, req: Request):
     email = request.email.lower().strip()
     ip    = get_ip(req)
@@ -3484,6 +3886,7 @@ def send_code(request: SendCodeRequest, req: Request):
 
 
 @app.post("/api/verify-code")
+@limiter.limit("20/minute")
 def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
     email = request.email.lower().strip()
     code  = (request.code or "").replace(" ", "").strip()
@@ -5369,6 +5772,9 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
 def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
     p = db_one("""
         SELECT p.id, p.name, p.api_key, p.publishable_key, p.is_active, p.last_used_at, p.created_at,
+               COALESCE(p.timezone, 'UTC') AS timezone,
+               COALESCE(p.currency, 'USD') AS currency,
+               COALESCE(p.tz_auto,  TRUE)  AS tz_auto,
                o.id AS org_id, o.name AS org_name, o.slug AS org_slug
         FROM crm_projects p
         JOIN crm_organizations o ON o.id = p.org_id
@@ -5386,6 +5792,9 @@ def get_project(project_id: int, user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     p = db_one("""
         SELECT p.id, p.name, p.api_key, p.publishable_key, p.is_active, p.last_used_at, p.created_at,
+               COALESCE(p.timezone, 'UTC') AS timezone,
+               COALESCE(p.currency, 'USD') AS currency,
+               COALESCE(p.tz_auto,  TRUE)  AS tz_auto,
                o.id AS org_id, o.name AS org_name, o.slug AS org_slug
         FROM crm_projects p
         JOIN crm_organizations o ON o.id = p.org_id
@@ -5458,14 +5867,47 @@ def get_project_overview(
 
 @app.patch("/api/projects/{project_id}")
 def rename_project(project_id: int, request: RenameProjectRequest, user: dict = Depends(get_current_user)):
-    name = request.name.strip()
-    if not name:        raise HTTPException(400, "Name is required")
-    if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
     require_owner(user, project_id)
+    # Patch is partial — only the supplied fields are updated. Used by
+    # Settings page for name / timezone / currency edits (more to come).
+    sets, params = [], []
+    if request.name is not None:
+        name = request.name.strip()
+        if not name:        raise HTTPException(400, "Name is required")
+        if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
+        sets.append("name=%s")
+        params.append(sanitize(name))
+    if request.timezone is not None:
+        tz_clean = request.timezone.strip()
+        # Validate against IANA via zoneinfo — bad strings would silently
+        # cause every analytics SQL to fail later. Reject early.
+        if _tz(tz_clean) is timezone.utc and tz_clean.upper() != 'UTC':
+            raise HTTPException(400, f"Unknown timezone '{tz_clean}'")
+        sets.append("timezone=%s")
+        params.append(tz_clean)
+        # If the caller didn't explicitly set tz_auto with this PATCH,
+        # changing the timezone means "I'm picking this manually" → flip
+        # tz_auto off. Without this, the next browser-tz poll would
+        # silently overwrite the user's choice.
+        if request.tz_auto is None:
+            sets.append("tz_auto=%s")
+            params.append(False)
+    if request.tz_auto is not None:
+        sets.append("tz_auto=%s")
+        params.append(bool(request.tz_auto))
+    if request.currency is not None:
+        cur_clean = request.currency.strip().upper()
+        if len(cur_clean) != 3 or not cur_clean.isalpha():
+            raise HTTPException(400, "Currency must be a 3-letter ISO code (e.g. USD, EUR, KZT)")
+        sets.append("currency=%s")
+        params.append(cur_clean)
+    if not sets:
+        raise HTTPException(400, "Nothing to update")
+    params.append(project_id)
     with db_cursor() as (conn, cur):
-        cur.execute("UPDATE crm_projects SET name=%s WHERE id=%s", (sanitize(name), project_id))
+        cur.execute(f"UPDATE crm_projects SET {', '.join(sets)} WHERE id=%s", tuple(params))
         conn.commit()
-    return {"ok": True, "name": name}
+    return {"ok": True}
 
 
 @app.delete("/api/projects/{project_id}")
@@ -10074,10 +10516,20 @@ def get_per_warehouse_stock(product_id: int, project_id: int = Query(...),
 @app.get("/api/projects/{project_id}/stock/per-warehouse-summary")
 def get_project_stock_summary(project_id: int,
                                 user: dict = Depends(get_current_user)):
-    """Project-wide snapshot for Inventory 'by Warehouse' view: one row per (warehouse, sku) with stock."""
+    """Project-wide snapshot for Inventory 'by Warehouse' view: one row per
+    (warehouse, sku) with stock. `cost_price` + `sell_price` are added so the
+    Inventory page can show Cost / Profit / Margin columns:
+      cost_value   = quantity * cost_price
+      profit_value = quantity * (sell_price - cost_price)
+      margin       = profit_value / (quantity * sell_price)
+    `sell_price` walks the price hierarchy: own SKU price, else the parent
+    variation price (matches _annotate_effective_price). `cost_price` is
+    per-SKU only — NULL when not configured."""
     require_team_member_or_owner(user, project_id)
     rows = db_all(
         "SELECT ps.warehouse_id, ps.sku_id, ps.quantity, ps.sold_quantity,"
+        "       c.cost_price::float                          AS cost_price,"
+        "       COALESCE(c.price, v.price)::float            AS sell_price,"
         "       w.name AS warehouse_name, w.code AS warehouse_code, w.is_default,"
         "       c.configuration_name AS sku_name, c.sku_code,"
         "       v.id AS variation_id, v.variation_name,"
@@ -11849,8 +12301,14 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
     was_deducted = bool(o["stock_deducted"])
 
     extra_sql = ""
-    if new_status == "delivered":
-        extra_sql = ", delivered_at = CURRENT_TIMESTAMP"
+    if new_status == "shipped":
+        extra_sql = ", shipped_at = CURRENT_TIMESTAMP"
+    elif new_status == "delivered":
+        # If the order was never marked shipped (merchant jumped straight
+        # from confirmed → delivered for a pick-up at counter scenario),
+        # set shipped_at too so the SLA chart isn't blank.
+        extra_sql = (", delivered_at = CURRENT_TIMESTAMP,"
+                     " shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP)")
 
     with db_cursor() as (conn, cur):
         cur.execute(
@@ -11865,6 +12323,14 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
                                      old_status, new_status, was_deducted)
         conn.commit()
 
+    # Live broadcast — every team member viewing this project's Orders
+    # / Analytics page gets a push so the row + chart re-render without
+    # a manual reload.
+    push_project_event(project_id, "order_status_changed", {
+        "order_id":   order_id,
+        "old_status": old_status,
+        "new_status": new_status,
+    })
     return {"ok": True, "status": new_status}
 
 
@@ -12295,13 +12761,25 @@ def inspect_return(project_id: int, return_id: int, body: InspectReturnBody,
                         (int(ri["quantity"]), restock_batch)
                     )
                 else:
+                    # Propagate cost_per_unit onto the auto-created Returns
+                    # batch — without it, restocked units sit in inventory
+                    # with NULL cost, which silently breaks COGS attribution
+                    # the next time these units sell (the analytics treats
+                    # them as zero-cost and inflates margin).
+                    cur.execute(
+                        "SELECT cost_price FROM product_configurations_l2 WHERE id=%s",
+                        (ri["configuration_id"],)
+                    )
+                    cp_row = cur.fetchone()
+                    cost_per_unit = (cp_row or {}).get("cost_price")
                     cur.execute(
                         "INSERT INTO inventory_batches"
                         "  (project_id, sku_id, warehouse_id, batch_name,"
-                        "   quantity_received, quantity_remaining, notes)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                        "   quantity_received, quantity_remaining, cost_per_unit, notes)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                         (project_id, ri["configuration_id"], restock_wh,
                          f"Returns · R#{return_id}", int(ri["quantity"]), int(ri["quantity"]),
+                         cost_per_unit,
                          f"Auto-created from return #{return_id}")
                     )
                     restock_batch = cur.fetchone()["id"]
@@ -12331,6 +12809,44 @@ def inspect_return(project_id: int, return_id: int, body: InspectReturnBody,
                     " VALUES (%s, %s, %s, %s, 'return', %s, %s)",
                     (project_id, ri["configuration_id"], restock_wh, int(ri["quantity"]),
                      return_id, f"Return #{return_id} · restocked")
+                )
+
+            # Decrement sold_quantity at INSPECT time — regardless of
+            # whether the item is resellable, damaged, or written off.
+            # Reason: by inspection time the goods are physically back
+            # at the warehouse, so the original "sold" counter is no
+            # longer accurate. Without this, every return permanently
+            # inflates the "Sold" column on Inventory + popular-products
+            # analytics counts the unit twice (once when shipped, never
+            # un-counted when returned). GREATEST(0, …) guards against
+            # an over-decrement from manually edited counters.
+            cur.execute("SET LOCAL torta.skip_audit = 'on'")
+            cur.execute(
+                "UPDATE product_configurations_l2"
+                "   SET sold_quantity = GREATEST(0, sold_quantity - %s)"
+                " WHERE id=%s",
+                (int(ri["quantity"]), ri["configuration_id"])
+            )
+            # product_stock sold_quantity is per-(sku,warehouse). If the
+            # item is resellable we already know restock_wh; if not, pick
+            # a warehouse that actually carries this SKU so the decrement
+            # lands on a real row instead of creating a phantom one.
+            decrement_wh = restock_wh
+            if not decrement_wh:
+                cur.execute(
+                    "SELECT warehouse_id FROM product_stock"
+                    " WHERE sku_id=%s AND sold_quantity > 0"
+                    " ORDER BY sold_quantity DESC LIMIT 1",
+                    (ri["configuration_id"],)
+                )
+                row = cur.fetchone()
+                decrement_wh = row["warehouse_id"] if row else None
+            if decrement_wh:
+                cur.execute(
+                    "UPDATE product_stock"
+                    "   SET sold_quantity = GREATEST(0, sold_quantity - %s)"
+                    " WHERE sku_id=%s AND warehouse_id=%s",
+                    (int(ri["quantity"]), ri["configuration_id"], decrement_wh)
                 )
 
             cur.execute(
@@ -12575,6 +13091,81 @@ class ChatHub:
 
 
 chat_hub = ChatHub()
+
+
+# ── Project-level events hub (orders / bookings / analytics) ──────────────
+# Subscribers are scoped per `project_id` (different from notif_hub which
+# is per-user). Used to power live updates on Booking / Orders / Revenue
+# dashboards — when a new order lands, every team member viewing this
+# project's analytics gets a push so the chart refreshes without a
+# manual reload.
+#
+# Cross-process pub/sub via PostgreSQL LISTEN/NOTIFY — both the CRM and
+# the public External API can publish onto the same `crm_project_events`
+# channel; only CRM holds open WebSockets so only CRM's listener
+# fans events out. No Redis, no shared secret, no extra infrastructure.
+class ProjectEventsHub:
+    def __init__(self):
+        self._subs: dict[int, set[WebSocket]] = {}
+        self._lock = asyncio.Lock()
+
+    async def connect(self, project_id: int, ws: WebSocket):
+        await ws.accept()
+        async with self._lock:
+            self._subs.setdefault(project_id, set()).add(ws)
+
+    async def disconnect(self, project_id: int, ws: WebSocket):
+        async with self._lock:
+            subs = self._subs.get(project_id)
+            if subs:
+                subs.discard(ws)
+                if not subs:
+                    self._subs.pop(project_id, None)
+
+    async def broadcast(self, project_id: int, event: dict):
+        subs = list(self._subs.get(project_id, ()))
+        if not subs:
+            return
+        payload = json.dumps(event)
+        dead = []
+        for ws in subs:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        if dead:
+            async with self._lock:
+                cur = self._subs.get(project_id)
+                if cur:
+                    for w in dead:
+                        cur.discard(w)
+
+
+events_hub = ProjectEventsHub()
+
+
+def push_project_event(project_id: int, event_type: str, data: dict | None = None):
+    """Fire a project-level event. Both CRM and External call this;
+    delivery is via PostgreSQL NOTIFY (single channel `crm_project_events`)
+    so the same payload reaches all WebSocket subscribers across both
+    processes via CRM's LISTEN background task.
+
+    Non-fatal on any failure — analytics live updates are a nice-to-have,
+    not part of the request path. If NOTIFY fails the original mutation
+    has already committed and the user will see the update on next
+    refresh."""
+    try:
+        event = {
+            "type":       event_type,
+            "project_id": int(project_id),
+            "data":       data or {},
+            "ts":         _utcnow().isoformat(),
+        }
+        with db_cursor() as (conn, cur):
+            cur.execute("SELECT pg_notify(%s, %s)", ("crm_project_events", json.dumps(event)))
+            conn.commit()
+    except Exception:
+        pass
 
 
 # ── Generic inbound-message handler (channel-agnostic) ────────────────────────
@@ -15488,12 +16079,53 @@ def delete_notification(notif_id: int, user: dict = Depends(get_current_user)):
 # ── ANALYTICS ────────────────────────────────────────────
 # All endpoints aggregate read-only data — safe to call repeatedly. project access verified up-front.
 
-def _date_range_for_period(period: str):
-    """period code → (start, end) UTC. Codes are kept in sync with
+def _date_range_for_period(period: str, tz: str = "UTC"):
+    """period code → (start, end) UTC, anchored at the END of "today" in
+    the project's local timezone. Codes are kept in sync with
     STAFF_PERIOD_OPTIONS on the frontend so one combobox primitive can drive
     every section across the page. Backward-compat: old `7d` / `30d` / `90d`
-    / `year` still resolve so existing /revenue page keeps working."""
-    end = _utcnow()
+    / `year` still resolve so existing /revenue page keeps working.
+
+    Custom range encoding: `period` may be `"YYYY-MM-DD_YYYY-MM-DD"`,
+    in which case both dates are parsed as LOCAL-tz days and the result
+    spans from start-of-first-day to end-of-last-day (in tz, then
+    converted to UTC for the SQL filter). This lets the user pick an
+    arbitrary range from the frontend's Custom modal without every
+    endpoint needing its own from/to parameter — they all already
+    pass `period` through here.
+
+    Timezone matters here because "last 30 days" should mean 30 LOCAL
+    days for the merchant, not 30 UTC days. A store in Almaty closing
+    the books at midnight Almaty time wants their "today" bucket to
+    include orders up through 23:59 Almaty, not 18:00 Almaty (which is
+    when UTC midnight rolls over). Returned values are UTC-aware
+    timestamps suitable for direct PostgreSQL `timestamptz` comparison.
+    """
+    tz_obj = _tz(tz)
+    # Custom range — `YYYY-MM-DD_YYYY-MM-DD`. Underscore is the
+    # delimiter because it can't appear in a valid period code or ISO
+    # date. We anchor START at 00:00 of the first day in tz, and END
+    # at 00:00 of the day AFTER the last day in tz, so the range is
+    # half-open [start, end) and includes the entire last day.
+    m = re.match(r'^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$', period or '')
+    if m:
+        from_str, to_str = m.group(1), m.group(2)
+        try:
+            start_local = datetime.fromisoformat(from_str).replace(tzinfo=tz_obj)
+            end_local_day = datetime.fromisoformat(to_str).replace(tzinfo=tz_obj)
+            # Include the last day → end at next midnight local.
+            end_local = end_local_day + timedelta(days=1)
+            return (start_local.astimezone(timezone.utc),
+                    end_local.astimezone(timezone.utc))
+        except (ValueError, OSError):
+            # Bad date string → fall through to the default 30-day window.
+            pass
+    # "End" is the END of today in project tz — converted back to UTC.
+    now_local = datetime.now(tz_obj)
+    # End of today (next midnight local) so partial-today is included.
+    tomorrow_local = (now_local + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    end = tomorrow_local.astimezone(timezone.utc)
     table = {
         "1d":       1,
         "3d":       3,
@@ -15511,12 +16143,28 @@ def _date_range_for_period(period: str):
     return start, end
 
 
+def get_project_timezone(project_id: int) -> str:
+    """Look up the project's configured timezone string ('UTC' default).
+    Used by analytics SQL to bucket orders by LOCAL day instead of UTC
+    day. Falls back to 'UTC' if the project row is missing or the tz
+    column doesn't exist yet on the deployment."""
+    try:
+        row = db_one(
+            "SELECT timezone FROM crm_projects WHERE id=%s",
+            (project_id,)
+        )
+        return (row or {}).get("timezone") or "UTC"
+    except Exception:
+        return "UTC"
+
+
 @app.get("/api/analytics/overview")
 def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
                        user: dict = Depends(get_current_user)):
     """5 KPI cards + daily revenue series + same-length previous-period deltas. Single endpoint for the Overview dashboard tile."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     prev_start = start - (end - start)
 
     def _agg(s, e):
@@ -15530,10 +16178,14 @@ def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
             "   AND status NOT IN ('cancelled', 'refunded')",
             (project_id, s, e)
         )
-        # Full datetimes (not .date()) so today's visitors aren't truncated
-        # at 00:00 by `< e.date()`. Matches the funnel fix.
+        # Identity-based visitor count (user_id when logged in, else
+        # IP). Matches the funnel SQL so the numbers across cards on
+        # the dashboard are mutually comparable — pure IP-count would
+        # collapse 3 separate test accounts to 1 because they share
+        # localhost.
         visitors = db_one(
-            "SELECT COUNT(DISTINCT ip) AS v FROM site_visits"
+            "SELECT COUNT(DISTINCT COALESCE(user_id::text, 'ip:'||ip)) AS v"
+            "  FROM site_visits"
             " WHERE project_id=%s AND created_at >= %s AND created_at < %s",
             (project_id, s, e)
         )
@@ -15547,8 +16199,13 @@ def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
 
     cur = _agg(start, end)
     prev = _agg(prev_start, start)
-    cur["conversion"] = (cur["orders"] / cur["visitors"] * 100) if cur["visitors"] else 0
-    prev["conversion"] = (prev["orders"] / prev["visitors"] * 100) if prev["visitors"] else 0
+    # Conversion = % of visitors who became paying customers. Capped to
+    # 100 because a single visitor having multiple orders should NOT
+    # push the metric above 100% (that's "AOV behaviour", not "more
+    # people converted"). Previously this was orders/visitors which
+    # produced absurd values like 800% for 8 orders / 1 visitor.
+    cur["conversion"]  = min(100, cur["customers"]  / cur["visitors"]  * 100) if cur["visitors"]  else 0
+    prev["conversion"] = min(100, prev["customers"] / prev["visitors"] * 100) if prev["visitors"] else 0
 
     def pct(c, p):
         if not p: return None
@@ -15563,16 +16220,17 @@ def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
         "conversion": pct(cur["conversion"], prev["conversion"]),
     }
 
-    # Daily revenue chart (day-bucketed; UTC).
+    # Daily revenue chart — bucketed by PROJECT local day (not UTC) so
+    # "today" on the dashboard reflects the merchant's working calendar.
     series = db_all(
-        "SELECT DATE(created_at) AS day,"
+        "SELECT (created_at AT TIME ZONE %s)::date AS day,"
         "       COALESCE(SUM(total_amount), 0) AS revenue,"
         "       COUNT(*) AS orders"
         "  FROM order_history"
         " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
         "   AND status NOT IN ('cancelled', 'refunded')"
         " GROUP BY day ORDER BY day ASC",
-        (project_id, start, end)
+        (tz, project_id, start, end)
     )
     return {
         "current":  cur,
@@ -15580,6 +16238,7 @@ def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
         "delta":    deltas,
         "series":   [{"day": str(r["day"]), "revenue": float(r["revenue"]), "orders": int(r["orders"])} for r in series],
         "period":   period,
+        "timezone": tz,
     }
 
 
@@ -15596,7 +16255,8 @@ def analytics_funnel(project_id: int = Query(...), period: str = Query("30d"),
     traffic patterns (drop-off shows real conversion gaps, not noise
     from refresh-spam)."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     # Identity expression — used at every step so the four numbers are
     # measured in the same unit (people). For tables that only have
     # user_id we still wrap in COALESCE to be safe against future
@@ -15613,15 +16273,42 @@ def analytics_funnel(project_id: int = Query(...), period: str = Query("30d"),
         " WHERE project_id=%s AND created_at >= %s AND created_at < %s",
         (project_id, start, end)
     )
-    # ATC: a user is "added to cart" when at least one cart_item update
-    # happens in the window. `carts.user_id` IS NOT NULL because cart
-    # requires login — so no IP fallback needed here.
+    # ATC: count UNIQUE PEOPLE who reached the cart stage. We UNION
+    # three independent signals so the count is robust to whichever
+    # mechanism has data:
+    #   (a) cart_events 'add' rows  — written by /cart/add audit log;
+    #       survives post-purchase cart cleanup
+    #   (b) live cart_items rows    — fallback for adds that happened
+    #       before (a) existed in the codebase
+    #   (c) order_history rows      — every paid order implies the buyer
+    #       must have added to cart at some point, so we infer ATC even
+    #       if neither (a) nor (b) caught it.
+    # IMPORTANT: all three sources must produce the SAME identity format
+    # so DISTINCT collapses the same user across sources. Previously (b)
+    # and (c) emitted `'u:'||user_id` while (a) emitted plain `user_id::text`
+    # — so user #16 was counted as both `"16"` and `"u:16"` and ATC was
+    # inflated to ~2× the real count.
     atc = db_one(
-        "SELECT COUNT(DISTINCT c.user_id) AS v"
-        "  FROM cart_items ci JOIN carts c ON ci.cart_id = c.id"
-        " WHERE c.project_id=%s AND c.user_id IS NOT NULL"
-        "   AND ci.updated_at >= %s AND ci.updated_at < %s",
-        (project_id, start, end)
+        "SELECT COUNT(DISTINCT identity) AS v FROM ("
+        "  SELECT COALESCE(user_id::text, 'ip:'||ip) AS identity"
+        "    FROM cart_events"
+        "   WHERE project_id=%s AND action='add'"
+        "     AND created_at >= %s AND created_at < %s"
+        "  UNION"
+        "  SELECT c.user_id::text AS identity"
+        "    FROM cart_items ci JOIN carts c ON ci.cart_id = c.id"
+        "   WHERE c.project_id=%s AND c.user_id IS NOT NULL"
+        "     AND ci.updated_at >= %s AND ci.updated_at < %s"
+        "  UNION"
+        "  SELECT user_id::text AS identity"
+        "    FROM order_history"
+        "   WHERE project_id=%s AND user_id IS NOT NULL"
+        "     AND created_at >= %s AND created_at < %s"
+        "     AND status NOT IN ('cancelled', 'refunded')"
+        ") t",
+        (project_id, start, end,
+         project_id, start, end,
+         project_id, start, end)
     )
     # Paid: count distinct buyers, not orders. A power customer with 5
     # orders in the period is still ONE buyer in the funnel.
@@ -15647,7 +16334,8 @@ def analytics_top_products(project_id: int = Query(...), period: str = Query("30
                            user: dict = Depends(get_current_user)):
     """Top N products by revenue / margin / units sold within the period."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     limit = min(max(1, int(limit)), 50)
 
     if by == "margin":
@@ -15657,11 +16345,16 @@ def analytics_top_products(project_id: int = Query(...), period: str = Query("30
     else:
         order_clause = "revenue DESC"
 
+    # Margin uses the per-order cost snapshot (oi.cost_per_unit) with
+    # fallback to current l2.cost_price — same pattern as analytics_margin.
+    # Snapshot keeps historical reports stable when costs are edited.
     rows = db_all(
         "SELECT p.id, p.title,"
         "       SUM(oi.quantity)                                  AS units,"
         "       SUM(oi.quantity * oi.price)                       AS revenue,"
-        "       SUM(oi.quantity * (oi.price - COALESCE(l2.cost_price, 0))) AS margin"
+        "       SUM(oi.quantity * (oi.price"
+        "                          - COALESCE(oi.cost_per_unit, l2.cost_price, 0)"
+        "                         )) AS margin"
         "  FROM order_items oi"
         "  JOIN products p ON oi.product_id = p.id"
         "  JOIN order_history oh ON oi.order_id = oh.id"
@@ -15683,6 +16376,159 @@ def analytics_top_products(project_id: int = Query(...), period: str = Query("30
             "margin":   float(r["margin"] or 0),
         } for r in rows
     ]
+
+
+@app.get("/api/analytics/margin")
+def analytics_margin(project_id: int = Query(...), period: str = Query("1mo"),
+                     user: dict = Depends(get_current_user)):
+    """Hierarchical gross-margin breakdown:
+       Product → Variation (L1) → SKU (L2)
+    For each leaf SKU: units sold, revenue, COGS (from L2.cost_price),
+    profit, margin %. Then we roll up to variation and product level.
+
+    Why it matters: a merchant can be selling lots of one SKU at razor-thin
+    margin and missing that another high-margin SKU is sitting unsold.
+    Margin % is the single most actionable profitability number — a
+    product with 80% margin can absorb shipping, returns and ads; 5% margin
+    can't. Revenue alone hides this."""
+    require_team_member_or_owner(user, project_id)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
+    # Inverted layout — start from products / variations / SKUs and
+    # LEFT JOIN sales rather than starting from order_items. This way
+    # unsold SKUs (and entire unsold products) STILL appear in the
+    # tree, with units=0, revenue=$0 and margin marked as N/A. The
+    # merchant can see the margin "potential" of every SKU regardless
+    # of whether it sold in the period.
+    #
+    # Returns subtraction: for each order_item, subtract the quantity
+    # that's been CONFIRMED returned. Only deduct from net_qty once the
+    # merchant has approved+received the goods back (or refunded the
+    # customer). A bare `'requested'` return is just a customer pressing
+    # the Return button — money hasn't moved, goods haven't moved, and
+    # the merchant might still reject it. Subtracting on `requested`
+    # silently distorts margin the moment any customer files a return,
+    # before the warehouse has a chance to inspect.
+    # COGS uses the PER-ORDER cost snapshot (oi.cost_per_unit) when
+    # available — that's the cost as of the moment the sale was made,
+    # frozen on the order_item row at checkout. Falls back to the
+    # current SKU cost_price for legacy rows that pre-date the
+    # snapshot. Without per-order snapshots, retroactive Margin
+    # reports drift every time the merchant edits the cost field.
+    rows = db_all(
+        "WITH sales AS ("
+        "  SELECT oi.configuration_id AS sku_id,"
+        "         oi.price             AS unit_price,"
+        "         COALESCE(oi.cost_per_unit, c0.cost_price, 0) AS unit_cost_snap,"
+        "         (oi.quantity"
+        "           - COALESCE(("
+        "             SELECT SUM(ri.quantity)"
+        "               FROM order_return_items ri"
+        "               JOIN order_returns r ON r.id = ri.return_id"
+        "              WHERE ri.order_item_id = oi.id"
+        "                AND r.status IN ('approved', 'received', 'inspected', 'refunded')"
+        "           ), 0)"
+        "         )::numeric AS net_qty"
+        "    FROM order_items oi"
+        "    JOIN order_history oh ON oh.id = oi.order_id"
+        "    LEFT JOIN product_configurations_l2 c0 ON c0.id = oi.configuration_id"
+        "   WHERE oh.created_at >= %s AND oh.created_at < %s"
+        "     AND oh.status NOT IN ('cancelled', 'refunded')"
+        ")"
+        "SELECT p.id  AS product_id, p.title,"
+        "       (SELECT (images)[1] FROM product_configurations_l1"
+        "         WHERE product_id = p.id"
+        "         ORDER BY position ASC, id ASC LIMIT 1)  AS product_image,"
+        "       v.id  AS variation_id, v.variation_name,"
+        "       (v.images)[1] AS variation_image,"
+        "       c.id  AS sku_id, c.configuration_name AS sku_name, c.sku_code,"
+        "       COALESCE(c.cost_price, 0)::float AS unit_cost,"
+        "       COALESCE(SUM(s.net_qty), 0)::int                                AS units,"
+        "       COALESCE(SUM(s.net_qty * s.unit_price), 0)::float                AS revenue,"
+        "       COALESCE(SUM(s.net_qty * s.unit_cost_snap), 0)::float            AS cogs"
+        "  FROM products p"
+        "  JOIN product_configurations_l1 v ON v.product_id   = p.id"
+        "  JOIN product_configurations_l2 c ON c.variation_id = v.id"
+        "  LEFT JOIN sales s                ON s.sku_id       = c.id"
+        " WHERE p.project_id = %s AND COALESCE(p.is_archived, FALSE) = FALSE"
+        " GROUP BY p.id, p.title, v.id, v.variation_name, v.images,"
+        "          c.id, c.configuration_name, c.sku_code, c.cost_price"
+        " ORDER BY p.title, v.position ASC, v.id, c.position ASC, c.id",
+        (start, end, project_id)
+    )
+    # Roll up SKU rows into Product → Variation → SKU tree.
+    # Margin is None (rendered as "—") when there were no sales — a
+    # zero-revenue SKU has no real margin number, calling it 0% would
+    # be misleading.
+    def _margin_pct(rev, cogs):
+        return round((rev - cogs) / rev * 100, 1) if rev > 0 else None
+    products = {}  # product_id → {... variations: {var_id → {... skus: [...]}}}
+    for r in rows:
+        pid = r["product_id"]
+        vid = r["variation_id"]
+        if pid not in products:
+            products[pid] = {
+                "id":    pid,
+                "title": r["title"],
+                "image": r["product_image"],
+                "units": 0, "revenue": 0.0, "cogs": 0.0,
+                "variations": {},
+            }
+        prod = products[pid]
+        if vid not in prod["variations"]:
+            prod["variations"][vid] = {
+                "id":    vid,
+                "name":  r["variation_name"] or '—',
+                "image": r["variation_image"],
+                "units": 0, "revenue": 0.0, "cogs": 0.0,
+                "skus":  [],
+            }
+        var = prod["variations"][vid]
+        units   = int(r["units"] or 0)
+        revenue = float(r["revenue"] or 0)
+        cogs    = float(r["cogs"] or 0)
+        var["skus"].append({
+            "id":         r["sku_id"],
+            "name":       r["sku_name"] or '—',
+            "sku_code":   r["sku_code"] or '',
+            "unit_cost":  float(r["unit_cost"] or 0),
+            "units":      units,
+            "revenue":    revenue,
+            "cogs":       cogs,
+            "profit":     round(revenue - cogs, 2),
+            "margin_pct": _margin_pct(revenue, cogs),
+        })
+        var["units"]   += units
+        var["revenue"] += revenue
+        var["cogs"]    += cogs
+        prod["units"]   += units
+        prod["revenue"] += revenue
+        prod["cogs"]    += cogs
+    # Final shape — flatten dicts to ordered lists, add computed fields.
+    out_products = []
+    total_revenue = 0.0
+    total_cogs = 0.0
+    for prod in products.values():
+        for var in prod["variations"].values():
+            var["profit"]     = round(var["revenue"] - var["cogs"], 2)
+            var["margin_pct"] = _margin_pct(var["revenue"], var["cogs"])
+            var["revenue"]    = round(var["revenue"], 2)
+            var["cogs"]       = round(var["cogs"], 2)
+        prod["variations"] = list(prod["variations"].values())
+        prod["profit"]     = round(prod["revenue"] - prod["cogs"], 2)
+        prod["margin_pct"] = _margin_pct(prod["revenue"], prod["cogs"])
+        prod["revenue"]    = round(prod["revenue"], 2)
+        prod["cogs"]       = round(prod["cogs"], 2)
+        total_revenue += prod["revenue"]
+        total_cogs    += prod["cogs"]
+        out_products.append(prod)
+    return {
+        "products":         out_products,
+        "total_revenue":    round(total_revenue, 2),
+        "total_cogs":       round(total_cogs, 2),
+        "total_profit":     round(total_revenue - total_cogs, 2),
+        "total_margin_pct": _margin_pct(total_revenue, total_cogs),
+    }
 
 
 @app.get("/api/analytics/inventory-health")
@@ -15723,70 +16569,159 @@ def analytics_inventory_health(project_id: int = Query(...),
 # 1y / 2y) and return the data shape needed by that section.
 
 @app.get("/api/analytics/revenue-over-time")
-def analytics_revenue_over_time(project_id: int = Query(...), period: str = Query("1mo"),
-                                granularity: str = Query("day"),
-                                user: dict = Depends(get_current_user)):
-    """Time-series of revenue + orders. Granularity drives the date_trunc
-    bucket — 'day' for short ranges, 'week'/'month' for long. Pairs with
-    a previous-period series so the chart can render the dashed reference
-    line side-by-side."""
+def analytics_revenue_over_time(
+    project_id: int = Query(...),
+    granularity: str = Query("day"),
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    """Chunked revenue-over-time series for the scrollable chart.
+
+    Accepts an ISO `from` / `to` window so the frontend can lazy-load
+    history in pages as the user pans into the past — only the buckets
+    inside [from, to) are computed and returned. Missing `from` defaults
+    to "the natural starting page" (90 days for daily, 1 year for weekly,
+    3 years for monthly); missing `to` defaults to now. Both must be
+    parseable as ISO-8601 (with or without timezone).
+
+    Also returns `oldest_order` so the frontend knows when to stop
+    asking for more — there's no data before the first order's date.
+
+    All datetimes are coerced to UTC-aware before any Python comparison
+    to avoid the naive-vs-aware TypeError that bit us when we tried to
+    `max(cap_start, oldest)` directly."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
-    prev_start = start - (end - start)
     if granularity not in ("day", "week", "month"):
         granularity = "day"
 
-    # interval-literal for generate_series. PostgreSQL parses '1 day',
-    # '1 week', '1 month' natively as intervals; whitelisted by the
-    # granularity check above so this f-string is safe.
-    interval_lit = {"day": "1 day", "week": "1 week", "month": "1 month"}[granularity]
+    def _aware(dt: Optional[datetime]) -> Optional[datetime]:
+        if dt is None: return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
-    def _series(s, e):
-        # generate_series produces one row PER BUCKET in the [s..e] range,
-        # regardless of whether any order falls in that bucket. LEFT JOIN
-        # to order_history then layers in the revenue — empty buckets get
-        # 0 instead of being skipped. Without this fill the line chart
-        # only had two points (the days that actually had sales) and
-        # connected them with a straight diagonal, which read like a
-        # gradual decline when really there were just two isolated sale
-        # days with nothing in between.
-        rows = db_all(
-            f"SELECT g.bucket AS bucket,"
-            f"       COALESCE(SUM(oh.total_amount), 0) AS revenue,"
-            f"       COUNT(oh.id) AS orders"
-            f"  FROM generate_series("
-            f"         date_trunc('{granularity}', %s::timestamptz),"
-            f"         date_trunc('{granularity}', %s::timestamptz),"
-            f"         '{interval_lit}'::interval"
-            f"       ) AS g(bucket)"
-            f"  LEFT JOIN order_history oh"
-            f"    ON date_trunc('{granularity}', oh.created_at) = g.bucket"
-            f"   AND oh.project_id = %s"
-            f"   AND oh.status NOT IN ('cancelled', 'refunded')"
-            f" GROUP BY g.bucket"
-            f" ORDER BY g.bucket ASC",
-            (s, e, project_id)
-        )
-        return [
-            {"bucket": r["bucket"].isoformat(),
+    def _parse_iso(s: Optional[str]) -> Optional[datetime]:
+        if not s: return None
+        try:
+            # Accept both "2024-05-17T12:34:56Z" and bare "2024-05-17".
+            return _aware(datetime.fromisoformat(s.replace('Z', '+00:00')))
+        except Exception:
+            return None
+
+    now = datetime.now(timezone.utc)
+    end_dt   = _parse_iso(to) or now
+    # Natural default page size — 1 viewport's worth + headroom.
+    default_span = {"day": timedelta(days=90),
+                    "week": timedelta(days=365),
+                    "month": timedelta(days=365 * 3)}[granularity]
+    start_dt = _parse_iso(from_) or (end_dt - default_span)
+
+    # Project metadata — clients use this to stop paginating once they've
+    # loaded all the way to the first order. Always returned, regardless
+    # of whether the current request hit that boundary.
+    oldest_row = db_one(
+        "SELECT MIN(created_at) AS d FROM order_history WHERE project_id=%s",
+        (project_id,)
+    )
+    oldest = _aware((oldest_row or {}).get("d"))
+    # Don't generate buckets earlier than the project's first order —
+    # zero-filled padding pre-store-opening is wasted bandwidth.
+    if oldest is not None and start_dt < oldest:
+        start_dt = oldest
+    # Sanity: empty range produces zero rows, not an error.
+    if start_dt >= end_dt:
+        return {
+            "buckets": [],
+            "granularity": granularity,
+            "oldest_order": oldest.isoformat() if oldest else None,
+        }
+
+    # Bucket orders by the PROJECT's local timezone, not UTC. An Almaty
+    # store sees orders placed at 02:00 local time bucketed correctly
+    # into "today" instead of leaking into "yesterday" because that's
+    # ~21:00 UTC the previous day. `AT TIME ZONE %s` converts the
+    # `timestamptz` to a naive timestamp in that zone, after which
+    # `date_trunc` truncates to that zone's day/week/month boundaries.
+    tz = get_project_timezone(project_id)
+    interval_lit = {"day": "1 day", "week": "1 week", "month": "1 month"}[granularity]
+    rows = db_all(
+        f"SELECT g.bucket AS bucket,"
+        f"       COALESCE(SUM(oh.total_amount), 0) AS revenue,"
+        f"       COUNT(oh.id) AS orders"
+        f"  FROM generate_series("
+        f"         date_trunc('{granularity}', (%s::timestamptz) AT TIME ZONE %s),"
+        f"         date_trunc('{granularity}', (%s::timestamptz) AT TIME ZONE %s),"
+        f"         '{interval_lit}'::interval"
+        f"       ) AS g(bucket)"
+        f"  LEFT JOIN order_history oh"
+        f"    ON date_trunc('{granularity}', oh.created_at AT TIME ZONE %s) = g.bucket"
+        f"   AND oh.project_id = %s"
+        f"   AND oh.status NOT IN ('cancelled', 'refunded')"
+        f" GROUP BY g.bucket"
+        f" ORDER BY g.bucket ASC",
+        (start_dt, tz, end_dt, tz, tz, project_id)
+    )
+    return {
+        "buckets": [
+            {"bucket":  r["bucket"].isoformat(),
              "revenue": float(r["revenue"] or 0),
              "orders":  int(r["orders"] or 0)}
             for r in rows
-        ]
-
-    return {
-        "current":     _series(start, end),
-        "previous":    _series(prev_start, start),
-        "granularity": granularity,
-        "period":      period,
+        ],
+        "granularity":  granularity,
+        "oldest_order": oldest.isoformat() if oldest else None,
+        "timezone":     tz,
     }
+
+
+@app.get("/api/analytics/orders-on-day")
+def analytics_orders_on_day(
+    project_id: int = Query(...),
+    day: str = Query(..., description="YYYY-MM-DD in the project's local timezone"),
+    user: dict = Depends(get_current_user),
+):
+    """Drill-down endpoint — every order on `day` (interpreted in the
+    project's local timezone). Click a point on Revenue-over-time → this
+    populates the modal that lists the orders that drove that day's
+    revenue. Cancelled / refunded orders excluded so totals add back up
+    to the chart bucket.
+    """
+    require_team_member_or_owner(user, project_id)
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', day or ''):
+        raise HTTPException(400, "day must be YYYY-MM-DD")
+    tz = get_project_timezone(project_id)
+    rows = db_all(
+        "SELECT oh.id, oh.total_amount, oh.status, oh.created_at,"
+        "       oh.fulfillment_type, oh.payment_status,"
+        "       COALESCE(u.name,  '') AS customer_name,"
+        "       COALESCE(u.email, '') AS customer_email,"
+        "       (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = oh.id) AS item_count"
+        "  FROM order_history oh"
+        "  LEFT JOIN users u ON u.id = oh.user_id"
+        " WHERE oh.project_id = %s"
+        "   AND (oh.created_at AT TIME ZONE %s)::date = %s::date"
+        "   AND oh.status NOT IN ('cancelled', 'refunded')"
+        " ORDER BY oh.created_at DESC",
+        (project_id, tz, day)
+    )
+    return [{
+        "id":               r["id"],
+        "total":            float(r["total_amount"] or 0),
+        "status":           r["status"],
+        "created_at":       r["created_at"].isoformat() if r.get("created_at") else None,
+        "fulfillment_type": r.get("fulfillment_type") or "",
+        "payment_status":   r.get("payment_status")   or "",
+        "customer_name":    r["customer_name"] or "—",
+        "customer_email":   r["customer_email"] or "",
+        "item_count":       int(r["item_count"] or 0),
+    } for r in rows]
 
 
 @app.get("/api/analytics/revenue-by-category")
 def analytics_revenue_by_category(project_id: int = Query(...), period: str = Query("1mo"),
                                   user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     rows = db_all(
         "SELECT COALESCE(c.name, 'Uncategorized') AS category,"
         "       COALESCE(SUM(oi.quantity * oi.price), 0) AS revenue,"
@@ -15812,35 +16747,54 @@ def analytics_funnel_dynamics(project_id: int = Query(...), period: str = Query(
     storefront-owner see if a marketing campaign improves the *rate*, not
     just the absolute number. Series length = (period in days)."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     # Per-day buckets — same per-user dedup logic as the headline funnel
-    # (see analytics_funnel above) so the two views stay consistent. A
-    # power customer with 5 orders in one day still counts as 1 paid
-    # user for that day.
+    # (see analytics_funnel above). All DATE() casts use the project's
+    # local timezone so "Monday" buckets match what shows in Orders /
+    # Revenue (i.e. days don't smear across UTC midnight).
     visitors = db_all(
-        "SELECT DATE(created_at) AS day,"
+        "SELECT (created_at AT TIME ZONE %s)::date AS day,"
         "       COUNT(DISTINCT COALESCE(user_id::text, 'ip:'||ip)) AS v"
         "  FROM site_visits"
         " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
         " GROUP BY day ORDER BY day ASC",
-        (project_id, start, end)
+        (tz, project_id, start, end)
     )
     atc = db_all(
-        "SELECT DATE(ci.updated_at) AS day, COUNT(DISTINCT c.user_id) AS v"
-        "  FROM cart_items ci JOIN carts c ON ci.cart_id = c.id"
-        " WHERE c.project_id=%s AND c.user_id IS NOT NULL"
-        "   AND ci.updated_at >= %s AND ci.updated_at < %s"
-        " GROUP BY day ORDER BY day ASC",
-        (project_id, start, end)
+        "SELECT day, COUNT(DISTINCT identity) AS v FROM ("
+        "  SELECT (created_at AT TIME ZONE %s)::date AS day,"
+        "         COALESCE(user_id::text, 'ip:'||ip) AS identity"
+        "    FROM cart_events"
+        "   WHERE project_id=%s AND action='add'"
+        "     AND created_at >= %s AND created_at < %s"
+        "  UNION"
+        "  SELECT (ci.updated_at AT TIME ZONE %s)::date AS day,"
+        "         c.user_id::text AS identity"
+        "    FROM cart_items ci JOIN carts c ON ci.cart_id = c.id"
+        "   WHERE c.project_id=%s AND c.user_id IS NOT NULL"
+        "     AND ci.updated_at >= %s AND ci.updated_at < %s"
+        "  UNION"
+        "  SELECT (created_at AT TIME ZONE %s)::date AS day,"
+        "         user_id::text AS identity"
+        "    FROM order_history"
+        "   WHERE project_id=%s AND user_id IS NOT NULL"
+        "     AND created_at >= %s AND created_at < %s"
+        "     AND status NOT IN ('cancelled', 'refunded')"
+        ") t GROUP BY day ORDER BY day ASC",
+        (tz, project_id, start, end,
+         tz, project_id, start, end,
+         tz, project_id, start, end)
     )
     paid = db_all(
-        "SELECT DATE(created_at) AS day, COUNT(DISTINCT user_id) AS v"
+        "SELECT (created_at AT TIME ZONE %s)::date AS day,"
+        "       COUNT(DISTINCT user_id) AS v"
         "  FROM order_history"
         " WHERE project_id=%s AND user_id IS NOT NULL"
         "   AND created_at >= %s AND created_at < %s"
         "   AND status NOT IN ('cancelled', 'refunded', 'new')"
         " GROUP BY day ORDER BY day ASC",
-        (project_id, start, end)
+        (tz, project_id, start, end)
     )
     by_day = {}
     for r in visitors: by_day.setdefault(str(r["day"]), {})["visitors"] = int(r["v"] or 0)
@@ -15865,7 +16819,8 @@ def analytics_heatmap(project_id: int = Query(...), period: str = Query("2mo"),
     """7×24 grid — day_of_week × hour_of_day. Cell value = order count.
     Postgres date parts: dow Sun=0, hour 0–23."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     rows = db_all(
         "SELECT EXTRACT(DOW  FROM created_at)::int  AS dow,"
         "       EXTRACT(HOUR FROM created_at)::int  AS hour,"
@@ -15887,18 +16842,73 @@ def analytics_heatmap(project_id: int = Query(...), period: str = Query("2mo"),
 
 
 @app.get("/api/analytics/customer-types")
-def analytics_customer_types(project_id: int = Query(...), period: str = Query("1mo"),
-                             user: dict = Depends(get_current_user)):
-    """For each day in the period: how many orders came from first-time
-    customers vs returning. A customer is "first-time" on the day their
-    *very first* order across project history was placed."""
+def analytics_customer_types(
+    project_id: int = Query(...),
+    period: str = Query("1mo"),
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    """Daily new-vs-returning split for the New-vs-returning chart.
+
+    Supports two calling modes:
+      • Legacy (period only) — returns a flat array of buckets for the
+        period, same shape as before. Kept so the cached middleware key
+        stays compatible for non-chart callers (if any).
+      • Chunked (from + to) — returns an object with `buckets` and
+        `oldest_order` so the scrollable chart can lazy-load history
+        the same way Revenue over time does (drag left → fetch next
+        chunk → prepend, auto-fill on wide period).
+
+    A customer is "first-time" on the day their *very first* paid
+    order (status NOT IN cancelled/refunded) lands. Cancelled-then-paid
+    sequences correctly count the SECOND order as new (their first
+    paid)."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
-    # The CTE that defines each user's "first ever order" must SKIP cancelled
-    # and refunded orders — otherwise a customer whose first attempt was
-    # cancelled and second was a real paid order gets bucketed as RETURNING
-    # on day 2 (since the cancelled row counts as their first_at). Matches
-    # the cohort-retention CTE which already filters status.
+
+    def _aware(dt):
+        if dt is None: return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+    def _parse_iso(s):
+        if not s: return None
+        try:
+            return _aware(datetime.fromisoformat(s.replace('Z', '+00:00')))
+        except Exception:
+            return None
+
+    chunked = (from_ is not None) or (to is not None)
+    now = datetime.now(timezone.utc)
+    if chunked:
+        end_dt   = _parse_iso(to) or now
+        start_dt = _parse_iso(from_) or (end_dt - timedelta(days=90))
+    else:
+        start_dt, end_dt = _date_range_for_period(period)
+
+    # Project metadata — frontend stops paginating once it hits this.
+    oldest_row = db_one(
+        "SELECT MIN(created_at) AS d FROM order_history WHERE project_id=%s",
+        (project_id,)
+    )
+    oldest = _aware((oldest_row or {}).get("d"))
+    if oldest is not None and start_dt < oldest:
+        start_dt = oldest
+
+    def _empty():
+        if chunked:
+            return {"buckets": [], "oldest_order": oldest.isoformat() if oldest else None}
+        return []
+
+    if start_dt >= end_dt:
+        return _empty()
+
+    # All DATE() / date_trunc are wrapped in `AT TIME ZONE %s` so day
+    # buckets respect the merchant's local calendar. Without this an
+    # Almaty store's "Monday" silently includes orders placed up to
+    # 06:00 Tuesday morning local time (because UTC midnight is 06:00
+    # Almaty), making "new vs returning by day" off by ~25 % of any
+    # order placed in late evening.
+    tz = get_project_timezone(project_id)
     rows = db_all(
         "WITH first_order AS ("
         "  SELECT user_id, MIN(created_at) AS first_at"
@@ -15906,23 +16916,47 @@ def analytics_customer_types(project_id: int = Query(...), period: str = Query("
         "   WHERE project_id=%s AND user_id IS NOT NULL"
         "     AND status NOT IN ('cancelled', 'refunded')"
         "  GROUP BY user_id"
+        "),"
+        "by_day AS ("
+        "  SELECT (oh.created_at AT TIME ZONE %s)::date AS day,"
+        "    COUNT(*) FILTER (WHERE (oh.created_at AT TIME ZONE %s)::date"
+        "                       = (fo.first_at AT TIME ZONE %s)::date) AS new_orders,"
+        "    COUNT(*) FILTER (WHERE (oh.created_at AT TIME ZONE %s)::date"
+        "                       > (fo.first_at AT TIME ZONE %s)::date) AS ret_orders"
+        "    FROM order_history oh"
+        "    LEFT JOIN first_order fo ON fo.user_id = oh.user_id"
+        "   WHERE oh.project_id=%s AND oh.created_at >= %s AND oh.created_at < %s"
+        "     AND oh.status NOT IN ('cancelled', 'refunded')"
+        "   GROUP BY day"
         ")"
-        "SELECT DATE(oh.created_at) AS day,"
-        "  COUNT(*) FILTER (WHERE DATE(oh.created_at) = DATE(fo.first_at)) AS new_orders,"
-        "  COUNT(*) FILTER (WHERE DATE(oh.created_at) > DATE(fo.first_at)) AS ret_orders"
-        "  FROM order_history oh"
-        "  LEFT JOIN first_order fo ON fo.user_id = oh.user_id"
-        " WHERE oh.project_id=%s AND oh.created_at >= %s AND oh.created_at < %s"
-        "   AND oh.status NOT IN ('cancelled', 'refunded')"
-        " GROUP BY day ORDER BY day ASC",
-        (project_id, project_id, start, end)
+        "SELECT g.day::date AS day,"
+        "       COALESCE(by_day.new_orders, 0) AS new_orders,"
+        "       COALESCE(by_day.ret_orders, 0) AS ret_orders"
+        "  FROM generate_series("
+        "         date_trunc('day', (%s::timestamptz) AT TIME ZONE %s),"
+        "         date_trunc('day', (%s::timestamptz) AT TIME ZONE %s),"
+        "         '1 day'::interval"
+        "       ) AS g(day)"
+        "  LEFT JOIN by_day ON by_day.day = g.day::date"
+        " ORDER BY g.day ASC",
+        (project_id,
+         tz, tz, tz, tz, tz,        # by_day CTE — 5 occurrences
+         project_id, start_dt, end_dt,
+         start_dt, tz, end_dt, tz)  # generate_series — 2 boundary casts
     )
-    return [
+    buckets = [
         {"day": str(r["day"]),
          "new": int(r["new_orders"] or 0),
          "returning": int(r["ret_orders"] or 0)}
         for r in rows
     ]
+    if chunked:
+        return {
+            "buckets":      buckets,
+            "oldest_order": oldest.isoformat() if oldest else None,
+            "timezone":     tz,
+        }
+    return buckets
 
 
 @app.get("/api/analytics/top-customers")
@@ -15930,7 +16964,8 @@ def analytics_top_customers(project_id: int = Query(...), period: str = Query("1
                             limit: int = Query(10),
                             user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     rows = db_all(
         "SELECT u.id, u.name, u.email,"
         "       COUNT(oh.id) AS orders,"
@@ -15962,7 +16997,8 @@ def analytics_geographic(project_id: int = Query(...), period: str = Query("1mo"
     Imperfect but good enough for a top-cities widget on the dashboard;
     a structured `shipping_address_components` JSONB column is in backlog."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     rows = db_all(
         "SELECT TRIM(SPLIT_PART(address, ',', 1)) AS city,"
         "       COUNT(*) AS orders,"
@@ -15989,37 +17025,21 @@ def analytics_cohort_retention(project_id: int = Query(...), months: int = Query
     in month M. Cell (M, N) = % of those customers who ordered again N
     months later. Always returns the LAST `months` cohorts; the period
     selector intentionally doesn't apply here (retention only makes sense
-    over multiple months)."""
+    over multiple months).
+
+    Reads from `mv_cohort_retention` materialized view (refreshed every
+    30 min by a background task) — pre-aggregated, ~5 ms response on a
+    50k-order DB vs ~2.5 s for the live query. The 30-min staleness is
+    fine for retention which is fundamentally month-scale data."""
     require_team_member_or_owner(user, project_id)
     months = max(2, min(24, int(months)))
-    # First-order month per user, then count returning per (cohort, offset)
-    # NOTE: `offset` is a Postgres reserved keyword — use `month_offset`
-    # as the alias instead so the GROUP BY / ORDER BY clauses parse.
-    # `INTERVAL '%s months'` — psycopg2 will escape the int as a quoted
-    # string which Postgres rejects in INTERVAL literals. Build via
-    # multiplication: `(NOW() - %s * INTERVAL '1 month')` is safe.
     cohorts = db_all(
-        "WITH first_order AS ("
-        "  SELECT user_id, DATE_TRUNC('month', MIN(created_at)) AS cohort"
-        "    FROM order_history WHERE project_id=%s AND user_id IS NOT NULL"
-        "      AND status NOT IN ('cancelled', 'refunded')"
-        "  GROUP BY user_id"
-        "), activity AS ("
-        "  SELECT fo.cohort,"
-        "         DATE_TRUNC('month', oh.created_at) AS active_month,"
-        "         oh.user_id"
-        "    FROM order_history oh JOIN first_order fo ON fo.user_id = oh.user_id"
-        "   WHERE oh.project_id=%s"
-        "     AND oh.status NOT IN ('cancelled', 'refunded')"
-        "     AND fo.cohort >= DATE_TRUNC('month', NOW() - (%s * INTERVAL '1 month'))"
-        ")"
-        "SELECT cohort,"
-        "       EXTRACT(MONTH FROM AGE(active_month, cohort))::int "
-        "         + 12*EXTRACT(YEAR FROM AGE(active_month, cohort))::int AS month_offset,"
-        "       COUNT(DISTINCT user_id) AS active"
-        "  FROM activity"
-        " GROUP BY cohort, month_offset ORDER BY cohort ASC, month_offset ASC",
-        (project_id, project_id, months - 1)
+        "SELECT cohort_month AS cohort, month_offset, active_users AS active"
+        "  FROM mv_cohort_retention"
+        " WHERE project_id = %s"
+        "   AND cohort_month >= DATE_TRUNC('month', NOW() - (%s * INTERVAL '1 month'))"
+        " ORDER BY cohort_month ASC, month_offset ASC",
+        (project_id, months - 1)
     )
     # Pivot into matrix: { cohort_label: [size, m0, m1, m2, ...] }
     out = {}
@@ -16049,7 +17069,8 @@ def analytics_returns(project_id: int = Query(...), period: str = Query("1mo"),
     """Returns dashboard — rate %, reasons distribution, avg processing
     time (requested → refunded), and per-product return rate top-N."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     delivered = db_one(
         "SELECT COUNT(*) AS n FROM order_history"
         " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
@@ -16127,7 +17148,8 @@ def analytics_returns(project_id: int = Query(...), period: str = Query("1mo"),
 def analytics_reviews_quality(project_id: int = Query(...), period: str = Query("1mo"),
                               user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     # All reviews for the project (not just period) for the avg / distribution
     # rollup — the period restricts only the "review velocity" series.
     summary = db_one(
@@ -16141,10 +17163,11 @@ def analytics_reviews_quality(project_id: int = Query(...), period: str = Query(
         (project_id,)
     )
     velocity = db_all(
-        "SELECT DATE(created_at) AS day, COUNT(*) AS n FROM product_reviews"
+        "SELECT (created_at AT TIME ZONE %s)::date AS day, COUNT(*) AS n"
+        "  FROM product_reviews"
         " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
         " GROUP BY day ORDER BY day ASC",
-        (project_id, start, end)
+        (tz, project_id, start, end)
     )
     top_rated = db_all(
         "SELECT p.id, p.title, COUNT(pr.id) AS reviews,"
@@ -16155,12 +17178,17 @@ def analytics_reviews_quality(project_id: int = Query(...), period: str = Query(
         " ORDER BY avg DESC, reviews DESC LIMIT 10",
         (project_id,)
     )
+    # `HAVING COUNT >= 1` instead of `>= 2`: even a single low review is
+    # worth surfacing in the merchant's UI — a brand-new product with a
+    # 1-star review needs investigation immediately, not after a second
+    # review confirms the issue. The "needs attention" semantic is "go
+    # look at this", not "statistically significant trend".
     needs_attention = db_all(
         "SELECT p.id, p.title, COUNT(pr.id) AS reviews,"
         "       AVG(pr.rating)::float AS avg"
         "  FROM products p JOIN product_reviews pr ON pr.product_id = p.id"
         " WHERE pr.project_id=%s AND COALESCE(p.is_archived, FALSE) = FALSE"
-        " GROUP BY p.id, p.title HAVING AVG(pr.rating) < 3.5 AND COUNT(pr.id) >= 2"
+        " GROUP BY p.id, p.title HAVING AVG(pr.rating) < 3.5 AND COUNT(pr.id) >= 1"
         " ORDER BY avg ASC LIMIT 10",
         (project_id,)
     )
@@ -16181,7 +17209,8 @@ def analytics_bookings(project_id: int = Query(...), period: str = Query("1mo"),
     frontend renders the section unconditionally — empty arrays just mean
     the section displays "No bookings in this period"."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     # Total per status (helps no-show + cancellation rate calculations).
     counts = db_one(
         "SELECT COUNT(*) AS total,"
@@ -16247,45 +17276,87 @@ def analytics_bookings(project_id: int = Query(...), period: str = Query("1mo"),
 @app.get("/api/analytics/promo-performance")
 def analytics_promo_performance(project_id: int = Query(...), period: str = Query("1mo"),
                                 user: dict = Depends(get_current_user)):
-    """Per-code usage + revenue impact. discount_total summed from
-    order_history.promo_discount_amount when present, else 0."""
+    """Per-code usage + revenue impact. Used + revenue come from
+    promo_code_uses ⋈ order_history. discount_total is APPROXIMATED
+    from the promo's own formula applied to the order's final total —
+    not exact (we don't snapshot the discount at order time) but close
+    enough for analytics until a proper `order_history.promo_discount`
+    column is added."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
-    # NOTE: `order_history.promo_code` + `promo_discount_amount` columns are
-    # not present in the current schema. Until they're added we can only show
-    # the configured codes — used/revenue/discount stay at 0. When the cols
-    # land, restore the LEFT JOIN to order_history with `oh.promo_code`.
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
+    # Diagnostic: how many promo_code_uses rows exist for this project,
+    # total + within window. If `all_time = 0`, no promo has ever been
+    # redeemed — place_order's INSERT never fired (likely the customer
+    # didn't enter a code, or the code failed validation). If
+    # `all_time > 0` but `in_window = 0`, the period is wrong.
+    diag = db_one(
+        "SELECT COUNT(*) AS all_time,"
+        "       COUNT(*) FILTER (WHERE used_at >= %s AND used_at < %s) AS in_window"
+        "  FROM promo_code_uses WHERE project_id=%s",
+        (start, end, project_id)
+    )
+    print(f"[promo-perf] project={project_id} period={period} "
+          f"window=[{start}..{end}]  uses_all_time={diag} ")
+    # LEFT JOIN promo_code_uses → order_history so configured-but-unused
+    # codes still appear with zero counts (so the merchant sees their
+    # whole catalogue, not just the ones that were redeemed in this
+    # period). status filter excludes cancelled / refunded orders so a
+    # cancelled order with a promo doesn't inflate "used" or "revenue".
     rows = db_all(
         "SELECT pc.code, pc.discount_type, pc.discount_value,"
-        "       0 AS used,"
-        "       0 AS revenue,"
-        "       0 AS discount_total,"
-        "       0 AS avg_order"
+        "       COUNT(oh.id)               AS used,"
+        "       COALESCE(SUM(oh.total_amount), 0)  AS revenue,"
+        "       COALESCE(AVG(oh.total_amount), 0)  AS avg_order"
         "  FROM promo_codes pc"
+        "  LEFT JOIN promo_code_uses pcu ON pcu.promo_id = pc.id"
+        "       AND pcu.used_at >= %s AND pcu.used_at < %s"
+        "  LEFT JOIN order_history oh ON oh.id = pcu.order_id"
+        "       AND oh.status NOT IN ('cancelled', 'refunded')"
         " WHERE pc.project_id=%s"
-        " ORDER BY pc.id DESC LIMIT 20",
-        (project_id,)
+        " GROUP BY pc.id, pc.code, pc.discount_type, pc.discount_value"
+        " ORDER BY used DESC, pc.id DESC LIMIT 20",
+        (start, end, project_id)
     )
+    # Discount approximation per row. Inverse-formula from the post-
+    # discount total (the only number we have stored):
+    #   percentage:  subtotal = total / (1 - pct/100); discount = subtotal · pct/100
+    #   fixed:       discount = discount_value × used  (clamped to revenue)
+    codes_out = []
+    total_disc = 0.0
+    for r in rows:
+        used    = int(r["used"] or 0)
+        revenue = float(r["revenue"] or 0)
+        dtype   = r["discount_type"] or 'fixed'
+        dval    = float(r["discount_value"] or 0)
+        if used == 0 or revenue == 0:
+            disc = 0.0
+        elif dtype == 'percentage' and dval > 0 and dval < 100:
+            subtotal = revenue / (1 - dval / 100)
+            disc = subtotal - revenue
+        else:  # fixed
+            disc = min(dval * used, revenue)
+        total_disc += disc
+        codes_out.append({
+            "code":           r["code"],
+            "discount_type":  dtype,
+            "discount_value": dval,
+            "used":           used,
+            "revenue":        revenue,
+            "discount_total": round(disc, 2),
+            "avg_order":      float(r["avg_order"] or 0),
+        })
     period_revenue = db_one(
         "SELECT COALESCE(SUM(total_amount), 0) AS rev FROM order_history"
         " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
         "   AND status NOT IN ('cancelled', 'refunded')",
         (project_id, start, end)
     )
-    total_rev  = float((period_revenue  or {}).get("rev")  or 0)
-    total_disc = 0.0
+    total_rev = float((period_revenue or {}).get("rev") or 0)
     return {
-        "codes": [
-            {"code": r["code"], "discount_type": r["discount_type"],
-             "discount_value": float(r["discount_value"] or 0),
-             "used": int(r["used"] or 0),
-             "revenue": float(r["revenue"] or 0),
-             "discount_total": float(r["discount_total"] or 0),
-             "avg_order": float(r["avg_order"] or 0)}
-            for r in rows
-        ],
+        "codes":                 codes_out,
         "total_revenue":         total_rev,
-        "total_discount_given":  total_disc,
+        "total_discount_given":  round(total_disc, 2),
         "discount_share_pct":    round(total_disc / total_rev * 100, 1) if total_rev else 0,
     }
 
@@ -16296,7 +17367,8 @@ def analytics_operations(project_id: int = Query(...), period: str = Query("1mo"
     """Operational SLA metrics — order-to-ship, ship-to-delivered, abandoned
     cart %, and cart-to-paid median for converted buyers."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     # `order_history.shipped_at` column doesn't exist in current schema —
     # fall back to NULL timings. delivered_at exists so we can still
     # compute "order → delivered" as a rough proxy when needed.
@@ -16315,47 +17387,87 @@ def analytics_operations(project_id: int = Query(...), period: str = Query("1mo"
         )
     except Exception:
         timing = {"processing_seconds": None, "shipping_seconds": None}
-    # `carts.updated_at` not in current schema — use cart_items.updated_at
-    # to define "active cart within period" (any item touched in window).
+    # Abandoned rate via per-(user, day) cart-session approximation:
+    # treat each calendar day a user added items to cart as one cart
+    # "session". A session is "converted" if the same user placed a
+    # paid order on that same day; otherwise it's "abandoned".
+    #
+    # Why per-day, not per-user: a previously-purchasing customer who
+    # adds new items today and doesn't check out IS abandoning a cart
+    # — the metric should reflect that. Per-user matching would mask
+    # this by classifying any returning customer as "buyer" forever.
+    # Per-day strikes a balance: granular enough to catch in-period
+    # abandonments without needing explicit session-timestamp tracking.
     abandoned = None
     try:
-        # Predicates on the LEFT-JOINed `ci` table MUST live in the ON
-        # clause — putting them in WHERE silently converts the LEFT JOIN
-        # to an INNER JOIN, dropping carts that have no items at all and
-        # under-reporting the total. We only count carts that have at
-        # least one item touched in the window anyway (an empty cart
-        # isn't meaningful for an abandonment-rate metric), so the JOIN
-        # is naturally INNER on `cart_items` to enforce that.
         abandoned = db_one(
-            "SELECT"
-            "   COUNT(DISTINCT c.id) FILTER (WHERE c.abandoned_email_sent_at IS NOT NULL) AS abandoned,"
-            "   COUNT(DISTINCT c.id) AS total"
-            "  FROM carts c"
-            "  JOIN cart_items ci ON ci.cart_id = c.id"
-            "                    AND ci.updated_at >= %s AND ci.updated_at < %s"
-            " WHERE c.project_id=%s",
-            (start, end, project_id)
+            "WITH starters AS ("
+            "  SELECT DISTINCT user_id, (created_at AT TIME ZONE %s)::date AS day"
+            "    FROM cart_events"
+            "   WHERE project_id=%s AND action='add' AND user_id IS NOT NULL"
+            "     AND created_at >= %s AND created_at < %s"
+            "),"
+            "buyers AS ("
+            "  SELECT DISTINCT user_id, (created_at AT TIME ZONE %s)::date AS day"
+            "    FROM order_history"
+            "   WHERE project_id=%s AND user_id IS NOT NULL"
+            "     AND created_at >= %s AND created_at < %s"
+            "     AND status NOT IN ('cancelled', 'refunded', 'new')"
+            ")"
+            "SELECT COUNT(*) AS total,"
+            "       COUNT(*) FILTER (WHERE NOT EXISTS ("
+            "          SELECT 1 FROM buyers b"
+            "           WHERE b.user_id = s.user_id AND b.day = s.day"
+            "       )) AS abandoned"
+            "  FROM starters s",
+            (tz, project_id, start, end, tz, project_id, start, end)
         )
     except Exception:
         abandoned = {"abandoned": 0, "total": 0}
-    # Cart-to-paid: best-effort, falls back to None if any cart-table
-    # column is missing in the schema. Use updated_at (set by the cart
-    # touch trigger) as a proxy for "first interaction with the cart".
+    # Diagnostic: total cart_events rows for this project (helps figure
+    # out whether the bucket is empty because no adds happened or
+    # because External isn't logging them).
+    ce_diag = db_one(
+        "SELECT COUNT(*) AS all_time,"
+        "       COUNT(*) FILTER (WHERE created_at >= %s AND created_at < %s) AS in_window"
+        "  FROM cart_events WHERE project_id=%s AND action='add'",
+        (start, end, project_id)
+    )
+    print(f"[operations] project={project_id} period={period} "
+          f"abandoned={abandoned} cart_events_diag={ce_diag}")
+    # Cart-to-paid median, per-order matching. The earlier global-user
+    # MIN approach produced NEGATIVE values: a user's order was placed
+    # under the legacy code-path (yesterday, no cart_events written),
+    # then they added new items today for testing — MIN(cart_events)
+    # = today, order = yesterday → diff = negative. Fix: only consider
+    # cart-events that happened BEFORE that specific order. Orders that
+    # have no pre-order cart-event are dropped from the cohort entirely
+    # (the timing is unknowable for them).
     convert = None
     try:
         convert = db_one(
-            "WITH first_cart AS ("
-            "  SELECT c.user_id, MIN(ci.updated_at) AS first_at"
-            "    FROM carts c JOIN cart_items ci ON ci.cart_id = c.id"
-            "   WHERE c.project_id=%s AND ci.updated_at >= %s AND ci.updated_at < %s"
-            "  GROUP BY c.user_id"
+            "WITH paid_orders AS ("
+            "  SELECT id, user_id, created_at AS order_at"
+            "    FROM order_history"
+            "   WHERE project_id=%s AND user_id IS NOT NULL"
+            "     AND created_at >= %s AND created_at < %s"
+            "     AND status NOT IN ('cancelled', 'refunded', 'new')"
+            "),"
+            "cart_starts AS ("
+            "  SELECT po.id AS order_id,"
+            "         po.order_at - MIN(ce.created_at) AS gap"
+            "    FROM paid_orders po"
+            "    JOIN cart_events ce"
+            "      ON ce.user_id    = po.user_id"
+            "     AND ce.project_id = %s"
+            "     AND ce.action     = 'add'"
+            "     AND ce.created_at <= po.order_at"
+            "  GROUP BY po.id, po.order_at"
             ")"
-            "SELECT EXTRACT(EPOCH FROM PERCENTILE_CONT(0.5) WITHIN GROUP"
-            "       (ORDER BY oh.created_at - fc.first_at)) AS median_seconds"
-            "  FROM order_history oh JOIN first_cart fc ON fc.user_id = oh.user_id"
-            " WHERE oh.project_id=%s AND oh.created_at >= %s AND oh.created_at < %s"
-            "   AND oh.status NOT IN ('cancelled', 'refunded', 'new')",
-            (project_id, start, end, project_id, start, end)
+            "SELECT EXTRACT(EPOCH FROM PERCENTILE_CONT(0.5)"
+            "       WITHIN GROUP (ORDER BY gap)) AS median_seconds"
+            "  FROM cart_starts",
+            (project_id, start, end, project_id)
         )
     except Exception:
         convert = {"median_seconds": None}
@@ -16384,7 +17496,8 @@ def analytics_popular_products(project_id: int = Query(...), period: str = Query
     """4-in-1 endpoint for the Popular products quadrant section: top by
     revenue, top by units, most-favorited, slow movers (no sales >90 days)."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     by_revenue = db_all(
         "SELECT p.id, p.title, COALESCE(SUM(oi.quantity * oi.price), 0) AS revenue,"
         "       COALESCE(SUM(oi.quantity), 0) AS units"
@@ -16446,7 +17559,8 @@ def analytics_stock_value_trend(project_id: int = Query(...), period: str = Quer
     """Daily total stock value (Σ quantity_remaining × cost_per_unit) from
     inventory_batches. If no batches exist, falls back to L2 stock × L2 cost."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     # Snapshot at the END of each day. We approximate using batches' current
     # state — proper time-travel would need stock_movements log replay; left
     # for inventory forecasting milestone (see Roadmap.md backlog).
@@ -16473,7 +17587,8 @@ def analytics_countries(project_id: int = Query(...), period: str = Query("1mo")
     """Top countries by unique visitors. NULL country_code (old rows or
     requests without CF / MaxMind) is bucketed as 'Unknown'."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     rows = db_all(
         "SELECT COALESCE(country_code, '??') AS code,"
         "       COALESCE(country_name, 'Unknown') AS name,"
@@ -16490,20 +17605,28 @@ def analytics_countries(project_id: int = Query(...), period: str = Query("1mo")
 def analytics_devices(project_id: int = Query(...), period: str = Query("1mo"),
                       user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
+    # Exclude rows where enrichment didn't fire (pre-2026-05 visits had
+    # no device_type/browser column; bot/curl traffic with no User-Agent
+    # also lands here). Otherwise every chart picks up a phantom
+    # "unknown"/"Other" bucket that confuses merchants who only used
+    # Chrome + Edge for testing.
     rows = db_all(
-        "SELECT COALESCE(device_type, 'unknown') AS device,"
+        "SELECT device_type AS device,"
         "       COUNT(DISTINCT ip) AS visitors"
         "  FROM site_visits"
         " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
-        " GROUP BY device ORDER BY visitors DESC",
+        "   AND device_type IS NOT NULL AND device_type <> 'unknown'"
+        " GROUP BY device_type ORDER BY visitors DESC",
         (project_id, start, end)
     )
     browsers = db_all(
-        "SELECT COALESCE(browser, 'Other') AS browser,"
+        "SELECT browser,"
         "       COUNT(DISTINCT ip) AS visitors"
         "  FROM site_visits"
         " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
+        "   AND browser IS NOT NULL"
         " GROUP BY browser ORDER BY visitors DESC LIMIT 6",
         (project_id, start, end)
     )
@@ -16517,7 +17640,8 @@ def analytics_devices(project_id: int = Query(...), period: str = Query("1mo"),
 def analytics_traffic_sources(project_id: int = Query(...), period: str = Query("1mo"),
                               user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     sources = db_all(
         "SELECT COALESCE(traffic_source, 'direct') AS source,"
         "       COUNT(DISTINCT ip) AS visitors"
@@ -16562,7 +17686,8 @@ def analytics_search_insights(project_id: int = Query(...), period: str = Query(
     """Top searches + zero-result queries. Zero-results are the gold:
     they show exactly which products customers wanted but didn't find."""
     require_team_member_or_owner(user, project_id)
-    start, end = _date_range_for_period(period)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
     top = db_all(
         "SELECT LOWER(query) AS query, COUNT(*) AS searches,"
         "       AVG(results_count)::int AS avg_results"
@@ -16996,6 +18121,500 @@ class NotifHub:
 
 
 notif_hub = NotifHub()
+
+
+@app.websocket("/api/projects/{project_id}/events/ws")
+async def project_events_ws(ws: WebSocket, project_id: int):
+    """Live project event stream — orders, bookings, status changes.
+    Cookie-authenticated; team membership enforced. Connection closed
+    with 4401 (auth) or 4403 (forbidden) so the browser can read the
+    code and surface a sensible error."""
+    cookie = ws.cookies.get("crm_token")
+    if not cookie:
+        await ws.accept(); await ws.close(code=4401); return
+    try:
+        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub"))
+    except Exception:
+        await ws.accept(); await ws.close(code=4401); return
+    # Verify the user has access to this project (owner or team member).
+    has_access = False
+    try:
+        row = db_one(
+            "SELECT 1 FROM crm_projects p"
+            " LEFT JOIN crm_team_members tm ON tm.project_id = p.id AND tm.user_id = %s"
+            " WHERE p.id = %s AND (p.crm_user_id = %s OR tm.user_id = %s)"
+            " LIMIT 1",
+            (user_id, project_id, user_id, user_id)
+        )
+        has_access = bool(row)
+    except Exception:
+        has_access = False
+    if not has_access:
+        await ws.accept(); await ws.close(code=4403); return
+    await events_hub.connect(project_id, ws)
+    try:
+        while True:
+            # Client doesn't need to send anything — receive_text just
+            # keeps the connection alive and detects disconnects.
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await events_hub.disconnect(project_id, ws)
+
+
+# ── PostgreSQL LISTEN background task ─────────────────────────────────────
+# A dedicated DB connection in a worker thread blocks on Postgres
+# notifications and dispatches them onto the asyncio event loop where the
+# WebSocket hub lives. Why a thread + run_coroutine_threadsafe:
+# psycopg2's LISTEN is synchronous-blocking; mixing it directly into the
+# event loop would block ALL request handling. asyncpg would let us go
+# fully async but adds a hard dependency for one task.
+_pg_listener_started = False
+
+
+def _start_pg_event_listener():
+    """One-shot startup hook — spawned from the FastAPI startup event."""
+    global _pg_listener_started
+    if _pg_listener_started:
+        return
+    _pg_listener_started = True
+    import threading
+    main_loop = asyncio.get_event_loop()
+
+    def loop():
+        import select as _sel
+        while True:
+            try:
+                conn = psycopg2.connect(**DB_CONFIG)
+                conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+                with conn.cursor() as cur:
+                    cur.execute("LISTEN crm_project_events")
+                global _health_listener_last_ok
+                _health_listener_last_ok = _utcnow()
+                while True:
+                    # 60s timeout = keep-alive heartbeat; if Postgres
+                    # drops the connection, the next poll() raises and
+                    # we re-enter the outer loop to reconnect.
+                    if _sel.select([conn], [], [], 60) == ([], [], []):
+                        # Heartbeat: prove we're still in the loop even
+                        # when no notifications are coming through, so
+                        # /api/health doesn't flag us as dead during
+                        # quiet periods.
+                        _health_listener_last_ok = _utcnow()
+                        continue
+                    conn.poll()
+                    _health_listener_last_ok = _utcnow()
+                    while conn.notifies:
+                        notify = conn.notifies.pop(0)
+                        try:
+                            event = json.loads(notify.payload)
+                            pid = int(event.get("project_id") or 0)
+                            if pid:
+                                asyncio.run_coroutine_threadsafe(
+                                    events_hub.broadcast(pid, event), main_loop)
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[pg events listener] connection dropped: {e}; retrying in 5s")
+                time.sleep(5)
+
+    t = threading.Thread(target=loop, name="pg-events-listener", daemon=True)
+    t.start()
+
+
+@app.on_event("startup")
+async def _start_listener_on_boot():
+    _start_pg_event_listener()
+    _start_mv_refresher()
+    _start_alerts_evaluator()
+
+
+# ── Healthcheck endpoints ────────────────────────────────────────────────
+# /api/health  → deep check: DB pool, background threads, MV freshness.
+#                Used by ops / on-call dashboards.
+# /api/ready   → shallow yes/no: container ready to serve traffic. Used
+#                by Docker / Kubernetes readiness probes — must be fast.
+#
+# Tracks background-thread liveness via three module-level booleans
+# updated by their loops. If a thread silently dies (e.g. uncaught
+# exception in the listener), the flag will go stale and `/api/health`
+# reports it as unhealthy → ops can restart the container.
+_health_listener_last_ok   = None   # type: Optional[datetime]
+_health_mv_last_refresh    = None   # type: Optional[datetime]
+_health_alerts_last_loop   = None   # type: Optional[datetime]
+
+
+@app.get("/api/ready")
+def healthcheck_ready():
+    """Shallow probe — does the process answer HTTP and has the DB pool
+    been initialised? Cheap; Docker/K8s hits this every few seconds."""
+    if _pool is None:
+        raise HTTPException(503, "DB pool not ready")
+    return {"ready": True}
+
+
+@app.get("/api/health")
+def healthcheck_full():
+    """Deep probe — every critical subsystem. Returns HTTP 200 with
+    per-component status object even when degraded, so ops can see the
+    full picture rather than just a binary fail. HTTP 503 only when DB
+    is unreachable (the one true "cannot serve anything" case)."""
+    out = {"ok": True, "components": {}}
+    # DB connectivity.
+    try:
+        row = db_one("SELECT 1 AS one")
+        out["components"]["db"] = {"ok": bool(row and row.get("one") == 1)}
+    except Exception as e:
+        out["components"]["db"] = {"ok": False, "error": str(e)[:200]}
+        # DB down = total failure.
+        out["ok"] = False
+        return Response(content=json.dumps(out), status_code=503,
+                        media_type="application/json")
+    # Background threads — liveness via "last seen alive" timestamps.
+    now = _utcnow()
+
+    def _age_s(ts):
+        if ts is None: return None
+        ts_aware = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+        return int((now - ts_aware).total_seconds())
+
+    def _component(ts, max_age_s, started):
+        age = _age_s(ts)
+        if not started:
+            return {"ok": False, "reason": "not started"}
+        if age is None:
+            return {"ok": False, "reason": "no heartbeat yet"}
+        return {"ok": age < max_age_s, "age_seconds": age}
+
+    out["components"]["pg_listener"] = _component(
+        _health_listener_last_ok,  max_age_s=300,
+        started=_pg_listener_started)
+    out["components"]["mv_refresher"] = _component(
+        _health_mv_last_refresh,   max_age_s=60 * 60 * 2,  # 2h grace
+        started=_mv_refresher_started)
+    out["components"]["alerts_evaluator"] = _component(
+        _health_alerts_last_loop,  max_age_s=60 * 80,      # 80 min grace
+        started=_alerts_evaluator_started)
+    if not all(c.get("ok") for c in out["components"].values()):
+        out["ok"] = False
+    return out
+
+
+# ── Alerts CRUD ───────────────────────────────────────────────────────────
+ALERT_TYPES = {
+    # type → (label, threshold_unit_hint)
+    "revenue_drop":   "Revenue drop vs previous day (%)",
+    "low_stock":      "Any SKU below this stock level",
+    "daily_summary":  "Daily revenue summary email",
+    "new_order":      "Email on every new paid order",
+}
+
+
+class AlertCreateBody(BaseModel):
+    type:      str
+    threshold: Optional[float] = None
+    email:     str
+    is_active: bool = True
+
+
+@app.get("/api/projects/{project_id}/alerts")
+def list_alerts(project_id: int, user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT id, type, threshold, email, is_active, last_fired_at, created_at"
+        "  FROM crm_alerts WHERE project_id=%s ORDER BY created_at DESC",
+        (project_id,)
+    )
+    return [{
+        "id":            r["id"],
+        "type":          r["type"],
+        "type_label":    ALERT_TYPES.get(r["type"], r["type"]),
+        "threshold":     float(r["threshold"]) if r["threshold"] is not None else None,
+        "email":         r["email"],
+        "is_active":     r["is_active"],
+        "last_fired_at": r["last_fired_at"].isoformat() if r["last_fired_at"] else None,
+        "created_at":    r["created_at"].isoformat() if r["created_at"] else None,
+    } for r in rows]
+
+
+@app.post("/api/projects/{project_id}/alerts")
+def create_alert(project_id: int, body: AlertCreateBody,
+                 user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if body.type not in ALERT_TYPES:
+        raise HTTPException(400, f"Unknown alert type. Valid: {sorted(ALERT_TYPES.keys())}")
+    if not body.email or '@' not in body.email:
+        raise HTTPException(400, "Valid email required")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_alerts (project_id, type, threshold, email, is_active)"
+            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (project_id, body.type, body.threshold,
+             sanitize(body.email)[:160], bool(body.is_active))
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "id": new_id}
+
+
+@app.patch("/api/projects/{project_id}/alerts/{alert_id}")
+def update_alert(project_id: int, alert_id: int, body: AlertCreateBody,
+                 user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_alerts"
+            "   SET type=%s, threshold=%s, email=%s, is_active=%s"
+            " WHERE id=%s AND project_id=%s",
+            (body.type, body.threshold, sanitize(body.email)[:160],
+             bool(body.is_active), alert_id, project_id)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Alert not found")
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/projects/{project_id}/alerts/{alert_id}")
+def delete_alert(project_id: int, alert_id: int,
+                 user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "DELETE FROM crm_alerts WHERE id=%s AND project_id=%s",
+            (alert_id, project_id)
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/api/projects/{project_id}/alerts/fires")
+def list_alert_fires(project_id: int, limit: int = Query(20),
+                     user: dict = Depends(get_current_user)):
+    """Recent alert firings — what tripped, when. Capped at 20 by
+    default so the audit list stays readable. Cascades cleanly when
+    the underlying alert is deleted (ON DELETE CASCADE on alert_id)."""
+    require_team_member_or_owner(user, project_id)
+    rows = db_all(
+        "SELECT id, alert_id, message, metric_val, fired_at"
+        "  FROM crm_alert_fires"
+        " WHERE project_id=%s"
+        " ORDER BY fired_at DESC LIMIT %s",
+        (project_id, max(1, min(100, int(limit))))
+    )
+    return [{
+        "id":         r["id"],
+        "alert_id":   r["alert_id"],
+        "message":    r["message"],
+        "metric_val": float(r["metric_val"]) if r["metric_val"] is not None else None,
+        "fired_at":   r["fired_at"].isoformat() if r["fired_at"] else None,
+    } for r in rows]
+
+
+# ── Alerts background evaluator ────────────────────────────────────────
+# Runs every hour. For each active alert, evaluates the metric and
+# fires an email if the threshold is crossed. Throttled by
+# `last_fired_at` so a sustained dip doesn't spam an email every hour.
+_alerts_evaluator_started = False
+
+
+def _evaluate_one_alert(alert: dict) -> Optional[tuple[str, float]]:
+    """Returns (message, metric_value) if this alert should fire now,
+    None otherwise. Pure DB-read function — no side effects."""
+    project_id = alert["project_id"]
+    alert_type = alert["type"]
+    threshold  = float(alert["threshold"] or 0)
+    if alert_type == "revenue_drop":
+        # Compare last 24h to prior 24h (in project TZ). If drop ≥
+        # threshold percent, fire.
+        tz = get_project_timezone(project_id)
+        now = datetime.now(timezone.utc)
+        cur_start = now - timedelta(days=1)
+        prev_start = now - timedelta(days=2)
+        rows = db_all(
+            "SELECT"
+            "  COALESCE(SUM(CASE WHEN created_at >= %s THEN total_amount ELSE 0 END), 0) AS cur_rev,"
+            "  COALESCE(SUM(CASE WHEN created_at >= %s AND created_at < %s"
+            "                    THEN total_amount ELSE 0 END), 0) AS prev_rev"
+            "  FROM order_history"
+            " WHERE project_id=%s AND created_at >= %s"
+            "   AND status NOT IN ('cancelled', 'refunded')",
+            (cur_start, prev_start, cur_start, project_id, prev_start)
+        )
+        if not rows: return None
+        cur_rev = float(rows[0]["cur_rev"] or 0)
+        prev_rev = float(rows[0]["prev_rev"] or 0)
+        if prev_rev <= 0: return None  # can't compute drop %
+        drop_pct = (prev_rev - cur_rev) / prev_rev * 100
+        if drop_pct >= threshold:
+            return (f"Revenue dropped {drop_pct:.1f}% in the last 24h "
+                    f"(${cur_rev:.2f} vs ${prev_rev:.2f} the day before).",
+                    drop_pct)
+        return None
+    if alert_type == "low_stock":
+        row = db_one(
+            "SELECT COUNT(*) AS n FROM product_configurations_l2 c"
+            "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+            "  JOIN products p ON v.product_id = p.id"
+            " WHERE p.project_id=%s AND p.is_archived=FALSE"
+            "   AND c.stock_quantity <= %s AND c.stock_quantity > 0",
+            (project_id, int(threshold))
+        )
+        n = int((row or {}).get("n") or 0)
+        if n > 0:
+            return (f"{n} SKU(s) are below the low-stock threshold "
+                    f"({int(threshold)} units).", n)
+        return None
+    if alert_type == "daily_summary":
+        # Sends every 24h regardless of metrics — `last_fired_at`
+        # throttle handles the cadence. Threshold ignored.
+        tz = get_project_timezone(project_id)
+        start = datetime.now(timezone.utc) - timedelta(days=1)
+        row = db_one(
+            "SELECT COALESCE(SUM(total_amount), 0) AS rev,"
+            "       COUNT(*) AS orders"
+            "  FROM order_history"
+            " WHERE project_id=%s AND created_at >= %s"
+            "   AND status NOT IN ('cancelled', 'refunded')",
+            (project_id, start)
+        )
+        rev = float((row or {}).get("rev") or 0)
+        orders = int((row or {}).get("orders") or 0)
+        return (f"Daily summary: ${rev:.2f} revenue across {orders} order(s) "
+                f"in the last 24 hours.", rev)
+    if alert_type == "new_order":
+        # Fires only if a new order landed since the last fire.
+        last_fired = alert.get("last_fired_at") or (datetime.now(timezone.utc) - timedelta(days=1))
+        row = db_one(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(total_amount), 0) AS rev"
+            "  FROM order_history"
+            " WHERE project_id=%s AND created_at > %s"
+            "   AND status NOT IN ('cancelled', 'refunded')",
+            (project_id, last_fired)
+        )
+        n = int((row or {}).get("n") or 0)
+        rev = float((row or {}).get("rev") or 0)
+        if n > 0:
+            return (f"{n} new paid order(s) — ${rev:.2f} total.", n)
+        return None
+    return None
+
+
+def _evaluator_loop_body():
+    """One pass over all active alerts. Called by the background
+    thread once an hour. Errors per-alert are isolated so one bad
+    rule doesn't take down the rest."""
+    try:
+        alerts = db_all(
+            "SELECT id, project_id, type, threshold, email, last_fired_at"
+            "  FROM crm_alerts WHERE is_active = TRUE"
+        )
+    except Exception as e:
+        print(f"[alerts evaluator] list failed: {e}")
+        return
+    for a in alerts:
+        try:
+            # Throttle by type — daily_summary fires once per 23h, others
+            # at most once per 4h so a sustained low-stock state doesn't
+            # spam.
+            throttle = timedelta(hours=23 if a["type"] == "daily_summary" else 4)
+            last = a["last_fired_at"]
+            if last is not None:
+                last_aware = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - last_aware < throttle:
+                    continue
+            result = _evaluate_one_alert(a)
+            if not result:
+                continue
+            message, metric_val = result
+            # Send email + log fire.
+            project = db_one(
+                "SELECT name FROM crm_projects WHERE id=%s", (a["project_id"],)
+            ) or {}
+            subject = f"[{project.get('name','CRM')}] {ALERT_TYPES.get(a['type'], a['type'])}"
+            try:
+                send_email(a["email"], subject,
+                           f"<p>{sanitize(message)}</p>"
+                           f"<p style='color:#666;font-size:12px'>"
+                           f"You can mute or edit this alert from your CRM "
+                           f"Settings page.</p>")
+            except Exception as e:
+                print(f"[alerts evaluator] email failed for alert {a['id']}: {e}")
+                continue
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    "INSERT INTO crm_alert_fires (alert_id, project_id, message, metric_val)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (a["id"], a["project_id"], message[:1000], metric_val)
+                )
+                cur.execute(
+                    "UPDATE crm_alerts SET last_fired_at = NOW() WHERE id=%s",
+                    (a["id"],)
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[alerts evaluator] alert {a.get('id')} failed: {e}")
+
+
+def _start_alerts_evaluator():
+    global _alerts_evaluator_started
+    if _alerts_evaluator_started:
+        return
+    _alerts_evaluator_started = True
+    import threading
+
+    def loop():
+        time.sleep(120)  # 2 min grace at boot
+        global _health_alerts_last_loop
+        while True:
+            try:
+                _evaluator_loop_body()
+                _health_alerts_last_loop = _utcnow()
+            except Exception as e:
+                print(f"[alerts evaluator] outer loop: {e}")
+            time.sleep(60 * 60)  # once per hour
+
+    t = threading.Thread(target=loop, name="alerts-evaluator", daemon=True)
+    t.start()
+
+
+# ── Background materialized-view refresher ────────────────────────────────
+# Keeps `mv_cohort_retention` (and any future MVs) reasonably fresh
+# without making request handlers pay the refresh cost. 30 min cadence
+# is fine for cohort retention which is fundamentally month-scale data —
+# a 30-minute-old view doesn't mislead anyone.
+_mv_refresher_started = False
+
+
+def _start_mv_refresher():
+    global _mv_refresher_started
+    if _mv_refresher_started:
+        return
+    _mv_refresher_started = True
+    import threading
+
+    def loop():
+        # Wait 60 s after boot so we don't pile work onto the just-started
+        # process, then refresh every 30 min indefinitely.
+        time.sleep(60)
+        global _health_mv_last_refresh
+        while True:
+            try:
+                with db_cursor() as (conn, cur):
+                    # CONCURRENTLY = no exclusive lock, readers stay
+                    # uninterrupted. Requires the unique index we added
+                    # alongside the MV.
+                    cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_cohort_retention")
+                    conn.commit()
+                _health_mv_last_refresh = _utcnow()
+            except Exception as e:
+                print(f"[mv refresher] cohort refresh failed: {e}")
+            time.sleep(30 * 60)
+
+    t = threading.Thread(target=loop, name="mv-refresher", daemon=True)
+    t.start()
 
 
 @app.websocket("/api/notifications/ws")

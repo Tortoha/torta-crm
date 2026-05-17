@@ -9,26 +9,38 @@
 // instead of ~150KB, and they hit pixel parity with the rest of the UI
 // because the colours come from CSS variables.
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import {
   ChartLine, Users, MapPin, Star, ArrowUUpLeft,
   CalendarBlank, Package, Warning, Tag, GearSix, Funnel,
   DeviceMobile, Globe, MagnifyingGlass, Target,
   Eye, ShoppingCart, PlusCircle, CheckCircle,
+  CaretRight, CaretDown, Percent, Folder, Cube,
+  X,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
-import { Combobox } from './Booking/BookingCreateModal.jsx';
+import { Combobox, DatePicker } from './Booking/BookingCreateModal.jsx';
+import { PoListRow } from '../../Utils/PoListRow.jsx';
+import { useProjectEvents } from '../../Utils/useProjectEvents.js';
 // Organization.css carries the .org-sort-toggle styles we reuse for the
 // Day/Week/Month granularity picker inside Revenue-over-time.
 // Products.css is required for the Combobox dropdown (.cat-filter-dropdown,
 // .cat-filter-item, .cat-filter-indicator) — without it the period menu
 // renders unstyled and invisibly (no position:fixed / z-index).
 import '../../Style/Organization.css';
-import '../../Style/Products.css';
+import '../../Style/Products.css';      // .po-tree-row, .po-set-table — used by MarginSection tree
+import '../../Style/Authentication.css'; // .auth-modal-* for CustomRangeModal + DrillDownModal
 import '../../Style/Analytics.css';
 
 // ── Period codes — match _date_range_for_period in CRM backend ───────────
+// The 'custom' option is a SENTINEL — selecting it from the dropdown
+// opens the date-range modal (CustomRangeModal below) rather than
+// committing the literal string 'custom' as the period. Once the
+// user picks from/to dates the modal swaps period to the encoded
+// "YYYY-MM-DD_YYYY-MM-DD" form, which the backend's
+// _date_range_for_period regex parses out.
 const PERIOD_OPTIONS = [
   { value: '1d',       label: '1 day'           },
   { value: '3d',       label: '3 days'          },
@@ -40,11 +52,24 @@ const PERIOD_OPTIONS = [
   { value: 'halfyear', label: 'Half-year'       },
   { value: '1y',       label: '1 year'          },
   { value: '2y',       label: '2 years'         },
+  { value: 'custom',   label: 'Custom range…' },
 ];
 // Same codes as a plain array so we can step forward/back when the user
 // zooms the chart with Ctrl+wheel — +1 = wider window (zoom out), −1 =
-// narrower window (zoom in). Kept in sync with PERIOD_OPTIONS above.
-const PERIOD_ORDER = PERIOD_OPTIONS.map(o => o.value);
+// narrower window (zoom in). Excludes 'custom' (it's not a position on
+// the zoom scale, it's a launcher for the date-range modal).
+const PERIOD_ORDER = PERIOD_OPTIONS
+  .filter(o => o.value !== 'custom')
+  .map(o => o.value);
+
+// Detect an encoded custom-range period like "2026-04-01_2026-04-15".
+const CUSTOM_PERIOD_RE = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
+const isCustomPeriod = (period) => CUSTOM_PERIOD_RE.test(period || '');
+const parseCustomPeriod = (period) => {
+  const m = (period || '').match(CUSTOM_PERIOD_RE);
+  return m ? { from: m[1], to: m[2] } : null;
+};
+const formatCustomPeriod = (fromISO, toISO) => `${fromISO}_${toISO}`;
 
 // ── Reusable section shell ───────────────────────────────────────────────
 // Section visual: flat heading (like Products page groups — "Physical [5]")
@@ -53,6 +78,28 @@ const PERIOD_ORDER = PERIOD_OPTIONS.map(o => o.value);
 // tables) are white tiles with shadow. The `Icon` prop is accepted but
 // intentionally ignored — design called for plain text headings.
 function SectionShell({ title, periodValue, onPeriodChange, hidePeriod, headerControls, children }) {
+  const [customOpen, setCustomOpen] = useState(false);
+  const handlePeriodChange = (v) => {
+    if (v === 'custom') {
+      setCustomOpen(true);
+      return; // don't commit 'custom' to state — wait for modal submit
+    }
+    onPeriodChange?.(v);
+  };
+  // Decorate the dropdown's displayed label when a custom encoded
+  // period is active — Combobox would otherwise show the raw
+  // `2026-04-01_2026-04-15` string. We piggy-back on the existing
+  // PERIOD_OPTIONS list by injecting a synthetic option that mirrors
+  // the current custom range as a readable label.
+  const dropdownOptions = useMemo(() => {
+    if (!isCustomPeriod(periodValue)) return PERIOD_OPTIONS;
+    const { from, to } = parseCustomPeriod(periodValue);
+    return [
+      ...PERIOD_OPTIONS.filter(o => o.value !== 'custom'),
+      { value: periodValue, label: `${from} → ${to}` },
+      { value: 'custom',    label: 'Custom range…' },
+    ];
+  }, [periodValue]);
   return (
     <section className="an-section">
       <header className="an-section-head">
@@ -61,13 +108,92 @@ function SectionShell({ title, periodValue, onPeriodChange, hidePeriod, headerCo
           {headerControls /* extra filter chips (e.g. Day/Week/Month for charts) */}
           {!hidePeriod && (
             <div className="an-section-period">
-              <Combobox value={periodValue} options={PERIOD_OPTIONS} onChange={onPeriodChange} />
+              <Combobox value={periodValue} options={dropdownOptions} onChange={handlePeriodChange} />
             </div>
           )}
         </div>
       </header>
       <div className="an-section-body">{children}</div>
+      {customOpen && (
+        <CustomRangeModal
+          initialFrom={isCustomPeriod(periodValue) ? parseCustomPeriod(periodValue).from : ''}
+          initialTo={isCustomPeriod(periodValue) ? parseCustomPeriod(periodValue).to   : ''}
+          onClose={() => setCustomOpen(false)}
+          onApply={(fromISO, toISO) => {
+            onPeriodChange?.(formatCustomPeriod(fromISO, toISO));
+            setCustomOpen(false);
+          }} />
+      )}
     </section>
+  );
+}
+
+// ── Custom date-range modal ───────────────────────────────────────────────
+// Two native <input type="date"> fields plus Apply / Cancel. The native
+// date picker is good enough for desktop AND mobile — both render an OS-
+// level calendar UI when tapped/clicked, no third-party date library
+// needed. Submission encodes the pair as "YYYY-MM-DD_YYYY-MM-DD" which
+// the backend's `_date_range_for_period` regex unwraps server-side, so
+// every analytics endpoint already supports custom ranges with zero
+// per-endpoint changes.
+function CustomRangeModal({ initialFrom, initialTo, onClose, onApply }) {
+  const todayISO = new Date().toISOString().slice(0, 10);
+  // Default to "last 7 days ending today" when no prior custom range.
+  const defaultFromISO = new Date(Date.now() - 7 * 86400 * 1000)
+    .toISOString().slice(0, 10);
+  const [fromVal, setFromVal] = useState(initialFrom || defaultFromISO);
+  const [toVal,   setToVal]   = useState(initialTo   || todayISO);
+  const [err, setErr] = useState('');
+  const submit = (e) => {
+    e?.preventDefault?.();
+    if (!fromVal || !toVal) {
+      setErr('Pick both dates');
+      return;
+    }
+    if (fromVal > toVal) {
+      setErr('"From" must be before "To"');
+      return;
+    }
+    onApply(fromVal, toVal);
+  };
+  return createPortal(
+    <div className="auth-modal-overlay"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="auth-modal an-range-modal" onClick={e => e.stopPropagation()}>
+        <div className="auth-modal-head">
+          <div className="auth-modal-title">Custom date range</div>
+          <button className="auth-modal-close" onClick={onClose} type="button">
+            <X className="auth-modal-close-icon" />
+          </button>
+        </div>
+        <form className="auth-modal-body an-range-form" onSubmit={submit}>
+          <div className="an-range-fields">
+            <label className="an-range-field">
+              <span>From</span>
+              {/* Reuse the calendar pop-up from BookingCreateModal — same
+                  month grid + nav + DynamicBlock indicator as the booking
+                  date picker, so the UI feels consistent across the app
+                  (and replaces the native browser date input which the
+                  user found ugly + inconsistent across browsers). */}
+              <DatePicker value={fromVal}
+                onChange={v => { setFromVal(v); setErr(''); }} />
+            </label>
+            <label className="an-range-field">
+              <span>To</span>
+              <DatePicker value={toVal}
+                onChange={v => { setToVal(v); setErr(''); }} />
+            </label>
+          </div>
+          {err && <p className="auth-msg auth-msg--err">{err}</p>}
+          <div className="auth-actions">
+            <button className="crm-submit-btn" type="submit">Apply</button>
+            <button className="crm-submit-btn auth-btn-secondary"
+              type="button" onClick={onClose}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -125,8 +251,82 @@ function LazySection({ children, minHeight = 220, rootMargin = '300px' }) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-const fmtMoney = (n) => `$${(+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Project's default currency lives in a mutable ref (set once at page
+// mount from the Outlet context). Every fmtMoney call reads the current
+// code from there — that way we don't have to thread `currency` through
+// every component prop. ISO 4217 code drives Intl.NumberFormat which
+// picks the correct symbol / placement / decimals (KZT no decimals,
+// USD has $, EUR has €, etc.).
+let __ANALYTICS_CURRENCY = 'USD';
+const setAnalyticsCurrency = (code) => { __ANALYTICS_CURRENCY = (code || 'USD').toUpperCase(); };
+const fmtMoney = (n) => {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: __ANALYTICS_CURRENCY,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(+n || 0);
+  } catch {
+    // Unknown currency code — fall back to bare number + 3-letter suffix.
+    return `${(+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${__ANALYTICS_CURRENCY}`;
+  }
+};
 const fmtInt   = (n) => (+n || 0).toLocaleString('en-US');
+
+// ── CSV export helper ────────────────────────────────────────────────────
+// Generates a CSV file client-side from in-memory section data and
+// triggers a browser download. Each section passes a `rows` array and
+// `columns` config — column object is `{ key, label, format? }`. We
+// don't go through the backend for this because (a) the data is
+// already on the client after the section rendered, (b) avoids a
+// second auth-check round-trip, (c) keeps export instant.
+//
+// CSV escaping follows RFC 4180: wrap in double-quotes whenever the
+// value contains a comma, double-quote, or newline; double up
+// embedded double-quotes. BOM prefix so Excel auto-detects UTF-8
+// (without BOM, Cyrillic and emoji turn into mojibake on Windows).
+function downloadCSV(filename, rows, columns) {
+  const esc = (val) => {
+    if (val == null) return '';
+    const s = String(val);
+    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  };
+  const header = columns.map(c => esc(c.label || c.key)).join(',');
+  const body = rows.map(r =>
+    columns.map(c => {
+      const raw = r[c.key];
+      return esc(c.format ? c.format(raw, r) : raw);
+    }).join(',')
+  ).join('\r\n');
+  const csv = '﻿' + header + '\r\n' + body;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Give the browser a tick to start the download before revoking.
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+// Convenience: a small "Download CSV" pill button that fits into
+// SectionShell's `headerControls` slot or the section body. Disabled
+// while there's no data yet.
+function CsvButton({ onClick, disabled, label = 'CSV' }) {
+  return (
+    <button type="button"
+      className="an-csv-btn"
+      onClick={onClick}
+      disabled={disabled}
+      title="Download as CSV">
+      ↓ {label}
+    </button>
+  );
+}
 const fmtPct   = (n, signed) => {
   if (n == null) return '—';
   const v = +n;
@@ -135,6 +335,20 @@ const fmtPct   = (n, signed) => {
 };
 const fmtDate  = (s) => s ? new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
 const fmtDays  = (n) => n == null ? '—' : `${(+n).toFixed(1)} d`;
+// Adaptive duration formatter — picks the unit (s / min / h / d) based on
+// magnitude. Input is in SECONDS. Used by Operations SLA so a 30-second
+// cart-to-paid doesn't render as "0.0 h" / "0.0 d" (looks like the
+// metric is broken when it's actually just very fast).
+const fmtDuration = (seconds) => {
+  if (seconds == null) return '—';
+  const s = +seconds;
+  if (s < 60)    return `${Math.max(1, Math.round(s))} s`;
+  if (s < 3600)  return `${(s / 60).toFixed(1)} min`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)} h`;
+  return `${(s / 86400).toFixed(1)} d`;
+};
+const fmtDaysAdaptive  = (days)  => days  == null ? '—' : fmtDuration(days  * 86400);
+const fmtHoursAdaptive = (hours) => hours == null ? '—' : fmtDuration(hours * 3600);
 
 // Tone helper — green for "good" (revenue ↑, conversion ↑) vs "bad" (returns ↑).
 const deltaTone = (n, inverse = false) => {
@@ -143,87 +357,209 @@ const deltaTone = (n, inverse = false) => {
   return positive ? ' an-delta--up' : ' an-delta--down';
 };
 
-// ── Inline SVG line chart ────────────────────────────────────────────────
-// Two-series smooth-curve chart with:
-//  • Catmull-Rom → cubic Bezier interpolation for soft curves
-//  • Y-axis labels on the RIGHT side (matches finance-tracker convention)
-//  • X-axis date labels at the bottom (auto-thinned for long series)
-//  • Hover crosshair + tooltip bubble with date + value
-//  • Ctrl/Cmd + wheel zoom → calls `onZoom(±1)` to step period up/down
-//  • Drag to pan → calls `onPan(±1)` after threshold
-// The chart container should set its own height via CSS; we use a fixed
-// viewBox (1200×360) and `preserveAspectRatio: none` so width fills the
-// parent and the curve stays visually proportional.
+// ── Scrollable line chart ────────────────────────────────────────────────
+// Stock-chart-style horizontal panning: the FULL data history lives in a
+// wide SVG group; an overflow-hidden wrapper shows one viewport-width at
+// a time; drag translates the group (direct DOM mutation, no React
+// re-render). No refetch on pan — backend ships the entire history up
+// front, this widget just slides a window over it.
+//
+// Layout:
+//   • Y-axis labels (right side) — OUTSIDE the scrolling group, stay fixed
+//   • Data path + X-axis labels  — INSIDE the scrolling group, slide together
+//   • Hover crosshair + dot      — inside the scrolling group, follow data
+//   • Hover tooltip bubble       — outside the group, positioned in screen px
+//
+// Zoom level is driven by `viewportBuckets` — how many data buckets fit in
+// the visible viewport. Wider buckets = "zoomed in" view; narrower buckets
+// = "zoomed out". The period selector + granularity in the parent compute
+// this. Ctrl/Cmd + wheel still fires `onZoom(±1)` for keyboard-driven
+// zoom in/out without going to the dropdown.
 function LineChart({
-  current = [], previous = [],
-  height = 320, valueKey = 'revenue', dateKey = 'bucket',
-  formatValue = (v) => `$${Math.round(v).toLocaleString('en-US')}`,
-  onZoom, onPan,
+  data = [],            // history slice, [{bucket, revenue, ...}, ...]
+  compareData = [],     // optional second series rendered as a dashed line
+  viewportBuckets = 30, // how many buckets fit in the visible viewport (zoom)
+  height = 320,
+  valueKey = 'revenue',
+  dateKey = 'bucket',
+  // Default formatter uses fmtMoney (module-level, currency-aware) but
+  // rounds to whole units for tooltip readability — `$1,234` reads
+  // faster on a chart bubble than `$1,234.56`.
+  formatValue = (v) => fmtMoney(Math.round(+v || 0)).replace(/[.,]00\b/, ''),
+  onZoom,
+  onLoadMore,           // called when scroll approaches the left edge
+  loadingMore = false,  // true while a prepend fetch is in flight
+  onBucketClick,        // (bucket, data) — fired on click (not drag)
 }) {
-  const w = 1200, h = height;
-  const pad = { l: 24, r: 72, t: 28, b: 38 };
-  const innerW = w - pad.l - pad.r;
-  const innerH = h - pad.t - pad.b;
+  const wrapperRef     = useRef(null);
+  const scrollGroupRef = useRef(null);
+  const scrollXRef     = useRef(0);  // mutable scroll position (px translation)
+  const dragRef        = useRef({ active: false, startX: 0, startScrollX: 0 });
+  const prevDataLenRef = useRef(0);  // for prepend-detection
+  const prevViewportRef = useRef(viewportBuckets); // for zoom-change detection
+  // Once the user manually drags, we stop auto-anchoring to rightmost
+  // on resize so we don't yank them out of the history view they were
+  // looking at. Reset on (initial load, zoom change, granularity change).
+  const userScrolledRef = useRef(false);
 
-  const [hover, setHover] = useState(null);   // index of nearest current point
-  const [dragX, setDragX] = useState(null);   // pan-drag start clientX
+  const [wrapperW, setWrapperW] = useState(1000);
+  const [hover,    setHover]    = useState(null);
+  const [version,  setVersion]  = useState(0); // bump to force re-render after commit
 
-  const allVals = [...current, ...previous].map(d => +d[valueKey] || 0);
-  const maxRaw = Math.max(1, ...allVals);
-  const minRaw = Math.min(0, ...allVals);
-  // Pad y-range by 10% on top so the highest point doesn't kiss the ceiling.
+  // Responsive width — recompute layout when the wrapper resizes.
+  useEffect(() => {
+    if (!wrapperRef.current) return;
+    const sync = () => setWrapperW(wrapperRef.current?.clientWidth || 1000);
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(wrapperRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const h = height;
+  const padL = 24, padR = 72, padT = 28, padB = 38;
+  const innerH = h - padT - padB;
+  const innerW = Math.max(50, wrapperW - padL - padR);
+  // 1 bucket = innerW / viewportBuckets pixels (always, regardless of
+  // data length — keeps the per-bucket scale consistent at a chosen zoom).
+  const bucketPx   = innerW / Math.max(1, viewportBuckets);
+  const dataWidthPx = data.length * bucketPx;
+  // Scroll position where the LAST data point sits at the right edge:
+  // scrollX + padL + (data.length - 0.5) * bucketPx = wrapperW - padR
+  const scrollAtRightmost = innerW - (data.length - 0.5) * bucketPx;
+  // Scroll position where the FIRST data point sits at the left edge:
+  // scrollX + padL + 0.5 * bucketPx = padL  →  scrollX = -0.5 * bucketPx
+  const scrollAtLeftmost  = -0.5 * bucketPx;
+  const canScroll = dataWidthPx > innerW;
+  // Drag clamp range (min = most-negative, max = least-negative).
+  const minScroll = canScroll ? scrollAtRightmost : scrollAtRightmost;
+  const maxScroll = canScroll ? scrollAtLeftmost  : scrollAtRightmost;
+
+  // Layout-effect helper — write scroll position to DOM WITHOUT firing
+  // the lazy-load trigger. Used for programmatic re-anchoring (initial
+  // load, resize re-anchor, prepend compensation). The user-driven
+  // writeScroll wrapper (defined below for drag handlers) adds the
+  // load-more side-effect on top.
+  const writeScrollPosition = (x) => {
+    scrollXRef.current = x;
+    if (scrollGroupRef.current) {
+      scrollGroupRef.current.setAttribute('transform', `translate(${x}, 0)`);
+    }
+  };
+
+  // Layout effect — runs synchronously BEFORE paint so the user never
+  // sees a frame with old scroll position + new data. Five cases:
+  //   (1) Initial load: snap to rightmost (latest data on screen).
+  //   (2) Prepend (lazy load): keep visual anchor by shifting scrollX
+  //       by -N*bucketPx where N is the prepended bucket count.
+  //   (3) Zoom change: viewportBuckets shifted — user picked a new
+  //       scale, snap back to rightmost (their reference frame moved).
+  //   (4) Resize before user has scrolled: re-anchor to rightmost so
+  //       the initial dimension (default wrapperW=1000) doesn't leave
+  //       the chart sitting in the middle of history after the
+  //       ResizeObserver lands the real width.
+  //   (5) Resize after user has scrolled: just clamp to the new range.
+  useLayoutEffect(() => {
+    const prev           = prevDataLenRef.current;
+    const cur            = data.length;
+    const viewportChanged = prevViewportRef.current !== viewportBuckets;
+    prevViewportRef.current = viewportBuckets;
+
+    if (prev === 0 && cur > 0) {
+      // (1) initial load
+      userScrolledRef.current = false;
+      writeScrollPosition(scrollAtRightmost);
+      setHover(null);
+    } else if (prev > 0 && cur > prev) {
+      // (2) prepend
+      const added = cur - prev;
+      writeScrollPosition(scrollXRef.current - added * bucketPx);
+      setHover(h => h != null ? h + added : null);
+    } else if (cur > 0 && viewportChanged) {
+      // (3) zoom change — explicit reset
+      userScrolledRef.current = false;
+      writeScrollPosition(scrollAtRightmost);
+    } else if (cur > 0 && !userScrolledRef.current) {
+      // (4) resize / layout shift, user hasn't scrolled — re-anchor
+      writeScrollPosition(scrollAtRightmost);
+    } else if (cur > 0) {
+      // (5) resize after user-scroll — clamp to valid range
+      const clamped = Math.max(scrollAtRightmost,
+                       Math.min(scrollAtLeftmost, scrollXRef.current));
+      if (clamped !== scrollXRef.current) writeScrollPosition(clamped);
+    }
+    prevDataLenRef.current = cur;
+  }, [data.length, scrollAtRightmost, scrollAtLeftmost, bucketPx, viewportBuckets]);
+
+  // Y-axis: range across BOTH series so the scale fits the larger
+  // of current vs comparison. Stable as the user pans.
+  const allVals = [
+    ...data.map(d => +d[valueKey] || 0),
+    ...compareData.map(d => +d[valueKey] || 0),
+  ];
+  const maxRaw  = Math.max(1, ...allVals);
+  const minRaw  = Math.min(0, ...allVals);
   const max = maxRaw + (maxRaw - minRaw) * 0.1;
   const min = minRaw;
 
-  const xScale = (i, len) => pad.l + (i / Math.max(1, len - 1)) * innerW;
+  // X position of bucket i (in chart coordinate space — the scrolling
+  // group will translate this whole space by scrollX on the screen).
+  const xScale = (i) => padL + (i + 0.5) * bucketPx;
   const yScale = (v) => {
     const range = max - min || 1;
-    return pad.t + innerH * (1 - (v - min) / range);
+    return padT + innerH * (1 - (v - min) / range);
   };
 
-  // Catmull-Rom → Bezier conversion with control-point clamping. Each
-  // segment uses neighbours for tangent computation; ends mirror their
-  // nearest interior point. Control points get clamped to the chart's
-  // visible y range so a zero→spike→zero pattern (e.g. one sale day
-  // surrounded by empty days) doesn't make the curve dip below the
-  // baseline or shoot above the ceiling. Without clamping, Catmull-Rom
-  // produces visible undershoot on either side of any tall spike.
-  const yTop = pad.t;
-  const yBot = pad.t + innerH;
+  // Catmull-Rom path with sampled-and-clamped polyline output (no
+  // sub-baseline dips, smooth shoulders, fat enough to look natural
+  // around isolated peaks).
+  const yTop = padT, yBot = padT + innerH;
+  const SAMPLES = 16;
   const clampY = (y) => Math.max(yTop, Math.min(yBot, y));
-  const smoothPath = (rows) => {
-    if (rows.length < 2) {
-      if (rows.length === 1) {
-        const x = xScale(0, 1), y = yScale(+rows[0][valueKey] || 0);
-        return `M${x},${y}`;
+  // Build a Catmull-Rom-sampled SVG path string for an arbitrary data
+  // series. Extracted so both the primary chart line and the optional
+  // comparison overlay can share the math.
+  const buildPath = useCallback((series) => {
+    if (series.length < 2) {
+      if (series.length === 1) {
+        return `M${xScale(0).toFixed(1)},${clampY(yScale(+series[0][valueKey] || 0)).toFixed(1)}`;
       }
       return '';
     }
-    const pts = rows.map((d, i) => [xScale(i, rows.length), yScale(+d[valueKey] || 0)]);
-    let path = `M${pts[0][0]},${pts[0][1]}`;
+    const pts = series.map((d, i) => [xScale(i), yScale(+d[valueKey] || 0)]);
+    let p = `M${pts[0][0].toFixed(1)},${clampY(pts[0][1]).toFixed(1)}`;
     for (let i = 0; i < pts.length - 1; i++) {
       const p0 = pts[i - 1] || pts[i];
       const p1 = pts[i];
       const p2 = pts[i + 1];
       const p3 = pts[i + 2] || p2;
       const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
-      const cp1y = clampY(p1[1] + (p2[1] - p0[1]) / 6);
+      const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
       const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
-      const cp2y = clampY(p2[1] - (p3[1] - p1[1]) / 6);
-      path += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0]},${p2[1]}`;
+      const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+      for (let s = 1; s <= SAMPLES; s++) {
+        const t = s / SAMPLES;
+        const u = 1 - t;
+        const u3 = u*u*u, u2t = 3*u*u*t, ut2 = 3*u*t*t, t3 = t*t*t;
+        const x = u3*p1[0] + u2t*cp1x + ut2*cp2x + t3*p2[0];
+        const y = u3*p1[1] + u2t*cp1y + ut2*cp2y + t3*p2[1];
+        p += ` L${x.toFixed(1)},${clampY(y).toFixed(1)}`;
+      }
     }
-    return path;
-  };
+    return p;
+  }, [bucketPx, max, min, padL, padT, innerH, valueKey]);
+  const pathD        = useMemo(() => buildPath(data),        [buildPath, data]);
+  const comparePathD = useMemo(() => buildPath(compareData), [buildPath, compareData]);
 
-  // Pretty Y-axis tick values — produce 5 evenly spaced ticks.
+  // Y-axis ticks — 5 evenly spaced.
   const tickCount = 5;
   const ticks = Array.from({ length: tickCount }, (_, i) => {
     const v = max - ((max - min) * i) / (tickCount - 1);
-    return { v, y: pad.t + (innerH * i) / (tickCount - 1) };
+    return { v, y: padT + (innerH * i) / (tickCount - 1) };
   });
 
-  // X-axis tick density — never more than ~8 labels so they don't overlap.
-  const labelStep = Math.max(1, Math.ceil(current.length / 8));
+  // X-axis label density — ~one label per 100 px.
+  const labelStep = Math.max(1, Math.round(100 / Math.max(1, bucketPx)));
   const fmtX = (val) => {
     if (!val) return '';
     try {
@@ -243,160 +579,300 @@ function LineChart({
     return v.toFixed(v > 10 ? 0 : 1);
   };
 
-  // ── Event handlers ──
-  // Pan is a "swipe gesture": user presses, drags any direction, then
-  // releases. We only fire onPan ONCE on release based on total deltaX
-  // sign and magnitude. Previously we fired on every 60px during drag
-  // which caused the chart to refetch + re-render mid-drag → cursor
-  // jittered, hover tooltip flickered, period switched multiple times
-  // before the user could see what happened. One step per gesture is
-  // far calmer and matches how trading-chart UIs behave (e.g. TradingView).
-  const PAN_THRESHOLD_PX = 80;
-  const handleMouseMove = (e) => {
-    if (!current.length) return;
-    // Suppress hover updates during an active drag — tooltip jumping
-    // around at the cursor while the user is panning is visual noise.
-    if (dragX != null) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const xInViewBox = ((e.clientX - rect.left) / rect.width) * w;
-    const rel = (xInViewBox - pad.l) / innerW;
-    const idx = Math.round(rel * (current.length - 1));
-    if (idx >= 0 && idx < current.length) setHover(idx);
-    else setHover(null);
-  };
-  const handleMouseLeave = () => { setHover(null); setDragX(null); };
-  const handleMouseDown  = (e) => { if (onPan) { setDragX(e.clientX); setHover(null); } };
-  const handleMouseUp    = (e) => {
-    if (dragX != null && onPan) {
-      const delta = e.clientX - dragX;
-      if (Math.abs(delta) >= PAN_THRESHOLD_PX) {
-        // Drag right (positive delta) → show earlier dates → onPan(-1)
-        // Drag left  (negative delta) → show later  dates → onPan(+1)
-        onPan(delta > 0 ? -1 : 1);
+  // Drag handlers — write directly to the DOM, no React re-render until
+  // gesture ends. setVersion bump at release forces ONE final re-render
+  // so React JSX (e.g. transform="translate(...)") stays in sync with
+  // the imperative scroll position (otherwise the next React render
+  // would clobber our DOM mutation with the stale JSX value).
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  // Drag-driven scroll write — same as writeScrollPosition plus the
+  // lazy-load trigger. The split lets the layout-effect re-anchor
+  // programmatically without spamming onLoadMore as it touches the
+  // left edge mathematically.
+  const writeScroll = (x) => {
+    writeScrollPosition(x);
+    if (onLoadMore && !loadingMore && canScroll) {
+      const range            = scrollAtLeftmost - scrollAtRightmost;
+      const distFromLeftmost = scrollAtLeftmost - x;
+      if (range > 0 && distFromLeftmost / range < 0.25) {
+        onLoadMore();
       }
     }
-    setDragX(null);
   };
-  const handleWheel = (e) => {
-    // Ctrl+wheel (or Cmd on macOS) zooms — wheel up = zoom in (narrower
-    // period), wheel down = zoom out (wider period). No modifier → leave
-    // wheel for normal page scrolling.
+  // Pointer events handle mouse + touch + pen with one code path. `e.pointerType`
+  // tells us which kind ("mouse" / "touch" / "pen") so hover can be mouse-only
+  // (touch has no concept of hover — finger leaves screen → no fired moves).
+  // setPointerCapture keeps the move events flowing to the wrapper even when
+  // the user's finger drags outside its bounds.
+  const handlePointerDown = (e) => {
+    // Ignore non-primary mouse buttons (right-click etc.) — only main
+    // button or first touch contact drives the pan.
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    dragRef.current = {
+      active: true,
+      startX: e.clientX,
+      startScrollX: scrollXRef.current,
+      // Track travel so handlePointerUp can distinguish click vs drag.
+      // Anything under ~5 px = click (open drill-down), more = pan.
+      moved: 0,
+    };
+    setHover(null);
+    if (wrapperRef.current) {
+      wrapperRef.current.style.cursor = 'grabbing';
+      try { wrapperRef.current.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
+    }
+    userScrolledRef.current = true;
+  };
+  const handlePointerMove = (e) => {
+    if (dragRef.current.active) {
+      const dx = e.clientX - dragRef.current.startX;
+      // Track total motion so we can tell a click from a drag on
+      // pointer-up. Use raw dx — even slight horizontal motion past
+      // the threshold means the user is panning.
+      if (Math.abs(dx) > Math.abs(dragRef.current.moved)) {
+        dragRef.current.moved = dx;
+      }
+      writeScroll(clamp(dragRef.current.startScrollX + dx, minScroll, maxScroll));
+      return;
+    }
+    // Hover crosshair is for pointing devices (mouse / pen) only — touch
+    // has no "hover" semantics, and a sticky tooltip after every tap
+    // reads like a bug.
+    if (e.pointerType === 'touch') return;
+    if (!data.length || !wrapperRef.current) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    const xScreen = e.clientX - rect.left;
+    const i = Math.floor((xScreen - scrollXRef.current - padL) / bucketPx);
+    if (i >= 0 && i < data.length) setHover(i);
+    else setHover(null);
+  };
+  // Click threshold — drag of <5 px on release counts as a click rather
+  // than a pan. Big enough to absorb hand jitter on touchscreens, small
+  // enough that a deliberate swipe still registers as pan.
+  const CLICK_THRESHOLD_PX = 5;
+  const endDrag = (e) => {
+    const wasActive = dragRef.current.active;
+    const movedPx   = Math.abs(dragRef.current.moved || 0);
+    if (wasActive) {
+      dragRef.current.active = false;
+      // Force one re-render so the React-managed transform attribute on
+      // the scrolling group matches the imperative DOM position. Without
+      // this, the next state-driven re-render (e.g. on hover) would
+      // reset the transform back to whatever JSX last wrote.
+      setVersion(v => v + 1);
+    }
+    if (wrapperRef.current) {
+      wrapperRef.current.style.cursor = 'grab';
+      if (e?.pointerId != null) {
+        try { wrapperRef.current.releasePointerCapture(e.pointerId); } catch { /* ok */ }
+      }
+    }
+    // Click detection — pointer-up after barely any movement = open
+    // drill-down for the bucket under the cursor. Resolves the bucket
+    // from the up-event's screen position so it works even for touch
+    // taps that never fired a hover.
+    if (wasActive && movedPx < CLICK_THRESHOLD_PX && onBucketClick && e && data.length) {
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      if (rect) {
+        const xScreen = e.clientX - rect.left;
+        const i = Math.floor((xScreen - scrollXRef.current - padL) / bucketPx);
+        if (i >= 0 && i < data.length) {
+          onBucketClick(data[i][dateKey], data[i]);
+        }
+      }
+    }
+  };
+  const handlePointerUp     = (e) => endDrag(e);
+  const handlePointerLeave  = (e) => { endDrag(e); setHover(null); };
+  const handlePointerCancel = (e) => endDrag(e);
+  const handleWheel         = (e) => {
     if (!onZoom || !(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     onZoom(e.deltaY > 0 ? +1 : -1);
   };
 
-  // Hover data for the tooltip
-  const hoverPt = hover != null && current[hover] ? {
-    x: xScale(hover, current.length),
-    y: yScale(+current[hover][valueKey] || 0),
-    val: +current[hover][valueKey] || 0,
-    date: current[hover][dateKey],
+  // Hover point in CHART coords (still inside the scrolling group, so
+  // crosshair tracks the data when the group translates).
+  const hoverPt = hover != null && data[hover] ? {
+    x: xScale(hover),
+    y: yScale(+data[hover][valueKey] || 0),
+    val: +data[hover][valueKey] || 0,
+    date: data[hover][dateKey],
   } : null;
 
+  // Unique clip-path id so multiple charts on a page don't collide.
+  const clipId = `an-chart-clip-${valueKey}`;
+
+  // Wrapper: overflow:hidden creates the viewport. The SVG is sized to
+  // the wrapper width (no viewBox stretch). The scrolling group inside
+  // the SVG is the ONLY element we translate — Y-axis labels sit at
+  // fixed positions outside that group so they stay put while the user
+  // pans through history.
   return (
-    <svg className="an-chart" viewBox={`0 0 ${w} ${h}`}
-         preserveAspectRatio="none"
-         onMouseMove={handleMouseMove}
-         onMouseLeave={handleMouseLeave}
-         onMouseDown={handleMouseDown}
-         onMouseUp={handleMouseUp}
+    <div ref={wrapperRef}
+         className="an-chart-wrap"
+         onPointerDown={handlePointerDown}
+         onPointerMove={handlePointerMove}
+         onPointerUp={handlePointerUp}
+         onPointerLeave={handlePointerLeave}
+         onPointerCancel={handlePointerCancel}
          onWheel={handleWheel}
-         style={{ height: `${h}px`,
-                  cursor: dragX != null ? 'grabbing' : (onPan ? 'grab' : 'default'),
-                  touchAction: 'pan-y',
-                  userSelect: 'none' }}>
-      {/* Y grid lines + labels (right side) */}
+         style={{
+           overflow: 'hidden',
+           cursor: canScroll ? 'grab' : 'default',
+           // Disable browser horizontal pan-scroll so our drag handler
+           // owns horizontal gestures. Vertical scroll (pan-y) still
+           // works so users can scroll the page through the chart on
+           // mobile — only horizontal swipes are intercepted.
+           touchAction: 'pan-y',
+           userSelect: 'none',
+           width: '100%',
+           position: 'relative',
+         }}>
+    <svg className="an-chart" width={wrapperW} height={h}
+         style={{ display: 'block', width: '100%' }}>
+      <defs>
+        <clipPath id={clipId}>
+          {/* Clip HORIZONTALLY only — keep the full chart height so the
+              x-axis date labels (rendered at y = h - 14, below the data
+              area) stay visible. Previously height was `innerH + 32`
+              which capped at y = padT + innerH + 16, hiding the date
+              labels at y = 306 (chart height 320). */}
+          <rect x={padL} y={0}
+                width={wrapperW - padL - padR} height={h} />
+        </clipPath>
+      </defs>
+
+      {/* Fixed: Y grid lines + labels (right side). Do NOT scroll. */}
       {ticks.map((t, i) => (
-        <g key={i}>
-          <line x1={pad.l} x2={w - pad.r} y1={t.y} y2={t.y}
+        <g key={`tick-${i}`}>
+          <line x1={padL} x2={wrapperW - padR} y1={t.y} y2={t.y}
                 stroke="#eef0f3" strokeWidth="1" />
-          <text x={w - pad.r + 8} y={t.y + 4} textAnchor="start"
+          <text x={wrapperW - padR + 8} y={t.y + 4} textAnchor="start"
                 fontSize="11" fill="#9a9aa0" fontFamily="inherit">
             {fmtY(t.v)}
           </text>
         </g>
       ))}
 
-      {/* X axis labels (bottom) */}
-      {current.map((d, i) => {
-        if (i % labelStep !== 0 && i !== current.length - 1) return null;
-        return (
-          <text key={`x-${i}`}
-                x={xScale(i, current.length)} y={h - 14}
-                textAnchor="middle" fontSize="11" fill="#9a9aa0"
-                fontFamily="inherit">
-            {fmtX(d[dateKey])}
-          </text>
-        );
-      })}
-
-      {/* Previous period — dashed faded */}
-      {previous.length > 0 && (
-        <path d={smoothPath(previous)} fill="none"
-              stroke="#9a9aa0" strokeWidth="1.5" strokeDasharray="4 4"
-              opacity="0.7" />
-      )}
-
-      {/* Current period — solid accent */}
-      <path d={smoothPath(current)} fill="none"
-            stroke="var(--accent)" strokeWidth="2.6"
-            strokeLinecap="round" strokeLinejoin="round" />
-
-      {/* Hover crosshair + dot + tooltip */}
-      {hoverPt && (
-        <g>
-          <line x1={hoverPt.x} x2={hoverPt.x} y1={pad.t} y2={h - pad.b}
-                stroke="#c7c7cc" strokeWidth="1" strokeDasharray="3 3" />
-          <circle cx={hoverPt.x} cy={hoverPt.y} r="6"
-                  fill="var(--accent)" stroke="#fff" strokeWidth="2" />
-          {/* Bubble with value */}
-          {(() => {
-            const valStr = formatValue(hoverPt.val);
-            // Approximate bubble width — 7px per char + 16px padding.
-            const bw = Math.max(60, valStr.length * 7 + 16);
-            const bx = Math.max(pad.l, Math.min(w - pad.r - bw, hoverPt.x - bw / 2));
-            const by = Math.max(pad.t, hoverPt.y - 38);
+      {/* Scrollable group — path + X labels + hover crosshair live
+          inside, all share the same translate(scrollX, 0). */}
+      <g clipPath={`url(#${clipId})`}>
+        <g ref={scrollGroupRef}
+           transform={`translate(${scrollXRef.current}, 0)`}
+           data-version={version}>
+          {/* X-axis labels — auto-thinned so they don't overlap. */}
+          {data.map((d, i) => {
+            if (i % labelStep !== 0 && i !== data.length - 1) return null;
             return (
-              <>
-                <rect x={bx} y={by} width={bw} height="24" rx="6"
-                      fill="var(--accent)" />
-                <text x={bx + bw / 2} y={by + 16} textAnchor="middle"
-                      fontSize="12" fontWeight="600" fill="#fff"
-                      fontFamily="inherit">
-                  {valStr}
-                </text>
-              </>
+              <text key={`xlabel-${i}`}
+                    x={xScale(i)} y={h - 14}
+                    textAnchor="middle" fontSize="11"
+                    fill="#9a9aa0" fontFamily="inherit">
+                {fmtX(d[dateKey])}
+              </text>
             );
-          })()}
-          {/* Date label above tooltip */}
-          <text x={hoverPt.x} y={Math.max(pad.t - 6, hoverPt.y - 44)}
-                textAnchor="middle" fontSize="11" fill="var(--muted)"
-                fontFamily="inherit">
-            {fmtXFull(hoverPt.date)}
-          </text>
+          })}
+
+          {/* Comparison series — drawn FIRST so the main line stays
+              on top. Dashed + thinner + 50 % opacity so it reads as
+              "supporting context", not competing with the primary
+              metric. */}
+          {comparePathD && (
+            <path d={comparePathD} fill="none"
+                  stroke="var(--accent)" strokeWidth="1.8"
+                  strokeDasharray="6 4"
+                  strokeLinecap="round" strokeLinejoin="round"
+                  opacity="0.45" />
+          )}
+          {/* Data path — solid accent line. */}
+          <path d={pathD} fill="none"
+                stroke="var(--accent)" strokeWidth="2.6"
+                strokeLinecap="round" strokeLinejoin="round" />
+
+          {/* Hover crosshair + dot — inside the scrolling group so they
+              follow data when the user pans. Hidden during drag. */}
+          {hoverPt && !dragRef.current.active && (
+            <g>
+              <line x1={hoverPt.x} x2={hoverPt.x}
+                    y1={padT} y2={padT + innerH}
+                    stroke="#c7c7cc" strokeWidth="1" strokeDasharray="3 3" />
+              <circle cx={hoverPt.x} cy={hoverPt.y} r="6"
+                      fill="var(--accent)" stroke="#fff" strokeWidth="2" />
+            </g>
+          )}
         </g>
-      )}
+      </g>
+
+      {/* Tooltip bubble — OUTSIDE the scrolling group so it isn't
+          clipped or translated. Its screen x is the chart-x plus the
+          current scrollX. Hidden during drag. */}
+      {hoverPt && !dragRef.current.active && (() => {
+        const screenX = hoverPt.x + scrollXRef.current;
+        if (screenX < padL || screenX > wrapperW - padR) return null;
+        const valStr = formatValue(hoverPt.val);
+        const bw = Math.max(60, valStr.length * 7 + 16);
+        const bx = Math.max(padL, Math.min(wrapperW - padR - bw, screenX - bw / 2));
+        const by = Math.max(padT, hoverPt.y - 38);
+        return (
+          <g pointerEvents="none">
+            <rect x={bx} y={by} width={bw} height="24" rx="6"
+                  fill="var(--accent)" />
+            <text x={bx + bw / 2} y={by + 16} textAnchor="middle"
+                  fontSize="12" fontWeight="600" fill="#fff"
+                  fontFamily="inherit">
+              {valStr}
+            </text>
+            <text x={screenX} y={Math.max(padT - 6, hoverPt.y - 44)}
+                  textAnchor="middle" fontSize="11" fill="var(--muted)"
+                  fontFamily="inherit">
+              {fmtXFull(hoverPt.date)}
+            </text>
+          </g>
+        );
+      })()}
     </svg>
+    </div>
   );
 }
 
 // ── Inline SVG horizontal bar (stacked or simple) ────────────────────────
-function HorizontalBars({ data, valueKey = 'revenue', labelKey = 'category', max, formatValue }) {
+function HorizontalBars({ data, valueKey = 'revenue', labelKey = 'category',
+                          max, formatValue, mode = 'share' }) {
+  // `mode` controls what the bar width means:
+  //   'max'   — bar width = value / max(values). Use for revenue-style
+  //             charts where the absolute amount matters.
+  //   'share' — bar width = value / sum(values), and we append the
+  //             percentage to the right-side value. Use for category-
+  //             distribution charts (traffic sources, devices, etc.)
+  //             where the user wants to see "X% of all visitors came
+  //             from this source". Without this mode, when every row
+  //             has the same value (3 different sources × 1 visitor
+  //             each), all bars render at 100% and the chart is
+  //             meaningless.
   const fmt = formatValue || ((v) => v.toLocaleString('en-US'));
   const computedMax = max || Math.max(1, ...data.map(d => +d[valueKey] || 0));
+  const total = data.reduce((s, d) => s + (+d[valueKey] || 0), 0) || 1;
   return (
     <div className="an-bars">
       {data.map((d, i) => {
         const v = +d[valueKey] || 0;
-        const pct = computedMax ? (v / computedMax) * 100 : 0;
+        const sharePct = (v / total) * 100;
+        const widthPct = mode === 'share'
+          ? sharePct
+          : (computedMax ? (v / computedMax) * 100 : 0);
         return (
           <div key={i} className="an-bar-row">
             <span className="an-bar-label">{d[labelKey] || '—'}</span>
             <div className="an-bar-track">
-              <div className="an-bar-fill" style={{ width: `${pct}%` }} />
+              <div className="an-bar-fill" style={{ width: `${widthPct}%` }} />
             </div>
-            <span className="an-bar-value">{fmt(v)}</span>
+            <span className="an-bar-value">
+              {fmt(v)}
+              {mode === 'share' && (
+                <span className="an-bar-share"> · {sharePct.toFixed(0)}%</span>
+              )}
+            </span>
           </div>
         );
       })}
@@ -416,7 +892,53 @@ function OverviewSection({ projectId, period, setPeriod }) {
   const { data, loading } = useSectionData('/api/analytics/overview', period, projectId);
   return (
     <SectionShell title="Overview" Icon={ChartLine}
-      periodValue={period} onPeriodChange={setPeriod}>
+      periodValue={period} onPeriodChange={setPeriod}
+      headerControls={
+        <CsvButton
+          disabled={loading || !data}
+          onClick={() => {
+            if (!data) return;
+            // Two rows: current period KPIs + previous period KPIs side
+            // by side, plus a "delta_%" column. Useful for the merchant
+            // to paste into a board deck and show period-over-period.
+            const rows = [
+              { metric: 'Revenue',
+                current:  data.current.revenue,
+                previous: data.previous.revenue,
+                delta:    data.delta.revenue },
+              { metric: 'Orders',
+                current:  data.current.orders,
+                previous: data.previous.orders,
+                delta:    data.delta.orders },
+              { metric: 'Avg order',
+                current:  data.current.aov,
+                previous: data.previous.aov,
+                delta:    data.delta.aov },
+              { metric: 'Conversion %',
+                current:  data.current.conversion,
+                previous: data.previous.conversion,
+                delta:    data.delta.conversion },
+              { metric: 'Visitors',
+                current:  data.current.visitors,
+                previous: data.previous.visitors,
+                delta:    data.delta.visitors },
+              { metric: 'Customers',
+                current:  data.current.customers,
+                previous: data.previous.customers,
+                delta:    data.delta.customers },
+            ];
+            downloadCSV(
+              `overview-${period}-${new Date().toISOString().slice(0,10)}.csv`,
+              rows,
+              [
+                { key: 'metric',   label: 'Metric' },
+                { key: 'current',  label: 'Current',  format: v => (+v || 0).toFixed(2) },
+                { key: 'previous', label: 'Previous', format: v => (+v || 0).toFixed(2) },
+                { key: 'delta',    label: 'Δ%',       format: v => v == null ? '' : (+v).toFixed(1) },
+              ]
+            );
+          }} />
+      }>
       {loading || !data ? <Skeleton height={120} /> : (
         <div className="an-kpi-grid">
           <Kpi label="Revenue"      value={fmtMoney(data.current.revenue)}   delta={data.delta.revenue} />
@@ -486,25 +1008,256 @@ function GranularitySegmented({ value, onChange }) {
   );
 }
 
+// Period (selected width) × granularity (bucket size) → how many
+// buckets fit in one viewport-wide view. Used as the zoom level for
+// the scrollable chart — the period dropdown is now a pure visual
+// zoom, not a fetch parameter (backend always returns full history).
+const PERIOD_DAYS = {
+  '1d': 1, '3d': 3, '1w': 7, '2w': 14, '1mo': 30, '2mo': 60,
+  '3mo': 90, 'season': 90, 'halfyear': 180, '1y': 365, '2y': 730,
+};
+const GRAN_DAYS = { day: 1, week: 7, month: 30 };
+function periodToViewportBuckets(period, gran) {
+  const days = PERIOD_DAYS[period] || 30;
+  const granDays = GRAN_DAYS[gran]  || 1;
+  return Math.max(1, Math.round(days / granDays));
+}
+
+// Chunk size for each lazy-load request, in days. Tuned per granularity
+// so each chunk is roughly "one viewport's worth + headroom" — enough
+// that the user gets to scroll a meaningful distance before we fetch
+// the next chunk, but small enough that the first load is fast.
+const CHUNK_DAYS = { day: 60, week: 365, month: 365 * 2 };
+
 function RevenueOverTimeSection({ projectId }) {
   const [period, setPeriod] = useState('1mo');
   const [gran,   setGran]   = useState('day');
-  // useSectionData appends ?project_id=…&period=… automatically; for this
-  // endpoint we need an extra `granularity` query param so we go through
-  // the bypass helper instead.
-  const fixedData = useFixedFetch(`/api/analytics/revenue-over-time?project_id=${projectId}&period=${period}&granularity=${gran}`);
-  const d = fixedData.data;
-  // Day / Week / Month is also a filter, so it lives in the section header
-  // next to the period combobox. Visually matches the Products page sort-
-  // toggle (.org-sort-toggle) — same pill container + sliding accent pill
-  // indicator following the active selection.
-  const segmented = (
-    <GranularitySegmented value={gran} onChange={setGran} />
+  // `data` accumulates across multiple paginated fetches — initial load
+  // brings the rightmost chunk (most recent buckets) and `handleLoadMore`
+  // prepends older chunks as the user pans into the past. Buckets are
+  // unique by their `bucket` ISO string so prepend de-dupes overlap.
+  const [data, setData]                 = useState([]);
+  const [oldestOrder, setOldestOrder]   = useState(null);
+  const [loading, setLoading]           = useState(true);
+  const [loadingMore, setLoadingMore]   = useState(false);
+  // Optional "compare with" period — when set, fetch a SECOND time
+  // series with this period's date range and overlay it on the chart
+  // as a dashed line. Default 'off' = no comparison.
+  const [comparePeriod, setComparePeriod] = useState('off');
+  const [compareData,   setCompareData]   = useState([]);
+  // dataVersion bumps whenever a project event arrives that could affect
+  // revenue (order_created, order_status_changed). useEffect below
+  // listens on it and re-fetches the visible chunk — so a new order
+  // shows up on the chart within seconds without the user reloading.
+  const [dataVersion, setDataVersion]   = useState(0);
+  useProjectEvents(projectId, (event) => {
+    if (event.type === 'order_created' || event.type === 'order_status_changed') {
+      setDataVersion(v => v + 1);
+    }
+  });
+  // When the user picks a custom range from the dropdown, period gets
+  // encoded as "YYYY-MM-DD_YYYY-MM-DD". The revenue chart uses a
+  // bespoke chunked fetcher (NOT the period-based useSectionData), so
+  // we have to honour custom ranges here explicitly: pass `from` + `to`
+  // straight to the endpoint and disable lazy-load / auto-fill (the
+  // range is fixed, scrolling further past the boundary makes no sense).
+  const customRange = isCustomPeriod(period) ? parseCustomPeriod(period) : null;
+  // Initial fetch: bespoke URL depending on whether a custom range is
+  // active. Resets on (projectId, granularity, period) change so picking
+  // a custom range re-fires the fetch with the new dates.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setData([]);
+    setOldestOrder(null);
+    let url = `${API_BASE}/api/analytics/revenue-over-time`
+      + `?project_id=${projectId}&granularity=${gran}`;
+    if (customRange) {
+      // Both bounds inclusive in user expectation — append " end-of-day"
+      // for `to` so the entire last day is covered. Backend's
+      // `_parse_iso` accepts both forms.
+      const fromISO = `${customRange.from}T00:00:00Z`;
+      const toISO   = `${customRange.to}T23:59:59Z`;
+      url += `&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`;
+    }
+    fetch(url, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (cancelled || !j) return;
+        setData(j.buckets || []);
+        setOldestOrder(j.oldest_order || null);
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [projectId, gran, period, dataVersion]);
+  // Fetch the chunk immediately older than what's currently loaded.
+  // Skipped when (a) a request is already in flight, (b) we've already
+  // reached the project's oldest_order, (c) data is empty (initial
+  // load not finished yet).
+  //
+  // Chunk size is ADAPTIVE — the default is one period-typical chunk
+  // (60 days / 1y / 2y), but if the current viewport is wider than
+  // what's loaded (e.g. user just switched from "1 month" to "half-year"
+  // and we only have 90 of the 180 buckets needed) the chunk grows to
+  // cover the gap in ONE fetch instead of chaining 3-4 small ones.
+  // Custom range mode: viewport fits the entire range (no scrolling),
+  // so viewportBuckets = data.length once loaded. Falls back to the
+  // preset-based calc while data is empty so layout math doesn't
+  // divide by zero.
+  const viewportBuckets = customRange
+    ? Math.max(1, data.length || 30)
+    : periodToViewportBuckets(period, gran);
+  const handleLoadMore = useCallback(() => {
+    // Custom range is a closed window — disable lazy-load and auto-fill.
+    if (customRange) return;
+    if (loadingMore || loading || data.length === 0) return;
+    const earliestISO = data[0].bucket;
+    const earliestDate = new Date(earliestISO);
+    if (oldestOrder && earliestDate <= new Date(oldestOrder)) return;
+    setLoadingMore(true);
+    const granDays   = GRAN_DAYS[gran] || 1;
+    const baseChunk  = CHUNK_DAYS[gran] || 60;
+    const targetBkts = viewportBuckets + 30; // viewport + one headroom buffer
+    const gap        = Math.max(0, targetBkts - data.length);
+    const chunkDays  = Math.max(baseChunk, gap * granDays);
+    const chunkMs    = chunkDays * 86400 * 1000;
+    const fromDate   = new Date(earliestDate.getTime() - chunkMs);
+    const fromISO    = fromDate.toISOString();
+    fetch(
+      `${API_BASE}/api/analytics/revenue-over-time?project_id=${projectId}`
+      + `&granularity=${gran}&from=${encodeURIComponent(fromISO)}`
+      + `&to=${encodeURIComponent(earliestISO)}`,
+      { credentials: 'include' }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (!j) return;
+        const newer = j.buckets || [];
+        if (newer.length === 0) {
+          // Backend confirmed no more data in that range — record the
+          // boundary so we don't keep asking forever.
+          if (j.oldest_order) setOldestOrder(j.oldest_order);
+          return;
+        }
+        setData(prev => {
+          // Drop any overlap (defensive): only keep prev buckets that
+          // are strictly newer than the newest in the prepended chunk.
+          const lastNewISO = newer[newer.length - 1].bucket;
+          const tail = prev.filter(b => b.bucket > lastNewISO);
+          return [...newer, ...tail];
+        });
+        if (j.oldest_order) setOldestOrder(j.oldest_order);
+      })
+      .finally(() => setLoadingMore(false));
+  }, [projectId, gran, data, oldestOrder, loadingMore, loading, viewportBuckets, customRange]);
+  // Auto-fill viewport: if the user picks a wide period (half-year, 1y)
+  // but the data we have so far doesn't cover that many buckets, kick
+  // off lazy-load chunks until the chart can display the requested
+  // window — or we hit the project's `oldest_order` and there's
+  // genuinely nothing more to fetch. Without this, switching from
+  // "1 month" to "Half-year" would leave the chart with empty space
+  // on the left and no way for the user to fetch more (drag can't
+  // trigger lazy-load when data is smaller than viewport — there's
+  // nothing to scroll).
+  useEffect(() => {
+    if (loading || loadingMore || data.length === 0) return;
+    // Already covered with one chunk of headroom — stop chaining.
+    if (data.length >= viewportBuckets + 30) return;
+    // Hit the oldest order — nothing older to fetch.
+    if (oldestOrder && new Date(data[0].bucket) <= new Date(oldestOrder)) return;
+    handleLoadMore();
+  }, [loading, loadingMore, data.length, viewportBuckets, oldestOrder, handleLoadMore]);
+  const exportCsv = () => downloadCSV(
+    `revenue-over-time-${new Date().toISOString().slice(0,10)}.csv`,
+    data,
+    [
+      { key: 'bucket',  label: 'Date' },
+      { key: 'revenue', label: 'Revenue', format: v => (+v || 0).toFixed(2) },
+      { key: 'orders',  label: 'Orders' },
+    ]
   );
-  // Chart-driven period control. Ctrl/Cmd+wheel + drag-pan inside the
-  // LineChart call these — they step through PERIOD_ORDER so the period
-  // combobox visibly reflects the zoom level. Both end-of-range steps
-  // are no-ops (we silently clamp instead of wrapping around).
+  // Fetch the comparison period series whenever comparePeriod / gran /
+  // projectId changes. Uses the same endpoint with period= (so the
+  // _date_range_for_period parser handles preset + custom encoding).
+  // 'off' clears comparison data without firing a fetch.
+  useEffect(() => {
+    if (comparePeriod === 'off') {
+      setCompareData([]);
+      return;
+    }
+    let cancelled = false;
+    let from = null, to = null;
+    if (isCustomPeriod(comparePeriod)) {
+      const r = parseCustomPeriod(comparePeriod);
+      from = `${r.from}T00:00:00Z`;
+      to   = `${r.to}T23:59:59Z`;
+    } else {
+      // Preset like "1mo" → end at now, start at now - PERIOD_DAYS.
+      const days = PERIOD_DAYS[comparePeriod] || 30;
+      const end = new Date();
+      const start = new Date(end.getTime() - days * 86400 * 1000);
+      from = start.toISOString();
+      to   = end.toISOString();
+    }
+    fetch(
+      `${API_BASE}/api/analytics/revenue-over-time?project_id=${projectId}`
+      + `&granularity=${gran}`
+      + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      { credentials: 'include' }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (!cancelled && j) setCompareData(j.buckets || []); });
+    return () => { cancelled = true; };
+  }, [projectId, gran, comparePeriod]);
+  // Drill-down: tap/click a bucket → open modal with the orders that
+  // made up that day's revenue. Only meaningful at day granularity —
+  // for week/month buckets the "orders on day X" query doesn't map
+  // 1:1 to the bucket, so we collapse the click silently.
+  const [drillDay, setDrillDay] = useState(null);
+  const handleBucketClick = (bucketIso) => {
+    if (!bucketIso || gran !== 'day') return;
+    const day = String(bucketIso).slice(0, 10);
+    setDrillDay(day);
+  };
+  // "Compare with" options — same list as the main period plus an
+  // explicit "off" sentinel. Picking 'custom' opens the standard date-
+  // range modal (handled inside SectionShell). Selected value is
+  // displayed as e.g. "vs 1 week".
+  const COMPARE_OPTIONS = useMemo(() => [
+    { value: 'off', label: 'No comparison' },
+    ...PERIOD_OPTIONS.map(o => ({
+      value: o.value,
+      label: o.value === 'custom' ? o.label : `vs ${o.label}`,
+    })),
+  ], []);
+  const compareDropdownOptions = useMemo(() => {
+    if (!isCustomPeriod(comparePeriod)) return COMPARE_OPTIONS;
+    const { from, to } = parseCustomPeriod(comparePeriod);
+    return [
+      ...COMPARE_OPTIONS.filter(o => o.value !== 'custom'),
+      { value: comparePeriod, label: `vs ${from} → ${to}` },
+      { value: 'custom', label: 'Custom range…' },
+    ];
+  }, [comparePeriod, COMPARE_OPTIONS]);
+  const [compareCustomOpen, setCompareCustomOpen] = useState(false);
+  const handleCompareChange = (v) => {
+    if (v === 'custom') {
+      setCompareCustomOpen(true);
+      return;
+    }
+    setComparePeriod(v);
+  };
+  const segmented = (
+    <>
+      <GranularitySegmented value={gran} onChange={setGran} />
+      <CsvButton onClick={exportCsv} disabled={loading || data.length === 0} />
+      <div className="an-compare-picker">
+        <Combobox value={comparePeriod}
+          options={compareDropdownOptions}
+          onChange={handleCompareChange} />
+      </div>
+    </>
+  );
   const stepPeriod = (delta) => {
     const i = PERIOD_ORDER.indexOf(period);
     const next = Math.max(0, Math.min(PERIOD_ORDER.length - 1, i + delta));
@@ -515,14 +1268,132 @@ function RevenueOverTimeSection({ projectId }) {
       periodValue={period} onPeriodChange={setPeriod}
       headerControls={segmented}>
       <div className="an-tile">
-        {fixedData.loading || !d ? <Skeleton height={240} /> : (
-          d.current.length === 0
-            ? <p className="an-empty">No orders in this period.</p>
-            : <LineChart current={d.current} previous={d.previous}
-                valueKey="revenue" onZoom={stepPeriod} onPan={stepPeriod} />
+        {loading ? <Skeleton height={240} /> : (
+          data.length === 0
+            ? <p className="an-empty">No orders yet.</p>
+            : <LineChart data={data}
+                compareData={compareData}
+                viewportBuckets={viewportBuckets}
+                valueKey="revenue"
+                onZoom={stepPeriod}
+                onLoadMore={handleLoadMore}
+                loadingMore={loadingMore}
+                onBucketClick={handleBucketClick} />
         )}
       </div>
+      {drillDay && (
+        <DrillDownOrdersModal
+          projectId={projectId}
+          day={drillDay}
+          onClose={() => setDrillDay(null)} />
+      )}
+      {compareCustomOpen && (
+        <CustomRangeModal
+          initialFrom={isCustomPeriod(comparePeriod) ? parseCustomPeriod(comparePeriod).from : ''}
+          initialTo={isCustomPeriod(comparePeriod) ? parseCustomPeriod(comparePeriod).to : ''}
+          onClose={() => setCompareCustomOpen(false)}
+          onApply={(fromISO, toISO) => {
+            setComparePeriod(formatCustomPeriod(fromISO, toISO));
+            setCompareCustomOpen(false);
+          }} />
+      )}
     </SectionShell>
+  );
+}
+
+// ── Drill-down modal: orders that landed on a given day ──────────────────
+// Triggered from a click on the Revenue-over-time chart. Shows compact
+// list of orders so the merchant can see "what drove that $X day".
+// Click a row to jump to the full Orders page (TODO when route exists).
+function DrillDownOrdersModal({ projectId, day, onClose }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/analytics/orders-on-day?project_id=${projectId}&day=${encodeURIComponent(day)}`,
+          { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(j => { if (!cancelled) setRows(Array.isArray(j) ? j : []); });
+    return () => { cancelled = true; };
+  }, [projectId, day]);
+  const total = (rows || []).reduce((s, r) => s + (+r.total || 0), 0);
+  const fmtTime = (iso) => {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }); }
+    catch { return ''; }
+  };
+  const fmtDayLong = (s) => {
+    if (!s) return '';
+    try { return new Date(s + 'T00:00').toLocaleDateString('en-US',
+      { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); }
+    catch { return s; }
+  };
+  // ── Modal shell mirrors PromoCodes / Booking modals ──────────────
+  // Same auth-modal + cpm-modal classes, same head with title +
+  // subtitle row + close X. Body uses a stacked row list (PoListRow-
+  // style grid) instead of a raw <table> so the layout reads like the
+  // rest of the design system.
+  const DRILL_COLS = '90px 1.8fr 70px 110px 110px';
+  return createPortal(
+    <div className="auth-modal-overlay"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="auth-modal cpm-modal an-drill-modal" onClick={e => e.stopPropagation()}>
+        <div className="auth-modal-head">
+          <div className="auth-modal-title-row">
+            <div>
+              <div className="auth-modal-title">{fmtDayLong(day)}</div>
+              <div className="auth-modal-subtitle-row">
+                <span className="auth-modal-subtitle">
+                  {rows == null ? 'Loading…'
+                   : rows.length === 0 ? 'No orders on this day.'
+                   : `${rows.length} order${rows.length === 1 ? '' : 's'} · ${fmtMoney(total)} total`}
+                </span>
+              </div>
+            </div>
+          </div>
+          <button className="auth-modal-close" onClick={onClose} type="button">
+            <X className="auth-modal-close-icon" />
+          </button>
+        </div>
+        <div className="auth-modal-body an-drill-body">
+          {rows == null ? (
+            <Skeleton height={120} />
+          ) : rows.length === 0 ? (
+            <p className="an-empty">Nothing to drill into for this day.</p>
+          ) : (
+            <div className="po-set-table">
+              <div className="po-set-row po-set-row--head"
+                   style={{ gridTemplateColumns: DRILL_COLS }}>
+                <span>Time</span>
+                <span>Customer</span>
+                <span style={{ textAlign: 'right' }}>Items</span>
+                <span style={{ textAlign: 'right' }}>Total</span>
+                <span>Status</span>
+              </div>
+              {rows.map(r => (
+                <div key={r.id} className="po-set-row po-tree-row"
+                     style={{ gridTemplateColumns: DRILL_COLS }}>
+                  <span className="po-set-note">{fmtTime(r.created_at)}</span>
+                  <span className="po-tree-name-cell">
+                    <span className="po-set-strong">{r.customer_name}</span>
+                    {r.customer_email && (
+                      <span className="po-set-note po-tree-meta">· {r.customer_email}</span>
+                    )}
+                  </span>
+                  <span className="po-money-cell">{r.item_count}</span>
+                  <span className="po-money-cell">{fmtMoney(r.total)}</span>
+                  <span>
+                    <span className={`an-drill-status an-drill-status--${r.status}`}>
+                      {r.status}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 // Convenience wrapper that bypasses useSectionData's URL convention — used
@@ -639,16 +1510,26 @@ function FunnelDynamicsSection({ projectId }) {
       {loading || !data ? <Skeleton height={200} /> : data.length === 0 ? (
         <p className="an-empty">Not enough traffic to compute conversion trends.</p>
       ) : (
-        <div className="an-multi-chart">
-          <SmallSeries title="Visit → ATC" series={data} valueKey="visit_to_atc" suffix="%" />
-          <SmallSeries title="ATC → Paid"  series={data} valueKey="atc_to_paid"  suffix="%" />
-          <SmallSeries title="Overall"     series={data} valueKey="overall"      suffix="%" />
-        </div>
+        <>
+          <p className="an-section-hint">
+            How efficiently each funnel step converts to the next, day by
+            day. Big number is the period average — line shows the daily
+            trend. Watch for sudden dips after a marketing push or site change.
+          </p>
+          <div className="an-multi-chart">
+            <SmallSeries title="Visit → ATC" hint="of visitors who added something to cart"
+              series={data} valueKey="visit_to_atc" suffix="%" />
+            <SmallSeries title="ATC → Paid"  hint="of cart-builders who actually paid"
+              series={data} valueKey="atc_to_paid"  suffix="%" />
+            <SmallSeries title="Overall"     hint="of visitors who became paying customers"
+              series={data} valueKey="overall"      suffix="%" />
+          </div>
+        </>
       )}
     </SectionShell>
   );
 }
-function SmallSeries({ title, series, valueKey, suffix }) {
+function SmallSeries({ title, hint, series, valueKey, suffix }) {
   const max = Math.max(1, ...series.map(d => +d[valueKey] || 0));
   const w = 240, h = 90, pad = 6;
   const path = series.map((d, i) => {
@@ -656,11 +1537,15 @@ function SmallSeries({ title, series, valueKey, suffix }) {
     const y = h - pad - ((+d[valueKey] || 0) / max) * (h - pad * 2);
     return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
-  const latest = series[series.length - 1]?.[valueKey] ?? 0;
+  // Average is far more useful than "latest day" — a single bad day
+  // would otherwise dominate a metric meant to summarize trends.
+  const nVals = series.filter(d => (+d[valueKey]) >= 0).length || 1;
+  const avg   = series.reduce((s, d) => s + (+d[valueKey] || 0), 0) / nVals;
   return (
     <div className="an-small-series">
       <span className="an-small-series-title">{title}</span>
-      <span className="an-small-series-value">{(+latest).toFixed(1)}{suffix}</span>
+      <span className="an-small-series-value">{avg.toFixed(1)}{suffix}</span>
+      {hint && <span className="an-small-series-hint">avg · {hint}</span>}
       <svg className="an-small-series-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
         <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2" />
       </svg>
@@ -681,7 +1566,7 @@ function HeatmapSection({ projectId }) {
     <SectionShell title="Orders by day-of-week × hour" Icon={CalendarBlank}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading ? <Skeleton height={260} /> : (
-        <div className="an-tile an-heatmap-wrap">
+        <div className="an-heatmap-wrap">
           <div className="an-heatmap">
             <div className="an-heatmap-corner" />
             {Array.from({ length: 24 }, (_, h) => (
@@ -694,24 +1579,27 @@ function HeatmapSection({ projectId }) {
               <Fragment key={`dow-${dow}`}>
                 <div className="an-heatmap-d-label">{DOW_LABELS[dow]}</div>
                 {row.map((v, h) => {
+                  // Quantize the order count into one of 5 intensity
+                  // tiers + an empty tier. The actual colour lives in
+                  // CSS (.an-heatmap-cell--t0..t5) instead of an inline
+                  // rgba string — keeps theming centralized and avoids
+                  // the React style-merge cost on a 168-cell grid.
                   const intensity = v / max;
+                  let tier = 'empty';
+                  if (v > 0) {
+                    if (intensity <= 0.2)       tier = 't1';
+                    else if (intensity <= 0.4)  tier = 't2';
+                    else if (intensity <= 0.6)  tier = 't3';
+                    else if (intensity <= 0.8)  tier = 't4';
+                    else                        tier = 't5';
+                  }
                   return (
-                    <div key={`${dow}-${h}`} className="an-heatmap-cell"
-                         title={`${DOW_LABELS[dow]} ${h}:00 — ${v} order${v === 1 ? '' : 's'}`}
-                         style={{
-                           background: v === 0
-                             ? 'rgba(0,0,0,0.04)'
-                             : `rgba(0,113,227,${0.12 + intensity * 0.78})`,
-                         }} />
+                    <div key={`${dow}-${h}`}
+                         className={`an-heatmap-cell an-heatmap-cell--${tier}`} />
                   );
                 })}
               </Fragment>
             ))}
-          </div>
-          <div className="an-heatmap-legend">
-            <span>Less</span>
-            <div className="an-heatmap-gradient" />
-            <span>More</span>
           </div>
         </div>
       )}
@@ -772,19 +1660,122 @@ function ProductMiniList({ title, rows, getValue, secondary, empty = 'No data ye
 // ════════════════════════════════════════════════════════════════════════
 function CustomerSection({ projectId }) {
   const [period, setPeriod] = useState('1mo');
-  const types     = useSectionData('/api/analytics/customer-types', period, projectId);
-  const top       = useSectionData('/api/analytics/top-customers',  period, projectId);
-  const geo       = useSectionData('/api/analytics/geographic',     period, projectId);
+  // New-vs-returning chart fetches its OWN paginated data (matches the
+  // Revenue-over-time scroll UX). Top customers + Top cities stick with
+  // the period-driven useSectionData fetch — they're snapshot tables,
+  // not time series.
+  const [nrData,        setNrData]        = useState([]);
+  const [nrOldestOrder, setNrOldestOrder] = useState(null);
+  const [nrLoading,     setNrLoading]     = useState(true);
+  const [nrLoadingMore, setNrLoadingMore] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setNrLoading(true);
+    setNrData([]);
+    setNrOldestOrder(null);
+    // Always invoke chunked mode by passing `to` — sending `to=now`
+    // anchors the response window's right edge at "now" and lets the
+    // backend pick the default 90-day chunk on the left. Without a
+    // chunked-mode trigger the endpoint falls back to legacy array
+    // shape (no oldest_order metadata → lazy-load can't stop).
+    // Custom range from period dropdown → fetch with explicit from/to
+    // and disable lazy-load (range is fixed). Otherwise default chunked
+    // mode (last 90 days, auto-fill on demand).
+    const nrCustomRange = isCustomPeriod(period) ? parseCustomPeriod(period) : null;
+    const nowISO = new Date().toISOString();
+    let url = `${API_BASE}/api/analytics/customer-types?project_id=${projectId}`;
+    if (nrCustomRange) {
+      url += `&from=${encodeURIComponent(nrCustomRange.from + 'T00:00:00Z')}`
+           + `&to=${encodeURIComponent(nrCustomRange.to + 'T23:59:59Z')}`;
+    } else {
+      url += `&to=${encodeURIComponent(nowISO)}`;
+    }
+    fetch(url, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (cancelled || !j) return;
+        const buckets = Array.isArray(j) ? j : (j.buckets || []);
+        setNrData(buckets);
+        if (!Array.isArray(j) && j.oldest_order) setNrOldestOrder(j.oldest_order);
+      })
+      .finally(() => { if (!cancelled) setNrLoading(false); });
+    return () => { cancelled = true; };
+  }, [projectId, period]);
+  // Day-granularity → viewportBuckets is just PERIOD_DAYS (1d = 1 bucket,
+  // 1mo = 30 buckets, half-year = 180 buckets, etc.). Custom range fits
+  // its entire span in the viewport (no scrolling — closed window).
+  const nrCustomRange = isCustomPeriod(period) ? parseCustomPeriod(period) : null;
+  const nrViewportBuckets = nrCustomRange
+    ? Math.max(1, nrData.length || 30)
+    : (PERIOD_DAYS[period] || 30);
+  const nrHandleLoadMore = useCallback(() => {
+    // Custom range = closed window; no lazy-load needed.
+    if (nrCustomRange) return;
+    if (nrLoadingMore || nrLoading || nrData.length === 0) return;
+    const earliestISO  = nrData[0].day;
+    const earliestDate = new Date(earliestISO);
+    if (nrOldestOrder && earliestDate <= new Date(nrOldestOrder)) return;
+    setNrLoadingMore(true);
+    const baseChunk  = 60;
+    const targetBkts = nrViewportBuckets + 30;
+    const gap        = Math.max(0, targetBkts - nrData.length);
+    const chunkDays  = Math.max(baseChunk, gap);
+    const fromDate = new Date(earliestDate.getTime() - chunkDays * 86400 * 1000);
+    const fromISO  = fromDate.toISOString();
+    fetch(
+      `${API_BASE}/api/analytics/customer-types?project_id=${projectId}`
+      + `&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(earliestISO)}`,
+      { credentials: 'include' }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (!j) return;
+        const newer = Array.isArray(j) ? j : (j.buckets || []);
+        if (newer.length === 0) {
+          if (!Array.isArray(j) && j.oldest_order) setNrOldestOrder(j.oldest_order);
+          return;
+        }
+        setNrData(prev => {
+          const lastNewISO = newer[newer.length - 1].day;
+          const tail = prev.filter(b => b.day > lastNewISO);
+          return [...newer, ...tail];
+        });
+        if (!Array.isArray(j) && j.oldest_order) setNrOldestOrder(j.oldest_order);
+      })
+      .finally(() => setNrLoadingMore(false));
+  }, [projectId, nrData, nrOldestOrder, nrLoadingMore, nrLoading, nrViewportBuckets, nrCustomRange]);
+  // Auto-fill for wider periods — same pattern as revenue-over-time.
+  // Disabled in custom-range mode since the range is already fully fetched.
+  useEffect(() => {
+    if (nrCustomRange) return;
+    if (nrLoading || nrLoadingMore || nrData.length === 0) return;
+    if (nrData.length >= nrViewportBuckets + 30) return;
+    if (nrOldestOrder && new Date(nrData[0].day) <= new Date(nrOldestOrder)) return;
+    nrHandleLoadMore();
+  }, [nrLoading, nrLoadingMore, nrData.length, nrViewportBuckets, nrOldestOrder, nrHandleLoadMore, nrCustomRange]);
+  const top = useSectionData('/api/analytics/top-customers', period, projectId);
+  const geo = useSectionData('/api/analytics/geographic',    period, projectId);
   return (
     <SectionShell title="Customers" Icon={Users}
       periodValue={period} onPeriodChange={setPeriod}>
+      <p className="an-section-hint">
+        Who's buying from you. Left chart: daily split of orders placed
+        by first-time vs returning customers — a high "New" share means
+        marketing is bringing fresh traffic, a high "Returning" share
+        means loyalty is paying off. Drag the chart to pan through
+        history. Middle: top spenders. Right: most active shipping
+        cities (courier deliveries only).
+      </p>
       <div className="an-cust-grid">
         {/* New vs returning */}
         <div className="an-cust-cell an-cust-cell--wide">
           <h3 className="an-mini-title">New vs returning customers</h3>
-          {types.loading ? <Skeleton height={180} /> :
-            !types.data?.length ? <p className="an-empty">No orders yet.</p> :
-            <NewReturningChart data={types.data} />}
+          {nrLoading ? <Skeleton height={180} /> :
+            nrData.length === 0 ? <p className="an-empty">No orders yet.</p> :
+            <NewReturningChart data={nrData}
+              viewportBuckets={nrViewportBuckets}
+              onLoadMore={nrHandleLoadMore}
+              loadingMore={nrLoadingMore} />}
         </div>
         {/* Top customers */}
         <div className="an-cust-cell">
@@ -793,7 +1784,11 @@ function CustomerSection({ projectId }) {
             !top.data?.length ? <p className="an-mini-empty">No customers yet.</p> : (
               <table className="an-table">
                 <thead>
-                  <tr><th>Customer</th><th>Orders</th><th>Spent</th></tr>
+                  <tr>
+                    <th>Customer</th>
+                    <th className="an-table-num">Orders</th>
+                    <th className="an-table-num">Spent</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {top.data.map(c => (
@@ -814,10 +1809,19 @@ function CustomerSection({ projectId }) {
         <div className="an-cust-cell">
           <h3 className="an-mini-title">Top cities</h3>
           {geo.loading ? <Skeleton height={180} /> :
-            !geo.data?.length ? <p className="an-mini-empty">No shipping data.</p> : (
+            !geo.data?.length ? (
+              <p className="an-mini-empty">
+                No city data yet. Only courier orders contribute — postal
+                and digital orders don't carry a shipping address.
+              </p>
+            ) : (
               <table className="an-table">
                 <thead>
-                  <tr><th>City</th><th>Orders</th><th>Revenue</th></tr>
+                  <tr>
+                    <th>City</th>
+                    <th className="an-table-num">Orders</th>
+                    <th className="an-table-num">Revenue</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {geo.data.map((c, i) => (
@@ -838,36 +1842,315 @@ function CustomerSection({ projectId }) {
     </SectionShell>
   );
 }
-function NewReturningChart({ data }) {
-  // Stacked bars per day — new on top of returning. Simple SVG.
-  const w = 720, h = 200, pad = { l: 24, r: 8, t: 8, b: 22 };
-  const innerW = w - pad.l - pad.r;
-  const innerH = h - pad.t - pad.b;
+// ── Scrollable bar chart for New-vs-returning customers ─────────────────
+// Same scroll architecture as the Revenue-over-time LineChart: full
+// dataset rendered inside a translate()'d <g>, wrapper has overflow:
+// hidden so only one viewport's worth is visible at a time, drag pans,
+// near-left-edge triggers lazy load. Bars (stacked new on top of
+// returning) replace the smooth line — everything else (Y-axis baseline
+// fixed outside scroll, hover tooltip outside scroll, useLayoutEffect
+// scroll anchoring) is structurally identical.
+function NewReturningChart({
+  data = [],
+  viewportBuckets = 30,
+  onLoadMore,
+  loadingMore = false,
+}) {
+  const wrapperRef     = useRef(null);
+  const scrollGroupRef = useRef(null);
+  const scrollXRef     = useRef(0);
+  const dragRef        = useRef({ active: false, startX: 0, startScrollX: 0 });
+  const prevDataLenRef = useRef(0);
+  const prevViewportRef = useRef(viewportBuckets);
+  const userScrolledRef = useRef(false);
+
+  const [wrapperW, setWrapperW] = useState(1000);
+  const [hover,    setHover]    = useState(null);
+
+  useEffect(() => {
+    if (!wrapperRef.current) return;
+    const sync = () => setWrapperW(wrapperRef.current?.clientWidth || 1000);
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(wrapperRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const h = 220;
+  const padL = 12, padR = 12, padT = 22, padB = 32;
+  const innerH = h - padT - padB;
+  const innerW = Math.max(50, wrapperW - padL - padR);
+  const bucketPx = innerW / Math.max(1, viewportBuckets);
+  const dataWidthPx = data.length * bucketPx;
   const max = Math.max(1, ...data.map(d => (d.new || 0) + (d.returning || 0)));
-  const bw = innerW / Math.max(1, data.length);
+  const bw  = Math.max(2, Math.min(bucketPx - 6, 40));
+  // Bars sit centered on xCenter(i), so their right edge is at
+  // xCenter+bw/2 and their left edge at xCenter-bw/2. The "rightmost"
+  // scroll position needs to land the LAST bar's RIGHT edge — not its
+  // center — at the right boundary of the plot area, otherwise half
+  // the bar is clipped by the overflow:hidden / clipPath rect. Same
+  // story on the left for the first bar (- bw/2 inset).
+  const halfBar = bw / 2;
+  const scrollAtRightmost = innerW - (data.length - 0.5) * bucketPx - halfBar;
+  const scrollAtLeftmost  = -0.5 * bucketPx + halfBar;
+  const canScroll = dataWidthPx > innerW;
+
+  const xCenter = (i) => padL + (i + 0.5) * bucketPx;
+  const showNumLabels = bucketPx >= 22;
+
+  // Density of x-axis labels — one per ~80 px visible.
+  const labelStep = Math.max(1, Math.round(80 / Math.max(1, bucketPx)));
+
+  const fmtDay = (s) => {
+    if (!s) return '';
+    try {
+      const d = new Date(s);
+      return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+    } catch { return String(s); }
+  };
+  const fmtDayFull = (s) => {
+    if (!s) return '';
+    try {
+      const d = new Date(s);
+      return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
+    } catch { return String(s); }
+  };
+
+  const writeScrollPosition = (x) => {
+    scrollXRef.current = x;
+    if (scrollGroupRef.current) {
+      scrollGroupRef.current.setAttribute('transform', `translate(${x}, 0)`);
+    }
+  };
+
+  useLayoutEffect(() => {
+    const prev = prevDataLenRef.current;
+    const cur  = data.length;
+    const viewportChanged = prevViewportRef.current !== viewportBuckets;
+    prevViewportRef.current = viewportBuckets;
+    if (prev === 0 && cur > 0) {
+      userScrolledRef.current = false;
+      writeScrollPosition(scrollAtRightmost);
+      setHover(null);
+    } else if (prev > 0 && cur > prev) {
+      const added = cur - prev;
+      writeScrollPosition(scrollXRef.current - added * bucketPx);
+      setHover(h => h != null ? h + added : null);
+    } else if (cur > 0 && viewportChanged) {
+      userScrolledRef.current = false;
+      writeScrollPosition(scrollAtRightmost);
+    } else if (cur > 0 && !userScrolledRef.current) {
+      writeScrollPosition(scrollAtRightmost);
+    } else if (cur > 0) {
+      const clamped = Math.max(scrollAtRightmost,
+                       Math.min(scrollAtLeftmost, scrollXRef.current));
+      if (clamped !== scrollXRef.current) writeScrollPosition(clamped);
+    }
+    prevDataLenRef.current = cur;
+  }, [data.length, scrollAtRightmost, scrollAtLeftmost, bucketPx, viewportBuckets]);
+
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const writeScroll = (x) => {
+    writeScrollPosition(x);
+    if (onLoadMore && !loadingMore && canScroll) {
+      const range            = scrollAtLeftmost - scrollAtRightmost;
+      const distFromLeftmost = scrollAtLeftmost - x;
+      if (range > 0 && distFromLeftmost / range < 0.25) {
+        onLoadMore();
+      }
+    }
+  };
+
+  // Pointer Events unify mouse/touch/pen. setPointerCapture keeps the
+  // move stream flowing even when the finger drags off the wrapper —
+  // crucial on mobile where a long swipe can exit the chart bounds.
+  const handlePointerDown = (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    dragRef.current = {
+      active: true,
+      startX: e.clientX,
+      startScrollX: scrollXRef.current,
+    };
+    setHover(null);
+    if (wrapperRef.current) {
+      wrapperRef.current.style.cursor = 'grabbing';
+      try { wrapperRef.current.setPointerCapture(e.pointerId); } catch { /* ok */ }
+    }
+    userScrolledRef.current = true;
+  };
+  const handlePointerMove = (e) => {
+    if (dragRef.current.active) {
+      const dx = e.clientX - dragRef.current.startX;
+      writeScroll(clamp(dragRef.current.startScrollX + dx,
+                        scrollAtRightmost, scrollAtLeftmost));
+      return;
+    }
+    // Hover only for pointing devices — touch has no hover semantics.
+    if (e.pointerType === 'touch') return;
+    if (!data.length || !wrapperRef.current) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    const xScreen = e.clientX - rect.left;
+    const i = Math.floor((xScreen - scrollXRef.current - padL) / bucketPx);
+    if (i >= 0 && i < data.length) setHover(i);
+    else setHover(null);
+  };
+  const endDrag = (e) => {
+    if (dragRef.current.active) dragRef.current.active = false;
+    if (wrapperRef.current) {
+      wrapperRef.current.style.cursor = canScroll ? 'grab' : 'default';
+      if (e?.pointerId != null) {
+        try { wrapperRef.current.releasePointerCapture(e.pointerId); } catch { /* ok */ }
+      }
+    }
+  };
+  const handlePointerUp     = (e) => endDrag(e);
+  const handlePointerLeave  = (e) => { endDrag(e); setHover(null); };
+  const handlePointerCancel = (e) => endDrag(e);
+
+  const hoverPt = hover != null && data[hover] ? {
+    i:    hover,
+    cx:   xCenter(hover),
+    nw:   data[hover].new || 0,
+    rt:   data[hover].returning || 0,
+    date: data[hover].day,
+  } : null;
+  const hoverTotal = hoverPt ? (hoverPt.nw + hoverPt.rt) : 0;
+  const hoverY = hoverPt ? (padT + innerH - (hoverTotal / max) * innerH) : 0;
+  const clipId = `an-nr-clip`;
+
   return (
     <div className="an-cust-chart">
-      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="an-chart">
-        {data.map((d, i) => {
-          const total = (d.new || 0) + (d.returning || 0);
-          const x = pad.l + i * bw;
-          const ret_h = ((d.returning || 0) / max) * innerH;
-          const new_h = ((d.new || 0) / max) * innerH;
-          const ret_y = pad.t + innerH - ret_h;
-          const new_y = ret_y - new_h;
-          return (
-            <g key={i}>
-              <rect x={x + 1} y={ret_y} width={Math.max(1, bw - 2)} height={ret_h}
-                fill="var(--accent)" opacity="0.45" />
-              <rect x={x + 1} y={new_y} width={Math.max(1, bw - 2)} height={new_h}
-                fill="var(--accent)" />
+      <div ref={wrapperRef}
+           className="an-chart-wrap"
+           onPointerDown={handlePointerDown}
+           onPointerMove={handlePointerMove}
+           onPointerUp={handlePointerUp}
+           onPointerLeave={handlePointerLeave}
+           onPointerCancel={handlePointerCancel}
+           style={{
+             overflow: 'hidden',
+             cursor: canScroll ? 'grab' : 'default',
+             touchAction: 'pan-y',
+             userSelect: 'none',
+             width: '100%',
+             position: 'relative',
+           }}>
+        <svg width={wrapperW} height={h}
+             style={{ display: 'block', width: '100%' }}>
+          <defs>
+            <clipPath id={clipId}>
+              {/* Clip HORIZONTALLY only — full chart height so x-axis
+                  date labels (at y = h - 12) stay visible. */}
+              <rect x={padL} y={0}
+                    width={wrapperW - padL - padR}
+                    height={h} />
+            </clipPath>
+          </defs>
+          {/* Fixed baseline — does NOT scroll, runs the full viewport. */}
+          <line x1={padL} x2={wrapperW - padR}
+                y1={padT + innerH + 0.5} y2={padT + innerH + 0.5}
+                stroke="#e5e7eb" strokeWidth="1" />
+          {/* Scrollable group: bars + x-labels + hover crosshair. */}
+          <g clipPath={`url(#${clipId})`}>
+            <g ref={scrollGroupRef}
+               transform={`translate(${scrollXRef.current}, 0)`}>
+              {/* X-axis labels — auto-thinned. */}
+              {data.map((d, i) => {
+                if (i % labelStep !== 0 && i !== data.length - 1) return null;
+                return (
+                  <text key={`x-${i}`} x={xCenter(i)} y={h - 12}
+                        textAnchor="middle" fontSize="11"
+                        fill="var(--muted)" fontFamily="inherit">
+                    {fmtDay(d.day)}
+                  </text>
+                );
+              })}
+              {/* Bars + per-day tick markers. For days with zero orders
+                  we still draw a 1×2 px tick at the baseline so wide
+                  periods (half-year × day = 180 buckets, most empty)
+                  visually read as "180 days of timeline, most empty"
+                  instead of "5 random bars in empty space". Reassures
+                  the merchant the chart loaded the full range. */}
+              {data.map((d, i) => {
+                const total = (d.new || 0) + (d.returning || 0);
+                const cx = xCenter(i);
+                if (total === 0) {
+                  return (
+                    <rect key={`tick-${i}`}
+                          x={cx - 0.5} y={padT + innerH - 2}
+                          width={1} height={2}
+                          fill="#cbd5e1" />
+                  );
+                }
+                const x  = cx - bw / 2;
+                const ret_h = ((d.returning || 0) / max) * innerH;
+                const new_h = ((d.new      || 0) / max) * innerH;
+                const ret_y = padT + innerH - ret_h;
+                const new_y = ret_y - new_h;
+                const isHov = hover === i;
+                return (
+                  <g key={i} opacity={hover != null && !isHov ? 0.55 : 1}>
+                    {ret_h > 0 && (
+                      <rect x={x} y={ret_y} width={bw} height={ret_h}
+                            fill="var(--accent)" opacity="0.45" />
+                    )}
+                    {new_h > 0 && (
+                      <rect x={x} y={new_y} width={bw} height={new_h}
+                            fill="var(--accent)" />
+                    )}
+                    {showNumLabels && hover == null && (
+                      <text x={cx} y={new_y - 5} textAnchor="middle"
+                            fontSize="10" fontWeight="600" fill="var(--text)"
+                            fontFamily="inherit">
+                        {total}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              {/* Hover crosshair — inside scroll group so it tracks the bar. */}
+              {hoverPt && !dragRef.current.active && (
+                <line x1={hoverPt.cx} x2={hoverPt.cx}
+                      y1={padT} y2={padT + innerH}
+                      stroke="#c7c7cc" strokeWidth="1" strokeDasharray="3 3" />
+              )}
             </g>
-          );
-        })}
-      </svg>
+          </g>
+          {/* Tooltip OUTSIDE the scroll group — uses screen-x = chart-x + scrollX. */}
+          {hoverPt && !dragRef.current.active && (() => {
+            const screenX = hoverPt.cx + scrollXRef.current;
+            if (screenX < padL || screenX > wrapperW - padR) return null;
+            const lines = [
+              fmtDayFull(hoverPt.date),
+              `New: ${hoverPt.nw}`,
+              `Returning: ${hoverPt.rt}`,
+              `Total: ${hoverTotal}`,
+            ];
+            const longestChars = Math.max(...lines.map(l => l.length));
+            const bw2 = Math.max(160, longestChars * 7 + 24);
+            const bh  = 4 + lines.length * 16 + 6;
+            const bx = Math.min(wrapperW - padR - bw2,
+                       Math.max(padL, screenX - bw2 / 2));
+            const by = Math.max(padT + 4, hoverY - bh - 12);
+            return (
+              <g pointerEvents="none">
+                <rect x={bx} y={by} width={bw2} height={bh} rx="8"
+                      fill="rgba(20,20,30,0.92)" />
+                {lines.map((line, j) => (
+                  <text key={j} x={bx + 12} y={by + 18 + j * 16}
+                        fontSize="11" fill="#fff" fontFamily="inherit"
+                        fontWeight={j === 0 ? 600 : 400}>
+                    {line}
+                  </text>
+                ))}
+              </g>
+            );
+          })()}
+        </svg>
+      </div>
       <div className="an-legend">
-        <span className="an-legend-dot an-legend-dot--new" /> New
-        <span className="an-legend-dot an-legend-dot--ret" /> Returning
+        <span className="an-legend-dot an-legend-dot--new" /> New (first-ever order)
+        <span className="an-legend-dot an-legend-dot--ret" /> Returning (≥2nd order)
       </div>
     </div>
   );
@@ -891,6 +2174,13 @@ function CohortRetentionSection({ projectId }) {
   }, [projectId]);
   return (
     <SectionShell title="Cohort retention (last 6 months)" Icon={Users} hidePeriod>
+      <p className="an-section-hint">
+        Groups customers by the month they placed their first ever
+        order ("cohort"). Each row tracks how many of that cohort came
+        back N months later. M0 = the month they joined (always 100%),
+        M1 = next month, etc. Reading a row across shows whether your
+        repeat-customer rate fades or holds steady over time.
+      </p>
       {loading ? <Skeleton height={200} /> :
         !data?.cohorts?.length ? <p className="an-empty">Need at least 2 months of orders to compute cohorts.</p> : (
           <div className="an-tile an-cohort-wrap">
@@ -898,9 +2188,9 @@ function CohortRetentionSection({ projectId }) {
               <thead>
                 <tr>
                   <th>Cohort</th>
-                  <th>Size</th>
+                  <th className="an-table-num">Size</th>
                   {Array.from({ length: data.months }, (_, i) => (
-                    <th key={i}>M{i}</th>
+                    <th key={i} className="an-cohort-h">M{i}</th>
                   ))}
                 </tr>
               </thead>
@@ -909,16 +2199,26 @@ function CohortRetentionSection({ projectId }) {
                   <tr key={c.cohort}>
                     <td>{c.cohort}</td>
                     <td className="an-table-num">{c.size}</td>
-                    {c.values.map((v, i) => (
-                      <td key={i} className="an-cohort-cell"
-                          style={{
-                            background: v.pct == null ? 'transparent'
-                              : `rgba(0,113,227,${0.08 + (v.pct / 100) * 0.65})`,
-                            color: v.pct != null && v.pct > 40 ? '#fff' : 'inherit',
-                          }}>
-                        {v.pct != null ? `${v.pct.toFixed(0)}%` : '—'}
-                      </td>
-                    ))}
+                    {c.values.map((v, i) => {
+                      // Quantize intensity into 6 tiers so the colour
+                      // lives in CSS (one class per tier) instead of an
+                      // inline rgba string. Easier to theme + matches
+                      // GitHub-style heatmap conventions.
+                      let tier = 'empty';
+                      if (v.pct != null) {
+                        if (v.pct === 0)       tier = 't0';
+                        else if (v.pct <= 20)  tier = 't1';
+                        else if (v.pct <= 40)  tier = 't2';
+                        else if (v.pct <= 60)  tier = 't3';
+                        else if (v.pct <= 80)  tier = 't4';
+                        else                   tier = 't5';
+                      }
+                      return (
+                        <td key={i} className={`an-cohort-cell an-cohort-cell--${tier}`}>
+                          {v.pct != null ? `${v.pct.toFixed(0)}%` : '—'}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -969,7 +2269,14 @@ function ReturnsSection({ projectId }) {
             <h3 className="an-mini-title">Products with highest return rate</h3>
             {data.top_products.length === 0 ? <p className="an-mini-empty">No data yet.</p> : (
               <table className="an-table">
-                <thead><tr><th>Product</th><th>Sold</th><th>Returned</th><th>Rate</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th className="an-table-num">Sold</th>
+                    <th className="an-table-num">Returned</th>
+                    <th className="an-table-num">Rate</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {data.top_products.slice(0, 8).map(p => (
                     <tr key={p.id}>
@@ -1101,26 +2408,39 @@ function TrafficSourcesSection({ projectId }) {
   return (
     <SectionShell title="Traffic sources" Icon={Globe}
       periodValue={period} onPeriodChange={setPeriod}>
+      <p className="an-section-hint">
+        Where your visitors come from. Source breakdown buckets them
+        into 4 channels: direct (typed URL or bookmark), organic
+        (Google/Yandex search), social (FB/IG/X), referral (any other
+        external site). Top referrers — exact domains that linked to
+        you. Numbers = unique visitors; bar width = share of total
+        traffic.
+      </p>
       {loading || !data ? <Skeleton height={200} /> : (
         <div className="an-traffic-grid">
           <div className="an-traffic-cell">
             <h3 className="an-mini-title">Source breakdown</h3>
             {data.sources.length === 0 ? <p className="an-mini-empty">No traffic yet.</p> :
               <HorizontalBars data={data.sources} valueKey="visitors" labelKey="source"
-                formatValue={(v) => `${v}`} />}
+                mode="share" formatValue={(v) => `${v}`} />}
           </div>
           <div className="an-traffic-cell">
             <h3 className="an-mini-title">Top referrers</h3>
             {data.referrers.length === 0 ? <p className="an-mini-empty">No external referrers.</p> :
               <HorizontalBars data={data.referrers} valueKey="visitors" labelKey="host"
-                formatValue={(v) => `${v}`} />}
+                mode="share" formatValue={(v) => `${v}`} />}
           </div>
           {data.campaigns.length > 0 && (
             <div className="an-traffic-cell an-traffic-cell--wide">
               <h3 className="an-mini-title">UTM campaigns</h3>
               <table className="an-table">
                 <thead>
-                  <tr><th>Source</th><th>Medium</th><th>Campaign</th><th>Visitors</th></tr>
+                  <tr>
+                    <th>Source</th>
+                    <th>Medium</th>
+                    <th>Campaign</th>
+                    <th className="an-table-num">Visitors</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {data.campaigns.map((c, i) => (
@@ -1150,19 +2470,26 @@ function DevicesSection({ projectId }) {
   return (
     <SectionShell title="Devices & browsers" Icon={DeviceMobile}
       periodValue={period} onPeriodChange={setPeriod}>
+      <p className="an-section-hint">
+        What your visitors browse on. Number = unique people (deduped
+        by IP); bar = share of the total. If mobile dominates
+        but your design is desktop-first, that's a UX gap to close. NB:
+        same person on the same machine in Chrome + Edge counts twice
+        — browsers don't share session cookies cross-app.
+      </p>
       {loading || !data ? <Skeleton height={160} /> : (
         <div className="an-traffic-grid">
           <div className="an-traffic-cell">
             <h3 className="an-mini-title">Device type</h3>
             {data.devices.length === 0 ? <p className="an-mini-empty">No data.</p> :
               <HorizontalBars data={data.devices} valueKey="visitors" labelKey="device"
-                formatValue={(v) => `${v}`} />}
+                mode="share" formatValue={(v) => `${v}`} />}
           </div>
           <div className="an-traffic-cell">
             <h3 className="an-mini-title">Browser</h3>
             {data.browsers.length === 0 ? <p className="an-mini-empty">No data.</p> :
               <HorizontalBars data={data.browsers} valueKey="visitors" labelKey="browser"
-                formatValue={(v) => `${v}`} />}
+                mode="share" formatValue={(v) => `${v}`} />}
           </div>
         </div>
       )}
@@ -1183,12 +2510,18 @@ function CountriesSection({ projectId }) {
         data.length === 0 ? <p className="an-empty">No country data yet. Pre-2026-05 visits show as "Unknown" — only newer rows are enriched.</p> : (
           <div className="an-tile">
           <table className="an-table">
-            <thead><tr><th>Country</th><th>Code</th><th>Visitors</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Country</th>
+                <th className="an-table-num">Code</th>
+                <th className="an-table-num">Visitors</th>
+              </tr>
+            </thead>
             <tbody>
               {data.map((c, i) => (
                 <tr key={i}>
                   <td>{c.name}</td>
-                  <td><code>{c.code}</code></td>
+                  <td className="an-table-num"><code>{c.code}</code></td>
                   <td className="an-table-num">{c.visitors}</td>
                 </tr>
               ))}
@@ -1217,7 +2550,13 @@ function SearchInsightsSection({ projectId }) {
             <h3 className="an-mini-title">Top searches</h3>
             {data.top.length === 0 ? <p className="an-mini-empty">No searches yet.</p> : (
               <table className="an-table">
-                <thead><tr><th>Query</th><th>Searches</th><th>Avg results</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Query</th>
+                    <th className="an-table-num">Searches</th>
+                    <th className="an-table-num">Avg results</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {data.top.slice(0, 10).map((q, i) => (
                     <tr key={i}>
@@ -1234,7 +2573,12 @@ function SearchInsightsSection({ projectId }) {
             <div className="an-search-cell an-search-cell--wide">
               <h3 className="an-mini-title">Zero-result queries (catalog gaps)</h3>
               <table className="an-table">
-                <thead><tr><th>Query</th><th>Searches</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Query</th>
+                    <th className="an-table-num">Searches</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {data.zero.slice(0, 10).map((q, i) => (
                     <tr key={i}>
@@ -1273,7 +2617,7 @@ function GoalsWidgetSection({ projectId }) {
       {loading ? <Skeleton height={180} /> :
         active.length === 0 ? (
           <p className="an-empty">
-            No active targets. Set them on the <a href="goals" style={{ color: 'var(--accent)' }}>Targets page</a>.
+            No active targets. Set them on the <a href="goals" className="an-link">Targets page</a>.
           </p>
         ) : (
           <div className="an-goals-list">
@@ -1305,6 +2649,210 @@ function GoalsWidgetSection({ projectId }) {
 
 
 // ════════════════════════════════════════════════════════════════════════
+// SECTION — Margin analysis (Product → Variation → SKU hierarchy)
+// ════════════════════════════════════════════════════════════════════════
+// Margin colour tier — accent (default = healthy) and red (< 20 % = thin
+// or loss). Green tier was removed; the design language across the page
+// uses only blue accent + red as the alarm colour.
+const marginTone = (pct) => {
+  if (pct == null) return '';     // no sales — rendered as "—", neutral
+  return pct < 20 ? ' an-margin-pct--bad' : '';
+};
+const MARGIN_COLS = '2.4fr 90px 1.1fr 1.1fr 1.1fr 110px';
+
+// Small thumbnail at depth=0 inside MarginNameCell. Falls back to a
+// neutral circle when the product / variation has no image.
+function MarginThumb({ src }) {
+  return src
+    ? <img src={src} alt="" className="po-tree-avatar" />
+    : <span className="po-tree-avatar-fallback" />;
+}
+
+// Name cell with tree indentation + chevron — same shape Discounts uses.
+function MarginNameCell({ depth = 0, chevron, onChevron, icon, children }) {
+  const padLeft = 8 + depth * 24;
+  return (
+    <span className="po-tree-name-cell" style={{ paddingLeft: padLeft }}>
+      {chevron ? (
+        <button type="button" className="po-tree-chevron"
+          onClick={(e) => { e.stopPropagation(); onChevron?.(); }}>
+          {chevron === 'open' ? <CaretDown weight="bold" /> : <CaretRight weight="bold" />}
+        </button>
+      ) : (
+        <span className="po-tree-chevron-spacer" />
+      )}
+      {icon && <span className="po-tree-icon">{icon}</span>}
+      {children}
+    </span>
+  );
+}
+
+function MarginSection({ projectId }) {
+  const [period, setPeriod] = useState('1mo');
+  const { data, loading } = useSectionData('/api/analytics/margin', period, projectId);
+  const [expanded,    setExpanded]    = useState({});  // product_id → bool
+  const [expandedVar, setExpandedVar] = useState({});  // variation_id → bool
+  const toggleProd = (id) => setExpanded(prev    => ({ ...prev, [id]: !prev[id] }));
+  const toggleVar  = (id) => setExpandedVar(prev => ({ ...prev, [id]: !prev[id] }));
+  // Export full hierarchy flat — one row per SKU with parent product /
+  // variation names denormalised. Merchant gets a spreadsheet they can
+  // pivot in Excel without losing the tree relationship.
+  const exportCsv = () => {
+    if (!data?.products?.length) return;
+    const flat = [];
+    for (const p of data.products) {
+      for (const v of (p.variations || [])) {
+        for (const s of (v.skus || [])) {
+          flat.push({
+            product:    p.title,
+            variation:  v.name,
+            sku:        s.name,
+            sku_code:   s.sku_code,
+            units:      s.units,
+            revenue:    s.revenue,
+            cost:       s.cogs,
+            profit:     s.profit,
+            margin_pct: s.margin_pct,
+          });
+        }
+      }
+    }
+    downloadCSV(
+      `margin-${period}-${new Date().toISOString().slice(0,10)}.csv`,
+      flat,
+      [
+        { key: 'product',    label: 'Product' },
+        { key: 'variation',  label: 'Variation' },
+        { key: 'sku',        label: 'SKU' },
+        { key: 'sku_code',   label: 'SKU code' },
+        { key: 'units',      label: 'Units' },
+        { key: 'revenue',    label: 'Revenue', format: v => (+v || 0).toFixed(2) },
+        { key: 'cost',       label: 'Cost',    format: v => (+v || 0).toFixed(2) },
+        { key: 'profit',     label: 'Profit',  format: v => (+v || 0).toFixed(2) },
+        { key: 'margin_pct', label: 'Margin %', format: v => v == null ? '' : (+v).toFixed(1) },
+      ]
+    );
+  };
+  return (
+    <SectionShell title="Margin analysis" Icon={Percent}
+      periodValue={period} onPeriodChange={setPeriod}
+      headerControls={<CsvButton onClick={exportCsv} disabled={!data?.products?.length} />}>
+      <p className="an-section-hint">
+        Gross profit margin = (Revenue − Cost) / Revenue × 100%. Cost
+        comes from each SKU's cost_price field on the product page.
+        Click a product to expand variations, then a variation to see
+        per-SKU breakdown. Margins under 20% render in red — the line
+        is too thin to absorb shipping or returns without going
+        negative. Unsold SKUs show a dash for margin.
+      </p>
+      {loading || !data ? <Skeleton height={240} /> :
+        !data.products?.length ? (
+          <p className="an-empty">No sales yet for this period.</p>
+        ) : (
+          <>
+            <div className="an-margin-totals">
+              <Kpi label="Total revenue" value={fmtMoney(data.total_revenue)} />
+              <Kpi label="Total cost"    value={fmtMoney(data.total_cogs)} inverse />
+              <Kpi label="Gross profit"  value={fmtMoney(data.total_profit)} />
+              <Kpi label="Avg margin"
+                   value={data.total_margin_pct == null ? '—'
+                          : `${data.total_margin_pct.toFixed(1)}%`} />
+            </div>
+            <div className="po-set-table">
+              <div className="po-set-row po-set-row--head"
+                   style={{ gridTemplateColumns: MARGIN_COLS }}>
+                <span>Product · Variation · SKU</span>
+                <span style={{ textAlign: 'right' }}>Units</span>
+                <span style={{ textAlign: 'right' }}>Revenue</span>
+                <span style={{ textAlign: 'right' }}>Cost</span>
+                <span style={{ textAlign: 'right' }}>Profit</span>
+                <span style={{ textAlign: 'right' }}>Margin</span>
+              </div>
+              {data.products.map(p => {
+                const isOpen = !!expanded[p.id];
+                return (
+                  <Fragment key={p.id}>
+                    <PoListRow className="po-tree-row"
+                      style={{ gridTemplateColumns: MARGIN_COLS }}
+                      onClick={() => toggleProd(p.id)}>
+                      <MarginNameCell depth={0}
+                        chevron={isOpen ? 'open' : 'closed'}
+                        onChevron={() => toggleProd(p.id)}
+                        icon={<MarginThumb src={p.image} />}>
+                        <span className="po-set-strong">{p.title}</span>
+                        <span className="po-set-note po-tree-meta">
+                          · {p.variations.length} variation{p.variations.length === 1 ? '' : 's'}
+                        </span>
+                      </MarginNameCell>
+                      <span className="an-margin-numcell">{fmtInt(p.units)}</span>
+                      <span className="an-margin-numcell">{fmtMoney(p.revenue)}</span>
+                      <span className="an-margin-numcell">{fmtMoney(p.cogs)}</span>
+                      <span className="an-margin-numcell">{fmtMoney(p.profit)}</span>
+                      <span className={`an-margin-numcell an-margin-pct${marginTone(p.margin_pct)}`}>
+                        {p.margin_pct == null ? '—' : <b>{p.margin_pct.toFixed(1)}%</b>}
+                      </span>
+                    </PoListRow>
+
+                    {isOpen && p.variations.map(v => {
+                      const vKey  = `${p.id}-${v.id}`;
+                      const vOpen = !!expandedVar[vKey];
+                      return (
+                        <Fragment key={v.id}>
+                          <PoListRow className="po-tree-row"
+                            style={{ gridTemplateColumns: MARGIN_COLS }}
+                            onClick={() => toggleVar(vKey)}>
+                            <MarginNameCell depth={1}
+                              chevron={vOpen ? 'open' : 'closed'}
+                              onChevron={() => toggleVar(vKey)}
+                              icon={<MarginThumb src={v.image} />}>
+                              <span className="po-set-strong">{v.name}</span>
+                              <span className="po-set-note po-tree-meta">
+                                · {v.skus.length} SKU{v.skus.length === 1 ? '' : 's'}
+                              </span>
+                            </MarginNameCell>
+                            <span className="an-margin-numcell">{fmtInt(v.units)}</span>
+                            <span className="an-margin-numcell">{fmtMoney(v.revenue)}</span>
+                            <span className="an-margin-numcell">{fmtMoney(v.cogs)}</span>
+                            <span className="an-margin-numcell">{fmtMoney(v.profit)}</span>
+                            <span className={`an-margin-numcell an-margin-pct${marginTone(v.margin_pct)}`}>
+                              {v.margin_pct == null ? '—' : `${v.margin_pct.toFixed(1)}%`}
+                            </span>
+                          </PoListRow>
+
+                          {vOpen && v.skus.map(s => (
+                            <PoListRow key={s.id} className="po-tree-row"
+                              style={{ gridTemplateColumns: MARGIN_COLS }}>
+                              <MarginNameCell depth={2}
+                                icon={<Cube className="po-disc-cell--muted" />}>
+                                <span>{s.name}</span>
+                                {s.sku_code && (
+                                  <span className="po-set-note po-tree-meta">· {s.sku_code}</span>
+                                )}
+                              </MarginNameCell>
+                              <span className="an-margin-numcell">{fmtInt(s.units)}</span>
+                              <span className="an-margin-numcell">{fmtMoney(s.revenue)}</span>
+                              <span className="an-margin-numcell">{fmtMoney(s.cogs)}</span>
+                              <span className="an-margin-numcell">{fmtMoney(s.profit)}</span>
+                              <span className={`an-margin-numcell an-margin-pct${marginTone(s.margin_pct)}`}>
+                                {s.margin_pct == null ? '—' : `${s.margin_pct.toFixed(1)}%`}
+                              </span>
+                            </PoListRow>
+                          ))}
+                        </Fragment>
+                      );
+                    })}
+                  </Fragment>
+                );
+              })}
+            </div>
+          </>
+        )}
+    </SectionShell>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
 // SECTION 13 — Inventory health
 // ════════════════════════════════════════════════════════════════════════
 function InventorySection({ projectId }) {
@@ -1323,20 +2871,24 @@ function InventorySection({ projectId }) {
     <SectionShell title="Inventory health" Icon={Package} hidePeriod>
       {loading || !data ? <Skeleton height={140} /> : (
         <div className="an-tile an-inv-grid">
-          <div className="an-inv-bar">
-            {(() => {
-              const total = data.total || 1;
-              const oos = (data.oos / total) * 100;
-              const low = (data.low / total) * 100;
-              const healthy = (data.healthy / total) * 100;
-              return (
-                <div className="an-inv-bar-track">
-                  <div className="an-inv-bar-oos"     style={{ width: `${oos}%` }}      title={`OOS: ${data.oos}`} />
-                  <div className="an-inv-bar-low"     style={{ width: `${low}%` }}      title={`Low: ${data.low}`} />
-                  <div className="an-inv-bar-healthy" style={{ width: `${healthy}%` }} title={`Healthy: ${data.healthy}`} />
-                </div>
-              );
-            })()}
+          <div className="an-inv-bar-track">
+            {/* Three rounded pills sized by their data value via flex-grow
+                so the proportions track {oos, low, healthy} and the gap
+                between them is fixed regardless of distribution. Empty
+                buckets are skipped so the gap doesn't render as a phantom
+                tick. */}
+            {data.oos > 0 && (
+              <div className="an-inv-bar-pill an-inv-bar-pill--oos"
+                   style={{ flex: data.oos }} />
+            )}
+            {data.low > 0 && (
+              <div className="an-inv-bar-pill an-inv-bar-pill--low"
+                   style={{ flex: data.low }} />
+            )}
+            {data.healthy > 0 && (
+              <div className="an-inv-bar-pill an-inv-bar-pill--healthy"
+                   style={{ flex: data.healthy }} />
+            )}
           </div>
           <div className="an-inv-legend">
             <span><span className="an-inv-dot an-inv-dot--oos" />OOS · {data.oos}</span>
@@ -1369,7 +2921,13 @@ function PromoSection({ projectId }) {
             <div className="an-tile">
             <table className="an-table">
               <thead>
-                <tr><th>Code</th><th>Used</th><th>Revenue</th><th>Discount</th><th>Avg order</th></tr>
+                <tr>
+                  <th>Code</th>
+                  <th className="an-table-num">Used</th>
+                  <th className="an-table-num">Revenue</th>
+                  <th className="an-table-num">Discount</th>
+                  <th className="an-table-num">Avg order</th>
+                </tr>
               </thead>
               <tbody>
                 {data.codes.map(c => (
@@ -1400,13 +2958,21 @@ function OperationsSection({ projectId }) {
   return (
     <SectionShell title="Operations" Icon={GearSix}
       periodValue={period} onPeriodChange={setPeriod}>
+      <p className="an-section-hint">
+        Operational SLA — how fast your fulfilment + checkout work.
+        Order → shipped: median time from order placed to status
+        moving to shipped (your warehouse speed). Shipped → delivered:
+        courier transit time. Cart → paid: how long shoppers hesitate
+        between adding an item and paying — long values hint at price
+        doubts. Abandoned rate: % of carts that never converted.
+        Dashes (—) mean we have no data yet for that metric in this
+        period.
+      </p>
       {loading || !data ? <Skeleton height={140} /> : (
         <div className="an-ops-grid">
-          <Kpi label="Order → shipped"    value={fmtDays(data.median_processing_days)} />
-          <Kpi label="Shipped → delivered" value={fmtDays(data.median_shipping_days)} />
-          <Kpi label="Cart → paid (median)" value={
-            data.median_cart_to_paid_hours == null ? '—' : `${data.median_cart_to_paid_hours.toFixed(1)} h`
-          } />
+          <Kpi label="Order → shipped"     value={fmtDaysAdaptive(data.median_processing_days)} />
+          <Kpi label="Shipped → delivered" value={fmtDaysAdaptive(data.median_shipping_days)} />
+          <Kpi label="Cart → paid (median)"  value={fmtHoursAdaptive(data.median_cart_to_paid_hours)} />
           <Kpi label="Abandoned rate"  value={`${data.abandoned_rate_pct.toFixed(1)}%`}
             inverse delta={null} />
         </div>
@@ -1419,7 +2985,14 @@ function OperationsSection({ projectId }) {
 // Main page — stacks all sections vertically
 // ════════════════════════════════════════════════════════════════════════
 export default function Analytics() {
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
+  // Project currency drives money formatting across all sections. Set
+  // once at mount and on any project switch (different store = different
+  // currency). The module-level setter avoids prop-drilling through
+  // ~20 child components.
+  useEffect(() => {
+    if (project?.currency) setAnalyticsCurrency(project.currency);
+  }, [project?.currency]);
   // Top-level period is shared by Overview only; everything else has its own.
   const [topPeriod, setTopPeriod] = useState('1mo');
   // Eager (above-fold) vs lazy (below-fold) split. Only the first four
@@ -1436,6 +3009,9 @@ export default function Analytics() {
         <RevenueOverTimeSection  projectId={projectId} />
         <RevenueByCategorySection projectId={projectId} />
         <FunnelSection           projectId={projectId} />
+        {/* Margin analysis right after the funnel — most important
+            profitability metric for the merchant, no point burying it. */}
+        <LazySection minHeight={320}><MarginSection           projectId={projectId} /></LazySection>
         <LazySection minHeight={260}><FunnelDynamicsSection   projectId={projectId} /></LazySection>
         <LazySection minHeight={320}><HeatmapSection          projectId={projectId} /></LazySection>
         <LazySection minHeight={360}><PopularProductsSection  projectId={projectId} /></LazySection>

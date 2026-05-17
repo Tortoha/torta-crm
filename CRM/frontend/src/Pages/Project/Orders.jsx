@@ -55,12 +55,21 @@ const CARD_TILT = {
 
 // ── Helpers ────────────────────────────────────────────────────
 
-const fmt     = n  => (+n).toFixed(2);
+const fmt = n  => (+n).toFixed(2);
+// Module-level mutable project timezone — the Orders top-level
+// component sets it once via setOrdersTimezone() at mount, and every
+// fmtDate / fmtDateLong call reads from it. This keeps date display
+// consistent with the Analytics page (which also reads project.timezone
+// server-side) — without this Orders shows "May 16" while Analytics
+// shows "May 17" for the same order, because the browser TZ and the
+// project TZ disagreed.
+let __ORDERS_TZ = 'UTC';
+const setOrdersTimezone = (tz) => { __ORDERS_TZ = tz || 'UTC'; };
 const fmtDate = ts => ts
-  ? new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  ? new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: __ORDERS_TZ })
   : '';
 const fmtDateLong = ts => ts
-  ? new Date(ts).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  ? new Date(ts).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: __ORDERS_TZ })
   : '';
 
 // ── Status selector ────────────────────────────────────────────
@@ -490,7 +499,13 @@ function OrdersTopTabs({ tab, setTab, returnsActionCount }) {
 // ── Top-level page: Orders ↔ Returns ──────────────────────────
 
 function Orders() {
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
+  // Keep date formatting in sync with the project's configured TZ so
+  // Orders' "May 17, 2026" stays consistent with what Analytics shows
+  // for the same order (both read project.timezone now).
+  useEffect(() => {
+    if (project?.timezone) setOrdersTimezone(project.timezone);
+  }, [project?.timezone]);
   const [params, setParams] = useSearchParams();
   const initialTab = params.get('tab') === 'returns' ? 'returns' : 'orders';
   const [topTab, setTopTab] = useState(initialTab);
