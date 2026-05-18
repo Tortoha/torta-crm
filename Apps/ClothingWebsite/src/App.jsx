@@ -17,10 +17,20 @@ import Orders from './Orders';
 import Booking from './Booking';
 import BookingSuccess from './BookingSuccess';
 import { client } from "./api.js"
+import { setShopCurrency } from "./currency.js"
 
 function App() {
   useEffect(() => {
     client.track.visit();
+    // Bootstrap the storefront's currency from project config BEFORE
+    // any price renders. The result is cached at module level by
+    // `setShopCurrency`, so subsequent `fmtMoney()` calls anywhere in
+    // the app pick up the merchant's chosen symbol immediately. Fails
+    // open to USD if the request errors — better to ship the page
+    // than block on a config fetch.
+    client.config.get()
+      .then(r => setShopCurrency(r?.data?.currency))
+      .catch(() => {});
   }, []);
 
   return (

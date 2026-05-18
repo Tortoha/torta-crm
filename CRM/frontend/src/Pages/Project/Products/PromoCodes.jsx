@@ -7,6 +7,7 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { todayLocalIsoDay } from '../../../Utils/date.js';
+import { formatMoney } from '../../../Utils/currency.js';
 import { Combobox, DatePicker, TimePicker } from '../Booking/BookingCreateModal.jsx';
 import { CpmOptionSelect } from './CreateProductModal.jsx';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
@@ -46,8 +47,11 @@ const TILT = {
 };
 
 export default function PromoCodes() {
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
   const pq = `?project_id=${projectId}`;
+  // Project currency drives how promo amounts (Min order, $-off
+  // discount values) are rendered in both the list and the cards.
+  const currency = project?.currency || 'USD';
   const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState('');
   const [typeF, setTypeF] = useState('all');
@@ -178,7 +182,7 @@ export default function PromoCodes() {
             <span>Min order</span><span>Used</span><span>Validity</span><span>Status</span><span></span>
           </div>
           {filtered.map(c => (
-            <PromoRow key={c.id} code={c} categories={categories}
+            <PromoRow key={c.id} code={c} categories={categories} currency={currency}
               onEdit={() => setEditing(c)}
               onDelete={() => remove(c.id)}
               onToggleActive={() => persist({ is_active: !c.is_active }, c.id)} />
@@ -188,7 +192,7 @@ export default function PromoCodes() {
       ) : (
         <div className="promo-grid">
           {filtered.map(c => (
-            <PromoCard key={c.id} code={c} categories={categories}
+            <PromoCard key={c.id} code={c} categories={categories} currency={currency}
               onEdit={() => setEditing(c)}
               onDelete={() => remove(c.id)}
               onToggleActive={() => persist({ is_active: !c.is_active }, c.id)} />
@@ -255,8 +259,13 @@ function SortToggle({ sort, onSort }) {
 }
 
 // ── Helpers shared between row + card ────────────────────────────────
-function buildLabels(code) {
-  const valueLabel = code.discount_type === 'percentage' ? `${code.discount_value}%` : `$${code.discount_value}`;
+// `currency` is the project's currency code (e.g. 'USD', 'KZT'). Pass-
+// through so promo discount values render in the merchant's chosen
+// currency (a 10₸ off coupon should NOT show as "$10").
+function buildLabels(code, currency = 'USD') {
+  const valueLabel = code.discount_type === 'percentage'
+    ? `${code.discount_value}%`
+    : formatMoney(code.discount_value, currency);
   const usedLabel = `${code.times_used}${code.usage_limit ? ` / ${code.usage_limit}` : ''}`;
   const f = code.valid_from  ? new Date(code.valid_from).toLocaleDateString()  : null;
   const t = code.valid_until ? new Date(code.valid_until).toLocaleDateString() : null;
@@ -269,11 +278,11 @@ function buildLabels(code) {
 }
 
 // ── Promo row (list view) — clickable, opens edit on row click ──────
-function PromoRow({ code, categories, onEdit, onDelete, onToggleActive }) {
+function PromoRow({ code, categories, currency, onEdit, onDelete, onToggleActive }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   const status = statusOf(code);
-  const { valueLabel, usedLabel, validLabel } = buildLabels(code);
+  const { valueLabel, usedLabel, validLabel } = buildLabels(code, currency);
   const catCount = (code.category_ids || []).length;
 
   return (
@@ -293,7 +302,7 @@ function PromoRow({ code, categories, onEdit, onDelete, onToggleActive }) {
       </span>
       <span>{code.discount_type}</span>
       <span>{valueLabel}</span>
-      <span>${code.min_order_amount || 0}</span>
+      <span>{formatMoney(code.min_order_amount || 0, currency)}</span>
       <span>{usedLabel}</span>
       <span className="po-set-note">{validLabel}</span>
       <span>
@@ -313,12 +322,12 @@ function PromoRow({ code, categories, onEdit, onDelete, onToggleActive }) {
 }
 
 // ── Promo card (grid view) — Organization-style 3D-tilt card ────────
-function PromoCard({ code, categories, onEdit, onDelete, onToggleActive }) {
+function PromoCard({ code, categories, currency, onEdit, onDelete, onToggleActive }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   const { ref, glossRef, handlers } = InteractiveSection(TILT, menuOpen);
   const status = statusOf(code);
-  const { valueLabel, usedLabel, validLabel } = buildLabels(code);
+  const { valueLabel, usedLabel, validLabel } = buildLabels(code, currency);
   const catCount = (code.category_ids || []).length;
 
   return (
@@ -342,7 +351,7 @@ function PromoCard({ code, categories, onEdit, onDelete, onToggleActive }) {
       <div className="promo-card-meta">
         <div className="promo-card-meta-row">
           <span className="promo-card-meta-label">Min order</span>
-          <span>${code.min_order_amount || 0}</span>
+          <span>{formatMoney(code.min_order_amount || 0, currency)}</span>
         </div>
         <div className="promo-card-meta-row">
           <span className="promo-card-meta-label">Used</span>

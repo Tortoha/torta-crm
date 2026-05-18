@@ -7,6 +7,7 @@ import {
   ArrowDown, FolderSimple,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { formatMoney } from '../../../Utils/currency.js';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
 import { DateTimePicker } from '../../../Utils/DateTimePicker.jsx';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
@@ -48,8 +49,11 @@ function ownSaleTuple(node) {
 function formatDiscountSummary(sale) {
   if (!sale) return '—';
   if (sale.type === 'percent') return `−${sale.value}%`;
-  if (sale.type === 'amount')  return `−$${sale.value}`;
-  if (sale.type === 'fixed')   return `$${sale.value}`;
+  // Amount-off and fixed-price summaries — render in project currency
+  // (e.g. "−5₸" instead of always "−$5"). `__DISC_CURRENCY` is synced
+  // by the page-level effect; no per-call param needed.
+  if (sale.type === 'amount')  return `−${formatMoney(sale.value, __DISC_CURRENCY)}`;
+  if (sale.type === 'fixed')   return formatMoney(sale.value, __DISC_CURRENCY);
   return '—';
 }
 
@@ -95,10 +99,19 @@ function applySaleToRange(range, sale) {
   return { min: applySale(range.min, sale), max: applySale(range.max, sale) };
 }
 
+// Project-currency-aware price formatter. The Discounts page sets
+// __DISC_CURRENCY at mount from project metadata, then every fmtPrice
+// call inside SaleWindowCell / fmtRange picks it up automatically.
+let __DISC_CURRENCY = 'USD';
+const setDiscountsCurrency = (c) => { __DISC_CURRENCY = c || 'USD'; };
 function fmtPrice(p) {
   if (p == null) return '—';
   const n = Number(p);
-  return `$${n.toFixed(n % 1 === 0 ? 0 : 2)}`;
+  // Whole-number prices render without decimals — "$30" not "$30.00"
+  // — when the underlying value is integer, matching how merchants
+  // expect a $30 / $30.00 distinction on a busy comparison view.
+  const opts = (n % 1 === 0) ? { decimals: 0 } : undefined;
+  return formatMoney(n, __DISC_CURRENCY, opts);
 }
 
 function fmtRange(range) {
@@ -108,7 +121,11 @@ function fmtRange(range) {
 }
 
 export default function Discounts() {
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
+  // Push project's currency into the module global so fmtPrice picks
+  // it up. Without this every price would render as USD regardless
+  // of the merchant's choice.
+  useEffect(() => { setDiscountsCurrency(project?.currency || 'USD'); }, [project?.currency]);
   const pq = `?project_id=${projectId}`;
 
   const [products, setProducts]   = useState([]);   // list endpoint rows (cheap)

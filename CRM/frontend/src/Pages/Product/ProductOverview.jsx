@@ -13,6 +13,7 @@ import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import { useUndoStack } from '../../Utils/UndoStack.js';
 import { useUndoableSave } from '../../Utils/useUndoableSave.js';
 import { RowContextMenu } from '../../Utils/RowContextMenu.jsx';
+import { safeHttpUrl } from '../../Utils/safeUrl.js';
 import LayerBlock, { snapshotLayerNode } from './LayerBlock.jsx';
 import SpecificationsBlock from './SpecificationsBlock.jsx';
 import PrintBarcodesModal from '../Project/Products/PrintBarcodesModal.jsx';
@@ -1008,8 +1009,11 @@ function CfFileInput({ value, onChange, productId, pq }) {
         onChange={e => upload(e.target.files?.[0])} />
       {value ? (
         <>
-          <a href={value} target="_blank" rel="noreferrer" className="cf-file-link"
-            title={value} onClick={e => e.stopPropagation()}>
+          {/* Validate URL scheme before rendering — `value` is a free-text
+              custom-field set by the merchant. `javascript:` would execute
+              in the CRM admin's session when clicked. */}
+          <a href={safeHttpUrl(value, '#')} target="_blank" rel="noopener noreferrer"
+            className="cf-file-link" title={value} onClick={e => e.stopPropagation()}>
             {fileName || 'Download'}
           </a>
           <button type="button" className="cf-file-replace"
@@ -1506,7 +1510,9 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
           return (
             <div key={f.field_key} className="po-files-row">
               <span className="po-files-icon">📄</span>
-              <a className="po-files-link" href={f.field_value} target="_blank" rel="noreferrer" title={f.field_value}>
+              {/* Scheme-validate the file URL — see safeUrl note above. */}
+              <a className="po-files-link" href={safeHttpUrl(f.field_value, '#')}
+                target="_blank" rel="noopener noreferrer" title={f.field_value}>
                 {fname || f.field_key}
               </a>
               <button type="button" className="po-files-remove" onClick={() => remove(f.field_key)}>

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { fmtMoney } from "./currency.js";
 
 function Card(props) {
     const { id, imag, title, price, compareAtPrice, onSale, discountPercent } = props;
@@ -17,14 +18,14 @@ function Card(props) {
                 <h3>{title}</h3>
                 {showSale ? (
                     <h2 className="card-price card-price--sale">
-                        <span className="card-price-old">${compareAtPrice}</span>
+                        <span className="card-price-old">{fmtMoney(compareAtPrice, { decimals: 0 })}</span>
                         <span className="card-price-now">
-                            <span className="mini-price-title">From</span> ${price}
+                            <span className="mini-price-title">From</span> {fmtMoney(price, { decimals: 0 })}
                         </span>
                     </h2>
                 ) : (
                     <h2 className="card-price">
-                        <span className="mini-price-title">From</span> ${price}
+                        <span className="mini-price-title">From</span> {fmtMoney(price, { decimals: 0 })}
                     </h2>
                 )}
             </div>

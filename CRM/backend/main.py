@@ -3560,6 +3560,48 @@ def sanitize(v: str) -> str:
     if not isinstance(v, str): return v
     return v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;").replace("'","&#x27;")
 
+
+# ── Currency-aware money formatter (server-side) ──────────────────────
+# Mirrors the frontend `Utils/currency.js` table. Used in alert emails,
+# webhook payloads, and anywhere else the backend assembles money
+# strings before sending. Keep in sync with the JS table — when you
+# add a currency, add it here too.
+_MONEY_FMT = {
+    'USD': ('$',   'prefix', 2), 'EUR': ('€',   'prefix', 2), 'GBP': ('£',   'prefix', 2),
+    'JPY': ('¥',   'prefix', 0), 'CNY': ('¥',   'prefix', 2), 'CHF': ('Fr.', 'prefix', 2),
+    'CAD': ('C$',  'prefix', 2), 'AUD': ('A$',  'prefix', 2), 'NZD': ('NZ$', 'prefix', 2),
+    'SGD': ('S$',  'prefix', 2), 'HKD': ('HK$', 'prefix', 2), 'INR': ('₹',   'prefix', 2),
+    'KRW': ('₩',   'prefix', 0), 'IDR': ('Rp',  'prefix', 0), 'THB': ('฿',   'prefix', 2),
+    'MYR': ('RM',  'prefix', 2), 'PHP': ('₱',   'prefix', 2), 'ILS': ('₪',   'prefix', 2),
+    'BRL': ('R$',  'prefix', 2), 'MXN': ('MX$', 'prefix', 2), 'ARS': ('AR$', 'prefix', 2),
+    'CLP': ('CLP$','prefix', 0), 'COP': ('COL$','prefix', 2), 'ZAR': ('R',   'prefix', 2),
+    'EGP': ('E£',  'prefix', 2), 'NGN': ('₦',   'prefix', 2),
+    'VND': ('₫',   'suffix', 0), 'AED': ('د.إ', 'suffix', 2), 'SAR': ('﷼',   'suffix', 2),
+    'TRY': ('₺',   'suffix', 2), 'PLN': ('zł',  'suffix', 2), 'CZK': ('Kč',  'suffix', 2),
+    'HUF': ('Ft',  'suffix', 0), 'RON': ('lei', 'suffix', 2), 'BGN': ('лв',  'suffix', 2),
+    'SEK': ('kr',  'suffix', 2), 'NOK': ('kr',  'suffix', 2), 'DKK': ('kr',  'suffix', 2),
+    'ISK': ('kr',  'suffix', 0), 'KZT': ('₸',   'suffix', 2), 'RUB': ('₽',   'suffix', 2),
+    'UAH': ('₴',   'suffix', 2), 'BYN': ('Br',  'suffix', 2), 'KGS': ('с',   'suffix', 2),
+    'UZS': ("so'm",'suffix', 0), 'TJS': ('SM',  'suffix', 2), 'TMT': ('m',   'suffix', 2),
+    'AZN': ('₼',   'suffix', 2), 'GEL': ('₾',   'suffix', 2), 'AMD': ('֏',   'suffix', 2),
+}
+
+
+def fmt_money(amount, currency: str = 'USD') -> str:
+    """Format a number as money for the given ISO 4217 currency.
+    Same symbol/position semantics as the frontend formatMoney().
+    Unknown codes render as "<n> <CODE>" so we never crash on bad data."""
+    code = (currency or 'USD').upper()
+    meta = _MONEY_FMT.get(code)
+    if not meta:
+        try:    n = f"{float(amount or 0):,.2f}"
+        except: n = "0.00"
+        return f"{n} {code}"
+    sym, pos, decimals = meta
+    try:    n = f"{float(amount or 0):,.{decimals}f}"
+    except: n = "0" if decimals == 0 else "0." + "0" * decimals
+    return f"{sym}{n}" if pos == 'prefix' else f"{n} {sym}"
+
 def validate_password(pwd: str):
     if not pwd or " " in pwd:
         raise HTTPException(400, "Password must not contain spaces")
@@ -3570,9 +3612,35 @@ def validate_password(pwd: str):
     if not any(c.isdigit() for c in pwd):
         raise HTTPException(400, "Password must contain at least 1 digit")
 
+# Loopback + RFC-1918 private ranges — only requests coming from these
+# IPs are treated as "behind a trusted reverse proxy" and allowed to
+# override the source IP via X-Forwarded-For. Without this gate, a
+# remote attacker could send `X-Forwarded-For: 1.2.3.4` on every
+# request to rotate the perceived IP and bypass IP-keyed brute-force
+# lockouts on /api/send-code, /api/forgot-password, etc.
+_TRUSTED_PROXY_PREFIXES = (
+    "127.",          # IPv4 loopback
+    "::1",           # IPv6 loopback
+    "10.",           # RFC 1918
+    "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.",
+    "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
+    "172.28.", "172.29.", "172.30.", "172.31.",
+    "192.168.",      # RFC 1918
+)
+
 def get_ip(req: Request) -> str:
+    """Resolve the real client IP. X-Forwarded-For is honored ONLY when
+    the immediate peer (`req.client.host`) is a known trusted-proxy
+    address — production nginx / docker-network / loopback. Direct
+    internet clients can spoof the header, so we ignore it for them.
+    """
+    direct = req.client.host if req.client else None
     fwd = req.headers.get("x-forwarded-for")
-    return fwd.split(",")[0].strip() if fwd else (req.client.host if req.client else "unknown")
+    if fwd and direct and any(direct.startswith(p) for p in _TRUSTED_PROXY_PREFIXES):
+        # Trusted hop — take the left-most IP in the chain (the original
+        # client). Strip whitespace; .split(",")[0] handles "a, b, c".
+        return fwd.split(",")[0].strip() or direct
+    return direct or "unknown"
 
 def make_token(user_id: int) -> str:
     """Short-lived (15 min) access JWT. Companion refresh token is in DB."""
@@ -3904,7 +3972,11 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
     pending["attempts"] = int(pending.get("attempts", 0)) + 1
     _pv_set(email, pending,
             ttl=int(max(float(pending["expires_ts"]) - now_ts, 1)))
-    if pending["attempts"] > MAX_FAILED_ATTEMPTS:
+    # Off-by-one fix: with MAX_FAILED_ATTEMPTS=5, `>` would let the 5th
+    # wrong attempt slip through (5 > 5 is False) and only reject the
+    # 6th. `>=` enforces the documented limit — N invalid attempts
+    # locks the code, the Nth itself is rejected.
+    if pending["attempts"] >= MAX_FAILED_ATTEMPTS:
         _pv_del(email)
         raise HTTPException(429, "Too many invalid attempts. Request a new code.")
     if not verify_otp(code, pending.get("code_hash", "")):
@@ -7625,6 +7697,21 @@ def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
 
     buf = StringIO()
     w = _csv.writer(buf, dialect="excel")
+
+    # CSV injection guard. Excel / Google Sheets / LibreOffice all
+    # interpret a cell starting with `=`, `+`, `-`, `@`, tab, or CR as a
+    # formula. A malicious user with edit access can drop
+    # `=cmd|'/c calc'!A1` into a product title; when an admin opens the
+    # exported CSV, the formula executes inside Excel with the admin's
+    # OS privileges. OWASP-recommended mitigation: prefix any suspect
+    # cell with a single quote (`'`), which Excel treats as literal.
+    def _safe_cell(v):
+        if v is None: return ""
+        s = str(v)
+        if s and s[0] in ('=', '+', '-', '@', '\t', '\r'):
+            return "'" + s
+        return s
+
     w.writerow([
         "product_id", "title", "subtitle", "description", "product_type", "product_sku", "product_barcode",
         "brand", "manufacturer", "country_of_origin", "category", "is_paused", "is_archived",
@@ -7633,13 +7720,18 @@ def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
     ])
     for r in rows:
         w.writerow([
-            r["product_id"], r.get("title", ""), r.get("subtitle") or "", r.get("description") or "",
-            r.get("product_type") or "physical", r.get("product_sku") or "", r.get("product_barcode") or "",
-            r.get("brand") or "", r.get("manufacturer") or "", r.get("country_of_origin") or "",
-            r.get("category") or "",
+            r["product_id"],
+            _safe_cell(r.get("title", "")), _safe_cell(r.get("subtitle") or ""),
+            _safe_cell(r.get("description") or ""),
+            _safe_cell(r.get("product_type") or "physical"),
+            _safe_cell(r.get("product_sku") or ""), _safe_cell(r.get("product_barcode") or ""),
+            _safe_cell(r.get("brand") or ""), _safe_cell(r.get("manufacturer") or ""),
+            _safe_cell(r.get("country_of_origin") or ""),
+            _safe_cell(r.get("category") or ""),
             "yes" if r.get("is_paused") else "", "yes" if r.get("is_archived") else "",
-            r.get("variation_name") or "", r.get("configuration_name") or "",
-            r.get("sku_code") or "", r.get("barcode") or "",
+            _safe_cell(r.get("variation_name") or ""),
+            _safe_cell(r.get("configuration_name") or ""),
+            _safe_cell(r.get("sku_code") or ""), _safe_cell(r.get("barcode") or ""),
             r["price"] if r.get("price") is not None else "",
             r["stock_quantity"] if r.get("stock_quantity") is not None else "",
             r["cost_price"] if r.get("cost_price") is not None else "",
@@ -11035,6 +11127,14 @@ async def upload_image(
     project_id: Optional[int] = Query(None),
     user: dict = Depends(get_current_user),
 ):
+    # Cross-tenant guard: a user must be a member of the project they're
+    # uploading into. Without this any logged-in user can write to
+    # another tenant's S3 prefix (`projects/{other_pid}/products/...`)
+    # and exhaust their storage budget. project_id is optional (legacy
+    # "avatar-like" uploads have no project_id), so we only enforce
+    # when it's provided.
+    if project_id is not None:
+        require_team_member_or_owner(user, project_id)
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "Only image files are allowed")
     contents = await file.read()
@@ -11099,6 +11199,9 @@ async def upload_media(
     user: dict = Depends(get_current_user),
 ):
     """Multi-type upload for L1 variation gallery (images/videos/3D/AR); preserves user-chosen ext."""
+    # Cross-tenant guard — see upload_image for rationale.
+    if project_id is not None:
+        require_team_member_or_owner(user, project_id)
     fname = (file.filename or '').strip()
     ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
     if ext not in ALLOWED_MEDIA_EXTS:
@@ -11214,6 +11317,9 @@ async def upload_file(
     user: dict = Depends(get_current_user),
 ):
     """Generic file upload for Custom Field type=file (digital products, ticket PDFs, etc.)."""
+    # Cross-tenant guard — see upload_image for rationale.
+    if project_id is not None:
+        require_team_member_or_owner(user, project_id)
     import re as _re_local
     contents = await file.read()
     if len(contents) > 50 * 1024 * 1024:
@@ -11590,10 +11696,13 @@ def get_oauth_settings(project_id: int = Query(...), user: dict = Depends(get_cu
     if not row:
         return {"configured": False, "google_client_id": "", "google_client_secret": "",
                 "google_enabled": False, "redirect_uri": redirect_uri}
+    # Mask the Google OAuth client_secret — non-owner team members
+    # could otherwise scrape it from the GET response and impersonate
+    # the storefront in Google's OAuth flow.
     return {
         "configured":           True,
         "google_client_id":     row["google_client_id"] or "",
-        "google_client_secret": row["google_client_secret"] or "",
+        "google_client_secret": _mask_secret(row["google_client_secret"]) if row["google_client_secret"] else "",
         "google_enabled":       bool(row["google_enabled"]),
         "redirect_uri":         redirect_uri,
     }
@@ -11602,17 +11711,23 @@ def get_oauth_settings(project_id: int = Query(...), user: dict = Depends(get_cu
 @app.post("/api/oauth-settings")
 def save_oauth_settings(req: OAuthSettingsRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_owner(user, project_id)
-    existing = db_one("SELECT id FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
+    existing_row = db_one("SELECT * FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
+    # If the client sent back the masked secret unchanged, preserve the
+    # existing DB value instead of overwriting with the mask string.
+    secret_in = req.google_client_secret
+    if (secret_in and secret_in.startswith("••••")
+            and existing_row and existing_row.get("google_client_secret")):
+        secret_in = existing_row["google_client_secret"]
     with db_cursor() as (conn, cur):
-        if existing:
+        if existing_row:
             cur.execute(
                 "UPDATE crm_oauth_settings SET google_client_id=%s, google_client_secret=%s, google_enabled=%s WHERE project_id=%s",
-                (req.google_client_id or None, req.google_client_secret or None, req.google_enabled, project_id)
+                (req.google_client_id or None, secret_in or None, req.google_enabled, project_id)
             )
         else:
             cur.execute(
                 "INSERT INTO crm_oauth_settings (project_id, google_client_id, google_client_secret, google_enabled) VALUES(%s,%s,%s,%s)",
-                (project_id, req.google_client_id or None, req.google_client_secret or None, req.google_enabled)
+                (project_id, req.google_client_id or None, secret_in or None, req.google_enabled)
             )
         conn.commit()
     return {"ok": True}
@@ -11759,6 +11874,27 @@ _SMS_DEFAULTS = {
     "test_phone_numbers":          "",
 }
 
+# Columns that hold provider credentials / tokens. GET masks these as
+# `••••••••<last4>` so a junior team member with read-only access can
+# see WHICH provider is configured (and verify it's set) without being
+# able to copy out the bearer tokens themselves. Owner-only PUT/POST
+# still receives the real values.
+_SMS_SECRET_COLS = {
+    "twilio_auth_token", "messagebird_access_key", "textlocal_api_key",
+    "vonage_api_secret", "aws_secret_access_key", "plivo_auth_token",
+    "smsc_password", "sms_ru_api_id", "mobizon_api_key",
+    "telegram_gateway_token",
+}
+
+def _mask_secret(v):
+    """Replace a secret string with `••••••••<last4>` placeholder. Empty
+    inputs pass through as empty so the frontend can detect "not yet
+    configured" vs "configured but masked"."""
+    if not v: return v
+    s = str(v)
+    return f"••••••••{s[-4:]}" if len(s) >= 4 else "•" * len(s)
+
+
 @app.get("/api/sms-settings")
 def get_sms_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
@@ -11767,6 +11903,14 @@ def get_sms_settings(project_id: int = Query(...), user: dict = Depends(get_curr
         return {"configured": False, **_SMS_DEFAULTS}
     # Drop internal columns
     out = {k: v for k, v in row.items() if k not in ("id", "project_id", "created_at")}
+    # Mask secret columns so non-owner team members can't scrape provider
+    # tokens (Twilio auth, AWS secret key, Mobizon API key, etc.). The
+    # owner sees masked values too — they're still saved server-side;
+    # a re-save round-trips the masked string back to the server, which
+    # treats `••••` prefix as "keep existing value" in save_sms_settings.
+    for col in _SMS_SECRET_COLS:
+        if col in out:
+            out[col] = _mask_secret(out[col])
     out["configured"] = True
     return out
 
@@ -11803,6 +11947,16 @@ def save_sms_settings(req: SmsSettingsRequest,
         "message_template", "test_phone_numbers",
     ]
 
+    # If the frontend sent back a masked secret (the user opened the
+    # page, saw `••••1234` and just saved without re-typing it), keep
+    # the existing DB value instead of overwriting with the mask string.
+    # Without this, GET-then-immediately-SAVE would corrupt the saved
+    # credentials.
+    existing_row = db_one(
+        "SELECT * FROM crm_sms_settings WHERE project_id=%s",
+        (project_id,),
+    ) or {}
+
     def _v(name):
         v = getattr(req, name)
         # Bool / int kept as-is, empty strings → NULL for credentials
@@ -11810,11 +11964,16 @@ def save_sms_settings(req: SmsSettingsRequest,
             return v
         if name in ("message_template", "test_phone_numbers"):
             return v or ""
+        # Detect masked secrets coming back unchanged and preserve the
+        # existing DB value for that column.
+        if (name in _SMS_SECRET_COLS and isinstance(v, str)
+                and v.startswith("••••")):
+            return existing_row.get(name)
         return v or None
 
     fields = tuple(_v(c) for c in cols)
 
-    existing = db_one("SELECT id FROM crm_sms_settings WHERE project_id=%s", (project_id,))
+    existing = existing_row.get("id") and {"id": existing_row["id"]} or None
     with db_cursor() as (conn, cur):
         if existing:
             set_clause = ", ".join(f"{c}=%s" for c in cols)
@@ -11924,9 +12083,13 @@ def get_orders(project_id: int = Query(...),
         params.append(status)
 
     fetch_limit = (page_size + 1) if want_pagination else 200
+    # `payment_currency` is the per-order snapshot — even if the merchant
+    # later changes the project currency, this order keeps the one it was
+    # placed in. Falls back to 'USD' on rows that pre-date the column.
     sql = f"""SELECT oh.id, oh.total_amount, oh.status, oh.delivery_method,
                    oh.recipient_name, oh.phone, oh.address, oh.comment,
                    oh.payment_method, oh.created_at, oh.updated_at,
+                   COALESCE(oh.payment_currency, 'USD') AS payment_currency,
                    u.name AS customer_name, u.email AS customer_email,
                    (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id=oh.id) AS items_count
             FROM order_history oh
@@ -11942,20 +12105,21 @@ def get_orders(project_id: int = Query(...),
     orders = db_all(sql, tuple(params))
     serialized = [
         {
-            "id":              o["id"],
-            "total_amount":    o["total_amount"],
-            "status":          o["status"],
-            "delivery_method": o["delivery_method"],
-            "recipient_name":  o["recipient_name"],
-            "phone":           o["phone"],
-            "address":         o["address"],
-            "comment":         o["comment"],
-            "payment_method":  o["payment_method"],
-            "items_count":     o["items_count"],
-            "customer_name":   o["customer_name"],
-            "customer_email":  o["customer_email"],
-            "created_at":      o["created_at"].isoformat() if o["created_at"] else None,
-            "updated_at":      o["updated_at"].isoformat() if o["updated_at"] else None,
+            "id":               o["id"],
+            "total_amount":     o["total_amount"],
+            "status":           o["status"],
+            "delivery_method":  o["delivery_method"],
+            "recipient_name":   o["recipient_name"],
+            "phone":            o["phone"],
+            "address":          o["address"],
+            "comment":          o["comment"],
+            "payment_method":   o["payment_method"],
+            "payment_currency": o["payment_currency"],
+            "items_count":      o["items_count"],
+            "customer_name":    o["customer_name"],
+            "customer_email":   o["customer_email"],
+            "created_at":       o["created_at"].isoformat() if o["created_at"] else None,
+            "updated_at":       o["updated_at"].isoformat() if o["updated_at"] else None,
         }
         for o in orders
     ]
@@ -12637,11 +12801,20 @@ def approve_return(project_id: int, return_id: int, user: dict = Depends(get_cur
     if r["status"] != "requested":
         raise HTTPException(400, f"Cannot approve from status '{r['status']}'")
     with db_cursor() as (conn, cur):
+        # Atomic state-machine guard. Two concurrent admin requests could
+        # both pass the SELECT above; without `AND status='requested'`
+        # they'd both UPDATE and the outcome would depend on timing.
+        # `rowcount == 0` means another worker already moved the return
+        # forward; we 409 so the admin sees an explicit "stale" error
+        # instead of a silent no-op.
         cur.execute(
             "UPDATE order_returns SET status='approved', approved_by=%s, approved_at=NOW(),"
-            "  updated_at=NOW() WHERE id=%s",
+            "  updated_at=NOW() WHERE id=%s AND status='requested'",
             (user["id"], return_id)
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            raise HTTPException(409, "Return was already moved by another request")
         conn.commit()
     _notify_return_event(project_id, return_id,
                          f"Return #{return_id} approved",
@@ -12667,11 +12840,16 @@ def reject_return(project_id: int, return_id: int, body: RejectReturnBody,
         raise HTTPException(400, f"Cannot reject from status '{r['status']}'")
     reason = sanitize((body.reason or "").strip())[:1000]
     with db_cursor() as (conn, cur):
+        # Atomic state guard — see approve_return. Allow rejection from
+        # any of the three valid prior states.
         cur.execute(
             "UPDATE order_returns SET status='rejected', rejected_reason=%s, updated_at=NOW()"
-            " WHERE id=%s",
+            " WHERE id=%s AND status IN ('requested','approved','received')",
             (reason, return_id)
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            raise HTTPException(409, "Return was already moved by another request")
         conn.commit()
     _notify_return_event(project_id, return_id,
                          f"Return #{return_id} rejected", reason or "Rejected by merchant.")
@@ -12697,11 +12875,15 @@ def receive_return(project_id: int, return_id: int, user: dict = Depends(get_cur
     if r["status"] != "approved":
         raise HTTPException(400, f"Cannot receive from status '{r['status']}'")
     with db_cursor() as (conn, cur):
+        # Atomic state guard — see approve_return.
         cur.execute(
             "UPDATE order_returns SET status='received', received_by=%s, received_at=NOW(),"
-            "  updated_at=NOW() WHERE id=%s",
+            "  updated_at=NOW() WHERE id=%s AND status='approved'",
             (user["id"], return_id)
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            raise HTTPException(409, "Return was already moved by another request")
         conn.commit()
     _notify_return_event(project_id, return_id,
                          f"Return #{return_id} received",
@@ -12860,15 +13042,24 @@ def inspect_return(project_id: int, return_id: int, body: InspectReturnBody,
                  entry.return_item_id)
             )
 
+        # Atomic state-machine guard. A concurrent /refund or duplicate
+        # /inspect could race past the early SELECT; here we require
+        # status was still 'received' when this UPDATE runs. Rollback
+        # everything (per-item restock, sold_quantity decrements, audit
+        # rows) if rowcount==0 — we don't want a partial state where
+        # stock got returned but the return wasn't moved to 'inspected'.
         cur.execute(
             "UPDATE order_returns"
             "   SET status='inspected', inspected_by=%s, inspected_at=NOW(),"
             "       internal_notes = CASE WHEN %s = '' THEN internal_notes ELSE %s END,"
             "       updated_at=NOW()"
-            " WHERE id=%s",
+            " WHERE id=%s AND status='received'",
             (user["id"], (body.internal_notes or ""),
              sanitize(body.internal_notes or "")[:5000], return_id)
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            raise HTTPException(409, "Return was already moved by another request")
         conn.commit()
 
     _notify_return_event(project_id, return_id,
@@ -12962,6 +13153,14 @@ def refund_return(project_id: int, return_id: int, body: RefundReturnBody,
             real_ref = provider_refund_id
 
     with db_cursor() as (conn, cur):
+        # CRITICAL atomic state check. By the time we get here we MAY
+        # have already called the provider's refund API (above). If two
+        # concurrent /refund requests raced past the initial SELECT,
+        # both will reach this UPDATE — without the `AND status='inspected'`
+        # guard, both succeed and the order's payment_amount_refunded
+        # gets double-counted. Idempotency on the Stripe side handles
+        # the provider charge (same idempotency_key → same refund_id),
+        # but the local state-machine would still drift without this.
         cur.execute(
             "UPDATE order_returns"
             "   SET status='refunded',"
@@ -12969,13 +13168,18 @@ def refund_return(project_id: int, return_id: int, body: RefundReturnBody,
             "       restocking_fee=%s, refund_processed_by=%s, refund_processed_at=NOW(),"
             "       provider_refund_id=%s, provider_refund_status=%s, provider_error='',"
             "       updated_at=NOW()"
-            " WHERE id=%s",
+            " WHERE id=%s AND status='inspected'",
             (round(float(body.refund_amount), 2),
              refund_reference,
              real_ref,
              round(float(body.restocking_fee or 0), 2),
              user["id"], provider_refund_id, provider_refund_status, return_id)
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            raise HTTPException(409,
+                "Refund was already processed by another request "
+                "(check Recent fires / order history before retrying).")
         # Mirror onto order_history payment_amount_refunded + payment_status
         cur.execute(
             "SELECT total_amount, payment_amount_refunded, payment_status"
@@ -15874,6 +16078,11 @@ def integrations_get(sub_id: int, project_id: int = Query(...),
     )
     if not row: raise HTTPException(404, "Integration not found")
     d = dict(row)
+    # CRITICAL: strip the HMAC signing `secret`. The list endpoint
+    # already strips it; the detail endpoint used to leak it, letting
+    # any team member read the secret and forge events to the
+    # subscription's receiver. Match list behavior.
+    d.pop("secret", None)
     d["last_event_at"] = row["last_event_at"].isoformat() if row["last_event_at"] else None
     d["created_at"]    = row["created_at"].isoformat()    if row["created_at"]    else None
     return d
@@ -18426,6 +18635,14 @@ def _evaluate_one_alert(alert: dict) -> Optional[tuple[str, float]]:
     project_id = alert["project_id"]
     alert_type = alert["type"]
     threshold  = float(alert["threshold"] or 0)
+    # Project currency for money strings inside the email body. Read
+    # once at the top and reuse — avoids hitting the DB inside each
+    # branch's f-string.
+    _proj_cur_row = db_one(
+        "SELECT COALESCE(currency, 'USD') AS currency FROM crm_projects WHERE id=%s",
+        (project_id,)
+    )
+    proj_currency = (_proj_cur_row or {}).get("currency", "USD")
     if alert_type == "revenue_drop":
         # Compare last 24h to prior 24h (in project TZ). If drop ≥
         # threshold percent, fire.
@@ -18450,7 +18667,8 @@ def _evaluate_one_alert(alert: dict) -> Optional[tuple[str, float]]:
         drop_pct = (prev_rev - cur_rev) / prev_rev * 100
         if drop_pct >= threshold:
             return (f"Revenue dropped {drop_pct:.1f}% in the last 24h "
-                    f"(${cur_rev:.2f} vs ${prev_rev:.2f} the day before).",
+                    f"({fmt_money(cur_rev, proj_currency)} vs "
+                    f"{fmt_money(prev_rev, proj_currency)} the day before).",
                     drop_pct)
         return None
     if alert_type == "low_stock":
@@ -18482,8 +18700,8 @@ def _evaluate_one_alert(alert: dict) -> Optional[tuple[str, float]]:
         )
         rev = float((row or {}).get("rev") or 0)
         orders = int((row or {}).get("orders") or 0)
-        return (f"Daily summary: ${rev:.2f} revenue across {orders} order(s) "
-                f"in the last 24 hours.", rev)
+        return (f"Daily summary: {fmt_money(rev, proj_currency)} revenue across "
+                f"{orders} order(s) in the last 24 hours.", rev)
     if alert_type == "new_order":
         # Fires only if a new order landed since the last fire.
         last_fired = alert.get("last_fired_at") or (datetime.now(timezone.utc) - timedelta(days=1))
@@ -18497,7 +18715,7 @@ def _evaluate_one_alert(alert: dict) -> Optional[tuple[str, float]]:
         n = int((row or {}).get("n") or 0)
         rev = float((row or {}).get("rev") or 0)
         if n > 0:
-            return (f"{n} new paid order(s) — ${rev:.2f} total.", n)
+            return (f"{n} new paid order(s) — {fmt_money(rev, proj_currency)} total.", n)
         return None
     return None
 

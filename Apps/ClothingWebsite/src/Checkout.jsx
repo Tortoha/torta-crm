@@ -3,10 +3,13 @@ import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle, Storefront, MapPin } from "@phosphor-icons/react";
 import Header from "./Header";
 import { client } from "./api.js";
+import { fmtMoney } from "./currency.js";
 import "./Style/Checkout.css";
 import "./Style/Load.css";
 
-const fmt = (n) => (+n % 1 === 0) ? +n : (+n).toFixed(2);
+// Drop decimals when amount is whole — "$30" reads better than "$30.00"
+// on checkout. fmtMoney handles the currency symbol and position.
+const fmt = (n) => fmtMoney(n, (+n % 1 === 0) ? { decimals: 0 } : undefined);
 
 function Checkout() {
   const navigate  = useNavigate();
@@ -381,7 +384,7 @@ function Checkout() {
                     <span className="checkout-item-meta">{item.variation_name} · {item.configuration_name}</span>
                     <span className="checkout-item-qty">×{item.quantity}</span>
                   </div>
-                  <span className="checkout-item-price">${fmt(item.item_total ?? item.price)}</span>
+                  <span className="checkout-item-price">{fmt(item.item_total ?? item.price)}</span>
                 </div>
               ))}
             </div>
@@ -389,21 +392,21 @@ function Checkout() {
             <div className="checkout-totals">
               <div className="checkout-total-row">
                 <span>Subtotal</span>
-                <span>${fmt(subtotal)}</span>
+                <span>{fmt(subtotal)}</span>
               </div>
               <div className="checkout-total-row">
                 <span>Shipping</span>
-                <span>{shipping === 0 ? "Free" : `$${fmt(shipping)}`}</span>
+                <span>{shipping === 0 ? "Free" : fmt(shipping)}</span>
               </div>
               {discount > 0 && (
                 <div className="checkout-total-row checkout-total-row--discount">
                   <span>Discount</span>
-                  <span>−${fmt(discount)}</span>
+                  <span>−{fmt(discount)}</span>
                 </div>
               )}
               <div className="checkout-total-row checkout-total-row--total">
                 <span>Total</span>
-                <span>${fmt(total)}</span>
+                <span>{fmt(total)}</span>
               </div>
             </div>
 

@@ -350,6 +350,17 @@ export function createClient(baseUrl, publishableKey) {
       },
     },
 
+    // ── Project config ───────────────────────────────────────────────────────
+    // Currency, project name, timezone. Returned by GET /{api_key}/config.
+    // The storefront calls this once on bootstrap so the first paint
+    // already has the merchant's chosen currency symbol — otherwise
+    // prices flash from "$100" to "100₸" on hydration.
+    config: {
+      async get() {
+        return req("GET", "/config");
+      },
+    },
+
     // ── Products ─────────────────────────────────────────────────────────────
     products: {
       /**

@@ -23,15 +23,15 @@ const OrgAnalytics  = lazy(() => import('./Pages/Organization/OrgAnalytics.jsx')
 const OrgPayments   = lazy(() => import('./Pages/Organization/OrgPayments.jsx'));
 // Project
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
-const Revenue       = lazy(() => import('./Pages/Project/Revenue.jsx'));
 const Analytics     = lazy(() => import('./Pages/Project/Analytics.jsx'));
 const Alerts        = lazy(() => import('./Pages/Project/Alerts.jsx'));
-const Goals         = lazy(() => import('./Pages/Project/Goals.jsx'));
+const Targets       = lazy(() => import('./Pages/Project/Targets.jsx'));
 const Products      = lazy(() => import('./Pages/Project/Products/Products.jsx'));
 const ProductsList  = lazy(() => import('./Pages/Project/Products/ProductsList.jsx'));
 const Categories    = lazy(() => import('./Pages/Project/Products/Categories.jsx'));
 const Authentication   = lazy(() => import('./Pages/Project/Authentication.jsx'));
 const ProjectSettings  = lazy(() => import('./Pages/Project/ProjectSettings.jsx'));
+const Documents        = lazy(() => import('./Pages/Project/Documents.jsx'));
 const Orders           = lazy(() => import('./Pages/Project/Orders.jsx'));
 const Chat             = lazy(() => import('./Pages/Project/Chat.jsx'));
 const Booking          = lazy(() => import('./Pages/Project/Booking/Booking.jsx'));
@@ -97,10 +97,14 @@ function App() {
               <Route path="warehouses"    element={<Warehouses />} />
               <Route path="settings"      element={<ProductsSettings />} />
             </Route>
-            <Route path="revenue"    element={<Revenue />} />
+            {/* Legacy /revenue route — было дублирующее имя для Analytics
+                page. Кикаем deep-links / bookmarks на единый /analytics. */}
+            <Route path="revenue"    element={<Navigate to="../analytics" relative="path" replace />} />
             <Route path="analytics"  element={<Analytics />} />
             <Route path="alerts"     element={<Alerts />} />
-            <Route path="goals"      element={<Goals />} />
+            <Route path="targets"    element={<Targets />} />
+            {/* Legacy /goals route — kept for bookmarks. Redirects to /targets. */}
+            <Route path="goals"      element={<Navigate to="../targets" relative="path" replace />} />
             <Route path="authentication" element={<Authentication />} />
             <Route path="email"      element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="oauth"      element={<Navigate to="../authentication" relative="path" replace />} />
@@ -110,6 +114,7 @@ function App() {
             <Route path="integrations" element={<Integrations />} />
             <Route path="chat"         element={<Chat />} />
             <Route path="settings"     element={<ProjectSettings />} />
+            <Route path="documents"    element={<Documents />} />
           </Route>
           <Route path="/settings" element={<SettingsLayout />}>
             <Route path="account"       element={<AccountSettings />} />

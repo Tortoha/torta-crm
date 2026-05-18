@@ -7,6 +7,7 @@ import {
   Plus, CaretDown, ArrowDown, Trash, Pencil, Clock, User, Users, Briefcase, DotsThreeOutline, X,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { formatMoney } from '../../../Utils/currency.js';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import BookingServiceModal from './BookingServiceModal.jsx';
 import BookingStaffModal   from './BookingStaffModal.jsx';
@@ -74,7 +75,15 @@ const ITEM_TILT = { maxAngleX: 6, maxAngleY: 3, lerp: 0.05, lerpOut: 0.07, scale
 const fmtDate = ts => ts ? new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 const fmtTime = ts => ts ? new Date(ts).toLocaleTimeString([],   { hour: '2-digit', minute: '2-digit' }) : '';
 const fmtDateLong = ts => ts ? new Date(ts).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '';
-const fmtMoney = n => `$${(+n).toFixed(2)}`;
+// Project-currency-aware money formatter — bound at component mount
+// via the `__BOOKING_CURRENCY` module global below. Booking page sets
+// it once when it reads project.currency, then every service-card /
+// staff-row / KPI render reuses it without prop-drilling. Same
+// pattern as `__ORDERS_TZ` in Orders.jsx — pragmatic and avoids
+// threading currency through 8 component layers.
+let __BOOKING_CURRENCY = 'USD';
+const setBookingCurrency = (c) => { __BOOKING_CURRENCY = c || 'USD'; };
+const fmtMoney = n => formatMoney(n, __BOOKING_CURRENCY);
 
 // ─── Tab Switcher (mirror of Authentication) ──────────────────
 
@@ -473,7 +482,7 @@ function StaffRow({ member, services, analytics, onEdit, onDelete }) {
       <span className="prow-cell">{member.bio || <span className="prow-empty">—</span>}</span>
       <span className="prow-cell">{servicesLabel}</span>
       <span className="prow-cell bk-stf-row-num">
-        ${(analytics?.cassa_earned ?? 0).toFixed(2)}
+        {fmtMoney(analytics?.cassa_earned ?? 0)}
         {member.commission_pct > 0 && (
           <span className="bk-stf-metric-commission"> · {member.commission_pct}%</span>
         )}
@@ -553,7 +562,7 @@ function StaffCard({ member, services, analytics, onEdit, onDelete }) {
                 )}
               </span>
               <span className="bk-stf-metric-value">
-                ${(analytics?.cassa_earned ?? 0).toFixed(2)}
+                {fmtMoney(analytics?.cassa_earned ?? 0)}
               </span>
             </div>
             <div className="bk-stf-metric">
@@ -566,7 +575,7 @@ function StaffCard({ member, services, analytics, onEdit, onDelete }) {
             </div>
             <div className="bk-stf-metric">
               <span className="bk-stf-metric-label">Avg ticket</span>
-              <span className="bk-stf-metric-value">${(analytics?.avg_ticket ?? 0).toFixed(2)}</span>
+              <span className="bk-stf-metric-value">{fmtMoney(analytics?.avg_ticket ?? 0)}</span>
             </div>
           </div>
         </div>
@@ -606,7 +615,7 @@ function StatsBlock({ projectId }) {
       <StatCard label="Total bookings" value={stats.total} />
       <StatCard label="This week" value={stats.week_count}
         delta={wow != null ? `${wow >= 0 ? '+' : ''}${wow}% vs last week` : ''} />
-      <StatCard label="Avg ticket" value={`$${stats.avg_ticket.toFixed(2)}`} />
+      <StatCard label="Avg ticket" value={fmtMoney(stats.avg_ticket)} />
       <StatCard label="No-show rate" value={`${stats.no_show_rate}%`}
         tone={stats.no_show_rate > 15 ? 'warn' : 'ok'} />
       {stats.top_staff.length > 0 && (
@@ -955,7 +964,12 @@ function RulesEditor({ projectId, showToast, onSaved }) {
 // ═══════════════════════════════════════════════════════════════
 
 function Booking() {
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
+  // Sync the module-level currency so fmtMoney() inside Service/Staff
+  // sub-components reuses the project's choice without prop drilling.
+  // Layout effect → fires before paint so the first render already uses
+  // the correct symbol.
+  useEffect(() => { setBookingCurrency(project?.currency || 'USD'); }, [project?.currency]);
   const navigate = useNavigate();
   // Edit click on a service: linked products jump to /product/{hash}; legacy ones (no product_id) keep the modal.
   const onEditService = (s) => {
@@ -1373,6 +1387,8 @@ function Booking() {
                 businessTz={businessTz}
                 slotInterval={settings?.slot_interval_minutes || 30}
                 staff={staff}
+                services={services}
+                currency={project?.currency || 'USD'}
                 onOpenBooking={setOpenBooking}
                 onCreateAt={(iso) => setCreateOpen({ presetStart: iso })}
                 onMoveBooking={async (id, iso) => {
@@ -1576,6 +1592,7 @@ function Booking() {
       {openBooking && (
         <BookingDetailModal
           booking={openBooking}
+          currency={project?.currency || 'USD'}
           onClose={() => setOpenBooking(null)}
           onStatusChange={updateBookingStatus}
           onDelete={deleteBooking}

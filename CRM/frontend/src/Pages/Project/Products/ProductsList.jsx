@@ -7,6 +7,7 @@ import {
   UploadSimple, DownloadSimple
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { formatMoney } from '../../../Utils/currency.js';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
@@ -290,10 +291,25 @@ function CategoryFilter({ value, categories, onChange, onCreate }) {
 
 // ── Price label helper ─────────────────────────────────────────
 
+// Module-level currency for the price-range label on grid/list cards.
+// Set once per page mount via setProductsListCurrency() inside the
+// top-level ProductsList component. Whole-number prices skip decimals
+// so the chip stays compact ("$30" not "$30.00").
+let __PRODLIST_CURRENCY = 'USD';
+const setProductsListCurrency = (c) => { __PRODLIST_CURRENCY = c || 'USD'; };
 function priceLabel(p) {
   if (p.min_price === 0 && p.max_price === 0) return '—';
-  if (p.min_price === p.max_price) return `$${p.min_price.toFixed(0)}`;
-  return `$${p.min_price.toFixed(0)}–${p.max_price.toFixed(0)}`;
+  if (p.min_price === p.max_price) {
+    return formatMoney(p.min_price, __PRODLIST_CURRENCY, { decimals: 0 });
+  }
+  // Range "$30–$45" — render both sides with the currency util so we
+  // get the symbol once for prefix currencies (`$30–$45`) and on both
+  // values for suffix currencies (`30₸–45₸`). The util's noSymbol
+  // option would let us avoid duplication for prefix currencies, but
+  // the extra glyph isn't worth a special case.
+  const lo = formatMoney(p.min_price, __PRODLIST_CURRENCY, { decimals: 0 });
+  const hi = formatMoney(p.max_price, __PRODLIST_CURRENCY, { decimals: 0 });
+  return `${lo}–${hi}`;
 }
 
 // ── Custom sharp star (polygon = straight lines, no rounded tips) ─
@@ -591,6 +607,9 @@ function ProdListRow({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onR
 
 export default function Products({ archived = false }) {
   const { projectId, project } = useOutletContext();
+  // Sync the currency global so priceLabel() renders product price
+  // ranges in the merchant's currency (₸/€/₽ etc.) instead of USD.
+  useEffect(() => { setProductsListCurrency(project?.currency || 'USD'); }, [project?.currency]);
   const navigate = useNavigate();
   const pq = `?project_id=${projectId}`;
 

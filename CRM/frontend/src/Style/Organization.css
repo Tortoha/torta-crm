@@ -433,10 +433,6 @@
   color: #e3342f;
 }
 
-.org-card-dropdown-item--danger:hover {
-  background: rgba(227, 52, 47, 0.07);
-}
-
 .org-card-dropdown-icon {
   width: 14px;
   height: 14px;

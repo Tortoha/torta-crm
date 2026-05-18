@@ -1742,11 +1742,48 @@ def _palette(style: str, accent: str):
     }
 
 
+# Currency metadata mirrors the JS Utils/currency.js table. Whenever
+# that JS table changes, this Python table must stay in lock-step so a
+# tenge-priced order rendered in the storefront ("100 ₸") shows the
+# same on its PDF invoice. `position` decides symbol placement:
+#   'prefix' → "$1,234.50"      (USD/EUR/GBP/JPY/CNY/INR/etc.)
+#   'suffix' → "1,234.50 ₸"     (KZT/RUB/UAH/PLN/CZK/etc.)
+# `decimals` matches ISO 4217 minor-unit rules — JPY/KRW/HUF/UZS/VND
+# are whole-unit so we drop the cents.
+_PDF_CURRENCY = {
+    'USD': ('$',   'prefix', 2), 'EUR': ('€',   'prefix', 2), 'GBP': ('£',   'prefix', 2),
+    'JPY': ('¥',   'prefix', 0), 'CNY': ('¥',   'prefix', 2), 'CHF': ('Fr.', 'prefix', 2),
+    'CAD': ('C$',  'prefix', 2), 'AUD': ('A$',  'prefix', 2), 'NZD': ('NZ$', 'prefix', 2),
+    'SGD': ('S$',  'prefix', 2), 'HKD': ('HK$', 'prefix', 2), 'INR': ('₹',   'prefix', 2),
+    'KRW': ('₩',   'prefix', 0), 'IDR': ('Rp',  'prefix', 0), 'THB': ('฿',   'prefix', 2),
+    'MYR': ('RM',  'prefix', 2), 'PHP': ('₱',   'prefix', 2), 'ILS': ('₪',   'prefix', 2),
+    'BRL': ('R$',  'prefix', 2), 'MXN': ('MX$', 'prefix', 2), 'ARS': ('AR$', 'prefix', 2),
+    'CLP': ('CLP$','prefix', 0), 'COP': ('COL$','prefix', 2), 'ZAR': ('R',   'prefix', 2),
+    'EGP': ('E£',  'prefix', 2), 'NGN': ('₦',   'prefix', 2),
+    # suffix-side
+    'VND': ('₫',   'suffix', 0), 'AED': ('د.إ', 'suffix', 2), 'SAR': ('﷼',   'suffix', 2),
+    'TRY': ('₺',   'suffix', 2), 'PLN': ('zł',  'suffix', 2), 'CZK': ('Kč',  'suffix', 2),
+    'HUF': ('Ft',  'suffix', 0), 'RON': ('lei', 'suffix', 2), 'BGN': ('лв',  'suffix', 2),
+    'SEK': ('kr',  'suffix', 2), 'NOK': ('kr',  'suffix', 2), 'DKK': ('kr',  'suffix', 2),
+    'ISK': ('kr',  'suffix', 0), 'KZT': ('₸',   'suffix', 2), 'RUB': ('₽',   'suffix', 2),
+    'UAH': ('₴',   'suffix', 2), 'BYN': ('Br',  'suffix', 2), 'KGS': ('с',   'suffix', 2),
+    'UZS': ("so'm",'suffix', 0), 'TJS': ('SM',  'suffix', 2), 'TMT': ('m',   'suffix', 2),
+    'AZN': ('₼',   'suffix', 2), 'GEL': ('₾',   'suffix', 2), 'AMD': ('֏',   'suffix', 2),
+}
+
+
 def _money(amount, currency="USD"):
-    sym = {"USD": "$", "EUR": "€", "KZT": "₸", "RUB": "₽", "GBP": "£"}.get(currency, "")
-    if sym in ("$", "€", "£"):
-        return f"{sym}{amount:,.2f}"
-    return f"{amount:,.2f} {currency}"
+    """Format `amount` as money in the given ISO 4217 code, using the
+    same symbol position rules as the frontend's formatMoney. Unknown
+    codes fall back to "<amount> <CODE>" so an unrecognized currency
+    doesn't break the invoice — operator sees the raw code instead."""
+    code = (currency or "USD").upper()
+    meta = _PDF_CURRENCY.get(code)
+    if not meta:
+        return f"{amount:,.2f} {code}"
+    sym, position, decimals = meta
+    num = f"{amount:,.{decimals}f}"
+    return f"{sym}{num}" if position == 'prefix' else f"{num} {sym}"
 
 
 def _safe(v):
@@ -2586,6 +2623,26 @@ def get_delivery_eta(api_key_record: dict = Depends(resolve_api_key)):
     return {
         "min_days": row.get("min_days") if row else None,
         "max_days": row.get("max_days") if row else None,
+    }
+
+
+@app.get("/{api_key}/config")
+def get_storefront_config(api_key_record: dict = Depends(resolve_api_key)):
+    """Public per-project config consumed by the storefront on bootstrap.
+
+    Currency in particular MUST be available before any price is
+    rendered — otherwise the first paint shows the fallback symbol
+    (USD '$') and then flickers to the merchant's chosen one when the
+    rest of the data arrives. The Magaz SDK fetches this once at app
+    init and caches it for the session.
+
+    Kept intentionally minimal — just the values the public storefront
+    needs. Admin-only fields (margins, costs, internal flags) stay
+    inside the CRM API."""
+    return {
+        "currency":     api_key_record.get("currency") or "USD",
+        "project_name": api_key_record.get("name"),
+        "timezone":     api_key_record.get("timezone") or "UTC",
     }
 
 
@@ -5975,11 +6032,23 @@ def place_order(data: PlaceOrderRequest, request: Request,
         # from the provider here, validate status + amount, and capture the
         # intent_id/charge_id into order_history.
         provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id)
+        # Per-project default currency. Each order row snapshots the
+        # currency it was placed in — even if the merchant later changes
+        # the project's currency, historical orders stay immutable. For
+        # paid orders the provider's reply still overrides (Stripe might
+        # have charged in EUR even though the project is USD-default, in
+        # which case the order is recorded as EUR — what was actually
+        # charged is the ground truth).
+        _proj_row = db_one(
+            "SELECT COALESCE(currency, 'USD') AS currency FROM crm_projects WHERE id=%s",
+            (project_id,)
+        )
+        project_currency  = (_proj_row or {}).get("currency", "USD")
         pay_status        = "manual"
         pay_intent_id     = ""
         pay_charge_id     = ""
         pay_amount_paid   = 0.0
-        pay_currency      = "USD"
+        pay_currency      = project_currency
         pay_provider      = provider
 
         if provider not in ("manual", "other") and creds:
@@ -6039,7 +6108,7 @@ def place_order(data: PlaceOrderRequest, request: Request,
             pay_intent_id   = intent_id
             pay_charge_id   = v.get("charge_id") or intent_id
             pay_amount_paid = provider_dollars
-            pay_currency    = (v.get("currency") or "USD").upper()
+            pay_currency    = (v.get("currency") or project_currency).upper()
             pay_provider    = provider
 
         # Создаём заказ
@@ -9226,10 +9295,19 @@ def order_invoice_pdf(order_id: int, request: Request,
     branding["style"] = style or branding.get("style") or "modern"
 
     user = db_one("SELECT name, email FROM users WHERE id=%s", (user_id,))
+    # Use the order's snapshotted payment_currency — historical orders
+    # render in the currency they were placed in, even if the merchant
+    # has since changed the project's house currency. Falls back to
+    # the project's current currency for rows that pre-date the column.
+    invoice_currency = (
+        order.get("payment_currency")
+        or api_key_record.get("currency")
+        or "USD"
+    )
     data = {
         "number":   order_id,
         "issued_at": order["created_at"].strftime("%Y-%m-%d") if order.get("created_at") else "",
-        "currency": "USD",
+        "currency": invoice_currency,
         "customer": {"name": (user or {}).get("name", "") or order.get("recipient_name", ""),
                      "email": (user or {}).get("email", "")},
         "items": [{"title": i["title"], "variation": i.get("variation_name"),
@@ -9263,10 +9341,15 @@ def booking_act_pdf(bid: int, request: Request,
     svc_duration = row["duration_minutes"] or row.get("freeform_duration_minutes") or 0
     svc_price    = (float(row["service_price"]) if row.get("service_price") is not None
                     else (float(row["freeform_price"]) if row.get("freeform_price") is not None else 0.0))
+    # Booking act uses the project's current currency — bookings
+    # don't have a per-row currency snapshot the way orders do, so
+    # we trust the merchant's current setting. (If they switch
+    # currencies mid-week, acts issued afterward will reflect the new
+    # symbol — same trade-off as Stripe's invoice rendering.)
     data = {
         "number": bid,
         "performed_at": when,
-        "currency": "USD",
+        "currency": api_key_record.get("currency") or "USD",
         "customer": {"name": row.get("customer_name", "")},
         "items": [{"title": svc_title,
                    "variation": f"{svc_duration} min",
@@ -9315,10 +9398,16 @@ def order_receipt_pdf(order_id: int, request: Request,
 
     branding = _get_branding(project_id)
     branding["style"] = style or branding.get("style") or "modern"
+    # Receipt mirrors invoice: snapshot wins over current project setting.
+    receipt_currency = (
+        order.get("payment_currency")
+        or api_key_record.get("currency")
+        or "USD"
+    )
     data = {
         "number": order_id,
         "paid_at": order["created_at"].strftime("%Y-%m-%d") if order.get("created_at") else "",
-        "currency": "USD",
+        "currency": receipt_currency,
         "items": [{"title": i["title"], "variation": i.get("variation_name"),
                    "qty": i["quantity"], "price": float(i["price"])} for i in items],
         "subtotal": sum(float(i["price"]) * i["quantity"] for i in items),

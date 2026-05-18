@@ -1,13 +1,19 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Bell, Plus, Trash, PencilSimple, X, CheckCircle, Warning } from '@phosphor-icons/react';
+import {
+  Bell, Plus, Trash, PencilSimple, X, CheckCircle, Warning, DotsThreeOutline,
+  MagnifyingGlass, ArrowDown, SquaresFour, List,
+} from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { Combobox } from './Booking/BookingCreateModal.jsx';
+import { PoListRow } from '../../Utils/PoListRow.jsx';
 import '../../Style/Authentication.css';
 import '../../Style/Booking.css';
 import '../../Style/Organization.css';
-import '../../Style/Alerts.css';
+import '../../Style/Products.css';   // .po-block-hint, .org-toolbar, .org-new-btn, .po-set-row
+import '../../Style/Targets.css';    // .t-card + status pills + .t-row-progress (reused for Alerts)
+import '../../Style/Alerts.css';     // .al-fire-* (unchanged history list)
 
 // ── Alert-type catalog (must match ALERT_TYPES in CRM backend) ──────
 const ALERT_TYPES = [
@@ -45,6 +51,21 @@ const ALERT_TYPES = [
 
 const typeMeta = (v) => ALERT_TYPES.find(t => t.value === v) || ALERT_TYPES[0];
 
+// Toolbar — status filter shape mirrors Targets / PromoCodes.
+const STATUS_FILTER_OPTIONS = [
+  { value: 'all',    label: 'All statuses' },
+  { value: 'active', label: 'Active'       },
+  { value: 'muted',  label: 'Muted'        },
+];
+
+// Toolbar — sort field options. Direction toggles on second click.
+const SORT_OPTIONS = [
+  { field: 'date',  label: 'Sort by date'   },
+  { field: 'type',  label: 'Sort by type'   },
+  { field: 'fired', label: 'Sort by recent fire' },
+];
+const SORT_DEFAULT_DIR = { date: 'desc', type: 'asc', fired: 'desc' };
+
 const fmtDateTime = (iso) => {
   if (!iso) return '—';
   try {
@@ -55,6 +76,49 @@ const fmtDateTime = (iso) => {
   } catch { return iso; }
 };
 
+// ── Sort toggle (sliding pill, mirrors Targets / PromoCodes) ───────────
+function SortToggle({ sort, onSort }) {
+  const indRef  = useRef(null);
+  const btnRefs = useRef({});
+  const [hovered, setHovered] = useState(null);
+  const curField = hovered ?? sort.field;
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = btnRefs.current[curField];
+      if (!ind || !el) return;
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [curField, sort.field]);
+
+  return (
+    <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
+      <div ref={indRef} className="org-sort-indicator" />
+      {SORT_OPTIONS.map(({ field, label }) => {
+        const active = sort.field === field;
+        const isCur  = curField === field;
+        return (
+          <button key={field} ref={el => { btnRefs.current[field] = el; }}
+            className={`org-sort-btn${isCur ? ' org-sort-btn--current' : ''}`}
+            style={active ? { paddingLeft: '6px' } : undefined}
+            onMouseEnter={() => setHovered(field)}
+            onClick={() => onSort(field)} type="button">
+            {active && (
+              <ArrowDown className="org-sort-icon"
+                style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
+            )}
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function Alerts() {
   const { projectId } = useOutletContext();
   const [alerts, setAlerts] = useState([]);
@@ -62,6 +126,14 @@ function Alerts() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);   // null | 'new' | alert object
   const [toast,   setToast]   = useState('');
+
+  // Toolbar state — mirrors Targets / PromoCodes for visual consistency.
+  const [search,  setSearch]  = useState('');
+  const [statusF, setStatusF] = useState('all');
+  const [sort,    setSort]    = useState({ field: 'date', dir: 'desc' });
+  const [view,    setView]    = useState('list');
+  const [viewHover, setViewHover] = useState(null);
+  const curView = viewHover ?? view;
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -112,95 +184,173 @@ function Alerts() {
     if (r.ok) reload();
   };
 
+  const handleSetSort = (field) => {
+    setSort(prev => ({
+      field,
+      dir: field === prev.field
+        ? (prev.dir === 'asc' ? 'desc' : 'asc')
+        : (SORT_DEFAULT_DIR[field] || 'desc'),
+    }));
+  };
+
+  // Filter + sort — same shape as Targets / PromoCodes.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filt = alerts.filter(a => {
+      if (q) {
+        const hay = `${a.type_label || ''} ${a.email || ''} ${typeMeta(a.type).label}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (statusF === 'active' && !a.is_active) return false;
+      if (statusF === 'muted'  &&  a.is_active) return false;
+      return true;
+    });
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    filt.sort((a, b) => {
+      let av, bv;
+      if (sort.field === 'type') {
+        av = (a.type_label || a.type || '').toLowerCase();
+        bv = (b.type_label || b.type || '').toLowerCase();
+      } else if (sort.field === 'fired') {
+        av = a.last_fired_at || '';
+        bv = b.last_fired_at || '';
+      } else {
+        av = a.created_at || a.id || 0;
+        bv = b.created_at || b.id || 0;
+      }
+      return av < bv ? -dir : av > bv ? dir : 0;
+    });
+    return filt;
+  }, [alerts, search, statusF, sort]);
+
   return (
     <>
       <h1 className="crm-page-title">Alerts</h1>
-      <p className="auth-page-subtitle">
-        Email notifications triggered by metric thresholds. The
-        evaluator runs every hour; per-alert throttling prevents spam
-        when a condition stays violated.
+
+      <p className="po-block-hint">
+        Email notifications triggered by metric thresholds. The evaluator
+        runs every hour; per-alert throttling prevents spam when a
+        condition stays violated.
       </p>
 
-      <div className="crm-section">
-        <div className="crm-section-row">
-          <h3 className="crm-section-title">Active rules</h3>
-          <button type="button" className="crm-add-btn"
-            onClick={() => setEditing('new')}>
-            <Plus weight="bold" /> New alert
+      {/* Full toolbar — search · sort · status filter · view toggle · New.
+          Same shape as Targets / PromoCodes / Batches. */}
+      <div className="org-toolbar">
+        <div className="org-search-wrap">
+          <MagnifyingGlass className="org-search-icon" />
+          <input className="org-search-input" placeholder="Search alerts…"
+            value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+
+        <SortToggle sort={sort} onSort={handleSetSort} />
+
+        <div className="po-cb-wrap po-cb-wrap--toolbar" style={{ width: 180, minWidth: 180 }}>
+          <Combobox value={statusF} options={STATUS_FILTER_OPTIONS}
+            onChange={(v) => setStatusF(v)} />
+        </div>
+
+        <div className="org-view-toggle" onMouseLeave={() => setViewHover(null)}>
+          <div className="org-view-indicator"
+            style={{ transform: `translateX(${curView === 'list' ? 30 : 0}px)` }} />
+          <button className={`org-view-btn${curView === 'grid' ? ' org-view-btn--current' : ''}`}
+            onClick={() => setView('grid')} onMouseEnter={() => setViewHover('grid')}
+            title="Grid view" type="button">
+            <SquaresFour className="org-view-icon" />
+          </button>
+          <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
+            onClick={() => setView('list')} onMouseEnter={() => setViewHover('list')}
+            title="List view" type="button">
+            <List className="org-view-icon" />
           </button>
         </div>
-        {loading ? (
-          <p className="crm-placeholder">Loading…</p>
-        ) : alerts.length === 0 ? (
-          <p className="crm-placeholder">
-            No alerts yet. Click <b>New alert</b> to add one — pick a metric,
-            set the threshold, and we'll email you when it trips.
-          </p>
-        ) : (
-          <div className="crm-cards-list">
-            {alerts.map(a => (
-              <div key={a.id} className="al-row">
-                <div className="al-row-icon">
-                  {a.is_active
-                    ? <Bell weight="duotone" className="al-icon al-icon--on" />
-                    : <Bell weight="regular" className="al-icon al-icon--off" />}
-                </div>
-                <div className="al-row-main">
-                  <div className="al-row-title">{a.type_label}</div>
-                  <div className="al-row-meta">
-                    {typeMeta(a.type).thresholdLabel
-                      ? <span>{typeMeta(a.type).thresholdLabel}: <b>{a.threshold}</b></span>
-                      : <span>{typeMeta(a.type).hint}</span>}
-                    {' · '}
-                    <span>To: <b>{a.email}</b></span>
-                    {a.last_fired_at && (
-                      <span>{' · '}Last fired {fmtDateTime(a.last_fired_at)}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="al-row-actions">
-                  <button type="button" className="al-toggle"
-                    onClick={() => handleToggle(a)}
-                    title={a.is_active ? 'Mute' : 'Activate'}>
-                    {a.is_active ? 'Mute' : 'Activate'}
-                  </button>
-                  <button type="button" className="crm-icon-btn"
-                    onClick={() => setEditing(a)} title="Edit">
-                    <PencilSimple weight="bold" />
-                  </button>
-                  <button type="button" className="crm-icon-btn crm-icon-btn--danger"
-                    onClick={() => handleDelete(a.id)} title="Delete">
-                    <Trash weight="bold" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+
+        <button type="button" className="org-new-btn" onClick={() => setEditing('new')}>
+          <Plus className="org-new-icon" /> New alert
+        </button>
       </div>
 
-      <div className="crm-section" style={{ marginTop: 24 }}>
-        <h3 className="crm-section-title">Recent fires</h3>
-        {fires.length === 0 ? (
-          <p className="crm-placeholder">
-            No fires yet — alerts haven't tripped or there's no history.
-          </p>
-        ) : (
-          <div className="al-fires">
-            {fires.map(f => (
-              <div key={f.id} className="al-fire">
-                <Warning weight="duotone" className="al-fire-icon" />
-                <div className="al-fire-body">
-                  <div className="al-fire-msg">{f.message}</div>
-                  <div className="al-fire-meta">
-                    {fmtDateTime(f.fired_at)} · alert #{f.alert_id}
-                  </div>
-                </div>
-              </div>
-            ))}
+      {loading ? (
+        <div className="crm-placeholder">Loading…</div>
+      ) : filtered.length === 0 ? (
+        <div className="crm-placeholder">
+          {search || statusF !== 'all'
+            ? 'No alerts match your filters.'
+            : 'No alerts yet. Click New alert to add one — pick a metric, set the threshold, and we\'ll email you when it trips.'}
+        </div>
+      ) : view === 'list' ? (
+        // ── List view — tabular rows like PromoCodes / Batches ────────
+        <div className="po-set-table">
+          <div className="po-set-row po-set-row--head po-set-row--alert">
+            <span>Type</span>
+            <span>Threshold</span>
+            <span>Recipient</span>
+            <span>Last fired</span>
+            <span>Status</span>
+            <span />
           </div>
-        )}
-      </div>
+          {filtered.map(a => (
+            <AlertListRow key={a.id} alert={a}
+              onEdit={() => setEditing(a)}
+              onDelete={() => handleDelete(a.id)}
+              onToggle={() => handleToggle(a)} />
+          ))}
+        </div>
+      ) : (
+        // ── Grid view — visual cards (existing AlertCard) ─────────────
+        <div className="t-grid">
+          {filtered.map(a => (
+            <AlertCard key={a.id} alert={a}
+              onEdit={() => setEditing(a)}
+              onDelete={() => handleDelete(a.id)}
+              onToggle={() => handleToggle(a)} />
+          ))}
+        </div>
+      )}
+
+      {/* Recent fires — same po-set-table list-row design as Alerts list
+          view (and Targets / PromoCodes / Batches). Adds visual rhythm so
+          the page reads as one consistent system instead of an alert list
+          followed by an odd boxy "history" panel. Rows are read-only —
+          no menu, no click handler (history can't be edited). */}
+      <h2 className="crm-section-title" style={{ marginTop: 32, marginBottom: 12 }}>
+        Recent fires
+      </h2>
+      {fires.length === 0 ? (
+        <div className="crm-placeholder">
+          No fires yet — alerts haven't tripped or there's no history.
+        </div>
+      ) : (
+        <div className="po-set-table">
+          <div className="po-set-row po-set-row--head po-set-row--fire">
+            <span>Event</span>
+            <span>Message</span>
+            <span>Alert</span>
+            <span>Fired at</span>
+          </div>
+          {fires.map(f => (
+            <PoListRow key={f.id} className="po-set-row--fire">
+              {/* Tinted icon tile — same visual weight as TargetCard.
+                  Marks the row as "this was an alert that tripped". */}
+              <span style={{ display: 'flex', alignItems: 'center' }}>
+                <span style={{
+                  width: 32, height: 32, borderRadius: 10,
+                  background: 'var(--accent-tint)',
+                  color: 'var(--accent)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Warning weight="duotone" style={{ width: 18, height: 18 }} />
+                </span>
+              </span>
+              <span className="po-set-strong"
+                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {f.message}
+              </span>
+              <span style={{ color: 'var(--muted)' }}>#{f.alert_id}</span>
+              <span style={{ color: 'var(--muted)' }}>{fmtDateTime(f.fired_at)}</span>
+            </PoListRow>
+          ))}
+        </div>
+      )}
 
       {editing && (
         <AlertEditModal
@@ -216,6 +366,177 @@ function Alerts() {
 
       {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
     </>
+  );
+}
+
+// ── List row — compact tabular variant (PromoCodes/Batches pattern) ────
+// 6 columns: type / threshold / email / last_fired / status / menu. The
+// status pill double-duty here as a click target won't work — keep the
+// 3-dot menu for actions (Mute/Activate/Edit/Delete). Whole row clicks
+// open the editor, status-pill stopPropagation prevents the open.
+function AlertListRow({ alert, onEdit, onDelete, onToggle }) {
+  const meta = typeMeta(alert.type);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef(null);
+  return (
+    <PoListRow className="po-set-row--alert" frozen={menuOpen}
+      onClick={() => onEdit()} style={{ cursor: 'pointer' }}>
+      {/* Type label only — Bell icon removed per design (page is named
+          "Alerts" with a Bell already in the sidebar; repeating the icon
+          on every row was visual noise). Muted color when inactive. */}
+      <span className="po-set-strong"
+        style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                 color: alert.is_active ? undefined : 'var(--muted)' }}>
+        {alert.type_label || meta.label}
+      </span>
+      <span>
+        {meta.thresholdLabel
+          ? <><b>{alert.threshold}</b> <span style={{ color: 'var(--muted)' }}>{meta.thresholdLabel.replace(/^[^()]*\(([^)]+)\)/, '$1').toLowerCase()}</span></>
+          : <span style={{ color: 'var(--muted)' }}>—</span>}
+      </span>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {alert.email}
+      </span>
+      <span style={{ color: 'var(--muted)' }}>
+        {alert.last_fired_at ? fmtDateTime(alert.last_fired_at) : 'Never'}
+      </span>
+      <span>
+        <span className={`t-status ${alert.is_active ? 't-status--on-track' : 't-status--behind'}`}>
+          {alert.is_active ? 'ACTIVE' : 'MUTED'}
+        </span>
+      </span>
+      <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
+        aria-label="Options"
+        onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+      </button>
+      {menuOpen && (
+        <AlertMenu btnRef={menuBtnRef}
+          onClose={() => setMenuOpen(false)}
+          isActive={alert.is_active}
+          onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} />
+      )}
+    </PoListRow>
+  );
+}
+
+// ── 3-dot menu — exact PromoMenu pattern (portal + getBoundingClientRect) ──
+// Anchored to the trigger button rect; renders into document.body so it
+// escapes the card's z-index / overflow constraints. Same .org-card-dropdown
+// styles as PromoCodes / Products — single visual language across pages.
+function AlertMenu({ btnRef, onClose, isActive, onEdit, onToggle, onDelete }) {
+  const [pos, setPos] = useState(null);
+
+  useEffect(() => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: Math.max(8, r.right - 184) });
+    }
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onPd  = (e) => {
+      if (!e.target.closest?.('.org-card-dropdown') &&
+          !btnRef.current?.contains(e.target)) {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPd);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPd);
+    };
+  }, [btnRef, onClose]);
+
+  if (!pos) return null;
+
+  return createPortal(
+    <div className="org-card-dropdown"
+      style={{ top: pos.top, left: pos.left }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}>
+      <button className="org-card-dropdown-item"
+        onClick={() => { onClose(); onEdit(); }}>
+        <PencilSimple className="org-card-dropdown-icon" /> Edit
+      </button>
+      <button className="org-card-dropdown-item"
+        onClick={() => { onClose(); onToggle(); }}>
+        <Bell className="org-card-dropdown-icon" />
+        {isActive ? 'Mute' : 'Activate'}
+      </button>
+      <div className="org-card-dropdown-sep" />
+      <button className="org-card-dropdown-item org-card-dropdown-item--danger"
+        onClick={() => { onClose(); onDelete(); }}>
+        <Trash className="org-card-dropdown-icon" /> Delete
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Alert card ─────────────────────────────────────────────────────────
+// Visual chrome mirrors TargetCard (which mirrors PromoCard): rounded card,
+// soft shadow, 3-dot menu in top-right. Bell icon left-side stays — it's
+// the page's identity. Active/muted styling lives on the bell + left bar.
+function AlertCard({ alert, onEdit, onDelete, onToggle }) {
+  const meta = typeMeta(alert.type);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef(null);
+
+  // (Close-on-Esc / outside-click is owned by AlertMenu itself — see below.)
+
+  // Map active/muted state to TargetCard's status colour classes so the
+  // left border / hover effect read consistently across both pages.
+  // Active = on_track (blue tint), muted = behind (grey-ish).
+  const statusCls = alert.is_active ? 't-card--on_track' : 't-card--behind';
+
+  return (
+    <div className={`t-card ${statusCls}`} onClick={() => onEdit()}>
+
+      <div className="t-card-head">
+        <div className="t-card-title-wrap">
+          {/* Bell icon removed — Alerts page identity is already established
+              by the sidebar Bell + page title. Title alone here keeps the
+              card head visually consistent with the list view. */}
+          <div style={{ minWidth: 0 }}>
+            <h3 className="t-card-title"
+              style={!alert.is_active ? { color: 'var(--muted)' } : undefined}>
+              {alert.type_label || meta.label}
+            </h3>
+            <div className="t-card-sub">
+              {meta.thresholdLabel && (
+                <>
+                  <span>{meta.thresholdLabel}: <b>{alert.threshold}</b></span>
+                  <span className="t-card-sub-dot" />
+                </>
+              )}
+              <span>To <b>{alert.email}</b></span>
+              {alert.last_fired_at && (
+                <>
+                  <span className="t-card-sub-dot" />
+                  <span>Last fired {fmtDateTime(alert.last_fired_at)}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="t-card-actions" onClick={(e) => e.stopPropagation()}>
+          <span className={`t-status ${alert.is_active ? 't-status--on-track' : 't-status--behind'}`}>
+            {alert.is_active ? 'ACTIVE' : 'MUTED'}
+          </span>
+          <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
+            aria-label="Options"
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+            <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+          </button>
+          {menuOpen && (
+            <AlertMenu btnRef={menuBtnRef}
+              onClose={() => setMenuOpen(false)}
+              isActive={alert.is_active}
+              onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} />
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -330,11 +651,16 @@ function AlertEditModal({ projectId, alert, onClose, onSaved }) {
               </span>
             </div>
 
+            {/* Active toggle — same styled checkbox as Edit target.
+                `cat-prod-checkbox` + `po-include-cb` give it the blue
+                CRM-wide check style. `po-wh-toggle-row` lays out the
+                label + checkbox in one row. */}
             <div className="cpm-section">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                <input type="checkbox" checked={isActive}
+              <label className="po-set-field po-set-field--toggle po-wh-toggle-row">
+                <input type="checkbox" className="cat-prod-checkbox po-include-cb"
+                  checked={isActive}
                   onChange={(e) => setIsActive(e.target.checked)} />
-                <span>Active</span>
+                <span className="po-set-toggle-text">Active</span>
               </label>
               <span className="cpm-section-hint">
                 Muted alerts keep their history but stop firing until re-enabled.

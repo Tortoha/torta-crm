@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import {
-  Truck, Package, Buildings, Info, ArrowRight, CheckCircle, Stack, TreeStructure,
+  Truck, Package, Buildings, ArrowRight, CheckCircle, Stack, TreeStructure,
   Hash, ArrowsClockwise,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
@@ -91,18 +91,9 @@ export default function ProductsSettings() {
 
   return (
     <div className="bulk-settings">
-      {/* Hero banner explains the page in one sentence — fixes "what does this do?" confusion. */}
-      <div className="bulk-hero">
-        <div className="bulk-hero-icon"><Info weight="fill" /></div>
-        <div className="bulk-hero-body">
-          <div className="bulk-hero-title">Bulk-update product settings</div>
-          <div className="bulk-hero-sub">
-            Pick fields, set a value, and apply — it overwrites the chosen field on
-            <b> every product</b> in this project. Per-product overrides live on each product's
-            own Settings page.
-          </div>
-        </div>
-      </div>
+      {/* No <h1> here — the parent Products layout (Products.jsx) already
+          renders a `crm-page-title` based on the active tab. Adding one
+          here would produce a duplicate title on screen. */}
 
       <Section icon={<Truck weight="duotone" />} title="Shipping & fulfillment"
         subtitle="How orders ship — class, lead time, international defaults">

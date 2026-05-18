@@ -374,6 +374,14 @@
   background: #fff;
   border-radius: 999px;
   font-size: 14px;
+  /* Force regular weight with !important — browser user-agent stylesheets
+     occasionally inherit bold on type=number inputs, and other rules in
+     Products.css have the same specificity (0,2,0) and could win based on
+     bundle order. !important + font-variant-numeric:normal makes this a
+     hard guarantee: every input inside .auth-modal renders at weight 400,
+     no tabular-numerals heaviness on numeric values. */
+  font-weight: 400 !important;
+  font-variant-numeric: normal !important;
   color: #111827;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }

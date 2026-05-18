@@ -4308,6 +4308,17 @@ select.prod-field-input {
   gap: 6px;
 }
 
+/* CRITICAL: base .crm-input has `flex: 1` (so it stretches horizontally
+   when laid out in a row). But inside .cpm-section the flex container
+   is COLUMN — and `flex: 1` then makes the input stretch VERTICALLY
+   to fill all available height. That's why Target value showed up at
+   61 px tall (DevTools-measured) instead of the expected ~40 px.
+   Force `flex: none` so the input keeps its natural content height. */
+.cpm-section > .crm-input,
+.cpm-section > .crm-input-select {
+  flex: none;
+}
+
 .cpm-textarea {
   border-radius: 16px !important;
   resize: none;
@@ -7494,6 +7505,7 @@ textarea.po-set-input,
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding-top: 24px;
 }
 
 /* ── Hero banner (explains the page) ─────────────────────────── */

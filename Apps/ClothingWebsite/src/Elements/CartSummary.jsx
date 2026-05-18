@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router-dom';
+import { fmtMoney } from '../currency.js';
 
-const fmt = (n) => (+n % 1 === 0) ? +n : (+n).toFixed(2);
+// Drop decimals on whole amounts. fmtMoney handles symbol + position.
+const fmt = (n) => fmtMoney(n, (+n % 1 === 0) ? { decimals: 0 } : undefined);
 
 function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onApplyPromo, cartData }) {
   const navigate = useNavigate();
@@ -15,18 +17,18 @@ function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onAppl
       <div className="summary-card">
         <div className="summary-row summary-subtotal">
           <span>Subtotal</span>
-          <span>${fmt(subtotal)}</span>
+          <span>{fmt(subtotal)}</span>
         </div>
 
         <div className="summary-row summary-shipping">
           <span>Estimated Shipping</span>
-          <span>{shippingCost === 0 ? "Free" : `${shippingCost}$`}</span>
+          <span>{shippingCost === 0 ? "Free" : fmt(shippingCost)}</span>
         </div>
 
         <div className="shipping-progress">
           <div className="progress-header">
             <span className="progress-text">To free shipping</span>
-            <span className="progress-amount">${fmt(cartData.amount_to_free_shipping)}</span>
+            <span className="progress-amount">{fmt(cartData.amount_to_free_shipping)}</span>
           </div>
           <div className="progress-bar">
             <div className="progress-fill" style={{ width: `${cartData.shipping_progress}%` }} />
@@ -56,7 +58,7 @@ function CartSummary({ promoCode, setPromoCode, appliedPromo, promoError, onAppl
       <div className="summary-card">
         <div className="summary-row summary-total">
           <span>Total</span>
-          <span>${fmt(total)}</span>
+          <span>{fmt(total)}</span>
         </div>
         <button
           className="checkout-btn"

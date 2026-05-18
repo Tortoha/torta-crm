@@ -1,312 +1,34 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { useOutletContext } from 'react-router-dom';
+// Project Settings — redesigned to match the Product Settings "bulk-style"
+// layout. One scrolling page, no tabs. Each topic is its own Section with
+// icon + title + subtitle and a column of bulk-field cards. Save-on-change
+// for every field (no Save button). Toast confirms each commit.
+//
+// Sections from top to bottom:
+//   1. General         — timezone (auto-detect or manual) + currency (with warning modal)
+//   2. Inventory       — FIFO/LIFO batch consumption + Hide-price/margin override
+//   3. Barcode defaults — 4 toggles for what gets encoded into printed barcodes
+//   4. Danger Zone     — placeholder (delete project, rotate API key — TODO)
+//
+// PDF document branding lives at /project/:apiKey/documents — a dedicated
+// Sidebar page now (used to be a tab here, but customers couldn't find it
+// buried inside Settings).
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GearSix, FileText, Warning, UploadSimple, Stack, Barcode } from '@phosphor-icons/react';
+import { useOutletContext } from 'react-router-dom';
+import {
+  Globe, Stack, Barcode, Warning, CaretDown, MagnifyingGlass,
+} from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { CURRENCIES, formatMoney, getCurrencyMeta } from '../../Utils/currency.js';
+import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import '../../Style/Authentication.css';
-import '../../Style/Booking.css';
 import '../../Style/Products.css';
-import '../../Style/Integrations.css';
-
-// ─── Tabs (mirror of Authentication.jsx) ───────────────────────────────
-
-function TabSwitcher({ tab, setTab }) {
-  const indRef = useRef(null);
-  const btnRefs = useRef({});
-  const [hovered, setHovered] = useState(null);
-  const curTab = hovered ?? tab;
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      const ind = indRef.current;
-      const el  = btnRefs.current[curTab];
-      if (!ind || !el) return;
-      ind.style.opacity   = '1';
-      ind.style.transform = `translateX(${el.offsetLeft}px)`;
-      ind.style.width     = `${el.offsetWidth}px`;
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [curTab, tab]);
-
-  const TABS = [
-    { key: 'general',   label: 'General',     Icon: GearSix  },
-    { key: 'inventory', label: 'Inventory',   Icon: Stack    },
-    { key: 'barcode',   label: 'Barcode defaults', Icon: Barcode },
-    { key: 'documents', label: 'Documents',   Icon: FileText },
-    { key: 'danger',    label: 'Danger Zone', Icon: Warning  },
-  ];
-  return (
-    <div className="auth-tab-switcher" onMouseLeave={() => setHovered(null)}>
-      <div ref={indRef} className="auth-tab-indicator" />
-      {TABS.map(({ key, label, Icon }) => (
-        <button key={key} ref={el => { btnRefs.current[key] = el; }}
-          className={`auth-tab-btn${curTab === key ? ' auth-tab-btn--active' : ''}`}
-          onMouseEnter={() => setHovered(key)}
-          onClick={() => setTab(key)} type="button">
-          <Icon className="auth-tab-icon" />
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ─── Documents tab ─────────────────────────────────────────────────────
-
-const STYLE_OPTIONS = [
-  { key: 'modern',  label: 'Modern',  hint: 'Coloured banner + accent stripes (default).' },
-  { key: 'classic', label: 'Classic', hint: 'Centered, serif, formal — invoice-style.' },
-  { key: 'minimal', label: 'Minimal', hint: 'Black & white, no decoration, prints small.' },
-];
-
-function StyleCard({ option, current, onPick }) {
-  const active = option.key === current;
-  return (
-    <button type="button"
-      className={`doc-style-card${active ? ' doc-style-card--active' : ''}`}
-      onClick={() => onPick(option.key)}>
-      <div className={`doc-style-preview doc-style-preview--${option.key}`}>
-        <div className="doc-style-preview-band" />
-        <div className="doc-style-preview-line doc-style-preview-line--w70" />
-        <div className="doc-style-preview-line doc-style-preview-line--w50" />
-        <div className="doc-style-preview-line doc-style-preview-line--w90" />
-        <div className="doc-style-preview-line doc-style-preview-line--w60" />
-      </div>
-      <div className="doc-style-name">{option.label}</div>
-      <div className="doc-style-hint">{option.hint}</div>
-    </button>
-  );
-}
-
-function DocumentsTab({ projectId, showToast }) {
-  const pq = `?project_id=${projectId}`;
-  const fileRef = useRef(null);
-  const [form, setForm] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [uploading, setUploading] = useState(false);
-
-  useEffect(() => {
-    fetch(`${API_BASE}/api/document-settings${pq}`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null).then(d => setForm(d || {
-        style: 'modern', company_name: '', logo_url: null, address: '',
-        tax_id_label: 'Tax ID', tax_id: '', contact_email: '', contact_phone: '',
-        footer_note: '', accent_color: '#0071E3',
-      }));
-  }, [projectId]);
-
-  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  const save = useCallback(async () => {
-    if (!form) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/document-settings${pq}`, {
-        method: 'PUT', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      if (res.ok) showToast('Saved');
-      else showToast('Save failed');
-    } finally { setBusy(false); }
-  }, [form, projectId, showToast]);
-
-  const upload = async (file) => {
-    if (!file) return;
-    setUploading(true);
-    const fd = new FormData(); fd.append('file', file);
-    try {
-      const res = await fetch(`${API_BASE}/api/upload/image${pq}`, {
-        method: 'POST', credentials: 'include', body: fd,
-      });
-      const data = await res.json();
-      if (res.ok && data.url) upd('logo_url', data.url);
-      else showToast('Upload failed');
-    } finally { setUploading(false); }
-  };
-
-  if (!form) return <p className="crm-placeholder">Loading…</p>;
-
-  return (
-    <>
-      <h1 className="crm-page-title">Documents</h1>
-      <p className="auth-page-subtitle">
-        Branding for invoices, acts, receipts and tickets. Saved settings apply to
-        all PDFs generated from orders and bookings — no per-document override.
-      </p>
-
-      <section className="auth-section">
-        <h2 className="auth-section-title">Template style</h2>
-        <p className="auth-field-hint">Pick the visual layout. You can change it any time.</p>
-        <div className="doc-style-row">
-          {STYLE_OPTIONS.map(opt => (
-            <StyleCard key={opt.key} option={opt}
-              current={form.style} onPick={v => upd('style', v)} />
-          ))}
-        </div>
-      </section>
-
-      <section className="auth-section">
-        <h2 className="auth-section-title">Company info</h2>
-
-        <div className="auth-field">
-          <label className="auth-label">Company / brand name</label>
-          <input className="crm-input" value={form.company_name || ''}
-            onChange={e => upd('company_name', e.target.value)} maxLength={200}
-            placeholder="Acme Inc, ИП Иванов, etc." />
-        </div>
-
-        <div className="auth-field">
-          <label className="auth-label">Logo (optional)</label>
-          <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
-            onChange={e => upload(e.target.files?.[0])} />
-          {form.logo_url ? (
-            <div className="bk-svc-img-preview">
-              <img src={form.logo_url} alt="" />
-              <div className="bk-svc-img-actions">
-                <button type="button" className="crm-submit-btn auth-btn-secondary"
-                  onClick={() => fileRef.current?.click()} disabled={uploading}>
-                  {uploading ? 'Uploading…' : 'Replace'}
-                </button>
-                <button type="button" className="auth-btn-danger"
-                  onClick={() => upd('logo_url', null)}>Remove</button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="bk-svc-img-drop"
-              onClick={() => fileRef.current?.click()} disabled={uploading}>
-              {uploading ? 'Uploading…' : (
-                <><UploadSimple weight="bold" size={20} /> <span>Click to upload a logo</span></>
-              )}
-            </button>
-          )}
-          <p className="auth-field-hint">Square or wide; rendered at 28×28 mm in the PDF header.</p>
-        </div>
-
-        <div className="bk-rules-grid">
-          <div className="auth-field">
-            <label className="auth-label">Tax ID label</label>
-            <input className="crm-input" value={form.tax_id_label || ''}
-              onChange={e => upd('tax_id_label', e.target.value)} maxLength={40}
-              placeholder="BIN / VAT / EIN / ИНН…" />
-          </div>
-          <div className="auth-field">
-            <label className="auth-label">Tax ID value</label>
-            <input className="crm-input" value={form.tax_id || ''}
-              onChange={e => upd('tax_id', e.target.value)} maxLength={80}
-              placeholder="123456789012" />
-          </div>
-        </div>
-
-        <div className="auth-field">
-          <label className="auth-label">Address</label>
-          <textarea className="crm-input bk-textarea" rows={3}
-            value={form.address || ''} onChange={e => upd('address', e.target.value)}
-            placeholder="Street, city, postal code, country" maxLength={500} />
-        </div>
-
-        <div className="bk-rules-grid">
-          <div className="auth-field">
-            <label className="auth-label">Contact email</label>
-            <input className="crm-input" value={form.contact_email || ''} type="email"
-              onChange={e => upd('contact_email', e.target.value)} maxLength={200}
-              placeholder="billing@company.com" />
-          </div>
-          <div className="auth-field">
-            <label className="auth-label">Contact phone</label>
-            <input className="crm-input" value={form.contact_phone || ''}
-              onChange={e => upd('contact_phone', e.target.value)} maxLength={40}
-              placeholder="+1 555 0100" />
-          </div>
-        </div>
-
-        <div className="bk-rules-grid">
-          <div className="auth-field">
-            <label className="auth-label">Accent colour (hex)</label>
-            <input className="crm-input" value={form.accent_color || '#0071E3'}
-              onChange={e => upd('accent_color', e.target.value)} maxLength={20}
-              placeholder="#0071E3" />
-            <p className="auth-field-hint">Used for the banner & total row in the Modern template.</p>
-          </div>
-          <div className="auth-field">
-            <label className="auth-label">Footer note (optional)</label>
-            <input className="crm-input" value={form.footer_note || ''}
-              onChange={e => upd('footer_note', e.target.value)} maxLength={200}
-              placeholder="Thank you for your business" />
-          </div>
-        </div>
-
-        <div className="auth-actions">
-          <button className="crm-submit-btn" onClick={save} disabled={busy} type="button">
-            {busy ? 'Saving…' : 'Save documents settings'}
-          </button>
-        </div>
-      </section>
-    </>
-  );
-}
-
-// ─── Page ──────────────────────────────────────────────────────────────
-
-export default function ProjectSettings() {
-  const { projectId } = useOutletContext();
-  const [tab, setTab] = useState('documents');
-  const [toast, setToast] = useState('');
-  const tref = useRef(null);
-
-  const showToast = (msg) => {
-    setToast(msg);
-    if (tref.current) clearTimeout(tref.current);
-    tref.current = setTimeout(() => setToast(''), 3200);
-  };
-
-  return (
-    <>
-      <div className="auth-tab-wrapper">
-        <TabSwitcher tab={tab} setTab={setTab} />
-      </div>
-      <div className="auth-page">
-
-      {tab === 'general' && (
-        <GeneralTab projectId={projectId} showToast={showToast} />
-      )}
-
-      {tab === 'inventory' && (
-        <InventoryConfigTab projectId={projectId} showToast={showToast} />
-      )}
-
-      {tab === 'barcode' && (
-        <BarcodeDefaultsTab projectId={projectId} showToast={showToast} />
-      )}
-
-      {tab === 'documents' && (
-        <DocumentsTab projectId={projectId} showToast={showToast} />
-      )}
-
-      {tab === 'danger' && (
-        <>
-          <h1 className="crm-page-title">Danger Zone</h1>
-          <p className="auth-page-subtitle">
-            Irreversible actions: rotate API key, delete project. Coming soon.
-          </p>
-          <div className="crm-placeholder">Coming soon</div>
-        </>
-      )}
-
-      {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
-      </div>
-    </>
-  );
-}
-
-// ── General tab: timezone + currency ─────────────────────
-// These two settings drive how dates and money are formatted across
-// the entire CRM. Timezone is critical: without it, an Almaty merchant
-// sees orders bucketed by UTC days, so a 23:00 local order looks like
-// "yesterday" in analytics and "today" in the orders list.
 
 // Common IANA timezones — covers the bulk of e-commerce markets without
-// dumping the full 600+ list on the user. They can type a custom value
-// via the text input if their zone isn't here.
+// dumping the full 600+ list on the user. Custom values are NOT directly
+// typeable through the dropdown; users with exotic zones can call the
+// backend API directly (rare enough to not warrant a typeahead UI).
 const TIMEZONE_PRESETS = [
   'UTC',
   'Asia/Almaty',     'Asia/Aqtobe',    'Asia/Tashkent',
@@ -318,27 +40,358 @@ const TIMEZONE_PRESETS = [
   'Australia/Sydney',
 ];
 
-// Common currencies — same triage. Bonus: shows symbol next to code.
-const CURRENCY_PRESETS = [
-  { code: 'USD', label: 'US Dollar ($)' },
-  { code: 'EUR', label: 'Euro (€)' },
-  { code: 'GBP', label: 'British Pound (£)' },
-  { code: 'KZT', label: 'Kazakhstani Tenge (₸)' },
-  { code: 'RUB', label: 'Russian Ruble (₽)' },
-  { code: 'TRY', label: 'Turkish Lira (₺)' },
-  { code: 'UZS', label: 'Uzbekistani Som' },
-  { code: 'CNY', label: 'Chinese Yuan (¥)' },
-  { code: 'JPY', label: 'Japanese Yen (¥)' },
-  { code: 'AED', label: 'UAE Dirham' },
-];
+// ── Shared bulk-style primitives (mirror of ProductsSettings) ───────────
 
-function GeneralTab({ projectId, showToast }) {
-  const [tz,       setTz]       = useState('UTC');
-  const [tzAuto,   setTzAuto]   = useState(true);
+function Section({ icon, title, subtitle, children }) {
+  return (
+    <section className="bulk-section">
+      <header className="bulk-section-head">
+        <div className="bulk-section-icon">{icon}</div>
+        <div className="bulk-section-text">
+          <h2 className="bulk-section-title">{title}</h2>
+          {subtitle && <p className="bulk-section-sub">{subtitle}</p>}
+        </div>
+      </header>
+      <div className="bulk-section-fields">{children}</div>
+    </section>
+  );
+}
+
+// Save-on-change card — no Apply switch. Modifier `bulk-field--noswitch`
+// shifts the layout to skip the toggle column.
+function FieldCard({ label, hint, children }) {
+  return (
+    <div className="bulk-field bulk-field--noswitch bulk-field--on">
+      <div className="bulk-field-head">
+        <div className="bulk-field-text">
+          <span className="bulk-field-label">{label}</span>
+          {hint && <span className="bulk-field-hint">{hint}</span>}
+        </div>
+      </div>
+      <div className="bulk-field-value">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * SegmentSwitch — sliding pill toggle. Used for FIFO/LIFO + hide-price
+ * + on/off toggles in barcode defaults. Same component as ProductsSettings
+ * — kept local here to avoid premature shared-Utils extraction.
+ */
+function SegmentSwitch({ value, options, onChange, disabled }) {
+  const indRef = useRef(null);
+  const btnRefs = useRef({});
+  const [hovered, setHovered] = useState(null);
+  const current = hovered ?? value;
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el = btnRefs.current[String(current)];
+      if (!ind || !el) return;
+      ind.style.opacity = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [current, value]);
+
+  return (
+    <div className={`seg-switch${disabled ? ' seg-switch--disabled' : ''}`}
+      onMouseLeave={() => setHovered(null)}>
+      <div ref={indRef} className="seg-switch-indicator" />
+      {options.map(({ value: v, label }) => (
+        <button key={String(v)} type="button" disabled={disabled}
+          ref={el => { btnRefs.current[String(v)] = el; }}
+          className={`seg-switch-btn${String(current) === String(v) ? ' seg-switch-btn--current' : ''}`}
+          onMouseEnter={() => !disabled && setHovered(v)}
+          onClick={() => onChange(v)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Searchable combobox ────────────────────────────────────────────────
+//
+// Built on the same shell as Booking's `Combobox` (portal dropdown,
+// DynamicBlock hover pill, smart up/down flip near viewport edge), with
+// a search input added at the top of the dropdown. We need this for the
+// Timezone (~18 options) and Currency (49 options) dropdowns where a
+// native `<select>` becomes a wall of text.
+//
+// Behaviour:
+//   • Click trigger → dropdown opens, search input auto-focused
+//   • Type → live filter on `label` AND `searchText` (so "tenge", "₸"
+//     and "KZT" all find the same row)
+//   • Esc → close. Click outside → close.
+//   • Each option supports `subLabel` rendered dim on the right —
+//     used to show currency symbol next to the name.
+function SearchableCombobox({
+  value, options, onChange,
+  placeholder = '— Select —',
+  searchPlaceholder = 'Search…',
+  disabled = false,
+}) {
+  const btnRef = useRef(null);
+  const inputRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const [query, setQuery] = useState('');
+  const [hovered, setHovered] = useState(null);
+
+  const selected = useMemo(
+    () => options.find(o => String(o.value) === String(value)),
+    [options, value]
+  );
+
+  // Live filter. `searchText` allows hidden synonyms (e.g. "tenge",
+  // "kzt", "₸" all match "Kazakhstani Tenge"). Lowercase compare,
+  // simple substring — no fuzzy / no regex. Good enough for <100 rows.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(o => {
+      const hay = `${o.label || ''} ${o.searchText || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [options, query]);
+
+  const activeKey = hovered ?? String(value);
+  const { indRef, setItemRef } = DynamicBlock(activeKey, open);
+
+  // Compute dropdown position + smart up/down flip. Same logic as
+  // Booking's Combobox — when there's < 240 px below the trigger we
+  // pin the dropdown to the trigger's TOP edge with a `bottom` value
+  // so it shrinks-to-content naturally rather than floating in space.
+  useEffect(() => {
+    if (!open || !btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const margin = 12;
+    const width = Math.max(r.width, 320);
+    const MAX_H = 360;
+    const spaceBelow = window.innerHeight - r.bottom - margin;
+    const spaceAbove = r.top - margin;
+    const flipUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+    const maxHeight = flipUp ? Math.min(MAX_H, spaceAbove) : Math.min(MAX_H, spaceBelow);
+    if (flipUp) {
+      setPos({ bottom: window.innerHeight - r.top + 6, left: Math.max(margin, r.left), width, maxHeight });
+    } else {
+      setPos({ top: r.bottom + 6, left: Math.max(margin, r.left), width, maxHeight });
+    }
+    // Reset filter every time we open so the user always starts fresh.
+    setQuery('');
+    // Auto-focus the search input after the portal mounts.
+    requestAnimationFrame(() => { inputRef.current?.focus(); });
+
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onPd = (e) => {
+      if (!e.target.closest?.('.bk-cb-dropdown') &&
+          !btnRef.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPd);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPd);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button ref={btnRef} type="button"
+        className={`cpm-cat-btn${open ? ' cpm-cat-btn--open' : ''}`}
+        disabled={disabled}
+        onClick={() => !disabled && setOpen(v => !v)}>
+        <span className={selected ? '' : 'cpm-cat-placeholder'}
+          style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          {selected ? (
+            <>
+              <span>{selected.label}</span>
+              {selected.subLabel && (
+                <span style={{ color: 'var(--muted)', fontSize: 12 }}>
+                  {selected.subLabel}
+                </span>
+              )}
+            </>
+          ) : placeholder}
+        </span>
+        <CaretDown weight="bold" className={`cpm-cat-caret${open ? ' cpm-cat-caret--up' : ''}`} />
+      </button>
+
+      {open && pos && createPortal(
+        <div className="cat-filter-dropdown bk-cb-dropdown"
+          style={{
+            ...(pos.top    != null ? { top:    pos.top }    : null),
+            ...(pos.bottom != null ? { bottom: pos.bottom } : null),
+            left: pos.left, width: pos.width, maxHeight: pos.maxHeight,
+            // Stack the search bar above the scrollable list inside the
+            // portal — the list flexes to fill remaining height so the
+            // search input always stays pinned.
+            display: 'flex', flexDirection: 'column',
+          }}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}>
+          {/* Search input — sticky to the dropdown's top edge */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 12px', borderBottom: '1px solid var(--border, rgba(0,0,0,0.06))',
+            flexShrink: 0,
+          }}>
+            <MagnifyingGlass size={14} weight="bold" style={{ color: 'var(--muted)' }} />
+            <input ref={inputRef} type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              style={{
+                flex: 1, border: 'none', outline: 'none',
+                background: 'transparent', fontSize: 13,
+                color: 'var(--text)',
+              }} />
+          </div>
+
+          {/* Filtered list — scrolls; dynamic indicator follows hover */}
+          <div style={{ overflowY: 'auto', flex: 1, position: 'relative' }}
+            onMouseLeave={() => setHovered(null)}>
+            <div ref={indRef} className="cat-filter-indicator" />
+            {filtered.length === 0 && (
+              <div style={{
+                padding: '16px 12px', color: 'var(--muted)',
+                fontSize: 13, textAlign: 'center',
+              }}>
+                No matches.
+              </div>
+            )}
+            {filtered.map(o => {
+              const k = String(o.value);
+              return (
+                <button key={k} ref={setItemRef(k)} type="button"
+                  className={`cat-filter-item${activeKey === k ? ' cat-filter-item--current' : ''}`}
+                  onMouseEnter={() => setHovered(k)}
+                  onClick={() => { onChange(o.value); setOpen(false); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: 12,
+                  }}>
+                  <span>{o.label}</span>
+                  {o.subLabel && (
+                    <span style={{ color: 'var(--muted)', fontSize: 12 }}>
+                      {o.subLabel}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+// ── Currency change warning modal (kept exactly as before) ─────────────
+//
+// Pops when the merchant picks a different currency from the dropdown.
+// Shows side-by-side "before / after" for a sample amount so the merchant
+// can see at a glance: NUMBER stays, SYMBOL changes. No FX conversion.
+function CurrencyChangeWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
+  const fromMeta = getCurrencyMeta(fromCode);
+  const toMeta   = getCurrencyMeta(toCode);
+  return (
+    <div className="auth-modal-overlay" onClick={onCancel}>
+      <div className="auth-modal" onClick={e => e.stopPropagation()}
+        style={{ width: 520 }}>
+        <div className="auth-modal-body">
+          <div className="auth-modal-title-row">
+            <h2 className="auth-modal-title">Change currency?</h2>
+          </div>
+
+          <p className="cpm-section-hint" style={{ marginTop: 0 }}>
+            You're switching from <b>{fromMeta.name} ({fromMeta.symbol})</b>{' '}
+            to <b>{toMeta.name} ({toMeta.symbol})</b>.
+          </p>
+
+          {/* Before / after preview */}
+          <div style={{
+            display:'grid', gridTemplateColumns:'1fr auto 1fr',
+            gap:12, alignItems:'center',
+            padding:16, borderRadius:16,
+            background:'var(--accent-tint)',
+            margin:'8px 0 12px',
+          }}>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ color:'var(--muted)', fontSize:12, marginBottom:4 }}>Was</div>
+              <div style={{ fontSize:20, fontWeight:600, fontVariantNumeric:'tabular-nums' }}>
+                {formatMoney(99.99, fromCode)}
+              </div>
+            </div>
+            <div style={{ color:'var(--muted)', fontSize:18 }}>→</div>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ color:'var(--muted)', fontSize:12, marginBottom:4 }}>Will be</div>
+              <div style={{ fontSize:20, fontWeight:600, color:'var(--accent)', fontVariantNumeric:'tabular-nums' }}>
+                {formatMoney(99.99, toCode)}
+              </div>
+            </div>
+          </div>
+
+          <ul style={{
+            margin:0, padding:'0 0 0 18px',
+            color:'var(--muted)', fontSize:13, lineHeight:1.55,
+          }}>
+            <li>
+              <b>Numbers don't change.</b> A product priced at 99.99
+              stays 99.99 — only the symbol updates.
+            </li>
+            <li>
+              <b>Past orders keep their original currency.</b> An invoice
+              issued in {fromMeta.symbol} stays in {fromMeta.symbol} forever.
+            </li>
+            <li>
+              <b>No FX rate is applied.</b> If you want to re-price
+              products at the current exchange rate, use Products →
+              Bulk update price after switching.
+            </li>
+          </ul>
+
+          <div className="auth-actions" style={{ marginTop: 16 }}>
+            <button type="button" className="crm-submit-btn" onClick={onConfirm}>
+              Change to {toMeta.code}
+            </button>
+            <button type="button" className="auth-btn-danger"
+              onClick={onCancel} style={{ marginLeft: 'auto' }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Page ────────────────────────────────────────────────────────────────
+
+export default function ProjectSettings() {
+  const { projectId } = useOutletContext();
+  const [toast, setToast] = useState('');
+  const tref = useRef(null);
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    if (tref.current) clearTimeout(tref.current);
+    tref.current = setTimeout(() => setToast(''), 2400);
+  }, []);
+
+  // ── General section state (timezone + currency) ────────────────────
+  // Source of truth lives on `crm_projects` row — same PATCH endpoint
+  // handles both fields. Currency change opens a warning modal first;
+  // timezone changes commit immediately (no ambiguity about behaviour).
+  const [tz, setTz]         = useState('UTC');
+  const [tzAuto, setTzAuto] = useState(true);
   const [currency, setCurrency] = useState('USD');
-  const [loaded,   setLoaded]   = useState(false);
-  const [savingTz, setSavingTz] = useState(false);
-  const [savingCur,setSavingCur]= useState(false);
+  const [loadedGen, setLoadedGen] = useState(false);
+  const [pendingCurrency, setPendingCurrency] = useState(null);
+
   useEffect(() => {
     fetch(`${API_BASE}/api/projects/${projectId}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
@@ -348,137 +401,74 @@ function GeneralTab({ projectId, showToast }) {
           setTzAuto(j.tz_auto !== false);
           setCurrency(j.currency || 'USD');
         }
-        setLoaded(true);
+        setLoadedGen(true);
       })
-      .catch(() => setLoaded(true));
+      .catch(() => setLoadedGen(true));
   }, [projectId]);
-  const save = async (body, setBusy) => {
-    setBusy(true);
+
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+  const saveProject = async (patch) => {
     const r = await fetch(`${API_BASE}/api/projects/${projectId}`, {
       method: 'PATCH', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(patch),
     });
-    setBusy(false);
-    if (r.ok) {
-      showToast('Saved');
-      setTimeout(() => window.location.reload(), 500);
-    } else {
-      const j = await r.json().catch(() => ({}));
-      showToast(j.detail || 'Save failed');
-    }
+    if (r.ok) showToast('Saved');
+    else showToast('Save failed');
   };
-  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
   // Manual dropdown selection → flips tz_auto off (user picked one
-  // explicitly, don't auto-overwrite next time they reload from a
-  // different machine).
+  // explicitly, don't auto-overwrite next time they reload).
   const pickTimezone = (v) => {
     setTz(v); setTzAuto(false);
-    save({ timezone: v, tz_auto: false }, setSavingTz);
+    saveProject({ timezone: v, tz_auto: false });
   };
-  // "Use browser timezone" → switches BACK to auto mode + immediately
-  // syncs to whatever the browser reports now. From this moment, the
-  // hidden polling in CRM Layout will keep tz in sync with the browser
-  // every 30 min + on every page load.
+  // "Use browser timezone" → BACK to auto mode + syncs immediately.
   const useBrowser = () => {
     setTz(browserTz); setTzAuto(true);
-    save({ timezone: browserTz, tz_auto: true }, setSavingTz);
+    saveProject({ timezone: browserTz, tz_auto: true });
   };
-  return (
-    <>
-      <h1 className="crm-page-title">General</h1>
-      <p className="auth-page-subtitle">
-        Timezone and currency. Both drive how dates and money are
-        displayed across the dashboard — Analytics, Orders, Booking, etc.
-      </p>
 
-      <div className="crm-section" style={{ marginBottom: 24 }}>
-        <h3 className="crm-section-title" style={{ marginBottom: 12 }}>Timezone</h3>
-        <p className="cpm-section-hint" style={{ marginBottom: 12 }}>
-          Days in analytics are bucketed by this timezone. Orders show
-          their creation date in this timezone too.
-          <br />
-          {tzAuto ? (
-            <>
-              <b>Auto-detect mode</b> — CRM keeps the project tz in sync
-              with your browser ({browserTz}) every 30 min and on every
-              page load. Pick a zone from the dropdown to lock it.
-            </>
-          ) : (
-            <>
-              <b>Manual mode</b> — locked to {tz}. Your browser reports{' '}
-              <b>{browserTz}</b>.{' '}
-              {tz !== browserTz && (
-                <button type="button" className="auth-btn-check"
-                  style={{ marginLeft: 8 }}
-                  onClick={useBrowser}
-                  disabled={!loaded || savingTz}>
-                  Use browser timezone
-                </button>
-              )}
-              {tz === browserTz && (
-                <button type="button" className="auth-btn-check"
-                  style={{ marginLeft: 8 }}
-                  onClick={useBrowser}
-                  disabled={!loaded || savingTz}>
-                  Resume auto-detect
-                </button>
-              )}
-            </>
-          )}
-        </p>
-        <select className="crm-input" value={tz}
-          disabled={!loaded || savingTz}
-          onChange={e => pickTimezone(e.target.value)}>
-          {TIMEZONE_PRESETS.includes(tz) ? null : <option value={tz}>{tz}</option>}
-          {TIMEZONE_PRESETS.map(z => <option key={z} value={z}>{z}</option>)}
-        </select>
-      </div>
-
-      <div className="crm-section">
-        <h3 className="crm-section-title" style={{ marginBottom: 12 }}>Currency</h3>
-        <p className="cpm-section-hint" style={{ marginBottom: 12 }}>
-          All amounts on the dashboard are formatted with this currency's
-          symbol and decimal style. Per-order currency on order_history
-          still wins when it disagrees (cross-currency sales).
-        </p>
-        <select className="crm-input" value={currency}
-          disabled={!loaded || savingCur}
-          onChange={e => { setCurrency(e.target.value); save({ currency: e.target.value }, setSavingCur); }}>
-          {CURRENCY_PRESETS.some(c => c.code === currency) ? null
-            : <option value={currency}>{currency}</option>}
-          {CURRENCY_PRESETS.map(c => (
-            <option key={c.code} value={c.code}>{c.label}</option>
-          ))}
-        </select>
-      </div>
-    </>
-  );
-}
-
-// ── Inventory tab: FIFO/LIFO consumption ────────────────
-
-function InventoryConfigTab({ projectId, showToast }) {
-  const [mode, setMode] = useState('fifo');
+  // ── Inventory section state ────────────────────────────────────────
+  // FIFO vs LIFO consumption + the "hide price column, enter cost only"
+  // option which auto-derives selling price from cost × (1 + margin/100).
+  const [invMode,   setInvMode]   = useState('fifo');
   const [hidePrice, setHidePrice] = useState(false);
   const [marginPct, setMarginPct] = useState(50);
-  const [loaded, setLoaded] = useState(false);
+  const [loadedInv, setLoadedInv] = useState(false);
+
+  // ── Barcode defaults section state ─────────────────────────────────
+  const [barcode, setBarcode] = useState({
+    barcode_include_date:   false,
+    barcode_include_batch:  false,
+    barcode_include_qty:    false,
+    barcode_include_serial: false,
+  });
+  const [loadedBc, setLoadedBc] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(j => {
         if (j) {
-          setMode(j.batch_consumption_mode || 'fifo');
+          setInvMode(j.batch_consumption_mode || 'fifo');
           setHidePrice(!!j.hide_price_in_overview);
           setMarginPct(parseFloat(j.default_margin_percent || 50));
+          setBarcode({
+            barcode_include_date:   !!j.barcode_include_date,
+            barcode_include_batch:  !!j.barcode_include_batch,
+            barcode_include_qty:    !!j.barcode_include_qty,
+            barcode_include_serial: !!j.barcode_include_serial,
+          });
         }
-        setLoaded(true);
+        setLoadedInv(true);
+        setLoadedBc(true);
       })
-      .catch(() => setLoaded(true));
+      .catch(() => { setLoadedInv(true); setLoadedBc(true); });
   }, [projectId]);
 
-  const save = async (patch) => {
+  const saveBatchSetting = async (patch) => {
     const r = await fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -489,114 +479,234 @@ function InventoryConfigTab({ projectId, showToast }) {
 
   return (
     <>
-      <h1 className="crm-page-title">Inventory</h1>
-      <p className="auth-page-subtitle">
-        Batch consumption order + how prices are entered for SKUs.
-        Batch-name format lives in <b>Products → Settings</b>.
-      </p>
+      <h1 className="crm-page-title">Settings</h1>
 
-      <div className="crm-section">
-        <h3 className="crm-section-title" style={{ marginBottom: 12 }}>Batch consumption</h3>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <input type="radio" name="cmode" checked={mode === 'fifo'}
-            onChange={() => { setMode('fifo'); save({ batch_consumption_mode: 'fifo' }); }} disabled={!loaded} />
-          <span style={{ fontWeight: 500 }}>FIFO — first in, first out (default)</span>
-          <span className="cpm-section-hint">Oldest batches sell first. Best for food, cosmetics, anything with an expiry date.</span>
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
-          <input type="radio" name="cmode" checked={mode === 'lifo'}
-            onChange={() => { setMode('lifo'); save({ batch_consumption_mode: 'lifo' }); }} disabled={!loaded} />
-          <span style={{ fontWeight: 500 }}>LIFO — last in, first out</span>
-          <span className="cpm-section-hint">Newest batches sell first. Uncommon — use only if you have a specific reason.</span>
-        </label>
-      </div>
+      <div className="bulk-settings">
 
-      <div className="crm-section" style={{ marginTop: 16 }}>
-        <h3 className="crm-section-title" style={{ marginBottom: 12 }}>Pricing entry</h3>
-        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <input type="checkbox" checked={hidePrice} disabled={!loaded}
-            onChange={(e) => { setHidePrice(e.target.checked); save({ hide_price_in_overview: e.target.checked }); }} />
-          <span>
-            <span style={{ fontWeight: 500 }}>Hide Price column — enter Cost only</span>
-            <span className="cpm-section-hint">
-              Product Overview hides the Price column for L2 SKUs. Merchant types <b>Cost</b>;
-              public price is auto-set to <b>Cost × (1 + margin/100)</b>.
-            </span>
-          </span>
-        </label>
+      {/* ── General ── */}
+      <Section icon={<Globe weight="duotone" />} title="General"
+        subtitle="Timezone and currency drive how dates and money render across the dashboard.">
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14, opacity: hidePrice ? 1 : 0.5 }}>
-          <span style={{ fontWeight: 500, minWidth: 160 }}>Default margin (%)</span>
+        <FieldCard label="Timezone"
+          hint={
+            tzAuto
+              ? <>Auto-detect mode — CRM syncs with your browser ({browserTz}) every 30 min and on every page load. Pick a zone below to lock it manually.</>
+              : <>Manual mode — locked to <b>{tz}</b>. Your browser reports <b>{browserTz}</b>.</>
+          }>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 220px', minWidth: 220 }}>
+              <SearchableCombobox
+                value={tz}
+                disabled={!loadedGen}
+                onChange={(v) => pickTimezone(v)}
+                searchPlaceholder="Search timezones…"
+                options={(() => {
+                  // Compose options with the current value at top if it
+                  // isn't in the preset list, then the standard preset
+                  // list. `searchText` accepts city names without the
+                  // region prefix so typing "Almaty" matches "Asia/Almaty".
+                  const list = TIMEZONE_PRESETS.includes(tz)
+                    ? TIMEZONE_PRESETS
+                    : [tz, ...TIMEZONE_PRESETS];
+                  return list.map(z => ({
+                    value: z,
+                    label: z,
+                    searchText: z.split('/').pop(),
+                  }));
+                })()} />
+            </div>
+            {(!tzAuto || tz !== browserTz) && (
+              <button type="button" className="auth-btn-check"
+                onClick={useBrowser} disabled={!loadedGen}>
+                {tzAuto ? 'Resume auto-detect' : 'Use browser timezone'}
+              </button>
+            )}
+          </div>
+        </FieldCard>
+
+        <FieldCard label="Currency"
+          hint={<>
+            Every price on the dashboard — products, orders, analytics,
+            invoices — uses this currency's symbol and decimal style.
+            <b> Past orders snapshot their currency at the time of purchase</b>,
+            so historical reports stay accurate after you change this.
+          </>}>
+          {/* Dropdown + live preview side-by-side */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'center' }}>
+            <SearchableCombobox
+              value={currency}
+              disabled={!loadedGen}
+              onChange={(next) => {
+                if (next === currency) return;
+                // Stage the change — modal asks for confirmation first.
+                setPendingCurrency(next);
+              }}
+              searchPlaceholder="Search 49 currencies (USD, ₸, tenge…)"
+              options={(() => {
+                // `searchText` lets the user find a currency by code,
+                // symbol or name — type "₸" / "kzt" / "tenge" all hit
+                // Kazakhstani Tenge. Label shows full name; subLabel
+                // shows the symbol as a dim trailing chip.
+                const list = CURRENCIES.some(c => c.code === currency)
+                  ? CURRENCIES
+                  : [getCurrencyMeta(currency), ...CURRENCIES];
+                return list.map(c => ({
+                  value: c.code,
+                  label: `${c.code} — ${c.name}`,
+                  subLabel: c.symbol,
+                  searchText: `${c.code} ${c.name} ${c.symbol}`,
+                }));
+              })()} />
+            <div style={{
+              padding: '8px 14px', borderRadius: 999,
+              background: 'var(--accent-tint)', color: 'var(--accent)',
+              fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}>
+              {formatMoney(1234.5, currency)}
+            </div>
+          </div>
+        </FieldCard>
+      </Section>
+
+      {/* ── Inventory ── */}
+      <Section icon={<Stack weight="duotone" />} title="Inventory"
+        subtitle="How stock partitions consume from batches, and how SKU prices are entered.">
+
+        <FieldCard label="Batch consumption order"
+          hint={
+            invMode === 'fifo'
+              ? 'FIFO (first-in, first-out) — oldest batches sell first. Best for food, cosmetics, anything with an expiry date.'
+              : 'LIFO (last-in, first-out) — newest batches sell first. Uncommon — use only if you have a specific accounting reason.'
+          }>
+          <SegmentSwitch value={invMode} disabled={!loadedInv}
+            options={[
+              { value: 'fifo', label: 'FIFO' },
+              { value: 'lifo', label: 'LIFO' },
+            ]}
+            onChange={(v) => { setInvMode(v); saveBatchSetting({ batch_consumption_mode: v }); }} />
+        </FieldCard>
+
+        <FieldCard label="Hide Price column — enter Cost only"
+          hint={<>
+            Product Overview hides the Price column for L2 SKUs. Merchant types <b>Cost</b>;
+            public price is auto-set to <b>Cost × (1 + margin / 100)</b>.
+          </>}>
+          <SegmentSwitch value={hidePrice ? 'on' : 'off'} disabled={!loadedInv}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'on',  label: 'On'  },
+            ]}
+            onChange={(v) => {
+              const on = v === 'on';
+              setHidePrice(on);
+              saveBatchSetting({ hide_price_in_overview: on });
+            }} />
+        </FieldCard>
+
+        {/* Margin input — only relevant when hidePrice is ON, so dim
+            otherwise. Disabled-state styling handled by the bulk-field
+            class system. */}
+        <FieldCard label="Default margin %"
+          hint="Used to compute selling price when Hide Price is on. e.g. 50 → price = cost × 1.5.">
           <input className="crm-input" type="number" min="0" max="10000" step="0.1"
-            style={{ width: 120 }}
+            style={{ maxWidth: 160, opacity: hidePrice ? 1 : 0.5 }}
             value={marginPct}
-            disabled={!hidePrice || !loaded}
+            disabled={!hidePrice || !loadedInv}
             onChange={(e) => setMarginPct(parseFloat(e.target.value) || 0)}
-            onBlur={(e) => save({ default_margin_percent: parseFloat(e.target.value) || 0 })} />
-          <span className="cpm-section-hint">
-            E.g. <b>50</b> → price = cost × 1.5. A cost of 100 produces price 150.
-          </span>
-        </label>
-      </div>
-    </>
-  );
-}
+            onBlur={(e) => saveBatchSetting({ default_margin_percent: parseFloat(e.target.value) || 0 })} />
+        </FieldCard>
+      </Section>
 
-// ── Barcode defaults tab: include date/batch/qty/serial ──
+      {/* ── Barcode defaults ── */}
+      <Section icon={<Barcode weight="duotone" />} title="Barcode defaults"
+        subtitle='These toggles pre-fill the "Advanced encoding" section in the Print barcodes modal.'>
 
-function BarcodeDefaultsTab({ projectId, showToast }) {
-  const [s, setS] = useState({
-    barcode_include_date:   false,
-    barcode_include_batch:  false,
-    barcode_include_qty:    false,
-    barcode_include_serial: false,
-  });
-  const [loaded, setLoaded] = useState(false);
+        <FieldCard label="Include production date"
+          hint="Appends -YYYYMMDD to the encoded value">
+          <SegmentSwitch value={barcode.barcode_include_date ? 'on' : 'off'} disabled={!loadedBc}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'on',  label: 'On'  },
+            ]}
+            onChange={(v) => {
+              const on = v === 'on';
+              setBarcode(s => ({ ...s, barcode_include_date: on }));
+              saveBatchSetting({ barcode_include_date: on });
+            }} />
+        </FieldCard>
 
-  useEffect(() => {
-    fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(j => { if (j) setS({
-        barcode_include_date:   !!j.barcode_include_date,
-        barcode_include_batch:  !!j.barcode_include_batch,
-        barcode_include_qty:    !!j.barcode_include_qty,
-        barcode_include_serial: !!j.barcode_include_serial,
-      }); setLoaded(true); })
-      .catch(() => setLoaded(true));
-  }, [projectId]);
+        <FieldCard label="Include batch name"
+          hint="Appends -B<batch> — useful for recall traceability">
+          <SegmentSwitch value={barcode.barcode_include_batch ? 'on' : 'off'} disabled={!loadedBc}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'on',  label: 'On'  },
+            ]}
+            onChange={(v) => {
+              const on = v === 'on';
+              setBarcode(s => ({ ...s, barcode_include_batch: on }));
+              saveBatchSetting({ barcode_include_batch: on });
+            }} />
+        </FieldCard>
 
-  const toggle = async (key) => {
-    const next = { ...s, [key]: !s[key] };
-    setS(next);
-    const r = await fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, {
-      method: 'PUT', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [key]: next[key] }),
-    });
-    if (r.ok) showToast('Saved');
-  };
+        <FieldCard label="Include quantity in batch"
+          hint="Appends -Q<n> — for production reporting">
+          <SegmentSwitch value={barcode.barcode_include_qty ? 'on' : 'off'} disabled={!loadedBc}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'on',  label: 'On'  },
+            ]}
+            onChange={(v) => {
+              const on = v === 'on';
+              setBarcode(s => ({ ...s, barcode_include_qty: on }));
+              saveBatchSetting({ barcode_include_qty: on });
+            }} />
+        </FieldCard>
 
-  const ROW = ({ k, label, sub }) => (
-    <label className="print-bc-check-row" style={{ padding: '8px 0' }}>
-      <input type="checkbox" checked={s[k]} disabled={!loaded} onChange={() => toggle(k)} />
-      <span style={{ flex: 1 }}>
-        <div style={{ fontWeight: 500 }}>{label}</div>
-        <div className="cpm-section-hint">{sub}</div>
-      </span>
-    </label>
-  );
+        <FieldCard label="Include serial counter"
+          hint="Each printed sticker gets a unique -NNNN suffix">
+          <SegmentSwitch value={barcode.barcode_include_serial ? 'on' : 'off'} disabled={!loadedBc}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'on',  label: 'On'  },
+            ]}
+            onChange={(v) => {
+              const on = v === 'on';
+              setBarcode(s => ({ ...s, barcode_include_serial: on }));
+              saveBatchSetting({ barcode_include_serial: on });
+            }} />
+        </FieldCard>
+      </Section>
 
-  return (
-    <>
-      <h1 className="crm-page-title">Barcode defaults</h1>
-      <p className="auth-page-subtitle">
-        These toggles pre-fill the "Advanced encoding" section in Print barcodes. Save once — they apply everywhere.
-      </p>
-      <div className="crm-section">
-        <ROW k="barcode_include_date"   label="Include production date" sub="Appends -YYYYMMDD to the encoded value" />
-        <ROW k="barcode_include_batch"  label="Include batch name"      sub="Appends -B<batch> — useful for recall traceability" />
-        <ROW k="barcode_include_qty"    label="Include quantity in batch" sub="Appends -Q<n> — for production reporting" />
-        <ROW k="barcode_include_serial" label="Include serial counter"  sub="Each printed sticker gets a unique -NNNN suffix" />
+      {/* ── Danger Zone ── */}
+      {/* Placeholder until rotate-api-key + delete-project are wired up.
+          Keeping the section visible signals intent to the merchant. */}
+      <Section icon={<Warning weight="duotone" />} title="Danger zone"
+        subtitle="Irreversible actions — rotate API key, delete project.">
+        <FieldCard label="Coming soon"
+          hint="Project rotation and deletion are not yet exposed in the UI. Until then, drop a request via support.">
+          <span style={{ color: 'var(--muted)', fontSize: 13 }}>—</span>
+        </FieldCard>
+      </Section>
+
+      {/* Currency-change warning modal — gates the dropdown commit. */}
+      {pendingCurrency && createPortal(
+        <CurrencyChangeWarningModal
+          fromCode={currency}
+          toCode={pendingCurrency}
+          onCancel={() => setPendingCurrency(null)}
+          onConfirm={() => {
+            const next = pendingCurrency;
+            setPendingCurrency(null);
+            setCurrency(next);
+            saveProject({ currency: next });
+          }}
+        />,
+        document.body,
+      )}
+
+      {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
       </div>
     </>
   );

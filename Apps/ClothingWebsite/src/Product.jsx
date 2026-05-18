@@ -10,6 +10,7 @@ import ReviewMenu from "./Elements/ReviewMenu";
 import ReviewsList from "./Elements/ReviewsList";
 import CartButton from "./CartButton";
 import { client } from "./api.js"
+import { fmtMoney } from "./currency.js"
 
 function Product() {
     const { id } = useParams();
@@ -338,9 +339,15 @@ function Product() {
                                                         />
                                                         <span className="pmod-item-name">{it.name || '—'}</span>
                                                         <span className="pmod-item-price">
-                                                            {it.price_delta > 0 ? `+$${it.price_delta}`
-                                                                : it.price_delta < 0 ? `-$${Math.abs(it.price_delta)}`
-                                                                : '+$0'}
+                                                            {/* Modifier price delta chip — always signed so
+                                                                shoppers see `+$2` / `-$1` / `+$0` clearly.
+                                                                fmtMoney's `signed` option emits a leading
+                                                                `+` only for strictly-positive values, so we
+                                                                special-case 0 → "+0 unit" by prefixing the
+                                                                bare formatted amount with `+`. */}
+                                                            {it.price_delta === 0
+                                                              ? `+${fmtMoney(0, { decimals: 0 })}`
+                                                              : fmtMoney(it.price_delta, { signed: true })}
                                                         </span>
                                                     </label>
                                                 );

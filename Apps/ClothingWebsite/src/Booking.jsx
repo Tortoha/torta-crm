@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import Header from "./Header";
 import { client } from "./api.js";
+import { fmtMoney } from "./currency.js";
 import "./Style/Booking.css";
 
 // Format helpers reused inside the picker.
-const fmtMoney    = (n) => `$${(+n || 0).toFixed(2)}`;
 const fmtDateLong = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
 // Local-date ISO. Using d.toISOString() here is a TZ bug: after setHours(0,0,0,0)

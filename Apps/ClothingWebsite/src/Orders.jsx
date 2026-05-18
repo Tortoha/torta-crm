@@ -5,6 +5,7 @@ import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle, CaretDown, CaretU
 import Header from "./Header";
 import ReturnRequestModal from "./ReturnRequestModal";
 import { client } from "./api.js";
+import { fmtMoney } from "./currency.js";
 import "./Style/Orders.css";
 import "./Style/Load.css";
 
@@ -56,7 +57,9 @@ function StatusBadge({ status }) {
 
 // ── Helpers ────────────────────────────────────────────────────
 
-const fmt = (n) => (+n % 1 === 0) ? +n : (+n).toFixed(2);
+// Shop-currency-aware money formatter — pulls symbol + position from
+// the global set at App.jsx bootstrap. Drops decimals when whole.
+const fmt = (n) => fmtMoney(n, (+n % 1 === 0) ? { decimals: 0 } : undefined);
 
 const fmtDate = (ts) => ts
   ? new Date(ts).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
@@ -163,7 +166,7 @@ function Orders() {
                   </div>
                   <div className="os-order-right">
                     <StatusBadge status={order.status} />
-                    <span className="os-order-total">${fmt(order.total_amount)}</span>
+                    <span className="os-order-total">{fmt(order.total_amount)}</span>
                     {expanded === order.id
                       ? <CaretUp className="os-chevron" weight="bold" />
                       : <CaretDown className="os-chevron" weight="bold" />}
@@ -214,7 +217,7 @@ function Orders() {
                             )}
                           </div>
                           <span className="os-item-qty">×{item.quantity}</span>
-                          <span className="os-item-price">${fmt(item.price)}</span>
+                          <span className="os-item-price">{fmt(item.price)}</span>
                         </div>
                       ))}
                     </div>
@@ -231,7 +234,7 @@ function Orders() {
                             </span>
                             {r.status === "refunded" && r.refund_amount > 0 && (
                               <span className="os-return-refund">
-                                Refunded ${fmt(r.refund_amount)}
+                                Refunded {fmt(r.refund_amount)}
                               </span>
                             )}
                             {r.status === "rejected" && r.rejected_reason && (

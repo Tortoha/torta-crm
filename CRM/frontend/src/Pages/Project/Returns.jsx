@@ -11,6 +11,8 @@ import {
   X, MagnifyingGlass, ArrowUUpLeft, CheckCircle, ArrowRight, Warning,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { formatMoney } from '../../Utils/currency.js';
+import { safeHttpUrl } from '../../Utils/safeUrl.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import { Combobox } from './Booking/BookingCreateModal.jsx';
 import '../../Style/Authentication.css';
@@ -93,9 +95,13 @@ function groupOf(status) {
 // Same visual language as ProdListRow on Products page — single-row grid
 // with 3D tilt + gloss. Columns: # · Customer · Order · Items · Reason · Status · Date.
 
-function ReturnRow({ ret, onOpen }) {
+function ReturnRow({ ret, onOpen, currency }) {
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
   const m = STATUS_META[ret.status] ?? { label: ret.status, cls: '' };
+  // Per-order snapshot wins (the order was placed in that currency);
+  // only when an old row has no snapshot do we fall back to the
+  // project's current currency.
+  const cur = ret.payment_currency || currency;
 
   return (
     <div ref={ref}
@@ -110,7 +116,7 @@ function ReturnRow({ ret, onOpen }) {
         )}
       </span>
       <span className="prow-cell">
-        #{ret.order_id} · ${fmt(ret.order_total)}
+        #{ret.order_id} · {formatMoney(ret.order_total, cur)}
       </span>
       <span className="prow-cell">
         {ret.units_count} unit{ret.units_count !== 1 ? 's' : ''}
@@ -128,7 +134,7 @@ function ReturnRow({ ret, onOpen }) {
 // Same shape as ProductsList groups (Physical / Digital / Services):
 // flat heading + count badge, then a `.prod-list` table with column heads.
 
-function GroupSection({ group, items, onOpen }) {
+function GroupSection({ group, items, onOpen, currency }) {
   if (items.length === 0) return null;
   return (
     <section className="prod-group">
@@ -148,7 +154,7 @@ function GroupSection({ group, items, onOpen }) {
         </div>
         <div className="prod-list-block">
           {items.map(ret => (
-            <ReturnRow key={ret.id} ret={ret} onOpen={onOpen} />
+            <ReturnRow key={ret.id} ret={ret} onOpen={onOpen} currency={currency} />
           ))}
         </div>
       </div>
@@ -288,7 +294,11 @@ function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
 
 // ── Detail modal ──────────────────────────────────────────────
 
-function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
+function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }) {
+  // Detail modal uses the order's snapshot currency once `detail` is
+  // loaded (`detail.payment_currency`). While loading, fall back to
+  // the project's house currency from props.
+  const cur = (s) => (s?.payment_currency) || currency;
   const [detail,  setDetail]  = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy,    setBusy]    = useState(false);
@@ -427,7 +437,7 @@ function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
     // exceed what was paid" from the API.
     const cap = Number(detail?.order_total);
     if (cap && amount > cap + 0.001) {
-      showToast(`Refund cannot exceed order total ($${cap.toFixed(2)})`);
+      showToast(`Refund cannot exceed order total (${formatMoney(cap, cur(detail))})`);
       return;
     }
     if (await callAction('refund', {
@@ -507,11 +517,19 @@ function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
                   </div>
                   {detail.customer_photos?.length > 0 && (
                     <div className="ret-detail-photos">
-                      {detail.customer_photos.map((url, i) => (
-                        <a key={i} href={url} target="_blank" rel="noreferrer">
-                          <img src={url} alt={`photo ${i + 1}`} />
-                        </a>
-                      ))}
+                      {/* `customer_photos` are URLs uploaded by the customer
+                          on the storefront. Without `safeHttpUrl`, a
+                          malicious customer could submit `javascript:...`
+                          and the CRM admin clicking the thumbnail would
+                          execute script in the admin's session. */}
+                      {detail.customer_photos
+                        .map((url, i) => ({ src: safeHttpUrl(url), i }))
+                        .filter(({ src }) => !!src)
+                        .map(({ src, i }) => (
+                          <a key={i} href={src} target="_blank" rel="noopener noreferrer">
+                            <img src={src} alt={`photo ${i + 1}`} />
+                          </a>
+                        ))}
                     </div>
                   )}
                 </div>
@@ -522,7 +540,7 @@ function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
                 <label className="po-field-label">Order</label>
                 <div className="ret-block">
                   <div className="ret-flat-value">
-                    Order #{detail.order_id} · ${fmt(detail.order_total)} ·{' '}
+                    Order #{detail.order_id} · {formatMoney(detail.order_total, cur(detail))} ·{' '}
                     {detail.recipient_name}
                   </div>
                   <span className="cpm-section-hint" style={{ padding: 0 }}>
@@ -575,7 +593,7 @@ function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
                               )}
                             </span>
                           </div>
-                          <span className="ret-item-price">${fmt(item.unit_price)}</span>
+                          <span className="ret-item-price">{formatMoney(item.unit_price, cur(detail))}</span>
                         </div>
                       ))}
                     </div>
@@ -604,7 +622,7 @@ function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
 
                     <div className="ret-refund-grid">
                       <label className="ret-refund-field">
-                        <span>Refund amount · max ${fmt(detail.order_total)}</span>
+                        <span>Refund amount · max {formatMoney(detail.order_total, cur(detail))}</span>
                         <input className="crm-input" type="number" step="0.01"
                           min="0" max={detail.order_total}
                           value={refundAmount} onChange={e => setRefundAmount(e.target.value)} />
@@ -635,7 +653,7 @@ function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
                   <label className="po-field-label">Refund recorded</label>
                   <div className="ret-block">
                     <div className="ret-flat-value">
-                      ${fmt(detail.refund_amount)}
+                      {formatMoney(detail.refund_amount, cur(detail))}
                       {detail.refund_method && ` · ${detail.refund_method}`}
                     </div>
                     <span className="cpm-section-hint" style={{ padding: 0 }}>
@@ -644,7 +662,7 @@ function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
                     </span>
                     {detail.restocking_fee > 0 && (
                       <span className="cpm-section-hint" style={{ padding: 0 }}>
-                        Restocking fee withheld: ${fmt(detail.restocking_fee)}
+                        Restocking fee withheld: {formatMoney(detail.restocking_fee, cur(detail))}
                       </span>
                     )}
                   </div>
@@ -724,7 +742,11 @@ function ReturnDetailModal({ returnId, projectId, onClose, onChanged }) {
 // ── Returns page (list view) ─────────────────────────────────
 
 export default function Returns({ onActionCountChange }) {
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
+  // Project's "house" currency — used as fallback when an individual
+  // return/order row doesn't have its own payment_currency snapshot
+  // (e.g. legacy rows from before payment_currency was added).
+  const currency = project?.currency || 'USD';
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [items,  setItems]  = useState([]);
@@ -804,6 +826,7 @@ export default function Returns({ onActionCountChange }) {
           {GROUPS.map(g => (
             <GroupSection key={g.key} group={g}
               items={grouped[g.key]}
+              currency={currency}
               onOpen={(r) => {
                 setOpenReturnId(r.id);
                 const next = new URLSearchParams(params);
@@ -819,6 +842,7 @@ export default function Returns({ onActionCountChange }) {
         <ReturnDetailModal
           returnId={openReturnId}
           projectId={projectId}
+          currency={currency}
           onClose={() => {
             setOpenReturnId(null);
             const next = new URLSearchParams(params);

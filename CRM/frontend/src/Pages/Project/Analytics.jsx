@@ -21,6 +21,7 @@ import {
   X,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { formatMoney as _formatMoney } from '../../Utils/currency.js';
 import { Combobox, DatePicker } from './Booking/BookingCreateModal.jsx';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
 import { useProjectEvents } from '../../Utils/useProjectEvents.js';
@@ -259,19 +260,12 @@ function LazySection({ children, minHeight = 220, rootMargin = '300px' }) {
 // USD has $, EUR has €, etc.).
 let __ANALYTICS_CURRENCY = 'USD';
 const setAnalyticsCurrency = (code) => { __ANALYTICS_CURRENCY = (code || 'USD').toUpperCase(); };
-const fmtMoney = (n) => {
-  try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: __ANALYTICS_CURRENCY,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(+n || 0);
-  } catch {
-    // Unknown currency code — fall back to bare number + 3-letter suffix.
-    return `${(+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${__ANALYTICS_CURRENCY}`;
-  }
-};
+// Delegate to the shared `formatMoney` from Utils/currency.js — same
+// helper used everywhere else in the app. Critically, it respects the
+// per-currency symbol position rule ($ before, ₸/₽/€ after) instead
+// of Intl's locale-dictated CLDR placement, which often disagrees
+// with what merchants expect on a receipt.
+const fmtMoney = (n) => _formatMoney(n, __ANALYTICS_CURRENCY);
 const fmtInt   = (n) => (+n || 0).toLocaleString('en-US');
 
 // ── CSV export helper ────────────────────────────────────────────────────

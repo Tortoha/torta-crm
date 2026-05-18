@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import heartIcon from "../../icons/Like.png";
+import { fmtMoney } from "../currency.js";
 
 function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavorite }) {
   const isQuantityOne = item.quantity === 1;
@@ -28,7 +29,10 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
                     </span>
                     {m.price_delta !== 0 && (
                       <span className="cart-item-mod-delta">
-                        {m.price_delta > 0 ? `+$${m.price_delta}` : `-$${Math.abs(m.price_delta)}`}
+                        {/* `signed: true` emits the leading + for positives so the
+                            chip clearly reads `+$2` / `-$1`. fmtMoney handles
+                            the symbol position for non-prefix currencies. */}
+                        {fmtMoney(m.price_delta, { signed: true })}
                       </span>
                     )}
                   </li>
@@ -36,7 +40,7 @@ function CartItem({ item, isFavorite, onUpdateQuantity, onRemove, onToggleFavori
               </ul>
             )}
           </div>
-          <div className="cart-item-price">${item.price}</div>
+          <div className="cart-item-price">{fmtMoney(item.price)}</div>
         </div>
 
         <div className="cart-item-actions">

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import { MagnifyingGlass, CaretRight, CaretDown, Folder, Cube, PencilSimple, X, ArrowDown, FolderSimple, Warehouse, Tag } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { formatMoney } from '../../../Utils/currency.js';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
 import { Combobox } from '../Booking/BookingCreateModal.jsx';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
@@ -65,12 +66,16 @@ const COLS = '1.8fr 0.85fr 0.85fr 0.85fr 0.85fr 0.85fr 0.85fr 0.85fr 95px';
 // each other and read as "33.0%76792801" / "230[Edit]".
 const ROW_STYLE = { gridTemplateColumns: COLS, columnGap: 12 };
 
-// ── Inline money/percent helpers (no Intl import overhead) ───────────
-// Returns "—" for null/undefined so empty cells read clearly, never $0.
+// ── Inline money/percent helpers ──────────────────────────────────────
+// Returns "—" for null/undefined so empty cells read clearly, never $0
+// or 0₸. The actual symbol is controlled by the project's currency,
+// set via `setInventoryCurrency()` at mount. Same pattern as
+// __BOOKING_CURRENCY in Booking.jsx — avoids prop-drilling currency
+// through 4+ levels of nested tree rows.
+let __INV_CURRENCY = 'USD';
+const setInventoryCurrency = (c) => { __INV_CURRENCY = c || 'USD'; };
 const fmtMoney = (v) =>
-  v == null
-    ? '—'
-    : `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  v == null ? '—' : formatMoney(v, __INV_CURRENCY);
 const fmtPct = (v) =>
   v == null ? '—' : `${Number(v).toFixed(1)}%`;
 // < 20 % gets the red highlight. Anything else (including healthy +
@@ -132,7 +137,11 @@ function rollupFinancials(skus) {
 }
 
 function ProductsInventory() {
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
+  // Sync the module-level currency global before any child row renders.
+  // Read currency from project metadata; default to USD until project
+  // loads.
+  useEffect(() => { setInventoryCurrency(project?.currency || 'USD'); }, [project?.currency]);
   const pq = `?project_id=${projectId}`;
 
   const [products, setProducts] = useState([]);

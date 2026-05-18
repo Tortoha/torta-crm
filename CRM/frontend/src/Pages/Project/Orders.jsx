@@ -4,6 +4,7 @@ import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown,
          Receipt, ArrowUUpLeft } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { formatMoney } from '../../Utils/currency.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import { useInfiniteList } from '../../Utils/useInfiniteList.js';
 import { useInfiniteScroll } from '../../Utils/useInfiniteScroll.js';
@@ -310,7 +311,9 @@ function OrderRow({ order, pq, onUpdated, onOpen }) {
       </span>
 
       <span className="prow-cell">{order.items_count} item{order.items_count !== 1 ? 's' : ''}</span>
-      <span className="prow-cell" style={{ fontWeight: 600, color: 'var(--text)' }}>${fmt(order.total_amount)}</span>
+      <span className="prow-cell" style={{ fontWeight: 600, color: 'var(--text)' }}>
+        {formatMoney(order.total_amount, order.payment_currency)}
+      </span>
       <span className="prow-cell">{fmtDate(order.created_at)}</span>
 
       {/* Status — stopPropagation so row click doesn't fire */}
@@ -343,7 +346,7 @@ function OrderCard({ order, pq, onUpdated, onOpen }) {
           <div className="ord-card-email">{order.customer_email}</div>
         )}
         <div className="ord-card-meta">
-          <span className="ord-card-amount">${fmt(order.total_amount)}</span>
+          <span className="ord-card-amount">{formatMoney(order.total_amount, order.payment_currency)}</span>
           <span className="ord-card-dot">·</span>
           <span>{order.items_count} item{order.items_count !== 1 ? 's' : ''}</span>
           <span className="ord-card-dot">·</span>
@@ -428,7 +431,9 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
                         {item.variation_name} · {item.size_name} · ×{item.quantity}
                       </span>
                     </div>
-                    <span className="ord-modal-item-price">${fmt(item.price)}</span>
+                    <span className="ord-modal-item-price">
+                      {formatMoney(item.price, detail.payment_currency || order.payment_currency)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -438,7 +443,9 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
           {/* Total */}
           <div className="modal-footer-row">
             <span className="modal-footer-label">Total</span>
-            <span className="modal-footer-value">${fmt(order.total_amount)}</span>
+            <span className="modal-footer-value">
+              {formatMoney(order.total_amount, detail.payment_currency || order.payment_currency)}
+            </span>
           </div>
         </>
       )}

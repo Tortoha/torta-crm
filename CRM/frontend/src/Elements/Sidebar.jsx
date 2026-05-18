@@ -1,11 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation, useParams } from 'react-router-dom';
 import {
-  House, CurrencyDollar, Tag, LockKey, GearSix,
+  House, Tag, LockKey, GearSix,
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Cube, ChatCircleText, Code,
   Package, ChatCircleDots, CalendarBlank, Plug,
-  ListBullets, ChartLine, Target, Bell,
+  ListBullets, ChartLine, Target, Bell, FileText,
 } from '@phosphor-icons/react';
 
 // ── Nav configs ────────────────────────────────────────────────
@@ -17,10 +17,9 @@ function buildSections(apiKey) {
       id: 'overview', label: 'Overview',
       items: [
         { to: `${base}`,           label: 'Project Overview', Icon: House,          exact: true },
-        { to: `${base}/revenue`,   label: 'Revenue',          Icon: CurrencyDollar },
         { to: `${base}/analytics`, label: 'Analytics',        Icon: ChartLine      },
         { to: `${base}/alerts`,    label: 'Alerts',           Icon: Bell           },
-        { to: `${base}/goals`,     label: 'Targets',          Icon: Target         },
+        { to: `${base}/targets`,   label: 'Targets',          Icon: Target         },
       ],
     },
     {
@@ -37,6 +36,7 @@ function buildSections(apiKey) {
       items: [
         { to: `${base}/authentication`, label: 'Authentication', Icon: LockKey   },
         { to: `${base}/integrations`,   label: 'Integrations',   Icon: Plug      },
+        { to: `${base}/documents`,      label: 'Documents',      Icon: FileText  },
         { to: `${base}/settings`,       label: 'Settings',       Icon: GearSix   },
       ],
     },

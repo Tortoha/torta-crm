@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } fr
 import { createPortal } from 'react-dom';
 import { CaretLeft, CaretRight, CaretDown, User, UserGear, Phone, ChatText, Users } from '@phosphor-icons/react';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
+import { formatMoney } from '../../../Utils/currency.js';
 import { Combobox } from './BookingCreateModal.jsx';
 
 // Tilt config for empty/busy slot cells — matches the same gentle 3D tilt
@@ -350,7 +351,7 @@ function CalendarCell({ top, busy, height, past }) {
 // Pass `workingHours` to size the hour gutter dynamically.
 // Pass `businessTz` (IANA name) so booking blocks render in business clock,
 // not browser clock.
-function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, onStatusChange, workingHours = [], businessTz, slotInterval = 30, staff = [] }) {
+function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, onStatusChange, workingHours = [], businessTz, slotInterval = 30, staff = [], services = [], currency = 'USD' }) {
   const tz = businessTz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const [anchor, setAnchor] = useState(() => startOfWeekInTz(tz));
   const [staffFilter, setStaffFilter] = useState('all');  // 'all' | staff_id
@@ -843,31 +844,68 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
   const onColDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
 
   // Returns the moved booking + computed target time, OR an error message.
-  // Conflict rule: another booking with the same staff_id (or same service_id
-  // when staff is not set) overlapping the target [start, end) range blocks the move.
+  //
+  // Conflict rules (in order):
+  //   1) **Staff double-booking** — a staff member can only serve one
+  //      booking at a time. If the dragged booking has staff_id X and
+  //      any overlapping booking ALSO has staff_id X → BLOCK.
+  //   2) **Service capacity** — a service has `capacity` (group classes /
+  //      shared resources may set it > 1 to allow multiple concurrent
+  //      customers). Count overlapping bookings of the same service; if
+  //      that count is already >= capacity → BLOCK. Capacity is also the
+  //      only constraint for services that don't require staff.
+  //
+  // Before this fix, the check just rejected ANY overlap with the same
+  // service_id — which ignored capacity entirely and made `Capacity per
+  // slot = 3` impossible to actually use.
   const validateDrop = (booking, targetDayISO, targetMinutes) => {
     const dur = (new Date(booking.ends_at) - new Date(booking.starts_at)) / 60000;
     const targetStart = new Date(`${targetDayISO}T${pad(Math.floor(targetMinutes / 60))}:${pad(targetMinutes % 60)}:00`);
     const targetEnd   = new Date(targetStart.getTime() + dur * 60000);
 
-    const conflict = visibleBookings.find(other => {
+    // Collect every other live booking that overlaps the target range.
+    // Cancelled / no_show don't occupy the slot.
+    const overlapping = visibleBookings.filter(other => {
       if (other.id === booking.id) return false;
       if (other.status === 'cancelled' || other.status === 'no_show') return false;
-      // Match by resource: staff if both have one, otherwise service
-      if (booking.staff_id && other.staff_id) {
-        if (String(other.staff_id) !== String(booking.staff_id)) return false;
-      } else if (String(other.service_id) !== String(booking.service_id)) {
-        return false;
-      }
       const oStart = new Date(other.starts_at);
       const oEnd   = new Date(other.ends_at || other.starts_at);
-      // Overlap if not (oEnd <= targetStart) and not (oStart >= targetEnd)
+      // Overlap iff intervals are not disjoint.
       return !(oEnd <= targetStart || oStart >= targetEnd);
     });
-    if (conflict) {
-      const conflictTime = (conflict._localTime || conflict.starts_at.slice(11, 16));
-      return { error: `Slot conflicts with ${conflict.customer_name || 'another booking'} at ${conflictTime}` };
+
+    // Rule 1: same staff in the overlap window → hard conflict.
+    if (booking.staff_id) {
+      const staffClash = overlapping.find(o =>
+        o.staff_id && String(o.staff_id) === String(booking.staff_id)
+      );
+      if (staffClash) {
+        const staffName = (staff.find(s => String(s.id) === String(booking.staff_id)) || {}).name
+                       || staffClash.staff_name
+                       || 'This staff member';
+        const t = (staffClash._localTime || staffClash.starts_at.slice(11, 16));
+        return { error: `${staffName} is already booked at ${t}` };
+      }
     }
+
+    // Rule 2: service capacity. Lookup `capacity` from the service
+    // catalog — defaults to 1 when service is unknown / freeform, so
+    // freeform bookings behave like the old "no overlap" rule. For
+    // services with capacity > 1 (group classes etc.), up to N concurrent
+    // bookings of the same service share the slot.
+    const svc = services.find(s => String(s.id) === String(booking.service_id));
+    const capacity = Math.max(1, parseInt(svc?.capacity, 10) || 1);
+    const sameServiceConcurrent = overlapping.filter(o =>
+      String(o.service_id) === String(booking.service_id)
+    ).length;
+    if (sameServiceConcurrent >= capacity) {
+      return {
+        error: capacity > 1
+          ? `${svc?.name || 'This service'} is at capacity (${capacity}) at this slot`
+          : `Slot conflicts with another ${svc?.name || 'booking'} here`,
+      };
+    }
+
     return { ok: true };
   };
 
@@ -1113,7 +1151,7 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
                             )}
                             {b.service_price > 0 && (
                               <div className="bk-cal-card-price">
-                                ${Number(b.service_price).toFixed(2)}
+                                {formatMoney(b.service_price, currency)}
                               </div>
                             )}
                           </div>

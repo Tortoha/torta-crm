@@ -80,6 +80,11 @@ textarea {
     border-radius: var(--radius-item);
     font-family: inherit;
     font-size: 14px;
+    /* Explicit regular weight — without this, some browser/font combos
+       (and notably `input[type=number]` in Chrome) render values with a
+       heavier inherited weight than adjacent labels / placeholders. */
+    font-weight: 400;
+    font-variant-numeric: normal;
     background: var(--bg);
     color: var(--text);
     outline: none;

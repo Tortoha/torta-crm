@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Clock, User, CalendarBlank, Phone, EnvelopeSimple, Trash, Note, MapPin } from '@phosphor-icons/react';
 import { Combobox } from './BookingCreateModal.jsx';
+import { formatMoney } from '../../../Utils/currency.js';
 
 const STATUS_OPTIONS = [
   { value: 'pending',   label: 'Pending'   },
@@ -19,7 +20,7 @@ const fmtTime = ts => ts
   : '';
 
 // Read-only-ish booking details with status changer + delete.
-function BookingDetailModal({ booking, onClose, onStatusChange, onDelete }) {
+function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, currency = 'USD' }) {
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', h);
@@ -68,7 +69,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete }) {
                 <div className="bk-detail-value">
                   {booking.service_name || '—'}
                   {booking.service_duration && <> · {booking.service_duration} min</>}
-                  {booking.service_price > 0 && <> · ${booking.service_price.toFixed(2)}</>}
+                  {booking.service_price > 0 && <> · {formatMoney(booking.service_price, currency)}</>}
                 </div>
               </div>
             </div>

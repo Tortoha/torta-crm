@@ -16,6 +16,7 @@ import {
   Eye, EyeSlash, Trash, ArrowSquareOut, CheckCircle, Warning, ArrowsClockwise,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { safeHttpUrl } from '../../Utils/safeUrl.js';
 
 const MASKED_PLACEHOLDER = '••••••••';
 
@@ -200,7 +201,13 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
     );
     if (r.ok) {
       const j = await r.json();
-      if (j.redirect_url) window.location.href = j.redirect_url;
+      // Validate the redirect target — only http(s) URLs are safe to
+      // navigate to. Without this, if the OAuth start endpoint is ever
+      // tricked into returning a hostile scheme (`javascript:...`), the
+      // admin's browser would execute it in the CRM origin context.
+      const safeDest = safeHttpUrl(j.redirect_url);
+      if (safeDest) window.location.href = safeDest;
+      else setErr('Stripe Connect returned an invalid redirect URL.');
     } else {
       const j = await r.json().catch(() => null);
       setErr(j?.detail || 'Stripe Connect unavailable');

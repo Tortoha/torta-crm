@@ -8,6 +8,7 @@ import {
   Folder, Cube, PencilSimple, X, ArrowDown, FolderSimple, Trash, Plus,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { formatMoney } from '../../../Utils/currency.js';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
 import '../../../Style/Authentication.css';
@@ -23,14 +24,21 @@ const SORT_OPTIONS = [
 ];
 const DEFAULT_DIR = { name: 'asc', stock: 'desc', variations: 'desc' };
 
+// Project-currency-aware tier formatter. Set via setTierCurrency() on
+// page mount; identical pattern to Discounts.jsx (the two pages share
+// the "render a price the way the merchant chose" requirement).
+let __TIER_CURRENCY = 'USD';
+const setTierCurrency = (c) => { __TIER_CURRENCY = c || 'USD'; };
 function fmtPrice(p) {
   if (p == null) return '—';
   const n = Number(p);
-  return `$${n.toFixed(n % 1 === 0 ? 0 : 2)}`;
+  const opts = (n % 1 === 0) ? { decimals: 0 } : undefined;
+  return formatMoney(n, __TIER_CURRENCY, opts);
 }
 
 export default function TierPricing() {
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
+  useEffect(() => { setTierCurrency(project?.currency || 'USD'); }, [project?.currency]);
   const pq = `?project_id=${projectId}`;
 
   const [products, setProducts] = useState([]);
