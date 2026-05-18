@@ -13,7 +13,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import {
-  ChartLine, Users, MapPin, Star, ArrowUUpLeft,
+  ChartLine, ChartLineUp, Users, MapPin, Star, ArrowUUpLeft,
   CalendarBlank, Package, Warning, Tag, GearSix, Funnel,
   DeviceMobile, Globe, MagnifyingGlass, Target,
   Eye, ShoppingCart, PlusCircle, CheckCircle,
@@ -34,6 +34,7 @@ import '../../Style/Organization.css';
 import '../../Style/Products.css';      // .po-tree-row, .po-set-table — used by MarginSection tree
 import '../../Style/Authentication.css'; // .auth-modal-* for CustomRangeModal + DrillDownModal
 import '../../Style/Analytics.css';
+import '../../Style/Targets.css';       // .po-set-row--target, .t-row-progress*, .t-status* — used by GoalsWidgetSection
 
 // ── Period codes — match _date_range_for_period in CRM backend ───────────
 // The 'custom' option is a SENTINEL — selecting it from the dropdown
@@ -2394,6 +2395,111 @@ function BookingsSection({ projectId }) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
+// SECTION 12.5 — Digital products (mirrors Customers section layout)
+// ════════════════════════════════════════════════════════════════════════
+// Digital products live in order_history alongside physical, but service
+// merchants need a dedicated view to see how their downloadable line is
+// performing without it being diluted by physical orders. Same layout as
+// CustomerSection (KPI strip + an-cust-grid: 1 wide + 2 narrow tables).
+function DigitalSection({ projectId }) {
+  const [period, setPeriod] = useState('1mo');
+  const { data, loading } = useSectionData('/api/analytics/digital', period, projectId);
+  return (
+    <SectionShell title="Digital products" Icon={Package}
+      periodValue={period} onPeriodChange={setPeriod}>
+      {loading || !data ? <Skeleton height={240} /> :
+        data.total === 0 ? (
+          <p className="an-empty">No digital sales in this period. Create a product with type "digital" to start tracking.</p>
+        ) : (
+          <>
+            {/* KPI strip — same 4-up Kpi pattern as Bookings/Margin sections. */}
+            <div className="an-bk-grid">
+              <Kpi label="Orders"        value={fmtInt(data.total)} />
+              <Kpi label="Revenue"       value={fmtMoney(data.revenue)} />
+              <Kpi label="Avg order"     value={fmtMoney(data.aov)} />
+              <Kpi label="Unique buyers" value={fmtInt(data.unique_buyers)} />
+            </div>
+            {/* an-cust-grid wide-cell + 2 narrow tables — same structure as
+                CustomerSection (top spenders + top cities). */}
+            <div className="an-cust-grid">
+              <div className="an-cust-cell an-cust-cell--wide">
+                <h3 className="an-mini-title">Top digital products</h3>
+                {data.top_products.length === 0
+                  ? <p className="an-mini-empty">No digital products sold in this period.</p>
+                  : <HorizontalBars
+                      data={data.top_products.map(p => ({
+                        product: p.title, revenue: p.revenue,
+                      }))}
+                      valueKey="revenue" labelKey="product" formatValue={fmtMoney} />}
+              </div>
+              <div className="an-cust-cell">
+                <h3 className="an-mini-title">Most units</h3>
+                {data.top_products.length === 0
+                  ? <p className="an-mini-empty">No products yet.</p>
+                  : (
+                    <table className="an-table">
+                      <thead>
+                        <tr>
+                          <th>Product</th>
+                          <th className="an-table-num">Units</th>
+                          <th className="an-table-num">Revenue</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...data.top_products]
+                          .sort((a, b) => b.units - a.units)
+                          .slice(0, 8)
+                          .map(p => (
+                            <tr key={p.id}>
+                              <td>
+                                <div className="an-table-name">{p.title}</div>
+                              </td>
+                              <td className="an-table-num">{fmtInt(p.units)}</td>
+                              <td className="an-table-num">{fmtMoney(p.revenue)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  )}
+              </div>
+              <div className="an-cust-cell">
+                <h3 className="an-mini-title">Recent orders</h3>
+                {data.recent.length === 0
+                  ? <p className="an-mini-empty">No recent orders.</p>
+                  : (
+                    <table className="an-table">
+                      <thead>
+                        <tr>
+                          <th>Customer</th>
+                          <th className="an-table-num">Lines</th>
+                          <th className="an-table-num">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.recent.map(r => (
+                          <tr key={r.id}>
+                            <td>
+                              <div className="an-table-name">{r.customer_name}</div>
+                              <div className="an-table-sub">#{r.id}</div>
+                            </td>
+                            <td className="an-table-num">{fmtInt(r.line_count)}</td>
+                            <td className="an-table-num">
+                              {fmtMoney(r.total_amount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+              </div>
+            </div>
+          </>
+        )}
+    </SectionShell>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════
 // SECTION 12.a — Traffic sources (Direct / Organic / Social / Referral / UTM)
 // ════════════════════════════════════════════════════════════════════════
 function TrafficSourcesSection({ projectId }) {
@@ -2593,6 +2699,57 @@ function SearchInsightsSection({ projectId }) {
 // ════════════════════════════════════════════════════════════════════════
 // SECTION 12.e — Goals progress widget
 // ════════════════════════════════════════════════════════════════════════
+// Reuses the exact `po-set-table` + `po-set-row--target` layout from the
+// Targets page (mirrors TargetListRow) so the widget reads as a "preview
+// slice" of the same page rather than a different visual paradigm. Helpers
+// (status pill metadata, type catalog, value formatter, progress %) are
+// duplicated here intentionally — Targets.jsx doesn't export them, and a
+// shared-helper file would be one tiny module for too little code reuse.
+
+const _G_TARGET_TYPES = {
+  revenue:              { label: 'Revenue',                unit: 'money'   },
+  orders_count:         { label: 'Orders count',           unit: 'count'   },
+  new_customers:        { label: 'New customers',          unit: 'count'   },
+  signups:              { label: 'Signups',                unit: 'count'   },
+  avg_order_value:      { label: 'Avg order value',        unit: 'money'   },
+  conversion_rate:      { label: 'Conversion rate (%)',    unit: 'percent' },
+  return_rate_max:      { label: 'Return rate ≤ (%)',      unit: 'percent' },
+  bookings_count:       { label: 'Bookings count',         unit: 'count'   },
+  avg_rating:           { label: 'Avg rating',             unit: 'rating'  },
+  repeat_purchase_rate: { label: 'Repeat-purchase rate %', unit: 'percent' },
+  custom_event_count:   { label: 'Custom event count',     unit: 'count'   },
+};
+const _G_PERIOD_LABELS = {
+  '1d':       '1 day',
+  '1w':       '1 week',
+  '1mo':      '1 month',
+  'season':   '1 season (3 mo)',
+  '1y':       '1 year',
+  'all_time': 'Lifetime',
+};
+const _G_STATUS_META = {
+  achieved:  { label: 'Achieved',   cls: 't-status--achieved',  Icon: CheckCircle },
+  on_track:  { label: 'On track',   cls: 't-status--on-track',  Icon: ChartLineUp },
+  behind:    { label: 'Behind',     cls: 't-status--behind',    Icon: Warning     },
+  at_risk:   { label: 'At risk',    cls: 't-status--at-risk',   Icon: Warning     },
+  inactive:  { label: 'Inactive',   cls: 't-status--behind',    Icon: Warning     },
+};
+function _gPillFor(t) {
+  if (!t.is_active) return _G_STATUS_META.inactive;
+  return _G_STATUS_META[t.status] || _G_STATUS_META.on_track;
+}
+function _gProgressPct(t) {
+  const p = t.progress || { current: 0, target: 1 };
+  return Math.min(100, (p.current / Math.max(p.target, 1)) * 100);
+}
+function _gFmtValue(v, unit) {
+  const n = +v || 0;
+  if (unit === 'money')   return fmtMoney(n);
+  if (unit === 'percent') return `${n.toFixed(1)}%`;
+  if (unit === 'rating')  return `★ ${n.toFixed(2)}`;
+  return n.toLocaleString('en-US');
+}
+
 function GoalsWidgetSection({ projectId }) {
   const [data, setData]       = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2605,34 +2762,61 @@ function GoalsWidgetSection({ projectId }) {
       .finally(() => setLoading(false));
   }, [projectId]);
 
+  // Preview slice — newest 6 active targets, same order Targets page would
+  // show by default. Full list lives at the Targets page (link in header).
   const active = useMemo(() => data.filter(g => g.is_active).slice(0, 6), [data]);
   return (
     <SectionShell title="Targets progress" Icon={Target} hidePeriod>
       {loading ? <Skeleton height={180} /> :
         active.length === 0 ? (
           <p className="an-empty">
-            No active targets. Set them on the <a href="goals" className="an-link">Targets page</a>.
+            No active targets. Set them on the <a href="targets" className="an-link">Targets page</a>.
           </p>
         ) : (
-          <div className="an-goals-list">
+          <div className="po-set-table">
+            <div className="po-set-row po-set-row--head po-set-row--target">
+              <span>Name</span>
+              <span>Type</span>
+              <span>Period</span>
+              <span>Progress</span>
+              <span>Status</span>
+              <span />
+            </div>
             {active.map(g => {
-              const p = g.progress || { current: 0, target: 1 };
-              const pct = Math.min(100, (p.current / Math.max(p.target, 1)) * 100);
+              const type   = _G_TARGET_TYPES[g.goal_type] || { unit: 'count', label: g.goal_type };
+              const status = _gPillFor(g);
+              const StatusIcon = status.Icon;
+              const p   = g.progress || { current: 0, target: 1 };
+              const pct = _gProgressPct(g);
               return (
-                <div key={g.id} className={`an-goal-row an-goal-row--${g.status}`}>
-                  <div className="an-goal-head">
-                    <span className="an-goal-name">🎯 {g.name}</span>
-                    <span className="an-goal-pct">{pct.toFixed(0)}%</span>
-                  </div>
-                  <div className="an-bar-track">
-                    <div className={`an-bar-fill an-goal-fill--${g.status}`}
-                         style={{ width: `${Math.max(2, pct)}%` }} />
-                  </div>
-                  <span className="an-goal-meta">
-                    {p.current.toFixed(0)} / {p.target.toFixed(0)} target ·{' '}
-                    <b>{g.status.replace('_', ' ')}</b>
+                <PoListRow key={g.id} className="po-set-row--target">
+                  <span className="po-set-strong" style={{ minWidth: 0 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {g.name}
+                    </span>
                   </span>
-                </div>
+                  <span>{type.label}</span>
+                  <span>{_G_PERIOD_LABELS[g.period] || g.period}</span>
+                  <span className="t-row-progress">
+                    <span className="t-row-progress-text" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      <b>{_gFmtValue(p.current, type.unit)}</b>
+                      <span style={{ color: 'var(--muted)' }}>
+                        {' / '}{_gFmtValue(p.target, type.unit)}
+                      </span>
+                    </span>
+                    <span className="t-row-progress-track">
+                      <span className={`t-progress-fill t-progress-fill--${g.status}`}
+                        style={{ width: `${Math.min(100, Math.max(2, pct))}%` }} />
+                    </span>
+                    <span className="t-row-progress-pct">{pct.toFixed(0)}%</span>
+                  </span>
+                  <span>
+                    <span className={`t-status ${status.cls}`}>
+                      <StatusIcon size={11} weight="fill" /> {status.label}
+                    </span>
+                  </span>
+                  <span />
+                </PoListRow>
               );
             })}
           </div>
@@ -3007,13 +3191,17 @@ export default function Analytics() {
             profitability metric for the merchant, no point burying it. */}
         <LazySection minHeight={320}><MarginSection           projectId={projectId} /></LazySection>
         <LazySection minHeight={260}><FunnelDynamicsSection   projectId={projectId} /></LazySection>
+        {/* Vertical revenue streams hoisted up so service / digital
+            merchants see THEIR numbers near the top instead of scrolling
+            past 10 physical-product sections to find them. */}
+        <LazySection minHeight={280}><BookingsSection         projectId={projectId} /></LazySection>
+        <LazySection minHeight={320}><DigitalSection          projectId={projectId} /></LazySection>
         <LazySection minHeight={320}><HeatmapSection          projectId={projectId} /></LazySection>
         <LazySection minHeight={360}><PopularProductsSection  projectId={projectId} /></LazySection>
         <LazySection minHeight={360}><CustomerSection         projectId={projectId} /></LazySection>
         <LazySection minHeight={280}><CohortRetentionSection  projectId={projectId} /></LazySection>
         <LazySection minHeight={300}><ReturnsSection          projectId={projectId} /></LazySection>
         <LazySection minHeight={300}><ReviewsSection          projectId={projectId} /></LazySection>
-        <LazySection minHeight={280}><BookingsSection         projectId={projectId} /></LazySection>
         <LazySection minHeight={240}><TrafficSourcesSection   projectId={projectId} /></LazySection>
         <LazySection minHeight={220}><DevicesSection          projectId={projectId} /></LazySection>
         <LazySection minHeight={240}><CountriesSection        projectId={projectId} /></LazySection>

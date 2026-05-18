@@ -16780,8 +16780,25 @@ def _resolve_export_period(period: str, custom_start: Optional[str], custom_end:
 
 def _fetch_orders_for_export(project_id: int, start_utc: datetime, end_utc: datetime,
                              include_unpaid: bool) -> list[dict]:
-    """One row per order; modest line-item rollup. Skips cancelled/refunded
-    unless the merchant explicitly opts in to unpaid via include_unpaid."""
+    """One row per order; modest line-item rollup.
+
+    Filter chain (CRITICAL — without the status guard, manually-marked-paid
+    orders that were later cancelled or refunded would still ship to the
+    accountant who then pays tax on them):
+      1. Always exclude orders cancelled or refunded at the *order level*
+         (matches the Analytics dashboard's `status NOT IN (…)` filter, so
+         the merchant's "active orders" count is mutually consistent across
+         the two surfaces).
+      2. By default exclude unpaid orders (only `paid` or `manual`-marked
+         money counts as revenue). `include_unpaid=True` opts back in to
+         `pending` / `failed` / `partial_refunded` for merchants who want
+         a fuller picture (e.g. cash-on-delivery shops).
+
+    The returned list covers product orders only (physical + digital — both
+    live in `order_history`). Service bookings live in a separate table and
+    are appended by `_fetch_bookings_for_export` — the two are merged in
+    `_build_accounting_export` before rendering the file.
+    """
     status_filter = "" if include_unpaid else " AND oh.payment_status IN ('paid','manual')"
     rows = db_all(
         f"""SELECT oh.id, oh.total_amount, oh.status, oh.payment_status,
@@ -16795,11 +16812,60 @@ def _fetch_orders_for_export(project_id: int, start_utc: datetime, end_utc: date
              WHERE oh.project_id = %s
                AND oh.created_at >= %s
                AND oh.created_at <= %s
+               AND oh.status NOT IN ('cancelled', 'refunded')
                {status_filter}
              ORDER BY oh.created_at ASC""",
         (project_id, start_utc, end_utc)
     )
     return [dict(r) for r in rows]
+
+
+def _fetch_bookings_for_export(project_id: int, start_utc: datetime,
+                               end_utc: datetime) -> list[dict]:
+    """Completed bookings reshaped into the same dict shape as
+    _fetch_orders_for_export so builders can iterate over both without
+    branching. The synthetic `id` is `B{booking_id}` so accountants can
+    spot service-line rows in the CSV and the auto-mint ID never collides
+    with a numeric order id."""
+    rows = db_all(
+        """SELECT b.id, b.starts_at AS created_at,
+                  COALESCE(s.price, b.freeform_price, 0) AS amount,
+                  COALESCE(s.name,  b.freeform_service_name, 'Service') AS service_name,
+                  b.customer_name, b.customer_email, b.customer_phone, b.customer_address,
+                  u.email AS user_email
+             FROM bookings b
+             LEFT JOIN booking_services s ON s.id = b.service_id
+             LEFT JOIN users u ON u.id = b.user_id
+            WHERE b.project_id = %s
+              AND b.starts_at >= %s AND b.starts_at <= %s
+              AND b.status = 'completed'
+            ORDER BY b.starts_at ASC""",
+        (project_id, start_utc, end_utc)
+    )
+    proj_curr = (db_one("SELECT currency FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("currency") or "USD"
+    return [{
+        # Synthetic id: `B-<num>` — service bookings get a B-prefix so
+        # accountants can filter by line type in Excel and the value never
+        # collides with order_history's bigint ids.
+        "id":               f"B-{r['id']}",
+        "total_amount":     float(r["amount"] or 0),
+        "status":           "completed",
+        "payment_status":   "manual",   # booking flow has no payment_status column → treat as manually-tracked
+        "payment_method":   "booking",
+        "payment_currency": proj_curr.upper(),
+        "recipient_name":   r["customer_name"] or "",
+        "phone":            r["customer_phone"] or "",
+        "address":          r["customer_address"] or "",
+        "created_at":       r["created_at"],
+        "payment_paid_at":  r["created_at"],
+        "customer_name":    r["customer_name"] or "",
+        "customer_email":   r["customer_email"] or r["user_email"] or "",
+        "items_count":      1,
+        # Extra: surface the service name so builders that include a memo /
+        # comment field can disambiguate "Order #B-12 (Haircut)" from a
+        # product line. _b_1c uses this in the Комментарий column.
+        "service_name":     r["service_name"],
+    } for r in rows]
 
 
 def _accounting_filename(provider: str, period_label: str) -> str:
@@ -16963,7 +17029,14 @@ def _build_accounting_export(sub: dict, project: dict, period: str,
         include_unpaid = bool(cfg.get("include_unpaid", False))
     tz_name = project.get("timezone") or "UTC"
     start_utc, end_utc, label = _resolve_export_period(period, custom_start, custom_end, tz_name)
-    orders = _fetch_orders_for_export(sub["project_id"], start_utc, end_utc, include_unpaid)
+    # Product orders (physical + digital — both live in order_history) PLUS
+    # service bookings (separate table). Merged chronologically so the CSV
+    # reads in the same order a paper bookkeeper would expect.
+    orders = (
+        _fetch_orders_for_export(sub["project_id"], start_utc, end_utc, include_unpaid)
+        + _fetch_bookings_for_export(sub["project_id"], start_utc, end_utc)
+    )
+    orders.sort(key=lambda o: o.get("created_at") or datetime.min.replace(tzinfo=timezone.utc))
     project_currency = (project.get("currency") or "USD").upper()
     blob = _ACCOUNTING_BUILDERS[provider](orders, project_currency)
     filename = _accounting_filename(provider, label)
@@ -17006,7 +17079,13 @@ def accounting_preview(sub_id: int,
     unp = include_unpaid if include_unpaid is not None else bool(cfg.get("include_unpaid", False))
     tz_name = proj.get("timezone") or "UTC"
     start_utc, end_utc, label = _resolve_export_period(period, start, end, tz_name)
-    orders = _fetch_orders_for_export(project_id, start_utc, end_utc, unp)
+    # Same merged fetch as the download endpoint so the preview's "12 orders"
+    # number exactly matches the row count in the downloaded file.
+    orders = (
+        _fetch_orders_for_export(project_id, start_utc, end_utc, unp)
+        + _fetch_bookings_for_export(project_id, start_utc, end_utc)
+    )
+    orders.sort(key=lambda o: o.get("created_at") or datetime.min.replace(tzinfo=timezone.utc))
     total = sum(float(o.get("total_amount") or 0) for o in orders)
     preview_rows = [
         {
@@ -17528,7 +17607,17 @@ def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
     prev_start = start - (end - start)
 
     def _agg(s, e):
-        # Aggregate revenue / orders / customers in a single round trip.
+        # Aggregate revenue / orders / customers across BOTH revenue streams:
+        #   1. order_history — physical AND digital product sales (one row per
+        #      checkout; product_type filter is irrelevant here, every product
+        #      sale lands in this table)
+        #   2. bookings — service appointments (separate table, NOT in
+        #      order_history; revenue = service price or freeform price,
+        #      counted only when status='completed' so unfinished bookings
+        #      don't inflate "money earned")
+        # Without the bookings union the Overview KPIs were misleading for
+        # service-vertical merchants (salons / clinics / repair shops) —
+        # they'd see $0 revenue on a day they did 5 appointments.
         row = db_one(
             "SELECT COUNT(*) AS orders,"
             "       COALESCE(SUM(total_amount), 0) AS revenue,"
@@ -17536,6 +17625,19 @@ def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
             "  FROM order_history"
             " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
             "   AND status NOT IN ('cancelled', 'refunded')",
+            (project_id, s, e)
+        )
+        bk = db_one(
+            "SELECT COUNT(*) AS booking_count,"
+            "       COALESCE(SUM(COALESCE(s.price, b.freeform_price, 0)), 0) AS booking_revenue,"
+            # bookings table uses `user_id`, not `customer_user_id` — getting
+            # this wrong made the whole /api/analytics/overview return 500
+            # which surfaced as a misleading "CORS blocked" error in DevTools
+            "       COUNT(DISTINCT b.user_id) AS booking_customers"
+            "  FROM bookings b"
+            "  LEFT JOIN booking_services s ON s.id = b.service_id"
+            " WHERE b.project_id=%s AND b.starts_at >= %s AND b.starts_at < %s"
+            "   AND b.status = 'completed'",
             (project_id, s, e)
         )
         # Identity-based visitor count (user_id when logged in, else
@@ -17549,11 +17651,22 @@ def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
             " WHERE project_id=%s AND created_at >= %s AND created_at < %s",
             (project_id, s, e)
         )
+        order_count = int(row["orders"] or 0)
+        booking_count = int((bk or {}).get("booking_count") or 0)
+        order_rev = float(row["revenue"] or 0)
+        booking_rev = float((bk or {}).get("booking_revenue") or 0)
+        combined_orders = order_count + booking_count
+        combined_rev    = order_rev + booking_rev
         return {
-            "revenue":   float(row["revenue"] or 0),
-            "orders":    int(row["orders"] or 0),
-            "aov":       float(row["revenue"] or 0) / max(1, int(row["orders"] or 0)),
-            "customers": int(row["customers"] or 0),
+            "revenue":   combined_rev,
+            "orders":    combined_orders,
+            "aov":       combined_rev / max(1, combined_orders),
+            # `customers` distinct-count can't be perfectly unioned without a
+            # second SELECT; best-effort = max(product-buyers, booking-customers)
+            # — under-counts a merchant who has the same user buying AND booking
+            # but never over-counts. Right answer requires a UNION query.
+            "customers": max(int(row["customers"] or 0),
+                             int((bk or {}).get("booking_customers") or 0)),
             "visitors":  int((visitors or {}).get("v") or 0),
         }
 
@@ -17582,15 +17695,27 @@ def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
 
     # Daily revenue chart — bucketed by PROJECT local day (not UTC) so
     # "today" on the dashboard reflects the merchant's working calendar.
+    # UNION ALL between order_history and bookings → both verticals contribute
+    # to the same daily bucket, then GROUP BY day collapses them.
     series = db_all(
-        "SELECT (created_at AT TIME ZONE %s)::date AS day,"
-        "       COALESCE(SUM(total_amount), 0) AS revenue,"
-        "       COUNT(*) AS orders"
-        "  FROM order_history"
-        " WHERE project_id=%s AND created_at >= %s AND created_at < %s"
-        "   AND status NOT IN ('cancelled', 'refunded')"
-        " GROUP BY day ORDER BY day ASC",
-        (tz, project_id, start, end)
+        "WITH combined AS ("
+        "  SELECT (created_at AT TIME ZONE %s)::date AS day,"
+        "         COALESCE(total_amount, 0)::numeric AS revenue,"
+        "         1 AS orders"
+        "    FROM order_history"
+        "   WHERE project_id=%s AND created_at >= %s AND created_at < %s"
+        "     AND status NOT IN ('cancelled', 'refunded')"
+        "  UNION ALL"
+        "  SELECT (b.starts_at AT TIME ZONE %s)::date AS day,"
+        "         COALESCE(s.price, b.freeform_price, 0)::numeric AS revenue,"
+        "         1 AS orders"
+        "    FROM bookings b LEFT JOIN booking_services s ON s.id = b.service_id"
+        "   WHERE b.project_id=%s AND b.starts_at >= %s AND b.starts_at < %s"
+        "     AND b.status = 'completed'"
+        ")"
+        "SELECT day, COALESCE(SUM(revenue), 0) AS revenue, SUM(orders) AS orders"
+        "  FROM combined GROUP BY day ORDER BY day ASC",
+        (tz, project_id, start, end, tz, project_id, start, end)
     )
     return {
         "current":  cur,
@@ -18003,22 +18128,37 @@ def analytics_revenue_over_time(
     # `date_trunc` truncates to that zone's day/week/month boundaries.
     tz = get_project_timezone(project_id)
     interval_lit = {"day": "1 day", "week": "1 week", "month": "1 month"}[granularity]
+    # Build a single revenue stream from both verticals via UNION ALL inside
+    # a CTE: order_history (physical + digital) + completed bookings (service).
+    # Then JOIN against generate_series so empty buckets still appear as $0
+    # (the chart renders a baseline tick for every day, even no-sales ones).
     rows = db_all(
+        f"WITH revenue_stream AS ("
+        f"  SELECT oh.created_at AS at, COALESCE(oh.total_amount, 0)::numeric AS amount, oh.id AS id"
+        f"    FROM order_history oh"
+        f"   WHERE oh.project_id = %s"
+        f"     AND oh.status NOT IN ('cancelled', 'refunded')"
+        f"  UNION ALL"
+        f"  SELECT b.starts_at AS at,"
+        f"         COALESCE(s.price, b.freeform_price, 0)::numeric AS amount,"
+        f"         b.id AS id"
+        f"    FROM bookings b LEFT JOIN booking_services s ON s.id = b.service_id"
+        f"   WHERE b.project_id = %s"
+        f"     AND b.status = 'completed'"
+        f")"
         f"SELECT g.bucket AS bucket,"
-        f"       COALESCE(SUM(oh.total_amount), 0) AS revenue,"
-        f"       COUNT(oh.id) AS orders"
+        f"       COALESCE(SUM(rs.amount), 0) AS revenue,"
+        f"       COUNT(rs.id) AS orders"
         f"  FROM generate_series("
         f"         date_trunc('{granularity}', (%s::timestamptz) AT TIME ZONE %s),"
         f"         date_trunc('{granularity}', (%s::timestamptz) AT TIME ZONE %s),"
         f"         '{interval_lit}'::interval"
         f"       ) AS g(bucket)"
-        f"  LEFT JOIN order_history oh"
-        f"    ON date_trunc('{granularity}', oh.created_at AT TIME ZONE %s) = g.bucket"
-        f"   AND oh.project_id = %s"
-        f"   AND oh.status NOT IN ('cancelled', 'refunded')"
+        f"  LEFT JOIN revenue_stream rs"
+        f"    ON date_trunc('{granularity}', rs.at AT TIME ZONE %s) = g.bucket"
         f" GROUP BY g.bucket"
         f" ORDER BY g.bucket ASC",
-        (start_dt, tz, end_dt, tz, tz, project_id)
+        (project_id, project_id, start_dt, tz, end_dt, tz, tz)
     )
     return {
         "buckets": [
@@ -18039,17 +18179,17 @@ def analytics_orders_on_day(
     day: str = Query(..., description="YYYY-MM-DD in the project's local timezone"),
     user: dict = Depends(get_current_user),
 ):
-    """Drill-down endpoint — every order on `day` (interpreted in the
-    project's local timezone). Click a point on Revenue-over-time → this
-    populates the modal that lists the orders that drove that day's
-    revenue. Cancelled / refunded orders excluded so totals add back up
-    to the chart bucket.
+    """Drill-down endpoint — every revenue event on `day` (interpreted in
+    the project's local timezone). Click a point on Revenue-over-time →
+    this populates the modal that lists the orders+bookings that drove
+    that day's revenue. Cancelled / refunded orders + non-completed
+    bookings excluded so totals add back up to the chart bucket.
     """
     require_team_member_or_owner(user, project_id)
     if not re.match(r'^\d{4}-\d{2}-\d{2}$', day or ''):
         raise HTTPException(400, "day must be YYYY-MM-DD")
     tz = get_project_timezone(project_id)
-    rows = db_all(
+    orders = db_all(
         "SELECT oh.id, oh.total_amount, oh.status, oh.created_at,"
         "       oh.fulfillment_type, oh.payment_status,"
         "       COALESCE(u.name,  '') AS customer_name,"
@@ -18063,7 +18203,25 @@ def analytics_orders_on_day(
         " ORDER BY oh.created_at DESC",
         (project_id, tz, day)
     )
-    return [{
+    # Bookings on the same local-tz day. Service bookings don't have a
+    # `fulfillment_type` or per-line `item_count` — synthetic values keep
+    # the table layout consistent.
+    bookings = db_all(
+        "SELECT b.id, b.starts_at,"
+        "       COALESCE(s.price, b.freeform_price, 0) AS amount,"
+        "       COALESCE(s.name, b.freeform_service_name, 'Service') AS service_name,"
+        "       COALESCE(b.customer_name, u.name,  '') AS customer_name,"
+        "       COALESCE(b.customer_email, u.email, '') AS customer_email"
+        "  FROM bookings b"
+        "  LEFT JOIN booking_services s ON s.id = b.service_id"
+        "  LEFT JOIN users u ON u.id = b.user_id"
+        " WHERE b.project_id = %s"
+        "   AND (b.starts_at AT TIME ZONE %s)::date = %s::date"
+        "   AND b.status = 'completed'"
+        " ORDER BY b.starts_at DESC",
+        (project_id, tz, day)
+    )
+    out = [{
         "id":               r["id"],
         "total":            float(r["total_amount"] or 0),
         "status":           r["status"],
@@ -18073,7 +18231,22 @@ def analytics_orders_on_day(
         "customer_name":    r["customer_name"] or "—",
         "customer_email":   r["customer_email"] or "",
         "item_count":       int(r["item_count"] or 0),
-    } for r in rows]
+    } for r in orders]
+    out.extend({
+        "id":               f"B-{r['id']}",
+        "total":            float(r["amount"] or 0),
+        "status":           "completed",
+        "created_at":       r["starts_at"].isoformat() if r.get("starts_at") else None,
+        "fulfillment_type": "booking",
+        "payment_status":   "manual",
+        "customer_name":    r["customer_name"] or "—",
+        "customer_email":   r["customer_email"] or "",
+        "item_count":       1,
+        "service_name":     r["service_name"],
+    } for r in bookings)
+    # Sort merged list newest-first by created_at to match the order_history-only behaviour
+    out.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return out
 
 
 @app.get("/api/analytics/revenue-by-category")
@@ -18629,6 +18802,121 @@ def analytics_bookings(project_id: int = Query(...), period: str = Query("1mo"),
              "cassa": float(r["cassa"] or 0),
              "count": int(r["count"] or 0)}
             for r in cassa_by_staff
+        ],
+    }
+
+
+@app.get("/api/analytics/digital")
+def analytics_digital(project_id: int = Query(...), period: str = Query("1mo"),
+                      user: dict = Depends(get_current_user)):
+    """Digital-products vertical analytics — mirrors the Bookings endpoint
+    shape so the frontend renders the section unconditionally.
+
+    Digital products live in the same `products` + `order_history` tables
+    as physical ones (just `products.product_type='digital'`), so the
+    queries are normal physical-order queries with an added JOIN to
+    products + WHERE clause on product_type. The merchant doesn't see
+    digital revenue separately in the Overview KPIs — they're folded in
+    — but this section breaks them out for verticals where downloadable
+    files are the main product line."""
+    require_team_member_or_owner(user, project_id)
+    tz = get_project_timezone(project_id)
+    start, end = _date_range_for_period(period, tz)
+    # KPI totals — DISTINCT oh.id to avoid double-counting when an order
+    # has multiple digital line items.
+    totals = db_one(
+        "SELECT COUNT(DISTINCT oh.id) AS orders,"
+        "       COALESCE(SUM(oi.price * oi.quantity), 0) AS revenue,"
+        "       COUNT(DISTINCT oh.user_id) AS unique_buyers,"
+        "       COALESCE(SUM(oi.quantity), 0) AS units"
+        "  FROM order_history oh"
+        "  JOIN order_items oi ON oi.order_id = oh.id"
+        "  JOIN products p ON p.id = oi.product_id"
+        " WHERE oh.project_id=%s AND oh.created_at >= %s AND oh.created_at < %s"
+        "   AND oh.status NOT IN ('cancelled', 'refunded')"
+        "   AND p.product_type = 'digital'",
+        (project_id, start, end)
+    )
+    # Daily revenue series — same per-day bucket pattern as Overview.
+    series = db_all(
+        "SELECT (oh.created_at AT TIME ZONE %s)::date AS day,"
+        "       COUNT(DISTINCT oh.id) AS orders,"
+        "       COALESCE(SUM(oi.price * oi.quantity), 0) AS revenue"
+        "  FROM order_history oh"
+        "  JOIN order_items oi ON oi.order_id = oh.id"
+        "  JOIN products p ON p.id = oi.product_id"
+        " WHERE oh.project_id=%s AND oh.created_at >= %s AND oh.created_at < %s"
+        "   AND oh.status NOT IN ('cancelled', 'refunded')"
+        "   AND p.product_type = 'digital'"
+        " GROUP BY day ORDER BY day ASC",
+        (tz, project_id, start, end)
+    )
+    # Top digital products by revenue (top 10).
+    top_products = db_all(
+        "SELECT p.id, p.title,"
+        "       COALESCE(SUM(oi.quantity), 0) AS units,"
+        "       COALESCE(SUM(oi.price * oi.quantity), 0) AS revenue,"
+        "       (SELECT (pv.images)[1] FROM product_configurations_l1 pv"
+        "         WHERE pv.product_id = p.id ORDER BY pv.position ASC LIMIT 1) AS image"
+        "  FROM order_items oi"
+        "  JOIN order_history oh ON oh.id = oi.order_id"
+        "  JOIN products p ON p.id = oi.product_id"
+        " WHERE oh.project_id=%s AND oh.created_at >= %s AND oh.created_at < %s"
+        "   AND oh.status NOT IN ('cancelled', 'refunded')"
+        "   AND p.product_type = 'digital'"
+        " GROUP BY p.id, p.title"
+        " ORDER BY revenue DESC LIMIT 10",
+        (project_id, start, end)
+    )
+    # Recent digital orders (top 10 newest).
+    recent = db_all(
+        "SELECT oh.id, oh.total_amount, oh.payment_currency, oh.created_at,"
+        "       u.name AS customer_name, u.email AS customer_email,"
+        "       COUNT(*) AS line_count"
+        "  FROM order_history oh"
+        "  JOIN order_items oi ON oi.order_id = oh.id"
+        "  JOIN products p ON p.id = oi.product_id"
+        "  LEFT JOIN users u ON u.id = oh.user_id"
+        " WHERE oh.project_id=%s AND oh.created_at >= %s AND oh.created_at < %s"
+        "   AND oh.status NOT IN ('cancelled', 'refunded')"
+        "   AND p.product_type = 'digital'"
+        " GROUP BY oh.id, oh.total_amount, oh.payment_currency, oh.created_at,"
+        "          u.name, u.email"
+        " ORDER BY oh.created_at DESC LIMIT 10",
+        (project_id, start, end)
+    )
+    orders   = int((totals or {}).get("orders")        or 0)
+    revenue  = float((totals or {}).get("revenue")     or 0)
+    buyers   = int((totals or {}).get("unique_buyers") or 0)
+    units    = int((totals or {}).get("units")         or 0)
+    return {
+        "total":         orders,    # named to mirror Bookings response shape
+        "revenue":       revenue,
+        "unique_buyers": buyers,
+        "units":         units,
+        "aov":           revenue / max(1, orders),
+        "series": [
+            {"day": str(r["day"]),
+             "orders":  int(r["orders"]   or 0),
+             "revenue": float(r["revenue"] or 0)}
+            for r in series
+        ],
+        "top_products": [
+            {"id": r["id"], "title": r["title"],
+             "units":   int(r["units"]   or 0),
+             "revenue": float(r["revenue"] or 0),
+             "image":   r["image"]}
+            for r in top_products
+        ],
+        "recent": [
+            {"id":               r["id"],
+             "total_amount":     float(r["total_amount"] or 0),
+             "payment_currency": r["payment_currency"] or "USD",
+             "created_at":       r["created_at"].isoformat() if r["created_at"] else None,
+             "customer_name":    r["customer_name"] or r["customer_email"] or "—",
+             "customer_email":   r["customer_email"] or "",
+             "line_count":       int(r["line_count"] or 0)}
+            for r in recent
         ],
     }
 

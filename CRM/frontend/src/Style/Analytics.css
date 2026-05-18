@@ -1174,7 +1174,7 @@
   min-width: 0;
 }
 .an-inv-bar-pill--oos     { background: #E30000; }
-.an-inv-bar-pill--low     { background: #E3C100; }
+.an-inv-bar-pill--low     { background: #EFC20B; }
 .an-inv-bar-pill--healthy { background: #0071E3; }
 
 .an-inv-legend {
@@ -1194,7 +1194,7 @@
 }
 
 .an-inv-dot--oos     { background: #E30000; }
-.an-inv-dot--low     { background: #E3C100; }
+.an-inv-dot--low     { background: #EFC20B; }
 .an-inv-dot--healthy { background: #0071E3; }
 
 /* ── Section 14 — Promo codes ──────────────────────────────────────── */
