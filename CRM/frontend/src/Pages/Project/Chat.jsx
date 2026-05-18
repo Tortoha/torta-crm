@@ -6,7 +6,7 @@ import {
   PaperPlaneRight, ChatsCircle, ArrowCounterClockwise,
   Copy, Trash, CircleNotch, MagnifyingGlass, FileText, Microphone, Play,
   Pause, DownloadSimple, MagnifyingGlassPlus, MagnifyingGlassMinus, Eye,
-  PencilSimple,
+  PencilSimple, Envelope, Warning,
 } from '@phosphor-icons/react';
 import { Icon as IconifyIcon } from '@iconify/react';
 import { API_BASE } from '../../api.js';
@@ -33,8 +33,13 @@ const WhatsAppIcon  = iconifyChannel('simple-icons:whatsapp', '#25D366');
 const InstagramIcon = iconifyChannel('simple-icons:instagram', '#E4405F');
 const FacebookIcon  = iconifyChannel('logos:facebook');
 const XIcon         = iconifyChannel('simple-icons:x',     '#000000');
-const VkIcon        = iconifyChannel('simple-icons:vk',    '#0077FF');
 const ViberIcon     = iconifyChannel('simple-icons:viber', '#7360F2');
+// Mirror the Auth Providers Email row — same Phosphor Envelope, same accent
+// blue. The channel is "email" not "Gmail specifically", so a generic envelope
+// reads better than a vendor logo.
+const EmailIcon     = ({ size = 22, ...rest }) => (
+  <Envelope size={size} color="#0071E3" weight="regular" {...rest} />
+);
 
 // WebChat — generic chat icon (Phosphor, blue accent).
 const WebChatIcon = props => <ChatCircleDots weight="fill" {...props} />;
@@ -68,17 +73,6 @@ const CHANNELS = [
     fields: [
       { key: 'bot_token', label: 'Bot token', placeholder: 'MTI3O…',
         hint: 'Discord Developer Portal → Applications → New App → Bot → Reset Token. Enable Privileged Gateway Intent: MESSAGE CONTENT.' },
-    ],
-  },
-  {
-    id: 'vk', label: 'VK', Icon: VkIcon,
-    desc: 'Connect a VK community to receive messages sent to the group.',
-    realtime: true, configurable: true,
-    fields: [
-      { key: 'group_id',     label: 'Community ID', placeholder: '123456789',
-        hint: 'Numeric ID of your VK community.' },
-      { key: 'access_token', label: 'Group access token', placeholder: 'vk1.a.…',
-        hint: 'Group → Settings → API usage → Create token (scopes: messages, manage). Then enable Long Poll API in Community settings.' },
     ],
   },
   {
@@ -146,6 +140,27 @@ const CHANNELS = [
         hint: 'For display only — used to label this integration.' },
       { key: 'app_secret',   label: 'App secret', placeholder: 'optional',
         hint: 'Consumer secret used to verify webhook signatures.' },
+    ],
+  },
+  {
+    // Reuses the merchant's verified email domain from Authentication →
+    // Email (DKIM-signed). Postfix on the SES VPS pipes parsed mail to a
+    // backend webhook which routes by destination domain → project. Outbound
+    // replies go back through SES with In-Reply-To/References for threading.
+    id: 'email', label: 'Email', Icon: EmailIcon,
+    desc: 'Receive customer emails sent to any address @your-verified-domain. Replies are threaded.',
+    realtime: false, configurable: true, webhook: true,
+    fields: [
+      // `domain` is locked to the verified Auth Providers domain (handled
+      // specially in ChannelModal — merchant can't type to spy on others).
+      { key: 'domain', label: 'Verified email domain', placeholder: 'support.merchant-store.com',
+        hint: 'Must be a domain you\'ve already verified in Authentication → Email (DKIM/SPF/DMARC). Any address at this domain will be routed to this chat.' },
+      // Reply identity — independent from the Auth Providers OTP from-address
+      // so chats can come from support@ while OTPs come from noreply@.
+      { key: 'reply_local', label: 'Reply-from address', placeholder: 'support',
+        hint: 'Local part only. Customer replies will land in the same chat regardless of this — this only controls what they see in the From field.' },
+      { key: 'reply_name',  label: 'Reply-from display name', placeholder: 'Acme Support',
+        hint: 'Shown as the sender name in the customer\'s inbox. Leave blank to reuse the Auth Providers display name.' },
     ],
   },
 ];
@@ -492,7 +507,7 @@ function ImageLightbox({ src, alt, filename, onClose }) {
   );
 }
 
-// Backend always sets att.url — either direct CDN (Discord/VK/Meta/Viber) or a signed CRM proxy URL (Telegram/WhatsApp).
+// Backend always sets att.url — either direct CDN (Discord/Meta/Viber) or a signed CRM proxy URL (Telegram/WhatsApp/Email).
 function AttachmentItem({ msg, idx, att, onImageClick }) {
   const src = att.url;
   if (!src) return null;
@@ -950,6 +965,7 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
   const meta = channelMeta(channel);
   const Icon = meta.Icon;
   const fields = meta.fields || [];
+  const isEmail = channel === 'email';
 
   // separate state object for the form values (one key per field)
   const [values,   setValues]   = useState(() =>
@@ -960,6 +976,42 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
   const [toast,    setToast]    = useState('');
   const [removing, setRemoving] = useState(false);
   const [savedExtra, setSavedExtra] = useState(null);
+
+  // Email-channel only: fetch the project's verified email domain so we can
+  // (a) lock the domain field to that value (prevents merchant from typing a
+  //     domain they don't own to spy on someone else's mail), and
+  // (b) show a warning + deep-link to Authentication when no domain is set.
+  // Also fetch any existing chat-integration row so we can pre-fill the
+  // editable reply_local / reply_name fields.
+  const [emailDomainState, setEmailDomainState] = useState(null);  // null = loading
+  useEffect(() => {
+    if (!isEmail) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [domRes, intRes] = await Promise.all([
+          fetch(`${API_BASE}/api/email-domain?project_id=${projectId}`, { credentials: 'include' }),
+          fetch(`${API_BASE}/api/chat/integrations/email?project_id=${projectId}`, { credentials: 'include' }),
+        ]);
+        const dom = domRes.ok ? await domRes.json() : { configured: false };
+        const int = intRes.ok ? await intRes.json() : { configured: false, config: {} };
+        if (cancelled) return;
+        setEmailDomainState(dom);
+        // Pre-fill all 3 fields from existing row if present; otherwise just
+        // lock the domain to the verified one.
+        const existing = int?.config || {};
+        setValues(v => ({
+          ...v,
+          domain:      existing.domain      || dom.domain || '',
+          reply_local: existing.reply_local || '',
+          reply_name:  existing.reply_name  || '',
+        }));
+      } catch {
+        if (!cancelled) setEmailDomainState({ configured: false });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isEmail, projectId, integration]);
 
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
@@ -972,7 +1024,12 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
     setTimeout(() => setToast(''), 3200);
   };
 
-  const required = fields.filter(f => !f.key.endsWith('app_secret'));
+  // Fields the merchant MUST fill before we can save. `app_secret` is
+  // optional for Meta webhook channels; `reply_local` + `reply_name` are
+  // optional polish for the Email channel (fall back to Auth Providers
+  // defaults when blank).
+  const OPTIONAL_KEYS = new Set(['app_secret', 'reply_local', 'reply_name']);
+  const required = fields.filter(f => !OPTIONAL_KEYS.has(f.key));
   const canSave  = required.every(f => (values[f.key] || '').trim());
 
   const save = async () => {
@@ -1010,10 +1067,19 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
     } finally { setRemoving(false); }
   };
 
-  // Resolve webhook hint: either freshly-returned from POST or computed from API_BASE
-  const webhookUrl = meta.webhook
+  // Resolve webhook hint: either freshly-returned from POST or computed from API_BASE.
+  // Email channel is special — receiving happens via Postfix MX, not an HTTPS
+  // webhook the merchant pastes anywhere; we show DNS instructions instead.
+  const webhookUrl = (meta.webhook && !isEmail)
     ? (savedExtra?.webhook_url || `${API_BASE}/api/chat/webhook/${channel}/${projectId}`)
     : null;
+  const emailDomain = isEmail
+    ? (emailDomainState?.configured && emailDomainState?.dkim_ok ? emailDomainState.domain : '')
+    : '';
+  // Domain isn't ready for Email channel until Auth Providers → Email shows a
+  // verified domain. Without this, the Connect button writes nothing useful.
+  const emailReady = !isEmail || (emailDomainState?.configured && emailDomainState?.dkim_ok);
+  const emailLoading = isEmail && emailDomainState === null;
 
   return createPortal(
     <div className="auth-modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
@@ -1059,7 +1125,40 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
               </div>
             )}
 
-            {fields.length === 0 && !integration && (
+            {isEmail && emailLoading && (
+              <p className="chat-modal-hint">Checking verified email domain…</p>
+            )}
+
+            {isEmail && !emailLoading && !emailReady && (
+              <div className="chat-modal-warn">
+                <Warning weight="fill" size={16} />
+                <div>
+                  <div className="chat-modal-warn-title">No verified email domain</div>
+                  <div className="chat-modal-warn-body">
+                    Email channel reuses the domain you've already verified for
+                    sending OTP codes. Open <a href={`/project/${projectId}/authentication`}>Authentication
+                    → Email</a> and finish DKIM/SPF/DMARC verification, then come back
+                    here.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isEmail && emailReady && (
+              <div className="chat-modal-webhook">
+                <div className="chat-modal-webhook-title">DNS — MX record</div>
+                <div className="chat-modal-webhook-url">
+                  {emailDomain}.&nbsp;&nbsp;MX&nbsp;&nbsp;10&nbsp;&nbsp;mail.tortacrm.com.
+                </div>
+                <div className="chat-modal-webhook-hint">
+                  Add this MX record to your domain so incoming mail reaches our
+                  servers. Any address at this domain (<code>support@</code>,
+                  <code> hello@</code>, <code>info@</code>, …) will land in this chat.
+                </div>
+              </div>
+            )}
+
+            {fields.length === 0 && !integration && !isEmail && (
               <div className="chat-modal-empty">
                 <div className="chat-modal-empty-title">No setup required</div>
                 <div className="chat-modal-empty-desc">
@@ -1069,22 +1168,87 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
               </div>
             )}
 
-            {fields.map(f => (
-              <div key={f.key} className="chat-modal-field">
-                <label className="chat-modal-label">{f.label}</label>
-                <input className="crm-input" placeholder={f.placeholder || ''}
-                  value={values[f.key] || ''}
-                  onChange={e => { setValues(v => ({ ...v, [f.key]: e.target.value })); setErr(''); }}
-                  autoComplete="off" />
-                {f.hint && <p className="chat-modal-hint">{f.hint}</p>}
+            {fields.map(f => {
+              // Email channel has 3 special-cased renders.
+              if (isEmail) {
+                // 1. Domain — locked to the verified value (merchant cannot
+                //    type someone else's domain to spy on it).
+                if (f.key === 'domain') {
+                  if (!emailReady) return null;
+                  return (
+                    <div key={f.key} className="chat-modal-field">
+                      <label className="chat-modal-label">{f.label}</label>
+                      <div className="chat-modal-locked-input">
+                        <input className="crm-input" value={`@${emailDomain}`}
+                          readOnly disabled
+                          title="Locked to your verified email domain" />
+                        <span className="chat-modal-lock-badge">
+                          <CheckCircle weight="fill" size={11} /> Verified
+                        </span>
+                      </div>
+                      <p className="chat-modal-hint">
+                        Locked to your verified email domain. To change it, update
+                        the domain in <a href={`/project/${projectId}/authentication`}>
+                        Authentication → Email</a> first.
+                      </p>
+                    </div>
+                  );
+                }
+                // 2. reply_local — input on the left, `@domain` suffix glued
+                //    to the right so the merchant sees the full address form live.
+                if (f.key === 'reply_local') {
+                  if (!emailReady) return null;
+                  return (
+                    <div key={f.key} className="chat-modal-field">
+                      <label className="chat-modal-label">{f.label}</label>
+                      <div className="chat-modal-split-input">
+                        <input className="crm-input chat-modal-split-input__left"
+                          placeholder={f.placeholder || 'support'}
+                          value={values[f.key] || ''}
+                          onChange={e => {
+                            // Lowercase + strip @-suffix if the merchant pastes a full email.
+                            const v = (e.target.value || '').toLowerCase().split('@')[0].trim();
+                            setValues(vs => ({ ...vs, [f.key]: v })); setErr('');
+                          }}
+                          autoComplete="off" maxLength={64} />
+                        <span className="chat-modal-split-input__suffix">@{emailDomain}</span>
+                      </div>
+                      {f.hint && <p className="chat-modal-hint">{f.hint}</p>}
+                    </div>
+                  );
+                }
+                // 3. reply_name — regular input but only show when emailReady
+                if (f.key === 'reply_name' && !emailReady) return null;
+              }
+              return (
+                <div key={f.key} className="chat-modal-field">
+                  <label className="chat-modal-label">{f.label}</label>
+                  <input className="crm-input" placeholder={f.placeholder || ''}
+                    value={values[f.key] || ''}
+                    onChange={e => { setValues(v => ({ ...v, [f.key]: e.target.value })); setErr(''); }}
+                    autoComplete="off" />
+                  {f.hint && <p className="chat-modal-hint">{f.hint}</p>}
+                </div>
+              );
+            })}
+
+            {/* Live preview — shows what the customer will see in their inbox
+                From field. Updates as the merchant types reply_local / reply_name. */}
+            {isEmail && emailReady && (values.reply_local || values.reply_name) && (
+              <div className="chat-modal-preview">
+                <div className="chat-modal-preview-label">Customer will see in their inbox</div>
+                <div className="chat-modal-preview-from">
+                  <strong>{values.reply_name?.trim() || 'Support'}</strong>
+                  &nbsp;&lt;{(values.reply_local?.trim() || 'support')}@{emailDomain}&gt;
+                </div>
               </div>
-            ))}
+            )}
 
             {err && <p className="auth-msg auth-msg--err">{err}</p>}
 
             <div className="auth-actions">
               <button className="crm-submit-btn" onClick={save}
-                disabled={saving || !canSave} type="button">
+                disabled={saving || !canSave || !emailReady} type="button">
                 {saving ? 'Saving…' : (integration ? 'Update' : 'Connect')}
               </button>
               {integration && (

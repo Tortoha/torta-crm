@@ -290,7 +290,7 @@ export function createClient(baseUrl, publishableKey) {
        * Redirect to a generic OAuth provider for this store (full page redirect).
        * Provider must be one of: github, discord, facebook, gitlab, bitbucket,
        * linkedin, twitch, spotify, slack, notion, figma, zoom, azure, apple,
-       * x, vk, kakao, keycloak.
+       * x, kakao, keycloak.
        *
        * Example: client.auth.oauthLogin('github')
        */

@@ -1243,7 +1243,12 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
 
 # ─── CSRF double-submit cookie ────────────────────────────────────────────
 _CSRF_SAFE_METHODS   = {"GET", "HEAD", "OPTIONS", "TRACE"}
-_CSRF_EXEMPT_SUFFIX  = ("/refresh",)
+# `/auth/oauth/apple/callback` is exempted because Apple Sign-In's form_post
+# mode submits the OAuth code cross-origin from appleid.apple.com — we have no
+# way to inject a CSRF token there. The CSRF defence is replaced by Apple's
+# id_token JWT signature verification + cookie-based state validation in
+# the apple_oauth_callback_post handler.
+_CSRF_EXEMPT_SUFFIX  = ("/refresh", "/auth/oauth/apple/callback")
 _CSRF_EXEMPT_SEGMENT = ("/track/",)
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -2314,6 +2319,7 @@ def send_code(request: SendCodeRequest, req: Request,
 
 @app.post("/{api_key}/verify-code")
 def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
+                background_tasks: BackgroundTasks,
                 api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
     email  = request.email.lower().strip()
@@ -2349,6 +2355,7 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
     if not verify_otp(code, pending.get("code_hash", "")): fail("Invalid code")
 
     with db_cursor() as (conn, cursor):
+        is_new_user = False
         if pending["type"] == "register":
             try:
                 cursor.execute(
@@ -2357,6 +2364,7 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
                 )
                 user_id = cursor.fetchone()["id"]
                 conn.commit()
+                is_new_user = True
             except psycopg2.errors.UniqueViolation:
                 conn.rollback()
                 # Race: another request created the same user concurrently
@@ -2366,6 +2374,15 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
                 user_id = existing["id"]
         else:
             user_id = get_user_by_email(email, project_id)["id"]
+
+    # Fire customer.created for Mailchimp / GA4 / Mixpanel / any subscriber that
+    # listens on it. Done outside the cursor block so a slow dispatch doesn't
+    # hold the DB connection.
+    if is_new_user:
+        background_tasks.add_task(dispatch_event, project_id, "customer.created", {
+            "user_id":  user_id,
+            "customer": {"name": sanitize(pending["name"]), "email": email},
+        })
 
     token = create_token(user_id)
     set_auth_cookie(response, token)
@@ -7451,6 +7468,7 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
         print(f"Google verify error: {e}")
         return RedirectResponse(f"{frontend}/login?error=google_verify")
 
+    is_new_user = False
     with db_cursor() as (conn, cursor):
         cursor.execute("SELECT id FROM users WHERE google_id=%s AND project_id=%s", (g_id, project_id))
         user = cursor.fetchone()
@@ -7468,8 +7486,20 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
             )
             user_id = cursor.fetchone()["id"]
             conn.commit()
+            is_new_user = True
         else:
             user_id = user["id"]
+
+    if is_new_user:
+        # OAuth callback isn't injected with BackgroundTasks (it's a redirect
+        # endpoint). dispatch_event has its own try/except so we just thread
+        # the call to keep the redirect snappy.
+        import threading
+        threading.Thread(
+            target=dispatch_event, daemon=True,
+            args=(project_id, "customer.created",
+                  {"user_id": user_id, "customer": {"name": sanitize(name), "email": email}}),
+        ).start()
 
     token   = create_token(user_id)
     refresh = issue_refresh_token(user_id, project_id, request, label="Google login")
@@ -7508,7 +7538,14 @@ OAUTH_PROVIDERS = {
         "token_url":     "https://discord.com/api/oauth2/token",
         "user_info_url": "https://discord.com/api/users/@me",
         "scope":         "identify email",
-        "extract":       _basic_extract("id", "email", "global_name"),
+        # Discord 2023+ migrated to handle-less accounts: legacy usernames have
+        # no global_name, fresh accounts have both. Prefer global_name (display),
+        # fall back to username (handle) so legacy users still get a sane name.
+        "extract":       lambda info: {
+            "id":    str(info.get("id") or ""),
+            "email": info.get("email"),
+            "name":  info.get("global_name") or info.get("username") or "",
+        },
     },
     "facebook": {
         "authorize_url": "https://www.facebook.com/v18.0/dialog/oauth",
@@ -7529,6 +7566,10 @@ OAUTH_PROVIDERS = {
         "token_url":     "https://bitbucket.org/site/oauth2/access_token",
         "user_info_url": "https://api.bitbucket.org/2.0/user",
         "scope":         "account email",
+        # Bitbucket's /2.0/user response doesn't include the email — it's at
+        # /2.0/user/emails. Without the fallback every Bitbucket signup would
+        # land with a `bitbucket_<uuid>@oauth.local` placeholder. Special-cased
+        # via the post-extract email fetch in _oauth_finish (see "bitbucket" branch).
         "extract":       _basic_extract("uuid", None, "display_name"),
     },
     "linkedin": {
@@ -7599,6 +7640,18 @@ OAUTH_PROVIDERS = {
         "extract":       _basic_extract("sub", "email", "name"),
     },
     "apple": {
+        # Production-grade Apple Sign-In:
+        #   • client_secret stored as JSON {team_id, key_id, private_key}
+        #     → _oauth_finish parses it and signs a fresh ES256 JWT per token
+        #       exchange (cached 50min, see _apple_client_secret_jwt).
+        #   • `name email` scope + form_post mode → Apple POSTs the callback
+        #     with `code`, `id_token`, and (first sign-in only) a `user` field
+        #     containing the display name. See @app.post("/apple/callback").
+        #   • id_token is verified against Apple's JWK set (cached 1h) before
+        #     trusting its claims — _verify_apple_id_token.
+        # Apple's cookie sameSite=lax POST callback works because we also set
+        # the state cookie with SameSite=None when the user clicks Login (see
+        # the apple branch in oauth_login).
         "authorize_url": "https://appleid.apple.com/auth/authorize",
         "token_url":     "https://appleid.apple.com/auth/token",
         "user_info_url": None,  # Apple returns user info inline in id_token
@@ -7618,18 +7671,6 @@ OAUTH_PROVIDERS = {
             "name":  d.get("username") or d.get("name"),
         })(info.get("data") or {}),
         "pkce":          True,
-    },
-    "vk": {
-        "authorize_url": "https://oauth.vk.com/authorize",
-        "token_url":     "https://oauth.vk.com/access_token",
-        "user_info_url": "https://api.vk.com/method/users.get?fields=email&v=5.131",
-        "scope":         "email",
-        # VK returns { response: [ { id, first_name, last_name } ] } and email via token resp
-        "extract":       lambda info: (lambda u: {
-            "id":    str(u.get("id") or ""),
-            "email": None,
-            "name":  f"{u.get('first_name','')} {u.get('last_name','')}".strip(),
-        })((info.get("response") or [{}])[0]),
     },
     "kakao": {
         "authorize_url": "https://kauth.kakao.com/oauth/authorize",
@@ -7667,6 +7708,117 @@ def _get_oauth_credentials(project_id: int, provider: str):
     return None, None
 
 
+# ── Apple Sign-In production helpers ──────────────────────────────────────
+#
+# Apple is unlike every other OAuth provider:
+#   1. `client_secret` is a freshly-signed ES256 JWT, not a static string.
+#      Merchant supplies the inputs (Team ID, Key ID, .p8 private key) in the
+#      `client_secret` column as a JSON blob — we sign on demand and cache for
+#      50 minutes (Apple's hard cap is 6 months).
+#   2. With scope including `name`, Apple POSTs the callback (form_post mode)
+#      and includes a `user` field on first sign-in only — captured below in
+#      the POST callback handler.
+#   3. id_token is a signed JWT — we verify against Apple's public JWK set
+#      (https://appleid.apple.com/auth/keys), refreshed hourly.
+
+_APPLE_JWT_CACHE: dict[tuple, tuple[str, float]] = {}   # (service_id,key_id) → (jwt, exp)
+_APPLE_JWK_CACHE: dict[str, tuple[dict, float]] = {}    # "keys" → (jwks_dict, fetched_at)
+_APPLE_AUD       = "https://appleid.apple.com"
+_APPLE_JWKS_URL  = "https://appleid.apple.com/auth/keys"
+
+
+def _parse_apple_credentials(client_secret_blob: str) -> dict:
+    """Apple's `client_secret` column holds a JSON blob with team_id, key_id,
+    private_key (PEM). Raises ValueError if malformed so callers can surface a
+    user-friendly error to the merchant."""
+    try:
+        data = json.loads(client_secret_blob or "{}")
+    except Exception:
+        raise ValueError("Apple client_secret must be JSON {team_id, key_id, private_key}")
+    team_id = (data.get("team_id") or "").strip()
+    key_id  = (data.get("key_id")  or "").strip()
+    pem     = (data.get("private_key") or "").strip()
+    if not team_id or len(team_id) != 10:
+        raise ValueError("Apple team_id must be 10 characters (Apple Developer → Membership)")
+    if not key_id or len(key_id) != 10:
+        raise ValueError("Apple key_id must be 10 characters (Apple Developer → Keys → your Sign-In key)")
+    if "PRIVATE KEY" not in pem:
+        raise ValueError("Apple private_key must be the PEM contents of the .p8 file (-----BEGIN PRIVATE KEY-----)")
+    return {"team_id": team_id, "key_id": key_id, "private_key": pem}
+
+
+def _apple_client_secret_jwt(service_id: str, team_id: str, key_id: str,
+                             private_key_pem: str) -> str:
+    """Returns a cached or freshly-signed ES256 JWT suitable for Apple's
+    /auth/token endpoint. Apple accepts up to 15777000s (6mo) but we reissue
+    every 50min — JWT signing is cheap and a short TTL limits blast-radius if
+    the private key ever leaks."""
+    cache_key = (service_id, key_id)
+    cached = _APPLE_JWT_CACHE.get(cache_key)
+    now = int(time.time())
+    if cached and cached[1] - now > 60:   # >1min left
+        return cached[0]
+    payload = {
+        "iss": team_id,
+        "iat": now,
+        "exp": now + 50 * 60,
+        "aud": _APPLE_AUD,
+        "sub": service_id,
+    }
+    token = jwt.encode(
+        payload, private_key_pem, algorithm="ES256",
+        headers={"alg": "ES256", "kid": key_id},
+    )
+    _APPLE_JWT_CACHE[cache_key] = (token, payload["exp"])
+    return token
+
+
+def _apple_jwks() -> dict:
+    """Apple's public JWK set — used to verify id_token signatures. Cached
+    1 hour; the keys rotate but old ones stay valid during the rotation
+    window so a 1h refresh is plenty."""
+    cached = _APPLE_JWK_CACHE.get("keys")
+    now = time.time()
+    if cached and now - cached[1] < 3600:
+        return cached[0]
+    try:
+        req = urllib.request.Request(_APPLE_JWKS_URL, headers={"User-Agent": "torta-crm/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        _APPLE_JWK_CACHE["keys"] = (data, now)
+        return data
+    except Exception as e:
+        print(f"[apple] JWK fetch failed: {e}")
+        # Return stale-but-cached if available; never raise (sign-in must keep working)
+        return cached[0] if cached else {"keys": []}
+
+
+def _verify_apple_id_token(id_token: str, audience: str) -> dict:
+    """Verifies + decodes Apple's id_token JWT. `audience` is the merchant's
+    Service ID (the `aud` claim Apple sets to). Returns the JWT payload, or
+    raises ValueError with a user-friendly message."""
+    try:
+        header = jwt.get_unverified_header(id_token)
+        kid = header.get("kid")
+    except Exception:
+        raise ValueError("Apple id_token is not a valid JWT")
+    jwks = _apple_jwks().get("keys") or []
+    key  = next((k for k in jwks if k.get("kid") == kid), None)
+    if not key:
+        raise ValueError(f"Apple id_token signed by unknown key '{kid}' — JWK set may be stale")
+    public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+    try:
+        payload = jwt.decode(
+            id_token, public_key, algorithms=["RS256"],
+            audience=audience, issuer=_APPLE_AUD,
+        )
+    except jwt.ExpiredSignatureError:
+        raise ValueError("Apple id_token has expired")
+    except jwt.InvalidTokenError as e:
+        raise ValueError(f"Apple id_token verification failed: {e}")
+    return payload
+
+
 @app.get("/{api_key}/auth/oauth/{provider}/login")
 def oauth_login(api_key: str, provider: str,
                 api_key_record: dict = Depends(resolve_api_key_public)):
@@ -7691,6 +7843,13 @@ def oauth_login(api_key: str, provider: str,
         params.update(cfg["extra_query"])
     # path="/" so cookies survive the cross-origin redirect from the provider
     cookie_path = "/"
+    # Apple uses form_post mode → the callback arrives as a cross-origin POST
+    # from appleid.apple.com. Cookies with SameSite=lax are NOT sent on
+    # cross-origin POST, so we set SameSite=none (requires Secure=true and
+    # therefore HTTPS — Apple won't work over plain HTTP localhost either way).
+    # All other providers use SameSite=lax which is sent on top-level GET.
+    state_samesite = "none" if provider == "apple" else "lax"
+    state_secure   = True   if provider == "apple" else COOKIE_SECURE
     if cfg.get("pkce"):
         import base64, hashlib as _h
         verifier = secrets.token_urlsafe(48)
@@ -7707,8 +7866,8 @@ def oauth_login(api_key: str, provider: str,
         return resp
     resp = RedirectResponse(cfg["authorize_url"] + "?" + urllib.parse.urlencode(params))
     resp.set_cookie(key=f"oa_state_{provider}", value=state,
-                    max_age=600, httponly=True, samesite="lax",
-                    secure=COOKIE_SECURE, path=cookie_path)
+                    max_age=600, httponly=True, samesite=state_samesite,
+                    secure=state_secure, path=cookie_path)
     return resp
 
 
@@ -7747,9 +7906,90 @@ def oauth_callback(api_key: str, provider: str, request: Request,
         return RedirectResponse(f"{frontend}/login?error={provider}_server_error")
 
 
+@app.post("/{api_key}/auth/oauth/apple/callback")
+async def apple_oauth_callback_post(api_key: str, request: Request,
+                                     api_key_record: dict = Depends(resolve_api_key_public)):
+    """Apple's form_post mode delivers the callback as `POST application/x-www-form-urlencoded`
+    with fields {code, id_token, state, user?}. We re-use the same _oauth_finish
+    flow as the GET callback, plus extract the `user` JSON (sent ONLY on first
+    sign-in) for the display name."""
+    project_id = api_key_record["id"]
+    frontend   = get_project_frontend_url(project_id)
+    if not frontend:
+        return RedirectResponse("/?error=site_url_not_configured")
+
+    cfg = OAUTH_PROVIDERS.get("apple")
+    if not cfg:
+        return RedirectResponse(f"{frontend}/login?error=unknown_provider")
+
+    try:
+        form = await request.form()
+    except Exception:
+        return RedirectResponse(f"{frontend}/login?error=apple_bad_form")
+    code  = form.get("code") or ""
+    state = form.get("state") or ""
+    user_blob = form.get("user") or ""
+
+    # State validation: cookie may be missing on cross-site POST over HTTP
+    # (SameSite=none requires Secure=true → HTTPS only). When the cookie isn't
+    # delivered, fall back to the JWT signature on id_token as the only
+    # authentication barrier — Apple's id_token cannot be forged.
+    cookie_state = request.cookies.get("oa_state_apple", "")
+    if cookie_state and not _hmac.compare_digest(state or "", cookie_state):
+        return RedirectResponse(f"{frontend}/login?error=apple_state_mismatch")
+
+    if not code:
+        return RedirectResponse(f"{frontend}/login?error=apple_cancelled")
+
+    client_id, client_secret = _get_oauth_credentials(project_id, "apple")
+    if not client_id:
+        return RedirectResponse(f"{frontend}/login?error=apple_not_configured")
+
+    # `user` field is JSON-encoded and present ONLY the first time a user signs
+    # in to this Service ID. After that Apple stops sending it — that's why we
+    # MUST persist the name on the very first signup; subsequent logins won't
+    # have it.
+    apple_user_name = None
+    if user_blob:
+        try:
+            data = json.loads(user_blob)
+            n = data.get("name") or {}
+            full = " ".join(p for p in (n.get("firstName"), n.get("lastName")) if p).strip()
+            if full:
+                apple_user_name = full
+        except Exception:
+            pass
+
+    redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key}/auth/oauth/apple/callback"
+
+    try:
+        return _oauth_finish("apple", cfg, code, client_id, client_secret,
+                             redirect_uri, project_id, frontend, request,
+                             apple_user_name=apple_user_name)
+    except Exception:
+        traceback.print_exc()
+        return RedirectResponse(f"{frontend}/login?error=apple_server_error")
+
+
 def _oauth_finish(provider, cfg, code, client_id, client_secret,
-                  redirect_uri, project_id, frontend, request):
+                  redirect_uri, project_id, frontend, request,
+                  apple_user_name: str | None = None):
     import urllib.parse, json as _json, base64
+
+    # Apple: replace the merchant-supplied JSON blob with a freshly-signed
+    # ES256 JWT. _parse_apple_credentials raises with a user-friendly message
+    # if any required field is missing or malformed.
+    if provider == "apple":
+        try:
+            creds = _parse_apple_credentials(client_secret)
+        except ValueError as e:
+            print(f"[apple] credentials parse failed: {e}")
+            return RedirectResponse(f"{frontend}/login?error=apple_bad_credentials")
+        client_secret = _apple_client_secret_jwt(
+            service_id=client_id,
+            team_id=creds["team_id"], key_id=creds["key_id"],
+            private_key_pem=creds["private_key"],
+        )
 
     # ── 1. Exchange code → access_token ──────────────────────────────────
     post_fields = {
@@ -7769,8 +8009,12 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
         "Accept":       "application/json",
         "User-Agent":   "torta-crm/1.0",
     }
-    # Some providers want HTTP Basic auth instead of body params
-    if provider in ("x", "spotify", "notion"):
+    # Some providers want HTTP Basic auth instead of body params for the
+    # token exchange. Zoom + Bitbucket REJECT body credentials and only accept
+    # Basic; Spotify/Notion/X accept either but Basic is the official path.
+    # Apple uses body-credential form (the JWT as client_secret) — do NOT
+    # switch to Basic for Apple.
+    if provider in ("x", "spotify", "notion", "zoom", "bitbucket"):
         basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
         headers["Authorization"] = f"Basic {basic}"
         post_fields.pop("client_id",     None)
@@ -7794,9 +8038,6 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
     if not access_token:
         return RedirectResponse(f"{frontend}/login?error={provider}_no_token")
 
-    # VK returns email in token response
-    vk_token_email = tokens.get("email") if provider == "vk" else None
-
     # ── 2. Fetch user info ───────────────────────────────────────────────
     if cfg.get("user_info_url"):
         ui_headers = {
@@ -7809,11 +8050,7 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
         # Notion needs special version header
         if provider == "notion":
             ui_headers["Notion-Version"] = "2022-06-28"
-        # VK requires access_token in query string, not bearer header
         url = cfg["user_info_url"]
-        if provider == "vk":
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}access_token={access_token}"
         try:
             ui_req = urllib.request.Request(url, headers=ui_headers, method="GET")
             with urllib.request.urlopen(ui_req, timeout=15) as resp:
@@ -7822,21 +8059,28 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
             print(f"[{provider}] user_info error: {e}")
             return RedirectResponse(f"{frontend}/login?error={provider}_user_info")
     else:
-        # Apple: parse id_token JWT (no signature check for demo — production must verify)
+        # Apple: verify the id_token JWT against Apple's public JWK set (cached
+        # 1 h). Verifies signature + aud (== our Service ID == client_id) +
+        # issuer (https://appleid.apple.com) + exp.
         id_token_str = tokens.get("id_token", "")
+        if not id_token_str:
+            return RedirectResponse(f"{frontend}/login?error={provider}_no_id_token")
         try:
-            payload = id_token_str.split(".")[1]
-            payload += "=" * (-len(payload) % 4)
-            user_info = _json.loads(base64.urlsafe_b64decode(payload))
-        except Exception as e:
-            print(f"[{provider}] id_token decode error: {e}")
+            user_info = _verify_apple_id_token(id_token_str, audience=client_id)
+        except ValueError as e:
+            print(f"[{provider}] id_token verification failed: {e}")
             return RedirectResponse(f"{frontend}/login?error={provider}_id_token")
 
     # ── 3. Extract canonical { id, email, name } ─────────────────────────
     extracted = cfg["extract"](user_info)
     oid   = extracted["id"]
-    email = (extracted.get("email") or vk_token_email or "").strip().lower() or None
-    name  = (extracted.get("name") or (email.split("@")[0] if email else f"{provider}_user_{oid[:8]}"))
+    email = (extracted.get("email") or "").strip().lower() or None
+    # Apple sends the display name only on first sign-in via the `user` field
+    # in the POST callback; pass-through here so the new user gets their real
+    # name instead of the email prefix.
+    name  = (apple_user_name
+             or extracted.get("name")
+             or (email.split("@")[0] if email else f"{provider}_user_{oid[:8]}"))
 
     if not oid:
         return RedirectResponse(f"{frontend}/login?error={provider}_no_id")
@@ -7854,6 +8098,29 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
             primary = next((e for e in emails if e.get("primary") and e.get("verified")), None)
             if primary:
                 email = primary["email"].lower()
+        except Exception:
+            pass
+
+    # Bitbucket /2.0/user never returns the email — it lives on /2.0/user/emails
+    # behind the `email` scope. Without this branch every Bitbucket signup would
+    # land with a synthetic `bitbucket_<uuid>@oauth.local` placeholder.
+    if provider == "bitbucket" and not email:
+        try:
+            req3 = urllib.request.Request(
+                "https://api.bitbucket.org/2.0/user/emails",
+                headers={"Authorization": f"Bearer {access_token}",
+                         "Accept": "application/json", "User-Agent": "torta-crm/1.0"},
+            )
+            with urllib.request.urlopen(req3, timeout=10) as r3:
+                payload = _json.loads(r3.read())
+            for e in (payload.get("values") or []):
+                if e.get("is_primary") and e.get("is_confirmed") and e.get("email"):
+                    email = e["email"].lower(); break
+            # Fall back to first confirmed if no primary marked
+            if not email:
+                for e in (payload.get("values") or []):
+                    if e.get("is_confirmed") and e.get("email"):
+                        email = e["email"].lower(); break
         except Exception:
             pass
 
@@ -7880,8 +8147,9 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
                 )
                 conn.commit()
         # 4c. Create new user
+        is_new_user = False
         if not user:
-            # Email may be missing (X, VK without scope) — generate a stable placeholder
+            # Email may be missing (X doesn't return it without elevated access) — generate a stable placeholder
             email_to_use = email or f"{provider}_{oid}@oauth.local"
             try:
                 cursor.execute(
@@ -7892,6 +8160,7 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
                 )
                 user_id = cursor.fetchone()["id"]
                 conn.commit()
+                is_new_user = True
             except psycopg2.errors.UniqueViolation:
                 conn.rollback()
                 # Race: user got created between our SELECT and INSERT — re-fetch
@@ -7905,6 +8174,15 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
                 user_id = row["id"]
         else:
             user_id = user["id"]
+
+    if is_new_user:
+        import threading
+        threading.Thread(
+            target=dispatch_event, daemon=True,
+            args=(project_id, "customer.created",
+                  {"user_id": user_id,
+                   "customer": {"name": sanitize(name), "email": email or ""}}),
+        ).start()
 
     token   = create_token(user_id)
     refresh = issue_refresh_token(user_id, project_id, request, label=f"{provider} login")
@@ -8403,6 +8681,7 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
 
     # ── Find or create user (race-safe) ───────────────────────────────
     name = pending.get("name") or f"User {phone[-4:]}"
+    is_new_user = False
     with db_cursor() as (conn, cur):
         cur.execute(
             "SELECT id FROM users WHERE phone=%s AND project_id=%s",
@@ -8420,6 +8699,7 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
                     (sanitize(name), f"phone_{phone}@phone.local", project_id, phone),
                 )
                 user_id = cur.fetchone()["id"]
+                is_new_user = True
             except psycopg2.errors.UniqueViolation:
                 # Concurrent INSERT won the race — find the existing row
                 conn.rollback()
@@ -8432,6 +8712,15 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
                     raise HTTPException(500, "Authentication failed")
                 user_id = row["id"]
         conn.commit()
+
+    if is_new_user:
+        import threading
+        threading.Thread(
+            target=dispatch_event, daemon=True,
+            args=(project_id, "customer.created",
+                  {"user_id": user_id, "phone": phone,
+                   "customer": {"name": sanitize(name), "phone": phone}}),
+        ).start()
 
     _phone_otp_del(project_id, phone)
     # Reset send-rate buckets on successful verify so legit users aren't punished

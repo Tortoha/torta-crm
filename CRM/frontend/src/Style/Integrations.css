@@ -330,6 +330,36 @@
   flex-shrink: 0;
 }
 
+/* Secret-input wrapper used by API connectors (GA4 api_secret, Mailchimp api_key).
+   Eye toggle sits inside the rounded pill input on the right edge. */
+.int-secret-input-wrap {
+  position: relative;
+}
+.int-secret-input-wrap .crm-input {
+  padding-right: 38px;
+}
+.int-secret-reveal {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.int-secret-reveal:hover {
+  background: rgba(0, 113, 227, 0.08);
+  color: var(--accent);
+}
+
 .int-events-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -470,4 +500,395 @@
   font-weight: 600;
   color: var(--text);
   margin: 0 0 6px;
+}
+
+/* ── Region filter Combobox (Browse toolbar, far-right edge) ────────── */
+.int-region-combo {
+  width: 200px;
+  flex-shrink: 0;
+  margin-left: auto;   /* push to the right side of the toolbar */
+}
+/* Match the search-input height (36px) so the two controls sit on the
+   same baseline. The default cpm-cat-btn padding is 11px which makes it
+   ~40px tall — too tall here. Also flatten the font-weight so it doesn't
+   read as bolder than the search placeholder. */
+.int-region-combo .cpm-cat-btn {
+  padding: 8px 14px 8px 16px;
+  font-weight: 400 !important;
+  font-size: 13px;
+}
+
+/* ── Coming-soon row (expandable) ───────────────────────────────────── */
+.int-soon-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.int-soon-row {
+  cursor: pointer !important;
+  opacity: 0.78;
+  transition: opacity 0.18s ease, background 0.18s ease;
+}
+.int-soon-row:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.02);
+}
+.int-soon-wrap--open .int-soon-row {
+  opacity: 1;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.int-soon-name {
+  color: var(--text);
+}
+
+.int-soon-panel {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 16px 20px 20px 76px;
+  border-radius: 0 0 14px 14px;
+  margin-top: -1px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: int-soon-fade 0.22s ease;
+}
+@keyframes int-soon-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.int-soon-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.int-soon-feature-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+.int-soon-feature-list li { margin-bottom: 2px; }
+.int-notify-btn {
+  align-self: flex-start;
+}
+
+/* ── Accounting modal ──────────────────────────────────────────────── */
+.acc-modal { width: min(820px, 96vw); }
+.acc-modal--narrow { width: min(560px, 96vw); }
+
+/* Bare-label layout: tighter gap than the old card-stack since each child
+   is now a label or a small content block rather than a padded card. */
+.acc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Section titles inside the Accounting modal: drop the uppercase + muted
+   warehouse-style styling in favour of a readable sentence-case label so
+   "Period" / "Preview" / "Email schedule" read as section headers, not as
+   metadata labels. Reuses the same .po-wh-section-label class for layout
+   (no card wrapper, sits in the flow) — only restyle text. */
+.acc-modal .po-wh-section-label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 16px;
+  padding: 0;
+}
+.acc-modal .po-wh-section-label:first-of-type {
+  margin-top: 8px;
+}
+
+.acc-format-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--accent-tint);
+  border-radius: 14px;
+  color: var(--accent);
+}
+.acc-format-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.acc-format-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+}
+
+/* Section titles are bare labels (po-wh-section-label) sitting directly
+   above the content — no card wrapper. The --row variant is for sections
+   that need a trailing control (e.g. Refresh button on the Preview header). */
+.po-wh-section-label--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.po-wh-section-label--row .acc-refresh {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+}
+.po-wh-section-label--row .acc-refresh:hover { opacity: 0.7; }
+.po-wh-section-label--row .acc-refresh:disabled { opacity: 0.5; cursor: default; }
+
+/* Period row — single line: Combobox + Include-unpaid toggle side-by-side */
+.acc-period-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.acc-period-row .acc-field--grow {
+  flex: 1;
+  min-width: 220px;
+}
+.acc-include-toggle {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.acc-custom-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.acc-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.acc-toggle-row input { cursor: pointer; }
+
+/* Field rows reused in modal */
+.acc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.acc-field--grow { width: 100%; }
+.acc-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.acc-field-foot {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 2px 0 0;
+}
+.acc-textarea {
+  border-radius: 16px !important;
+  padding: 10px 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+/* Preview */
+.acc-preview-loading,
+.acc-preview-empty {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0;
+}
+.acc-preview-err {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #d93025;
+  background: rgba(217, 48, 37, 0.08);
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+/* Preview stats row — sits ABOVE the preview table, mirrors
+   Analytics → Margin analysis visually (Kpi cards on white tiles). Styles
+   are replicated locally rather than importing Analytics.css to avoid
+   pulling in the entire analytics stylesheet (1200+ lines) for one section. */
+.acc-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 0 0 4px;
+}
+@media (max-width: 700px) {
+  .acc-stats-row { grid-template-columns: repeat(1, 1fr); }
+}
+.acc-stats-row .an-kpi {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.acc-stats-row .an-kpi-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.acc-stats-row .an-kpi-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Smaller value font for the "Window" KPI which holds longer text like
+   "Last 30 days" or "Q4 2026" — otherwise it wraps awkwardly. */
+.acc-stats-row .an-kpi-value--small {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Preview table — reuses Products .po-set-table grid skeleton. */
+.acc-preview-pst {
+  margin-top: 6px;
+}
+.acc-preview-pst-row {
+  grid-template-columns: 70px 100px 1fr 70px 110px !important;
+}
+.acc-num { text-align: right; font-variant-numeric: tabular-nums; }
+.acc-mono { font-family: ui-monospace, monospace; }
+
+.acc-preview-foot {
+  font-size: 11px;
+  color: var(--accent);
+  background-color: var(--accent-tint);
+  padding: 8px 12px;
+  margin: 6px 0 0;
+  border-radius: 8px;
+}
+
+/* Setup steps */
+.acc-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+.acc-steps li { margin-bottom: 4px; }
+
+/* Action row override — wraps when the modal is narrow.
+   .acc-btn-action: enforce flex alignment so icon + text sit on the same
+   baseline (default <button> text-baseline + inline-svg can leave the
+   icon visually 1-2px off-centre, which the user spotted on Download).
+   .acc-btn-delete: right-aligned with same padding so neither end looks
+   "stuck to the wall". */
+.acc-actions { flex-wrap: wrap; }
+.acc-btn-action {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1;
+}
+.acc-btn-action > svg {
+  flex-shrink: 0;
+  display: block;
+}
+.acc-btn-delete {
+  margin-left: auto;
+  padding: 8px 16px;
+}
+
+/* Coming-soon (Request) modal extras */
+.acc-soon-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: var(--accent-tint);
+  border-radius: 14px;
+  color: var(--accent);
+}
+.acc-soon-banner > svg { flex-shrink: 0; margin-top: 2px; }
+.acc-soon-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.acc-soon-sub {
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.85;
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.acc-feature-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+.acc-feature-list li { margin-bottom: 3px; }
+
+.acc-soon-thanks {
+  text-align: center;
+  padding: 24px 12px;
+}
+.acc-soon-thanks-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 12px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 700;
+}
+.acc-soon-thanks h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.acc-soon-thanks p {
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: var(--muted);
 }

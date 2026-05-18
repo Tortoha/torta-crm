@@ -382,6 +382,33 @@ def run_migrations():
             cur.execute("ALTER TABLE crm_chat_messages ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_conv_project ON crm_chat_conversations(project_id, is_active, last_message_at DESC)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON crm_chat_messages(conversation_id, created_at)")
+            # Email channel: dedicated raw-message log for idempotency + forensics.
+            # `message_id` is the email's Message-Id header (unique per send);
+            # UNIQUE(project_id, message_id) prevents double-ingest if Postfix
+            # retries delivery to our pipe.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_email_inbound (
+                    id           BIGSERIAL PRIMARY KEY,
+                    project_id   INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    message_id   TEXT    NOT NULL,
+                    in_reply_to  TEXT,
+                    "references" TEXT,
+                    from_email   TEXT    NOT NULL,
+                    from_name    TEXT,
+                    to_email     TEXT    NOT NULL,
+                    subject      TEXT,
+                    body_text    TEXT,
+                    body_html    TEXT,
+                    raw_size     INTEGER NOT NULL DEFAULT 0,
+                    spf_pass     BOOLEAN,
+                    dkim_pass    BOOLEAN,
+                    received_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    conv_id      INTEGER REFERENCES crm_chat_conversations(id) ON DELETE SET NULL,
+                    msg_id       INTEGER REFERENCES crm_chat_messages(id) ON DELETE SET NULL,
+                    UNIQUE (project_id, message_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_email_inbound_project ON crm_email_inbound(project_id, received_at DESC)")
             conn.commit()
     except Exception as e:
         print(f"[migration] chat tables migration failed: {e}")
@@ -11742,13 +11769,13 @@ def delete_oauth_settings(project_id: int = Query(...), user: dict = Depends(get
     return {"ok": True}
 
 
-# ── GENERIC OAUTH PROVIDERS (GitHub, Discord, Facebook, GitLab, Bitbucket, LinkedIn, Twitch, Spotify, Slack, Notion, Figma, Zoom, Azure, Apple, X, VK, Kakao, KeyCloak) ──
+# ── GENERIC OAUTH PROVIDERS (GitHub, Discord, Facebook, GitLab, Bitbucket, LinkedIn, Twitch, Spotify, Slack, Notion, Figma, Zoom, Azure, Apple, X, Kakao, KeyCloak) ──
 
 # Whitelist of providers handled in External — add to OAUTH_PROVIDERS in External/main.py when extending.
 ALLOWED_AUTH_PROVIDERS = {
     "github", "discord", "facebook", "gitlab", "bitbucket", "linkedin",
     "twitch", "spotify", "slack", "notion", "figma", "zoom",
-    "azure", "apple", "x", "vk", "kakao", "keycloak",
+    "azure", "apple", "x", "kakao", "keycloak",
 }
 
 @app.get("/api/auth-providers")
@@ -13232,18 +13259,21 @@ def refund_return(project_id: int, return_id: int, body: RefundReturnBody,
 
 # Channels: real-time (localhost, no HTTPS) — telegram(long-poll)/discord(Gateway WS)/vk(Long Poll)/webchat(widget); webhook (prod, HTTPS) — whatsapp/instagram/facebook(Meta Graph), viber, x.
 CHAT_CHANNELS = {
-    "telegram", "discord", "vk", "webchat",
+    "telegram", "discord", "webchat", "email",
     "whatsapp", "instagram", "facebook", "viber", "x",
 }
-CHAT_REALTIME_CHANNELS = {"telegram", "discord", "vk", "webchat"}
-CHAT_WEBHOOK_CHANNELS  = {"whatsapp", "instagram", "facebook", "viber", "x"}
+CHAT_REALTIME_CHANNELS = {"telegram", "discord", "webchat"}
+CHAT_WEBHOOK_CHANNELS  = {"whatsapp", "instagram", "facebook", "viber", "x", "email"}
 
 # Per-channel required config keys for validation
 CHAT_REQUIRED_KEYS: dict[str, tuple] = {
     "telegram":  ("bot_token",),
     "discord":   ("bot_token",),
-    "vk":        ("group_id", "access_token"),
     "webchat":   (),  # no credentials — uses project's existing api_key
+    # Email channel: merchant supplies the domain (must match a verified Auth
+    # Providers email domain) and a local-part. Backend auto-derives the
+    # actual receiving alias and validates ownership.
+    "email":     ("domain",),
     "whatsapp":  ("phone_number_id", "access_token", "verify_token"),
     "instagram": ("page_id", "access_token", "verify_token"),
     "facebook":  ("page_id", "access_token", "verify_token"),
@@ -13378,11 +13408,12 @@ async def _handle_inbound_message(project_id: int, channel: str,
                                   external_chat_id: str, text: str,
                                   external_msg_id: str = "",
                                   attachments: list | None = None):
-    """Channel-agnostic inbound: upsert conversation, insert message (+attachments), broadcast."""
+    """Channel-agnostic inbound: upsert conversation, insert message (+attachments), broadcast.
+    Returns (conv_id, msg_id) on success, (None, None) when dropped as empty."""
     attachments = attachments or []
     # Drop empty messages — but keep ones that ONLY have an attachment (e.g. Telegram voice with no caption).
     if not external_chat_id or (not text and not attachments):
-        return
+        return (None, None)
 
     contact_uid = make_contact_uid(channel, external_chat_id, project_id)
     preview     = sanitize(text[:200]) if text else _attachment_preview(attachments)
@@ -13423,6 +13454,7 @@ async def _handle_inbound_message(project_id: int, channel: str,
         "conversation": _serialize_conv(conv),
         "message":      _serialize_msg(message, project_id),
     })
+    return (conv["id"], message["id"])
 
 
 # Short label shown in the conversation list when the message has no text body.
@@ -13495,33 +13527,6 @@ def _extract_discord_attachments(msg: dict) -> list:
         out.append({"type": kind, "url": a.get("url"),
                     "mime": mime, "filename": a.get("filename"),
                     "size": a.get("size"), "duration": a.get("duration_secs")})
-    return out
-
-
-def _extract_vk_attachments(msg: dict) -> list:
-    out = []
-    for att in (msg.get("attachments") or []):
-        t = att.get("type")
-        if t == "photo":
-            sizes = (att.get("photo") or {}).get("sizes") or []
-            if sizes:
-                best = max(sizes, key=lambda s: (s.get("width") or 0) * (s.get("height") or 0))
-                out.append({"type": "image", "url": best.get("url"), "mime": "image/jpeg"})
-        elif t == "video":
-            v = att.get("video") or {}
-            # VK doesn't always give a direct mp4 URL — fall back to the player URL.
-            url = v.get("player") or (v.get("files") or {}).get("mp4_480") or (v.get("files") or {}).get("mp4_360")
-            out.append({"type": "video", "url": url, "mime": "video/mp4",
-                        "duration": v.get("duration"), "thumb": (v.get("image") or [{}])[-1].get("url")})
-        elif t == "audio_message":
-            a = att.get("audio_message") or {}
-            out.append({"type": "voice", "url": a.get("link_ogg") or a.get("link_mp3"),
-                        "mime": "audio/ogg", "duration": a.get("duration")})
-        elif t == "doc":
-            d = att.get("doc") or {}
-            mime = d.get("ext") and f"application/{d['ext']}" or "application/octet-stream"
-            out.append({"type": "file", "url": d.get("url"),
-                        "mime": mime, "filename": d.get("title"), "size": d.get("size")})
     return out
 
 
@@ -13805,132 +13810,6 @@ def _discord_call(token: str, method: str, path: str, payload: dict | None = Non
         raise HTTPException(503, f"Discord unreachable: {e}")
 
 
-# ── VK Long Poll for groups (works on localhost without HTTPS) ────────────────
-
-class VKPoller:
-    """VK Bots Long Poll — receives messages sent to a community.
-
-    Requires:
-      - group_id      (numeric VK group/community id)
-      - access_token  (group token with `messages` scope, generated in group settings)
-    Group settings → API usage → Long Poll API → Enabled, version 5.131."""
-
-    API_BASE = "https://api.vk.com/method"
-    API_VER  = "5.131"
-
-    def __init__(self):
-        self._tasks: dict[int, asyncio.Task] = {}
-
-    async def start(self, project_id: int, group_id: str, token: str):
-        await self.stop(project_id)
-        task = asyncio.create_task(self._run(project_id, group_id, token))
-        self._tasks[project_id] = task
-        print(f"[vk poller] started for project {project_id}")
-
-    async def stop(self, project_id: int):
-        task = self._tasks.pop(project_id, None)
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            print(f"[vk poller] stopped for project {project_id}")
-
-    async def start_all(self):
-        loop = asyncio.get_event_loop()
-        rows = await loop.run_in_executor(
-            None,
-            lambda: db_all(
-                "SELECT project_id, config FROM crm_chat_integrations WHERE channel='vk' AND is_active=TRUE",
-                ()
-            )
-        )
-        for row in rows:
-            cfg = row["config"] or {}
-            gid, tok = cfg.get("group_id"), cfg.get("access_token")
-            if gid and tok:
-                await self.start(row["project_id"], str(gid), tok)
-
-    def _api(self, token: str, method: str, params: dict) -> dict:
-        params = {**params, "access_token": token, "v": self.API_VER}
-        url = f"{self.API_BASE}/{method}"
-        body = urllib.parse.urlencode(params).encode()
-        req = urllib.request.Request(url, data=body, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
-
-    async def _run(self, project_id: int, group_id: str, token: str):
-        loop = asyncio.get_event_loop()
-        try:
-            while True:
-                try:
-                    server_info = await loop.run_in_executor(
-                        None,
-                        lambda: self._api(token, "groups.getLongPollServer", {"group_id": group_id})
-                    )
-                    if "response" not in server_info:
-                        err = server_info.get("error", {}).get("error_msg", "unknown")
-                        print(f"[vk poller] cannot get LP server project={project_id}: {err}")
-                        await asyncio.sleep(15)
-                        continue
-
-                    lp     = server_info["response"]
-                    server = lp["server"]
-                    key    = lp["key"]
-                    ts     = lp["ts"]
-
-                    while True:
-                        url    = f"{server}?act=a_check&key={key}&ts={ts}&wait=25"
-                        result = await loop.run_in_executor(
-                            None,
-                            lambda u=url: json.loads(urllib.request.urlopen(u, timeout=30).read())
-                        )
-                        if "failed" in result:
-                            # 1: ts outdated → use new ts; 2/3: re-fetch server info
-                            if result["failed"] == 1 and "ts" in result:
-                                ts = result["ts"]; continue
-                            break  # break inner loop, refetch LP server
-                        ts = result.get("ts", ts)
-                        for upd in result.get("updates", []):
-                            if upd.get("type") != "message_new":
-                                continue
-                            msg = (upd.get("object") or {}).get("message") or {}
-                            external_chat_id = str(msg.get("peer_id", ""))
-                            text = (msg.get("text") or "").strip()
-                            try:
-                                await _handle_inbound_message(
-                                    project_id, "vk", external_chat_id, text,
-                                    external_msg_id=str(msg.get("id", "")),
-                                    attachments=_extract_vk_attachments(msg),
-                                )
-                            except Exception as e:
-                                print(f"[vk poller] process error: {e}")
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    print(f"[vk poller] error project={project_id}: {e}")
-                    await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            return
-
-
-vk_poller = VKPoller()
-
-
-def _vk_call(token: str, method: str, params: dict) -> dict:
-    """Synchronous VK API call (validation, send, etc.)."""
-    full = {**params, "access_token": token, "v": VKPoller.API_VER}
-    url  = f"{VKPoller.API_BASE}/{method}"
-    body = urllib.parse.urlencode(full).encode()
-    req  = urllib.request.Request(url, data=body, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read())
-    except Exception as e:
-        raise HTTPException(503, f"VK unreachable: {e}")
-
-
 # ── Meta Graph API helpers (WhatsApp / Instagram / Facebook) ──────────────────
 
 def _meta_call(method: str, path: str, access_token: str,
@@ -13989,11 +13868,6 @@ async def start_telegram_polling():
 @app.on_event("startup")
 async def start_discord_polling():
     await discord_poller.start_all()
-
-
-@app.on_event("startup")
-async def start_vk_polling():
-    await vk_poller.start_all()
 
 
 def _user_from_token(token: str) -> dict | None:
@@ -14087,6 +13961,51 @@ def list_chat_integrations(project_id: int = Query(...), user: dict = Depends(ge
     }
 
 
+# Per-channel non-secret config keys safe to return on GET. Anything not listed
+# here is hidden (bot_tokens, access_tokens, app_secrets, etc.) so the edit
+# modal can pre-fill display fields without leaking auth credentials.
+_CHAT_PUBLIC_CONFIG_KEYS = {
+    "email":    ("domain", "reply_local", "reply_name"),
+    "x":        ("handle",),
+    # Telegram / Discord / WhatsApp / Instagram / Facebook / Viber: all of
+    # their config keys are secrets — no public fields.
+}
+
+
+@app.get("/api/chat/integrations/{channel}")
+def get_chat_integration(channel: str,
+                         project_id: int = Query(...),
+                         user: dict = Depends(get_current_user)):
+    """Single-integration detail with non-secret config fields (e.g. Email's
+    reply_local + reply_name) so the edit modal can pre-fill them. Secrets
+    are stripped via the _CHAT_PUBLIC_CONFIG_KEYS allowlist."""
+    require_team_member_or_owner(user, project_id)
+    channel = channel.lower().strip()
+    if channel not in CHAT_CHANNELS:
+        raise HTTPException(400, "Unsupported channel")
+    row = db_one(
+        "SELECT channel, is_active, bot_username, config FROM crm_chat_integrations"
+        " WHERE project_id=%s AND channel=%s",
+        (project_id, channel)
+    )
+    if not row:
+        return {"configured": False, "channel": channel, "is_active": False,
+                "bot_username": None, "config": {}}
+    cfg = row.get("config") or {}
+    if isinstance(cfg, str):
+        try:    cfg = json.loads(cfg)
+        except Exception: cfg = {}
+    allow = _CHAT_PUBLIC_CONFIG_KEYS.get(channel, ())
+    safe = {k: cfg.get(k, "") for k in allow}
+    return {
+        "configured":   True,
+        "channel":      row["channel"],
+        "is_active":    row["is_active"],
+        "bot_username": row["bot_username"],
+        "config":       safe,
+    }
+
+
 @app.post("/api/chat/integrations")
 async def save_chat_integration(req: ChatIntegrationRequest,
                                 project_id: int = Query(...),
@@ -14130,18 +14049,6 @@ async def save_chat_integration(req: ChatIntegrationRequest,
             raise HTTPException(400, "Discord rejected the token")
         bot_username = username + (f"#{info['discriminator']}" if info.get("discriminator") and info["discriminator"] != "0" else "")
 
-    elif channel == "vk":
-        token   = config["access_token"]
-        gid     = config["group_id"]
-        info    = await loop.run_in_executor(None,
-            lambda: _vk_call(token, "groups.getById", {"group_id": gid}))
-        if "error" in info:
-            raise HTTPException(400, info["error"].get("error_msg", "VK rejected the token"))
-        groups = info.get("response") or []
-        if not groups:
-            raise HTTPException(400, "VK group not found")
-        bot_username = groups[0].get("name") or groups[0].get("screen_name")
-
     elif channel in ("whatsapp", "instagram", "facebook"):
         token = config["access_token"]
         # Validate token by hitting /me
@@ -14171,6 +14078,39 @@ async def save_chat_integration(req: ChatIntegrationRequest,
         # X Account Activity API: creds stored only; subscription must be registered through dev portal manually.
         bot_username = config.get("handle") or "X account"
 
+    elif channel == "email":
+        # The `domain` field must be a verified email domain on this project.
+        # Without this guard, a merchant could claim another project's domain
+        # and intercept their incoming mail.
+        domain = (config.get("domain") or "").strip().lower()
+        if not domain:
+            raise HTTPException(400, "Email domain required")
+        verified = await loop.run_in_executor(None, lambda: db_one(
+            "SELECT id FROM crm_email_domains WHERE project_id=%s AND LOWER(domain)=%s AND is_verified=TRUE",
+            (project_id, domain),
+        ))
+        if not verified:
+            raise HTTPException(
+                400,
+                f"Domain {domain!r} is not verified for this project. "
+                "Add and verify it in Authentication → Email first."
+            )
+        # Optional per-channel "Reply-from" customisation. Lets the merchant
+        # use e.g. `support` + "Torta Support" for chat replies even though
+        # OTP emails go from `noreply` + "Torta CRM". Local-part validated
+        # against a conservative RFC 5321 subset to keep header injection out.
+        reply_local = (config.get("reply_local") or "").strip().lower()
+        if reply_local:
+            if not re.fullmatch(r"[a-z0-9._+\-]{1,64}", reply_local):
+                raise HTTPException(400, "Reply-from local-part may only contain letters, digits, ._+-")
+            config["reply_local"] = reply_local
+        reply_name = (config.get("reply_name") or "").strip()
+        if reply_name:
+            # Strip newlines/CR to prevent header injection via display name.
+            reply_name = re.sub(r"[\r\n]+", " ", reply_name)[:120]
+            config["reply_name"] = sanitize(reply_name)
+        bot_username = domain  # surfaces as the "account" label in the chat list
+
     # ── Persist ───────────────────────────────────────────────────────────────
     def _save():
         with db_cursor() as (conn, cur):
@@ -14190,8 +14130,6 @@ async def save_chat_integration(req: ChatIntegrationRequest,
             await telegram_poller.start(project_id, config["bot_token"])
         elif channel == "discord":
             await discord_poller.start(project_id, config["bot_token"])
-        elif channel == "vk":
-            await vk_poller.start(project_id, config["group_id"], config["access_token"])
 
     # ── Return webhook URL hint for webhook-only channels ─────────────────────
     extra: dict = {}
@@ -14230,8 +14168,6 @@ async def delete_chat_integration(channel: str,
                     pass
     elif channel == "discord":
         await discord_poller.stop(project_id)
-    elif channel == "vk":
-        await vk_poller.stop(project_id)
 
     # ── Persist ───────────────────────────────────────────────────────────────
     def _delete():
@@ -14457,19 +14393,6 @@ async def send_message(conv_id: int,
         result = _discord_call(token, "POST", f"/channels/{chat_id}/messages", {"content": text})
         external_msg_id = str(result.get("id", ""))
 
-    elif ch == "vk":
-        token = cfg.get("access_token")
-        if not token:
-            raise HTTPException(400, "VK token missing")
-        result = _vk_call(token, "messages.send", {
-            "peer_id":   chat_id,
-            "message":   text,
-            "random_id": secrets.randbits(31),
-        })
-        if "error" in result:
-            raise HTTPException(400, result["error"].get("error_msg", "VK send failed"))
-        external_msg_id = str(result.get("response", ""))
-
     elif ch == "whatsapp":
         token = cfg.get("access_token")
         phone = cfg.get("phone_number_id")
@@ -14513,6 +14436,31 @@ async def send_message(conv_id: int,
     elif ch == "webchat":
         # Web-chat replies are stored only — widget polls GET /{api_key}/api/chat/messages?since_id=N.
         external_msg_id = ""
+
+    elif ch == "email":
+        # Reply by emailing the conversation's sender. Pull the In-Reply-To +
+        # subject + references off the most recent inbound message in this
+        # thread so Gmail/Outlook collapse the reply into the same thread.
+        thread = db_one(
+            """SELECT m.attachments, m.external_msg_id
+                 FROM crm_chat_messages m
+                WHERE m.conversation_id = %s AND m.direction = 'in'
+                ORDER BY m.id DESC LIMIT 1""",
+            (conv_id,)
+        )
+        in_reply_to = ""
+        refs = ""
+        subj = "your message"
+        if thread:
+            meta_list = thread.get("attachments") or []
+            meta = next((a for a in meta_list if a.get("type") == "email_meta"), {})
+            in_reply_to = meta.get("in_reply_to") or thread.get("external_msg_id") or ""
+            refs        = meta.get("references")  or ""
+            subj        = meta.get("subject")     or subj
+        external_msg_id = _send_email_reply(
+            project_id, chat_id, subj, text,
+            in_reply_to=in_reply_to, references=refs,
+        )
 
     elif ch == "x":
         token = cfg.get("bearer_token")
@@ -14769,6 +14717,266 @@ async def internal_chat_inbound(req: WebChatInboundRequest, request: Request):
         req.project_id, "webchat", req.web_chat_id, text[:4000],
     )
     return {"ok": True}
+
+
+# ── Email channel: inbound + outbound + helpers ──────────────────────────
+#
+# Flow:
+#   1. Customer sends mail to support@verified-merchant-domain.com
+#   2. DNS MX for verified-merchant-domain.com points to mail.tortacrm.com
+#   3. Postfix on the VPS pipes the raw mail to a Python script
+#      (deployed at /opt/ses/email_to_crm.py — see Notes/Chat Channels.md)
+#      which parses headers + bodies and POSTs JSON to this endpoint
+#      authenticated by INTERNAL_API_KEY.
+#   4. We route by destination address → project (only matches if the email
+#      domain is in crm_email_domains.is_verified for that project), upsert
+#      conversation keyed by sender email, insert message, broadcast via
+#      ChatHub. Message-Id is stored in external_msg_id for dedup +
+#      In-Reply-To threading on outbound replies.
+#
+# Security model:
+#   - Cross-tenant isolation: only verified domains route to their project
+#   - Idempotency: UNIQUE(project_id, message_id) prevents double-ingest
+#   - Auth: INTERNAL_API_KEY shared secret (same as WebChat inbound path)
+#   - Sender trust: we display the From header but don't trust it — the
+#     merchant decides whether to reply. SPF/DKIM pass flags are stored as
+#     metadata so the operator can spot forged mail.
+#   - No raw HTML rendering: body_html stored but stripped to text before
+#     showing in chat UI (sanitize() removes script/iframe/etc.)
+
+class EmailInboundRequest(BaseModel):
+    message_id:   str            # Email Message-Id header (unique per send)
+    from_email:   str
+    from_name:    Optional[str] = ""
+    to_email:     str            # The recipient address Postfix delivered to
+    subject:      Optional[str] = ""
+    body_text:    Optional[str] = ""
+    body_html:    Optional[str] = ""
+    in_reply_to:  Optional[str] = ""
+    references:   Optional[str] = ""
+    raw_size:     Optional[int] = 0
+    spf_pass:     Optional[bool] = None
+    dkim_pass:    Optional[bool] = None
+
+
+def _resolve_email_project(to_email: str) -> Optional[dict]:
+    """Find which project owns this incoming address.
+
+    The destination domain must be a verified email domain
+    (crm_email_domains.is_verified=TRUE) on the project. Local-part is
+    accepted as-is — operator decides which addresses to monitor via the
+    Chat Channel config (whitelist/blacklist not enforced server-side).
+
+    Returns {project_id, domain} or None if no match."""
+    if not to_email or "@" not in to_email:
+        return None
+    domain = to_email.rsplit("@", 1)[-1].strip().lower()
+    if not domain:
+        return None
+    row = db_one(
+        """SELECT ed.project_id, ed.domain
+             FROM crm_email_domains ed
+             JOIN crm_chat_integrations ci
+               ON ci.project_id = ed.project_id AND ci.channel = 'email' AND ci.is_active = TRUE
+            WHERE LOWER(ed.domain) = %s AND ed.is_verified = TRUE
+            LIMIT 1""",
+        (domain,)
+    )
+    return dict(row) if row else None
+
+
+def _strip_html_to_text(html: str, max_len: int = 4000) -> str:
+    """Cheap HTML → text. Real email bodies are messy (signatures, quoted
+    replies, MIME alternatives). We try body_text first in the caller; this
+    helper is the fallback when only body_html is present."""
+    if not html:
+        return ""
+    # Drop script/style blocks
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.I | re.S)
+    # <br>, </p>, </div> → newlines
+    text = re.sub(r"<\s*br[^>]*>|</\s*(p|div|li|h[1-6])\s*>", "\n", text, flags=re.I)
+    # Strip remaining tags
+    text = re.sub(r"<[^>]+>", "", text)
+    # HTML entities
+    import html as _html
+    text = _html.unescape(text)
+    # Collapse whitespace
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text[:max_len]
+
+
+# Email quoted-reply markers — used to trim long threaded replies down to just
+# the new content (Gmail's "On Mon, ... wrote:", Outlook's "From: ...", etc.)
+_QUOTE_MARKERS = re.compile(
+    r"^(On .+ wrote:|От: |From: |-----Original Message-----|________________________________)",
+    re.MULTILINE,
+)
+def _strip_quoted_reply(body: str) -> str:
+    if not body:
+        return body
+    m = _QUOTE_MARKERS.search(body)
+    return body[: m.start()].rstrip() if m else body
+
+
+@app.post("/api/chat/internal/email-inbound")
+async def email_inbound(req: EmailInboundRequest, request: Request):
+    """Postfix pipe script POSTs parsed mail here. See deployment doc."""
+    if request.headers.get("X-Internal-Key", "") != INTERNAL_API_KEY:
+        raise HTTPException(403, "Forbidden")
+
+    message_id = (req.message_id or "").strip()
+    to_email   = (req.to_email or "").strip().lower()
+    from_email = (req.from_email or "").strip().lower()
+    if not message_id or not to_email or not from_email or "@" not in from_email:
+        raise HTTPException(400, "message_id, from_email, to_email required")
+
+    loop = asyncio.get_event_loop()
+    proj = await loop.run_in_executor(None, lambda: _resolve_email_project(to_email))
+    if not proj:
+        # No project owns this domain — silently drop (Postfix already accepted
+        # the mail, but we don't want to bounce; just log).
+        print(f"[email inbound] no project for to={to_email!r} from={from_email!r}")
+        return {"ok": True, "routed": False}
+
+    project_id = proj["project_id"]
+    subject   = (req.subject or "").strip()[:500]
+    raw_text  = (req.body_text or "").strip()
+    if not raw_text and req.body_html:
+        raw_text = _strip_html_to_text(req.body_html)
+    text = _strip_quoted_reply(raw_text)[:4000]
+    if not text:
+        text = f"({subject})" if subject else "(empty message)"
+
+    # Idempotency: ON CONFLICT skip if Postfix retried delivery.
+    def _persist_raw():
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                """INSERT INTO crm_email_inbound
+                     (project_id, message_id, in_reply_to, "references",
+                      from_email, from_name, to_email, subject,
+                      body_text, body_html, raw_size, spf_pass, dkim_pass)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (project_id, message_id) DO NOTHING
+                   RETURNING id""",
+                (project_id, message_id,
+                 (req.in_reply_to or "")[:500],
+                 (req.references  or "")[:2000],
+                 from_email, sanitize(req.from_name or "")[:200],
+                 to_email, sanitize(subject),
+                 raw_text[:50_000], (req.body_html or "")[:200_000],
+                 int(req.raw_size or 0),
+                 req.spf_pass, req.dkim_pass)
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return (row or {}).get("id")
+
+    inbound_id = await loop.run_in_executor(None, _persist_raw)
+    if not inbound_id:
+        # Already ingested — short-circuit
+        return {"ok": True, "duplicate": True}
+
+    # Display name prefix only if it differs from local part
+    sender_label = (req.from_name or "").strip() or from_email
+    body = (f"Subject: {subject}\n\n{text}" if subject else text)
+
+    conv_id, msg_id = await _handle_inbound_message(
+        project_id, "email",
+        external_chat_id=from_email,   # one conversation per sender per project
+        text=body,
+        external_msg_id=message_id,
+        attachments=[{
+            "type": "email_meta",
+            "subject": subject,
+            "in_reply_to": req.in_reply_to or "",
+            "references": req.references or "",
+            "from_name": sender_label,
+            "to_email": to_email,
+        }],
+    )
+    # Link back the conv/msg ids onto the raw log row for forensics joins.
+    if conv_id and msg_id:
+        def _link():
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    "UPDATE crm_email_inbound SET conv_id=%s, msg_id=%s WHERE id=%s",
+                    (conv_id, msg_id, inbound_id)
+                )
+                conn.commit()
+        await loop.run_in_executor(None, _link)
+    return {"ok": True, "routed": True, "conversation_id": conv_id, "message_id": msg_id}
+
+
+def _send_email_reply(project_id: int, to_email: str, subject: str, text: str,
+                      in_reply_to: str | None = None, references: str | None = None) -> str:
+    """Sends an outbound reply through SES with proper threading headers so
+    Gmail/Outlook collapse it into the same thread on the customer side.
+    Returns the Message-Id we generated for the outgoing mail.
+
+    From identity is picked by precedence:
+      1. The Email chat integration's reply_local + reply_name (per-channel
+         override — lets merchant use 'support' for chat while OTPs go from
+         'noreply'). Requires verified domain match.
+      2. get_project_email() — the Auth Providers email config.
+      3. Hardcoded support@tortacrm.com (final fallback)."""
+    from_name, from_email = get_project_email(project_id)
+
+    # Per-channel override from crm_chat_integrations.config (json).
+    ch = db_one(
+        "SELECT config FROM crm_chat_integrations WHERE project_id=%s AND channel='email' AND is_active=TRUE",
+        (project_id,)
+    )
+    cfg = (ch or {}).get("config") or {}
+    if isinstance(cfg, str):
+        try:    cfg = json.loads(cfg)
+        except Exception: cfg = {}
+    chat_domain = (cfg.get("domain")      or "").strip().lower()
+    chat_local  = (cfg.get("reply_local") or "").strip().lower()
+    chat_name   = (cfg.get("reply_name")  or "").strip()
+    if chat_domain and chat_local:
+        # Re-verify ownership before we trust the override — config rows can
+        # outlive a domain being revoked from crm_email_domains.
+        owned = db_one(
+            "SELECT 1 FROM crm_email_domains WHERE project_id=%s AND LOWER(domain)=%s AND is_verified=TRUE",
+            (project_id, chat_domain)
+        )
+        if owned:
+            from_email = f"{chat_local}@{chat_domain}"
+            if chat_name:
+                from_name = chat_name
+
+    # Generate a stable Message-Id we can store as external_msg_id.
+    out_mid = f"<reply.{secrets.token_hex(8)}.{int(time.time())}@{from_email.rsplit('@',1)[-1]}>"
+    subj = subject or "Re: your message"
+    if subj and not subj.lower().startswith(("re:", "fw:", "fwd:")):
+        subj = f"Re: {subj}"
+    # text → minimal HTML (newlines preserved) — SES API expects html field
+    html = "<div style='font-family:-apple-system,Segoe UI,sans-serif;font-size:14px;color:#1d1d1f'>" \
+           + sanitize(text).replace("\n", "<br>") + "</div>"
+    payload = {
+        "to": to_email,
+        "subject": subj[:500],
+        "html": html,
+        "from_email": from_email,
+        "from_name": from_name,
+        # Threading headers — SES API supports an optional "extra_headers"
+        # dict; if SES on the VPS is older and ignores them, the reply still
+        # delivers but doesn't visually thread on the customer side.
+        "extra_headers": {
+            "Message-Id": out_mid,
+            **({"In-Reply-To": in_reply_to} if in_reply_to else {}),
+            **({"References": (references + " " + (in_reply_to or "")).strip()
+                if references else (in_reply_to or "")} if (references or in_reply_to) else {}),
+        },
+    }
+    try:
+        _ses("POST", "/send", payload)
+    except HTTPException:
+        # Re-raise so the caller surfaces the SES error to the operator.
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"SES send failed: {e}")
+    return out_mid
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -15670,7 +15878,25 @@ ALL_EVENTS = [
     "product.created", "product.updated",
     "goal.achieved",
 ]
-ALLOWED_INTEGRATION_TYPES = {"webhook", "slack", "discord"}
+ALLOWED_INTEGRATION_TYPES = {
+    # Event-driven, user-supplied URL with optional HMAC signing.
+    "webhook", "slack", "discord", "zapier",
+    # Event-driven, fixed third-party endpoint — user supplies a primary
+    # identifier (Measurement ID / Project Token / Audience ID) in the `url`
+    # column and per-provider secrets in `config` JSONB.
+    "ga4", "mixpanel", "mailchimp",
+    # Accounting connectors — these don't POST per-event; they generate a
+    # period-scoped file on demand or on a schedule. `url` is repurposed as the
+    # recipient email for scheduled deliveries (validation branches on type).
+    "acc_1c", "acc_kompra", "acc_quickbooks", "acc_xero", "acc_datev",
+}
+ACCOUNTING_TYPES   = {"acc_1c", "acc_kompra", "acc_quickbooks", "acc_xero", "acc_datev"}
+WEBHOOK_LIKE_TYPES = {"webhook", "slack", "discord", "zapier"}
+API_CONNECTOR_TYPES = {"ga4", "mixpanel", "mailchimp"}
+
+# Sensitive keys inside `config` JSONB that must be masked on read endpoints —
+# same `••••••••<last4>` pattern as the SMS settings.
+_INTEGRATION_SECRET_CONFIG_KEYS = {"api_secret", "api_key"}
 
 
 def _build_slack_message(event: str, data: dict) -> dict:
@@ -15792,17 +16018,107 @@ def _url_is_safe_for_outbound(url: str) -> tuple[bool, str]:
 
 def _post_webhook(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
     """Synchronously POSTs an event payload to a single subscription. Returns
-    a delivery dict suitable for INSERT into crm_webhook_deliveries."""
+    a delivery dict suitable for INSERT into crm_webhook_deliveries.
+
+    Per-type branches:
+      • slack/discord     — payload shape only; target_url = sub.url
+      • zapier            — generic JSON, no HMAC (Zapier doesn't verify)
+      • webhook           — generic JSON + HMAC signature headers
+      • ga4/mixpanel/mailchimp — fixed third-party endpoint built from sub.url
+                                 (identifier) + sub.config (secret). The
+                                 user-supplied `url` is NOT the target URL for
+                                 these; it's a Measurement ID / token / list ID.
+    """
     sub_type = sub["type"]
+    cfg = sub.get("config") or {}
+    if isinstance(cfg, str):
+        try:    cfg = json.loads(cfg)
+        except Exception: cfg = {}
+
+    target_url  = sub.get("url") or ""
+    ext_headers = {"Content-Type": "application/json"}
+    body_obj    = None
+    ext_body    = b""
+    user_supplied_target = True  # turns off SSRF guard for fixed third-party endpoints
+
+    def _fail(reason: str, code: int = 0) -> dict:
+        return {
+            "subscription_id": sub["id"], "project_id": sub["project_id"],
+            "event": event, "payload": json.dumps(body_obj or {"event": event}, default=str),
+            "attempt": attempt, "status": "failed", "status_code": code,
+            "http_code": code, "duration_ms": 0, "response_body": reason,
+        }
+
     if sub_type == "slack":
-        body_obj   = _build_slack_message(event, data)
-        ext_body   = json.dumps(body_obj).encode()
-        ext_headers = {"Content-Type": "application/json"}
+        body_obj = _build_slack_message(event, data)
+        ext_body = json.dumps(body_obj).encode()
     elif sub_type == "discord":
-        body_obj   = _build_discord_message(event, data)
-        ext_body   = json.dumps(body_obj).encode()
-        ext_headers = {"Content-Type": "application/json"}
-    else:
+        body_obj = _build_discord_message(event, data)
+        ext_body = json.dumps(body_obj).encode()
+    elif sub_type == "zapier":
+        body_obj = {
+            "event":       event,
+            "project_id":  sub["project_id"],
+            "occurred_at": _utcnow().isoformat(),
+            "data":        data,
+        }
+        ext_body = json.dumps(body_obj, default=str).encode()
+        # Zapier doesn't verify HMAC — let the merchant add validation in the
+        # downstream Zap if they care.
+    elif sub_type == "ga4":
+        measurement_id = (sub.get("url") or "").strip()
+        api_secret = (cfg.get("api_secret") or "").strip()
+        if not measurement_id or not api_secret:
+            return _fail("GA4 misconfigured: missing measurement_id or api_secret")
+        body_obj = _build_ga4_payload(event, data)
+        if body_obj is None:
+            # GA4 has no equivalent for this event — silently skipped so the
+            # subscription doesn't accumulate failed deliveries on every push.
+            return {
+                "subscription_id": sub["id"], "project_id": sub["project_id"],
+                "event": event, "payload": json.dumps({"skipped": "no-ga4-mapping"}),
+                "attempt": attempt, "status": "skipped", "http_code": None,
+                "duration_ms": 0, "response_body": f"No GA4 mapping for {event}",
+            }
+        target_url = (
+            f"https://www.google-analytics.com/mp/collect"
+            f"?measurement_id={urllib.parse.quote(measurement_id)}"
+            f"&api_secret={urllib.parse.quote(api_secret)}"
+        )
+        ext_body = json.dumps(body_obj).encode()
+        user_supplied_target = False
+    elif sub_type == "mixpanel":
+        token = (sub.get("url") or "").strip()
+        if not token:
+            return _fail("Mixpanel misconfigured: missing project token")
+        body_obj = _build_mixpanel_payload(token, sub["project_id"], event, data)
+        target_url = "https://api.mixpanel.com/track"
+        # Mixpanel /track expects an array of events.
+        ext_body = json.dumps([body_obj]).encode()
+        user_supplied_target = False
+    elif sub_type == "mailchimp":
+        if event != "customer.created":
+            return {
+                "subscription_id": sub["id"], "project_id": sub["project_id"],
+                "event": event, "payload": json.dumps({"skipped": "mailchimp-customers-only"}),
+                "attempt": attempt, "status": "skipped", "http_code": None,
+                "duration_ms": 0, "response_body": "Mailchimp listens only to customer.created",
+            }
+        list_id = (sub.get("url") or "").strip()
+        api_key = (cfg.get("api_key") or "").strip()
+        dc      = _mailchimp_dc(api_key)
+        if not list_id or not api_key or not dc:
+            return _fail("Mailchimp misconfigured: missing audience_id or api_key with -dcXX suffix")
+        body_obj = _build_mailchimp_payload(data)
+        if not body_obj.get("email_address"):
+            return _fail("Mailchimp skipped: customer has no email")
+        target_url = f"https://{dc}.api.mailchimp.com/3.0/lists/{urllib.parse.quote(list_id)}/members"
+        ext_body = json.dumps(body_obj).encode()
+        ext_headers["Authorization"] = (
+            "Basic " + base64.b64encode(f"anystring:{api_key}".encode()).decode()
+        )
+        user_supplied_target = False
+    else:  # "webhook" — custom signed JSON
         body_obj = {
             "event":       event,
             "project_id":  sub["project_id"],
@@ -15811,27 +16127,22 @@ def _post_webhook(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
         }
         ext_body = json.dumps(body_obj, default=str).encode()
         sig = hmac.new(sub["secret"].encode(), ext_body, hashlib.sha256).hexdigest()
-        ext_headers = {
-            "Content-Type":       "application/json",
+        ext_headers.update({
             "X-Torta-Event":      event,
             "X-Torta-Signature":  f"sha256={sig}",
             "X-Torta-Timestamp":  str(int(time.time())),
             "User-Agent":         "Torta-Webhooks/1.0",
-        }
+        })
 
-    # Re-check the URL right before sending. The integration row might pre-date
-    # this guard, or its hostname's DNS record might have changed to point at a
-    # private IP since it was registered.
-    ok, reason = _url_is_safe_for_outbound(sub["url"])
-    if not ok:
-        return {
-            "subscription_id": sub["id"], "project_id": sub["project_id"],
-            "event": event, "payload": json.dumps(body_obj, default=str),
-            "attempt": attempt, "status": "failed", "status_code": 0,
-            "duration_ms": 0, "response_body": f"[blocked] {reason}",
-        }
+    # SSRF guard runs only on merchant-supplied target URLs. The fixed
+    # third-party endpoints (api.mixpanel.com, *.api.mailchimp.com,
+    # google-analytics.com) are hardcoded and known-safe.
+    if user_supplied_target:
+        ok, reason = _url_is_safe_for_outbound(target_url)
+        if not ok:
+            return _fail(f"[blocked] {reason}")
     t0  = time.time()
-    req = urllib.request.Request(sub["url"], data=ext_body, headers=ext_headers, method="POST")
+    req = urllib.request.Request(target_url, data=ext_body, headers=ext_headers, method="POST")
     out = {
         "subscription_id": sub["id"], "project_id": sub["project_id"],
         "event": event, "payload": json.dumps(body_obj, default=str),
@@ -15871,6 +16182,10 @@ def dispatch_event(project_id: int, event: str, data: dict):
         print(f"[webhook] subs query failed: {e}"); return
 
     for sub in rows:
+        # Accounting connectors generate period-scoped files on demand or on a
+        # cron schedule; they don't get per-event pushes.
+        if sub.get("type") in ACCOUNTING_TYPES:
+            continue
         events = sub.get("events") or []
         if events and event not in events:
             continue
@@ -15946,6 +16261,7 @@ def integrations_list(project_id: int = Query(...),
         d["last_event_at"] = r["last_event_at"].isoformat() if r["last_event_at"] else None
         d["created_at"]    = r["created_at"].isoformat()    if r["created_at"]    else None
         d.pop("secret", None)  # never expose the signing secret over GET list
+        _redact_integration_row(d)
         out.append(d)
     return out
 
@@ -15958,15 +16274,34 @@ def integrations_create(req: IntegrationCreateRequest,
     if req.type not in ALLOWED_INTEGRATION_TYPES:
         raise HTTPException(400, f"Unsupported type. Allowed: {sorted(ALLOWED_INTEGRATION_TYPES)}")
     url = (req.url or "").strip()
-    if not url.startswith(("http://", "https://")):
-        raise HTTPException(400, "URL must start with http:// or https://")
-    ok, reason = _url_is_safe_for_outbound(url)
-    if not ok:
-        raise HTTPException(400, f"Refusing to register webhook URL: {reason}")
-    events = req.events or []
-    invalid = [e for e in events if e not in ALL_EVENTS]
-    if invalid:
-        raise HTTPException(400, f"Unknown events: {invalid}")
+    cfg = req.config or {}
+    if req.type in ACCOUNTING_TYPES:
+        # `url` is the recipient email — validated only when a schedule is set
+        # (otherwise the merchant can leave it blank and just download manually).
+        if cfg.get("schedule", "off") != "off":
+            if not url or "@" not in url or "." not in url.split("@", 1)[-1]:
+                raise HTTPException(400, "A recipient email is required for scheduled exports.")
+        if url and ("@" not in url or len(url) > 200):
+            raise HTTPException(400, "Recipient email looks invalid.")
+        events = []
+    elif req.type in WEBHOOK_LIKE_TYPES:
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "URL must start with http:// or https://")
+        ok, reason = _url_is_safe_for_outbound(url)
+        if not ok:
+            raise HTTPException(400, f"Refusing to register webhook URL: {reason}")
+        events = req.events or []
+        invalid = [e for e in events if e not in ALL_EVENTS]
+        if invalid:
+            raise HTTPException(400, f"Unknown events: {invalid}")
+    elif req.type in API_CONNECTOR_TYPES:
+        _validate_api_connector(req.type, url, cfg)
+        events = req.events or []
+        invalid = [e for e in events if e not in ALL_EVENTS]
+        if invalid:
+            raise HTTPException(400, f"Unknown events: {invalid}")
+    else:
+        raise HTTPException(400, f"Unsupported type {req.type}")
     secret = "wh_sec_" + secrets.token_hex(24)
     name   = (req.name or "").strip()[:200] or _default_integration_name(req.type)
     with db_cursor() as (conn, cur):
@@ -15983,8 +16318,161 @@ def integrations_create(req: IntegrationCreateRequest,
 
 
 def _default_integration_name(t: str) -> str:
-    return {"slack": "Slack notifications", "discord": "Discord notifications",
-            "webhook": "Custom Webhook"}.get(t, t.title())
+    return {
+        "slack":           "Slack notifications",
+        "discord":         "Discord notifications",
+        "webhook":         "Custom Webhook",
+        "zapier":          "Zapier",
+        "ga4":             "Google Analytics 4",
+        "mixpanel":        "Mixpanel",
+        "mailchimp":       "Mailchimp",
+        "acc_1c":          "1C Бухгалтерия export",
+        "acc_kompra":      "Kompra ЭСФ export",
+        "acc_quickbooks":  "QuickBooks IIF export",
+        "acc_xero":        "Xero CSV export",
+        "acc_datev":       "DATEV CSV export",
+    }.get(t, t.title())
+
+
+def _validate_api_connector(t: str, url: str, cfg: dict):
+    """Validates the user-supplied primary identifier (url) + per-provider
+    config secrets. Raises HTTPException on bad input."""
+    if t == "ga4":
+        if not url or not url.startswith("G-"):
+            raise HTTPException(400, "GA4 Measurement ID must start with G- (Admin → Data Streams → Web).")
+        api_secret = (cfg.get("api_secret") or "").strip()
+        if not api_secret:
+            raise HTTPException(400, "GA4 API Secret required (Admin → Data Streams → your stream → Measurement Protocol API secrets).")
+    elif t == "mixpanel":
+        if not url or len(url) < 16:
+            raise HTTPException(400, "Mixpanel Project Token required (Project Settings → Access Keys).")
+    elif t == "mailchimp":
+        if not url or not re.match(r"^[A-Za-z0-9]{6,32}$", url):
+            raise HTTPException(400, "Mailchimp Audience ID looks invalid (Audience → Settings → Audience name and defaults → Unique ID).")
+        api_key = (cfg.get("api_key") or "").strip()
+        if not api_key or "-" not in api_key:
+            raise HTTPException(400, "Mailchimp API Key required and must include the -dcXX suffix (e.g. xxxx-us21).")
+
+
+# ── API connector helpers (datacenter extraction, secret masking, payloads) ──
+
+def _mailchimp_dc(api_key: str) -> str:
+    """Mailchimp encodes the datacenter as the suffix of the API key
+    (e.g. 'abc123-us21' → 'us21'). Returns empty string if malformed."""
+    if not api_key or "-" not in api_key:
+        return ""
+    return api_key.rsplit("-", 1)[-1].strip()
+
+
+def _mask_integration_secret(v) -> str:
+    if not v:
+        return ""
+    s = str(v)
+    if len(s) <= 4:
+        return "•" * len(s)
+    return "•" * 8 + s[-4:]
+
+
+def _is_masked_secret(v) -> bool:
+    """True if value still has the mask prefix — used by update endpoint to
+    detect 'user didn't change this field' and preserve the existing value."""
+    return isinstance(v, str) and v.startswith("•")
+
+
+def _redact_integration_row(d: dict) -> dict:
+    """Mask sensitive `config` keys before returning a subscription row to
+    the merchant. Mirrors the SMS / OAuth secret-masking pattern."""
+    cfg = d.get("config") or {}
+    if isinstance(cfg, str):
+        try:    cfg = json.loads(cfg)
+        except Exception: cfg = {}
+    for k in list(cfg.keys()):
+        if k in _INTEGRATION_SECRET_CONFIG_KEYS and cfg[k]:
+            cfg[k] = _mask_integration_secret(cfg[k])
+    d["config"] = cfg
+    return d
+
+
+# ── Payload builders for the API-connector types ──
+
+def _build_ga4_payload(event: str, data: dict) -> Optional[dict]:
+    """Map CRM events → GA4 Measurement Protocol events.
+    Returns None for events with no sensible GA4 mapping (silently skipped)."""
+    cust = data.get("customer") or {}
+    client_id = str(data.get("user_id") or cust.get("email")
+                    or f"anon-{data.get('order_id') or 'x'}")
+    currency = (data.get("currency") or "USD").upper()
+    value = float(data.get("amount") or data.get("total") or 0)
+
+    if event == "order.paid":
+        items = []
+        for it in (data.get("items") or []):
+            items.append({
+                "item_id":   str(it.get("product_id") or it.get("id") or ""),
+                "item_name": (it.get("title") or "Item")[:100],
+                "quantity":  int(it.get("qty") or it.get("quantity") or 1),
+                "price":     float(it.get("price") or 0),
+            })
+        ev = {"name": "purchase", "params": {
+            "transaction_id": str(data.get("order_id") or ""),
+            "value": value, "currency": currency, "items": items[:50],
+        }}
+    elif event == "order.created":
+        ev = {"name": "begin_checkout", "params": {"value": value, "currency": currency}}
+    elif event == "order.refunded" or event == "order.returned":
+        ev = {"name": "refund", "params": {
+            "transaction_id": str(data.get("order_id") or ""),
+            "value": value, "currency": currency,
+        }}
+    else:
+        return None
+    return {"client_id": client_id, "events": [ev]}
+
+
+def _build_mixpanel_payload(token: str, project_id: int, event: str, data: dict) -> dict:
+    """Mixpanel /track expects a single event dict (we wrap it in a list at
+    send time). Distinct_id falls back to email or anon-{project_id} so anon
+    visitors still appear as a single timeline."""
+    cust = data.get("customer") or {}
+    distinct_id = str(data.get("user_id") or cust.get("email") or f"anon-p{project_id}")
+    # Flatten one level of safe scalars; nested objects are JSON-stringified.
+    flat = {}
+    for k, v in (data or {}).items():
+        if isinstance(v, (str, int, float, bool)) and len(str(v)) < 500:
+            flat[k] = v
+        elif v is None:
+            continue
+        else:
+            try:    flat[k] = json.dumps(v, default=str)[:500]
+            except Exception: pass
+    return {
+        "event": event,
+        "properties": {
+            "token": token,
+            "distinct_id": distinct_id,
+            "$insert_id": f"{event}-{data.get('order_id') or ''}-{int(time.time() * 1000)}",
+            "time": int(time.time()),
+            "project_id": project_id,
+            **flat,
+        },
+    }
+
+
+def _build_mailchimp_payload(data: dict) -> dict:
+    """Mailchimp `/lists/{id}/members` body. We always use 'subscribed'
+    status — the Audience itself controls whether double-opt-in is enforced."""
+    cust = data.get("customer") or {}
+    email = (cust.get("email") or data.get("email") or "").strip()
+    name  = (cust.get("name")  or data.get("name")  or "").strip()
+    parts = name.split(None, 1)
+    return {
+        "email_address": email,
+        "status": "subscribed",
+        "merge_fields": {
+            "FNAME": parts[0] if parts else "",
+            "LNAME": parts[1] if len(parts) > 1 else "",
+        },
+    }
 
 
 # NOTE: /deliveries routes MUST be declared BEFORE /{sub_id} (FastAPI matches in declaration order).
@@ -16083,6 +16571,7 @@ def integrations_get(sub_id: int, project_id: int = Query(...),
     # any team member read the secret and forge events to the
     # subscription's receiver. Match list behavior.
     d.pop("secret", None)
+    _redact_integration_row(d)  # mask api_secret / api_key inside config
     d["last_event_at"] = row["last_event_at"].isoformat() if row["last_event_at"] else None
     d["created_at"]    = row["created_at"].isoformat()    if row["created_at"]    else None
     return d
@@ -16093,23 +16582,53 @@ def integrations_update(sub_id: int, req: IntegrationUpdateRequest,
                         project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
-    row = db_one("SELECT id FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+    row = db_one("SELECT id, type, config FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                  (sub_id, project_id))
     if not row: raise HTTPException(404, "Integration not found")
+    sub_type      = row["type"]
+    is_accounting = sub_type in ACCOUNTING_TYPES
+    is_api_conn   = sub_type in API_CONNECTOR_TYPES
+    existing_cfg  = row.get("config") or {}
+    if isinstance(existing_cfg, str):
+        try: existing_cfg = json.loads(existing_cfg)
+        except Exception: existing_cfg = {}
     fields, values = [], []
     if req.name is not None:
         fields.append("name=%s");  values.append(sanitize(req.name.strip())[:200])
     if req.url is not None:
         u = req.url.strip()
-        if not u.startswith(("http://", "https://")):
-            raise HTTPException(400, "URL must start with http:// or https://")
+        if is_accounting:
+            if u and ("@" not in u or len(u) > 200):
+                raise HTTPException(400, "Recipient email looks invalid.")
+        elif is_api_conn:
+            # Validate identifier the same way as on create — keep the rules
+            # in one place so create/update can't diverge.
+            _validate_api_connector(sub_type, u, existing_cfg)
+        else:
+            if not u.startswith(("http://", "https://")):
+                raise HTTPException(400, "URL must start with http:// or https://")
         fields.append("url=%s");   values.append(u)
-    if req.events is not None:
+    if req.events is not None and not is_accounting:
         invalid = [e for e in req.events if e not in ALL_EVENTS]
         if invalid: raise HTTPException(400, f"Unknown events: {invalid}")
         fields.append("events=%s"); values.append(req.events)
     if req.config is not None:
-        fields.append("config=%s::jsonb"); values.append(json.dumps(req.config))
+        new_cfg = dict(req.config)
+        # Preserve existing sensitive values when the request leaves them
+        # masked (i.e. the merchant didn't touch the input). Without this,
+        # saving any other field would wipe the api_secret / api_key.
+        for k in _INTEGRATION_SECRET_CONFIG_KEYS:
+            if k in new_cfg and _is_masked_secret(new_cfg[k]):
+                new_cfg[k] = existing_cfg.get(k, "")
+        # If this is an API connector, validate with the merged secrets so a
+        # masked-but-required key doesn't accidentally trip the validator.
+        if is_api_conn:
+            url_for_val = (req.url.strip() if req.url is not None else "")
+            if not url_for_val:
+                cur = db_one("SELECT url FROM crm_webhook_subscriptions WHERE id=%s", (sub_id,))
+                url_for_val = (cur or {}).get("url") or ""
+            _validate_api_connector(sub_type, url_for_val, new_cfg)
+        fields.append("config=%s::jsonb"); values.append(json.dumps(new_cfg))
     if req.is_active is not None:
         fields.append("is_active=%s"); values.append(req.is_active)
     if not fields: return {"ok": True}
@@ -16166,6 +16685,638 @@ def integrations_test(sub_id: int, project_id: int = Query(...),
         "duration_ms": out.get("duration_ms"),
         "response_body": (out.get("response_body") or "")[:500],
     }
+
+
+# ── Accounting exports (1C / Kompra / QuickBooks / Xero / DATEV) ─────────
+#
+# These connectors don't push per-event webhooks; they generate a
+# period-scoped file (CSV/IIF) on demand or on a cron schedule. The
+# merchant either downloads the file from the modal or receives an email
+# with a signed download link. SES doesn't yet support MIME attachments,
+# so we never inline the file bytes into the email.
+
+import csv as _csv
+
+ACCOUNTING_PROVIDER_META = {
+    "acc_1c":         {"ext": "csv", "mime": "text/csv; charset=windows-1251", "label": "1C Бухгалтерия", "country": "RU/CIS"},
+    "acc_kompra":     {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Kompra ЭСФ",     "country": "KZ"},
+    "acc_quickbooks": {"ext": "iif", "mime": "application/iif",                "label": "QuickBooks",     "country": "US/CA"},
+    "acc_xero":       {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Xero",           "country": "AU/UK/NZ"},
+    "acc_datev":      {"ext": "csv", "mime": "text/csv; charset=windows-1252", "label": "DATEV",          "country": "DE"},
+}
+
+# Signing secret for accounting download links emailed to merchants. Falls back
+# to a process-lifetime random in dev — set ACCOUNTING_SIG_SECRET in prod so
+# links survive restarts.
+ACCOUNTING_SIG_SECRET = os.getenv("ACCOUNTING_SIG_SECRET") or secrets.token_hex(32)
+
+
+def _sign_accounting_token(sub_id: int, project_id: int, period: str, ttl_days: int = 30) -> str:
+    exp = int(time.time()) + ttl_days * 86400
+    payload = f"{sub_id}.{project_id}.{period}.{exp}"
+    sig = hmac.new(ACCOUNTING_SIG_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{exp}.{sig}"
+
+
+def _verify_accounting_token(sub_id: int, project_id: int, period: str, token: str) -> bool:
+    try:
+        exp_s, sig = token.split(".", 1)
+        exp = int(exp_s)
+    except Exception:
+        return False
+    if exp < int(time.time()):
+        return False
+    payload = f"{sub_id}.{project_id}.{period}.{exp}"
+    expected = hmac.new(ACCOUNTING_SIG_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return hmac.compare_digest(sig, expected)
+
+
+def _resolve_export_period(period: str, custom_start: Optional[str], custom_end: Optional[str],
+                           tz_name: str) -> tuple[datetime, datetime, str]:
+    """Returns (start_utc, end_utc, human_label). Periods are interpreted in
+    the project's local timezone so 'this_month' matches what the merchant
+    sees in the Analytics tab."""
+    from zoneinfo import ZoneInfo
+    try:
+        tz = ZoneInfo(tz_name or "UTC")
+    except Exception:
+        tz = ZoneInfo("UTC")
+    now_local = datetime.now(tz)
+    today = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if period == "custom":
+        try:
+            s = datetime.fromisoformat(custom_start).replace(tzinfo=tz) if custom_start else today
+            e = datetime.fromisoformat(custom_end).replace(tzinfo=tz) if custom_end else now_local
+        except Exception:
+            raise HTTPException(400, "Custom period requires ISO dates start/end (YYYY-MM-DD)")
+        e = e.replace(hour=23, minute=59, second=59)
+        return s.astimezone(timezone.utc), e.astimezone(timezone.utc), f"{s.date()} → {e.date()}"
+    if period == "today":
+        return today.astimezone(timezone.utc), now_local.astimezone(timezone.utc), "Today"
+    if period == "yesterday":
+        y_start = today - timedelta(days=1)
+        y_end   = today - timedelta(seconds=1)
+        return y_start.astimezone(timezone.utc), y_end.astimezone(timezone.utc), "Yesterday"
+    if period == "last_7d":
+        return (today - timedelta(days=7)).astimezone(timezone.utc), now_local.astimezone(timezone.utc), "Last 7 days"
+    if period == "last_30d":
+        return (today - timedelta(days=30)).astimezone(timezone.utc), now_local.astimezone(timezone.utc), "Last 30 days"
+    if period == "this_month":
+        first = today.replace(day=1)
+        return first.astimezone(timezone.utc), now_local.astimezone(timezone.utc), today.strftime("%B %Y")
+    if period == "last_month":
+        first_this = today.replace(day=1)
+        last_prev  = first_this - timedelta(seconds=1)
+        first_prev = last_prev.replace(day=1, hour=0, minute=0, second=0)
+        return first_prev.astimezone(timezone.utc), last_prev.astimezone(timezone.utc), last_prev.strftime("%B %Y")
+    if period == "this_quarter":
+        q = (today.month - 1) // 3
+        qstart = today.replace(month=q * 3 + 1, day=1)
+        return qstart.astimezone(timezone.utc), now_local.astimezone(timezone.utc), f"Q{q+1} {today.year}"
+    # Default fallback
+    return (today - timedelta(days=30)).astimezone(timezone.utc), now_local.astimezone(timezone.utc), "Last 30 days"
+
+
+def _fetch_orders_for_export(project_id: int, start_utc: datetime, end_utc: datetime,
+                             include_unpaid: bool) -> list[dict]:
+    """One row per order; modest line-item rollup. Skips cancelled/refunded
+    unless the merchant explicitly opts in to unpaid via include_unpaid."""
+    status_filter = "" if include_unpaid else " AND oh.payment_status IN ('paid','manual')"
+    rows = db_all(
+        f"""SELECT oh.id, oh.total_amount, oh.status, oh.payment_status,
+                   oh.payment_method, oh.payment_currency,
+                   oh.recipient_name, oh.phone, oh.address,
+                   oh.created_at, oh.payment_paid_at,
+                   u.name AS customer_name, u.email AS customer_email,
+                   (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = oh.id) AS items_count
+             FROM order_history oh
+             LEFT JOIN users u ON u.id = oh.user_id
+             WHERE oh.project_id = %s
+               AND oh.created_at >= %s
+               AND oh.created_at <= %s
+               {status_filter}
+             ORDER BY oh.created_at ASC""",
+        (project_id, start_utc, end_utc)
+    )
+    return [dict(r) for r in rows]
+
+
+def _accounting_filename(provider: str, period_label: str) -> str:
+    meta = ACCOUNTING_PROVIDER_META[provider]
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", period_label).strip("_") or "export"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    base = provider.replace("acc_", "")
+    return f"{base}_{safe}_{stamp}.{meta['ext']}"
+
+
+# ── Format builders ─────────────────────────────────────
+
+def _b_1c(orders: list[dict], project_currency: str) -> bytes:
+    """1C Бухгалтерия — semicolon CSV, Windows-1251 (Cyrillic). One row per order."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["Дата", "Тип документа", "Номер", "Контрагент", "Email",
+                "Сумма", "Валюта", "Способ оплаты", "Статус", "Комментарий"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d.%m.%Y") if dt else ""
+        w.writerow([
+            date, "Заказ", str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            o.get("customer_email") or "",
+            f"{float(o['total_amount'] or 0):.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "USD").upper(),
+            o.get("payment_method") or "",
+            o.get("payment_status") or "",
+            f"Заказ #{o['id']}",
+        ])
+    text = buf.getvalue()
+    # cp1251 with `?` for unrepresentable glyphs — safer than crashing on emoji
+    return text.encode("cp1251", errors="replace")
+
+
+def _b_kompra(orders: list[dict], project_currency: str) -> bytes:
+    """Kompra (KZ) — UTF-8 semicolon CSV with the columns Kompra accepts for
+    bulk ЭСФ import. VAT is split out at the Kazakhstan standard 12% rate;
+    merchants override per-line in the Kompra UI before submitting."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Номер", "Дата", "ИИН/БИН", "Наименование покупателя",
+                "Email", "Телефон", "Сумма без НДС", "НДС 12%",
+                "Сумма с НДС", "Валюта", "Назначение"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d.%m.%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.12, 2)
+        vat   = round(total - net, 2)
+        w.writerow([
+            str(o["id"]), date, "",  # ИИН/БИН blank — merchant fills it in Kompra
+            o.get("customer_name") or o.get("recipient_name") or "",
+            o.get("customer_email") or "",
+            o.get("phone") or "",
+            f"{net:.2f}", f"{vat:.2f}", f"{total:.2f}",
+            (o.get("payment_currency") or project_currency or "KZT").upper(),
+            f"Заказ #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()  # BOM so Excel keeps Cyrillic correctly
+    return text.encode("utf-8")
+
+
+def _b_quickbooks(orders: list[dict], project_currency: str) -> bytes:
+    """QuickBooks Desktop .IIF — tab-delimited transaction blocks (TRNS/SPL/ENDTRNS).
+    Modern QB Online doesn't ingest IIF directly but every accountant tool that
+    talks to QB does — and IIF survives version changes."""
+    lines: list[str] = []
+    lines.append("!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tDOCNUM\tMEMO")
+    lines.append("!SPL\tSPLID\tTRNSTYPE\tDATE\tACCNT\tNAME\tAMOUNT\tDOCNUM\tMEMO")
+    lines.append("!ENDTRNS")
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%m/%d/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        name  = (o.get("customer_name") or o.get("recipient_name") or "Customer").replace("\t", " ")
+        memo  = f"Order #{o['id']}"
+        lines.append(f"TRNS\t\tINVOICE\t{date}\tAccounts Receivable\t{name}\t{total:.2f}\t{o['id']}\t{memo}")
+        lines.append(f"SPL\t\tINVOICE\t{date}\tSales\t{name}\t{-total:.2f}\t{o['id']}\t{memo}")
+        lines.append("ENDTRNS")
+    return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+
+
+def _b_xero(orders: list[dict], project_currency: str) -> bytes:
+    """Xero — invoice import CSV. Xero's importer requires the asterisked column
+    names exactly and one row per line-item (we aggregate orders into a single
+    line each for v1; per-product rollup is in the post-diploma backlog)."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, lineterminator="\r\n")
+    w.writerow(["*ContactName", "EmailAddress", "*InvoiceNumber", "*InvoiceDate",
+                "*DueDate", "*Description", "*Quantity", "*UnitAmount",
+                "*AccountCode", "*TaxType", "Currency", "Reference"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%Y-%m-%d") if dt else ""
+        due  = (dt + timedelta(days=14)).strftime("%Y-%m-%d") if dt else ""
+        total = float(o["total_amount"] or 0)
+        w.writerow([
+            o.get("customer_name") or o.get("recipient_name") or "Customer",
+            o.get("customer_email") or "",
+            f"INV-{o['id']}", date, due,
+            f"Order #{o['id']} ({int(o.get('items_count') or 0)} item(s))",
+            "1", f"{total:.2f}",
+            "200", "Tax Exempt",
+            (o.get("payment_currency") or project_currency or "USD").upper(),
+            f"order-{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_datev(orders: list[dict], project_currency: str) -> bytes:
+    """DATEV Pro 'Buchungsstapel' CSV — semicolon delimited, Windows-1252.
+    Strict accountancy format: amounts use comma decimal, dates DDMM, S/H
+    debit/credit indicator. Konto/Gegenkonto pair maps revenue (8400) against
+    accounts-receivable (1400) as is standard for a retail SaaS sale."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    # The header DATEV expects (simplified vs the full EXTF;700;21;Buchungsstapel
+    # banner row — that one is opaque enough we let merchants prepend it
+    # themselves through DATEV's import wizard).
+    w.writerow(["Umsatz", "Soll/Haben", "WKZ Umsatz", "Konto", "Gegenkonto",
+                "BU-Schlüssel", "Belegdatum", "Belegfeld 1", "Buchungstext"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        beleg = dt.strftime("%d%m") if dt else ""
+        total = float(o["total_amount"] or 0)
+        amt   = f"{total:.2f}".replace(".", ",")
+        cur   = (o.get("payment_currency") or project_currency or "EUR").upper()
+        name  = (o.get("customer_name") or o.get("recipient_name") or "Kunde")[:60]
+        w.writerow([amt, "S", cur, "1400", "8400", "", beleg, str(o["id"]),
+                    f"Order #{o['id']} {name}"])
+    text = buf.getvalue()
+    return text.encode("cp1252", errors="replace")
+
+
+_ACCOUNTING_BUILDERS = {
+    "acc_1c":         _b_1c,
+    "acc_kompra":     _b_kompra,
+    "acc_quickbooks": _b_quickbooks,
+    "acc_xero":       _b_xero,
+    "acc_datev":      _b_datev,
+}
+
+
+def _build_accounting_export(sub: dict, project: dict, period: str,
+                             custom_start: Optional[str] = None,
+                             custom_end: Optional[str] = None,
+                             include_unpaid: Optional[bool] = None) -> tuple[bytes, str, str, dict]:
+    """Returns (file_bytes, filename, mime, meta) where meta carries row counts
+    and totals for the modal preview / scheduled email body."""
+    provider = sub["type"]
+    if provider not in _ACCOUNTING_BUILDERS:
+        raise HTTPException(400, "Not an accounting connector")
+    cfg = sub.get("config") or {}
+    if isinstance(cfg, str):
+        try:    cfg = json.loads(cfg)
+        except Exception: cfg = {}
+    if include_unpaid is None:
+        include_unpaid = bool(cfg.get("include_unpaid", False))
+    tz_name = project.get("timezone") or "UTC"
+    start_utc, end_utc, label = _resolve_export_period(period, custom_start, custom_end, tz_name)
+    orders = _fetch_orders_for_export(sub["project_id"], start_utc, end_utc, include_unpaid)
+    project_currency = (project.get("currency") or "USD").upper()
+    blob = _ACCOUNTING_BUILDERS[provider](orders, project_currency)
+    filename = _accounting_filename(provider, label)
+    mime = ACCOUNTING_PROVIDER_META[provider]["mime"]
+    total = sum(float(o.get("total_amount") or 0) for o in orders)
+    meta = {
+        "orders":   len(orders),
+        "revenue":  round(total, 2),
+        "currency": project_currency,
+        "period":   label,
+        "start":    start_utc.isoformat(),
+        "end":      end_utc.isoformat(),
+    }
+    return blob, filename, mime, meta
+
+
+# ── Accounting endpoints ─────────────────────────────────
+
+@app.get("/api/integrations/{sub_id}/accounting/preview")
+def accounting_preview(sub_id: int,
+                       project_id: int = Query(...),
+                       period: str = Query("last_30d"),
+                       start: Optional[str] = Query(None),
+                       end: Optional[str] = Query(None),
+                       include_unpaid: Optional[bool] = Query(None),
+                       user: dict = Depends(get_current_user)):
+    """JSON summary + first 10 rows for the modal preview panel.
+    Doesn't generate the file blob — that happens on download."""
+    require_team_member_or_owner(user, project_id)
+    sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+                 (sub_id, project_id))
+    if not sub: raise HTTPException(404, "Integration not found")
+    if sub["type"] not in ACCOUNTING_TYPES:
+        raise HTTPException(400, "Not an accounting connector")
+    proj = db_one("SELECT timezone, currency FROM crm_projects WHERE id=%s", (project_id,)) or {}
+    cfg = sub.get("config") or {}
+    if isinstance(cfg, str):
+        try: cfg = json.loads(cfg)
+        except Exception: cfg = {}
+    unp = include_unpaid if include_unpaid is not None else bool(cfg.get("include_unpaid", False))
+    tz_name = proj.get("timezone") or "UTC"
+    start_utc, end_utc, label = _resolve_export_period(period, start, end, tz_name)
+    orders = _fetch_orders_for_export(project_id, start_utc, end_utc, unp)
+    total = sum(float(o.get("total_amount") or 0) for o in orders)
+    preview_rows = [
+        {
+            "id":               o["id"],
+            "date":             (o.get("payment_paid_at") or o["created_at"]).isoformat() if (o.get("payment_paid_at") or o["created_at"]) else None,
+            "customer_name":    o.get("customer_name") or o.get("recipient_name") or "",
+            "customer_email":   o.get("customer_email") or "",
+            "total_amount":     float(o["total_amount"] or 0),
+            "payment_currency": (o.get("payment_currency") or proj.get("currency") or "USD").upper(),
+            "payment_status":   o.get("payment_status") or "",
+            "items_count":      int(o.get("items_count") or 0),
+        }
+        for o in orders[:10]
+    ]
+    return {
+        "orders":   len(orders),
+        "revenue":  round(total, 2),
+        "currency": (proj.get("currency") or "USD").upper(),
+        "period":   label,
+        "start":    start_utc.isoformat(),
+        "end":      end_utc.isoformat(),
+        "preview":  preview_rows,
+        "filename_hint": _accounting_filename(sub["type"], label),
+    }
+
+
+@app.get("/api/integrations/{sub_id}/accounting/download")
+def accounting_download(sub_id: int,
+                        project_id: int = Query(...),
+                        period: str = Query("last_30d"),
+                        start: Optional[str] = Query(None),
+                        end: Optional[str] = Query(None),
+                        include_unpaid: Optional[bool] = Query(None),
+                        token: Optional[str] = Query(None),
+                        request: Request = None):
+    """Streams the generated file. Two auth paths:
+       • cookie session (merchant clicks Download in the CRM modal), or
+       • signed HMAC token (merchant follows a link from a scheduled email)."""
+    # Token-based access for emailed links — short-circuits cookie auth.
+    if token:
+        if not _verify_accounting_token(sub_id, project_id, period, token):
+            raise HTTPException(401, "Invalid or expired download link")
+    else:
+        try:
+            user = get_current_user(request)
+        except Exception:
+            raise HTTPException(401, "Authentication required")
+        require_team_member_or_owner(user, project_id)
+    sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+                 (sub_id, project_id))
+    if not sub: raise HTTPException(404, "Integration not found")
+    if sub["type"] not in ACCOUNTING_TYPES:
+        raise HTTPException(400, "Not an accounting connector")
+    proj = db_one("SELECT timezone, currency FROM crm_projects WHERE id=%s", (project_id,)) or {}
+    blob, filename, mime, meta = _build_accounting_export(
+        dict(sub), dict(proj), period, start, end, include_unpaid
+    )
+    return Response(
+        content=blob, media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@app.post("/api/integrations/{sub_id}/accounting/test-send")
+def accounting_test_send(sub_id: int,
+                         project_id: int = Query(...),
+                         period: str = Query("last_30d"),
+                         user: dict = Depends(get_current_user)):
+    """Sends an email RIGHT NOW so the merchant can verify the recipient and
+    body. Updates last_status / last_error like a real delivery."""
+    require_team_member_or_owner(user, project_id)
+    sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
+                 (sub_id, project_id))
+    if not sub: raise HTTPException(404, "Integration not found")
+    if sub["type"] not in ACCOUNTING_TYPES:
+        raise HTTPException(400, "Not an accounting connector")
+    recipient = (sub.get("url") or "").strip()
+    if not recipient or "@" not in recipient:
+        raise HTTPException(400, "Set a recipient email first (the URL field).")
+    proj = db_one("SELECT name, timezone, currency FROM crm_projects WHERE id=%s",
+                  (project_id,)) or {}
+    t0 = time.time()
+    try:
+        _send_accounting_email(dict(sub), dict(proj), period, manual=True)
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "UPDATE crm_webhook_subscriptions SET last_status='success', last_error='', last_event_at=NOW() WHERE id=%s",
+                (sub_id,)
+            )
+            conn.commit()
+        return {"status": "success", "duration_ms": int((time.time() - t0) * 1000)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "UPDATE crm_webhook_subscriptions SET last_status='failed', last_error=%s, last_event_at=NOW() WHERE id=%s",
+                (str(e)[:500], sub_id)
+            )
+            conn.commit()
+        raise HTTPException(500, f"Email send failed: {e}")
+
+
+def _send_accounting_email(sub: dict, project: dict, period: str, manual: bool = False):
+    """Composes and sends the scheduled-export email. Body is short — file
+    bytes are NOT inlined (SES has no attachments yet); merchant follows the
+    signed download link instead."""
+    recipient = (sub.get("url") or "").strip()
+    if not recipient:
+        raise HTTPException(400, "No recipient email configured")
+    blob, filename, _mime, meta = _build_accounting_export(sub, project, period)
+    label  = ACCOUNTING_PROVIDER_META[sub["type"]]["label"]
+    pname  = project.get("name") or "Your store"
+    token  = _sign_accounting_token(sub["id"], sub["project_id"], period)
+    dl_url = (f"{CRM_BACKEND_URL}/api/integrations/{sub['id']}/accounting/download"
+              f"?project_id={sub['project_id']}&period={period}&token={token}")
+    money  = fmt_money(meta["revenue"], meta["currency"])
+    subject = f"[{pname}] {label} export — {meta['period']}"
+    flavor = "Test export" if manual else "Scheduled export"
+    html = f"""
+      <div style="font-family:-apple-system,Segoe UI,sans-serif;color:#1d1d1f;max-width:540px">
+        <h2 style="margin:0 0 8px;font-weight:600">{flavor} ready</h2>
+        <p style="margin:0 0 16px;color:#555">
+          {meta['orders']} order(s) — {money} — period <strong>{meta['period']}</strong>.
+        </p>
+        <p style="margin:0 0 24px">
+          <a href="{dl_url}" style="display:inline-block;background:#0071E3;color:#fff;
+              padding:10px 20px;border-radius:999px;text-decoration:none;font-weight:600">
+            Download {filename}
+          </a>
+        </p>
+        <p style="color:#888;font-size:12px;margin:0">
+          Link valid for 30 days. Sent by Torta CRM accounting integration "{sanitize(sub.get('name') or label)}".
+        </p>
+      </div>
+    """.strip()
+    ok = send_email(recipient, subject, html, from_name="Torta CRM")
+    if not ok:
+        raise HTTPException(502, "Email provider rejected the message")
+    # File size is recorded for the merchant's reference, but we don't store
+    # the blob itself anywhere — they re-download from the link.
+    return {"size_bytes": len(blob)}
+
+
+# ── Scheduled exports ─────────────────────────────────────
+# Runs alongside the alerts evaluator — hourly cadence is enough; we look at
+# the merchant's chosen hour-of-day and the last_sent_at marker. Once-per-day
+# at most, regardless of when the loop ticks.
+
+def _accounting_due(sub: dict, now_utc: datetime) -> bool:
+    cfg = sub.get("config") or {}
+    if isinstance(cfg, str):
+        try: cfg = json.loads(cfg)
+        except Exception: cfg = {}
+    schedule = cfg.get("schedule") or "off"
+    if schedule == "off":
+        return False
+    hour_utc = int(cfg.get("schedule_hour_utc", 6))
+    if now_utc.hour != hour_utc:
+        return False
+    last_iso = cfg.get("last_sent_at")
+    try:
+        last = datetime.fromisoformat(last_iso) if last_iso else None
+    except Exception:
+        last = None
+    if last and last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    # 23-h hard floor between fires so a slow loop tick doesn't double-send
+    if last and (now_utc - last) < timedelta(hours=23):
+        return False
+    if schedule == "daily":
+        return True
+    if schedule == "weekly":
+        return now_utc.weekday() == int(cfg.get("schedule_day_of_week", 0))
+    if schedule == "monthly":
+        return now_utc.day == int(cfg.get("schedule_day_of_month", 1))
+    return False
+
+
+def _accounting_period_for_schedule(schedule: str) -> str:
+    return {"daily": "yesterday", "weekly": "last_7d", "monthly": "last_month"}.get(schedule, "last_30d")
+
+
+_accounting_scheduler_started = False
+
+
+def _accounting_loop_body():
+    now = _utcnow()
+    try:
+        subs = db_all(
+            "SELECT * FROM crm_webhook_subscriptions"
+            " WHERE is_active=TRUE AND type = ANY(%s)",
+            (list(ACCOUNTING_TYPES),)
+        )
+    except Exception as e:
+        print(f"[accounting scheduler] list failed: {e}")
+        return
+    for s in subs:
+        try:
+            if not _accounting_due(dict(s), now):
+                continue
+            proj = db_one("SELECT name, timezone, currency FROM crm_projects WHERE id=%s",
+                          (s["project_id"],)) or {}
+            cfg = s.get("config") or {}
+            if isinstance(cfg, str):
+                try: cfg = json.loads(cfg)
+                except Exception: cfg = {}
+            schedule = cfg.get("schedule") or "daily"
+            period = _accounting_period_for_schedule(schedule)
+            try:
+                _send_accounting_email(dict(s), dict(proj), period, manual=False)
+                cfg["last_sent_at"] = now.isoformat()
+                with db_cursor() as (conn, cur):
+                    cur.execute(
+                        "UPDATE crm_webhook_subscriptions"
+                        "   SET config=%s::jsonb, last_status='success', last_error='', last_event_at=NOW()"
+                        " WHERE id=%s",
+                        (json.dumps(cfg), s["id"])
+                    )
+                    conn.commit()
+            except Exception as e:
+                with db_cursor() as (conn, cur):
+                    cur.execute(
+                        "UPDATE crm_webhook_subscriptions"
+                        "   SET last_status='failed', last_error=%s, last_event_at=NOW()"
+                        " WHERE id=%s",
+                        (str(e)[:500], s["id"])
+                    )
+                    conn.commit()
+        except Exception as e:
+            print(f"[accounting scheduler] sub {s.get('id')} failed: {e}")
+
+
+def _start_accounting_scheduler():
+    global _accounting_scheduler_started
+    if _accounting_scheduler_started:
+        return
+    _accounting_scheduler_started = True
+    import threading
+
+    def loop():
+        time.sleep(180)  # 3-min grace at boot
+        while True:
+            try:
+                _accounting_loop_body()
+            except Exception as e:
+                print(f"[accounting scheduler] outer loop: {e}")
+            time.sleep(60 * 60)
+
+    t = threading.Thread(target=loop, name="accounting-scheduler", daemon=True)
+    t.start()
+
+
+# ── Request-an-integration form ─────────────────────────────
+# Lightweight: merchant can express interest in a Coming-soon connector. We
+# just record it and email the platform owner. No dedicated table — reuses
+# crm_webhook_subscriptions with a `requested_*` type prefix would be a bad
+# idea (pollutes the marketplace list); store in a tiny audit table.
+
+def _ensure_integration_requests_table():
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_integration_requests (
+                    id            SERIAL PRIMARY KEY,
+                    project_id    INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    crm_user_id   INTEGER NOT NULL REFERENCES crm_users(id)    ON DELETE CASCADE,
+                    connector     VARCHAR(60) NOT NULL,
+                    notify_email  VARCHAR(200) NOT NULL DEFAULT '',
+                    notes         TEXT NOT NULL DEFAULT '',
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_intreq_project ON crm_integration_requests(project_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_intreq_connector ON crm_integration_requests(connector)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] integration_requests failed: {e}")
+
+
+_ensure_integration_requests_table()
+
+
+class IntegrationRequestBody(BaseModel):
+    connector:    str
+    notify_email: Optional[str] = ""
+    notes:        Optional[str] = ""
+
+
+@app.post("/api/integrations/request")
+def request_integration(body: IntegrationRequestBody,
+                        project_id: int = Query(...),
+                        user: dict = Depends(get_current_user)):
+    """Captures 'Notify me when {connector} is ready' / general interest."""
+    require_team_member_or_owner(user, project_id)
+    conn_name = (body.connector or "").strip()[:60]
+    if not conn_name:
+        raise HTTPException(400, "Connector name required")
+    email = (body.notify_email or "").strip()[:200]
+    if email and "@" not in email:
+        raise HTTPException(400, "Email looks invalid")
+    notes = sanitize((body.notes or "").strip())[:2000]
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_integration_requests (project_id, crm_user_id, connector, notify_email, notes)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (project_id, user["id"], conn_name, email, notes)
+        )
+        conn.commit()
+    return {"ok": True}
 
 
 # ── DOCUMENT (PDF) settings ─────────────────────────────
@@ -18438,6 +19589,7 @@ async def _start_listener_on_boot():
     _start_pg_event_listener()
     _start_mv_refresher()
     _start_alerts_evaluator()
+    _start_accounting_scheduler()
 
 
 # ── Healthcheck endpoints ────────────────────────────────────────────────

@@ -598,6 +598,129 @@
   margin: 0;
 }
 
+/* Warning banner — Email channel shows this when no Auth Providers email
+   domain is verified yet, with a deep-link to the Authentication page. */
+.chat-modal-warn {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: rgba(255, 159, 10, 0.10);
+  color: #B25E00;
+  border: 1px solid rgba(255, 159, 10, 0.25);
+  border-radius: 12px;
+}
+.chat-modal-warn > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.chat-modal-warn-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #8A4500;
+  margin-bottom: 2px;
+}
+.chat-modal-warn-body {
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.85;
+  line-height: 1.55;
+}
+.chat-modal-warn-body a {
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: none;
+}
+.chat-modal-warn-body a:hover { text-decoration: underline; }
+
+/* Locked-domain input — Email channel field with a Verified badge attached
+   to the right edge, signalling the value isn't editable. Same visual weight
+   as a normal input so it doesn't read as broken. */
+.chat-modal-locked-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.chat-modal-locked-input .crm-input {
+  padding-right: 92px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.025);
+  cursor: not-allowed;
+}
+.chat-modal-lock-badge {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  pointer-events: none;
+}
+.chat-modal-hint a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.chat-modal-hint a:hover { text-decoration: underline; }
+
+.chat-modal-split-input {
+  display: flex;
+  align-items: stretch;
+}
+.chat-modal-split-input__left {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-right: 0 !important;
+  flex: 1;
+  min-width: 0;
+}
+.chat-modal-split-input__suffix {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 16px;
+  background: rgba(0, 0, 0, 0.04);
+  border-left: 0;
+  border-top-right-radius: 999px;
+  border-bottom-right-radius: 999px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--accent);
+  white-space: nowrap;
+  background-color: var(--accent-tint);
+}
+
+/* Live preview card — shows the final From: header the customer will see. */
+.chat-modal-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.025);
+  border-radius: 10px;
+  border: 1px dashed rgba(0, 0, 0, 0.10);
+}
+.chat-modal-preview-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.chat-modal-preview-from {
+  font-size: 13px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
 /* Empty-fields placeholder (Web Chat — no credentials needed) */
 .chat-modal-empty {
   display: flex;

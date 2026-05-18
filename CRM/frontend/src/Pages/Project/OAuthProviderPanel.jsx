@@ -21,7 +21,6 @@ const PROVIDER_INFO = {
   azure:     { console: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',    id_ph: 'Application (client) ID', sec_ph: 'Client secret value', console_label: 'Open Azure Portal' },
   apple:     { console: 'https://developer.apple.com/account/resources/identifiers/list/serviceId',             id_ph: 'Service ID',     sec_ph: 'Client Secret JWT',  console_label: 'Open Apple Developer' },
   x:         { console: 'https://developer.twitter.com/en/portal/projects-and-apps',                            id_ph: 'OAuth 2.0 Client ID', sec_ph: 'OAuth 2.0 Client Secret', console_label: 'Open X Developer Portal' },
-  vk:        { console: 'https://vk.com/apps?act=manage',                                                       id_ph: 'App ID',         sec_ph: 'Secure key',    console_label: 'Open VK App Manager' },
   kakao:     { console: 'https://developers.kakao.com/console/app',                                             id_ph: 'REST API key',   sec_ph: 'Client secret', console_label: 'Open Kakao Developers' },
   keycloak:  { console: '',                                                                                     id_ph: 'Client ID',      sec_ph: 'Client Secret', console_label: '' },
 };

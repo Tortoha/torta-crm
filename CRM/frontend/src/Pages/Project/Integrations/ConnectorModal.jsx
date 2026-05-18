@@ -1,14 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Copy, CheckCircle, BookOpen, PaperPlaneTilt } from '@phosphor-icons/react';
+import {
+  X, Copy, CheckCircle, BookOpen, PaperPlaneTilt, Eye, EyeSlash,
+} from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { CONNECTOR_BY_TYPE } from './connectors.js';
 import ConnectorIcon from './ConnectorIcon.jsx';
 
-// One modal handles install + edit + uninstall for every connector type.
-// `connectorType` decides the layout (Slack/Discord show "webhook URL", Custom
-// Webhook shows secret + signature hint, etc.). When `existing` is passed,
-// modal is in edit mode.
+// One modal handles install + edit + uninstall for every event-driven
+// connector — webhook-style (Custom Webhook / Slack / Discord / Zapier) plus
+// API-connector kinds (GA4 / Mixpanel / Mailchimp). The visual layout adapts
+// to the connector's `primaryLabel` + `configFields` meta in connectors.js:
+//
+//   • For webhook/slack/discord/zapier — the merchant supplies a URL only.
+//     The Custom Webhook also receives an HMAC signing secret on install.
+//   • For ga4/mixpanel/mailchimp — primaryLabel is something like
+//     "Measurement ID" / "Project Token" / "Audience ID", and configFields[]
+//     declares the secret inputs (api_secret / api_key). Secrets are masked
+//     in GET responses and preserved on save when the input stays masked.
 
 const ALL_EVENTS = [
   { value: 'order.created',     group: 'Orders'   },
@@ -31,21 +40,77 @@ const EVENTS_BY_GROUP = ALL_EVENTS.reduce((acc, e) => {
   (acc[e.group] = acc[e.group] || []).push(e); return acc;
 }, {});
 
+// Default field schema for legacy webhook/slack/discord — kept as a fallback
+// so connectors that don't declare primaryLabel still render correctly.
+const DEFAULT_PRIMARY_BY_TYPE = {
+  webhook: {
+    label: 'Endpoint URL',
+    placeholder: 'https://your-server.com/torta-webhook',
+    help: 'Your server should accept POST and verify X-Torta-Signature.',
+  },
+  slack: {
+    label: 'Webhook URL',
+    placeholder: 'https://hooks.slack.com/services/T0…/B0…/…',
+    help: 'Get this from api.slack.com/messaging/webhooks',
+  },
+  discord: {
+    label: 'Webhook URL',
+    placeholder: 'https://discord.com/api/webhooks/…/…',
+    help: 'Server Settings → Integrations → Webhooks → New Webhook',
+  },
+};
+
 export default function ConnectorModal({ projectId, connectorType, existing, onClose, onSaved, onDeleted }) {
   const pq = `?project_id=${projectId}`;
   const meta = CONNECTOR_BY_TYPE[connectorType] || {};
   const isEdit = !!existing;
 
-  const [name,     setName]     = useState(existing?.name ?? meta.name ?? '');
-  const [url,      setUrl]      = useState(existing?.url ?? '');
-  const [allEvents, setAllEvents] = useState(() => !existing || (existing.events || []).length === 0);
-  const [events,   setEvents]   = useState(existing?.events ?? []);
-  const [isActive, setIsActive] = useState(existing?.is_active !== false);
-  const [secret,   setSecret]   = useState(existing?.secret ?? '');
-  const [busy,     setBusy]     = useState(false);
-  const [err,      setErr]      = useState('');
-  const [testRes,  setTestRes]  = useState(null);
-  const [copied,   setCopied]   = useState(false);
+  // Primary field — `url` column in DB. Label / placeholder / help from meta
+  // (declared in connectors.js) or fall back to type-based defaults so
+  // webhook/slack/discord without explicit meta still work.
+  const primary = useMemo(() => {
+    if (meta.primaryLabel) {
+      return {
+        label:       meta.primaryLabel,
+        placeholder: meta.primaryPlaceholder || '',
+        help:        meta.primaryHelp || '',
+      };
+    }
+    return DEFAULT_PRIMARY_BY_TYPE[connectorType] || {
+      label: 'Webhook URL', placeholder: 'https://your-endpoint.com/hook', help: '',
+    };
+  }, [meta, connectorType]);
+
+  const configFields = meta.configFields || [];
+  const isWebhookLike = ['webhook', 'slack', 'discord', 'zapier'].includes(connectorType);
+  const showHmacSecret = connectorType === 'webhook';
+
+  const [name,      setName]      = useState(existing?.name ?? meta.name ?? '');
+  const [url,       setUrl]       = useState(existing?.url ?? '');
+  const initialEvents = existing?.events ?? (isEdit ? [] : (meta.defaultEvents || []));
+  const [allEvents, setAllEvents] = useState(
+    () => !isEdit
+      ? (meta.defaultEvents || []).length === 0  // new install: default to "all" only if no defaults specified
+      : (existing.events || []).length === 0,
+  );
+  const [events,    setEvents]    = useState(initialEvents);
+  const [isActive,  setIsActive]  = useState(existing?.is_active !== false);
+  const [secret,    setSecret]    = useState(existing?.secret ?? '');
+
+  // Per-config-field state — one entry per configFields[].key, seeded from
+  // existing row's config dict (already masked by the backend).
+  const [configState, setConfigState] = useState(() => {
+    const obj = {};
+    const existingCfg = existing?.config || {};
+    configFields.forEach(f => { obj[f.key] = existingCfg[f.key] ?? ''; });
+    return obj;
+  });
+  const [showSecretMap, setShowSecretMap] = useState({});
+
+  const [busy,    setBusy]    = useState(false);
+  const [err,     setErr]     = useState('');
+  const [testRes, setTestRes] = useState(null);
+  const [copied,  setCopied]  = useState(false);
 
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
@@ -57,19 +122,46 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
     setEvents(prev => prev.includes(ev) ? prev.filter(x => x !== ev) : [...prev, ev]);
   };
 
+  const onSecretChange = (key, value) => {
+    setConfigState(prev => ({ ...prev, [key]: value }));
+  };
+
+  // For API-connector types, build the merged config payload — only include
+  // keys the user touched (unmodified masked values are kept by the backend
+  // via _is_masked_secret detection, but sending them is fine too).
+  const buildConfigPayload = () => {
+    const cfg = {};
+    configFields.forEach(f => { cfg[f.key] = (configState[f.key] || '').trim(); });
+    // Preserve any other keys the backend already had (e.g. future extensions).
+    const existingCfg = existing?.config || {};
+    Object.keys(existingCfg).forEach(k => {
+      if (!(k in cfg)) cfg[k] = existingCfg[k];
+    });
+    return cfg;
+  };
+
   const save = async () => {
     setErr(''); setBusy(true);
     try {
       const u = url.trim();
-      if (!u) { setErr('URL is required'); setBusy(false); return; }
-      if (!/^https?:\/\//i.test(u)) {
-        setErr('URL must start with http:// or https://'); setBusy(false); return;
+      // Webhook-like primary field is a URL; API-connector primary is an
+      // identifier (G-XXX, list_id, token) — backend enforces both shapes.
+      if (!u) {
+        setErr(`${primary.label} is required`);
+        setBusy(false); return;
+      }
+      if (isWebhookLike && !/^https?:\/\//i.test(u)) {
+        setErr(`${primary.label} must start with http:// or https://`);
+        setBusy(false); return;
       }
       const body = {
         name: name.trim(),
         url: u,
         events: allEvents ? [] : events,
       };
+      if (configFields.length > 0) {
+        body.config = buildConfigPayload();
+      }
       let res;
       if (isEdit) {
         res = await fetch(`${API_BASE}/api/integrations/${existing.id}${pq}`, {
@@ -126,18 +218,6 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
     setCopied(true); setTimeout(() => setCopied(false), 1600);
   };
 
-  const urlPlaceholder = {
-    slack:   'https://hooks.slack.com/services/T0…/B0…/…',
-    discord: 'https://discord.com/api/webhooks/…/…',
-    webhook: 'https://your-server.com/torta-webhook',
-  }[connectorType] || 'https://your-endpoint.com/hook';
-
-  const urlHint = {
-    slack:   'Get this from api.slack.com/messaging/webhooks',
-    discord: 'Server Settings → Integrations → Webhooks → New Webhook',
-    webhook: 'Your server should accept POST and verify X-Torta-Signature.',
-  }[connectorType];
-
   return createPortal(
     <div className="auth-modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className="auth-modal int-modal">
@@ -165,16 +245,40 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">
-              {connectorType === 'webhook' ? 'Endpoint URL' : 'Webhook URL'}
-            </label>
-            <input className="crm-input" value={url} type="url"
+            <label className="auth-label">{primary.label}</label>
+            <input className="crm-input" value={url}
+              type={isWebhookLike ? 'url' : 'text'}
               onChange={e => setUrl(e.target.value)}
-              placeholder={urlPlaceholder} />
-            {urlHint && <p className="auth-field-hint">{urlHint}</p>}
+              placeholder={primary.placeholder} />
+            {primary.help && <p className="auth-field-hint">{primary.help}</p>}
           </div>
 
-          {connectorType === 'webhook' && secret && (
+          {/* Connector-specific secret/config fields */}
+          {configFields.map(f => {
+            const reveal = !!showSecretMap[f.key];
+            const isSecret = f.secret;
+            return (
+              <div key={f.key} className="auth-field">
+                <label className="auth-label">{f.label}</label>
+                <div className={isSecret ? 'int-secret-input-wrap' : ''}>
+                  <input className="crm-input" value={configState[f.key] || ''}
+                    type={isSecret && !reveal ? 'password' : 'text'}
+                    onChange={e => onSecretChange(f.key, e.target.value)}
+                    placeholder={f.placeholder} maxLength={500} />
+                  {isSecret && (
+                    <button type="button" className="int-secret-reveal"
+                      onClick={() => setShowSecretMap(m => ({ ...m, [f.key]: !m[f.key] }))}
+                      aria-label={reveal ? 'Hide' : 'Show'}>
+                      {reveal ? <EyeSlash size={14} /> : <Eye size={14} />}
+                    </button>
+                  )}
+                </div>
+                {f.help && <p className="auth-field-hint">{f.help}</p>}
+              </div>
+            );
+          })}
+
+          {showHmacSecret && secret && (
             <div className="auth-field">
               <label className="auth-label">Signing secret</label>
               <div className="int-secret-row">
@@ -198,7 +302,13 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
             <label className="auth-toggle-row" style={{ cursor: 'pointer' }}>
               <div>
                 <span className="auth-toggle-label">Subscribe to all events</span>
-                <p className="auth-field-hint">When ON, every event from this project triggers this integration.</p>
+                <p className="auth-field-hint">
+                  {connectorType === 'mailchimp'
+                    ? 'Mailchimp listens to customer.created only — other events are silently skipped server-side.'
+                    : connectorType === 'ga4'
+                    ? 'GA4 maps order.paid → purchase, order.created → begin_checkout. Other events are skipped.'
+                    : 'When ON, every event from this project triggers this integration.'}
+                </p>
               </div>
               <span className="auth-toggle">
                 <input type="checkbox" checked={allEvents}
@@ -266,9 +376,9 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
                 <PaperPlaneTilt size={14} /> Test send
               </button>
             )}
-            {connectorType === 'webhook' && (
-              <a className="auth-btn-check" target="_blank" rel="noreferrer"
-                href="https://docs.tortacrm.com/webhooks" style={{ textDecoration: 'none' }}>
+            {meta.docsUrl && (
+              <a className="auth-btn-check" target="_blank" rel="noopener noreferrer"
+                href={meta.docsUrl} style={{ textDecoration: 'none' }}>
                 <BookOpen size={14} /> Docs
               </a>
             )}

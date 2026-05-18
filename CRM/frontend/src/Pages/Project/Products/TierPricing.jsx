@@ -230,7 +230,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
             {hydrated ? ` · ${skuCount} SKU${skuCount === 1 ? '' : 's'}` : ''}
           </span>
         </NameCell>
-        <span className="po-numeric-muted">
+        <span className="po-numeric-left">
           {(product.min_price || product.max_price)
             ? (product.min_price === product.max_price
                 ? fmtPrice(product.min_price)
@@ -296,7 +296,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
                   <NameCell depth={2} icon={<Cube className="po-disc-cell--muted" />}>
                     <span>{c.configuration_name || c.name || '—'}</span>
                   </NameCell>
-                  <span className="po-numeric-muted">{fmtPrice(basePrice)}</span>
+                  <span className="po-numeric-left">{fmtPrice(basePrice)}</span>
                   <TierLadderCell tiers={tiers} />
                   <span className="po-set-note">{c.sku_code || '—'}</span>
                   <button type="button" className="po-edit-btn"

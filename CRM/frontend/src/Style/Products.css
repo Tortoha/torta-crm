@@ -5058,6 +5058,16 @@ textarea.po-set-input,
   text-align: right;
 }
 
+/* Same tabular-nums styling as .po-numeric-muted but left-aligned so it
+   sits flush with its column header (used in Tier pricing's Base price
+   column — right-aligning price made it visually collide with the
+   left-aligned Tier ladder column next to it). */
+.po-numeric-left {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
 /* ── Cost / Profit / Margin columns on the Inventory page ────────────
    .po-num-head — right-aligned head label for the three financial
                   columns so the labels sit above their numbers.
@@ -6845,10 +6855,8 @@ textarea.po-set-input,
   display: inline-flex;
   align-items: center;
   background: var(--card);
-  border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 999px;
   padding: 3px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
   flex-shrink: 0;
 }
 

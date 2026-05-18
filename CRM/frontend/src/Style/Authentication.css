@@ -401,17 +401,17 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  background: #2563EB;
+  background: var(--accent);
   color: #fff;
   transition: background 0.18s ease, transform 0.1s ease;
 }
 
 .auth-modal .crm-submit-btn:hover:not(:disabled) {
-  background: #1d4ed8;
+  background: var(--accent-hover);
 }
 
 .auth-modal .crm-submit-btn:disabled {
-  background: #E5E7EB;
+  background: var(--muted);
   color: #9CA3AF;
   cursor: default;
 }
@@ -587,6 +587,51 @@
   background-color: #E5E7EB;
   color: #9CA3AF;
   cursor: default;
+}
+
+/* ── ApplePanel-specific ────────────────────────────────────────────── */
+/* Textarea for .p8 PEM contents — sized to comfortably show the 6-line
+   PRIVATE KEY block without scrolling. Eye toggle blurs the contents when
+   off so over-shoulder readers can't grab the key. */
+.apple-p8-textarea {
+  width: 100%;
+  border-radius: 16px !important;  /* rounder than inputs (less pill-y) */
+  padding: 12px 14px;
+  resize: vertical;
+  min-height: 110px;
+  line-height: 1.45;
+  background: var(--card);
+}
+.apple-p8-upload {
+  margin-top: 8px;
+  align-self: flex-start;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.apple-https-warn {
+  background: rgba(255, 159, 10, 0.10);
+  color: #B25E00;
+  border: 1px solid rgba(255, 159, 10, 0.25);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.apple-https-warn code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+.auth-msg--warn {
+  /* generic warn variant for future use */
+  background: rgba(255, 159, 10, 0.10);
+  color: #B25E00;
 }
 
 .auth-sep {

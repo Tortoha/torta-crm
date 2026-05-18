@@ -11,6 +11,7 @@ import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import EmailPanel from './EmailPanel.jsx';
 import GooglePanel from './GooglePanel.jsx';
 import OAuthProviderPanel from './OAuthProviderPanel.jsx';
+import ApplePanel from './ApplePanel.jsx';
 import PhonePanel from './PhonePanel.jsx';
 import '../../Style/Authentication.css';
 
@@ -38,7 +39,6 @@ const PROVIDERS = [
   { id: 'azure',     label: 'Azure',           desc: 'Microsoft Entra ID (Azure AD)', configurable: true, iconify: 'logos:microsoft-azure' },
   { id: 'apple',     label: 'Apple',           desc: 'Sign in with Apple ID',       configurable: true, iconify: 'simple-icons:apple',     color: '#000000' },
   { id: 'x',         label: 'X / Twitter (OAuth 2.0)', desc: 'Sign in with X',      configurable: true, iconify: 'simple-icons:x',         color: '#000000' },
-  { id: 'vk',        label: 'VK',              desc: 'Sign in with VK',             configurable: true, iconify: 'simple-icons:vk',        color: '#0077FF' },
   { id: 'kakao',     label: 'Kakao',           desc: 'Sign in with Kakao',          configurable: true, iconify: 'simple-icons:kakaotalk', color: '#3C1E1E' },
   { id: 'keycloak',  label: 'KeyCloak',        desc: 'Sign in with KeyCloak',       configurable: true, iconify: 'simple-icons:keycloak',  color: '#4D4D4D' },
 ];
@@ -480,13 +480,23 @@ function Authentication() {
           subtitle={modalProvider.desc}
           iconEl={<ProviderIcon provider={modalProvider} size={24} />}
           onClose={() => setModal(null)}>
-          <OAuthProviderPanel
-            provider={modalProvider}
-            projectId={projectId}
-            onSaved={(en) => {
-              setProviderEnabled(prev => ({ ...prev, [modalProvider.id]: !!en }));
-            }}
-          />
+          {modalProvider.id === 'apple' ? (
+            <ApplePanel
+              provider={modalProvider}
+              projectId={projectId}
+              onSaved={(en) => {
+                setProviderEnabled(prev => ({ ...prev, [modalProvider.id]: !!en }));
+              }}
+            />
+          ) : (
+            <OAuthProviderPanel
+              provider={modalProvider}
+              projectId={projectId}
+              onSaved={(en) => {
+                setProviderEnabled(prev => ({ ...prev, [modalProvider.id]: !!en }));
+              }}
+            />
+          )}
         </AuthModal>
       )}
     </>
