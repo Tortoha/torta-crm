@@ -21,7 +21,25 @@ import { setShopCurrency } from "./currency.js"
 
 function App() {
   useEffect(() => {
-    client.track.visit();
+    // Track a site visit *per identity*, not per App mount. SPA
+    // navigation keeps <App> mounted across login/logout, so a single
+    // mount would only ever produce one `site_visits` row even though
+    // `product_page_views` records each identity separately. That
+    // mismatch made the Sales-funnel analytics show "1 visitor / 2
+    // viewers" and clamp every step to 100%. Polling the SDK's cached
+    // user (invalidated by `verifyCode`/`logout`) lets us fire a fresh
+    // visit when the identity actually changes.
+    let lastIdentity;
+    const fire = async () => {
+      await client.auth.getUser();
+      const id = client.auth.user?.id ?? 'anon';
+      if (id !== lastIdentity) {
+        lastIdentity = id;
+        client.track.visit();
+      }
+    };
+    fire();
+    const handle = setInterval(fire, 2000);
     // Bootstrap the storefront's currency from project config BEFORE
     // any price renders. The result is cached at module level by
     // `setShopCurrency`, so subsequent `fmtMoney()` calls anywhere in
@@ -31,6 +49,7 @@ function App() {
     client.config.get()
       .then(r => setShopCurrency(r?.data?.currency))
       .catch(() => {});
+    return () => clearInterval(handle);
   }, []);
 
   return (

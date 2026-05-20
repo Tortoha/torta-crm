@@ -4,6 +4,7 @@ import { Truck, EnvelopeSimple, CreditCard, Money, ChatCircle, Storefront, MapPi
 import Header from "./Header";
 import { client } from "./api.js";
 import { fmtMoney } from "./currency.js";
+import CountryCombobox from "./CountryCombobox.jsx";
 import "./Style/Checkout.css";
 import "./Style/Load.css";
 
@@ -24,10 +25,36 @@ function Checkout() {
   const initPromo = location.state?.promoCode || "";
 
   const [form, setForm] = useState({
-    recipient_name: "",
+    // Structured recipient name — first + last required at checkout,
+    // middle (patronymic) optional. Backend composes the legacy
+    // recipient_name as "{last} {first} {middle}" for back-compat
+    // with invoices that print the single-string version.
+    recipient_first_name:  "",
+    recipient_last_name:   "",
+    recipient_middle_name: "",
+    // Contact info for guest checkout — at least one is required
+    // (which one depends on /auth/methods returned by the merchant).
+    customer_email: "",
     phone:          "",
     delivery_method: "courier",
-    address:        "",
+    // ── Structured shipping address ────────────────────────────────
+    // The merchant's CRM stores the address as a single freeform
+    // string (`order_history.address`), so on submit we compose these
+    // fields into "City, Street, Apartment, ZIP, Country" — that
+    // ordering puts city first, which makes the shipping-label
+    // renderer happy (it extracts city as the first comma-separated
+    // segment for the highlighted block).
+    addr_country:   "Kazakhstan",   // sensible default for our user base
+    addr_city:      "",
+    addr_street:    "",             // street + building number
+    // Apartment is split into 4 structured fields — the courier sees
+    // exactly which unit / floor / entrance / intercom to use, no
+    // freeform-parsing required.
+    addr_apartment: "",
+    addr_floor:     "",
+    addr_entrance:  "",
+    addr_intercom:  "",
+    addr_postal:    "",
     comment:        "",
     payment_method: "cash",
     promo_code:     initPromo,
@@ -37,10 +64,55 @@ function Checkout() {
     pickup_warehouse_id: null,
   });
 
+  // Compose the structured fields into a single string for backend
+  // storage. City first so label rendering can split-by-comma and
+  // pick city for the highlighted block. Apartment + floor + entrance
+  // + intercom collapse into one street-line tail (matches how real
+  // shipping labels print one address line below the recipient name).
+  const composeAddress = () => {
+    const aptBits = [];
+    if (form.addr_apartment.trim()) aptBits.push(`кв ${form.addr_apartment.trim()}`);
+    if (form.addr_floor.trim())     aptBits.push(`эт ${form.addr_floor.trim()}`);
+    if (form.addr_entrance.trim())  aptBits.push(`под ${form.addr_entrance.trim()}`);
+    if (form.addr_intercom.trim())  aptBits.push(`домофон ${form.addr_intercom.trim()}`);
+    const aptLine = aptBits.join(", ");
+    const street = [form.addr_street.trim(), aptLine].filter(Boolean).join(", ");
+    return [
+      form.addr_city.trim(),
+      street,
+      form.addr_postal.trim(),
+      form.addr_country.trim(),
+    ].filter(Boolean).join(", ");
+  };
+
   // Pickup locations loaded once on mount — if the merchant opted at least
   // one warehouse into pickup, the toggle becomes visible.
   const [pickupLocations, setPickupLocations] = useState([]);
   const [deliveryEta, setDeliveryEta] = useState(null);
+
+  // ── Saved addresses (per-user, persisted on the backend) ──────────
+  // Logged-in customer can pick from previously-saved ones via the
+  // dropdown OR enter a new address and tick "Save this address" to
+  // store it for next time. selectedAddrId === 'new' means the form
+  // is editable; any numeric id means we hydrated the form from a
+  // saved entry (still editable so the customer can tweak per-order
+  // differences like floor / intercom).
+  // Saved-addresses dropdown — populated from /me/addresses on mount.
+  // No explicit "save this address" checkbox anymore: the backend now
+  // auto-saves the address on the user's first courier order (silent
+  // default). UX matches Wildberries/Amazon — typing once is enough.
+  const [savedAddresses,  setSavedAddresses]  = useState([]);
+  const [selectedAddrId,  setSelectedAddrId]  = useState('new');
+
+  // What contact methods does this merchant accept at checkout?
+  // Driven by GET /auth/methods which reads crm_auth_providers. Email
+  // is always true; phone toggles based on whether the merchant has
+  // enabled SMS/phone-OTP login. We use this to pick the right UI:
+  //   • both → toggle "Email / Phone"
+  //   • email-only → just the email input
+  //   • (phone-only is theoretically possible but rare in v1)
+  const [authMethods, setAuthMethods] = useState({ email: true, phone: false });
+  const [contactMode, setContactMode] = useState("email"); // "email" | "phone"
 
   const [promoApplied,  setPromoApplied]  = useState(null);
   const [promoError,    setPromoError]    = useState("");
@@ -51,18 +123,44 @@ function Checkout() {
     let mounted = true;
     (async () => {
       try {
+        // Guest visitors are perfectly fine on Checkout — the cart
+        // they built (via auto-guest user) lives in the backend
+        // already. We no longer redirect to /login when not "fully"
+        // signed in: the user_id is whatever lazy-guest creation
+        // assigned on the first Add-to-cart click.
         const user = await client.auth.getUser();
         if (!mounted) return;
-        if (!user) { navigate("/login"); return; }
 
-        // Pre-fill name from account
-        if (user.name) setForm(f => ({ ...f, recipient_name: user.name }));
+        // Pre-fill from existing user account (real users will have
+        // these, guests won't — fields stay empty for them).
+        if (user) {
+          setForm(f => ({
+            ...f,
+            recipient_first_name: user.first_name || f.recipient_first_name,
+            recipient_last_name:  user.last_name  || f.recipient_last_name,
+            customer_email:       user.email      || f.customer_email,
+            phone:                user.phone      || f.phone,
+          }));
+        }
 
         const result = await client.cart.get();
         if (!mounted) return;
-        if (result.status === 401) { navigate("/login"); return; }
+        // 401 here means even the guest cookie expired or got cleared.
+        // Redirect to cart so the user can re-add items (which will
+        // re-issue a fresh guest cookie).
+        if (result.status === 401) { navigate("/cart"); return; }
         if (!result.ok || !result.data?.items?.length) { navigate("/cart"); return; }
         setCart(result.data);
+
+        // What contact methods can this merchant accept? Drives the
+        // "Email / Phone" choice in the Contact section. Optional —
+        // fallback "email-only" if endpoint or SDK is missing.
+        client.auth?.methods?.()
+          .then(r => {
+            if (!mounted || !r?.ok) return;
+            setAuthMethods({ email: !!r.data?.email, phone: !!r.data?.phone });
+          })
+          .catch(() => {});
 
         // Pull pickup locations + delivery ETA in parallel. Both endpoints
         // are public — work for both logged-in and guest checkouts.
@@ -76,6 +174,32 @@ function Checkout() {
         client.shipping?.deliveryEta?.()
           .then(r => mounted && r.ok && setDeliveryEta(r.data))
           .catch(() => {});
+        // Saved addresses — also optional. If the SDK is old (no
+        // `addresses` namespace), skip without crashing.
+        client.addresses?.list?.()
+          .then(r => {
+            if (!mounted) return;
+            const list = Array.isArray(r?.data) ? r.data : [];
+            setSavedAddresses(list);
+            // Auto-select the default (if any) and hydrate the form
+            // fields from it. Falls back to "new" mode otherwise.
+            const def = list.find(a => a.is_default) || list[0];
+            if (def) {
+              setSelectedAddrId(def.id);
+              setForm(f => ({
+                ...f,
+                addr_country:   def.country     || f.addr_country,
+                addr_city:      def.city        || "",
+                addr_postal:    def.postal_code || "",
+                addr_street:    def.street      || "",
+                addr_apartment: def.apartment   || "",
+                addr_floor:     def.floor       || "",
+                addr_entrance:  def.entrance    || "",
+                addr_intercom:  def.intercom    || "",
+              }));
+            }
+          })
+          .catch(() => {});
       } catch (e) {
         console.error("Checkout load error:", e);
         navigate("/cart");
@@ -87,6 +211,37 @@ function Checkout() {
   }, []);
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
+
+  // Pick an address from the saved list (or "new" to clear the form).
+  // Sets the dropdown choice + hydrates the structured form fields so
+  // the customer sees what they're about to submit.
+  const pickSavedAddress = (id) => {
+    setSelectedAddrId(id);
+    if (id === 'new') {
+      // Wipe the address fields so the customer types fresh data
+      // rather than accidentally editing a previously-saved address.
+      setForm(f => ({
+        ...f,
+        addr_city: "", addr_postal: "",
+        addr_street: "", addr_apartment: "",
+        addr_floor: "", addr_entrance: "", addr_intercom: "",
+      }));
+      return;
+    }
+    const a = savedAddresses.find(x => x.id === Number(id));
+    if (!a) return;
+    setForm(f => ({
+      ...f,
+      addr_country:   a.country     || f.addr_country,
+      addr_city:      a.city        || "",
+      addr_postal:    a.postal_code || "",
+      addr_street:    a.street      || "",
+      addr_apartment: a.apartment   || "",
+      addr_floor:     a.floor       || "",
+      addr_entrance:  a.entrance    || "",
+      addr_intercom:  a.intercom    || "",
+    }));
+  };
 
   // ── Apply promo ─────────────────────────────────────────────
   const handleApplyPromo = async () => {
@@ -110,13 +265,34 @@ function Checkout() {
   // ── Place order ─────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.recipient_name.trim()) {
-      setError("Recipient name is required");
-      return;
+    // Name validation — first + last required.
+    if (!form.recipient_first_name.trim()) {
+      setError("First name is required"); return;
     }
-    if (cart.requires_shipping && form.fulfillment_type === "courier" && !form.address.trim()) {
-      setError("Delivery address is required for courier");
-      return;
+    if (!form.recipient_last_name.trim()) {
+      setError("Last name is required"); return;
+    }
+    // Contact info — at least the active mode's field must be set.
+    if (contactMode === "email" || !authMethods.phone) {
+      if (!form.customer_email.trim()) {
+        setError("Email is required"); return;
+      }
+      if (!/^[^@]+@[^@]+\.[^@]+$/.test(form.customer_email.trim())) {
+        setError("Enter a valid email"); return;
+      }
+    } else if (contactMode === "phone") {
+      if (!form.phone.trim()) {
+        setError("Phone is required"); return;
+      }
+    }
+    if (cart.requires_shipping && form.fulfillment_type === "courier") {
+      // Require city + postal + street. Apartment and country
+      // remain optional (rural areas, dorms etc. — but a postal
+      // code matters for couriers to route correctly, so we don't
+      // make it skippable like before).
+      if (!form.addr_city.trim())   { setError("City is required"); return; }
+      if (!form.addr_postal.trim()) { setError("Postal code is required"); return; }
+      if (!form.addr_street.trim()) { setError("Street address is required"); return; }
     }
     if (cart.requires_shipping && form.fulfillment_type === "pickup" && !form.pickup_warehouse_id) {
       setError("Please pick a store to collect your order from");
@@ -126,21 +302,54 @@ function Checkout() {
     setSubmitting(true);
 
     const payload = {
-      recipient_name:  form.recipient_name.trim(),
+      // Structured recipient name fields — backend composes the
+      // legacy `recipient_name` from these for back-compat.
+      recipient_first_name:  form.recipient_first_name.trim(),
+      recipient_last_name:   form.recipient_last_name.trim(),
       delivery_method: cart.requires_shipping ? form.delivery_method : "digital",
       payment_method:  form.payment_method,
       fulfillment_type: cart.requires_shipping ? form.fulfillment_type : "courier",
     };
+    if (form.recipient_middle_name.trim())
+      payload.recipient_middle_name = form.recipient_middle_name.trim();
+    // Contact info — backend persists this onto the (guest) users
+    // record so the next email/phone-OTP login can find this account.
+    if (form.customer_email.trim())
+      payload.customer_email = form.customer_email.trim().toLowerCase();
     if (form.fulfillment_type === "pickup" && form.pickup_warehouse_id) {
       payload.pickup_warehouse_id = form.pickup_warehouse_id;
     }
     if (form.phone.trim())   payload.phone       = form.phone.trim();
-    if (form.address.trim()) payload.address     = form.address.trim();
+    // Ship the structured address fields as separate keys — the
+    // External backend reconstructs the legacy `address` string from
+    // these for back-compat (invoice PDF + older clients), and the
+    // shipping-label renderer uses the structured fields directly so
+    // the highlighted City block on the label is always accurate.
+    // Skip for pickup (warehouse handles itself) and digital orders.
+    if (cart.requires_shipping && form.fulfillment_type === "courier") {
+      if (form.addr_country.trim())   payload.address_country     = form.addr_country.trim();
+      if (form.addr_city.trim())      payload.address_city        = form.addr_city.trim();
+      if (form.addr_postal.trim())    payload.address_postal_code = form.addr_postal.trim();
+      if (form.addr_street.trim())    payload.address_street      = form.addr_street.trim();
+      if (form.addr_apartment.trim()) payload.address_apartment   = form.addr_apartment.trim();
+      if (form.addr_floor.trim())     payload.address_floor       = form.addr_floor.trim();
+      if (form.addr_entrance.trim())  payload.address_entrance    = form.addr_entrance.trim();
+      if (form.addr_intercom.trim())  payload.address_intercom    = form.addr_intercom.trim();
+      // Compose a legacy `address` string too — useful as a defensive
+      // fallback if anything downstream still reads the freeform
+      // column instead of the new structured ones.
+      const composed = composeAddress();
+      if (composed) payload.address = composed;
+    }
     if (form.comment.trim()) payload.comment     = form.comment.trim();
     if (form.promo_code.trim()) payload.promo_code = form.promo_code.trim();
 
     const { ok, data, error } = await client.orders.place(payload);
     if (ok) {
+      // Address auto-save now happens server-side on /place — the
+      // first courier order with a structured address creates the
+      // user's default saved-address row automatically. No manual
+      // checkbox needed here.
       navigate("/order-success", { state: { orderId: data.order_id } });
     } else {
       setError(error || "Failed to place order. Please try again.");
@@ -175,26 +384,84 @@ function Checkout() {
             <div className="checkout-section">
               <h2 className="checkout-section-title">Contact</h2>
               <div className="checkout-fields">
+                <div className="checkout-addr-row">
+                  <div className="checkout-field">
+                    <label>First Name <span className="req">*</span></label>
+                    <input
+                      type="text"
+                      className="checkout-input"
+                      value={form.recipient_first_name}
+                      onChange={e => set("recipient_first_name", e.target.value)}
+                      placeholder="First name"
+                      autoComplete="given-name" />
+                  </div>
+                  <div className="checkout-field">
+                    <label>Last Name <span className="req">*</span></label>
+                    <input
+                      type="text"
+                      className="checkout-input"
+                      value={form.recipient_last_name}
+                      onChange={e => set("recipient_last_name", e.target.value)}
+                      placeholder="Last name"
+                      autoComplete="family-name" />
+                  </div>
+                </div>
                 <div className="checkout-field">
-                  <label>Recipient Name <span className="req">*</span></label>
+                  <label>Middle Name / Patronymic <span className="optional">optional</span></label>
                   <input
                     type="text"
                     className="checkout-input"
-                    value={form.recipient_name}
-                    onChange={e => set("recipient_name", e.target.value)}
-                    placeholder="Full name"
-                  />
+                    value={form.recipient_middle_name}
+                    onChange={e => set("recipient_middle_name", e.target.value)}
+                    placeholder="Middle name / Отчество"
+                    autoComplete="additional-name" />
                 </div>
-                <div className="checkout-field">
-                  <label>Phone <span className="optional">optional</span></label>
-                  <input
-                    type="tel"
-                    className="checkout-input"
-                    value={form.phone}
-                    onChange={e => set("phone", e.target.value)}
-                    placeholder="+1 (555) 000-0000"
-                  />
-                </div>
+
+                {/* Contact channel — depends on what merchant allows.
+                    Both enabled → toggle; one enabled → that input
+                    alone. Fallback: email (always available). */}
+                {authMethods.email && authMethods.phone && (
+                  <div className="checkout-toggle checkout-contact-toggle">
+                    <button type="button"
+                      className={`checkout-toggle-btn${contactMode === "email" ? " checkout-toggle-btn--active" : ""}`}
+                      onClick={() => setContactMode("email")}>
+                      Email
+                    </button>
+                    <button type="button"
+                      className={`checkout-toggle-btn${contactMode === "phone" ? " checkout-toggle-btn--active" : ""}`}
+                      onClick={() => setContactMode("phone")}>
+                      Phone
+                    </button>
+                  </div>
+                )}
+                {(contactMode === "email" || !authMethods.phone) && (
+                  <div className="checkout-field">
+                    <label>Email <span className="req">*</span></label>
+                    <input
+                      type="email"
+                      className="checkout-input"
+                      value={form.customer_email}
+                      onChange={e => set("customer_email", e.target.value)}
+                      placeholder="you@example.com"
+                      autoComplete="email" />
+                    <span className="optional">
+                      We'll send order confirmation here. Sign up later with
+                      this email to keep your order history.
+                    </span>
+                  </div>
+                )}
+                {(contactMode === "phone" || (authMethods.phone && !authMethods.email)) && (
+                  <div className="checkout-field">
+                    <label>Phone <span className="req">*</span></label>
+                    <input
+                      type="tel"
+                      className="checkout-input"
+                      value={form.phone}
+                      onChange={e => set("phone", e.target.value)}
+                      placeholder="+7 777 123 4567"
+                      autoComplete="tel" />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -237,16 +504,147 @@ function Checkout() {
                           : `Delivery in ${deliveryEta.min_days}–${deliveryEta.max_days} days`}
                       </div>
                     )}
+
+                    {/* Saved-addresses picker — only shown when the
+                        customer actually has saved addresses. The
+                        select pre-fills the form below; choosing
+                        "Use a new address" clears it. */}
+                    {savedAddresses.length > 0 && (
+                      <div className="checkout-field checkout-field--mt">
+                        <label htmlFor="saved-addr">Saved addresses</label>
+                        <select
+                          id="saved-addr" className="checkout-input"
+                          value={selectedAddrId}
+                          onChange={e => pickSavedAddress(e.target.value)}>
+                          {savedAddresses.map(a => (
+                            <option key={a.id} value={a.id}>
+                              {a.label ? `${a.label} · ` : ""}
+                              {[a.city, a.street, a.apartment].filter(Boolean).join(", ")}
+                              {a.is_default ? " (default)" : ""}
+                            </option>
+                          ))}
+                          <option value="new">+ Use a new address</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Structured address form — mirrors what real
+                        carriers ask for (city + postal + street are
+                        required; country / apartment are optional).
+                        Layout follows the "City + Postal on one row,
+                        Street + Apartment full-width" pattern that
+                        most shipping forms (Stripe Checkout, Shopify,
+                        Amazon) settled on. */}
+                    {/* Country picker — custom button-based combobox
+                        instead of native <input list> so the browser
+                        doesn't paste in the customer's autofill data
+                        (which made it look like we'd already saved
+                        their personal info). */}
                     <div className="checkout-field checkout-field--mt">
-                      <label>Delivery Address <span className="req">*</span></label>
-                      <input
-                        type="text"
-                        className="checkout-input"
-                        value={form.address}
-                        onChange={e => set("address", e.target.value)}
-                        placeholder="Street, City, ZIP"
-                      />
+                      <label>Country</label>
+                      <CountryCombobox
+                        value={form.addr_country}
+                        onChange={(v) => set("addr_country", v)}
+                        placeholder="Select country" />
                     </div>
+
+                    <div className="checkout-addr-row">
+                      <div className="checkout-field">
+                        <label htmlFor="addr-city">City <span className="req">*</span></label>
+                        {/* Generic placeholders below — avoid baking
+                            real personal addresses into the UI; the
+                            customer was uncomfortable seeing what
+                            looked like their own data pre-filled. */}
+                        <input
+                          id="addr-city" type="text"
+                          className="checkout-input"
+                          value={form.addr_city}
+                          onChange={e => set("addr_city", e.target.value)}
+                          placeholder="City name"
+                          autoComplete="off" />
+                      </div>
+                      <div className="checkout-field">
+                        <label htmlFor="addr-postal">Postal Code <span className="req">*</span></label>
+                        <input
+                          id="addr-postal" type="text"
+                          className="checkout-input"
+                          value={form.addr_postal}
+                          onChange={e => set("addr_postal", e.target.value)}
+                          placeholder="Postal / ZIP code"
+                          autoComplete="off" />
+                      </div>
+                    </div>
+
+                    <div className="checkout-field">
+                      <label htmlFor="addr-street">Street + Building <span className="req">*</span></label>
+                      <input
+                        id="addr-street" type="text"
+                        className="checkout-input"
+                        value={form.addr_street}
+                        onChange={e => set("addr_street", e.target.value)}
+                        placeholder="Street name and building number"
+                        autoComplete="off" />
+                    </div>
+
+                    {/* Apartment block — 4 structured fields in a
+                        2×2 grid. Apartment is the most important so
+                        it goes top-left; intercom (least common)
+                        bottom-right. Couriers read the label one
+                        row at a time and the columns line up with
+                        the human reading order: "where do I go". */}
+                    <div className="checkout-addr-row">
+                      <div className="checkout-field">
+                        <label htmlFor="addr-apartment">Apartment</label>
+                        <input
+                          id="addr-apartment" type="text"
+                          className="checkout-input"
+                          value={form.addr_apartment}
+                          onChange={e => set("addr_apartment", e.target.value)}
+                          placeholder="123"
+                          autoComplete="off" />
+                      </div>
+                      <div className="checkout-field">
+                        <label htmlFor="addr-floor">Floor</label>
+                        <input
+                          id="addr-floor" type="text"
+                          className="checkout-input"
+                          value={form.addr_floor}
+                          onChange={e => set("addr_floor", e.target.value)}
+                          placeholder="4"
+                          autoComplete="off" />
+                      </div>
+                    </div>
+                    <div className="checkout-addr-row">
+                      <div className="checkout-field">
+                        <label htmlFor="addr-entrance">Entrance</label>
+                        <input
+                          id="addr-entrance" type="text"
+                          className="checkout-input"
+                          value={form.addr_entrance}
+                          onChange={e => set("addr_entrance", e.target.value)}
+                          placeholder="2"
+                          autoComplete="off" />
+                      </div>
+                      <div className="checkout-field">
+                        <label htmlFor="addr-intercom">Intercom</label>
+                        <input
+                          id="addr-intercom" type="text"
+                          className="checkout-input"
+                          value={form.addr_intercom}
+                          onChange={e => set("addr_intercom", e.target.value)}
+                          placeholder="123#"
+                          autoComplete="off" />
+                      </div>
+                    </div>
+
+                    {/* Address auto-saves on first order — no checkbox
+                        needed. Tiny hint so the customer knows the
+                        info is being kept. */}
+                    {savedAddresses.length === 0 && (
+                      <span className="optional checkout-autosave-hint">
+                        We'll remember this address for next time
+                      </span>
+                    )}
                   </>
                 )}
 

@@ -19,6 +19,10 @@ import {
 import { API_BASE } from '../../api.js';
 import '../../Style/Authentication.css';
 import '../../Style/Products.css';
+// Page-specific CSS — template-preview cards + logo uploader live
+// here, isolated from Integrations.css / Booking.css where they were
+// stranded before.
+import '../../Style/Documents.css';
 
 const STYLE_OPTIONS = [
   { key: 'modern',  label: 'Modern',  hint: 'Coloured banner + accent stripes (default).' },
@@ -179,9 +183,9 @@ export default function Documents() {
           <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
             onChange={e => upload(e.target.files?.[0])} />
           {form.logo_url ? (
-            <div className="bk-svc-img-preview">
+            <div className="doc-logo-preview">
               <img src={form.logo_url} alt="" />
-              <div className="bk-svc-img-actions">
+              <div className="doc-logo-actions">
                 <button type="button" className="crm-submit-btn auth-btn-secondary"
                   onClick={() => fileRef.current?.click()} disabled={uploading}>
                   {uploading ? 'Uploading…' : 'Replace'}
@@ -191,7 +195,7 @@ export default function Documents() {
               </div>
             </div>
           ) : (
-            <button type="button" className="bk-svc-img-drop"
+            <button type="button" className="doc-logo-drop"
               onClick={() => fileRef.current?.click()} disabled={uploading}>
               {uploading ? 'Uploading…' : (
                 <><UploadSimple weight="bold" size={20} /> <span>Click to upload a logo</span></>
@@ -261,19 +265,16 @@ export default function Documents() {
         subtitle="Accent colour and footer text. Apply only to the Modern template.">
         <FieldCard label="Accent colour"
           hint="Used for the banner and total row in the Modern template. Hex format (#RRGGBB).">
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="color" value={form.accent_color || '#0071E3'}
-              onChange={e => persist({ accent_color: e.target.value })}
-              style={{
-                width: 40, height: 40, padding: 0, border: 'none',
-                borderRadius: 999, cursor: 'pointer', background: 'transparent',
-              }} />
-            <input className="crm-input" value={form.accent_color || '#0071E3'}
+          <div className="doc-accent-row">
+            <input type="color" className="doc-accent-swatch"
+              value={form.accent_color || '#0071E3'}
+              onChange={e => persist({ accent_color: e.target.value })} />
+            <input className="crm-input doc-accent-hex"
+              value={form.accent_color || '#0071E3'}
               onChange={e => setForm(f => ({ ...f, accent_color: e.target.value }))}
               onBlur={e => persist({ accent_color: e.target.value })}
               maxLength={20}
-              placeholder="#0071E3"
-              style={{ maxWidth: 160 }} />
+              placeholder="#0071E3" />
           </div>
         </FieldCard>
         <FieldCard label="Footer note"

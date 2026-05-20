@@ -54,7 +54,10 @@
   filter: none !important;
   isolation: isolate;
 }
-.hdr-brand-logo path { fill: var(--accent) !important; }
+
+.hdr-brand-logo path {
+  fill: var(--accent) !important;
+}
 
 .hdr-brand:hover {
   background: var(--accent-tint);
@@ -157,7 +160,9 @@
   transition: transform 0.15s var(--ease-smooth), color 0.15s ease;
 }
 
-.hdr-switcher-arrow:hover .hdr-switcher-chevron { color: #0071E3; }
+.hdr-switcher-arrow:hover .hdr-switcher-chevron {
+  color: #0071E3;
+}
 
 .hdr-switcher-chevron--open {
   transform: rotate(180deg);
@@ -345,7 +350,9 @@
   transition: color 0.4s ease;
 }
 
-.hdr-switcher-new:hover .hdr-switcher-new-icon { color: #0071E3; }
+.hdr-switcher-new:hover .hdr-switcher-new-icon {
+  color: #0071E3;
+}
 
 /* ══════════════════════════════
    MODAL
@@ -628,8 +635,14 @@
   color: #0071E3;
 }
 
-.hdr-drop-item--danger       { color: #ef4444; }
-.hdr-drop-item--danger:hover { background: rgba(227, 52, 47, 0.07); color: #ef4444; }
+.hdr-drop-item--danger {
+  color: #ef4444;
+}
+
+.hdr-drop-item--danger:hover {
+  background: rgba(227, 52, 47, 0.07);
+  color: #ef4444;
+}
 
 .hdr-drop-icon {
   width: 15px;
@@ -638,94 +651,222 @@
   transition: color 0.4s ease;
 }
 
-.hdr-drop-item:not(.hdr-drop-item--danger):hover .hdr-drop-icon { color: #0071E3; }
+.hdr-drop-item:not(.hdr-drop-item--danger):hover .hdr-drop-icon {
+  color: #0071E3;
+}
+
 /* ── NotificationsBell ─────────────────────────────────── */
 .hdr-bell-btn {
   position: relative;
-  width: 38px; height: 38px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: 0;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
   border-radius: 999px;
   cursor: pointer;
   color: var(--text);
   margin-right: 6px;
   transition: background 0.2s ease, color 0.2s ease;
 }
-.hdr-bell-btn:hover { background: var(--accent-tint); color: var(--accent); }
-.hdr-bell-btn svg { width: 20px; height: 20px; }
+
+.hdr-bell-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.hdr-bell-btn svg {
+  width: 20px;
+  height: 20px;
+}
 
 .hdr-bell-badge {
   position: absolute;
-  top: 4px; right: 4px;
-  min-width: 16px; height: 16px;
+  top: 2px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
   padding: 0 4px;
-  background: #d93025; color: #fff;
+  background: var(--accent);
+  color: #fff;
   border-radius: 999px;
-  font-size: 10px; font-weight: 700;
-  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
 }
 
 .notif-popover {
   position: fixed;
-  width: 360px; max-height: 480px;
-  background: var(--card);
-  border-radius: 16px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.06);
-  padding: 8px;
+  width: 400px;
+  max-height: 540px;
+  /* background: var(--bg); */
+  /* border-radius: 20px; */
+  /* box-shadow: 0 8px 24px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.06); */
+  /* padding: 12px; */
   z-index: 9000;
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
   animation: drop-in 0.18s var(--ease-smooth);
 }
 
+/* Head row holds only the "Mark all read" CTA (when there's anything to
+   mark). Title removed per UX feedback — the bell icon + dropdown context
+   already make it self-evident this is the Notifications popover. */
 .notif-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 10px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px 8px;
 }
-.notif-title { font-weight: 600; font-size: 14px; }
+
 .notif-mark-all {
-  background: transparent; border: 0;
-  color: var(--accent);
-  font-family: inherit; font-size: 12px;
-  cursor: pointer;
-}
-.notif-mark-all:hover { text-decoration: underline; }
-
-.notif-list { overflow-y: auto; flex: 1; }
-
-.notif-item {
-  display: flex; align-items: flex-start; gap: 10px;
-  width: 100%;
-  padding: 10px;
-  background: transparent; border: 0;
-  border-radius: 12px;
-  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
   font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: color 0.4s ease;
 }
-.notif-item:hover { background: var(--accent-tint); }
 
-.notif-item--unread { background: rgba(0, 113, 227, 0.04); }
-.notif-item--unread::before {
-  content: ''; display: block;
-  width: 6px; height: 6px;
-  background: var(--accent);
+.notif-mark-all:hover {
+  color: var(--accent);
+}
+
+
+.notif-list {
+  flex: 1;
+  min-height: 0;
+  /* overflow-y: auto; */
+  /* Quiet scrollbar to match the popover aesthetic (visible on hover only) */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+
+.notif-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.notif-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
   border-radius: 999px;
+}
+
+.notif-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* po-set-table inside the popover — drop the top margin (we already have
+   padding on .notif-popover) and use a 2-column grid: body | time.
+
+   `filter: drop-shadow` (not `box-shadow`) — traces the actual rendered
+   contour of children rather than the table's bounding rect. Because the
+   head pill and the body row stack are visually separate (head has
+   margin-bottom + own rounded corners, body has its own), each gets its
+   OWN shadow automatically. A single box-shadow on the table would paint
+   one big rectangle behind both, defeating the visual separation. Two
+   stacked drop-shadows mimic the soft+sharp shadow pattern used by the
+   header switcher dropdowns elsewhere in the CRM. */
+.notif-popover .po-set-table {
+  margin-top: 0;
+  filter:
+    drop-shadow(0 6px 16px rgba(0, 0, 0, 0.10)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.06));
+}
+
+.notif-row {
+  grid-template-columns: 1fr 70px !important;
+}
+
+/* Clickable body rows — pointer cursor via class instead of inline style. */
+.notif-row--clickable {
+  cursor: pointer;
+}
+
+/* Header pill was removed → the cascading "po-set-row--head + po-set-row"
+   selector no longer rounds the first body row's top corners. Apply it
+   manually as :first-child here so the body stack stays a clean rounded card. */
+.notif-popover .po-set-table>.po-set-row:first-child:not(.po-set-row--head) {
+  border-radius: 24px 24px 0 0;
+}
+
+.notif-popover .po-set-row--head.notif-row {
+  margin-bottom: 6px;
+}
+
+
+.notif-popover .po-set-row.notif-row--unread .notif-row-icon::after {
+  content: '';
   position: absolute;
-  margin-left: -4px; margin-top: 6px;
+  top: 0px;
+  right: 0px;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
 }
 
-.notif-icon {
-  display: inline-flex; align-items: center; justify-content: center;
-  flex: 0 0 32px; width: 32px; height: 32px;
-  background: var(--accent-tint); color: var(--accent);
-  border-radius: 999px;
+/* Body cell holds an icon tile + 2-line text (title + message). */
+.notif-row-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
 }
-.notif-icon svg { width: 16px; height: 16px; }
 
-.notif-body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.notif-item-title   { font-weight: 600; font-size: 13px; }
-.notif-item-message { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
-.notif-item-time    { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.notif-row-icon {
+  /* position:relative so the unread-state ::after dot can absolutely-position
+     relative to the icon tile, not the page. */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 10px;
+}
+
+.notif-row-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.notif-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notif-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notif-row-message {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notif-row-time {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

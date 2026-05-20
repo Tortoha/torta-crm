@@ -386,6 +386,14 @@ function ShippingBlock({ product, save }) {
           hint="Days from order to ship-out (made-to-order)"
           value={product.lead_time_days} min={0} max={365}
           onSave={v => save({ lead_time_days: v })} />
+        {/* Product-level default weight in grams. Used by the shipping
+            label renderer ("Weigh ≈ X kg" line on the parcel sticker)
+            and as a fallback when a SKU doesn't have its own weight_g
+            set. Falls back to NULL → omits the line from the label. */}
+        <FieldNumber label="Default weight (g)"
+          hint="Used for label weight estimate when SKU weight isn't set"
+          value={product.weight_grams} min={0} max={5_000_000}
+          onSave={v => save({ weight_grams: v })} />
       </div>
     </section>
   );

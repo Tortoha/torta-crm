@@ -416,80 +416,11 @@
   overflow: auto;
 }
 
-/* ── Settings → Documents: style preview cards ───────────────────────── */
-.doc-style-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-top: 8px;
-}
-.doc-style-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  background: var(--card);
-  border-radius: 16px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  text-align: left;
-  font-family: inherit;
-  transition: border-color 0.18s ease, transform 0.18s ease,
-              box-shadow 0.18s ease;
-}
-.doc-style-card:hover {
-  border-color: rgba(0, 113, 227, 0.18);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-}
-.doc-style-card--active {
-  border-color: var(--accent);
-  background: var(--accent-tint);
-}
-
-.doc-style-preview {
-  position: relative;
-  height: 110px;
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  padding: 14px 12px 12px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.doc-style-preview-band {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 8px;
-  background: var(--accent);
-}
-.doc-style-preview--minimal .doc-style-preview-band  { display: none; }
-.doc-style-preview--classic .doc-style-preview-band  { display: none; }
-.doc-style-preview--classic { padding-top: 10px; align-items: center; }
-.doc-style-preview-line {
-  height: 6px;
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 3px;
-}
-.doc-style-preview--modern  .doc-style-preview-line  { background: rgba(0, 113, 227, 0.55); }
-.doc-style-preview--modern  .doc-style-preview-line:nth-child(2) { background: rgba(0, 113, 227, 0.85); }
-.doc-style-preview--minimal .doc-style-preview-line  { background: rgba(0, 0, 0, 0.55); }
-.doc-style-preview-line--w70 { width: 70%; }
-.doc-style-preview-line--w50 { width: 50%; }
-.doc-style-preview-line--w90 { width: 90%; }
-.doc-style-preview-line--w60 { width: 60%; }
-
-.doc-style-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.doc-style-hint {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.4;
-}
+/* The Documents page's `.doc-style-*` cards used to live here despite
+   never being styled in Integrations. Moved to its own
+   Style/Documents.css so the page is self-contained and the
+   doc-style class set isn't accidentally relied on by an Integrations
+   modal that has no reason to share it. */
 
 /* Section blocks inside ProjectSettings */
 .auth-section {

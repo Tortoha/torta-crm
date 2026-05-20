@@ -2,12 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown,
-         Receipt, ArrowUUpLeft } from '@phosphor-icons/react';
+         Receipt, ArrowUUpLeft, Printer } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { formatMoney } from '../../Utils/currency.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import { useInfiniteList } from '../../Utils/useInfiniteList.js';
 import { useInfiniteScroll } from '../../Utils/useInfiniteScroll.js';
+import PrintShippingLabelModal from './Products/PrintShippingLabelModal.jsx';
 import Modal from '../../Elements/Modal.jsx';
 import Returns from './Returns.jsx';
 import '../../Style/Organization.css';
@@ -66,6 +67,17 @@ const fmt = n  => (+n).toFixed(2);
 // project TZ disagreed.
 let __ORDERS_TZ = 'UTC';
 const setOrdersTimezone = (tz) => { __ORDERS_TZ = tz || 'UTC'; };
+// Prefer the structured recipient name fields when present (post
+// guest-checkout migration). Falls back to the user account name,
+// then to the legacy `recipient_name` freeform string, then to "—"
+// for guests who never typed anything yet (shouldn't reach this).
+function formatCustomerName(order) {
+  const last  = (order.recipient_last_name  || '').trim();
+  const first = (order.recipient_first_name || '').trim();
+  if (last || first) return [first, last].filter(Boolean).join(' ');
+  return (order.customer_name || order.recipient_name || '—').trim();
+}
+
 const fmtDate = ts => ts
   ? new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: __ORDERS_TZ })
   : '';
@@ -290,21 +302,47 @@ function OrdStatusFilter({ active, counts, onChange }) {
 
 // ── Order row (table view) — InteractiveSection tilt ──────────
 
-function OrderRow({ order, pq, onUpdated, onOpen }) {
+// Whitelist of statuses where it makes sense to print a shipping
+// label. After 'shipped' the parcel is already in the courier's hands;
+// 'delivered'/'cancelled'/'refunded' are terminal — reprinting a label
+// at that point is almost always a mistake. Limiting the button this
+// way keeps clutter down on rows where it would be a no-op.
+const SHIP_LABEL_STATUSES = new Set(['new', 'confirmed']);
+
+function OrderRow({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onContextMenu, onPrintLabel }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, menuOpen);
+
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    onContextMenu?.({ x: e.clientX, y: e.clientY });
+  };
+
+  const canPrint = SHIP_LABEL_STATUSES.has(order.status);
 
   return (
     <div
       ref={ref}
-      className={`prow ord-prow${menuOpen ? ' org-list-row--frozen' : ''}`}
+      className={`prow ord-prow${menuOpen ? ' org-list-row--frozen' : ''}${selected ? ' ord-prow--selected' : ''}`}
       onClick={() => onOpen(order)}
+      onContextMenu={handleContextMenu}
       {...handlers}
     >
       <div ref={glossRef} className="org-list-gloss" />
 
+      {/* Bulk-select checkbox — stopPropagation so clicking it doesn't open
+          the order detail modal. */}
+      <span className="ord-prow-check" onClick={e => e.stopPropagation()}>
+        <input type="checkbox" className="cat-prod-checkbox"
+          checked={!!selected}
+          onChange={(e) => onToggleSelect?.(order.id, e.target.checked)} />
+      </span>
+
       <span className="ord-prow-customer">
-        <span className="ord-prow-name">{order.customer_name || order.recipient_name}</span>
+        <span className="ord-prow-name">
+          {formatCustomerName(order)}
+          {order.is_guest && <span className="ord-guest-badge">Guest</span>}
+        </span>
         {order.customer_email && (
           <span className="ord-prow-email">{order.customer_email}</span>
         )}
@@ -320,23 +358,43 @@ function OrderRow({ order, pq, onUpdated, onOpen }) {
       <span className="prow-cell" onClick={e => e.stopPropagation()}>
         <StatusSelect orderId={order.id} currentStatus={order.status} pq={pq} onUpdated={onUpdated} onOpenChange={setMenuOpen} />
       </span>
+
+      {/* Print shipping label — icon-only button at the far right.
+          Hidden for shipped/delivered/cancelled orders so the column
+          column stays usable for new/confirmed rows that actually need
+          a label. Spacer span preserves the grid track height. */}
+      <span className="ord-prow-actions" onClick={e => e.stopPropagation()}>
+        {canPrint ? (
+          <button type="button" className="ord-prow-action-btn"
+            title="Print shipping label"
+            onClick={() => onPrintLabel?.(order.id)}>
+            <Printer weight="bold" />
+          </button>
+        ) : null}
+      </span>
     </div>
   );
 }
 
 // ── Order card (cards view) — InteractiveSection tilt ─────────
 
-function OrderCard({ order, pq, onUpdated, onOpen }) {
+function OrderCard({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onPrintLabel }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, menuOpen);
 
+  const canPrint = SHIP_LABEL_STATUSES.has(order.status);
+
   return (
-    <div ref={ref} className={`ord-card${menuOpen ? ' ord-card--frozen' : ''}`} onClick={() => onOpen(order)} {...handlers}>
+    <div ref={ref}
+      className={`ord-card${menuOpen ? ' ord-card--frozen' : ''}${selected ? ' ord-card--selected' : ''}`}
+      onClick={() => onOpen(order)}
+      {...handlers}>
       <div ref={glossRef} className="ord-card-gloss" />
       <div className="ord-card-main">
         <div className="ord-card-top">
           <span className="ord-card-id">
-            {order.customer_name || order.recipient_name}
+            {formatCustomerName(order)}
+            {order.is_guest && <span className="ord-guest-badge">Guest</span>}
           </span>
           <span onClick={e => e.stopPropagation()}>
             <StatusSelect orderId={order.id} currentStatus={order.status} pq={pq} onUpdated={onUpdated} onOpenChange={setMenuOpen} />
@@ -353,6 +411,13 @@ function OrderCard({ order, pq, onUpdated, onOpen }) {
           <span>{fmtDate(order.created_at)}</span>
         </div>
       </div>
+      {canPrint && (
+        <button type="button" className="ord-card-action-btn"
+          title="Print shipping label"
+          onClick={(e) => { e.stopPropagation(); onPrintLabel?.(order.id); }}>
+          <Printer weight="bold" />
+        </button>
+      )}
     </div>
   );
 }
@@ -565,6 +630,21 @@ function OrdersTab() {
   const [viewHover, setViewHover] = useState(null);
   const [sort,      setSort]      = useState({ field: 'date', dir: 'desc' });
   const [openOrder, setOpenOrder] = useState(null);
+  // Bulk selection + shipping label modal state. selectedIds is a Set
+  // (kept lightweight; one Set survives across infinite-scroll loads).
+  // labelOrderIds drives the shipping-label modal: a single int array
+  // from the per-row Print button, or many ids from the bulk action
+  // bar. Same modal handles both cases.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [labelOrderIds, setLabelOrderIds] = useState(null); // [int]
+
+  const toggleSelect = useCallback((orderId, on) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (on) next.add(orderId); else next.delete(orderId);
+      return next;
+    });
+  }, []);
 
   // Infinite-scroll orders feed — 100 per page (table rows are denser than cards).
   const {
@@ -681,12 +761,34 @@ function OrdersTab() {
       {/* ── Table view ── */}
       {view === 'table' && (
         <div className="prod-list">
-          <div className="ord-list-head">
+          <div className="ord-list-head ord-list-head--bulk">
+            <span className="org-list-th ord-list-th-check">
+              {/* Header checkbox: tri-state. Clicking toggles ALL currently
+                  filtered rows (not the entire orders list, which could be
+                  hundreds). */}
+              <input type="checkbox" className="cat-prod-checkbox"
+                checked={sorted.length > 0 && sorted.every(o => selectedIds.has(o.id))}
+                ref={el => {
+                  if (!el) return;
+                  const sel = sorted.filter(o => selectedIds.has(o.id)).length;
+                  el.indeterminate = sel > 0 && sel < sorted.length;
+                }}
+                onChange={(e) => {
+                  setSelectedIds(prev => {
+                    const next = new Set(prev);
+                    if (e.target.checked) sorted.forEach(o => next.add(o.id));
+                    else                   sorted.forEach(o => next.delete(o.id));
+                    return next;
+                  });
+                }} />
+            </span>
             <span className="org-list-th">Customer</span>
             <span className="org-list-th">Items</span>
             <span className="org-list-th">Amount</span>
             <span className="org-list-th">Date</span>
             <span className="org-list-th">Status</span>
+            {/* Empty header for the per-row Print-label action column. */}
+            <span className="org-list-th" aria-hidden="true" />
           </div>
 
           {loading ? (
@@ -705,6 +807,9 @@ function OrdersTab() {
                   pq={pq}
                   onUpdated={handleUpdated}
                   onOpen={setOpenOrder}
+                  selected={selectedIds.has(order.id)}
+                  onToggleSelect={toggleSelect}
+                  onPrintLabel={(id) => setLabelOrderIds([id])}
                 />
               ))}
               {hasMore && <div ref={ordersSentinelRef} className="inf-sentinel">Loading more…</div>}
@@ -731,12 +836,42 @@ function OrdersTab() {
                 pq={pq}
                 onUpdated={handleUpdated}
                 onOpen={setOpenOrder}
+                selected={selectedIds.has(order.id)}
+                onToggleSelect={toggleSelect}
+                onPrintLabel={(id) => setLabelOrderIds([id])}
               />
             ))}
             {hasMore && <div ref={ordersSentinelRef} className="inf-sentinel">Loading more…</div>}
           </div>
         )
       )}
+
+      {/* Sticky bulk action bar — appears only when ≥1 row is selected.
+          Mirrors the pattern used by other multi-select UIs in this CRM. */}
+      {selectedIds.size > 0 && (
+        <div className="ord-bulk-bar">
+          <span className="ord-bulk-count">
+            {selectedIds.size} order{selectedIds.size === 1 ? '' : 's'} selected
+          </span>
+          <button type="button" className="crm-submit-btn"
+            onClick={() => setLabelOrderIds([...selectedIds])}>
+            <Printer weight="bold" style={{ verticalAlign: '-3px', marginRight: 6 }} />
+            Print shipping labels
+          </button>
+          <button type="button" className="auth-btn-check"
+            onClick={() => setSelectedIds(new Set())}>
+            Clear selection
+          </button>
+        </div>
+      )}
+
+      {/* Shipping-label modal — open with either a single order id (from
+          context menu) or N order ids (from bulk action bar). */}
+      <PrintShippingLabelModal
+        open={!!labelOrderIds}
+        orderIds={labelOrderIds || []}
+        onClose={() => setLabelOrderIds(null)}
+      />
 
       {/* ── Order detail modal ── */}
       {openOrder && (

@@ -1,15 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Bell, CheckCircle, Trash, Warehouse, ShoppingBag, Calendar, Lightning } from '@phosphor-icons/react';
+import {
+  Bell, CheckCircle, Trash, Warehouse, ShoppingBag, Calendar, Lightning,
+  Target, ChatCircleDots, ArrowUUpLeft, Warning,
+} from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
+import { InteractiveSection } from '../Utils/InteractiveSection.js';
+import '../Style/Products.css';  // .po-set-table, .po-set-row, .po-set-row--head, .po-set-strong
+
+const NOTIF_TILT = {
+  maxAngleX: 10, maxAngleY: 4, lerp: 0.05, lerpOut: 0.07,
+  scale: 1.086, perspective: 900,
+  gloss: { opacity: 0.14, spread: 40 },
+};
+
+function NotifRow({ className = '', children, ...rest }) {
+  const { ref, glossRef, handlers } = InteractiveSection(NOTIF_TILT, false);
+  return (
+    <div ref={ref} className={`po-set-row ${className}`.trim()} {...handlers} {...rest}>
+      <div ref={glossRef} className="po-set-row-gloss" />
+      {children}
+    </div>
+  );
+}
 
 // Bell with unread badge + dropdown notifications panel. Real-time via WebSocket /api/notifications/ws.
+// Per-notification-type icon. Backend `type` column maps 1:1 to keys here.
+// Keep `Bell` as a fallback in render() so unrecognised types still get a
+// sensible visual rather than no icon.
 const TYPE_ICON = {
   low_stock:     <Warehouse weight="bold" />,
   new_order:     <ShoppingBag weight="bold" />,
   new_booking:   <Calendar weight="bold" />,
   webhook_failed:<Lightning weight="bold" />,
+  // New types wired this pass:
+  alert:         <Warning weight="bold" />,         // alerts evaluator firing
+  goal:          <Target weight="bold" />,          // target hit
+  chat:          <ChatCircleDots weight="bold" />,  // new chat message
+  return:        <ArrowUUpLeft weight="bold" />,    // return state change
 };
 
 function timeAgo(iso) {
@@ -74,11 +103,11 @@ export default function NotificationsBell() {
     };
   }, []);
 
-  // Position the popover under the bell on open.
+  const POPOVER_W = 400;
   useEffect(() => {
     if (!open || !btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
-    setPos({ top: r.bottom + 8, left: Math.max(8, r.right - 340) });
+    setPos({ top: r.bottom + 16, left: Math.max(8, r.right - POPOVER_W) });
     const onDown = e => {
       if (!e.target.closest?.('.notif-popover') && !btnRef.current?.contains(e.target))
         setOpen(false);
@@ -125,32 +154,39 @@ export default function NotificationsBell() {
 
       {open && pos && createPortal(
         <div className="notif-popover" style={{ top: pos.top, left: pos.left }}>
-          <div className="notif-head">
-            <span className="notif-title">Notifications</span>
-            {unread > 0 && (
+          {unread > 0 && (
+            <div className="notif-head">
               <button className="notif-mark-all" type="button" onClick={markAllRead}>
                 Mark all read
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           <div className="notif-list">
             {loading && <p className="crm-placeholder">Loading…</p>}
             {!loading && items.length === 0 && (
               <p className="crm-placeholder">No notifications yet</p>
             )}
-            {items.map(it => (
-              <button key={it.id} type="button"
-                className={`notif-item${it.is_read ? '' : ' notif-item--unread'}`}
-                onClick={() => onItemClick(it)}>
-                <span className="notif-icon">{TYPE_ICON[it.type] || <Bell weight="bold" />}</span>
-                <span className="notif-body">
-                  <span className="notif-item-title">{it.title}</span>
-                  <span className="notif-item-message">{it.message}</span>
-                  <span className="notif-item-time">{timeAgo(it.created_at)}</span>
-                </span>
-              </button>
-            ))}
+            {items.length > 0 && (
+              <div className="po-set-table notif-table">
+                {items.map(it => (
+                  <NotifRow key={it.id}
+                    className={`notif-row notif-row--clickable${it.is_read ? '' : ' notif-row--unread'}`}
+                    onClick={() => onItemClick(it)}>
+                    <span className="notif-row-body">
+                      <span className="notif-row-icon">
+                        {TYPE_ICON[it.type] || <Bell weight="bold" />}
+                      </span>
+                      <span className="notif-row-text">
+                        <span className="po-set-strong notif-row-title">{it.title}</span>
+                        <span className="notif-row-message">{it.message}</span>
+                      </span>
+                    </span>
+                    <span className="notif-row-time">{timeAgo(it.created_at)}</span>
+                  </NotifRow>
+                ))}
+              </div>
+            )}
           </div>
         </div>,
         document.body

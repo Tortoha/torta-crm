@@ -38,15 +38,25 @@ function buildIsoWithTz(date, time, tz) {
 
 // ── Generic combobox (Service / Status) — same UX as CpmCategorySelect: pill button + portal dropdown + DynamicBlock. ──
 
-export function Combobox({ value, options, placeholder = '— Select —', onChange }) {
+export function Combobox({ value, options, placeholder = '— Select —', onChange, searchable = false }) {
   const btnRef = useRef(null);
+  const searchRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const [hovered, setHovered] = useState(null);
+  // Search query is only used when `searchable` is true. Kept here
+  // unconditionally so the hook order is stable across re-renders.
+  const [query, setQuery] = useState('');
 
   const activeKey = String(value);
   const current = hovered ?? activeKey;
   const { indRef, setItemRef } = DynamicBlock(current, open);
+
+  // Filter once per keystroke; case-insensitive substring match
+  // against the option's label. Empty query → full list.
+  const filteredOptions = searchable && query.trim()
+    ? options.filter(o => String(o.label).toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
 
   useEffect(() => {
     if (!open || !btnRef.current) return;
@@ -94,11 +104,21 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
     };
     document.addEventListener('keydown', onKey);
     document.addEventListener('pointerdown', onPd);
+    // Auto-focus the search input so the user can start typing
+    // immediately after opening the dropdown — same UX as the
+    // Magaz-side CountryCombobox.
+    if (searchable) {
+      requestAnimationFrame(() => searchRef.current?.focus());
+    }
     return () => {
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('pointerdown', onPd);
     };
-  }, [open]);
+  }, [open, searchable]);
+
+  // Reset the query whenever the dropdown closes so re-opening
+  // starts with the full list rather than the previous filter.
+  useEffect(() => { if (!open) setQuery(''); }, [open]);
 
   const selected = options.find(o => String(o.value) === String(value));
 
@@ -113,7 +133,7 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
         <CaretDown weight="bold" className={`cpm-cat-caret${open ? ' cpm-cat-caret--up' : ''}`} />
       </button>
       {open && pos && createPortal(
-        <div className="cat-filter-dropdown bk-cb-dropdown"
+        <div className={`cat-filter-dropdown bk-cb-dropdown${searchable ? ' bk-cb-dropdown--searchable' : ''}`}
           style={{
             ...(pos.top    != null ? { top:    pos.top }    : null),
             ...(pos.bottom != null ? { bottom: pos.bottom } : null),
@@ -122,18 +142,43 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
           onMouseLeave={() => setHovered(null)}>
-          <div ref={indRef} className="cat-filter-indicator" />
-          {options.map(o => {
-            const k = String(o.value);
-            return (
-              <button key={k} ref={setItemRef(k)} type="button"
-                className={`cat-filter-item${current === k ? ' cat-filter-item--current' : ''}`}
-                onMouseEnter={() => setHovered(k)}
-                onClick={() => { onChange(o.value); setOpen(false); }}>
-                <span>{o.label}</span>
-              </button>
-            );
-          })}
+          {searchable && (
+            <div className="bk-cb-search">
+              <input
+                ref={searchRef}
+                type="text"
+                className="bk-cb-search-input"
+                placeholder="Search…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter picks the first filtered result — common
+                  // pattern for searchable dropdowns (Stripe, Shopify).
+                  if (e.key === 'Enter' && filteredOptions[0]) {
+                    onChange(filteredOptions[0].value);
+                    setOpen(false);
+                  }
+                }} />
+            </div>
+          )}
+          <div className="bk-cb-list">
+            <div ref={indRef} className="cat-filter-indicator" />
+            {filteredOptions.length === 0 ? (
+              <div className="bk-cb-empty">No matches</div>
+            ) : (
+              filteredOptions.map(o => {
+                const k = String(o.value);
+                return (
+                  <button key={k} ref={setItemRef(k)} type="button"
+                    className={`cat-filter-item${current === k ? ' cat-filter-item--current' : ''}`}
+                    onMouseEnter={() => setHovered(k)}
+                    onClick={() => { onChange(o.value); setOpen(false); }}>
+                    <span>{o.label}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>,
         document.body
       )}

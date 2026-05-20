@@ -1001,6 +1001,8 @@ export default function Products({ archived = false }) {
         />
       )}
 
+
+
       {/* Import CSV modal */}
       {showImport && (
         <ImportCsvModal

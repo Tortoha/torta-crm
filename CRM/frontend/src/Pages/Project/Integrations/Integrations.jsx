@@ -170,7 +170,7 @@ function BrowseTab({ subscriptions, onPick, onRequest }) {
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="int-region-combo">
-          <Combobox value={country}
+          <Combobox value={country} searchable
             options={CONNECTOR_COUNTRIES.map(c => ({ value: c.key, label: c.label }))}
             onChange={setCountry} />
         </div>

@@ -282,7 +282,7 @@ export default function BulkReceiveWizard({ projectId, onClose, onApplied, showT
     <div className="auth-modal-overlay"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div
-        className={`auth-modal cpm-modal po-bulk-wizard${step === 1 ? ' po-bulk-wizard--narrow' : ''}`}
+        className={`auth-modal cpm-modal po-bulk-wizard${step === 1 ? ' po-bulk-wizard--narrow' : ' po-bulk-wizard--receive'}`}
         onClick={e => e.stopPropagation()}>
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">

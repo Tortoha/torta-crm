@@ -7,18 +7,6 @@ import { API_BASE } from '../../../api.js';
 import { CONNECTOR_BY_TYPE } from './connectors.js';
 import ConnectorIcon from './ConnectorIcon.jsx';
 
-// One modal handles install + edit + uninstall for every event-driven
-// connector — webhook-style (Custom Webhook / Slack / Discord / Zapier) plus
-// API-connector kinds (GA4 / Mixpanel / Mailchimp). The visual layout adapts
-// to the connector's `primaryLabel` + `configFields` meta in connectors.js:
-//
-//   • For webhook/slack/discord/zapier — the merchant supplies a URL only.
-//     The Custom Webhook also receives an HMAC signing secret on install.
-//   • For ga4/mixpanel/mailchimp — primaryLabel is something like
-//     "Measurement ID" / "Project Token" / "Audience ID", and configFields[]
-//     declares the secret inputs (api_secret / api_key). Secrets are masked
-//     in GET responses and preserved on save when the input stays masked.
-
 const ALL_EVENTS = [
   { value: 'order.created',     group: 'Orders'   },
   { value: 'order.paid',        group: 'Orders'   },
@@ -325,7 +313,11 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
                   <div className="int-events-group-title">{group}</div>
                   {list.map(e => (
                     <label key={e.value} className="int-event-check">
-                      <input type="checkbox" checked={events.includes(e.value)}
+                      {/* Same square checkbox as Targets / Promo / Accounting modal —
+                          unifies the CRM's checkbox look (was raw browser default). */}
+                      <input type="checkbox"
+                        className="cat-prod-checkbox po-include-cb"
+                        checked={events.includes(e.value)}
                         onChange={() => toggleEvent(e.value)} />
                       <span>{e.value}</span>
                     </label>

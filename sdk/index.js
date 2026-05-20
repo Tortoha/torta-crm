@@ -348,6 +348,16 @@ export function createClient(baseUrl, publishableKey) {
         _userPromise = null;
         return result;
       },
+
+      /**
+       * Which contact methods does this merchant accept for checkout
+       * + login? Returns { email: bool, phone: bool }. Driven server-
+       * side by the merchant's `crm_auth_providers` config. Email is
+       * always true; phone toggles based on SMS-OTP enablement.
+       */
+      async methods() {
+        return req("GET", "/auth/methods");
+      },
     },
 
     // ── Project config ───────────────────────────────────────────────────────
@@ -358,6 +368,33 @@ export function createClient(baseUrl, publishableKey) {
     config: {
       async get() {
         return req("GET", "/config");
+      },
+    },
+
+    // ── Saved delivery addresses ─────────────────────────────────────────────
+    // Per-user address book. Logged-in customers can tick "Save this address"
+    // at checkout, then on the next order pick from a dropdown instead of
+    // retyping. Scoped per store (project_id + user_id) on the server.
+    addresses: {
+      /** List all saved addresses for the current user in this store. */
+      async list() {
+        return req("GET", "/me/addresses");
+      },
+      /**
+       * Save a new address.
+       * payload: { label?, country?, city, postal_code?, street, apartment?, is_default? }
+       * city + street are required.
+       */
+      async add(payload) {
+        return req("POST", "/me/addresses", payload);
+      },
+      /** Delete a saved address. */
+      async remove(id) {
+        return req("DELETE", `/me/addresses/${id}`);
+      },
+      /** Mark one address as the default — clears default on all others. */
+      async setDefault(id) {
+        return req("PATCH", `/me/addresses/${id}/default`);
       },
     },
 
@@ -531,7 +568,14 @@ export function createClient(baseUrl, publishableKey) {
        * @param {string} payload.recipient_name   - Required
        * @param {string} [payload.phone]
        * @param {string} [payload.delivery_method] - "courier" | "postal" (default: "courier")
-       * @param {string} [payload.address]         - Required when delivery_method = "courier"
+       * @param {string} [payload.address]         - Legacy freeform string. New clients should
+       *                                             prefer the structured fields below; the
+       *                                             backend composes this for back-compat.
+       * @param {string} [payload.address_country]
+       * @param {string} [payload.address_city]
+       * @param {string} [payload.address_postal_code]
+       * @param {string} [payload.address_street]
+       * @param {string} [payload.address_apartment]
        * @param {string} [payload.comment]
        * @param {string} [payload.payment_method]  - "card" | "cash" (default: "card")
        * @param {string} [payload.promo_code]

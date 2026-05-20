@@ -92,6 +92,71 @@ const SMS_PROVIDERS = [
     ],
   },
 
+  // ── Uzbekistan ─────────────────────────────────────────────────────────────
+  // Twilio doesn't deliver to UZ reliably — Eskiz is the local must-have.
+  {
+    id: 'eskiz', label: 'Eskiz', region: 'Uzbekistan',
+    phosphor: ChatCircle, color: '#1976D2',
+    fields: [
+      { key: 'eskiz_email',    label: 'Eskiz Email',                        placeholder: 'merchant@example.uz' },
+      { key: 'eskiz_password', label: 'Eskiz Password',     secret: true,   placeholder: '••••••••••••••••' },
+      { key: 'eskiz_from',     label: 'Sender (default 4546 for test)',     placeholder: '4546 or YourBrand', optional: true },
+    ],
+  },
+
+  // ── China ──────────────────────────────────────────────────────────────────
+  // Twilio is blocked by the Great Firewall — AliCloud SMS is the de-facto
+  // standard for Chinese merchants. Template approval required (Aliyun console).
+  {
+    id: 'alicloud_sms', label: 'AliCloud SMS 阿里云', region: 'China',
+    phosphor: ChatCircle, color: '#FF6A00',
+    fields: [
+      { key: 'alicloud_access_key_id',     label: 'AccessKey ID',                          placeholder: 'LTAI...' },
+      { key: 'alicloud_access_key_secret', label: 'AccessKey Secret',   secret: true,     placeholder: '••••••••••••••••' },
+      { key: 'alicloud_sign_name',         label: 'Sign Name (签名名称)',                  placeholder: '阿里云短信测试' },
+      { key: 'alicloud_template_code',     label: 'Template Code (模板CODE)',              placeholder: 'SMS_154950909' },
+    ],
+  },
+
+  // ── India ──────────────────────────────────────────────────────────────────
+  // India requires DLT/TRAI registration; MSG91 handles it end-to-end.
+  // Template must be pre-approved on the DLT portal (handled in MSG91 onboarding).
+  {
+    id: 'msg91', label: 'MSG91 (India DLT)', region: 'India',
+    phosphor: ChatCircle, color: '#15A4FA',
+    fields: [
+      { key: 'msg91_auth_key',    label: 'MSG91 Auth Key',     secret: true,    placeholder: '••••••••••••••••' },
+      { key: 'msg91_template_id', label: 'OTP Template ID (DLT approved)',      placeholder: '600fbXXXXXXXXXXX' },
+      { key: 'msg91_sender_id',   label: 'Sender ID (6-char alphanumeric)',     placeholder: 'TORTA1', optional: true },
+    ],
+  },
+
+  // ── Brazil ─────────────────────────────────────────────────────────────────
+  // Zenvia is Brazil's local leader — 3-5x cheaper than Twilio for BR routes,
+  // better delivery through direct Vivo / Claro / Tim integrations.
+  {
+    id: 'zenvia', label: 'Zenvia (Brasil)', region: 'Brazil',
+    phosphor: ChatCircle, color: '#00B4A6',
+    fields: [
+      { key: 'zenvia_api_token', label: 'Zenvia API Token',   secret: true,    placeholder: '••••••••••••••••' },
+      { key: 'zenvia_from',      label: 'From (registered short-code or brand)', placeholder: 'YourBrand or 28128' },
+    ],
+  },
+
+  // ── WhatsApp Business (Meta Cloud) ─────────────────────────────────────────
+  // Different category — not SMS but the dominant business-messaging channel
+  // in BR/IN/MX/ID/MY/PH. ~10x cheaper than SMS for OTP. Template must be
+  // pre-approved in Meta Business Manager (category=AUTHENTICATION).
+  {
+    id: 'whatsapp_cloud', label: 'WhatsApp Business (Meta)', region: 'WhatsApp',
+    iconify: 'logos:whatsapp-icon',
+    fields: [
+      { key: 'whatsapp_phone_number_id', label: 'Phone Number ID',                         placeholder: '105954XXXXXXX' },
+      { key: 'whatsapp_access_token',    label: 'System User Access Token', secret: true,  placeholder: 'EAAGq••••••••••••' },
+      { key: 'whatsapp_template_name',   label: 'Approved Template Name (AUTHENTICATION category)', placeholder: 'otp_login' },
+    ],
+  },
+
   // ── UK / India ─────────────────────────────────────────────────────────────
   {
     id: 'textlocal', label: 'Textlocal', region: 'UK / India',

@@ -168,6 +168,39 @@
   flex-shrink: 0;
 }
 
+/* Multi-line structured address — one line per logical chunk
+   (city / street+apt / postal+country). Reads like a real mailing
+   label rather than one long comma-soup string. */
+.os-addr-block {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.os-addr-block > span:first-child {
+  font-weight: 600;
+}
+
+/* Tracking link — visually distinct so it reads as a clickable
+   trail-link rather than a static info field. */
+.os-tracking-link {
+  color: #0071E3;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.os-tracking-link:hover {
+  text-decoration: underline;
+}
+
+.os-tracking-num {
+  font-weight: 600;
+}
+
+.os-tracking-pkg {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+}
+
 /* ── Items in expanded order ─────────────────────────────────── */
 
 .os-items {

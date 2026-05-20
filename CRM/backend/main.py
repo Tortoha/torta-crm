@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File, Query, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Response, HTTPException, Request, Depends, UploadFile, File, Query, Body, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -163,7 +163,6 @@ def s3_delete_url(url: str, prefix: str) -> None:
         s3_delete(key)
 
 def s3_delete_prefix(prefix: str) -> None:
-    """Best-effort: delete every object under `prefix`. Silently ignores S3 errors."""
     if not prefix:
         return
     try:
@@ -186,11 +185,6 @@ def s3_delete_prefix(prefix: str) -> None:
 app = FastAPI()
 
 # ── Rate limiting ────────────────────────────────────────────────────────
-# slowapi guards against F5-spam (one user reloading Analytics fires
-# ~15 parallel requests; without a cap, that user can DoS the DB pool)
-# and brute-force on auth endpoints. Key is `client_ip` for unauth'd
-# routes and `user_id` (from the cookie JWT) for authenticated ones —
-# logged-in attackers can't bypass by rotating IPs through a proxy.
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.errors import RateLimitExceeded
@@ -230,10 +224,6 @@ except ImportError:
 
 
 # ── VALIDATION-ERROR FORMATTER ───────────────────────────
-# FastAPI returns Pydantic validation errors as {"detail": [{...}, ...]} by default.
-# Frontends usually do setError(json.detail) → <p>{error}</p>, which crashes React
-# ("Objects are not valid as a React child"). Flatten to a single string so every
-# endpoint is safe and the frontend never has to type-check the response shape.
 from fastapi.exceptions import RequestValidationError as _RVE
 
 @app.exception_handler(_RVE)
@@ -485,6 +475,31 @@ def run_migrations():
                     mobizon_api_key             TEXT,
                     mobizon_alpha               TEXT,
 
+                    -- AliCloud SMS (China — Twilio blocked by GFW, must use local)
+                    alicloud_access_key_id      TEXT,
+                    alicloud_access_key_secret  TEXT,
+                    alicloud_sign_name          TEXT,
+                    alicloud_template_code      TEXT,
+
+                    -- MSG91 (India — DLT/TRAI compliance handled by MSG91)
+                    msg91_auth_key              TEXT,
+                    msg91_template_id           TEXT,
+                    msg91_sender_id             TEXT,
+
+                    -- Zenvia (Brazil — local leader, 3-5x cheaper than Twilio for BR routes)
+                    zenvia_api_token            TEXT,
+                    zenvia_from                 TEXT,
+
+                    -- Eskiz (Uzbekistan — Twilio doesn't deliver to UZ reliably)
+                    eskiz_email                 TEXT,
+                    eskiz_password              TEXT,
+                    eskiz_from                  TEXT,
+
+                    -- WhatsApp Business Cloud API (Meta — dominant in BR/IN/MX/MY/ID)
+                    whatsapp_phone_number_id    TEXT,
+                    whatsapp_access_token       TEXT,
+                    whatsapp_template_name      TEXT,
+
                     -- Telegram Gateway (free OTP via Telegram)
                     telegram_gateway_token      TEXT,
 
@@ -514,6 +529,22 @@ def run_migrations():
                 "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS mobizon_api_key TEXT",
                 "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS mobizon_alpha TEXT",
                 "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS telegram_gateway_token TEXT",
+                # 2026-05 — country-bridge expansion for SMS (5 new providers)
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS alicloud_access_key_id TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS alicloud_access_key_secret TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS alicloud_sign_name TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS alicloud_template_code TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS msg91_auth_key TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS msg91_template_id TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS msg91_sender_id TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS zenvia_api_token TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS zenvia_from TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS eskiz_email TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS eskiz_password TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS eskiz_from TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS whatsapp_phone_number_id TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS whatsapp_access_token TEXT",
+                "ALTER TABLE crm_sms_settings ADD COLUMN IF NOT EXISTS whatsapp_template_name TEXT",
             ]:
                 try: cur.execute(col)
                 except Exception: pass
@@ -693,10 +724,6 @@ def run_migrations():
         print(f"[migration] booking phase-1/4 fields failed: {e}")
 
     # ── Analytics enrichment + Goals system (2026-05) ─────────────────
-    # Adds geographic / device / referrer / UTM columns to the existing
-    # visit + product-view trackers, plus five new event tables for
-    # search queries, cart, checkout, custom-event goals.  All ALTERs use
-    # IF NOT EXISTS so re-running the migration is a no-op.
     try:
         with db_cursor() as (conn, cur):
             # Visits and product views — same enrichment columns.
@@ -1269,12 +1296,6 @@ def run_migrations():
                 "   )"
             )
             # ── One-time data fix for orders wrongly marked by the broken
-            # backfill above (only matters until every dev/staging DB has
-            # been migrated past this point). For each new-code order
-            # that ended up with stock_deducted=TRUE despite having a
-            # reservation log entry, apply the correct stock side-effect
-            # for its current status and reset/keep the flag accordingly.
-            # Idempotent via a per-order 'fix_migration_v2' log entry.
             cur.execute(
                 "SELECT DISTINCT oh.id, oh.status, oh.project_id"
                 "  FROM order_history oh"
@@ -2173,7 +2194,6 @@ def run_migrations():
     try:
         with db_cursor() as (conn, cur):
             # ── order_history: every revenue / funnel / margin query
-            #    filters by (project_id, created_at) and most also by status.
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_oh_project_created_status "
                 "ON order_history(project_id, created_at DESC, status)"
@@ -2184,7 +2204,6 @@ def run_migrations():
                 "ON order_history(project_id, user_id, created_at)"
             )
             # ── order_items: joined by (order_id) and aggregated by
-            #    (configuration_id) — popular products, margin breakdown.
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_oi_order "
                 "ON order_items(order_id)"
@@ -2194,7 +2213,6 @@ def run_migrations():
                 "ON order_items(configuration_id)"
             )
             # ── order_returns: margin SQL subqueries by (order_item_id) +
-            #    filter by (status). Two indexes since usage patterns differ.
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_or_project_status "
                 "ON order_returns(project_id, status)"
@@ -2217,7 +2235,6 @@ def run_migrations():
                 "ON product_stock(warehouse_id)"
             )
             # ── product_configurations: tree traversal joins for inventory
-            #    + margin pages. Already PKed on id; need the FK direction.
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_l1_product "
                 "ON product_configurations_l1(product_id, position)"
@@ -2227,8 +2244,6 @@ def run_migrations():
                 "ON product_configurations_l2(variation_id, position)"
             )
             # ── site_visits / product_page_views: funnel + visitor analytics
-            #    aggregate by (project_id, day, user_id_or_ip). Composite
-            #    keeps the time-bucket scan fast.
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sv_project_visited "
                 "ON site_visits(project_id, visited_at DESC)"
@@ -2723,11 +2738,6 @@ def run_migrations():
         print(f"[migration] order_returns provider refund columns failed: {e}")
 
     # ── Events vertical: REMOVED (post-MVP scope) ──
-    # The Events vertical (venues, showtimes, scanner, etc.) was prototyped
-    # then descoped. Drop the related tables + columns if they exist so the
-    # schema stays clean. `IF EXISTS` makes this a no-op on fresh installs
-    # where the tables were never created. CASCADE drops the FK from
-    # event_seat_sales → order_items via the parent table.
     try:
         with db_cursor() as (conn, cur):
             cur.execute("ALTER TABLE IF EXISTS order_items DROP COLUMN IF EXISTS event_showtime_id")
@@ -2740,9 +2750,6 @@ def run_migrations():
         print(f"[migration] events vertical drop failed: {e}")
 
     # ── Performance indexes ──────────────────────────────────────────
-    # Added 2026-05 after audit. Each one targets a hot query path; comments
-    # describe the WHERE/JOIN that hits the column. All `IF NOT EXISTS`, so
-    # this migration is idempotent and safe to keep in the startup path.
     try:
         with db_cursor() as (conn, cur):
             # require_team_member_or_owner() runs on EVERY authenticated CRM
@@ -2785,10 +2792,6 @@ def run_migrations():
                 "ON product_reviews(product_id, project_id)"
             )
             # ── Shipping settings (per-project) ────────────────────────────
-            # Used by External /orders + /init-payment + /cart total endpoints.
-            # Previously created out-of-band; without this CREATE the SELECTs
-            # in External would 500 on fresh DBs and the order would fail
-            # before any payment path was reached.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS shipping_settings (
                     id                      SERIAL PRIMARY KEY,
@@ -2800,9 +2803,6 @@ def run_migrations():
                 )
             """)
             # ── Analytics page hot-path indices (added 2026-05 after audit) ──
-            # 22 analytics endpoints all filter by (project_id, created_at)
-            # on these high-volume tables. Without composite indices every
-            # endpoint sequential-scans the whole table on each page load.
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_site_visits_project_created "
                 "ON site_visits(project_id, created_at DESC)"
@@ -2832,6 +2832,290 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] perf indexes failed: {e}")
 
+    # ── Shipping labels ────────────────────────────────────────────────
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS shipping_carriers (
+                    id                    SERIAL PRIMARY KEY,
+                    code                  VARCHAR(40)  UNIQUE NOT NULL,
+                    name                  VARCHAR(120) NOT NULL,
+                    country_code          CHAR(2),
+                    tracking_url_template TEXT NOT NULL,
+                    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            # Seed with the most common carriers per region. {tracking}
+            # placeholder is substituted at label-render time. URLs were
+            # spot-checked by pasting a sample tracking number into each
+            # site's public tracking page and reading the resulting URL
+            # pattern. INSERT-ON-CONFLICT keeps re-runs idempotent — if
+            # we tweak a URL later, the next startup applies it.
+            #
+            # Three categories of "carrier" URL exist here:
+            #   (a) Deep-link tracking — pastes the tracking ID into the
+            #       URL, lands directly on the parcel status page.
+            #       Example: CDEK, DHL Express, Pochta России.
+            #   (b) Public tracking page, manual entry — the site doesn't
+            #       accept a URL param so we point at the page and the
+            #       recipient pastes the number themselves. Example:
+            #       Australia Post (their SPA tracking 404s for direct
+            #       hash URLs).
+            #   (c) Marketplace internal — Kaspi, WB, Ozon, Glovo, Wolt
+            #       don't expose public per-parcel tracking pages at all
+            #       (their tracking lives inside the user's logged-in
+            #       account). For these we link to "My orders" so the
+            #       recipient can find the order after logging in.
+            carriers = [
+                # ── CIS — couriers ─────────────────────────────────
+                ('cdek',         'CDEK',                'RU', 'https://www.cdek.ru/ru/tracking?order_id={tracking}'),
+                ('cdek_kz',      'CDEK Kazakhstan',     'KZ', 'https://www.cdek.ru/ru/tracking?order_id={tracking}'),
+                ('kazpost',      'Казпост',             'KZ', 'https://post.kz/mail/search/{tracking}'),
+                ('pochta_ru',    'Почта России',        'RU', 'https://www.pochta.ru/tracking?barcode={tracking}'),
+                ('boxberry',     'Boxberry',            'RU', 'https://boxberry.ru/tracking/?id={tracking}'),
+                ('dpd_ru',       'DPD Russia',          'RU', 'https://www.dpd.ru/ols/personal/trace.do2?nm={tracking}'),
+                ('iml',          'IML',                 'RU', 'https://www.iml.ru/info_clients/?tracker={tracking}'),
+                ('pony_express', 'Pony Express',        'RU', 'https://www.ponyexpress.ru/tracking/?id={tracking}'),
+                ('ems',          'EMS',                 None, 'https://www.ems.post/en/global-network/tracking?id={tracking}'),
+                # ── CIS — marketplace fulfillment (cat. c) ─────────
+                ('kaspi',        'Kaspi Postomat',      'KZ', 'https://kaspi.kz/shop/'),
+                ('yandex_kz',    'Yandex Доставка',     'KZ', 'https://yandex.com/delivery/'),
+                ('wildberries',  'Wildberries Доставка','RU', 'https://www.wildberries.ru/lk/myorders/all'),
+                ('ozon',         'Ozon Rocket',         'RU', 'https://www.ozon.ru/my/orders'),
+                # ── Global integrators ──────────────────────────────
+                ('dhl',          'DHL Express',         None, 'https://www.dhl.com/en/express/tracking.html?AWB={tracking}'),
+                ('fedex',        'FedEx',               'US', 'https://www.fedex.com/fedextrack/?trknbr={tracking}'),
+                ('ups',          'UPS',                 'US', 'https://www.ups.com/track?tracknum={tracking}'),
+                ('usps',         'USPS',                'US', 'https://tools.usps.com/go/TrackConfirmAction?tLabels={tracking}'),
+                ('dpd',          'DPD International',   None, 'https://www.dpd.com/tracking?reference={tracking}'),
+                ('aramex',       'Aramex',              'AE', 'https://www.aramex.com/track/results?mode=0&ShipmentNumber={tracking}'),
+                # ── Europe — national postal services ───────────────
+                ('deutsche_post','Deutsche Post / DHL Paket', 'DE', 'https://www.dhl.de/en/privatkunden/dhl-sendungsverfolgung.html?piececode={tracking}'),
+                ('gls',          'GLS',                 'DE', 'https://gls-group.eu/EU/en/parcel-tracking?match={tracking}'),
+                ('hermes_de',    'Hermes Germany',      'DE', 'https://www.myhermes.de/empfangen/sendungsverfolgung/sendungsinformation/?sid={tracking}'),
+                ('evri',         'Evri (UK)',           'GB', 'https://www.evri.com/track/parcel/{tracking}'),
+                ('royal_mail',   'Royal Mail',          'GB', 'https://www.royalmail.com/track-your-item#/tracking-results/{tracking}'),
+                ('colissimo',    'Colissimo / La Poste','FR', 'https://www.laposte.fr/outils/suivre-vos-envois?code={tracking}'),
+                ('chronopost',   'Chronopost',          'FR', 'https://www.chronopost.fr/tracking-no-cms/suivi-page?listeNumerosLT={tracking}'),
+                ('postnl',       'PostNL',              'NL', 'https://www.postnl.nl/tracktrace?B={tracking}&D=NL&T=C&L=EN'),
+                ('bpost',        'bpost',               'BE', 'https://track.bpost.cloud/btr/web/#/search?itemCode={tracking}'),
+                ('swiss_post',   'Swiss Post',          'CH', 'https://service.post.ch/EasyTrack/submitParcelData.do?formattedParcelCodes={tracking}'),
+                ('post_at',      'Austrian Post',       'AT', 'https://www.post.at/en/track?snr={tracking}'),
+                ('posti',        'Posti',               'FI', 'https://www.posti.fi/en/tracking#/lahetys/{tracking}'),
+                ('postnord',     'PostNord',            'SE', 'https://www.postnord.com/track-and-trace/?shipmentId={tracking}'),
+                ('correos',      'Correos',             'ES', 'https://www.correos.es/es/es/herramientas/localizador/envios/detalle?tracking-number={tracking}'),
+                ('poste_it',     'Poste Italiane',      'IT', 'https://www.poste.it/cerca/index.html#/risultati-spedizioni/{tracking}'),
+                # CTT's old appserver2 URL is auth-gated — link to the
+                # public search page (manual entry, cat. b).
+                ('ctt',          'CTT Correios',        'PT', 'https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearch.jspx?objects={tracking}'),
+                # ── Asia + Oceania ──────────────────────────────────
+                # China — top-5 private + 2 marketplace fulfillment.
+                # ZTO/YTO/STO/Yunda + SF Express are the "Big 5" of Chinese
+                # express logistics; together they handle >70% of mainland
+                # parcel volume. JD Logistics + Cainiao handle marketplace
+                # fulfillment (Cainiao is Alibaba's AliExpress/Taobao arm).
+                ('sf_express',   'SF Express',          'CN', 'https://www.sf-express.com/cn/sc/dynamic_function/waybill/#search/bill-number/{tracking}'),
+                ('china_post',   'China Post',          'CN', 'http://track.chinapost.com.cn/?strSearchnumber={tracking}'),
+                ('zto',          'ZTO Express 中通',     'CN', 'https://www.zto.com/express/expressCheck.html?txtbill={tracking}'),
+                ('yto',          'YTO Express 圆通',     'CN', 'https://www.yto.net.cn/index/ywcx.html?wnum={tracking}'),
+                ('sto',          'STO Express 申通',     'CN', 'https://www.sto.cn/web/index.html'),  # cat. b — manual entry
+                ('yunda',        'Yunda Express 韵达',   'CN', 'https://www.yundaex.com/'),            # cat. b
+                ('cainiao',      'Cainiao 菜鸟',         'CN', 'https://global.cainiao.com/detail.htm?mailNoCode={tracking}'),
+                ('jd_logistics', 'JD Logistics 京东',    'CN', 'https://www.jdl.com/'),                # cat. c — marketplace
+                # Japan — Yamato + Sagawa dominate domestic (~80% market).
+                ('japan_post',   'Japan Post',          'JP', 'https://trackings.post.japanpost.jp/services/srv/search/?requestNo1={tracking}&locale=en'),
+                ('yamato',       'Yamato Kuroneko ヤマト','JP','https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number01={tracking}'),
+                ('sagawa',       'Sagawa Express 佐川',  'JP', 'https://k2k.sagawa-exp.co.jp/p/sagawa/web/okurijoinput.jsp?okurijoNo={tracking}'),
+                # Korea — CJ Logistics ~50% market share; Coupang dominates
+                # marketplace fulfillment (Korean Amazon equivalent).
+                ('korea_post',   'Korea Post',          'KR', 'https://trace.epost.go.kr/xtts/tt/epost/ems/ems_eng.jsp?POST_CODE={tracking}'),
+                ('cj_logistics', 'CJ Logistics CJ대한통운','KR','https://www.cjlogistics.com/ko/tool/parcel/tracking?gnbInvcNo={tracking}'),
+                ('coupang',      'Coupang Logistics',   'KR', 'https://www.coupang.com/np/mypage/order'),   # cat. c
+                # India — postal + private; Ekart handles Flipkart marketplace.
+                ('delhivery',    'Delhivery',           'IN', 'https://www.delhivery.com/tracking?wbn={tracking}'),
+                ('bluedart',     'Blue Dart',           'IN', 'https://www.bluedart.com/web/guest/trackdartresultthirdparty?trackFor=0&trackNo={tracking}'),
+                ('india_post',   'India Post / Speed Post','IN','https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx'),  # cat. b
+                ('dtdc',         'DTDC Express',        'IN', 'https://www.dtdc.in/tracking/tracking_results.asp?strCnno={tracking}'),
+                ('ekart',        'Ekart Logistics',     'IN', 'https://ekartlogistics.com/track'),     # cat. b — Flipkart fulfillment
+                # Indonesia — JNE is the dominant local; J&T is fastest-
+                # growing SEA-wide (also covers TH/PH/MY/VN/SG).
+                ('jne',          'JNE Express',         'ID', 'https://www.jne.co.id/en/tracking-package?tracking_number={tracking}'),
+                ('jnt',          'J&T Express',         'ID', 'https://www.jet.co.id/track?awb={tracking}'),
+                # Thailand — Kerry + Flash are the two large private carriers.
+                ('thailand_post','Thailand Post',       'TH', 'https://track.thailandpost.co.th/?trackNumber={tracking}'),
+                ('kerry_th',     'Kerry Express TH',    'TH', 'https://th.kerryexpress.com/en/track/?track={tracking}'),
+                ('flash_express','Flash Express',       'TH', 'https://www.flashexpress.com/tracking?se={tracking}'),
+                # Vietnam — Viettel (state-owned, dominant) + GHN private.
+                ('viettel_post', 'Viettel Post',        'VN', 'https://viettelpost.com.vn/Tracking?KEY={tracking}'),
+                ('ghn',          'GHN Express',         'VN', 'https://donhang.ghn.vn/?order_code={tracking}'),
+                # Philippines — LBC is the dominant local choice.
+                ('lbc',          'LBC Express',         'PH', 'https://www.lbcexpress.com/track/'),    # cat. b
+                # Malaysia / Singapore / pan-SEA — Pos Malaysia is the local
+                # postal; Ninja Van is the leading pan-SEA private; Shopee
+                # Express handles Shopee marketplace fulfillment across SEA.
+                ('pos_malaysia', 'Pos Malaysia',        'MY', 'https://tracking.pos.com.my/tracking/{tracking}'),
+                ('ninja_van',    'Ninja Van',           'SG', 'https://www.ninjavan.co/en-sg/tracking?id={tracking}'),
+                ('singpost',     'Singapore Post',      'SG', 'https://www.singpost.com/track-items?tracking_number={tracking}'),
+                ('shopee_express','Shopee Express',     'SG', 'https://spx.shopee.com/'),              # cat. c
+                # Hong Kong + Taiwan — government postal services.
+                ('hk_post',      'Hong Kong Post',      'HK', 'https://app3.hongkongpost.hk/CGI/mt/enquiry.jsp?tracknbr={tracking}'),
+                ('chunghwa_post','Chunghwa Post 中華郵政','TW','https://postserv.post.gov.tw/pstmail/main_mail.html'),  # cat. b
+                # Middle East — Emirates Post + Saudi Post + Aramex (already
+                # global above). Together they cover 95%+ of GCC shipping.
+                ('emirates_post','Emirates Post',       'AE', 'https://www.emiratespost.ae/track/{tracking}'),
+                ('saudi_post',   'Saudi Post (SPL) سبل','SA', 'https://splonline.com.sa/en/national-tracking/'),  # cat. b
+                ('australia_post','Australia Post',     'AU', 'https://auspost.com.au/parcels-mail/track-your-item'),
+                ('nz_post',      'NZ Post',             'NZ', 'https://www.nzpost.co.nz/tools/tracking?trackid={tracking}'),
+                # ── Quick-commerce / food delivery (cat. c) ────────
+                ('glovo',        'Glovo',               'ES', 'https://glovoapp.com/'),
+                ('wolt',         'Wolt',                'FI', 'https://wolt.com/me/order-history'),
+            ]
+            for code, name, cc, tpl in carriers:
+                cur.execute(
+                    "INSERT INTO shipping_carriers (code, name, country_code, tracking_url_template) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (code) DO UPDATE "
+                    "  SET name=EXCLUDED.name, country_code=EXCLUDED.country_code, "
+                    "      tracking_url_template=EXCLUDED.tracking_url_template",
+                    (code, name, cc, tpl)
+                )
+            # Per-shipment metadata on order_history. carrier_id stays
+            # nullable until the merchant assigns a courier in the label
+            # modal; same for tracking_number (the courier issues it
+            # AFTER pickup, so we cannot pre-fill). package_count defaults
+            # to 1 (single-box shipment). ship_weight_grams is the
+            # actually-weighed value the courier writes back, distinct
+            # from Σ(product.weight_grams · qty) which is just an
+            # estimate printed on the label.
+            cur.execute("""
+                ALTER TABLE order_history
+                  ADD COLUMN IF NOT EXISTS carrier_id        INTEGER REFERENCES shipping_carriers(id) ON DELETE SET NULL,
+                  ADD COLUMN IF NOT EXISTS tracking_number   VARCHAR(100) NOT NULL DEFAULT '',
+                  ADD COLUMN IF NOT EXISTS package_count     INTEGER      NOT NULL DEFAULT 1,
+                  ADD COLUMN IF NOT EXISTS ship_weight_grams INTEGER
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_order_history_tracking "
+                "ON order_history(tracking_number) WHERE tracking_number <> ''"
+            )
+            # Product-level default weight. SKU-level override already
+            # exists as product_configurations_l2.weight_g (NUMERIC) —
+            # the label renderer falls back to the L2 value if
+            # weight_grams is NULL on the product row.
+            cur.execute(
+                "ALTER TABLE products ADD COLUMN IF NOT EXISTS weight_grams INTEGER"
+            )
+            # Structured shipping-address columns. Until now order_history
+            # stored the delivery address as a single freeform string —
+            # legacy from the original storefront. Real carriers + the
+            # shipping-label renderer want city / postal / street as
+            # separate fields. We keep the original `address` column too
+            # (composed on submit) so existing endpoints + the front-end
+            # invoice PDF that prints `address` keep working without a
+            # code change at the read site.
+            cur.execute("""
+                ALTER TABLE order_history
+                  ADD COLUMN IF NOT EXISTS address_country     VARCHAR(60),
+                  ADD COLUMN IF NOT EXISTS address_city        VARCHAR(120),
+                  ADD COLUMN IF NOT EXISTS address_postal_code VARCHAR(20),
+                  ADD COLUMN IF NOT EXISTS address_street      VARCHAR(300),
+                  ADD COLUMN IF NOT EXISTS address_apartment   VARCHAR(120),
+                  ADD COLUMN IF NOT EXISTS address_floor       VARCHAR(20),
+                  ADD COLUMN IF NOT EXISTS address_entrance    VARCHAR(20),
+                  ADD COLUMN IF NOT EXISTS address_intercom    VARCHAR(40)
+            """)
+            # Structured recipient name (Last/First/Middle) — required by
+            # shipping carriers that print "Last F.M." privacy-style.
+            # `recipient_name` (legacy freeform) stays populated as
+            # "{Last} {First} {Middle}" for back-compat with invoice PDFs.
+            cur.execute("""
+                ALTER TABLE order_history
+                  ADD COLUMN IF NOT EXISTS recipient_first_name  VARCHAR(80),
+                  ADD COLUMN IF NOT EXISTS recipient_last_name   VARCHAR(80),
+                  ADD COLUMN IF NOT EXISTS recipient_middle_name VARCHAR(80)
+            """)
+            # Guest checkout support — allow user_id NULL + capture the
+            # guest's email separately. When the guest later registers
+            # with the same email, auto-link runs in /verify-code →
+            # UPDATE order_history SET user_id=new_id WHERE user_id IS
+            # NULL AND customer_email=email AND project_id=current.
+            # That gives a smooth "your old orders are already here"
+            # experience the first time they log in.
+            cur.execute("""
+                ALTER TABLE order_history
+                  ADD COLUMN IF NOT EXISTS customer_email VARCHAR(255)
+            """)
+            cur.execute("""
+                ALTER TABLE order_history ALTER COLUMN user_id DROP NOT NULL
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_order_history_guest_email "
+                "ON order_history(project_id, customer_email) "
+                "WHERE user_id IS NULL AND customer_email IS NOT NULL"
+            )
+            # Per-user saved addresses (Magaz storefront). Lets repeat
+            # customers tick a "Save this address" checkbox at checkout
+            # and reuse it on the next order without re-typing every
+            # field. Scoped to (project_id, user_id) so user 16 in
+            # store A doesn't see addresses they saved in store B.
+            # A pre-existing `user_addresses` table from an earlier
+            # codepath had a slightly different schema (no project_id,
+            # no label, no apartment, no created_at). We extend it in
+            # place via ADD COLUMN IF NOT EXISTS rather than dropping
+            # the table — keeps the migration safely idempotent.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_addresses (
+                    id           SERIAL PRIMARY KEY,
+                    user_id      INTEGER NOT NULL,
+                    country      VARCHAR(60)  NOT NULL DEFAULT '',
+                    city         VARCHAR(120) NOT NULL DEFAULT '',
+                    postal_code  VARCHAR(20)  NOT NULL DEFAULT '',
+                    street       VARCHAR(300) NOT NULL DEFAULT '',
+                    is_default   BOOLEAN      NOT NULL DEFAULT FALSE
+                )
+            """)
+            cur.execute("""
+                ALTER TABLE user_addresses
+                  ADD COLUMN IF NOT EXISTS project_id INTEGER,
+                  ADD COLUMN IF NOT EXISTS label      VARCHAR(60)  NOT NULL DEFAULT '',
+                  ADD COLUMN IF NOT EXISTS apartment  VARCHAR(120) NOT NULL DEFAULT '',
+                  ADD COLUMN IF NOT EXISTS floor      VARCHAR(20)  NOT NULL DEFAULT '',
+                  ADD COLUMN IF NOT EXISTS entrance   VARCHAR(20)  NOT NULL DEFAULT '',
+                  ADD COLUMN IF NOT EXISTS intercom   VARCHAR(40)  NOT NULL DEFAULT '',
+                  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            """)
+            # Legacy NOT NULL columns from the original schema had no
+            # DEFAULT clause — INSERTs that omit them blew up on
+            # NotNullViolation. Backfill defaults so the table is
+            # usable without listing every column on every INSERT.
+            for col in ("country", "region", "city", "street", "postal_code"):
+                cur.execute(
+                    f"ALTER TABLE user_addresses ALTER COLUMN {col} SET DEFAULT ''"
+                )
+            # FK on project_id once the column exists. Wrapped in DO
+            # block because ADD CONSTRAINT IF NOT EXISTS isn't supported.
+            cur.execute("""
+                DO $do$
+                BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                     WHERE conname='fk_user_addresses_project'
+                  ) THEN
+                    ALTER TABLE user_addresses
+                      ADD CONSTRAINT fk_user_addresses_project
+                      FOREIGN KEY (project_id) REFERENCES crm_projects(id) ON DELETE CASCADE;
+                  END IF;
+                END $do$;
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_addresses_owner "
+                "ON user_addresses(project_id, user_id)"
+            )
+            conn.commit()
+            print("[migration] shipping_carriers + order_history shipping cols + structured address + products.weight_grams ready")
+    except Exception as e:
+        print(f"[migration] shipping_carriers failed: {e}")
+
 # ── DB POOL ──────────────────────────────────────────────
 
 # Pool size 20: the Analytics page alone fires ~22 parallel fetches; with
@@ -2840,12 +3124,6 @@ def run_migrations():
 _pool = ThreadedConnectionPool(1, 20, **DB_CONFIG)
 
 # ── Analytics response cache (in-process, TTL=60s) ──────────────────
-# Analytics queries are aggregations over hours-to-days of data — refreshing
-# them every page visit is wasteful. A 60-second TTL keeps numbers fresh
-# enough for dashboards while letting the second visit and every period-
-# switch round-trip be ~free. Keyed by (route, project_id, all other query
-# args, user_id) so each user gets their own cache slice. Cleared on
-# process restart; no Redis required.
 import time as _time
 _ANALYTICS_CACHE: dict = {}
 # Cache TTL: short enough that the dashboard feels live during testing
@@ -2936,17 +3214,14 @@ def db_all(sql: str, params: tuple = ()):
 
 
 # ── PAGINATION HELPERS ──────────────────────────────────
-# Offset-based pagination wrapper. Frontend hook (`useInfiniteList`) signals "I want pagination" by sending a `cursor` query param (defaults to 0); without it the endpoint stays backward-compat and returns a bare array.
 
 def _paginate(rows: list, limit: int) -> dict:
-    """Trim `rows` to `limit` (assumes caller fetched `limit + 1` to peek the next page)."""
     has_more = len(rows) > limit
     page = rows[:limit]
     return {"items": page, "has_more": has_more}
 
 
 def _wrap_paginated(want_pagination: bool, rows: list, cursor: Optional[int], limit: int):
-    """Format response — paginated wrapper {items, next_cursor, has_more} OR legacy bare array."""
     if not want_pagination:
         return rows[:limit]   # legacy callers still get just the array
     has_more = len(rows) > limit
@@ -2956,7 +3231,6 @@ def _wrap_paginated(want_pagination: bool, rows: list, cursor: Optional[int], li
 
 
 def _pagination_params(cursor: Optional[str], limit_q: Optional[int], default_limit: int = 50, max_limit: int = 200):
-    """Parse + clamp pagination params. Returns (want_pagination, offset, limit). want_pagination=True if cursor was explicitly passed (even '0')."""
     want = cursor is not None
     offset = 0
     if cursor is not None:
@@ -2972,7 +3246,6 @@ def _pagination_params(cursor: Optional[str], limit_q: Optional[int], default_li
 # ── EMAIL ────────────────────────────────────────────────
 
 def _ses(method: str, path: str, data: dict | None = None) -> dict:
-    """Call self-hosted SES API."""
     body = json.dumps(data).encode() if data is not None else None
     req  = urllib.request.Request(
         f"{SES_API_URL}{path}",
@@ -3039,7 +3312,6 @@ if REDIS_URL:
         _redis = None
 
 def backend() -> str:
-    """Returns 'redis' or 'memory'. Useful for /health endpoints."""
     return _backend_name
 
 # ─── In-memory fallback ─────────────────────────────────────────────────────
@@ -3048,7 +3320,6 @@ _mem_expires: dict[str, float] = {}
 _mem_lock = threading.RLock()
 
 def _mem_purge_expired():
-    """Best-effort sweep — called on every read so memory doesn't bloat."""
     now = time.time()
     expired = [k for k, t in _mem_expires.items() if t <= now]
     for k in expired:
@@ -3058,7 +3329,6 @@ def _mem_purge_expired():
 # ─── Public API ─────────────────────────────────────────────────────────────
 
 def _kv_get(key: str) -> Any | None:
-    """Returns the deserialised JSON value, or None if missing/expired."""
     if _redis:
         v = _redis.get(key)
         if v is None: return None
@@ -3069,7 +3339,6 @@ def _kv_get(key: str) -> Any | None:
         return _mem.get(key)
 
 def _kv_set(key: str, value: Any, ttl: int | None = None) -> None:
-    """Set a JSON value. ttl in seconds (None = no expiry)."""
     if _redis:
         payload = json.dumps(value)
         if ttl: _redis.setex(key, int(ttl), payload)
@@ -3127,7 +3396,6 @@ def _kv_incr(key: str, ttl: int | None = None) -> int:
         return cur
 
 def _kv_ttl(key: str) -> int:
-    """Returns seconds remaining until expiry. -1 if no TTL, -2 if missing."""
     if _redis:
         return int(_redis.ttl(key))
     with _mem_lock:
@@ -3210,6 +3478,26 @@ if _RATE_LIMIT_AVAILABLE:
     from slowapi.middleware import SlowAPIMiddleware
     app.add_middleware(SlowAPIMiddleware)
 
+
+# ── HTTP cache headers for safe-to-cache GETs ─────────────────────
+_CACHEABLE_PATHS = (
+    "/api/shipping-carriers",   # 35-row preset table, virtually static
+    "/api/orgs",                # rare changes
+    "/api/projects",            # rare changes
+    "/api/categories",          # rare changes
+)
+@app.middleware("http")
+async def add_cache_headers(request, call_next):
+    response = await call_next(request)
+    if request.method == "GET" and any(request.url.path.startswith(p) for p in _CACHEABLE_PATHS):
+        # 60s fresh + 5min SWR is conservative — these tables are
+        # tweakable in CRM and we don't want a stale list lingering
+        # for an hour after the merchant renames something.
+        response.headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=300"
+        response.headers["Vary"] = "Cookie"
+    return response
+
+
 # ── МОДЕЛИ ───────────────────────────────────────────────
 
 class SendCodeRequest(BaseModel):
@@ -3291,6 +3579,10 @@ class UpdateProductRequest(BaseModel):
     ships_internationally: Optional[bool] = None
     shipping_class: Optional[str] = None              # standard|fragile|oversized|hazmat|perishable
     lead_time_days: Optional[int] = None
+    # Product-level default weight, in grams. The shipping-label renderer
+    # uses this to estimate parcel weight when L2-level weight_g isn't
+    # set. Capped at 5_000_000 g (5000 kg) by the PATCH validator.
+    weight_grams:    Optional[int] = None
     continue_selling_oos: Optional[bool] = None
     moq: Optional[int] = None
     order_increment: Optional[int] = None
@@ -3521,6 +3813,27 @@ class SmsSettingsRequest(BaseModel):
     mobizon_api_key: str = ""
     mobizon_alpha: str = ""
 
+    # 2026-05 — country-bridge expansion for SMS
+    alicloud_access_key_id: str = ""
+    alicloud_access_key_secret: str = ""
+    alicloud_sign_name: str = ""
+    alicloud_template_code: str = ""
+
+    msg91_auth_key: str = ""
+    msg91_template_id: str = ""
+    msg91_sender_id: str = ""
+
+    zenvia_api_token: str = ""
+    zenvia_from: str = ""
+
+    eskiz_email: str = ""
+    eskiz_password: str = ""
+    eskiz_from: str = ""
+
+    whatsapp_phone_number_id: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_template_name: str = ""
+
     telegram_gateway_token: str = ""
 
     enable_phone_confirmations: bool = True
@@ -3588,11 +3901,17 @@ def sanitize(v: str) -> str:
     return v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;").replace("'","&#x27;")
 
 
+def clean(v, max_len: int = 0) -> str:
+    """Three-in-one input scrubber: coerce to str, HTML-escape, strip
+    surrounding whitespace, optionally truncate. Replaces the long-form
+    `sanitize((x or "").strip())[:N]` chain that's repeated 200+
+    times across both backends."""
+    if v is None: return ""
+    s = sanitize(str(v)).strip()
+    return s[:max_len] if max_len else s
+
+
 # ── Currency-aware money formatter (server-side) ──────────────────────
-# Mirrors the frontend `Utils/currency.js` table. Used in alert emails,
-# webhook payloads, and anywhere else the backend assembles money
-# strings before sending. Keep in sync with the JS table — when you
-# add a currency, add it here too.
 _MONEY_FMT = {
     'USD': ('$',   'prefix', 2), 'EUR': ('€',   'prefix', 2), 'GBP': ('£',   'prefix', 2),
     'JPY': ('¥',   'prefix', 0), 'CNY': ('¥',   'prefix', 2), 'CHF': ('Fr.', 'prefix', 2),
@@ -3670,7 +3989,6 @@ def get_ip(req: Request) -> str:
     return direct or "unknown"
 
 def make_token(user_id: int) -> str:
-    """Short-lived (15 min) access JWT. Companion refresh token is in DB."""
     return jwt.encode(
         {"sub": str(user_id), "type": "crm",
          "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_MINUTES)},
@@ -3678,13 +3996,11 @@ def make_token(user_id: int) -> str:
     )
 
 def set_cookie(response: Response, token: str):
-    """Set ACCESS token cookie (short max_age — frontend silently refreshes)."""
     response.set_cookie("crm_token", token, httponly=True,
                         max_age=ACCESS_TOKEN_MINUTES * 60, samesite="lax",
                         secure=COOKIE_SECURE, path="/")
 
 def set_refresh_cookie(response: Response, refresh_token: str):
-    """Set REFRESH token cookie (long-lived, only sent to /api/refresh path)."""
     response.set_cookie("crm_refresh", refresh_token, httponly=True,
                         max_age=REFRESH_TOKEN_DAYS * 86400, samesite="lax",
                         secure=COOKIE_SECURE, path="/")
@@ -3701,14 +4017,12 @@ REVOKE_REASON_REUSED  = "reuse_detected"   # security incident — chain wiped
 REVOKE_REASON_MANUAL  = "manual_revoke"
 
 def _new_refresh_token() -> tuple[str, str]:
-    """Returns (plaintext, hash). Plaintext goes to cookie, hash to DB."""
     raw  = "rt_" + secrets.token_hex(32)
     return raw, hashlib.sha256(raw.encode()).hexdigest()
 
 def issue_refresh_token(user_id: int, request: Request,
                         parent_id: int | None = None,
                         label: str | None = None) -> str:
-    """Create a new refresh-token row, return the plaintext string for cookie."""
     raw, h = _new_refresh_token()
     ua = (request.headers.get("user-agent") or "")[:500] if request else ""
     ip = get_ip(request) if request else ""
@@ -3725,7 +4039,6 @@ def issue_refresh_token(user_id: int, request: Request,
     return raw
 
 def _revoke_chain_from(cur, root_id: int, reason: str):
-    """Walk rotation chain (parent_id ↔ rotated_to_id) and revoke all on token-reuse detection."""
     visited = set()
     queue = [root_id]
     while queue:
@@ -3746,7 +4059,6 @@ def _revoke_chain_from(cur, root_id: int, reason: str):
             if row["id"] not in visited: queue.append(row["id"])
 
 def consume_refresh_token(raw: str, request: Request) -> tuple[int, str] | None:
-    """Validate + atomically rotate refresh token; revokes whole chain on reuse attack signal."""
     if not raw: return None
     h = hashlib.sha256(raw.encode()).hexdigest()
     with db_cursor() as (conn, cur):
@@ -3823,7 +4135,6 @@ def get_current_user(request: Request) -> dict:
     return user
 
 def check_rate_limit(keys: list, now: datetime):
-    """Each `key` is treated as a separate (bucket=login, ident=key) pair."""
     for key in keys:
         blocked, left = _fail_check("login", key)
         if blocked:
@@ -3912,7 +4223,6 @@ def send_reset_email(email: str, token: str) -> bool:
 
 @app.get("/api/csrf")
 def get_csrf_token(request: Request, response: Response):
-    """Issue (or reuse) CSRF token cookie (non-httpOnly so JS echoes it as X-CSRF-Token)."""
     token = request.cookies.get("csrf_token", "")
     if not token:
         token = secrets.token_hex(32)
@@ -4073,7 +4383,6 @@ def logout(response: Response, request: Request):
 
 @app.post("/api/refresh")
 def refresh_session(request: Request, response: Response):
-    """Exchange refresh token for NEW access+refresh pair (rotation); 401 on any failure."""
     raw = request.cookies.get("crm_refresh", "")
     result = consume_refresh_token(raw, request)
     if not result:
@@ -4091,7 +4400,6 @@ def refresh_session(request: Request, response: Response):
 
 @app.get("/api/sessions")
 def list_sessions(request: Request, user: dict = Depends(get_current_user)):
-    """List active sessions for current user; marks the one matching current refresh cookie."""
     cur_hash = ""
     raw = request.cookies.get("crm_refresh", "")
     if raw:
@@ -4117,7 +4425,6 @@ def list_sessions(request: Request, user: dict = Depends(get_current_user)):
 
 @app.delete("/api/sessions/{session_id}")
 def revoke_session(session_id: int, user: dict = Depends(get_current_user)):
-    """Revoke a single session (logout from one device)."""
     with db_cursor() as (conn, cur):
         cur.execute(
             "UPDATE crm_refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
@@ -4130,7 +4437,6 @@ def revoke_session(session_id: int, user: dict = Depends(get_current_user)):
 
 @app.post("/api/logout-all")
 def logout_all(response: Response, user: dict = Depends(get_current_user)):
-    """Revoke EVERY session for this user (logout from all devices)."""
     with db_cursor() as (conn, cur):
         cur.execute(
             "UPDATE crm_refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
@@ -4343,7 +4649,6 @@ def update_org_sku_settings(org_id: int, body: dict = Body(...),
 
 @app.post("/api/orgs/{org_id}/sku-regenerate")
 def regenerate_org_skus(org_id: int, user: dict = Depends(get_current_user)):
-    """Wipe + regenerate every product.sku and l2.sku_code in the org under current settings."""
     require_org_owner(user, org_id)
     settings = db_one("SELECT sku_mode, sku_length FROM crm_organizations WHERE id=%s", (org_id,))
     if not settings: raise HTTPException(404, "Org not found")
@@ -4449,17 +4754,7 @@ def update_org_payment_settings(org_id: int, body: dict = Body(...),
 
 
 # ── Payment credentials (encrypted at rest) ───────────────────────────────
-# Per-org Stripe/Tinkoff/etc. API keys. Only org owners can read/write.
-# Secret fields are NEVER returned in plaintext — only the last 4 chars + a
-# masked indicator. The full secret can only be read internally by code that
-# imports payment_crypto.decrypt_credentials() and is gated by require_org_owner.
-#
 # Security checklist:
-#  • secret_key never leaves the DB except via payment_providers.* helpers
-#  • all writes require org owner (require_org_owner)
-#  • prefix validation prevents pasting a publishable key into the secret field
-#  • test endpoint pings the real provider API to catch bad keys before saving
-#  • DELETE clears credentials AND resets is_connected (so refund attempts fail loudly)
 
 # ── Inlined: payment_crypto (Fernet AES-128 encryption of merchant creds) ──
 
@@ -4484,7 +4779,6 @@ def _load_fernet() -> Fernet | None:
 
 
 def is_encryption_configured() -> bool:
-    """True if the master key is set and valid (use in /health checks)."""
     return _load_fernet() is not None
 
 
@@ -4559,8 +4853,6 @@ from typing import Any
 
 
 # ── Provider catalogue ─────────────────────────────────────────────────────
-# Required credential fields per provider. Used by CRM endpoints to validate
-# the request body shape and by the frontend to render the form.
 
 PROVIDER_FIELDS: dict[str, list[dict[str, Any]]] = {
     "stripe": [
@@ -4761,8 +5053,6 @@ def mask_credentials(provider: str, creds: dict) -> dict:
 
 
 # ── Stripe ─────────────────────────────────────────────────────────────────
-# Uses dashboard.stripe.com REST API directly (no `stripe` SDK).
-# For Connect: pass connected account ID via Stripe-Account header.
 
 _STRIPE_BASE = "https://api.stripe.com/v1"
 
@@ -4830,15 +5120,11 @@ def stripe_create_refund(creds: dict, charge_or_intent_id: str, amount_cents: in
 
 
 # ── Tinkoff ────────────────────────────────────────────────────────────────
-# https://www.tinkoff.ru/kassa/dev/payments/
-# Tinkoff signs requests via Token = SHA256 of concatenated values of all
-# top-level params (sorted by key) + Password. We add Token field server-side.
 
 _TINKOFF_BASE = "https://securepay.tinkoff.ru/v2"
 
 
 def _tinkoff_sign(params: dict, password: str) -> str:
-    """Token = sha256 of values of {sorted top-level params + Password}, hex digest."""
     items = {k: v for k, v in params.items() if not isinstance(v, (dict, list))}
     items["Password"] = password
     concat = "".join(str(items[k]) for k in sorted(items))
@@ -4896,14 +5182,11 @@ def tinkoff_create_refund(creds: dict, payment_id: str, amount_kopecks: int,
 
 
 # ── CloudPayments ──────────────────────────────────────────────────────────
-# https://developers.cloudpayments.ru/
-# HTTP Basic auth: public_id : api_secret.
 
 _CLOUDPAYMENTS_BASE = "https://api.cloudpayments.ru"
 
 
 def cloudpayments_test_connection(creds: dict) -> dict:
-    """Calls /test — explicit credential-check endpoint."""
     pid = creds.get("public_id", "").strip()
     sec = creds.get("api_secret", "").strip()
     if not pid or not sec:
@@ -4920,7 +5203,6 @@ def cloudpayments_test_connection(creds: dict) -> dict:
 
 def cloudpayments_create_refund(creds: dict, transaction_id: str, amount: float,
                                  idempotency_key: str) -> dict:
-    """POST /payments/refund. Amount in major units (rubles)."""
     pid = creds.get("public_id", "").strip()
     sec = creds.get("api_secret", "").strip()
     if not pid or not sec:
@@ -4940,14 +5222,11 @@ def cloudpayments_create_refund(creds: dict, transaction_id: str, amount: float,
 
 
 # ── YooKassa ───────────────────────────────────────────────────────────────
-# https://yookassa.ru/developers/api
-# HTTP Basic auth: shop_id : secret_key. Idempotence-Key header required on POSTs.
 
 _YOOKASSA_BASE = "https://api.yookassa.ru/v3"
 
 
 def yookassa_test_connection(creds: dict) -> dict:
-    """GET /me returns the shop info — minimum read call."""
     shop = creds.get("shop_id", "").strip()
     sec  = creds.get("secret_key", "").strip()
     if not shop or not sec:
@@ -4962,7 +5241,6 @@ def yookassa_test_connection(creds: dict) -> dict:
 
 def yookassa_create_refund(creds: dict, payment_id: str, amount: float,
                             currency: str, idempotency_key: str) -> dict:
-    """POST /refunds. payment_id is YooKassa's payment.id (UUID)."""
     shop = creds.get("shop_id", "").strip()
     sec  = creds.get("secret_key", "").strip()
     if not shop or not sec:
@@ -4987,8 +5265,6 @@ def yookassa_create_refund(creds: dict, payment_id: str, amount: float,
 
 
 # ── PayPal ─────────────────────────────────────────────────────────────────
-# https://developer.paypal.com/api/rest/
-# OAuth2 client_credentials grant for an access_token, then API calls with Bearer.
 
 _PAYPAL_BASE_LIVE    = "https://api-m.paypal.com"
 _PAYPAL_BASE_SANDBOX = "https://api-m.sandbox.paypal.com"
@@ -4999,7 +5275,6 @@ def _paypal_base(is_test: bool) -> str:
 
 
 def _paypal_token(creds: dict, is_test: bool) -> tuple[str, str]:
-    """Returns (access_token, error). One of the two will be empty."""
     cid  = creds.get("client_id", "").strip()
     csec = creds.get("client_secret", "").strip()
     if not cid or not csec:
@@ -5016,7 +5291,6 @@ def _paypal_token(creds: dict, is_test: bool) -> tuple[str, str]:
 
 
 def paypal_test_connection(creds: dict, is_test: bool = True) -> dict:
-    """Token-acquisition is itself the test — if creds are bad, oauth2/token returns 401."""
     token, err = _paypal_token(creds, is_test)
     if err:
         return _err(err)
@@ -5026,7 +5300,6 @@ def paypal_test_connection(creds: dict, is_test: bool = True) -> dict:
 def paypal_create_refund(creds: dict, capture_id: str, amount: float,
                           currency: str, idempotency_key: str,
                           is_test: bool = True) -> dict:
-    """POST /v2/payments/captures/{capture_id}/refund."""
     if amount <= 0:
         return _err("Refund amount must be positive")
     token, err = _paypal_token(creds, is_test)
@@ -5045,15 +5318,12 @@ def paypal_create_refund(creds: dict, capture_id: str, amount: float,
 
 
 # ── Adyen ──────────────────────────────────────────────────────────────────
-# https://docs.adyen.com/api-explorer
-# Auth: X-API-Key header. Different endpoints for test/live.
 
 def _adyen_base(is_test: bool) -> str:
     return "https://checkout-test.adyen.com/v71" if is_test else "https://checkout-live.adyen.com/v71"
 
 
 def adyen_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
-    """POST /paymentMethods with merchantAccount — minimum auth-check call."""
     api_key = creds.get("api_key", "").strip()
     mac     = creds.get("merchant_account", "").strip()
     if not api_key or not mac:
@@ -5072,7 +5342,6 @@ def adyen_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
 def adyen_create_refund(creds: dict, psp_reference: str, amount_minor: int,
                          currency: str, idempotency_key: str,
                          is_test_mode: bool = True) -> dict:
-    """POST /payments/{pspReference}/refunds. amount_minor in cents."""
     api_key = creds.get("api_key", "").strip()
     mac     = creds.get("merchant_account", "").strip()
     if not api_key or not mac:
@@ -5096,8 +5365,6 @@ def adyen_create_refund(creds: dict, psp_reference: str, amount_minor: int,
 
 
 # ── Braintree (GraphQL) ────────────────────────────────────────────────────
-# https://graphql.braintreepayments.com/
-# Auth: HTTP Basic public_key:private_key.
 
 def _braintree_url(is_test: bool) -> str:
     return ("https://payments.sandbox.braintree-api.com/graphql" if is_test
@@ -5111,7 +5378,6 @@ def _braintree_headers() -> dict:
 
 
 def braintree_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
-    """GraphQL `ping` field returns "pong" — minimum auth check."""
     pub = creds.get("public_key", "").strip()
     pri = creds.get("private_key", "").strip()
     mid = creds.get("merchant_id", "").strip()
@@ -5132,7 +5398,6 @@ def braintree_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
 
 def braintree_create_refund(creds: dict, transaction_id: str, amount: float,
                              idempotency_key: str, is_test_mode: bool = True) -> dict:
-    """GraphQL refundTransaction mutation."""
     pub = creds.get("public_key", "").strip()
     pri = creds.get("private_key", "").strip()
     if not pub or not pri:
@@ -5157,15 +5422,12 @@ def braintree_create_refund(creds: dict, transaction_id: str, amount: float,
 
 
 # ── Square ─────────────────────────────────────────────────────────────────
-# https://developer.squareup.com/reference/square
-# Auth: Bearer access_token.
 
 def _square_base(is_test: bool) -> str:
     return "https://connect.squareupsandbox.com/v2" if is_test else "https://connect.squareup.com/v2"
 
 
 def square_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
-    """GET /v2/locations returns merchant's locations (auth check)."""
     tok = creds.get("access_token", "").strip()
     if not tok:
         return _err("Missing access_token")
@@ -5183,7 +5445,6 @@ def square_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
 def square_create_refund(creds: dict, payment_id: str, amount_minor: int,
                           currency: str, idempotency_key: str,
                           is_test_mode: bool = True) -> dict:
-    """POST /v2/refunds. amount_minor in smallest unit."""
     tok = creds.get("access_token", "").strip()
     if not tok:
         return _err("Missing access_token")
@@ -5207,14 +5468,11 @@ def square_create_refund(creds: dict, payment_id: str, amount_minor: int,
 
 
 # ── Mollie ─────────────────────────────────────────────────────────────────
-# https://docs.mollie.com/reference
-# Auth: Bearer api_key (test_/live_ prefix selects mode).
 
 _MOLLIE_BASE = "https://api.mollie.com/v2"
 
 
 def mollie_test_connection(creds: dict) -> dict:
-    """GET /v2/methods returns enabled methods for the account."""
     key = creds.get("api_key", "").strip()
     if not key:
         return _err("Missing api_key")
@@ -5228,7 +5486,6 @@ def mollie_test_connection(creds: dict) -> dict:
 
 def mollie_create_refund(creds: dict, payment_id: str, amount: float,
                           currency: str, idempotency_key: str) -> dict:
-    """POST /v2/payments/{id}/refunds. amount in major units (decimal string)."""
     key = creds.get("api_key", "").strip()
     if not key:
         return _err("Missing api_key")
@@ -5248,14 +5505,11 @@ def mollie_create_refund(creds: dict, payment_id: str, amount: float,
 
 
 # ── Razorpay ───────────────────────────────────────────────────────────────
-# https://razorpay.com/docs/api/
-# Auth: HTTP Basic key_id:key_secret.
 
 _RAZORPAY_BASE = "https://api.razorpay.com/v1"
 
 
 def razorpay_test_connection(creds: dict) -> dict:
-    """GET /v1/payments?count=1 returns up to 1 payment — auth check."""
     kid = creds.get("key_id", "").strip()
     ksec = creds.get("key_secret", "").strip()
     if not kid or not ksec:
@@ -5270,7 +5524,6 @@ def razorpay_test_connection(creds: dict) -> dict:
 
 def razorpay_create_refund(creds: dict, payment_id: str, amount_minor: int,
                             idempotency_key: str) -> dict:
-    """POST /v1/payments/{id}/refund. amount in paise."""
     kid = creds.get("key_id", "").strip()
     ksec = creds.get("key_secret", "").strip()
     if not kid or not ksec:
@@ -5290,15 +5543,12 @@ def razorpay_create_refund(creds: dict, payment_id: str, amount_minor: int,
 
 
 # ── Paddle Billing (new API) ───────────────────────────────────────────────
-# https://developer.paddle.com/api-reference/
-# Auth: Bearer api_key. Refunds are issued via `adjustments`.
 
 def _paddle_base(is_test: bool) -> str:
     return "https://sandbox-api.paddle.com" if is_test else "https://api.paddle.com"
 
 
 def paddle_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
-    """GET /event-types returns webhook event types catalog — auth check."""
     tok = creds.get("api_key", "").strip()
     if not tok:
         return _err("Missing api_key")
@@ -5342,16 +5592,11 @@ def paddle_create_refund(creds: dict, transaction_id: str, amount: float,
 
 
 # ── PayBox.money (Kazakhstan) ──────────────────────────────────────────────
-# https://paybox.money/docs
-# Auth: signature in body (no header). All requests sign params via SHA1.
-# Sort top-level params by key, prepend the endpoint name, append secret_key,
-# SHA1 the result, hex digest → pg_sig field.
 
 _PAYBOX_BASE = "https://api.paybox.money"
 
 
 def _paybox_sign(endpoint: str, params: dict, secret_key: str) -> str:
-    """sig = sha1(endpoint;v1;v2;...;secret) where v* are values of sorted params."""
     parts = [endpoint]
     for k in sorted(params.keys()):
         parts.append(str(params[k]))
@@ -5388,7 +5633,6 @@ def paybox_test_connection(creds: dict) -> dict:
 
 def paybox_create_refund(creds: dict, payment_id: str, amount: float,
                           currency: str, idempotency_key: str) -> dict:
-    """POST /revoke.php to refund a successful payment. amount in major units."""
     mid = creds.get("merchant_id", "").strip()
     sec = creds.get("secret_key", "").strip()
     if not mid or not sec:
@@ -5422,7 +5666,6 @@ def paybox_create_refund(creds: dict, payment_id: str, amount: float,
 
 def test_connection(provider: str, creds: dict, *, is_test_mode: bool = True,
                      stripe_account_id: str = "") -> dict:
-    """Single entry point for all providers. Returns canonical {ok, data, error, raw}."""
     if provider == "manual" or provider == "other":
         return _ok({"note": "Manual / Other providers don't have a remote check — credentials are saved as-is."})
     if provider == "stripe":         return stripe_test_connection(creds, stripe_account_id)
@@ -5627,7 +5870,6 @@ def put_org_payment_credentials(org_id: int, body: dict = Body(...),
 
 @app.post("/api/orgs/{org_id}/payment-credentials/test")
 def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
-    """Ping the provider API with stored credentials. Updates is_connected + last_verified_at."""
     require_org_owner(user, org_id)
     row = db_one(
         "SELECT provider, credentials_encrypted, is_test_mode, stripe_account_id"
@@ -5678,10 +5920,6 @@ def delete_org_payment_credentials(org_id: int, user: dict = Depends(get_current
 
 
 # ── Stripe Connect OAuth flow (optional) ──────────────────────────────────
-# Standard OAuth2 — merchant clicks "Connect with Stripe" → redirected to Stripe →
-# returns with `code` → CRM exchanges for access_token + stripe_user_id (acct_…).
-# Refunds for that org then use Stripe-Account header to act on behalf of the
-# connected account, instead of needing the merchant's actual secret_key.
 
 import hashlib as _hashlib_oa
 
@@ -5717,7 +5955,6 @@ def stripe_connect_oauth_callback(request: Request,
                                     code: str = Query(...),
                                     state: str = Query(...),
                                     user: dict = Depends(get_current_user)):
-    """Exchange Stripe OAuth code for access_token + connected account ID."""
     # Verify state signature
     try:
         user_id_str, org_id_str, nonce, sig = state.split(".")
@@ -6077,7 +6314,6 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)):
 # ── PRODUCT CATEGORIES — flat, ≤1 per product, slug fixed at create; delete modes: keep_products|delete_products|move(?target_id=X) ──
 
 def _category_slug(cur, project_id: int, name: str) -> str:
-    """Generate unique category slug in this project (appends -2, -3 on collision)."""
     base = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")[:100] or "category"
     slug = base
     n = 1
@@ -6156,7 +6392,6 @@ def set_category_products(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Replaces set of products in this category (assigns new ones, clears removed ones)."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
                   (cat_id, project_id)):
@@ -6192,7 +6427,6 @@ def delete_category(
     project_id: int          = Query(...),
     user: dict               = Depends(get_current_user),
 ):
-    """Three modes: keep_products | delete_products | move(?target_id=X)."""
     require_team_member_or_owner(user, project_id)
     if mode not in ("keep_products", "delete_products", "move"):
         raise HTTPException(400, "Invalid mode")
@@ -6316,7 +6550,6 @@ def list_products(project_id: int = Query(...),
                   cursor: Optional[str] = Query(None),
                   limit: Optional[int]  = Query(None),
                   user: dict = Depends(get_current_user)):
-    """List products. Filters: category_id, uncategorized, product_type, archived. Cursor pagination (opt-in via `cursor` param) for large catalogs — backward-compat when client doesn't ask."""
     require_team_member_or_owner(user, project_id)
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where  = ["p.project_id=%s"]
@@ -6652,7 +6885,6 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
     if request.is_paused is not None:
         fields.append("is_paused=%s"); vals.append(bool(request.is_paused))
     # ── Phase 1: SaaS-grade physical fields ──
-    # Free-text identifiers (sku, barcode, brand, etc.) — sanitized.
     for fld in ("sku", "barcode", "brand", "manufacturer", "vendor",
                 "country_of_origin", "hs_code"):
         v = getattr(request, fld)
@@ -6670,14 +6902,18 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
             raise HTTPException(400, "Invalid shipping_class")
         fields.append("shipping_class=%s"); vals.append(request.shipping_class)
     for fld in ("lead_time_days", "moq", "order_increment",
-                "low_stock_threshold", "net_terms_days"):
-        v = getattr(request, fld)
+                "low_stock_threshold", "net_terms_days", "weight_grams"):
+        v = getattr(request, fld, None)
         if v is not None:
             iv = int(v)
             if iv < 0: raise HTTPException(400, f"{fld} must be ≥ 0")
-            # moq/order_increment must be ≥ 1 to make sense in a cart math.
+            # moq/order_increment must be ≥ 1 to make sense in cart math.
             if fld in ("moq", "order_increment") and iv < 1:
                 raise HTTPException(400, f"{fld} must be ≥ 1")
+            # weight_grams capped at 5_000kg — anything above is almost
+            # certainly a unit error (typing "5000" expecting kg).
+            if fld == "weight_grams" and iv > 5_000_000:
+                raise HTTPException(400, "weight_grams too large (>5000 kg)")
             fields.append(f"{fld}=%s"); vals.append(iv)
     if "pre_order_release_at" in request.model_fields_set:
         fields.append("pre_order_release_at=%s"); vals.append(request.pre_order_release_at)
@@ -6792,7 +7028,6 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
 
 @app.post("/api/products/{product_id}/duplicate")
 def duplicate_product(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Clone product tree (L1-L5 + specs + custom_fields + modifier_groups/items). Skips reviews, orders, cart, stock_log."""
     require_team_member_or_owner(user, project_id)
     src = db_one("SELECT * FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
     if not src: raise HTTPException(404, "Product not found")
@@ -6966,7 +7201,6 @@ class BulkActionRequest(BaseModel):
 
 @app.post("/api/projects/{project_id}/products/bulk")
 def bulk_action(project_id: int, request: BulkActionRequest, user: dict = Depends(get_current_user)):
-    """Atomic batch on N products (max 500). Verifies every id belongs to the project before any write."""
     require_team_member_or_owner(user, project_id)
     if not request.product_ids:
         return {"ok": True, "affected": 0}
@@ -7183,7 +7417,6 @@ class PrintBarcodesRequest(BaseModel):
 
 
 def _ean13_check_digit(twelve: str) -> str:
-    """GS1 EAN-13 algorithm: sum odd-position digits + 3 × even-position digits, then 10 - (sum % 10) mod 10."""
     if not twelve or not twelve.isdigit() or len(twelve) != 12:
         return ''
     s = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(twelve))
@@ -7191,7 +7424,6 @@ def _ean13_check_digit(twelve: str) -> str:
 
 
 def _normalize_ean13(raw: str) -> Optional[str]:
-    """Accepts 12 or 13 digits. Returns the canonical 13-digit value or None if invalid."""
     s = (raw or '').strip()
     if not s.isdigit(): return None
     if len(s) == 12:
@@ -7232,7 +7464,6 @@ def _ensure_product_ean13(cur, product_id: int) -> str:
 
 
 def _ensure_sku_ean13(cur, sku_id: int) -> str:
-    """Same as _ensure_product_ean13 but for product_configurations_l2 (L2 SKUs)."""
     cur.execute("SELECT barcode FROM product_configurations_l2 WHERE id = %s", (sku_id,))
     row = cur.fetchone()
     existing = (row or {}).get('barcode') or ''
@@ -7426,7 +7657,6 @@ def _generate_qr_svg(value: str, symbology: str = "qr") -> str:
 @app.get("/api/skus/lookup")
 def lookup_skus(project_id: int = Query(...), ids: str = Query(""),
                 user: dict = Depends(get_current_user)):
-    """Batched sku_id → {product_id, title, variation_name, configuration_name} lookup. Used by PrintBarcodesModal to render labels for arbitrary SKU lists."""
     require_team_member_or_owner(user, project_id)
     try:
         id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()][:500]
@@ -7689,7 +7919,6 @@ def print_barcodes(project_id: int, request: PrintBarcodesRequest,
 @app.get("/api/projects/{project_id}/products/export.csv")
 def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
                         user: dict = Depends(get_current_user)):
-    """Streams a CSV with one row per Layer 2 SKU (project's full catalog or filtered by ?ids=). Used by the CRM Products page Export button."""
     require_team_member_or_owner(user, project_id)
     import csv as _csv
     from io import StringIO
@@ -7797,7 +8026,6 @@ class CsvImportRequest(BaseModel):
 @app.post("/api/projects/{project_id}/products/import")
 def import_products_csv(project_id: int, request: CsvImportRequest,
                         user: dict = Depends(get_current_user)):
-    """Parses validated CsvImportRow batch and upserts products + L1/L2 + categories. dry_run=true returns counters without writing."""
     require_team_member_or_owner(user, project_id)
     if not request.rows: return {"ok": True, "created": 0, "updated": 0}
     if len(request.rows) > 5000:
@@ -7987,7 +8215,6 @@ def reorder_variations(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Apply new order to all variations (id index → position); supplied set must match exactly."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -8011,7 +8238,6 @@ def reorder_layer_items(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Reorder rows under a parent at layer 2-5; id set must match existing rows (idor-safe)."""
     if layer < 2 or layer > 5:
         raise HTTPException(400, "Layer must be 2-5 (use /variations/reorder for layer 1)")
     if req.parent_id is None:
@@ -8042,7 +8268,6 @@ def reorder_specifications(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Reorder specifications attached to a single (layer, parent_id) node."""
     if req.layer is None or req.parent_id is None:
         raise HTTPException(400, "layer and parent_id required")
     require_team_member_or_owner(user, project_id)
@@ -8072,7 +8297,6 @@ def reorder_custom_fields(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    """Reorder custom fields by field_keys (CF rows are identified by key, not id)."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -8197,7 +8421,6 @@ def delete_configuration(product_id: int, var_id: int, cfg_id: int,
 # ── SPECIFICATIONS (per variation, key/value pairs) ──────
 
 def _ensure_var_in_product(product_id: int, var_id: int, project_id: int):
-    """Reused guard: variation must belong to product, product to project."""
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     if not db_one("SELECT id FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id)):
@@ -8352,7 +8575,6 @@ def delete_specification_generic(product_id: int, spec_id: int,
 # ── MULTI-LAYER CONFIGURATIONS (l1 with images[]; l2..l5 each parent = previous layer) ──
 
 def _restore_layer_subtree(cur, *, product_id: int, layer: int, parent_id: Optional[int], node: dict) -> Optional[int]:
-    """Recursively recreate a layer node + specs + children for Undo; preserves snapshot position."""
     if not node: return None
     tbl       = _layer_table(layer)
     parent_col = _layer_parent_col(layer)
@@ -8428,7 +8650,6 @@ def _layer_name_col(n: int) -> str:
     return "name"
 
 def _product_id_for(n: int, item_id: int) -> Optional[int]:
-    """Walk up the chain to find the owning product_id."""
     cur_n, cur_id = n, item_id
     while cur_n >= 2:
         row = db_one(f"SELECT {_layer_parent_col(cur_n)} AS p FROM {_layer_table(cur_n)} WHERE id=%s", (cur_id,))
@@ -8439,7 +8660,6 @@ def _product_id_for(n: int, item_id: int) -> Optional[int]:
     return row["product_id"] if row else None
 
 def _annotate_effective_price(items: list, parent_eff: Optional[float]):
-    """Annotate effective_price = own price if set, else parent_eff (mutates items in place)."""
     for it in items:
         own = it.get("price")
         eff = float(own) if own is not None else parent_eff
@@ -8452,7 +8672,6 @@ def _annotate_effective_price(items: list, parent_eff: Optional[float]):
 
 
 def _load_product_tree(product_id: int) -> tuple[list, int]:
-    """Load all layers for a product as a nested tree. Returns (variations, max_layer)."""
     variations = db_all(
         "SELECT id, variation_name, images, position, price, stock_quantity, sold_quantity,"
         " sale_type, sale_value, sale_starts_at, sale_ends_at"
@@ -8472,7 +8691,6 @@ def _load_product_tree(product_id: int) -> tuple[list, int]:
     var_ids = [v["id"] for v in variations]
 
     def _fetch_layer(n: int, parent_ids: list[int]) -> dict:
-        """Fetch layer N rows for parent_ids → dict {parent_id: rows}; L2 includes physical attrs."""
         if not parent_ids: return {}
         fmt = ",".join(["%s"] * len(parent_ids))
         name_col = _layer_name_col(n)
@@ -8763,7 +8981,6 @@ def delete_layer_item(product_id: int, layer: int, item_id: int,
 @app.post("/api/products/{product_id}/layers/{layer}/{item_id}/copy-to-siblings")
 def copy_layer_to_siblings(product_id: int, layer: int, item_id: int,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Replicate item_id's children to every sibling at same layer (NULL prices re-inherit)."""
     if layer < 1 or layer > 4:
         raise HTTPException(400, "copy-to-siblings requires layer 1-4 (deeper layers have no children)")
     require_team_member_or_owner(user, project_id)
@@ -8814,7 +9031,6 @@ def copy_layer_to_siblings(product_id: int, layer: int, item_id: int,
 @app.delete("/api/products/{product_id}/layers/{layer}")
 def delete_entire_layer(product_id: int, layer: int,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Wipe every row of `layer` for this product (and CASCADE deletes deeper layers)."""
     if layer < 2 or layer > 5:
         raise HTTPException(400, "Only layers 2-5 can be deleted (Layer 1 = the product itself)")
     require_team_member_or_owner(user, project_id)
@@ -8985,7 +9201,6 @@ def toggle_custom_field_global(product_id: int, field_key: str, project_id: int 
 
 @app.post("/api/products/{product_id}/restore")
 def restore(product_id: int, request: RestoreRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Generic Undo target: rebuilds a snapshot. Types: variation | layer_node | layer | custom_fields."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -9066,7 +9281,6 @@ def _safe_parent_for_product(layer: int, parent_id: int, product_id: int) -> boo
 
 def _validate_group_payload(req: ModifierGroupRequest, *, control_type: str = None,
                              min_select: int = None, max_select: int = None):
-    """Common validation for create + update — consistent error messages."""
     ct = control_type if control_type is not None else (req.control_type or 'checkbox')
     if ct not in ('checkbox', 'radio'):
         raise HTTPException(400, "control_type must be 'checkbox' or 'radio'")
@@ -9294,7 +9508,6 @@ def delete_modifier_item(product_id: int, iid: int,
 @app.put("/api/products/{product_id}/modifier-items/reorder")
 def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Within-group sort + cross-group move. Body: { items: [{ id, group_id, position }, ...] }."""
     require_team_member_or_owner(user, project_id)
     payload = list(req.items or [])
     if not payload: return {"ok": True}
@@ -9350,7 +9563,6 @@ def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
 # Promo codes CRUD: shared with External (validates at /{api_key}/promo-code/apply); CRM owns admin UI.
 
 def _ensure_promo_codes_table():
-    """Create promo_codes + promo_code_uses with full Phase 1 column set (idempotent)."""
     try:
         with db_cursor() as (conn, cur):
             cur.execute("""
@@ -9703,10 +9915,8 @@ def delete_tier_pricing(product_id: int, tier_id: int,
 
 
 # ── INVENTORY BATCHES ────────────────────────────────────
-# Batches = physical receipts of stock. The new source of truth for "how did this stock get here?". product_stock.quantity = SUM(inventory_batches.quantity_remaining) for active (non-frozen) batches.
 
 def _resolve_batch_naming(project_id: int, cur, sku_id: Optional[int] = None) -> tuple[str, str]:
-    """Look up project's batch_naming_mode/format (moved from org-level)."""
     row = db_one(
         "SELECT batch_naming_mode, batch_naming_format FROM crm_projects WHERE id = %s",
         (project_id,)
@@ -9814,7 +10024,6 @@ class ReceiveBatchRequest(BaseModel):
 @app.post("/api/projects/{project_id}/inventory/receive")
 def receive_batch(project_id: int, req: ReceiveBatchRequest,
                   user: dict = Depends(get_current_user)):
-    """Receive a new stock batch — bumps product_stock + creates inventory_batches row + audit log entry."""
     require_team_member_or_owner(user, project_id)
     if req.quantity_received <= 0:
         raise HTTPException(400, "quantity_received must be > 0")
@@ -9950,9 +10159,6 @@ def bulk_receive(project_id: int, req: BulkReceiveRequest,
         })
 
     # ── Resolve project's batch_grouping_mode (default 'config' = current behaviour). ─
-    # Used below to: (a) share one auto-generated batch name across rows in the same
-    # group, and (b) propagate production/expiry dates inside the same group when the
-    # merchant only filled them on one row.
     proj = db_one("SELECT batch_grouping_mode FROM crm_projects WHERE id=%s", (project_id,))
     grouping = (proj or {}).get('batch_grouping_mode') or 'config'
 
@@ -10091,7 +10297,6 @@ def list_batches(project_id: int, sku_id: Optional[int] = Query(None),
                  cursor: Optional[str] = Query(None),
                  limit:  Optional[int] = Query(None),
                  user: dict = Depends(get_current_user)):
-    """List batches with optional filters + cursor pagination. Returns joined product/warehouse names."""
     require_team_member_or_owner(user, project_id)
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where = ["b.project_id = %s"]
@@ -10128,7 +10333,6 @@ def list_batches(project_id: int, sku_id: Optional[int] = Query(None),
 def lookup_batches_for_target(project_id: int, sku_id: int = Query(...),
                               warehouse_id: int = Query(...),
                               user: dict = Depends(get_current_user)):
-    """Used by the BulkTransferWizard Batch column — returns active (non-frozen) batches available as a target for adding more stock at (sku, warehouse)."""
     require_team_member_or_owner(user, project_id)
     rows = db_all(
         "SELECT id, batch_name, quantity_remaining, quantity_received, production_date, expiry_date"
@@ -10172,7 +10376,6 @@ class BatchUpdateRequest(BaseModel):
 @app.put("/api/projects/{project_id}/batches/{batch_id}")
 def update_batch(project_id: int, batch_id: int, req: BatchUpdateRequest,
                  user: dict = Depends(get_current_user)):
-    """Edit batch metadata. Freezing a batch removes its quantity_remaining from the SKU's available stock; un-freezing restores it."""
     require_team_member_or_owner(user, project_id)
     sent = req.model_dump(exclude_unset=True)
     if not sent: return {"ok": True}
@@ -10238,7 +10441,6 @@ def update_batch(project_id: int, batch_id: int, req: BatchUpdateRequest,
 
 @app.delete("/api/projects/{project_id}/batches/{batch_id}")
 def delete_batch(project_id: int, batch_id: int, user: dict = Depends(get_current_user)):
-    """Delete a batch — only allowed when quantity_remaining == quantity_received (i.e. nothing has been sold from it). Otherwise audit trail would be broken."""
     require_team_member_or_owner(user, project_id)
     row = db_one(
         "SELECT sku_id, warehouse_id, quantity_remaining, quantity_received"
@@ -10306,7 +10508,6 @@ def update_org_batch_settings(org_id: int, req: OrgBatchSettingsRequest,
 
 @app.get("/api/projects/{project_id}/batch-settings")
 def get_project_batch_settings(project_id: int, user: dict = Depends(get_current_user)):
-    """Project-level consumption + barcode encoding defaults + pricing display + batch naming (all project-level now)."""
     require_team_member_or_owner(user, project_id)
     row = db_one(
         "SELECT pr.batch_consumption_mode,"
@@ -10377,6 +10578,7 @@ def update_project_batch_settings(project_id: int, req: ProjectBatchSettingsRequ
 
 @app.post("/api/products/{product_id}/stock/adjust")
 def adjust_stock(product_id: int, req: StockAdjustRequest,
+                 background_tasks: BackgroundTasks,
                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
     # Validate SKU belongs to this product + project.
@@ -10426,9 +10628,6 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
         )
         was_zero = int((cur.fetchone() or {}).get("total") or 0) == 0
         # ── Batch routing (optional) ─────────────────────────────────────
-        # When batch_id or new_batch_name is supplied, also adjust an inventory_batches
-        # row so the Batches page reflects the manual change. Without these fields the
-        # legacy path runs — product_stock is bumped but no batch is touched.
         touched_batch_id   = None
         touched_batch_name = None
         if req.batch_id is not None:
@@ -10526,17 +10725,18 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
                     (ids,)
                 )
         conn.commit()
-    # Fire-and-forget restock notifications post-commit (CRM sends from platform default).
+    # Restock notifications go to the BackgroundTasks queue so the
+    # merchant's "adjust stock" click returns immediately — a 50-name
+    # wishlist used to make the request hang for ~15s while each email
+    # sent sync. FastAPI runs these after the response is delivered.
     for _, email in notify_emails:
-        try:
-            send_email(
-                to=email,
-                subject="Back in stock — your wishlist item is available",
-                html=("<p>Good news — the item you were watching is back in stock.</p>"
-                      "<p>Visit the store to grab it before it sells out.</p>"),
-            )
-        except Exception:
-            pass
+        background_tasks.add_task(
+            send_email,
+            to=email,
+            subject="Back in stock — your wishlist item is available",
+            html=("<p>Good news — the item you were watching is back in stock.</p>"
+                  "<p>Visit the store to grab it before it sells out.</p>"),
+        )
     return {"ok": True, "new_quantity": new_qty, "notified": len(notify_emails)}
 
 
@@ -10578,7 +10778,6 @@ def get_stock_log(product_id: int, project_id: int = Query(...), limit: int = Qu
 @app.get("/api/products/{product_id}/stock/per-warehouse")
 def get_per_warehouse_stock(product_id: int, project_id: int = Query(...),
                               user: dict = Depends(get_current_user)):
-    """Per-SKU per-warehouse stock matrix for product: [{sku_id, sku_name, variation_name, warehouses[]}]."""
     require_team_member_or_owner(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
@@ -10874,10 +11073,8 @@ def bulk_apply_product_defaults(project_id: int, body: dict = Body(...),
 
 
 # ─── Warehouses CRUD ────────────────────────────────────────────────
-# Each project starts with one default warehouse on first list call.
 
 def _ensure_default_warehouse(project_id):
-    """Lazy-create default warehouse on first access (idempotent via partial unique index)."""
     if not db_one("SELECT id FROM warehouses WHERE project_id=%s LIMIT 1", (project_id,)):
         with db_cursor() as (conn, cur):
             cur.execute(
@@ -10891,7 +11088,6 @@ def _ensure_default_warehouse(project_id):
 # Multi-warehouse stock (Phase A): product_stock is source of truth, l2.stock_quantity is denormalised aggregate. Every write must call _sync_l2_stock(sku_id).
 
 def _default_warehouse_id(cur, project_id):
-    """Return the default WH id for the project, creating one if missing."""
     cur.execute("SELECT id FROM warehouses WHERE project_id=%s AND is_default LIMIT 1", (project_id,))
     row = cur.fetchone()
     if row: return row["id"]
@@ -10904,7 +11100,6 @@ def _default_warehouse_id(cur, project_id):
 
 
 def _verify_warehouse_in_project(cur, warehouse_id, project_id):
-    """403/404 guard for warehouse_id — prevents IDOR. Call from every WH endpoint."""
     cur.execute("SELECT id FROM warehouses WHERE id=%s AND project_id=%s",
                 (warehouse_id, project_id))
     if not cur.fetchone():
@@ -10912,7 +11107,6 @@ def _verify_warehouse_in_project(cur, warehouse_id, project_id):
 
 
 def _verify_sku_in_project(cur, sku_id, project_id):
-    """Same idea, for SKUs (Layer 2 row)."""
     cur.execute(
         "SELECT c.id FROM product_configurations_l2 c"
         "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
@@ -10925,7 +11119,6 @@ def _verify_sku_in_project(cur, sku_id, project_id):
 
 
 def _sync_l2_stock(cur, sku_id):
-    """Recompute l2.stock_quantity = SUM(product_stock.quantity) for this SKU. Skips trg_l2_stock_audit since app already logs via product_stock_log."""
     cur.execute("SET LOCAL torta.skip_audit = 'on'")
     cur.execute(
         "UPDATE product_configurations_l2"
@@ -10937,7 +11130,6 @@ def _sync_l2_stock(cur, sku_id):
 
 
 def _per_warehouse_stock(cur, sku_id):
-    """List {warehouse_id, name, code, is_default, quantity} for every project WH (0 if no row)."""
     cur.execute(
         "SELECT w.id AS warehouse_id, w.name, w.code, w.is_default,"
         "       COALESCE(ps.quantity, 0) AS quantity"
@@ -11225,7 +11417,6 @@ async def upload_media(
     project_id: Optional[int] = Query(None),
     user: dict = Depends(get_current_user),
 ):
-    """Multi-type upload for L1 variation gallery (images/videos/3D/AR); preserves user-chosen ext."""
     # Cross-tenant guard — see upload_image for rationale.
     if project_id is not None:
         require_team_member_or_owner(user, project_id)
@@ -11273,7 +11464,6 @@ SAFE_MEDIA_HOSTS = (
 )
 
 def _is_safe_media_url(url: str) -> bool:
-    """True if URL is on our S3 bucket OR https + whitelisted external host."""
     if not url: return False
     u = str(url).lower()
     if u.startswith("https://torta-crm.s3.") or "/torta-crm." in u:
@@ -11293,7 +11483,6 @@ class AddMediaUrlRequest(BaseModel):
 @app.post("/api/products/{product_id}/layers/1/{var_id}/media-url")
 def add_media_url(product_id: int, var_id: int, req: AddMediaUrlRequest,
                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Append S3 or whitelisted-host URL to variation's images[] (refuses arbitrary external URLs)."""
     require_team_member_or_owner(user, project_id)
     _verify_layer_item_belongs_to_product(1, var_id, product_id)
     url = (req.url or '').strip()
@@ -11343,7 +11532,6 @@ async def upload_file(
     project_id: Optional[int] = Query(None),
     user: dict = Depends(get_current_user),
 ):
-    """Generic file upload for Custom Field type=file (digital products, ticket PDFs, etc.)."""
     # Cross-tenant guard — see upload_image for rationale.
     if project_id is not None:
         require_team_member_or_owner(user, project_id)
@@ -11780,7 +11968,6 @@ ALLOWED_AUTH_PROVIDERS = {
 
 @app.get("/api/auth-providers")
 def list_auth_providers(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    """Return all configured providers for a project (id, enabled state — secrets stripped)."""
     require_team_member_or_owner(user, project_id)
     rows = db_all(
         "SELECT provider, is_enabled, (client_id IS NOT NULL AND client_id <> '') AS configured "
@@ -11861,6 +12048,12 @@ ALLOWED_SMS_PROVIDERS = {
     "twilio", "twilio_verify", "messagebird", "textlocal", "vonage",
     "aws_sns", "plivo",
     "smsc", "sms_ru", "mobizon",
+    # 2026-05 — country-bridge expansion
+    "alicloud_sms",     # CN (Twilio blocked by Great Firewall)
+    "msg91",            # IN (DLT/TRAI compliance handled by MSG91)
+    "zenvia",           # BR (local leader, 3-5x cheaper than Twilio)
+    "eskiz",            # UZ (Twilio doesn't deliver reliably to UZ)
+    "whatsapp_cloud",   # Global modern alt — WhatsApp Business Cloud API (Meta)
     "telegram_gateway",
 }
 
@@ -11893,6 +12086,21 @@ _SMS_DEFAULTS = {
     "smsru_from":                  "",
     "mobizon_api_key":             "",
     "mobizon_alpha":               "",
+    "alicloud_access_key_id":      "",
+    "alicloud_access_key_secret":  "",
+    "alicloud_sign_name":          "",
+    "alicloud_template_code":      "",
+    "msg91_auth_key":              "",
+    "msg91_template_id":           "",
+    "msg91_sender_id":             "",
+    "zenvia_api_token":            "",
+    "zenvia_from":                 "",
+    "eskiz_email":                 "",
+    "eskiz_password":              "",
+    "eskiz_from":                  "",
+    "whatsapp_phone_number_id":    "",
+    "whatsapp_access_token":       "",
+    "whatsapp_template_name":      "",
     "telegram_gateway_token":      "",
     "enable_phone_confirmations":  True,
     "otp_expiry_seconds":          60,
@@ -11909,7 +12117,14 @@ _SMS_DEFAULTS = {
 _SMS_SECRET_COLS = {
     "twilio_auth_token", "messagebird_access_key", "textlocal_api_key",
     "vonage_api_secret", "aws_secret_access_key", "plivo_auth_token",
-    "smsc_password", "sms_ru_api_id", "mobizon_api_key",
+    "smsc_password", "smsru_api_id", "mobizon_api_key",
+    # 2026-05 — new providers (secrets only — non-secret IDs like sender names
+    # remain plain so the merchant sees their configured value at a glance)
+    "alicloud_access_key_secret",
+    "msg91_auth_key",
+    "zenvia_api_token",
+    "eskiz_password",
+    "whatsapp_access_token",
     "telegram_gateway_token",
 }
 
@@ -11968,6 +12183,12 @@ def save_sms_settings(req: SmsSettingsRequest,
         "smsc_login", "smsc_password", "smsc_sender",
         "smsru_api_id", "smsru_from",
         "mobizon_api_key", "mobizon_alpha",
+        "alicloud_access_key_id", "alicloud_access_key_secret",
+        "alicloud_sign_name", "alicloud_template_code",
+        "msg91_auth_key", "msg91_template_id", "msg91_sender_id",
+        "zenvia_api_token", "zenvia_from",
+        "eskiz_email", "eskiz_password", "eskiz_from",
+        "whatsapp_phone_number_id", "whatsapp_access_token", "whatsapp_template_name",
         "telegram_gateway_token",
         "enable_phone_confirmations",
         "otp_expiry_seconds", "otp_length",
@@ -12115,9 +12336,13 @@ def get_orders(project_id: int = Query(...),
     # placed in. Falls back to 'USD' on rows that pre-date the column.
     sql = f"""SELECT oh.id, oh.total_amount, oh.status, oh.delivery_method,
                    oh.recipient_name, oh.phone, oh.address, oh.comment,
+                   oh.recipient_first_name, oh.recipient_last_name, oh.recipient_middle_name,
+                   oh.customer_email AS order_customer_email,
                    oh.payment_method, oh.created_at, oh.updated_at,
                    COALESCE(oh.payment_currency, 'USD') AS payment_currency,
-                   u.name AS customer_name, u.email AS customer_email,
+                   u.name AS customer_name, u.email AS user_email,
+                   COALESCE(u.is_guest, FALSE) AS is_guest,
+                   (oh.user_id IS NULL) AS is_anon_order,
                    (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id=oh.id) AS items_count
             FROM order_history oh
             LEFT JOIN users u ON oh.user_id=u.id
@@ -12137,6 +12362,11 @@ def get_orders(project_id: int = Query(...),
             "status":           o["status"],
             "delivery_method":  o["delivery_method"],
             "recipient_name":   o["recipient_name"],
+            # Structured recipient fields — front-end prefers these for
+            # the customer cell when populated (post-migration orders).
+            "recipient_first_name":  o.get("recipient_first_name"),
+            "recipient_last_name":   o.get("recipient_last_name"),
+            "recipient_middle_name": o.get("recipient_middle_name"),
             "phone":            o["phone"],
             "address":          o["address"],
             "comment":          o["comment"],
@@ -12144,7 +12374,16 @@ def get_orders(project_id: int = Query(...),
             "payment_currency": o["payment_currency"],
             "items_count":      o["items_count"],
             "customer_name":    o["customer_name"],
-            "customer_email":   o["customer_email"],
+            # `customer_email` snapshots whatever was typed at checkout
+            # (independent of any later email change on the users row);
+            # fall back to current users.email when historical snapshot
+            # is null.
+            "customer_email":   o.get("order_customer_email") or o.get("user_email"),
+            # Guest-flag: TRUE when the user_id linked to this order is
+            # still in the is_guest=TRUE state (never registered) OR
+            # when the order is fully anonymous (user_id NULL). Drives
+            # the "Guest" badge in CRM Orders.
+            "is_guest":         bool(o.get("is_guest") or o.get("is_anon_order")),
             "created_at":       o["created_at"].isoformat() if o["created_at"] else None,
             "updated_at":       o["updated_at"].isoformat() if o["updated_at"] else None,
         }
@@ -12198,7 +12437,6 @@ def get_orders_stats(project_id: int = Query(...),
 @app.get("/api/orders/stream")
 async def stream_orders(project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    """SSE 3s poll: fires on new_count OR max id change (catches new orders even if count equal)."""
     require_team_member_or_owner(user, project_id)
 
     async def generator():
@@ -12270,18 +12508,6 @@ def get_order(order_id: int, project_id: int = Query(...),
 
 
 # ── Stock state machine (Phase reservation, 2026-05) ────────────────────
-# Stock flows in three buckets per order line:
-#   1. RESERVED     — order placed but not yet shipped. quantity untouched,
-#                     reserved_quantity holds the units. Visible-for-sale =
-#                     quantity - reserved.
-#   2. DEDUCTED     — order shipped or delivered. quantity decreased,
-#                     sold_quantity increased, reserved_quantity decreased.
-#                     The row's order_history.stock_deducted flag is TRUE.
-#   3. RELEASED     — order cancelled (or refunded) without having shipped.
-#                     reserved_quantity decreased; quantity/sold untouched.
-#
-# Transitions handled by `_apply_stock_transition(...)` below; called from
-# update_order_status() after the status row is updated.
 _STOCK_DEDUCTED_STATES = {"shipped", "delivered"}
 _STOCK_RESERVED_STATES = {"new", "confirmed"}
 _STOCK_RELEASED_STATES = {"cancelled", "refunded"}
@@ -12526,10 +12752,6 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
 
 
 # ── RETURNS / REFUNDS ─────────────────────────────────────
-# Lifecycle: requested → approved → received → inspected → refunded
-# Terminal: rejected | cancelled
-# Stock is returned to a specific inventory_batch on inspection (merchant picks per item).
-# Refund is record-only (Variant A) — merchant processes actual money refund elsewhere.
 
 RETURN_STATUSES = ("requested", "approved", "rejected", "received", "inspected", "refunded", "cancelled")
 RETURN_REASONS  = ("damaged", "wrong_item", "not_as_described", "changed_mind",
@@ -12568,7 +12790,6 @@ class RefundReturnBody(BaseModel):
 
 
 def _serialize_return(r: dict) -> dict:
-    """Shared serializer for a return row."""
     return {
         "id":                  r["id"],
         "order_id":            r["order_id"],
@@ -12594,7 +12815,6 @@ def _serialize_return(r: dict) -> dict:
 
 
 def _notify_return_event(project_id: int, return_id: int, title: str, message: str):
-    """Push notification to project owner + every team member."""
     rows = db_all(
         "SELECT crm_user_id FROM crm_projects WHERE id=%s"
         " UNION"
@@ -12894,7 +13114,6 @@ def reject_return(project_id: int, return_id: int, body: RejectReturnBody,
 
 @app.post("/api/projects/{project_id}/returns/{return_id}/receive")
 def receive_return(project_id: int, return_id: int, user: dict = Depends(get_current_user)):
-    """Goods physically arrived at warehouse — mark as received, ready for inspection."""
     require_team_member_or_owner(user, project_id)
     r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
                (return_id, project_id))
@@ -12921,7 +13140,6 @@ def receive_return(project_id: int, return_id: int, user: dict = Depends(get_cur
 @app.post("/api/projects/{project_id}/returns/{return_id}/inspect")
 def inspect_return(project_id: int, return_id: int, body: InspectReturnBody,
                    user: dict = Depends(get_current_user)):
-    """Per-item condition + restock decisions. Resellable items get added back to chosen batch."""
     require_team_member_or_owner(user, project_id)
     r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
                (return_id, project_id))
@@ -13283,7 +13501,6 @@ CHAT_REQUIRED_KEYS: dict[str, tuple] = {
 
 
 def make_contact_uid(channel: str, external_chat_id: str, project_id: int) -> str:
-    """Stable, anonymous, project-scoped 10-hex public id (e.g. u_a8f3d2b14c)."""
     raw = f"{project_id}|{channel}|{external_chat_id}".encode()
     return "u_" + hashlib.sha256(raw).hexdigest()[:10]
 
@@ -13328,16 +13545,6 @@ chat_hub = ChatHub()
 
 
 # ── Project-level events hub (orders / bookings / analytics) ──────────────
-# Subscribers are scoped per `project_id` (different from notif_hub which
-# is per-user). Used to power live updates on Booking / Orders / Revenue
-# dashboards — when a new order lands, every team member viewing this
-# project's analytics gets a push so the chart refreshes without a
-# manual reload.
-#
-# Cross-process pub/sub via PostgreSQL LISTEN/NOTIFY — both the CRM and
-# the public External API can publish onto the same `crm_project_events`
-# channel; only CRM holds open WebSockets so only CRM's listener
-# fans events out. No Redis, no shared secret, no extra infrastructure.
 class ProjectEventsHub:
     def __init__(self):
         self._subs: dict[int, set[WebSocket]] = {}
@@ -13454,6 +13661,26 @@ async def _handle_inbound_message(project_id: int, channel: str,
         "conversation": _serialize_conv(conv),
         "message":      _serialize_msg(message, project_id),
     })
+
+    # Bell push — chat operators see a new-message ping even when their
+    # browser tab isn't on the Chat page. Title = channel + contact uid;
+    # message = the preview text (or attachment label). Link jumps straight
+    # to the conversation thread. Best-effort: failures here mustn't break
+    # the chat ingest path.
+    try:
+        proj = await loop.run_in_executor(
+            None, lambda: db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
+        )
+        api_key = (proj or {}).get("api_key")
+        link = f"/project/{api_key}/chat?conv={conv['id']}" if api_key else None
+        title = f"New {channel} message · {conv['contact_uid']}"
+        # Use the preview text so attachments still surface ("📷 Photo")
+        notif_msg = preview or text[:200]
+        for uid in _project_team_user_ids(project_id):
+            push_notification(uid, project_id, "chat", title, notif_msg, link)
+    except Exception as e:
+        print(f"[notif] chat push failed: {e}")
+
     return (conv["id"], message["id"])
 
 
@@ -13470,10 +13697,6 @@ def _attachment_preview(attachments: list) -> str:
 
 
 # ── Per-channel attachment extractors ────────────────────────────────────────
-# Each takes the raw inbound payload and returns a list of dicts with shape:
-#   {type, url?, ref?, mime?, filename?, duration?, size?, thumb?}
-# `url`  — direct media URL renderable in <img>/<video>/<audio>; if missing, frontend hits /api/chat/messages/{id}/media/{idx}.
-# `ref`  — channel-specific lookup token (Telegram file_id, WhatsApp media_id) used by the proxy.
 
 def _extract_telegram_attachments(msg: dict) -> list:
     out = []
@@ -13515,7 +13738,6 @@ def _extract_telegram_attachments(msg: dict) -> list:
 
 
 def _extract_discord_attachments(msg: dict) -> list:
-    """Discord CDN URLs are public-ish; store directly so the browser can render them."""
     out = []
     for a in (msg.get("attachments") or []):
         mime = a.get("content_type") or "application/octet-stream"
@@ -13531,7 +13753,6 @@ def _extract_discord_attachments(msg: dict) -> list:
 
 
 def _extract_whatsapp_attachments(msg: dict) -> list:
-    """WhatsApp media must be fetched via /{media_id} with token — store ref, proxy resolves at request time."""
     out = []
     for kind in ("image", "video", "audio", "document"):
         m = msg.get(kind)
@@ -13547,7 +13768,6 @@ def _extract_whatsapp_attachments(msg: dict) -> list:
 
 
 def _extract_meta_attachments(msg: dict) -> list:
-    """Instagram + Facebook share the same attachment shape — direct CDN URLs in payload.url."""
     out = []
     for a in (msg.get("attachments") or []):
         t = a.get("type")
@@ -13563,7 +13783,6 @@ def _extract_meta_attachments(msg: dict) -> list:
 
 
 def _extract_viber_attachments(msg: dict) -> list:
-    """Viber inlines media URL in the message body — each message has at most one media item."""
     t = msg.get("type")
     if t in ("picture", "video", "file"):
         kind = {"picture": "image", "video": "video", "file": "file"}[t]
@@ -13576,7 +13795,6 @@ def _extract_viber_attachments(msg: dict) -> list:
 # ── Telegram long-poll background poller (works on localhost without HTTPS) ───
 
 async def _process_telegram_update(project_id: int, update: dict):
-    """Handle one Telegram update: upsert conversation + message (+attachments), broadcast."""
     msg = update.get("message") or update.get("edited_message")
     if not msg:
         return
@@ -13613,7 +13831,6 @@ class TelegramPoller:
             print(f"[telegram poller] stopped for project {project_id}")
 
     async def start_all(self):
-        """Called on server startup — resumes polling for all active bots."""
         loop = asyncio.get_event_loop()
         rows = await loop.run_in_executor(
             None,
@@ -13788,7 +14005,6 @@ discord_poller = DiscordPoller()
 
 
 def _discord_call(token: str, method: str, path: str, payload: dict | None = None) -> dict:
-    """Synchronous Discord REST API call."""
     url  = f"https://discord.com/api/v10{path}"
     body = json.dumps(payload).encode() if payload is not None else None
     req  = urllib.request.Request(url, data=body, method=method, headers={
@@ -13814,7 +14030,6 @@ def _discord_call(token: str, method: str, path: str, payload: dict | None = Non
 
 def _meta_call(method: str, path: str, access_token: str,
                payload: dict | None = None, params: dict | None = None) -> dict:
-    """Synchronous Meta Graph API call. Used to send messages."""
     qs = urllib.parse.urlencode({**(params or {}), "access_token": access_token})
     url = f"https://graph.facebook.com/v20.0{path}?{qs}"
     body = json.dumps(payload).encode() if payload is not None else None
@@ -13838,7 +14053,6 @@ def _meta_call(method: str, path: str, access_token: str,
 # ── Viber Bot API helpers ─────────────────────────────────────────────────────
 
 def _viber_call(method: str, auth_token: str, payload: dict) -> dict:
-    """Synchronous Viber Bot API call."""
     url = f"https://chatapi.viber.com/pa/{method}"
     body = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=body, method="POST", headers={
@@ -13884,7 +14098,6 @@ def _user_from_token(token: str) -> dict | None:
 
 
 def _telegram_call_timeout(token: str, method: str, payload: dict, timeout: int = 15) -> dict:
-    """Synchronous Telegram Bot API call with configurable timeout."""
     url = f"https://api.telegram.org/bot{token}/{method}"
     body = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
@@ -14297,7 +14510,6 @@ def _fetch_channel_media(channel: str, ref: str, cfg: dict) -> tuple[bytes, str]
 @app.get("/api/chat/media/{msg_id}/{idx}")
 def get_chat_media(msg_id: int, idx: int,
                    pid: int = Query(...), exp: int = Query(...), sig: str = Query(...)):
-    """Streams a chat attachment's bytes — auth via signed URL so <img>/<video> tags work cross-origin."""
     if not _verify_chat_media_sig(msg_id, idx, pid, exp, sig):
         raise HTTPException(403, "Invalid or expired signature")
     row = db_one(
@@ -14512,7 +14724,6 @@ async def send_message(conv_id: int,
 async def delete_chat_message(msg_id: int,
                               project_id: int = Query(...),
                               user: dict = Depends(get_current_user)):
-    """Hard-deletes a single chat message (CRM-side only — does not unsend on the messenger)."""
     require_team_member_or_owner(user, project_id)
     row = db_one(
         """SELECT m.id, m.conversation_id
@@ -14595,7 +14806,6 @@ def _verify_meta_signature(app_secret: str, signature_header: str, body: bytes) 
 
 @app.get("/api/chat/webhook/{channel}/{project_id}")
 async def meta_webhook_verify(channel: str, project_id: int, request: Request):
-    """Meta verification handshake. Echo hub.challenge when verify_token matches."""
     if channel not in ("whatsapp", "instagram", "facebook"):
         raise HTTPException(404, "Not found")
     qp        = request.query_params
@@ -14615,7 +14825,6 @@ async def meta_webhook_verify(channel: str, project_id: int, request: Request):
 
 @app.post("/api/chat/webhook/{channel}/{project_id}")
 async def channel_webhook_inbound(channel: str, project_id: int, request: Request):
-    """Inbound webhook for Meta family + Viber. Telegram has its own dedicated route above."""
     if channel not in CHAT_WEBHOOK_CHANNELS:
         raise HTTPException(404, "Not found")
 
@@ -14720,29 +14929,7 @@ async def internal_chat_inbound(req: WebChatInboundRequest, request: Request):
 
 
 # ── Email channel: inbound + outbound + helpers ──────────────────────────
-#
-# Flow:
-#   1. Customer sends mail to support@verified-merchant-domain.com
-#   2. DNS MX for verified-merchant-domain.com points to mail.tortacrm.com
-#   3. Postfix on the VPS pipes the raw mail to a Python script
-#      (deployed at /opt/ses/email_to_crm.py — see Notes/Chat Channels.md)
-#      which parses headers + bodies and POSTs JSON to this endpoint
-#      authenticated by INTERNAL_API_KEY.
-#   4. We route by destination address → project (only matches if the email
-#      domain is in crm_email_domains.is_verified for that project), upsert
-#      conversation keyed by sender email, insert message, broadcast via
-#      ChatHub. Message-Id is stored in external_msg_id for dedup +
-#      In-Reply-To threading on outbound replies.
-#
 # Security model:
-#   - Cross-tenant isolation: only verified domains route to their project
-#   - Idempotency: UNIQUE(project_id, message_id) prevents double-ingest
-#   - Auth: INTERNAL_API_KEY shared secret (same as WebChat inbound path)
-#   - Sender trust: we display the From header but don't trust it — the
-#     merchant decides whether to reply. SPF/DKIM pass flags are stored as
-#     metadata so the operator can spot forged mail.
-#   - No raw HTML rendering: body_html stored but stripped to text before
-#     showing in chat UI (sanitize() removes script/iframe/etc.)
 
 class EmailInboundRequest(BaseModel):
     message_id:   str            # Email Message-Id header (unique per send)
@@ -14820,7 +15007,6 @@ def _strip_quoted_reply(body: str) -> str:
 
 @app.post("/api/chat/internal/email-inbound")
 async def email_inbound(req: EmailInboundRequest, request: Request):
-    """Postfix pipe script POSTs parsed mail here. See deployment doc."""
     if request.headers.get("X-Internal-Key", "") != INTERNAL_API_KEY:
         raise HTTPException(403, "Forbidden")
 
@@ -14909,16 +15095,6 @@ async def email_inbound(req: EmailInboundRequest, request: Request):
 
 def _send_email_reply(project_id: int, to_email: str, subject: str, text: str,
                       in_reply_to: str | None = None, references: str | None = None) -> str:
-    """Sends an outbound reply through SES with proper threading headers so
-    Gmail/Outlook collapse it into the same thread on the customer side.
-    Returns the Message-Id we generated for the outgoing mail.
-
-    From identity is picked by precedence:
-      1. The Email chat integration's reply_local + reply_name (per-channel
-         override — lets merchant use 'support' for chat while OTPs go from
-         'noreply'). Requires verified domain match.
-      2. get_project_email() — the Auth Providers email config.
-      3. Hardcoded support@tortacrm.com (final fallback)."""
     from_name, from_email = get_project_email(project_id)
 
     # Per-channel override from crm_chat_integrations.config (json).
@@ -15889,8 +16065,32 @@ ALLOWED_INTEGRATION_TYPES = {
     # period-scoped file on demand or on a schedule. `url` is repurposed as the
     # recipient email for scheduled deliveries (validation branches on type).
     "acc_1c", "acc_kompra", "acc_quickbooks", "acc_xero", "acc_datev",
+    # Country-bridge expansion: each maps to a dominant local accounting SaaS
+    # so we never have to talk to a government tax API directly. Adding a new
+    # country = ~150-line CSV builder + 1 connector card + 1 icon.
+    "acc_conta_azul", "acc_nibo",                # BR
+    "acc_contpaqi",   "acc_aspel",               # MX
+    "acc_tally",      "acc_zoho_books",          # IN
+    "acc_bas",                                   # UA
+    "acc_1c_uz",                                 # UZ
+    "acc_logo_tiger", "acc_mikro_bulut",         # TR
+    "acc_comarch",    "acc_ifirma",              # PL
+    "acc_yonyou",                                # CN
+    "acc_freee",      "acc_money_forward",       # JP (двое лидеров — фактически monopoly together)
+    "acc_douzone",                               # KR
+    "acc_mekari_jurnal",                         # ID
+    "acc_flow_account",                          # TH
+    "acc_misa_sme",                              # VN
+    "acc_sql_account",                           # MY
 }
-ACCOUNTING_TYPES   = {"acc_1c", "acc_kompra", "acc_quickbooks", "acc_xero", "acc_datev"}
+ACCOUNTING_TYPES   = {
+    "acc_1c", "acc_kompra", "acc_quickbooks", "acc_xero", "acc_datev",
+    "acc_conta_azul", "acc_nibo", "acc_contpaqi", "acc_aspel",
+    "acc_tally", "acc_zoho_books", "acc_bas", "acc_1c_uz",
+    "acc_logo_tiger", "acc_mikro_bulut", "acc_comarch", "acc_ifirma",
+    "acc_yonyou", "acc_freee", "acc_money_forward", "acc_douzone",
+    "acc_mekari_jurnal", "acc_flow_account", "acc_misa_sme", "acc_sql_account",
+}
 WEBHOOK_LIKE_TYPES = {"webhook", "slack", "discord", "zapier"}
 API_CONNECTOR_TYPES = {"ga4", "mixpanel", "mailchimp"}
 
@@ -15900,7 +16100,6 @@ _INTEGRATION_SECRET_CONFIG_KEYS = {"api_secret", "api_key"}
 
 
 def _build_slack_message(event: str, data: dict) -> dict:
-    """Render an event as a Slack 'incoming webhook' payload (text + attachment)."""
     label_map = {
         "order.created":      ("🆕 New order",        ":package:"),
         "order.paid":         ("💰 Order paid",       ":moneybag:"),
@@ -15937,7 +16136,6 @@ def _build_slack_message(event: str, data: dict) -> dict:
 
 
 def _build_discord_message(event: str, data: dict) -> dict:
-    """Render an event as a Discord webhook payload (embeds)."""
     title_map = {
         "order.created":      "🆕 New order",
         "order.paid":         "💰 Order paid",
@@ -15989,7 +16187,6 @@ _PRIVATE_NET_RE = re.compile(
     r"::1$|fc00:|fd00:|fe80:|0\.0\.0\.0)"
 )
 def _url_is_safe_for_outbound(url: str) -> tuple[bool, str]:
-    """Returns (ok, reason). Caller blocks on ok=False with the reason as 400/422."""
     try:
         parsed = urllib.parse.urlparse(url)
     except Exception:
@@ -16331,6 +16528,26 @@ def _default_integration_name(t: str) -> str:
         "acc_quickbooks":  "QuickBooks IIF export",
         "acc_xero":        "Xero CSV export",
         "acc_datev":       "DATEV CSV export",
+        "acc_conta_azul":  "Conta Azul CSV export",
+        "acc_nibo":        "Nibo CSV export",
+        "acc_contpaqi":    "Contpaqi pólizas export",
+        "acc_aspel":       "Aspel COI export",
+        "acc_tally":       "Tally Prime voucher export",
+        "acc_zoho_books":  "Zoho Books invoice export",
+        "acc_bas":         "BAS Бухгалтерія export",
+        "acc_1c_uz":       "1C:Бухгалтерия Узбекистана export",
+        "acc_logo_tiger":  "Logo Tiger CSV export",
+        "acc_mikro_bulut": "Mikro Bulut CSV export",
+        "acc_comarch":       "Comarch Optima CSV export",
+        "acc_ifirma":        "iFirma CSV export",
+        "acc_yonyou":        "Yonyou (用友) CSV export",
+        "acc_freee":         "Freee (フリー) CSV export",
+        "acc_money_forward": "Money Forward Cloud export",
+        "acc_douzone":       "Douzone iCUBE CSV export",
+        "acc_mekari_jurnal": "Mekari Jurnal CSV export",
+        "acc_flow_account":  "FlowAccount CSV export",
+        "acc_misa_sme":      "MISA SME CSV export",
+        "acc_sql_account":   "SQL Account CSV export",
     }.get(t, t.title())
 
 
@@ -16513,7 +16730,6 @@ def integrations_deliveries(project_id: int = Query(...),
 def integrations_delivery_detail(delivery_id: int,
                                  project_id: int = Query(...),
                                  user: dict = Depends(get_current_user)):
-    """Full payload + headers for a single delivery — used by the 'expand row' UX in Logs."""
     require_team_member_or_owner(user, project_id)
     row = db_one(
         "SELECT * FROM crm_webhook_deliveries WHERE id=%s AND project_id=%s",
@@ -16653,7 +16869,6 @@ def integrations_delete(sub_id: int, project_id: int = Query(...),
 @app.post("/api/integrations/{sub_id}/test")
 def integrations_test(sub_id: int, project_id: int = Query(...),
                       user: dict = Depends(get_current_user)):
-    """Sends synthetic 'order.paid' to verify receiver; logged to deliveries like real events."""
     require_team_member_or_owner(user, project_id)
     sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                  (sub_id, project_id))
@@ -16688,21 +16903,35 @@ def integrations_test(sub_id: int, project_id: int = Query(...),
 
 
 # ── Accounting exports (1C / Kompra / QuickBooks / Xero / DATEV) ─────────
-#
-# These connectors don't push per-event webhooks; they generate a
-# period-scoped file (CSV/IIF) on demand or on a cron schedule. The
-# merchant either downloads the file from the modal or receives an email
-# with a signed download link. SES doesn't yet support MIME attachments,
-# so we never inline the file bytes into the email.
 
 import csv as _csv
 
 ACCOUNTING_PROVIDER_META = {
-    "acc_1c":         {"ext": "csv", "mime": "text/csv; charset=windows-1251", "label": "1C Бухгалтерия", "country": "RU/CIS"},
-    "acc_kompra":     {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Kompra ЭСФ",     "country": "KZ"},
-    "acc_quickbooks": {"ext": "iif", "mime": "application/iif",                "label": "QuickBooks",     "country": "US/CA"},
-    "acc_xero":       {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Xero",           "country": "AU/UK/NZ"},
-    "acc_datev":      {"ext": "csv", "mime": "text/csv; charset=windows-1252", "label": "DATEV",          "country": "DE"},
+    "acc_1c":          {"ext": "csv", "mime": "text/csv; charset=windows-1251", "label": "1C Бухгалтерия",       "country": "RU/CIS"},
+    "acc_kompra":      {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Kompra ЭСФ",           "country": "KZ"},
+    "acc_quickbooks":  {"ext": "iif", "mime": "application/iif",                "label": "QuickBooks",           "country": "US/CA"},
+    "acc_xero":        {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Xero",                 "country": "AU/UK/NZ"},
+    "acc_datev":       {"ext": "csv", "mime": "text/csv; charset=windows-1252", "label": "DATEV",                "country": "DE"},
+    "acc_conta_azul":  {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Conta Azul",           "country": "BR"},
+    "acc_nibo":        {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Nibo",                 "country": "BR"},
+    "acc_contpaqi":    {"ext": "csv", "mime": "text/csv; charset=windows-1252", "label": "Contpaqi",             "country": "MX"},
+    "acc_aspel":       {"ext": "csv", "mime": "text/csv; charset=windows-1252", "label": "Aspel COI",            "country": "MX"},
+    "acc_tally":       {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Tally Prime",          "country": "IN"},
+    "acc_zoho_books":  {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Zoho Books",           "country": "IN"},
+    "acc_bas":         {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "BAS Бухгалтерія",      "country": "UA"},
+    "acc_1c_uz":       {"ext": "csv", "mime": "text/csv; charset=windows-1251", "label": "1C:Бухгалтерия (UZ)",  "country": "UZ"},
+    "acc_logo_tiger":  {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Logo Tiger",           "country": "TR"},
+    "acc_mikro_bulut": {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Mikro Bulut",          "country": "TR"},
+    "acc_comarch":       {"ext": "csv", "mime": "text/csv; charset=windows-1250", "label": "Comarch Optima",       "country": "PL"},
+    "acc_ifirma":        {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "iFirma",               "country": "PL"},
+    "acc_yonyou":        {"ext": "csv", "mime": "text/csv; charset=gbk",          "label": "Yonyou 用友",          "country": "CN"},
+    "acc_freee":         {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Freee",                "country": "JP"},
+    "acc_money_forward": {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Money Forward Cloud",  "country": "JP"},
+    "acc_douzone":       {"ext": "csv", "mime": "text/csv; charset=euc-kr",       "label": "Douzone iCUBE",        "country": "KR"},
+    "acc_mekari_jurnal": {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "Mekari Jurnal",        "country": "ID"},
+    "acc_flow_account":  {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "FlowAccount",          "country": "TH"},
+    "acc_misa_sme":      {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "MISA SME",             "country": "VN"},
+    "acc_sql_account":   {"ext": "csv", "mime": "text/csv; charset=utf-8",        "label": "SQL Account",          "country": "MY"},
 }
 
 # Signing secret for accounting download links emailed to merchants. Falls back
@@ -16879,7 +17108,6 @@ def _accounting_filename(provider: str, period_label: str) -> str:
 # ── Format builders ─────────────────────────────────────
 
 def _b_1c(orders: list[dict], project_currency: str) -> bytes:
-    """1C Бухгалтерия — semicolon CSV, Windows-1251 (Cyrillic). One row per order."""
     buf = io.StringIO()
     w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
     w.writerow(["Дата", "Тип документа", "Номер", "Контрагент", "Email",
@@ -17003,12 +17231,611 @@ def _b_datev(orders: list[dict], project_currency: str) -> bytes:
     return text.encode("cp1252", errors="replace")
 
 
+def _b_conta_azul(orders: list[dict], project_currency: str) -> bytes:
+    """Conta Azul (BR) — UTF-8 semicolon CSV. ICMS 18% (standard SP-state rate)
+    pre-split for the Conta Azul invoice import; merchant overrides per-line in
+    the Conta Azul UI before emitindo a nota fiscal. Decimal separator is comma
+    (Brazilian Portuguese), date DD/MM/YYYY."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Tipo", "Data", "Numero", "Cliente", "CPF/CNPJ",
+                "Email", "Telefone", "Valor sem ICMS", "ICMS 18%",
+                "Valor Total", "Moeda", "Historico"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d/%m/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.18, 2)
+        icms  = round(total - net, 2)
+        w.writerow([
+            "Venda", date, str(o["id"]), "",  # CPF/CNPJ blank — merchant fills it in Conta Azul
+            o.get("customer_name") or o.get("recipient_name") or "",
+            o.get("customer_email") or "",
+            o.get("phone") or "",
+            f"{net:.2f}".replace(".", ","),
+            f"{icms:.2f}".replace(".", ","),
+            f"{total:.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "BRL").upper(),
+            f"Pedido #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_nibo(orders: list[dict], project_currency: str) -> bytes:
+    """Nibo (BR) — UTF-8 semicolon CSV. Nibo's lançamentos import accepts gross
+    value + category — VAT is computed inside Nibo from each customer's fiscal
+    profile, so we emit Valor Bruto without an ICMS split (avoids double-tax)."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Lancamento", "Data", "Cliente", "Documento", "Email",
+                "Valor Bruto", "Desconto", "Valor Liquido", "Moeda",
+                "Categoria", "Descricao"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d/%m/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        w.writerow([
+            str(o["id"]), date,
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # Documento — merchant fills in Nibo
+            o.get("customer_email") or "",
+            f"{total:.2f}".replace(".", ","),
+            "0,00",
+            f"{total:.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "BRL").upper(),
+            "Vendas", f"Pedido #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_contpaqi(orders: list[dict], project_currency: str) -> bytes:
+    """Contpaqi (MX) — Windows-1252 (cp1252) comma CSV with the IVA 16% split
+    Contpaqi's pólizas import expects. RFC column blank — merchant maps cliente
+    to RFC inside Contpaqi before CFDI submission."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["Folio", "Fecha", "Cliente", "RFC", "Email",
+                "Subtotal", "IVA 16%", "Total", "Moneda", "Forma_Pago", "Concepto"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d/%m/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        subt  = round(total / 1.16, 2)
+        iva   = round(total - subt, 2)
+        w.writerow([
+            str(o["id"]), date,
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # RFC — assigned in Contpaqi
+            o.get("customer_email") or "",
+            f"{subt:.2f}",
+            f"{iva:.2f}",
+            f"{total:.2f}",
+            (o.get("payment_currency") or project_currency or "MXN").upper(),
+            o.get("payment_method") or "PUE",
+            f"Pedido #{o['id']}",
+        ])
+    text = buf.getvalue()
+    return text.encode("cp1252", errors="replace")
+
+
+def _b_aspel(orders: list[dict], project_currency: str) -> bytes:
+    """Aspel SAE/COI (MX) — comma CSV cp1252. Aspel COI imports double-entry
+    pólizas (Cargo/Abono pair per line); we map Sales → Cuentas por Cobrar 105
+    debit + Ventas 401 credit which is the default Mexican chart row."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Folio", "Fecha", "Concepto", "Cuenta", "Cargo",
+                "Abono", "Departamento", "RFC", "Moneda"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d/%m/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        name  = (o.get("customer_name") or o.get("recipient_name") or "Cliente")[:60]
+        memo  = f"Pedido #{o['id']} {name}"
+        cur   = (o.get("payment_currency") or project_currency or "MXN").upper()
+        w.writerow([str(o["id"]), date, memo, "105-001", f"{total:.2f}", "0.00", "01", "", cur])
+        w.writerow([str(o["id"]), date, memo, "401-001", "0.00", f"{total:.2f}", "01", "", cur])
+    text = buf.getvalue()
+    return text.encode("cp1252", errors="replace")
+
+
+def _b_tally(orders: list[dict], project_currency: str) -> bytes:
+    """Tally Prime (IN) — UTF-8 CSV ready for the 'Import Data → Vouchers' flow.
+    GST 18% split into CGST 9% + SGST 9% (intra-state convention); for IGST
+    flows (inter-state) the merchant changes the column in Tally before posting.
+    Date format DD-MMM-YYYY (15-May-2026) — Tally's native parser."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["Date", "Voucher Type", "Voucher No", "Party Name", "GSTIN",
+                "Taxable Value", "CGST 9%", "SGST 9%", "Total", "Currency", "Narration"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d-%b-%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        taxable = round(total / 1.18, 2)
+        gst_half = round((total - taxable) / 2, 2)
+        w.writerow([
+            date, "Sales", str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # GSTIN — merchant maps in Tally
+            f"{taxable:.2f}",
+            f"{gst_half:.2f}",
+            f"{gst_half:.2f}",
+            f"{total:.2f}",
+            (o.get("payment_currency") or project_currency or "INR").upper(),
+            f"Order #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_zoho_books(orders: list[dict], project_currency: str) -> bytes:
+    """Zoho Books (IN/Global) — UTF-8 comma CSV in the Zoho Books invoice import
+    template. GST 'Treatment' column left as 'consumer' (B2C default) — merchant
+    flips to 'business_gst' for registered B2B clients inside Zoho. Place of
+    Supply column blank — Zoho auto-derives from customer address if linked."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["Invoice Date", "Invoice Number", "Customer Name", "Email",
+                "GST Treatment", "GSTIN", "Place of Supply", "Currency Code",
+                "Item Name", "Quantity", "Item Rate", "Item Total"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%Y-%m-%d") if dt else ""
+        total = float(o["total_amount"] or 0)
+        w.writerow([
+            date, f"INV-{o['id']}",
+            o.get("customer_name") or o.get("recipient_name") or "Customer",
+            o.get("customer_email") or "",
+            "consumer", "", "",
+            (o.get("payment_currency") or project_currency or "INR").upper(),
+            f"Order #{o['id']} ({int(o.get('items_count') or 0)} item(s))",
+            "1", f"{total:.2f}", f"{total:.2f}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_bas(orders: list[dict], project_currency: str) -> bytes:
+    """BAS Бухгалтерія (UA) — UTF-8 semicolon CSV. ПДВ 20% (Ukrainian VAT)
+    pre-split. ЄДРПОУ/ІПН column blank — merchant fills контрагентів in BAS
+    before posting. UTF-8 BOM so Excel keeps Cyrillic + Ukrainian glyphs (і/ї/є)
+    intact when the accountant opens the file for review."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Дата", "Номер", "Контрагент", "ЄДРПОУ/ІПН", "Email",
+                "Сума без ПДВ", "ПДВ 20%", "Сума з ПДВ", "Валюта", "Призначення"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d.%m.%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.20, 2)
+        pdv   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # ЄДРПОУ — merchant fills in BAS
+            o.get("customer_email") or "",
+            f"{net:.2f}".replace(".", ","),
+            f"{pdv:.2f}".replace(".", ","),
+            f"{total:.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "UAH").upper(),
+            f"Замовлення #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_1c_uz(orders: list[dict], project_currency: str) -> bytes:
+    """1C:Бухгалтерия для Узбекистана — Windows-1251 semicolon CSV. НДС/QQS 12%
+    (Uzbek standard since 2023, down from 15% pre-2023 and 20% before that)
+    pre-split. ИНН blank — merchant maps в 1С. Default currency UZS."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["Дата", "Номер", "Контрагент", "ИНН", "Email",
+                "Сумма без НДС", "НДС 12%", "Сумма с НДС", "Валюта", "Назначение"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d.%m.%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.12, 2)
+        nds   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # ИНН — merchant maps in 1C
+            o.get("customer_email") or "",
+            f"{net:.2f}".replace(".", ","),
+            f"{nds:.2f}".replace(".", ","),
+            f"{total:.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "UZS").upper(),
+            f"Заказ #{o['id']}",
+        ])
+    text = buf.getvalue()
+    return text.encode("cp1251", errors="replace")
+
+
+def _b_logo_tiger(orders: list[dict], project_currency: str) -> bytes:
+    """Logo Tiger (TR) — UTF-8 BOM semicolon CSV. KDV %20 (Türkiye standard
+    since 2023, up from 18%) pre-split. VKN/TCKN blank — merchant maps cariler
+    in Logo. Comma decimal (Turkish locale)."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Tarih", "Belge No", "Cari Kod", "Müşteri", "VKN/TCKN",
+                "E-posta", "Tutar (KDV Hariç)", "KDV %20", "Toplam",
+                "Para Birimi", "Açıklama"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d.%m.%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.20, 2)
+        kdv   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]), "",  # Cari Kod auto-generated in Logo
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # VKN/TCKN — assigned in Logo
+            o.get("customer_email") or "",
+            f"{net:.2f}".replace(".", ","),
+            f"{kdv:.2f}".replace(".", ","),
+            f"{total:.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "TRY").upper(),
+            f"Sipariş #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_mikro_bulut(orders: list[dict], project_currency: str) -> bytes:
+    """Mikro Bulut (TR) — UTF-8 BOM comma CSV. Cloud sibling of Mikro Yazılım's
+    desktop ERP. Same KDV %20 split as Logo Tiger but plain comma delimiter +
+    English column names that Mikro Bulut's CSV wizard accepts."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["Tarih", "Belge", "Cari Hesap", "Vergi No", "E-mail",
+                "Brüt", "KDV", "Net", "Döviz", "Açıklama"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d.%m.%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.20, 2)
+        kdv   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # Vergi No — assigned in Mikro
+            o.get("customer_email") or "",
+            f"{net:.2f}".replace(".", ","),
+            f"{kdv:.2f}".replace(".", ","),
+            f"{total:.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "TRY").upper(),
+            f"Sipariş #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_comarch(orders: list[dict], project_currency: str) -> bytes:
+    """Comarch Optima (PL) — Windows-1250 (Central European Windows) semicolon
+    CSV. VAT 23% (Polish standard) pre-split into Netto / VAT / Brutto. NIP
+    blank — merchant fills kontrahenta in Optima. Date YYYY-MM-DD ISO."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Data", "Numer", "Kontrahent", "NIP", "Email",
+                "Netto", "VAT 23%", "Brutto", "Waluta", "Opis"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%Y-%m-%d") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.23, 2)
+        vat   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # NIP — assigned in Optima
+            o.get("customer_email") or "",
+            f"{net:.2f}".replace(".", ","),
+            f"{vat:.2f}".replace(".", ","),
+            f"{total:.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "PLN").upper(),
+            f"Zamówienie #{o['id']}",
+        ])
+    text = buf.getvalue()
+    return text.encode("cp1250", errors="replace")
+
+
+def _b_ifirma(orders: list[dict], project_currency: str) -> bytes:
+    """iFirma (PL) — UTF-8 BOM semicolon CSV. Cloud-native Polish accounting;
+    accepts CSV in their faktury sprzedaży import. Same 23% VAT split as Comarch
+    but UTF-8 (BOM) instead of cp1250 — iFirma is a modern web app."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Data wystawienia", "Numer faktury", "Nabywca", "NIP", "Email",
+                "Kwota netto", "Stawka VAT", "Kwota VAT", "Kwota brutto",
+                "Waluta", "Opis"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%Y-%m-%d") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.23, 2)
+        vat   = round(total - net, 2)
+        w.writerow([
+            date, f"FV-{o['id']}",
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # NIP — assigned in iFirma
+            o.get("customer_email") or "",
+            f"{net:.2f}".replace(".", ","),
+            "23%",
+            f"{vat:.2f}".replace(".", ","),
+            f"{total:.2f}".replace(".", ","),
+            (o.get("payment_currency") or project_currency or "PLN").upper(),
+            f"Zamówienie #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_yonyou(orders: list[dict], project_currency: str) -> bytes:
+    """Yonyou (用友, CN) — GBK comma CSV. China VAT (增值税) standard rate 13%
+    pre-split into 不含税金额 / 增值税 / 价税合计. Yonyou is the NetSuite of China —
+    state-owned enterprises and most mid-market firms use NC/U8/T+/Cloud."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["日期", "凭证号", "客户", "USCC", "Email",
+                "不含税金额", "增值税13%", "价税合计", "币种", "摘要"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%Y-%m-%d") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.13, 2)
+        vat   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # USCC (统一社会信用代码) — assigned in Yonyou
+            o.get("customer_email") or "",
+            f"{net:.2f}",
+            f"{vat:.2f}",
+            f"{total:.2f}",
+            (o.get("payment_currency") or project_currency or "CNY").upper(),
+            f"订单 #{o['id']}",
+        ])
+    text = buf.getvalue()
+    # GBK is Chinese national encoding — every Chinese accounting tool reads it
+    # natively, but we keep errors='replace' so an emoji in a customer name
+    # can't bring the whole export down.
+    return text.encode("gbk", errors="replace")
+
+
+def _b_freee(orders: list[dict], project_currency: str) -> bytes:
+    """Freee (フリー, JP) — UTF-8 BOM comma CSV. Japan 消費税 (consumption tax)
+    standard 10%; reduced 8% applies to food/drink takeout but we default to
+    10% — merchant adjusts non-conforming rows in Freee before submission."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["日付", "取引先", "取引先コード", "メール",
+                "税抜金額", "消費税(10%)", "税込金額", "通貨", "備考"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%Y/%m/%d") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.10, 2)
+        tax   = round(total - net, 2)
+        w.writerow([
+            date,
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # 取引先コード — auto in Freee
+            o.get("customer_email") or "",
+            f"{net:.0f}",  # JPY has 0 decimals
+            f"{tax:.0f}",
+            f"{total:.0f}",
+            (o.get("payment_currency") or project_currency or "JPY").upper(),
+            f"注文 #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_money_forward(orders: list[dict], project_currency: str) -> bytes:
+    """Money Forward Cloud (マネーフォワード, JP) — UTF-8 BOM comma CSV.
+    Money Forward uses 仕訳 (journal entry) double-entry format like Aspel —
+    debit Accounts Receivable (売掛金 / 1140) + credit Sales (売上高 / 4100)."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["取引日", "取引先", "借方科目", "借方金額",
+                "貸方科目", "貸方金額", "通貨", "摘要"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%Y-%m-%d") if dt else ""
+        total = float(o["total_amount"] or 0)
+        name  = (o.get("customer_name") or o.get("recipient_name") or "顧客")[:60]
+        memo  = f"注文 #{o['id']} {name}"
+        cur   = (o.get("payment_currency") or project_currency or "JPY").upper()
+        # JPY has 0 decimals; non-JPY currencies fall back to 2.
+        amt   = f"{total:.0f}" if cur == "JPY" else f"{total:.2f}"
+        w.writerow([date, name, "売掛金", amt, "売上高", amt, cur, memo])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_douzone(orders: list[dict], project_currency: str) -> bytes:
+    """Douzone iCUBE (더존, KR) — cp949 (Korean Windows) comma CSV.
+    South Korea VAT 부가가치세 standard 10%. Date format YYYY.MM.DD (Korean
+    convention). 사업자번호 column blank — merchant maps 거래처 in Douzone."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["일자", "전표번호", "거래처", "사업자번호", "이메일",
+                "공급가액", "부가세(10%)", "합계", "통화", "적요"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%Y.%m.%d") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.10, 2)
+        vat   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # 사업자번호 — assigned in Douzone
+            o.get("customer_email") or "",
+            f"{net:.0f}",  # KRW has 0 decimals
+            f"{vat:.0f}",
+            f"{total:.0f}",
+            (o.get("payment_currency") or project_currency or "KRW").upper(),
+            f"주문 #{o['id']}",
+        ])
+    text = buf.getvalue()
+    return text.encode("cp949", errors="replace")
+
+
+def _b_mekari_jurnal(orders: list[dict], project_currency: str) -> bytes:
+    """Mekari Jurnal (ID) — UTF-8 BOM comma CSV. Indonesia PPN standard 11%
+    (raised from 10% in April 2022; 12% planned for 2025). NPWP column blank —
+    merchant maps pelanggan in Jurnal before issuing e-faktur."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["Tanggal", "Nomor", "Pelanggan", "NPWP", "Email",
+                "DPP", "PPN 11%", "Total", "Mata Uang", "Keterangan"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d/%m/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        dpp   = round(total / 1.11, 2)
+        ppn   = round(total - dpp, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # NPWP — assigned in Jurnal
+            o.get("customer_email") or "",
+            f"{dpp:.2f}",
+            f"{ppn:.2f}",
+            f"{total:.2f}",
+            (o.get("payment_currency") or project_currency or "IDR").upper(),
+            f"Pesanan #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_flow_account(orders: list[dict], project_currency: str) -> bytes:
+    """FlowAccount (TH) — UTF-8 BOM comma CSV. Thailand VAT (ภาษีมูลค่าเพิ่ม)
+    legal rate 10% but charged at 7% by royal decree since 1999. FlowAccount
+    is the dominant SME accounting cloud in Thailand."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["วันที่", "เลขที่", "ลูกค้า", "เลขประจำตัวผู้เสียภาษี",
+                "อีเมล", "ยอดก่อน VAT", "ภาษี 7%", "รวมสุทธิ",
+                "สกุลเงิน", "หมายเหตุ"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d/%m/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.07, 2)
+        vat   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # เลขประจำตัวผู้เสียภาษี — assigned in FlowAccount
+            o.get("customer_email") or "",
+            f"{net:.2f}",
+            f"{vat:.2f}",
+            f"{total:.2f}",
+            (o.get("payment_currency") or project_currency or "THB").upper(),
+            f"คำสั่งซื้อ #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_misa_sme(orders: list[dict], project_currency: str) -> bytes:
+    """MISA SME (VN) — UTF-8 BOM semicolon CSV. Vietnam GTGT (Giá trị gia tăng)
+    standard 10%. MISA is the dominant SME accounting platform in Vietnam,
+    bundled with mobile e-invoice (hóa đơn điện tử) submission."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    w.writerow(["Ngày", "Số chứng từ", "Khách hàng", "Mã số thuế", "Email",
+                "Tiền hàng", "Thuế GTGT 10%", "Tổng tiền", "Tiền tệ", "Diễn giải"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d/%m/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.10, 2)
+        vat   = round(total - net, 2)
+        # VND has 0 decimals; non-VND fall back to 2.
+        cur = (o.get("payment_currency") or project_currency or "VND").upper()
+        is_vnd = cur == "VND"
+        fmt = "{:.0f}" if is_vnd else "{:.2f}"
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # Mã số thuế — assigned in MISA
+            o.get("customer_email") or "",
+            fmt.format(net),
+            fmt.format(vat),
+            fmt.format(total),
+            cur,
+            f"Đơn hàng #{o['id']}",
+        ])
+    text = "﻿" + buf.getvalue()
+    return text.encode("utf-8")
+
+
+def _b_sql_account(orders: list[dict], project_currency: str) -> bytes:
+    """SQL Account (MY/SG) — UTF-8 comma CSV. Malaysia SST (Sales & Service
+    Tax) — service tax 8%, sales tax 5/10% depending on goods category. We
+    default to SST 6% which is the broad-base service tax rate used by most
+    SQL Account merchants; sales-tax-only merchants override per-line."""
+    buf = io.StringIO()
+    w = _csv.writer(buf, delimiter=",", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
+    w.writerow(["Date", "DocNo", "Customer", "BRN", "Email",
+                "Amount", "SST 6%", "Total", "Currency", "Description"])
+    for o in orders:
+        dt = o.get("payment_paid_at") or o["created_at"]
+        date = dt.strftime("%d/%m/%Y") if dt else ""
+        total = float(o["total_amount"] or 0)
+        net   = round(total / 1.06, 2)
+        sst   = round(total - net, 2)
+        w.writerow([
+            date, str(o["id"]),
+            o.get("customer_name") or o.get("recipient_name") or "",
+            "",  # BRN (Business Registration Number) — assigned in SQL
+            o.get("customer_email") or "",
+            f"{net:.2f}",
+            f"{sst:.2f}",
+            f"{total:.2f}",
+            (o.get("payment_currency") or project_currency or "MYR").upper(),
+            f"Order #{o['id']}",
+        ])
+    text = buf.getvalue()
+    return text.encode("utf-8")
+
+
 _ACCOUNTING_BUILDERS = {
-    "acc_1c":         _b_1c,
-    "acc_kompra":     _b_kompra,
-    "acc_quickbooks": _b_quickbooks,
-    "acc_xero":       _b_xero,
-    "acc_datev":      _b_datev,
+    "acc_1c":            _b_1c,
+    "acc_kompra":        _b_kompra,
+    "acc_quickbooks":    _b_quickbooks,
+    "acc_xero":          _b_xero,
+    "acc_datev":         _b_datev,
+    "acc_conta_azul":    _b_conta_azul,
+    "acc_nibo":          _b_nibo,
+    "acc_contpaqi":      _b_contpaqi,
+    "acc_aspel":         _b_aspel,
+    "acc_tally":         _b_tally,
+    "acc_zoho_books":    _b_zoho_books,
+    "acc_bas":           _b_bas,
+    "acc_1c_uz":         _b_1c_uz,
+    "acc_logo_tiger":    _b_logo_tiger,
+    "acc_mikro_bulut":   _b_mikro_bulut,
+    "acc_comarch":       _b_comarch,
+    "acc_ifirma":        _b_ifirma,
+    "acc_yonyou":        _b_yonyou,
+    "acc_freee":         _b_freee,
+    "acc_money_forward": _b_money_forward,
+    "acc_douzone":       _b_douzone,
+    "acc_mekari_jurnal": _b_mekari_jurnal,
+    "acc_flow_account":  _b_flow_account,
+    "acc_misa_sme":      _b_misa_sme,
+    "acc_sql_account":   _b_sql_account,
 }
 
 
@@ -17036,7 +17863,16 @@ def _build_accounting_export(sub: dict, project: dict, period: str,
         _fetch_orders_for_export(sub["project_id"], start_utc, end_utc, include_unpaid)
         + _fetch_bookings_for_export(sub["project_id"], start_utc, end_utc)
     )
-    orders.sort(key=lambda o: o.get("created_at") or datetime.min.replace(tzinfo=timezone.utc))
+    # order_history.created_at is `timestamp without time zone` (naive) while
+    # bookings.starts_at is `timestamptz` (UTC-aware). Comparing the two raises
+    # `TypeError: can't compare offset-naive and offset-aware datetimes`, which
+    # 500'd the whole preview/download. Coerce naive → UTC-aware in the sort key.
+    def _sort_key(o):
+        dt = o.get("created_at")
+        if dt is None:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    orders.sort(key=_sort_key)
     project_currency = (project.get("currency") or "USD").upper()
     blob = _ACCOUNTING_BUILDERS[provider](orders, project_currency)
     filename = _accounting_filename(provider, label)
@@ -17085,7 +17921,16 @@ def accounting_preview(sub_id: int,
         _fetch_orders_for_export(project_id, start_utc, end_utc, unp)
         + _fetch_bookings_for_export(project_id, start_utc, end_utc)
     )
-    orders.sort(key=lambda o: o.get("created_at") or datetime.min.replace(tzinfo=timezone.utc))
+    # order_history.created_at is `timestamp without time zone` (naive) while
+    # bookings.starts_at is `timestamptz` (UTC-aware). Comparing the two raises
+    # `TypeError: can't compare offset-naive and offset-aware datetimes`, which
+    # 500'd the whole preview/download. Coerce naive → UTC-aware in the sort key.
+    def _sort_key(o):
+        dt = o.get("created_at")
+        if dt is None:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    orders.sort(key=_sort_key)
     total = sum(float(o.get("total_amount") or 0) for o in orders)
     preview_rows = [
         {
@@ -17231,9 +18076,6 @@ def _send_accounting_email(sub: dict, project: dict, period: str, manual: bool =
 
 
 # ── Scheduled exports ─────────────────────────────────────
-# Runs alongside the alerts evaluator — hourly cadence is enough; we look at
-# the merchant's chosen hour-of-day and the last_sent_at marker. Once-per-day
-# at most, regardless of when the loop ticks.
 
 def _accounting_due(sub: dict, now_utc: datetime) -> bool:
     cfg = sub.get("config") or {}
@@ -17340,10 +18182,6 @@ def _start_accounting_scheduler():
 
 
 # ── Request-an-integration form ─────────────────────────────
-# Lightweight: merchant can express interest in a Coming-soon connector. We
-# just record it and email the platform owner. No dedicated table — reuses
-# crm_webhook_subscriptions with a `requested_*` type prefix would be a bad
-# idea (pollutes the marketplace list); store in a tiny audit table.
 
 def _ensure_integration_requests_table():
     try:
@@ -17379,7 +18217,6 @@ class IntegrationRequestBody(BaseModel):
 def request_integration(body: IntegrationRequestBody,
                         project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    """Captures 'Notify me when {connector} is ready' / general interest."""
     require_team_member_or_owner(user, project_id)
     conn_name = (body.connector or "").strip()[:60]
     if not conn_name:
@@ -17455,12 +18292,311 @@ def document_settings_save(req: DocumentSettingsRequest,
     return {"ok": True}
 
 
+# ── SHIPPING LABELS ──────────────────────────────────────
+
+from pdf_shipping_label import render_shipping_labels
+
+
+@app.get("/api/shipping-carriers")
+def list_shipping_carriers(user: dict = Depends(get_current_user)):
+    """Preset list of common carriers (KZ/RU/world). Read-only — merchant
+    cannot add custom carriers in v1; if they need one we add it server-side."""
+    rows = db_all(
+        "SELECT id, code, name, country_code, tracking_url_template "
+        "  FROM shipping_carriers ORDER BY country_code NULLS LAST, name"
+    )
+    return {"items": rows}
+
+
+class ShippingPatchBody(BaseModel):
+    carrier_id:        Optional[int] = None
+    tracking_number:   Optional[str] = None
+    package_count:     Optional[int] = None
+    ship_weight_grams: Optional[int] = None
+
+
+@app.patch("/api/orders/{order_id}/shipping")
+def patch_order_shipping(order_id: int, body: ShippingPatchBody,
+                         project_id: int = Query(...),
+                         user: dict = Depends(get_current_user)):
+    """Update only the shipping-label metadata on an order. Kept
+    separate from PATCH /api/orders/{id} (status update) to avoid
+    accidentally triggering stock side-effects when the merchant is
+    just typing in a tracking number."""
+    require_team_member_or_owner(user, project_id)
+    fields = body.model_dump(exclude_unset=True)
+    # Sanitize + clamp numeric ranges.
+    if "tracking_number" in fields:
+        fields["tracking_number"] = sanitize((fields["tracking_number"] or "").strip())[:100]
+    if "package_count" in fields:
+        pc = int(fields["package_count"] or 1)
+        fields["package_count"] = max(1, min(pc, 999))
+    if "ship_weight_grams" in fields and fields["ship_weight_grams"] is not None:
+        fields["ship_weight_grams"] = max(0, min(int(fields["ship_weight_grams"]), 5_000_000))
+    if not fields:
+        return {"ok": True}
+    # Carrier must exist if provided.
+    if fields.get("carrier_id"):
+        ok = db_one("SELECT 1 AS x FROM shipping_carriers WHERE id=%s", (fields["carrier_id"],))
+        if not ok:
+            raise HTTPException(400, "Unknown carrier_id")
+    sets = ", ".join(f"{k}=%s" for k in fields)
+    vals = list(fields.values()) + [order_id, project_id]
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            f"UPDATE order_history SET {sets}, updated_at=CURRENT_TIMESTAMP "
+            f" WHERE id=%s AND project_id=%s",
+            tuple(vals)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Order not found")
+        conn.commit()
+    return {"ok": True}
+
+
+def _format_label_name(order: dict) -> str:
+    """Return the recipient name in the privacy-friendly format real
+    carriers print on shipping labels: "LAST F.M." (full surname
+    plus initials of first + middle names). Falls back to the
+    legacy `recipient_name` freeform string for pre-migration
+    orders, then to "—" if everything's empty.
+    Example outputs:
+      • last="Иванов", first="Иван", middle="Петрович" → "Иванов И.П."
+      • last="Иванов", first="Иван"                   → "Иванов И."
+      • only legacy recipient_name="John Doe"          → "John Doe"
+    """
+    last   = (order.get("recipient_last_name")   or "").strip()
+    first  = (order.get("recipient_first_name")  or "").strip()
+    middle = (order.get("recipient_middle_name") or "").strip()
+    if last:
+        initials = ""
+        if first:  initials += first[0].upper()  + "."
+        if middle: initials += middle[0].upper() + "."
+        return (last + (" " + initials if initials else "")).strip()
+    legacy = (order.get("recipient_name") or "").strip()
+    return legacy or "—"
+
+
+def _resolve_label_payload(project_id: int, order_id: int) -> dict:
+    """Pull everything needed to draw ONE label for an order: branding
+    from crm_document_settings, recipient + items from order_history /
+    order_items, carrier preset row, weight estimate from product
+    rows. Returns a flat dict ready for pdf_shipping_label."""
+    order = db_one(
+        """SELECT oh.id, oh.recipient_name, oh.phone, oh.address,
+                  oh.tracking_number, oh.package_count, oh.ship_weight_grams,
+                  oh.carrier_id, oh.created_at,
+                  oh.address_country, oh.address_city, oh.address_postal_code,
+                  oh.address_street, oh.address_apartment,
+                  oh.address_floor, oh.address_entrance, oh.address_intercom,
+                  oh.recipient_first_name, oh.recipient_last_name, oh.recipient_middle_name,
+                  c.code AS carrier_code, c.name AS carrier_name,
+                  c.tracking_url_template
+             FROM order_history oh
+             LEFT JOIN shipping_carriers c ON c.id = oh.carrier_id
+            WHERE oh.id=%s AND oh.project_id=%s""",
+        (order_id, project_id)
+    )
+    if not order:
+        raise HTTPException(404, f"Order {order_id} not found in this project")
+    branding = db_one(
+        "SELECT company_name, address FROM crm_document_settings WHERE project_id=%s",
+        (project_id,)
+    ) or {}
+    # Fall back to project name + organisation name when the merchant
+    # hasn't filled Documents → company_name yet. Showing the literal
+    # project / org name is far more useful than a generic "Your Store"
+    # placeholder — the recipient at least recognises who shipped them
+    # the parcel. The merchant can override anytime by filling
+    # Documents page properly (Documents is where ALL PDF branding
+    # lives — invoices, acts, receipts, shipping labels).
+    proj_row = db_one(
+        "SELECT p.name AS project_name, o.name AS org_name "
+        "  FROM crm_projects p "
+        "  LEFT JOIN crm_organizations o ON o.id = p.org_id "
+        " WHERE p.id = %s",
+        (project_id,)
+    ) or {}
+    items = db_all(
+        """SELECT oi.quantity,
+                  p.title,
+                  p.weight_grams      AS p_weight_g,
+                  pc.weight_g         AS sku_weight_g
+             FROM order_items oi
+             JOIN products                       p  ON oi.product_id       = p.id
+             LEFT JOIN product_configurations_l2 pc ON oi.configuration_id = pc.id
+            WHERE oi.order_id=%s""",
+        (order_id,)
+    )
+    # Estimate total weight: prefer product-level weight_grams (newer
+    # explicit column), fall back to SKU-level weight_g (legacy). If
+    # neither is set, omit weight from label entirely.
+    est_weight = 0
+    have_weight = False
+    for it in items:
+        qty = int(it.get("quantity") or 1)
+        w = it.get("p_weight_g") or it.get("sku_weight_g")
+        if w:
+            est_weight += int(float(w)) * qty
+            have_weight = True
+    # Merchant-overridden ship_weight wins if present.
+    if order.get("ship_weight_grams"):
+        final_weight = int(order["ship_weight_grams"])
+    elif have_weight:
+        final_weight = est_weight
+    else:
+        final_weight = None
+
+    tracking = (order.get("tracking_number") or "").strip()
+    url_tpl = order.get("tracking_url_template") or ""
+    tracking_url = url_tpl.replace("{tracking}", tracking) if (url_tpl and tracking) else ""
+
+    # Prefer the structured address columns when populated (new
+    # checkout flow). Fall back to splitting the freeform `address`
+    # string for orders placed before the structured fields existed —
+    # the renderer then uses the first comma-segment as a guessed
+    # city, just like before.
+    struct_city   = (order.get("address_city")     or "").strip()
+    struct_street = (order.get("address_street")   or "").strip()
+    struct_apt    = (order.get("address_apartment")or "").strip()
+    struct_postal = (order.get("address_postal_code") or "").strip()
+    struct_country= (order.get("address_country")  or "").strip()
+    if struct_city or struct_street:
+        # Build a compact human-readable line from the structured
+        # fields. Apartment-block (apt + floor + entrance + intercom)
+        # collapses into a comma-list inline. English short forms
+        # (apt/fl/entr/int) keep the line short for thermal labels
+        # and avoid the multi-language headache until proper i18n
+        # lands on the storefront.
+        struct_floor    = (order.get("address_floor")    or "").strip()
+        struct_entrance = (order.get("address_entrance") or "").strip()
+        struct_intercom = (order.get("address_intercom") or "").strip()
+        apt_bits = []
+        if struct_apt:      apt_bits.append(f"apt {struct_apt}")
+        if struct_floor:    apt_bits.append(f"fl {struct_floor}")
+        if struct_entrance: apt_bits.append(f"entr {struct_entrance}")
+        if struct_intercom: apt_bits.append(f"int {struct_intercom}")
+        apt_line = ", ".join(apt_bits)
+        street_line = ", ".join(s for s in (struct_street, apt_line) if s)
+        rest_parts  = [p for p in (street_line, struct_postal, struct_country) if p]
+        city_guess  = struct_city
+        rest        = ", ".join(rest_parts)
+    else:
+        addr_full = (order.get("address") or "").strip()
+        if "," in addr_full:
+            city_guess, rest = addr_full.split(",", 1)
+            city_guess = city_guess.strip()
+            rest = rest.strip()
+        else:
+            city_guess = ""
+            rest = addr_full
+
+    eta = ""  # No delivery_eta on order_history; left blank for v1.
+
+    sender_name = (
+        (branding.get("company_name") or "").strip()
+        or (proj_row.get("project_name") or "").strip()
+        or (proj_row.get("org_name") or "").strip()
+    )
+    return {
+        "order_id":          order["id"],
+        "tracking_number":   tracking or f"ORD-{order['id']}",
+        "tracking_url":      tracking_url,
+        "carrier_name":      order.get("carrier_name") or "",
+        "sender_name":       sender_name,
+        "sender_address":    (branding.get("address") or "").strip(),
+        # Privacy convention CDEK/Kazpost use on real labels: "LAST F.M."
+        # (full last name + initials). We prefer the structured fields
+        # when present; legacy `recipient_name` (composed freeform) is
+        # the fallback for orders placed before the migration.
+        "recipient_name":    _format_label_name(order),
+        "recipient_phone":   (order.get("phone") or "").strip(),
+        "recipient_city":    city_guess,
+        "recipient_address": rest or addr_full,
+        "items":             [
+            {"title": (it.get("title") or "").strip(),
+             "quantity": int(it.get("quantity") or 1)}
+            for it in items
+        ],
+        "package_index":     1,
+        "package_total":     int(order.get("package_count") or 1),
+        "package_weight_g":  final_weight,
+        "eta_date":          eta,
+    }
+
+
+@app.get("/api/orders/{order_id}/shipping-label.pdf")
+def get_order_shipping_label(order_id: int, project_id: int = Query(...),
+                             format: str = Query("thermal_100x150"),
+                             user: dict = Depends(get_current_user)):
+    """Single-order shipping label PDF. `format` ∈
+    thermal_100x150 | a4_1 | a4_2 | a4_4."""
+    require_team_member_or_owner(user, project_id)
+    if format not in ("thermal_100x150", "a4_1", "a4_2", "a4_4"):
+        raise HTTPException(400, "Invalid format")
+    label = _resolve_label_payload(project_id, order_id)
+    # If package_count > 1 we render N pages (1/N, 2/N, …) so the
+    # merchant gets one label per box in the shipment.
+    pkg_total = label["package_total"]
+    labels = []
+    for i in range(1, pkg_total + 1):
+        labels.append({**label, "package_index": i, "package_total": pkg_total})
+    pdf = render_shipping_labels(labels, format=format)
+    from fastapi.responses import Response as _Response
+    return _Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="label-{order_id}.pdf"'}
+    )
+
+
+class BulkLabelBody(BaseModel):
+    order_ids: List[int]
+    format:    Optional[str] = "thermal_100x150"
+
+
+@app.post("/api/orders/shipping-label/bulk")
+def post_bulk_shipping_labels(body: BulkLabelBody,
+                              project_id: int = Query(...),
+                              user: dict = Depends(get_current_user)):
+    """Multi-order shipping label PDF — one continuous document with
+    every selected order's label(s) in sequence. Honours per-order
+    package_count (an order with package_count=3 contributes 3 pages
+    with 1/3, 2/3, 3/3 indices)."""
+    require_team_member_or_owner(user, project_id)
+    fmt = body.format or "thermal_100x150"
+    if fmt not in ("thermal_100x150", "a4_1", "a4_2", "a4_4"):
+        raise HTTPException(400, "Invalid format")
+    ids = [int(x) for x in (body.order_ids or []) if isinstance(x, int) or str(x).isdigit()]
+    if not ids:
+        raise HTTPException(400, "order_ids required")
+    if len(ids) > 200:
+        raise HTTPException(400, "Max 200 orders per bulk request")
+    labels = []
+    for oid in ids:
+        try:
+            base = _resolve_label_payload(project_id, oid)
+        except HTTPException:
+            # Skip orders that don't exist or aren't in this project —
+            # the bulk caller already filters by project, so this is
+            # just a defensive guard against stale UI selection.
+            continue
+        for i in range(1, base["package_total"] + 1):
+            labels.append({**base, "package_index": i, "package_total": base["package_total"]})
+    if not labels:
+        raise HTTPException(404, "No printable orders in selection")
+    pdf = render_shipping_labels(labels, format=fmt)
+    from fastapi.responses import Response as _Response
+    return _Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="labels-bulk.pdf"'}
+    )
+
+
 # ── NOTIFICATIONS ────────────────────────────────────────
 
 @app.get("/api/notifications")
 def list_notifications(project_id: Optional[int] = Query(None), unread_only: bool = Query(False),
                        limit: int = Query(50), user: dict = Depends(get_current_user)):
-    """Latest notifications for the current user; optionally project-scoped + unread-only filter."""
     where = ["user_id = %s"]
     params: list = [user["id"]]
     if project_id is not None:
@@ -17487,7 +18623,6 @@ def list_notifications(project_id: Optional[int] = Query(None), unread_only: boo
 
 @app.post("/api/notifications/{notif_id}/read")
 def mark_notification_read(notif_id: int, user: dict = Depends(get_current_user)):
-    """Owner-scoped: only the recipient can mark a notification read."""
     with db_cursor() as (conn, cur):
         cur.execute(
             "UPDATE crm_notifications SET is_read=TRUE WHERE id=%s AND user_id=%s",
@@ -17516,7 +18651,6 @@ def delete_notification(notif_id: int, user: dict = Depends(get_current_user)):
 
 
 # ── ANALYTICS ────────────────────────────────────────────
-# All endpoints aggregate read-only data — safe to call repeatedly. project access verified up-front.
 
 def _date_range_for_period(period: str, tz: str = "UTC"):
     """period code → (start, end) UTC, anchored at the END of "today" in
@@ -17597,10 +18731,29 @@ def get_project_timezone(project_id: int) -> str:
         return "UTC"
 
 
+def get_project_email(project_id: int) -> tuple[str, str]:
+    """Pick the (from_name, from_email) pair for outbound mail tied to this
+    project. Uses the merchant's verified custom email domain from
+    crm_email_domains when present; otherwise falls back to the platform
+    default (`Torta CRM <support@tortacrm.com>`). Mirrors the External-side
+    helper of the same name so chat-email replies / accounting-export
+    scheduled mails / etc. all use the same identity logic."""
+    try:
+        row = db_one(
+            "SELECT from_name, from_email FROM crm_email_domains"
+            " WHERE project_id=%s AND is_verified=TRUE",
+            (project_id,)
+        )
+    except Exception:
+        row = None
+    if row and row.get("from_email"):
+        return (row.get("from_name") or "Torta CRM", row["from_email"])
+    return ("Torta CRM", EMAIL_FROM)
+
+
 @app.get("/api/analytics/overview")
 def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
                        user: dict = Depends(get_current_user)):
-    """5 KPI cards + daily revenue series + same-length previous-period deltas. Single endpoint for the Overview dashboard tile."""
     require_team_member_or_owner(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
@@ -17817,7 +18970,6 @@ def analytics_top_products(project_id: int = Query(...), period: str = Query("30
                            by: str = Query("revenue"),  # revenue | margin | units
                            limit: int = Query(10),
                            user: dict = Depends(get_current_user)):
-    """Top N products by revenue / margin / units sold within the period."""
     require_team_member_or_owner(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
@@ -18019,7 +19171,6 @@ def analytics_margin(project_id: int = Query(...), period: str = Query("1mo"),
 @app.get("/api/analytics/inventory-health")
 def analytics_inventory_health(project_id: int = Query(...),
                                user: dict = Depends(get_current_user)):
-    """Aggregate stock health across project: OOS / low / healthy SKU counts."""
     require_team_member_or_owner(user, project_id)
     # `products.low_stock_threshold` is DEFAULT 0 (NOT NULL); a value of 0
     # means "not configured" so we fall back to the project-wide default
@@ -18049,9 +19200,6 @@ def analytics_inventory_health(project_id: int = Query(...),
 
 
 # ── Analytics — additional endpoints for the dedicated /analytics page ─────
-# Each section on the frontend has its own period picker, so the endpoints
-# all accept `?period=` (1d / 3d / 1w / 2w / 1mo / 2mo / season / halfyear /
-# 1y / 2y) and return the data shape needed by that section.
 
 @app.get("/api/analytics/revenue-over-time")
 def analytics_revenue_over_time(
@@ -19121,20 +20269,31 @@ def analytics_operations(project_id: int = Query(...), period: str = Query("1mo"
         convert = {"median_seconds": None}
     abandoned_total = int((abandoned or {}).get("total") or 0)
     abandoned_count = int((abandoned or {}).get("abandoned") or 0)
-    def _days(sec):
-        return round(sec / 86400, 2) if sec else None
+    # Return RAW seconds so the frontend formatter can pick the right unit
+    # (s / min / h / d) per metric. The previous shape pre-divided by
+    # 86400/3600 + round-2 which destroyed sub-minute precision — a real
+    # 50-second processing time became 0.0 days, and the frontend then
+    # rendered "1 s" as a generic zero placeholder for every metric.
+    def _to_sec(v):
+        if v is None: return None
+        try: return float(v)
+        except Exception: return None
     return {
-        "median_processing_days": _days((timing  or {}).get("processing_seconds")),
-        "median_shipping_days":   _days((timing  or {}).get("shipping_seconds")),
-        "median_cart_to_paid_hours": (
-            round((convert or {}).get("median_seconds") / 3600, 2)
-            if (convert or {}).get("median_seconds") else None
-        ),
+        "median_processing_seconds":   _to_sec((timing or {}).get("processing_seconds")),
+        "median_shipping_seconds":     _to_sec((timing or {}).get("shipping_seconds")),
+        "median_cart_to_paid_seconds": _to_sec((convert or {}).get("median_seconds")),
         "abandoned_carts": abandoned_count,
         "total_carts":     abandoned_total,
         "abandoned_rate_pct": (
             round(abandoned_count / abandoned_total * 100, 1) if abandoned_total else 0
         ),
+        # Backwards-compat: keep the OLD keys too so any chart consumer
+        # outside OperationsSection (Returns section uses median_processing_days
+        # but reads from a DIFFERENT endpoint, so it's safe — left for
+        # defensive duplication). Sent as days/hours to mirror the old shape.
+        "median_processing_days":   round(_to_sec((timing  or {}).get("processing_seconds")) / 86400, 4) if (timing  or {}).get("processing_seconds") else None,
+        "median_shipping_days":     round(_to_sec((timing  or {}).get("shipping_seconds"))   / 86400, 4) if (timing  or {}).get("shipping_seconds")   else None,
+        "median_cart_to_paid_hours": round(_to_sec((convert or {}).get("median_seconds"))    / 3600,  4) if (convert or {}).get("median_seconds")    else None,
     }
 
 
@@ -19331,8 +20490,6 @@ def analytics_traffic_sources(project_id: int = Query(...), period: str = Query(
 @app.get("/api/analytics/search-insights")
 def analytics_search_insights(project_id: int = Query(...), period: str = Query("1mo"),
                               user: dict = Depends(get_current_user)):
-    """Top searches + zero-result queries. Zero-results are the gold:
-    they show exactly which products customers wanted but didn't find."""
     require_team_member_or_owner(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
@@ -19368,8 +20525,6 @@ def analytics_search_insights(project_id: int = Query(...), period: str = Query(
 
 
 # ── GOALS / TARGETS ─────────────────────────────────────────────────────
-# Goal types and their auto-progress queries. Custom-event goals are
-# handled by External (/track/goal), all others recompute here.
 
 GOAL_TYPES = {
     "revenue", "orders_count", "new_customers", "signups",
@@ -19572,7 +20727,6 @@ def _compute_goal_progress(goal: dict) -> dict:
 
 
 def _goal_status(progress: dict, goal: dict) -> str:
-    """Determine 'on_track' / 'behind' / 'at_risk' / 'achieved' for the UI badge."""
     if progress["achieved"]: return "achieved"
     if goal["period"] == "all_time": return "on_track"
     days = _GOAL_PERIOD_DAYS.get(goal["period"], 30)
@@ -19728,19 +20882,24 @@ def goals_progress(goal_id: int, project_id: int = Query(...),
                 "current": progress["current"],
                 "period":  g["period"],
             })
-            push_notification(
-                user_id=user["id"], project_id=project_id, ntype="goal",
-                title=f"🎯 Goal achieved: {g['name']}",
-                message=f"Reached {progress['current']:.0f} of {progress['target']:.0f}.",
-                link=None,
-            )
+            try:
+                proj = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
+                link = f"/project/{proj['api_key']}/targets" if proj else None
+            except Exception:
+                link = None
+            for uid in _project_team_user_ids(project_id):
+                push_notification(
+                    user_id=uid, project_id=project_id, ntype="goal",
+                    title=f"🎯 Target achieved: {g['name']}",
+                    message=f"Reached {progress['current']:.0f} of {progress['target']:.0f}.",
+                    link=link,
+                )
         except Exception as e:
             print(f"[goal] dispatch_event/push failed: {e}")
     return {"progress": progress, "status": _goal_status(progress, g)}
 
 
 # ── NOTIFICATIONS WEBSOCKET ──────────────────────────────
-# Push channel: bell icon subscribes; backend fans out events to per-user subscribers.
 
 class NotifHub:
     """In-memory subscriber registry by user_id. Pattern mirrors ChatHub."""
@@ -19813,17 +20972,10 @@ async def project_events_ws(ws: WebSocket, project_id: int):
 
 
 # ── PostgreSQL LISTEN background task ─────────────────────────────────────
-# A dedicated DB connection in a worker thread blocks on Postgres
-# notifications and dispatches them onto the asyncio event loop where the
-# WebSocket hub lives. Why a thread + run_coroutine_threadsafe:
-# psycopg2's LISTEN is synchronous-blocking; mixing it directly into the
-# event loop would block ALL request handling. asyncpg would let us go
-# fully async but adds a hard dependency for one task.
 _pg_listener_started = False
 
 
 def _start_pg_event_listener():
-    """One-shot startup hook — spawned from the FastAPI startup event."""
     global _pg_listener_started
     if _pg_listener_started:
         return
@@ -19839,6 +20991,11 @@ def _start_pg_event_listener():
                 conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
                 with conn.cursor() as cur:
                     cur.execute("LISTEN crm_project_events")
+                    # User-targeted notifications (cross-process bell push).
+                    # External writes to crm_notifications + NOTIFY on this
+                    # channel; we fan out to the matching user's bell UI
+                    # subscribers via NotifHub.
+                    cur.execute("LISTEN crm_user_notifications")
                 global _health_listener_last_ok
                 _health_listener_last_ok = _utcnow()
                 while True:
@@ -19858,10 +21015,20 @@ def _start_pg_event_listener():
                         notify = conn.notifies.pop(0)
                         try:
                             event = json.loads(notify.payload)
-                            pid = int(event.get("project_id") or 0)
-                            if pid:
-                                asyncio.run_coroutine_threadsafe(
-                                    events_hub.broadcast(pid, event), main_loop)
+                            # Route by source channel: project-events go to
+                            # the project hub (Analytics live updates etc.);
+                            # user-notifications go to the per-user NotifHub
+                            # for the bell icon.
+                            if notify.channel == "crm_user_notifications":
+                                uid = int(event.get("user_id") or 0)
+                                if uid:
+                                    asyncio.run_coroutine_threadsafe(
+                                        notif_hub.broadcast(uid, event), main_loop)
+                            else:
+                                pid = int(event.get("project_id") or 0)
+                                if pid:
+                                    asyncio.run_coroutine_threadsafe(
+                                        events_hub.broadcast(pid, event), main_loop)
                         except Exception:
                             pass
             except Exception as e:
@@ -19881,15 +21048,6 @@ async def _start_listener_on_boot():
 
 
 # ── Healthcheck endpoints ────────────────────────────────────────────────
-# /api/health  → deep check: DB pool, background threads, MV freshness.
-#                Used by ops / on-call dashboards.
-# /api/ready   → shallow yes/no: container ready to serve traffic. Used
-#                by Docker / Kubernetes readiness probes — must be fast.
-#
-# Tracks background-thread liveness via three module-level booleans
-# updated by their loops. If a thread silently dies (e.g. uncaught
-# exception in the listener), the flag will go stale and `/api/health`
-# reports it as unhealthy → ops can restart the container.
 _health_listener_last_ok   = None   # type: Optional[datetime]
 _health_mv_last_refresh    = None   # type: Optional[datetime]
 _health_alerts_last_loop   = None   # type: Optional[datetime]
@@ -20063,9 +21221,6 @@ def list_alert_fires(project_id: int, limit: int = Query(20),
 
 
 # ── Alerts background evaluator ────────────────────────────────────────
-# Runs every hour. For each active alert, evaluates the metric and
-# fires an email if the threshold is crossed. Throttled by
-# `last_fired_at` so a sustained dip doesn't spam an email every hour.
 _alerts_evaluator_started = False
 
 
@@ -20075,9 +21230,6 @@ def _evaluate_one_alert(alert: dict) -> Optional[tuple[str, float]]:
     project_id = alert["project_id"]
     alert_type = alert["type"]
     threshold  = float(alert["threshold"] or 0)
-    # Project currency for money strings inside the email body. Read
-    # once at the top and reuse — avoids hitting the DB inside each
-    # branch's f-string.
     _proj_cur_row = db_one(
         "SELECT COALESCE(currency, 'USD') AS currency FROM crm_projects WHERE id=%s",
         (project_id,)
@@ -20212,6 +21364,15 @@ def _evaluator_loop_body():
                     (a["id"],)
                 )
                 conn.commit()
+            try:
+                proj = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (a["project_id"],))
+                link = f"/project/{proj['api_key']}/alerts" if proj else None
+                title = ALERT_TYPES.get(a["type"], a["type"])
+                for uid in _project_team_user_ids(a["project_id"]):
+                    push_notification(uid, a["project_id"], "alert",
+                                       title, message, link)
+            except Exception as e:
+                print(f"[alerts evaluator] bell push failed for alert {a['id']}: {e}")
         except Exception as e:
             print(f"[alerts evaluator] alert {a.get('id')} failed: {e}")
 
@@ -20239,10 +21400,6 @@ def _start_alerts_evaluator():
 
 
 # ── Background materialized-view refresher ────────────────────────────────
-# Keeps `mv_cohort_retention` (and any future MVs) reasonably fresh
-# without making request handlers pay the refresh cost. 30 min cadence
-# is fine for cohort retention which is fundamentally month-scale data —
-# a 30-minute-old view doesn't mislead anyone.
 _mv_refresher_started = False
 
 
@@ -20277,7 +21434,6 @@ def _start_mv_refresher():
 
 @app.websocket("/api/notifications/ws")
 async def notifications_ws(ws: WebSocket):
-    """Cookie-authenticated; rejects with code 4401 if JWT cookie is missing/invalid (browsers can read close codes)."""
     await ws.accept()
     cookie = ws.cookies.get("crm_token")
     if not cookie:
@@ -20300,9 +21456,21 @@ async def notifications_ws(ws: WebSocket):
         await notif_hub.unsubscribe(user_id, ws)
 
 
+def _project_team_user_ids(project_id: int) -> list[int]:
+    try:
+        rows = db_all(
+            "SELECT u.id FROM crm_users u JOIN crm_projects pr ON pr.crm_user_id = u.id"
+            "  WHERE pr.id = %s"
+            " UNION SELECT tm.crm_user_id FROM crm_team_members tm WHERE tm.project_id = %s",
+            (project_id, project_id)
+        )
+        return [int(r["id"]) for r in rows if r.get("id")]
+    except Exception:
+        return []
+
+
 def push_notification(user_id: int, project_id: Optional[int], ntype: str,
                       title: str, message: str = "", link: Optional[str] = None) -> None:
-    """Helper: insert notification + broadcast over WebSocket. Used by webhook fanout, order events, etc. Always sanitize() user-supplied content before passing in."""
     try:
         with db_cursor() as (conn, cur):
             cur.execute(
@@ -20314,6 +21482,7 @@ def push_notification(user_id: int, project_id: Optional[int], ntype: str,
             conn.commit()
         msg = {
             "id":         row["id"],
+            "user_id":    user_id,
             "project_id": project_id,
             "type":       ntype,
             "title":      title,
@@ -20322,7 +21491,9 @@ def push_notification(user_id: int, project_id: Optional[int], ntype: str,
             "is_read":    False,
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         }
-        # Fire WebSocket broadcast in the background (we're outside an async context here).
+        # In-process fast-path: directly fan out to local NotifHub subscribers
+        # without round-tripping through Postgres NOTIFY. CRM-originated pushes
+        # take this path.
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -20331,4 +21502,3 @@ def push_notification(user_id: int, project_id: Optional[int], ntype: str,
             pass
     except Exception as e:
         print(f"[notifications] push failed: {e}")
-

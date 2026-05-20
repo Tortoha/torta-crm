@@ -247,7 +247,7 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
   return createPortal(
     <div className="auth-modal-overlay"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="auth-modal cpm-modal po-bulk-wizard" onClick={e => e.stopPropagation()}>
+      <div className="auth-modal cpm-modal po-bulk-wizard po-bulk-wizard--transfer" onClick={e => e.stopPropagation()}>
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>

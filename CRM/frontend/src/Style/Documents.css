@@ -1,0 +1,173 @@
+/* ════════════════════════════════════════════════════════════════════════
+   DOCUMENTS — PDF branding configuration page
+   ════════════════════════════════════════════════════════════════════════
+   This page owns the visual prefs that the backend stamps into every
+   generated PDF (invoices / acts / receipts / booking tickets):
+     • Template style (Modern / Classic / Minimal)
+     • Logo + company name
+     • Tax & legal identifiers
+     • Contact fields printed in the footer
+     • Accent colour + free-form footer note
+
+   The classes here were previously misplaced — `.doc-style-*` lived in
+   Integrations.css (despite being for this page), and the logo
+   uploader was reusing `.bk-svc-img-*` from Booking.css. Both source
+   pages were not imported by Documents.jsx, so the page rendered as
+   raw HTML with no styling. Consolidated here so the imports stay
+   self-contained and future maintenance doesn't break across files.
+   ──────────────────────────────────────────────────────────────────── */
+
+/* ── Template-style picker — three preview cards ──────────────────── */
+.doc-style-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.doc-style-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--card);
+  border-radius: 16px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.18s ease, transform 0.18s ease,
+              box-shadow 0.18s ease;
+}
+
+.doc-style-card:hover {
+  border-color: rgba(0, 113, 227, 0.18);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+.doc-style-card--active {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.doc-style-preview {
+  position: relative;
+  height: 110px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 14px 12px 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.doc-style-preview-band {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 8px;
+  background: var(--accent);
+}
+
+.doc-style-preview--minimal .doc-style-preview-band { display: none; }
+.doc-style-preview--classic .doc-style-preview-band { display: none; }
+.doc-style-preview--classic { padding-top: 10px; align-items: center; }
+
+.doc-style-preview-line {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+
+.doc-style-preview--modern .doc-style-preview-line { background: rgba(0, 113, 227, 0.55); }
+.doc-style-preview--modern .doc-style-preview-line:nth-child(2) { background: rgba(0, 113, 227, 0.85); }
+.doc-style-preview--minimal .doc-style-preview-line { background: rgba(0, 0, 0, 0.55); }
+
+.doc-style-preview-line--w70 { width: 70%; }
+.doc-style-preview-line--w50 { width: 50%; }
+.doc-style-preview-line--w90 { width: 90%; }
+.doc-style-preview-line--w60 { width: 60%; }
+
+.doc-style-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.doc-style-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* ── Logo uploader — preview row + dashed drop zone ─────────────────
+   Renamed from `.bk-svc-img-*` (Booking page leftover). The 96×96
+   constraint on the <img> is critical — without it, an uploaded
+   logo stretches to fill the full grid column and creates that
+   "huge black box" effect when the source image is dark. */
+.doc-logo-preview {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 12px;
+}
+
+.doc-logo-preview img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.doc-logo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.doc-logo-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1.5px dashed rgba(0, 0, 0, 0.12);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.doc-logo-drop:hover:not(:disabled) {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Accent-colour picker row ──────────────────────────────────────── */
+.doc-accent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-accent-swatch {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.doc-accent-hex {
+  max-width: 160px;
+}

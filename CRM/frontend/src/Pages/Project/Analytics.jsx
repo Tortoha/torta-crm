@@ -332,12 +332,17 @@ const fmtDate  = (s) => s ? new Date(s).toLocaleDateString('en-US', { month: 'sh
 const fmtDays  = (n) => n == null ? '—' : `${(+n).toFixed(1)} d`;
 // Adaptive duration formatter — picks the unit (s / min / h / d) based on
 // magnitude. Input is in SECONDS. Used by Operations SLA so a 30-second
-// cart-to-paid doesn't render as "0.0 h" / "0.0 d" (looks like the
-// metric is broken when it's actually just very fast).
+// Adaptive seconds → human duration. Was previously flooring < 60s values
+// to "1 s" which masked legitimate sub-second metrics (e.g. test-data
+// where an operator clicked through statuses in 50 seconds rendered as
+// "1 s" identically to 0). Now we keep real precision: <1s → "<1 s",
+// 1-59s → integer seconds, then min/h/d ladder.
 const fmtDuration = (seconds) => {
   if (seconds == null) return '—';
   const s = +seconds;
-  if (s < 60)    return `${Math.max(1, Math.round(s))} s`;
+  if (s === 0)   return '0 s';
+  if (s < 1)     return '< 1 s';
+  if (s < 60)    return `${Math.round(s)} s`;
   if (s < 3600)  return `${(s / 60).toFixed(1)} min`;
   if (s < 86400) return `${(s / 3600).toFixed(1)} h`;
   return `${(s / 86400).toFixed(1)} d`;
@@ -377,10 +382,13 @@ function LineChart({
   height = 320,
   valueKey = 'revenue',
   dateKey = 'bucket',
-  // Default formatter uses fmtMoney (module-level, currency-aware) but
-  // rounds to whole units for tooltip readability — `$1,234` reads
-  // faster on a chart bubble than `$1,234.56`.
-  formatValue = (v) => fmtMoney(Math.round(+v || 0)).replace(/[.,]00\b/, ''),
+  // Default formatter uses fmtMoney (module-level, currency-aware).
+  // Cents are preserved when the value has a non-zero fractional
+  // part — Order #74 totalling $1,336.33 should NOT round down to
+  // $1,336 on the tooltip; that misleads the merchant about real
+  // revenue. Round only the trailing `.00` (whole dollars) for
+  // chart readability.
+  formatValue = (v) => fmtMoney(+v || 0).replace(/[.,]00\b/, ''),
   onZoom,
   onLoadMore,           // called when scroll approaches the left edge
   loadingMore = false,  // true while a prepend fetch is in flight
@@ -3148,9 +3156,13 @@ function OperationsSection({ projectId }) {
       </p>
       {loading || !data ? <Skeleton height={140} /> : (
         <div className="an-ops-grid">
-          <Kpi label="Order → shipped"     value={fmtDaysAdaptive(data.median_processing_days)} />
-          <Kpi label="Shipped → delivered" value={fmtDaysAdaptive(data.median_shipping_days)} />
-          <Kpi label="Cart → paid (median)"  value={fmtHoursAdaptive(data.median_cart_to_paid_hours)} />
+          {/* Reads RAW seconds from backend (was previously divided to
+              days/hours which destroyed sub-minute precision, causing
+              every metric to render "1 s" — the formatter's old zero-
+              placeholder). fmtDuration picks the right unit per value. */}
+          <Kpi label="Order → shipped"     value={fmtDuration(data.median_processing_seconds)} />
+          <Kpi label="Shipped → delivered" value={fmtDuration(data.median_shipping_seconds)} />
+          <Kpi label="Cart → paid (median)"  value={fmtDuration(data.median_cart_to_paid_seconds)} />
           <Kpi label="Abandoned rate"  value={`${data.abandoned_rate_pct.toFixed(1)}%`}
             inverse delta={null} />
         </div>

@@ -104,11 +104,133 @@
   flex-shrink: 0;
 }
 
+/* When bulk-select is active, a leading 32px checkbox column appears
+   in BOTH the header and every row — kept perfectly aligned so the
+   tick boxes line up vertically down the list. The final 40px track
+   reserves space for the per-row Print-label button (shown only for
+   new/confirmed rows; spacer otherwise so the grid stays even). */
+.ord-list-head--bulk {
+  grid-template-columns: 32px 1fr 70px 100px 140px 148px 40px;
+}
+
+.ord-list-th-check {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
 /* ── Row grid override (prow base + ord-prow columns) ── */
 
 .prow.ord-prow {
-  grid-template-columns: 1fr 70px 100px 140px 148px;
+  grid-template-columns: 32px 1fr 70px 100px 140px 148px 40px;
   min-height: 60px;
+}
+
+.ord-prow-check {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+/* Per-row Print-label action cell — icon-only button that opens the
+   shipping-label modal scoped to this single order. Shown only when
+   order.status ∈ {new, confirmed}; rendered as null for terminal
+   statuses, so the cell stays empty but the grid track survives. */
+.ord-prow-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ord-prow-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: 0.4s ease;
+}
+
+.ord-prow-action-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.ord-prow-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Cards view — same icon button, absolute-positioned top-right corner
+   so it doesn't push the meta row layout around. */
+.ord-card {
+  position: relative;
+}
+
+.ord-card-action-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.ord-card-action-btn:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ord-card-action-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Selected highlight — subtle accent-tint so the merchant sees which
+   rows will be included when they click "Print N labels". */
+.ord-prow--selected {
+  background: var(--accent-tint);
+}
+
+.ord-card--selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ── Bulk action bar — sticky pill at the bottom-center of viewport ── */
+.ord-bulk-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--card);
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  z-index: 100;
+}
+
+.ord-bulk-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
 }
 
 /* Customer cell */
@@ -137,6 +259,19 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.ord-guest-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--muted);
+  vertical-align: middle;
+  letter-spacing: 0.02em;
 }
 
 /* ── Status badge ── */

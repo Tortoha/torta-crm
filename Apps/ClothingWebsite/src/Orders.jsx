@@ -177,16 +177,61 @@ function Orders() {
                 {expanded === order.id && (
                   <div className="os-order-body">
                     <div className="os-order-info">
+                      {/* Delivery line — when the order has structured
+                          address fields, render them on multiple lines
+                          (City + Street + Apartment + Postal+Country)
+                          so they read like a normal mailing label.
+                          Old orders still fall back to the single
+                          `address` freeform string. */}
                       <span className="os-info-row">
-                        {order.delivery_method === "courier"
-                          ? <><Truck weight="bold" /> Courier{order.address ? ` — ${order.address}` : ""}</>
-                          : <><EnvelopeSimple weight="bold" /> Postal</>}
+                        {order.delivery_method === "courier" ? (
+                          <>
+                            <Truck weight="bold" />
+                            {(order.address_city || order.address_street) ? (
+                              <span className="os-addr-block">
+                                {order.address_city && <span>{order.address_city}</span>}
+                                {(order.address_street || order.address_apartment) && (
+                                  <span>
+                                    {[order.address_street, order.address_apartment]
+                                      .filter(Boolean).join(", ")}
+                                  </span>
+                                )}
+                                {(order.address_postal_code || order.address_country) && (
+                                  <span>
+                                    {[order.address_postal_code, order.address_country]
+                                      .filter(Boolean).join(", ")}
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              <span>Courier{order.address ? ` — ${order.address}` : ""}</span>
+                            )}
+                          </>
+                        ) : (
+                          <><EnvelopeSimple weight="bold" /> Postal</>
+                        )}
                       </span>
                       <span className="os-info-row">
                         {order.payment_method === "card"
                           ? <><CreditCard weight="bold" /> Card</>
                           : <><Money weight="bold" /> Pay on Delivery</>}
                       </span>
+                      {/* Courier tracking — only shown when the merchant has
+                          attached a carrier + tracking number. Link opens
+                          the carrier's own tracking page in a new tab. */}
+                      {order.tracking_number && (
+                        <span className="os-info-row">
+                          <Truck weight="bold" />
+                          {order.carrier_name ? `${order.carrier_name}: ` : 'Tracking: '}
+                          {order.tracking_url
+                            ? <a href={order.tracking_url} target="_blank" rel="noopener noreferrer"
+                                className="os-tracking-link">{order.tracking_number}</a>
+                            : <span className="os-tracking-num">{order.tracking_number}</span>}
+                          {order.package_count > 1 && (
+                            <span className="os-tracking-pkg"> · {order.package_count} packages</span>
+                          )}
+                        </span>
+                      )}
                       {order.comment && (
                         <span className="os-info-row"><ChatCircle weight="bold" /> {order.comment}</span>
                       )}

@@ -62,6 +62,163 @@
   margin-top: 16px;
 }
 
+/* Two-column row for paired short fields (City + Postal Code,
+   First name + Last name etc.). Stacks vertically on narrow screens
+   so the inputs never become uncomfortably cramped. */
+.checkout-addr-row {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 540px) {
+  .checkout-addr-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Auto-save hint — small grey line confirming the user's address
+   will be remembered without a manual "Save" tick. Mirrors the
+   .optional helper text style for consistency. */
+.checkout-autosave-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  font-style: italic;
+}
+
+/* The native <select> in saved-addresses picker — re-skin to match
+   the rounded pill .checkout-input look so it doesn't stand out as
+   a browser-default control. */
+select.checkout-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 16px;
+  padding-right: 44px;
+  cursor: pointer;
+}
+
+/* ── Country combobox — button trigger + portal popup ──────────────
+   Mirrors the rounded-pill aesthetic of .checkout-input. The popup
+   itself is portaled to <body> with position: fixed (computed from
+   the trigger's bounding rect) so it floats above modal overlays. */
+.country-cbx-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border: 1.5px solid rgba(0, 0, 0, 0.1);
+  border-radius: 999px;
+  background: #fafafa;
+  font-family: "Parkinsans", sans-serif;
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.country-cbx-btn:hover {
+  border-color: rgba(0, 113, 227, 0.25);
+}
+.country-cbx-val {
+  color: #000;
+}
+.country-cbx-placeholder {
+  color: rgba(0, 0, 0, 0.45);
+}
+.country-cbx-caret {
+  width: 14px;
+  height: 14px;
+  color: rgba(0, 0, 0, 0.5);
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.country-cbx-pop {
+  position: fixed;
+  z-index: 1000;
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
+  padding: 10px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Search row stays pinned while the list scrolls below. */
+.country-cbx-search {
+  position: relative;
+  flex-shrink: 0;
+  margin-bottom: 6px;
+}
+.country-cbx-search input {
+  width: 100%;
+  padding: 10px 14px 10px 38px;
+  border: 1.5px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  background: #f3f3f3;
+  font-family: "Parkinsans", sans-serif;
+  font-size: 14px;
+  outline: none;
+}
+.country-cbx-search input:focus {
+  border-color: #0071e3;
+  background: #fff;
+}
+.country-cbx-search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: rgba(0, 0, 0, 0.4);
+}
+
+.country-cbx-list {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.country-cbx-list::-webkit-scrollbar { width: 6px; }
+.country-cbx-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+.country-cbx-opt {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 9px 14px;
+  border: none;
+  background: transparent;
+  font-family: "Parkinsans", sans-serif;
+  font-size: 14px;
+  color: #000;
+  cursor: pointer;
+  border-radius: 12px;
+  transition: background 0.1s ease;
+}
+.country-cbx-opt--hi {
+  background: rgba(0, 113, 227, 0.07);
+}
+.country-cbx-opt--sel {
+  color: #0071e3;
+  font-weight: 600;
+}
+
+.country-cbx-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.5);
+}
+
 .checkout-field label {
   font-size: 14px;
   font-weight: 500;
