@@ -149,9 +149,10 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
           method: 'PATCH', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            carrier_id:      r.carrier_id,
-            tracking_number: r.tracking_number,
-            package_count:   r.package_count,
+            carrier_id:        r.carrier_id,
+            tracking_number:   r.tracking_number,
+            package_count:     r.package_count,
+            ship_weight_grams: r.ship_weight_grams ?? null,
           }),
         })
       ));
@@ -316,6 +317,28 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
                             onBlur={(e) => persistRow(r.id, {
                               package_count: parseInt(e.target.value || '1', 10),
                             })} />
+                        </div>
+                        {/* Weight (kg) override. Leave blank → label auto-sums the
+                            per-SKU weights (the merchant sees that figure in the
+                            preview); type a value to override (e.g. + packaging). */}
+                        <div className="psl-field psl-field--packages">
+                          <label className="po-field-label">Weight (kg)</label>
+                          <input type="number" className="crm-input"
+                            min="0" step="0.01"
+                            value={r.ship_weight_grams != null ? (r.ship_weight_grams / 1000) : ''}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const kg = parseFloat(v);
+                              const g = (v === '' || isNaN(kg)) ? null : Math.max(0, Math.round(kg * 1000));
+                              updateRow(r.id, { ship_weight_grams: g });
+                            }}
+                            onBlur={(e) => {
+                              const v = e.target.value;
+                              const kg = parseFloat(v);
+                              const g = (v === '' || isNaN(kg)) ? null : Math.max(0, Math.round(kg * 1000));
+                              persistRow(r.id, { ship_weight_grams: g });
+                            }}
+                            placeholder="Auto from product weights" />
                         </div>
                       </div>
                     ))}

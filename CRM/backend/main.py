@@ -1096,6 +1096,18 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] L2 SaaS fields failed: {e}")
 
+    # Weight lives on the SKU (deepest sellable leaf) at ANY depth, so every
+    # layer table carries weight_g. The leaf row holds the value; parent layers
+    # show a min–max range computed from descendant leaves.
+    try:
+        with db_cursor() as (conn, cur):
+            for _wt in ("product_configurations_l1", "product_configurations_l3",
+                        "product_configurations_l4", "product_configurations_l5"):
+                cur.execute(f"ALTER TABLE {_wt} ADD COLUMN IF NOT EXISTS weight_g NUMERIC(10, 2)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] per-layer weight_g failed: {e}")
+
     # Tax categories per project — referenced from products.tax_category_id.
     # Default category seeded at first lookup if list is empty.
     try:
@@ -1485,6 +1497,11 @@ def run_migrations():
                 "  WHERE NOT EXISTS (SELECT 1 FROM warehouses w WHERE w.project_id = p.project_id)"
                 " ON CONFLICT DO NOTHING"
             )
+            # Seed ONLY SKUs that have no stock row in ANY warehouse yet. The old
+            # version keyed off the current default WH, so changing the default
+            # (then restarting) re-seeded every SKU into the new default —
+            # duplicating stock across two warehouses. The NOT EXISTS guard makes
+            # this a true one-time initial seed that's safe across default changes.
             cur.execute(
                 "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
                 " SELECT c.id, w.id, c.stock_quantity, c.sold_quantity"
@@ -1492,6 +1509,7 @@ def run_migrations():
                 "   JOIN product_configurations_l1 v ON c.variation_id = v.id"
                 "   JOIN products p              ON v.product_id = p.id"
                 "   JOIN warehouses w            ON w.project_id = p.project_id AND w.is_default"
+                "  WHERE NOT EXISTS (SELECT 1 FROM product_stock ps WHERE ps.sku_id = c.id)"
                 " ON CONFLICT (sku_id, warehouse_id) DO NOTHING"
             )
             conn.commit()
@@ -1545,51 +1563,18 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] L1 media_alt failed: {e}")
 
-    # Phase 1 backfill: seed default specs (Material/Care/etc) on physical-product L1 variations.
+    # Default-spec seeding (Material/Care/Country/Size guide) has been removed —
+    # merchants build their own grouped Specifications instead. Keep the column
+    # for back-compat and mark every existing variation seeded so no stale code
+    # path can re-introduce the placeholder rows. Existing seeded rows are left
+    # untouched (they may hold real merchant data).
     try:
         with db_cursor() as (conn, cur):
             cur.execute("ALTER TABLE product_configurations_l1 ADD COLUMN IF NOT EXISTS default_specs_seeded BOOLEAN NOT NULL DEFAULT FALSE")
-            # Find variations that haven't been seeded yet AND belong to physical products.
-            cur.execute(
-                "SELECT v.id FROM product_configurations_l1 v"
-                "  JOIN products p ON v.product_id = p.id"
-                " WHERE p.product_type = 'physical' AND v.default_specs_seeded = FALSE"
-            )
-            target_vids = [r["id"] for r in cur.fetchall()]
-            DEFAULT_SPECS = ["Material", "Care instructions", "Country of origin", "Size guide"]
-            for vid in target_vids:
-                # Only add default spec if key doesn't already exist on this variation.
-                cur.execute(
-                    "SELECT spec_key FROM product_specifications"
-                    " WHERE (variation_id = %s OR (layer = 1 AND parent_id = %s))",
-                    (vid, vid)
-                )
-                existing_keys = {r["spec_key"] for r in cur.fetchall()}
-                base_pos_row = cur.execute(
-                    "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM product_specifications"
-                    " WHERE (variation_id = %s OR (layer = 1 AND parent_id = %s))",
-                    (vid, vid)
-                )
-                base_pos_row = cur.fetchone()
-                pos = (base_pos_row.get("p") if base_pos_row else 0) or 0
-                for key in DEFAULT_SPECS:
-                    if key in existing_keys: continue
-                    cur.execute(
-                        "INSERT INTO product_specifications"
-                        "  (variation_id, layer, parent_id, spec_key, spec_value, position)"
-                        " VALUES (%s, 1, %s, %s, '', %s)",
-                        (vid, vid, key, pos)
-                    )
-                    pos += 1
-                cur.execute(
-                    "UPDATE product_configurations_l1 SET default_specs_seeded = TRUE WHERE id = %s",
-                    (vid,)
-                )
-            if target_vids:
-                print(f"[migration] seeded default specs for {len(target_vids)} physical variations")
+            cur.execute("UPDATE product_configurations_l1 SET default_specs_seeded = TRUE WHERE default_specs_seeded = FALSE")
             conn.commit()
     except Exception as e:
-        print(f"[migration] default specs seeding failed: {e}")
+        print(f"[migration] default specs flag backfill failed: {e}")
 
     # Rename size→configuration (clothing-specific term replaced with generic "priced options"); idempotent per step.
     try:
@@ -1719,6 +1704,38 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] multi-layer configurations failed: {e}")
+
+    # Specification groups — optional named buckets a node's specs can belong to
+    # (e.g. "Display", "Processor & memory"), mirroring product_modifier_groups.
+    # group_id is nullable on product_specifications → ungrouped specs still valid.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS product_spec_groups (
+                    id          SERIAL PRIMARY KEY,
+                    product_id  INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                    layer       SMALLINT NOT NULL DEFAULT 1,
+                    parent_id   INTEGER NOT NULL,
+                    name        VARCHAR(200) NOT NULL DEFAULT '',
+                    position    INTEGER NOT NULL DEFAULT 0,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_spec_groups_node ON product_spec_groups(product_id, layer, parent_id)")
+            cur.execute("ALTER TABLE product_specifications ADD COLUMN IF NOT EXISTS group_id INTEGER")
+            cur.execute("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_spec_group') THEN
+                        ALTER TABLE product_specifications
+                        ADD CONSTRAINT fk_spec_group
+                        FOREIGN KEY (group_id) REFERENCES product_spec_groups(id) ON DELETE CASCADE;
+                    END IF;
+                END $$;
+            """)
+            conn.commit()
+            print("[migration] product_spec_groups OK")
+    except Exception as e:
+        print(f"[migration] product_spec_groups failed: {e}")
 
     # Modifiers — 2-level: groups (checkbox/radio + min/max/required/default) contain items (name + price_delta). Self-heals on schema mismatch by drop+recreate.
     try:
@@ -3686,10 +3703,19 @@ class CreateSpecificationRequest(BaseModel):
     spec_value: Optional[str] = ''
     layer: Optional[int] = 1
     parent_id: Optional[int] = None
+    group_id: Optional[int] = None     # optional named bucket (product_spec_groups)
 
 class UpdateSpecificationRequest(BaseModel):
     spec_key: Optional[str] = None
     spec_value: Optional[str] = None
+
+class SpecGroupRequest(BaseModel):
+    name: Optional[str] = ''
+    layer: Optional[int] = 1
+    parent_id: Optional[int] = None
+
+class SpecGroupUpdateRequest(BaseModel):
+    name: Optional[str] = None
 
 class CreateLayerItemRequest(BaseModel):
     parent_id: Optional[int] = None     # required for layer >= 2
@@ -6703,7 +6729,7 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         # Pull all specs in this product's tree: layer=1 by variation_id IN var_ids, layer≥2 by parent_id (new code).
         fmt = ",".join(["%s"] * len(var_ids))
         specifications = db_all(
-            "SELECT id, variation_id, parent_id, layer, spec_key, spec_value, position"
+            "SELECT id, variation_id, parent_id, layer, spec_key, spec_value, position, group_id"
             f" FROM product_specifications WHERE variation_id IN ({fmt})"
             "    OR parent_id IN ("
             "      SELECT id FROM product_configurations_l1 WHERE product_id=%s"
@@ -6729,16 +6755,41 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         spec_by_node.setdefault((layer, parent_id), []).append({
             "id": s["id"], "spec_key": s["spec_key"], "spec_value": s["spec_value"],
             "position": s["position"], "layer": layer, "parent_id": parent_id,
+            "group_id": s.get("group_id"),
         })
+
+    # Spec groups (named buckets) per node, with their specs nested inside.
+    spec_groups_rows = db_all(
+        "SELECT id, layer, parent_id, name, position FROM product_spec_groups"
+        " WHERE product_id=%s ORDER BY position ASC, id ASC",
+        (product_id,)
+    )
+    groups_by_node = {}   # key: (layer, parent_id) → list[group dict]
+    for g in spec_groups_rows:
+        groups_by_node.setdefault((g["layer"], g["parent_id"]), []).append(
+            {"id": g["id"], "name": g["name"], "position": g["position"]}
+        )
+
+    def _groups_for(layer: int, nid: int):
+        node_specs = spec_by_node.get((layer, nid), [])
+        out = []
+        for g in groups_by_node.get((layer, nid), []):
+            out.append({
+                "id": g["id"], "name": g["name"], "position": g["position"],
+                "specs": [s for s in node_specs if s.get("group_id") == g["id"]],
+            })
+        return out
 
     # Attach Layer 1 specs to variations (legacy + layer=1 new entries)
     for v in variations:
         v["specifications"] = spec_by_node.get((1, v["id"]), [])
+        v["spec_groups"] = _groups_for(1, v["id"])
 
     # Attach deeper-layer specs by walking the tree
     def _attach_specs(items: list, layer: int):
         for it in items:
             it["specifications"] = spec_by_node.get((layer, it["id"]), [])
+            it["spec_groups"] = _groups_for(layer, it["id"])
             if it.get("children"):
                 _attach_specs(it["children"], layer + 1)
     for v in variations:
@@ -8518,7 +8569,17 @@ def create_specification_generic(product_id: int, request: CreateSpecificationRe
         raise HTTPException(404, "Parent not found")
     key = sanitize((request.spec_key or '').strip())
     value = sanitize((request.spec_value or '').strip())
+    group_id = request.group_id
     with db_cursor() as (conn, cur):
+        # A group_id must belong to the same node (product + layer + parent).
+        if group_id is not None:
+            cur.execute(
+                "SELECT 1 FROM product_spec_groups"
+                " WHERE id=%s AND product_id=%s AND layer=%s AND parent_id=%s",
+                (group_id, product_id, layer, parent_id)
+            )
+            if not cur.fetchone():
+                raise HTTPException(404, "Group not found")
         cur.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 AS next_pos"
             " FROM product_specifications WHERE layer=%s AND parent_id=%s",
@@ -8528,13 +8589,13 @@ def create_specification_generic(product_id: int, request: CreateSpecificationRe
         # Set variation_id only when layer=1 (backwards compat with legacy code paths)
         var_id = parent_id if layer == 1 else None
         cur.execute(
-            "INSERT INTO product_specifications (variation_id, layer, parent_id, spec_key, spec_value, position)"
-            " VALUES(%s, %s, %s, %s, %s, %s) RETURNING id",
-            (var_id, layer, parent_id, key, value, next_pos)
+            "INSERT INTO product_specifications (variation_id, layer, parent_id, group_id, spec_key, spec_value, position)"
+            " VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (var_id, layer, parent_id, group_id, key, value, next_pos)
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
-    return {"id": new_id, "layer": layer, "parent_id": parent_id,
+    return {"id": new_id, "layer": layer, "parent_id": parent_id, "group_id": group_id,
             "spec_key": key, "spec_value": value, "position": next_pos}
 
 
@@ -8571,6 +8632,85 @@ def delete_specification_generic(product_id: int, spec_id: int,
         raise HTTPException(404, "Spec not found")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_specifications WHERE id=%s", (spec_id,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── Specification groups (named buckets) — mirror modifier-groups CRUD ──
+# A group attaches to one node (product + layer + parent_id); its specs carry
+# group_id. Reorder is declared BEFORE /{group_id} so "reorder" isn't parsed
+# as a group id (FastAPI matches in declaration order).
+
+@app.post("/api/products/{product_id}/spec-groups")
+def create_spec_group(product_id: int, request: SpecGroupRequest,
+                       project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    layer = request.layer or 1
+    parent_id = request.parent_id
+    if parent_id is None:
+        raise HTTPException(400, "parent_id required")
+    if _product_id_for(layer, parent_id) != product_id:
+        raise HTTPException(404, "Parent not found")
+    name = sanitize((request.name or '').strip())[:200]
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next_pos FROM product_spec_groups"
+            " WHERE product_id=%s AND layer=%s AND parent_id=%s",
+            (product_id, layer, parent_id)
+        )
+        next_pos = cur.fetchone()["next_pos"]
+        cur.execute(
+            "INSERT INTO product_spec_groups (product_id, layer, parent_id, name, position)"
+            " VALUES(%s,%s,%s,%s,%s) RETURNING id",
+            (product_id, layer, parent_id, name, next_pos)
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": new_id, "layer": layer, "parent_id": parent_id,
+            "name": name, "position": next_pos, "specs": []}
+
+
+@app.put("/api/products/{product_id}/spec-groups/reorder")
+def reorder_spec_groups(product_id: int, req: ReorderIdsRequest,
+                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    ids = list(req.ids or [])
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT id FROM product_spec_groups WHERE product_id=%s AND id = ANY(%s)",
+                    (product_id, ids))
+        valid = {r["id"] for r in cur.fetchall()}
+        for idx, gid in enumerate(ids):
+            if gid in valid:
+                cur.execute("UPDATE product_spec_groups SET position=%s WHERE id=%s AND product_id=%s",
+                            (idx, gid, product_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.put("/api/products/{product_id}/spec-groups/{group_id}")
+def update_spec_group(product_id: int, group_id: int, request: SpecGroupUpdateRequest,
+                       project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    g = db_one("SELECT id FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
+    if not g: raise HTTPException(404, "Group not found")
+    if request.name is None: return {"ok": True}
+    name = sanitize(request.name.strip())[:200]
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE product_spec_groups SET name=%s WHERE id=%s AND product_id=%s",
+                    (name, group_id, product_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/spec-groups/{group_id}")
+def delete_spec_group(product_id: int, group_id: int,
+                       project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    g = db_one("SELECT id FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
+    if not g: return {"ok": True}
+    with db_cursor() as (conn, cur):
+        # Specs inside the group cascade-delete via the group_id FK.
+        cur.execute("DELETE FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
         conn.commit()
     return {"ok": True}
 
@@ -8677,6 +8817,7 @@ def _annotate_effective_price(items: list, parent_eff: Optional[float]):
 def _load_product_tree(product_id: int) -> tuple[list, int]:
     variations = db_all(
         "SELECT id, variation_name, images, position, price, stock_quantity, sold_quantity,"
+        " weight_g,"
         " sale_type, sale_value, sale_starts_at, sale_ends_at"
         " FROM product_configurations_l1 WHERE product_id=%s ORDER BY position ASC, id ASC",
         (product_id,)
@@ -8686,6 +8827,8 @@ def _load_product_tree(product_id: int) -> tuple[list, int]:
     for v in variations:
         if v.get("sale_value") is not None:
             v["sale_value"] = float(v["sale_value"])
+        if v.get("weight_g") is not None:
+            v["weight_g"] = float(v["weight_g"])
         for tk in ("sale_starts_at", "sale_ends_at"):
             if v.get(tk) is not None:
                 v[tk] = v[tk].isoformat()
@@ -8701,12 +8844,12 @@ def _load_product_tree(product_id: int) -> tuple[list, int]:
         extra = ""
         if n == 2:
             extra = (", sku_code, barcode, compare_at_price, cost_price,"
-                     " weight_g, length_cm, width_cm, height_cm,"
+                     " length_cm, width_cm, height_cm,"
                      " sale_price, sale_starts_at, sale_ends_at,"
                      " sale_type, sale_value")
         rows = db_all(
             f"SELECT id, {parent_col} AS parent_id, {name_col} AS name,"
-            f" price, stock_quantity, sold_quantity, position{extra}"
+            f" price, stock_quantity, sold_quantity, position, weight_g{extra}"
             f" FROM {_layer_table(n)} WHERE {parent_col} IN ({fmt}) ORDER BY position ASC, id ASC",
             tuple(parent_ids)
         )
@@ -8848,25 +8991,20 @@ def create_layer_item(product_id: int, layer: int, request: CreateLayerItemReque
             if generated:
                 cur.execute("UPDATE product_configurations_l2 SET sku_code=%s WHERE id=%s AND sku_code=''",
                             (generated, new_id))
-        # Phase 1: pre-seed default specs (Material/Care/etc) on new L1 physical-product variations.
+            # Seed a 0-qty stock row in the default warehouse so the new SKU shows
+            # up in Inventory immediately (otherwise the warehouse-grouped list,
+            # which JOINs product_stock, can't see a SKU until stock is received).
+            wh_id = _default_warehouse_id(cur, project_id)
+            cur.execute(
+                "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity)"
+                " VALUES (%s, %s, 0, 0) ON CONFLICT (sku_id, warehouse_id) DO NOTHING",
+                (new_id, wh_id)
+            )
+        # New L1 variations come up with no specs — merchants add their own via
+        # the grouped Specifications block. (Default Material/Care/Country/Size
+        # placeholder seeding was removed.) Mark seeded so the legacy backfill
+        # never targets this row.
         if layer == 1:
-            cur.execute("SELECT product_type FROM products WHERE id=%s", (product_id,))
-            ptype = (cur.fetchone() or {}).get("product_type") or "physical"
-            if ptype == "physical":
-                DEFAULT_SPECS = [
-                    "Material",
-                    "Care instructions",
-                    "Country of origin",
-                    "Size guide",
-                ]
-                for pos, key in enumerate(DEFAULT_SPECS):
-                    cur.execute(
-                        "INSERT INTO product_specifications"
-                        "  (variation_id, layer, parent_id, spec_key, spec_value, position)"
-                        " VALUES (%s, 1, %s, %s, '', %s)",
-                        (new_id, new_id, key, pos)
-                    )
-            # Mark seeded regardless of type — prevents startup backfill on later type flips.
             cur.execute(
                 "UPDATE product_configurations_l1 SET default_specs_seeded = TRUE WHERE id = %s",
                 (new_id,)
@@ -8909,6 +9047,13 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
         fields.append("stock_quantity=%s"); vals.append(sent['stock_quantity'])
     if 'sold_quantity' in sent and sent['sold_quantity'] is not None:
         fields.append("sold_quantity=%s"); vals.append(sent['sold_quantity'])
+    # weight_g — the SKU (leaf) weight; lives on every layer table so it can be
+    # set on the deepest sellable row regardless of depth. Explicit null clears.
+    if 'weight_g' in sent:
+        v = sent['weight_g']
+        if v is not None and float(v) < 0:
+            raise HTTPException(400, "weight_g must be ≥ 0")
+        fields.append("weight_g=%s"); vals.append(v)
     if layer == 1 and 'images' in sent:
         fields.append("images=%s"); vals.append(list(sent['images'] or []))
     if layer == 1 and 'media_alt' in sent:
@@ -8938,8 +9083,9 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
             fields.append("sku_code=%s"); vals.append(sanitize(sent['sku_code'].strip())[:80])
         if 'barcode' in sent and sent['barcode'] is not None:
             fields.append("barcode=%s"); vals.append(sanitize(sent['barcode'].strip())[:80])
-        # NUMERIC nullable fields — explicit null clears, number sets, omit leaves alone
-        for nf in ('compare_at_price', 'cost_price', 'weight_g',
+        # NUMERIC nullable fields — explicit null clears, number sets, omit leaves alone.
+        # (weight_g handled layer-agnostically above.)
+        for nf in ('compare_at_price', 'cost_price',
                     'length_cm', 'width_cm', 'height_cm', 'sale_price'):
             if nf in sent:
                 v = sent[nf]
@@ -18739,25 +18885,37 @@ def _resolve_label_payload(project_id: int, order_id: int) -> dict:
         " WHERE p.id = %s",
         (project_id,)
     ) or {}
+    # Weight now lives on the SKU (leaf) at any depth — read it from the layer
+    # the order line points to (configuration_layer), falling back to the legacy
+    # product-level weight_grams when the leaf has none.
     items = db_all(
         """SELECT oi.quantity,
                   p.title,
-                  p.weight_grams      AS p_weight_g,
-                  pc.weight_g         AS sku_weight_g
+                  p.weight_grams AS p_weight_g,
+                  CASE oi.configuration_layer
+                    WHEN 1 THEN l1.weight_g
+                    WHEN 2 THEN l2.weight_g
+                    WHEN 3 THEN l3.weight_g
+                    WHEN 4 THEN l4.weight_g
+                    WHEN 5 THEN l5.weight_g
+                  END AS leaf_weight_g
              FROM order_items oi
-             JOIN products                       p  ON oi.product_id       = p.id
-             LEFT JOIN product_configurations_l2 pc ON oi.configuration_id = pc.id
+             JOIN products p ON oi.product_id = p.id
+             LEFT JOIN product_configurations_l1 l1 ON oi.configuration_id = l1.id AND oi.configuration_layer = 1
+             LEFT JOIN product_configurations_l2 l2 ON oi.configuration_id = l2.id AND oi.configuration_layer = 2
+             LEFT JOIN product_configurations_l3 l3 ON oi.configuration_id = l3.id AND oi.configuration_layer = 3
+             LEFT JOIN product_configurations_l4 l4 ON oi.configuration_id = l4.id AND oi.configuration_layer = 4
+             LEFT JOIN product_configurations_l5 l5 ON oi.configuration_id = l5.id AND oi.configuration_layer = 5
             WHERE oi.order_id=%s""",
         (order_id,)
     )
-    # Estimate total weight: prefer product-level weight_grams (newer
-    # explicit column), fall back to SKU-level weight_g (legacy). If
-    # neither is set, omit weight from label entirely.
+    # Sum Σ(leaf weight · qty); prefer the SKU leaf weight, fall back to the
+    # legacy product-level weight_grams. If neither is set, omit weight entirely.
     est_weight = 0
     have_weight = False
     for it in items:
         qty = int(it.get("quantity") or 1)
-        w = it.get("p_weight_g") or it.get("sku_weight_g")
+        w = it.get("leaf_weight_g") or it.get("p_weight_g")
         if w:
             est_weight += int(float(w)) * qty
             have_weight = True
@@ -18918,7 +19076,8 @@ def post_bulk_shipping_labels(body: BulkLabelBody,
 
 @app.get("/api/notifications")
 def list_notifications(project_id: Optional[int] = Query(None), unread_only: bool = Query(False),
-                       limit: int = Query(50), user: dict = Depends(get_current_user)):
+                       limit: int = Query(50), before: Optional[int] = Query(None),
+                       user: dict = Depends(get_current_user)):
     where = ["user_id = %s"]
     params: list = [user["id"]]
     if project_id is not None:
@@ -18927,20 +19086,28 @@ def list_notifications(project_id: Optional[int] = Query(None), unread_only: boo
         params.append(project_id)
     if unread_only:
         where.append("is_read = FALSE")
-    limit = min(max(1, int(limit)), 200)
+    # Keyset cursor: `before` = id of the last row the client already has.
+    # id is BIGSERIAL (monotonic with creation) so `id < before` ≡ "older than".
+    if before is not None:
+        where.append("id < %s")
+        params.append(int(before))
+    limit = min(max(1, int(limit)), 100)
 
+    # Fetch one extra row to detect "there's another page" without a COUNT(*).
     rows = db_all(
         "SELECT id, project_id, type, title, message, link, is_read, created_at"
         "  FROM crm_notifications"
         " WHERE " + " AND ".join(where) +
-        " ORDER BY created_at DESC LIMIT %s",
-        tuple(params + [limit])
+        " ORDER BY id DESC LIMIT %s",
+        tuple(params + [limit + 1])
     )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
     unread = db_one(
         "SELECT COUNT(*) AS c FROM crm_notifications WHERE user_id=%s AND is_read=FALSE",
         (user["id"],)
     )
-    return {"items": rows, "unread": unread["c"] if unread else 0}
+    return {"items": rows, "unread": unread["c"] if unread else 0, "has_more": has_more}
 
 
 @app.post("/api/notifications/{notif_id}/read")
@@ -18970,6 +19137,155 @@ def delete_notification(notif_id: int, user: dict = Depends(get_current_user)):
                     (notif_id, user["id"]))
         conn.commit()
     return {"ok": True}
+
+
+# ── CUSTOMERS ────────────────────────────────────────────
+# Per-project customer directory. A "customer" = a `users` row that either has
+# a real account (NOT is_guest) OR placed ≥1 order (so abandoned anonymous
+# carts — guest rows with no order — are hidden). Aggregates (order count,
+# lifetime spend, last order) come from order_history.
+
+_CUSTOMER_SORTS = {
+    "recent": "last_order_at DESC NULLS LAST, u.created_at DESC",
+    "name":   "LOWER(u.name) ASC, u.id",
+    "spent":  "total_spent DESC, u.id",
+    "orders": "order_count DESC, u.id",
+    "joined": "u.created_at DESC, u.id",
+}
+
+@app.get("/api/customers")
+def list_customers(project_id: int = Query(...), search: str = Query(""),
+                   sort: str = Query("recent"), limit: int = Query(40),
+                   offset: int = Query(0), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    limit  = min(max(1, int(limit)), 100)
+    offset = max(0, int(offset))
+    order_by = _CUSTOMER_SORTS.get(sort, _CUSTOMER_SORTS["recent"])
+
+    where  = ["u.project_id = %s"]
+    params = [project_id]
+    s = search.strip()
+    if s:
+        where.append("(u.name ILIKE %s OR u.email ILIKE %s OR u.phone ILIKE %s)")
+        like = f"%{s}%"
+        params += [like, like, like]
+
+    proj_currency = (db_one("SELECT currency FROM crm_projects WHERE id=%s", (project_id,))
+                     or {}).get("currency") or "USD"
+
+    rows = db_all(
+        f"""SELECT u.id, u.name, u.email, u.phone, u.avatar_url, u.is_guest, u.created_at,
+                   COUNT(oh.id) AS order_count,
+                   COALESCE(SUM(oh.total_amount) FILTER (
+                     WHERE oh.status NOT IN ('cancelled', 'refunded')), 0) AS total_spent,
+                   MAX(oh.created_at) AS last_order_at
+              FROM users u
+              LEFT JOIN order_history oh
+                     ON oh.user_id = u.id AND oh.project_id = u.project_id
+             WHERE {' AND '.join(where)}
+             GROUP BY u.id
+             HAVING (NOT u.is_guest) OR COUNT(oh.id) > 0
+             ORDER BY {order_by}
+             LIMIT %s OFFSET %s""",
+        tuple(params + [limit + 1, offset])
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "currency": proj_currency,
+        "has_more": has_more,
+        "items": [{
+            "id":            r["id"],
+            "name":          r["name"] or "",
+            "email":         r["email"] or "",
+            "phone":         r["phone"] or "",
+            "avatar_url":    r.get("avatar_url"),
+            "is_guest":      bool(r["is_guest"]),
+            "order_count":   int(r["order_count"] or 0),
+            "total_spent":   float(r["total_spent"] or 0),
+            "created_at":    r["created_at"].isoformat() if r["created_at"] else None,
+            "last_order_at": r["last_order_at"].isoformat() if r["last_order_at"] else None,
+        } for r in rows],
+    }
+
+
+@app.get("/api/customers/{cust_id}")
+def get_customer(cust_id: int, project_id: int = Query(...),
+                 user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    u = db_one(
+        "SELECT id, name, email, phone, avatar_url, is_guest, phone_verified,"
+        "       oauth_provider, created_at, last_login_at"
+        "  FROM users WHERE id=%s AND project_id=%s",
+        (cust_id, project_id)
+    )
+    if not u:
+        raise HTTPException(404, "Customer not found")
+    proj_currency = (db_one("SELECT currency FROM crm_projects WHERE id=%s", (project_id,))
+                     or {}).get("currency") or "USD"
+
+    agg = db_one(
+        """SELECT COUNT(*) AS orders,
+                  COUNT(*) FILTER (WHERE status NOT IN ('cancelled','refunded')) AS paid_orders,
+                  COALESCE(SUM(total_amount) FILTER (
+                    WHERE status NOT IN ('cancelled','refunded')), 0) AS total_spent,
+                  MIN(created_at) AS first_order_at,
+                  MAX(created_at) AS last_order_at
+             FROM order_history WHERE project_id=%s AND user_id=%s""",
+        (project_id, cust_id)
+    ) or {}
+    returns_n = (db_one(
+        "SELECT COUNT(*) AS n FROM order_returns WHERE project_id=%s AND customer_user_id=%s",
+        (project_id, cust_id)
+    ) or {}).get("n") or 0
+
+    # Recent orders with the payment snapshot — shows HOW they paid per order.
+    orders = db_all(
+        """SELECT oh.id, oh.created_at, oh.status, oh.total_amount,
+                  oh.payment_method, oh.payment_status, oh.payment_provider, oh.payment_currency,
+                  (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = oh.id) AS items_count
+             FROM order_history oh
+            WHERE oh.project_id=%s AND oh.user_id=%s
+            ORDER BY oh.created_at DESC LIMIT 100""",
+        (project_id, cust_id)
+    )
+    orders_n = int(agg.get("orders") or 0)
+    total    = float(agg.get("total_spent") or 0)
+    return {
+        "currency": proj_currency,
+        "profile": {
+            "id":             u["id"],
+            "name":           u["name"] or "",
+            "email":          u["email"] or "",
+            "phone":          u["phone"] or "",
+            "avatar_url":     u.get("avatar_url"),
+            "is_guest":       bool(u["is_guest"]),
+            "phone_verified": bool(u.get("phone_verified")),
+            "oauth_provider": u.get("oauth_provider") or "",
+            "created_at":     u["created_at"].isoformat() if u["created_at"] else None,
+            "last_login_at":  u["last_login_at"].isoformat() if u.get("last_login_at") else None,
+        },
+        "stats": {
+            "orders":        orders_n,
+            "paid_orders":   int(agg.get("paid_orders") or 0),
+            "total_spent":   total,
+            "avg_order":     (total / max(1, int(agg.get("paid_orders") or 0))),
+            "returns":       int(returns_n),
+            "first_order_at": agg["first_order_at"].isoformat() if agg.get("first_order_at") else None,
+            "last_order_at":  agg["last_order_at"].isoformat()  if agg.get("last_order_at")  else None,
+        },
+        "orders": [{
+            "id":             o["id"],
+            "created_at":     o["created_at"].isoformat() if o["created_at"] else None,
+            "status":         o["status"],
+            "total_amount":   float(o["total_amount"] or 0),
+            "items_count":    int(o["items_count"] or 0),
+            "payment_method":   o.get("payment_method") or "",
+            "payment_status":   o.get("payment_status") or "",
+            "payment_provider": o.get("payment_provider") or "",
+            "payment_currency": (o.get("payment_currency") or proj_currency).upper(),
+        } for o in orders],
+    }
 
 
 # ── ANALYTICS ────────────────────────────────────────────

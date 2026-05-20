@@ -267,10 +267,6 @@ function PerSkuBlock({ product, pq, showToast }) {
             hint="EAN-13 / UPC printed on this specific SKU"
             value={sku.barcode || ''} maxLength={80}
             onSave={v => saveSkuField('barcode', v)} />
-          <FieldNumberOpt key={`w-${sku.id}`} label="Weight (g)"
-            hint="Used by carrier-API rate calculation"
-            value={sku.weight_g} step={0.01}
-            onSave={v => saveSkuField('weight_g', v)} />
           <FieldNumberOpt key={`l-${sku.id}`} label="Length (cm)"
             value={sku.length_cm} step={0.1}
             onSave={v => saveSkuField('length_cm', v)} />
@@ -386,14 +382,9 @@ function ShippingBlock({ product, save }) {
           hint="Days from order to ship-out (made-to-order)"
           value={product.lead_time_days} min={0} max={365}
           onSave={v => save({ lead_time_days: v })} />
-        {/* Product-level default weight in grams. Used by the shipping
-            label renderer ("Weigh ≈ X kg" line on the parcel sticker)
-            and as a fallback when a SKU doesn't have its own weight_g
-            set. Falls back to NULL → omits the line from the label. */}
-        <FieldNumber label="Default weight (g)"
-          hint="Used for label weight estimate when SKU weight isn't set"
-          value={product.weight_grams} min={0} max={5_000_000}
-          onSave={v => save({ weight_grams: v })} />
+        {/* Weight moved to the Configuration editor — it's a per-SKU (leaf)
+            attribute set on the deepest sellable row, with a min–max range
+            shown on parent layers. See Product Overview → Configuration. */}
       </div>
     </section>
   );

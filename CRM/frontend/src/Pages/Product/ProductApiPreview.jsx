@@ -26,17 +26,32 @@ export default function ProductApiPreview() {
   }, [productId, projectId, productHash]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mirror External /{api_key}/product/{hash}: conf_layer_1..5 tree, `name` per level, leaves omit next layer key.
-  const mapSpecs = (arr) => (arr || []).map(s => ({ key: s.spec_key, value: s.spec_value }));
+  // Specs are flat ({key,value,group}) AND nested under named sections (spec_groups),
+  // exactly like External. The CRM GET returns node.spec_groups = [{id,name,specs}] +
+  // group_id on each flat spec, so build a group_id→name lookup per node.
+  const gmapOf = (node) => Object.fromEntries((node?.spec_groups || []).map(g => [g.id, g.name]));
+  const mapSpecs = (arr, gmap) => (arr || []).map(s => ({
+    key: s.spec_key, value: s.spec_value, group: (gmap || {})[s.group_id] || '',
+  }));
+  const mapSpecGroups = (node) => {
+    const gmap = gmapOf(node);
+    return (node?.spec_groups || []).map(g => ({ name: g.name, specs: mapSpecs(g.specs, gmap) }));
+  };
 
-  const mapL5 = (n) => ({
-    id: n.id,
-    name: n.name || '',
-    price: n.price ?? null,
-    effective_price: n.effective_price ?? null,
-    stock_quantity: n.stock_quantity || 0,
-    sold_quantity: n.sold_quantity || 0,
-    specifications: mapSpecs(n.specifications),
-  });
+  const mapL5 = (n) => {
+    const out = {
+      id: n.id,
+      name: n.name || '',
+      price: n.price ?? null,
+      effective_price: n.effective_price ?? null,
+      stock_quantity: n.stock_quantity || 0,
+      sold_quantity: n.sold_quantity || 0,
+      specifications: mapSpecs(n.specifications, gmapOf(n)),
+    };
+    const sg = mapSpecGroups(n);
+    if (sg.length) out.spec_groups = sg;
+    return out;
+  };
   const mapL4 = (n) => {
     const out = mapL5(n);
     const kids = (n.children || []).map(mapL5);
@@ -91,8 +106,10 @@ export default function ProductApiPreview() {
           is_in_cart: false,
           cart_item_id: null,
           cart_quantity: 0,
-          specifications: mapSpecs(c.specifications),
+          specifications: mapSpecs(c.specifications, gmapOf(c)),
         };
+        const csg = mapSpecGroups(c);
+        if (csg.length) out.spec_groups = csg;
         const kids = (c.children || []).map(mapL3);
         if (kids.length) out.conf_layer_3 = kids;
         return out;
@@ -113,8 +130,10 @@ export default function ProductApiPreview() {
         stock_quantity: v.stock_quantity || 0,
         sold_quantity: v.sold_quantity || 0,
         is_in_cart: false,
-        specifications: mapSpecs(v.specifications),
+        specifications: mapSpecs(v.specifications, gmapOf(v)),
       };
+      const vsg = mapSpecGroups(v);
+      if (vsg.length) out.spec_groups = vsg;
       if (conf_layer_2.length) out.conf_layer_2 = conf_layer_2;
       return out;
     });

@@ -867,8 +867,9 @@ def _eff_price(own_price, parent_eff):
 
 def _build_layer_subtree(rows, layer, parent_eff,
                          layer4_by_parent, layer5_by_parent,
-                         specifications_by_node):
+                         specifications_by_node, spec_groups_by_node=None):
     if not rows: return []
+    spec_groups_by_node = spec_groups_by_node or {}
     next_layer = layer + 1
     by_parent_below = (layer4_by_parent if layer == 3
                        else layer5_by_parent if layer == 4
@@ -880,7 +881,7 @@ def _build_layer_subtree(rows, layer, parent_eff,
         children_rows = by_parent_below.get(r["id"], []) if by_parent_below else []
         nested = (_build_layer_subtree(children_rows, next_layer, eff,
                                        layer4_by_parent, layer5_by_parent,
-                                       specifications_by_node)
+                                       specifications_by_node, spec_groups_by_node)
                   if children_rows and next_layer <= 5 else [])
         node = {
             "id":              r["id"],
@@ -890,6 +891,7 @@ def _build_layer_subtree(rows, layer, parent_eff,
             "stock_quantity":  r.get("stock_quantity") or 0,
             "sold_quantity":   r.get("sold_quantity")  or 0,
             "specifications":  specifications_by_node.get((layer, r["id"]), []),
+            "spec_groups":     spec_groups_by_node.get((layer, r["id"]), []),
         }
         if nested: node[f"conf_layer_{next_layer}"] = nested
         out.append(node)
@@ -985,9 +987,11 @@ def _assemble_product_payload(
     user_id,
     modifier_groups=None,    # list of pre-shaped groups for THIS product (or None)
     tier_pricing_by_sku=None,  # { l2_id → [{min_qty, price}, ...] } pre-fetched
+    spec_groups_by_node=None,  # { (layer, parent_id) → [{name, specs:[…]}] } pre-shaped
 ):
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
+    spec_groups_by_node = spec_groups_by_node or {}
     # Product-level sale tuple — used as the lowest-priority fallback for every L2.
     prod_sale = (
         product.get("sale_type"), product.get("sale_value"),
@@ -1010,7 +1014,7 @@ def _assemble_product_payload(
             l3_rows = layer3_by_parent.get(c["id"], [])
             l3_tree = _build_layer_subtree(
                 l3_rows, 3, cfg_eff,
-                layer4_by_parent, layer5_by_parent, specifications_by_node)
+                layer4_by_parent, layer5_by_parent, specifications_by_node, spec_groups_by_node)
             # `price` on L2 falls back to effective when own price is NULL.
             display_price = (float(c["price"]) if c.get("price") is not None
                              else (cfg_eff if cfg_eff is not None else 0.0))
@@ -1052,6 +1056,7 @@ def _assemble_product_payload(
                 "cart_item_id": cart_item["cart_item_id"] if cart_item else None,
                 "cart_quantity": cart_item["quantity"]    if cart_item else 0,
                 "specifications": specifications_by_node.get((2, c["id"]), []),
+                "spec_groups":    spec_groups_by_node.get((2, c["id"]), []),
             }
             if l3_tree: node_l2["conf_layer_3"] = l3_tree
             conf_2_out.append(node_l2)
@@ -1083,6 +1088,7 @@ def _assemble_product_payload(
             "sold_quantity":  v.get("sold_quantity")  or 0,
             "is_in_cart": any(c["is_in_cart"] for c in conf_2_out),
             "specifications": specifications_by_node.get((1, v["id"]), []),
+            "spec_groups":    spec_groups_by_node.get((1, v["id"]), []),
         }
         if conf_2_out: node_l1["conf_layer_2"] = conf_2_out
         final_variations.append(node_l1)
@@ -1553,6 +1559,11 @@ class FrontReview(BaseModel):
 
 class FrontSpecification(BaseModel):
     key: str; value: str
+    group: str = ''     # optional section name (product_spec_groups), '' = ungrouped
+
+class FrontSpecGroup(BaseModel):
+    name: str = ''
+    specs: List[FrontSpecification] = []
 
 class FrontConfNode(BaseModel):
     id: int
@@ -1562,6 +1573,7 @@ class FrontConfNode(BaseModel):
     stock_quantity: int = 0
     sold_quantity: int = 0
     specifications: List[FrontSpecification] = []
+    spec_groups: List[FrontSpecGroup] = []   # specs nested under named sections
     image: Optional[str] = None
     is_in_cart: bool = False
     cart_item_id: Optional[int] = None
@@ -3145,7 +3157,8 @@ def get_products(request: Request,
                 spec_params.extend(ids)
         if spec_clauses:
             cursor.execute(
-                f"SELECT variation_id, layer, parent_id, spec_key, spec_value, position "
+                f"SELECT variation_id, layer, parent_id, spec_key, spec_value, position, "
+                f"       (SELECT name FROM product_spec_groups psg WHERE psg.id = product_specifications.group_id) AS group_name "
                 f"FROM product_specifications WHERE {' OR '.join(spec_clauses)} "
                 f"ORDER BY position ASC, id ASC",
                 spec_params
@@ -3158,6 +3171,7 @@ def get_products(request: Request,
                 parent_id = row["parent_id"] if row.get("parent_id") is not None else row["variation_id"]
                 specifications_by_node.setdefault((layer_v, parent_id), []).append({
                     "key": row["spec_key"], "value": row["spec_value"],
+                    "group": (row.get("group_name") or ""),
                 })
 
         # ── 6. Reviews per product ────────────────────────────────────
@@ -3299,7 +3313,8 @@ def get_product_page(product_hash: str, request: Request,
         layer3_by_parent = {}
         layer4_by_parent = {}
         layer5_by_parent = {}
-        specifications_by_node = {}    # key: (layer, parent_id) → list[{key,value}]
+        specifications_by_node = {}    # key: (layer, parent_id) → list[{key,value,group}]
+        spec_groups_by_node = {}       # key: (layer, parent_id) → list[{name, specs:[…]}]
         if variations:
             vids = [v["id"] for v in variations]
             vfmt = ",".join(["%s"] * len(vids))
@@ -3355,7 +3370,8 @@ def get_product_page(product_hash: str, request: Request,
 
             # Specifications: legacy variation_id (layer 1) + new layer/parent_id rows.
             cursor.execute(
-                f"SELECT variation_id, layer, parent_id, spec_key, spec_value, position "
+                f"SELECT variation_id, layer, parent_id, group_id, spec_key, spec_value, position, "
+                f"       (SELECT name FROM product_spec_groups psg WHERE psg.id = product_specifications.group_id) AS group_name "
                 f"FROM product_specifications "
                 f"WHERE variation_id IN ({vfmt}) OR parent_id IS NOT NULL "
                 f"ORDER BY position ASC, id ASC",
@@ -3371,7 +3387,32 @@ def get_product_page(product_hash: str, request: Request,
                 specifications_by_node.setdefault((layer_v, parent_id), []).append({
                     "key":   row["spec_key"],
                     "value": row["spec_value"],
+                    "group": (row.get("group_name") or ""),
+                    "_gid":  row.get("group_id"),
                 })
+
+            # Nest specs under their sections (product_spec_groups) per node, ordered
+            # by group position. Sections with no non-empty specs are skipped.
+            try:
+                cursor.execute(
+                    "SELECT id, layer, parent_id, name FROM product_spec_groups "
+                    "WHERE product_id = %s ORDER BY position ASC, id ASC",
+                    (product["id"],)
+                )
+                groups_at = {}
+                for g in cursor.fetchall():
+                    groups_at.setdefault((g["layer"], g["parent_id"]), []).append(g)
+                for (lv, pid), node_specs in specifications_by_node.items():
+                    sections = []
+                    for g in groups_at.get((lv, pid), []):
+                        gspecs = [{"key": s["key"], "value": s["value"], "group": g["name"]}
+                                  for s in node_specs if s.get("_gid") == g["id"]]
+                        if gspecs:
+                            sections.append({"name": g["name"], "specs": gspecs})
+                    if sections:
+                        spec_groups_by_node[(lv, pid)] = sections
+            except Exception:
+                spec_groups_by_node = {}
 
         cursor.execute(
             "SELECT pr.id, pr.user_id, pr.rating, pr.comment, pr.created_at, "
@@ -3474,6 +3515,7 @@ def get_product_page(product_hash: str, request: Request,
         user_id=user_id,
         modifier_groups=modifier_groups,
         tier_pricing_by_sku=tier_pricing_by_sku,
+        spec_groups_by_node=spec_groups_by_node,
     )
 
 

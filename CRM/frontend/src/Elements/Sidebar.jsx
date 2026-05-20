@@ -5,7 +5,7 @@ import {
   CaretDown, ArrowLineLeft, ArrowLineRight,
   Cube, ChatCircleText, Code,
   Package, ChatCircleDots, CalendarBlank, Plug,
-  ListBullets, ChartLine, Target, Bell, FileText,
+  ListBullets, ChartLine, Target, Bell, FileText, UsersThree,
 } from '@phosphor-icons/react';
 
 // ── Nav configs ────────────────────────────────────────────────
@@ -25,10 +25,11 @@ function buildSections(apiKey) {
     {
       id: 'store', label: 'Business',
       items: [
-        { to: `${base}/products`, label: 'Products', Icon: Tag     },
-        { to: `${base}/orders`,   label: 'Orders',   Icon: Package },
-        { to: `${base}/booking`,  label: 'Bookings', Icon: CalendarBlank },
-        { to: `${base}/chat`,     label: 'Chat with Customers', Icon: ChatCircleDots },
+        { to: `${base}/products`,  label: 'Products',  Icon: Tag     },
+        { to: `${base}/orders`,    label: 'Orders',    Icon: Package },
+        { to: `${base}/booking`,   label: 'Bookings',  Icon: CalendarBlank },
+        { to: `${base}/customers`, label: 'Customers', Icon: UsersThree },
+        { to: `${base}/chat`,      label: 'Chat with Customers', Icon: ChatCircleDots },
       ],
     },
     {

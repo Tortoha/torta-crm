@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -93,20 +93,58 @@ function dateBucket(iso) {
 }
 
 // Full-history modal — every notification grouped by date, rendered as the
-// Products-page list style (po-set-table rows). Fetches its own (larger) page.
-function AllNotificationsModal({ onClose, onOpenItem }) {
-  const [items, setItems]     = useState([]);
-  const [loading, setLoading] = useState(true);
+// Products-page list style (po-set-table rows). Loads 30 at a time via a
+// keyset cursor (infinite scroll) so a year of history isn't fetched at once.
+const NOTIF_PAGE = 30;
 
+function AllNotificationsModal({ onClose, onOpenItem }) {
+  const [items, setItems]             = useState([]);
+  const [loading, setLoading]         = useState(true);   // first page
+  const [loadingMore, setLoadingMore] = useState(false);  // subsequent pages
+  const [hasMore, setHasMore]         = useState(false);
+  const bodyRef     = useRef(null);
+  const sentinelRef = useRef(null);
+  const busyRef     = useRef(false);    // guards against double-fire
+
+  const fetchPage = useCallback(async (before) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    const first = before == null;
+    first ? setLoading(true) : setLoadingMore(true);
+    try {
+      const url = `${API_BASE}/api/notifications?limit=${NOTIF_PAGE}`
+        + (before != null ? `&before=${before}` : '');
+      const res  = await fetch(url, { credentials: 'include' });
+      const data = res.ok ? await res.json() : { items: [], has_more: false };
+      setItems(prev => first ? (data.items || []) : [...prev, ...(data.items || [])]);
+      setHasMore(!!data.has_more);
+    } catch {
+      setHasMore(false);
+    } finally {
+      busyRef.current = false;
+      first ? setLoading(false) : setLoadingMore(false);
+    }
+  }, []);
+
+  // Initial page + Escape-to-close.
   useEffect(() => {
-    fetch(`${API_BASE}/api/notifications?limit=200`, { credentials: 'include' })
-      .then(r => (r.ok ? r.json() : { items: [] }))
-      .then(d => { setItems(d.items || []); setLoading(false); })
-      .catch(() => setLoading(false));
+    fetchPage(null);
     const onKey = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [fetchPage, onClose]);
+
+  // Infinite scroll: load the next page when the sentinel nears the viewport.
+  useEffect(() => {
+    if (!hasMore || !sentinelRef.current) return;
+    const io = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting && !busyRef.current && items.length) {
+        fetchPage(items[items.length - 1].id);
+      }
+    }, { root: bodyRef.current, rootMargin: '160px' });
+    io.observe(sentinelRef.current);
+    return () => io.disconnect();
+  }, [hasMore, items, fetchPage]);
 
   // Items arrive newest-first, so contiguous buckets group cleanly in one pass.
   const groups = useMemo(() => {
@@ -142,7 +180,7 @@ function AllNotificationsModal({ onClose, onOpenItem }) {
           </button>
         </div>
 
-        <div className="auth-modal-body notif-all-body">
+        <div className="auth-modal-body notif-all-body" ref={bodyRef}>
           {loading && <p className="crm-placeholder">Loading…</p>}
           {!loading && items.length === 0 && (
             <p className="crm-placeholder">No notifications yet</p>
@@ -157,6 +195,11 @@ function AllNotificationsModal({ onClose, onOpenItem }) {
               </div>
             </div>
           ))}
+          {hasMore && (
+            <div ref={sentinelRef} className="notif-load-sentinel">
+              {loadingMore ? 'Loading more…' : ''}
+            </div>
+          )}
         </div>
       </div>
     </div>,
@@ -178,7 +221,9 @@ export default function NotificationsBell() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/notifications?limit=20`, { credentials: 'include' });
+      // Only 11 — 10 to show + 1 to know whether the "View all" card is needed.
+      // The full history is paginated lazily inside the modal, not loaded here.
+      const res = await fetch(`${API_BASE}/api/notifications?limit=11`, { credentials: 'include' });
       if (!res.ok) return;
       const data = await res.json();
       setItems(data.items || []);

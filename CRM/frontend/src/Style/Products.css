@@ -3344,6 +3344,35 @@ select.prod-field-input {
   grid-template-columns: 2fr 1fr 44px !important;
 }
 
+/* ── LayerTable with the Weight (g) column: name | price | cost | weight | actions.
+   Declared after the base/bulk rules so equal-specificity variants win on order. ── */
+.cfg-list-head--wt,
+.cfg-row--wt {
+  grid-template-columns: 2fr 1fr 1fr 1fr 44px !important;
+}
+.cfg-list-head--wt.cfg-list-head--hide-price,
+.cfg-row--wt.cfg-row--hide-price {
+  grid-template-columns: 2fr 1fr 1fr 44px !important;
+}
+.cfg-list-head--wt.cfg-list-head--bulk-mode,
+.cfg-row--wt.cfg-row--bulk-mode:not(.cf-row):not(.spec-row) {
+  grid-template-columns: 28px 2fr 1fr 1fr 1fr 44px !important;
+}
+.cfg-list-head--wt.cfg-list-head--bulk-mode.cfg-list-head--hide-price,
+.cfg-row--wt.cfg-row--bulk-mode.cfg-row--hide-price {
+  grid-template-columns: 28px 2fr 1fr 1fr 44px !important;
+}
+/* Read-only weight range shown on parent rows / cards. */
+.cfg-weight-range {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.layer1-meta-range {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .cfg-row .cfg-cell {
   height: 12px;
   font-size: 14px;
@@ -3469,6 +3498,29 @@ select.prod-field-input {
 .spec-list-head,
 .cfg-row.spec-row {
   grid-template-columns: 1fr 1fr 44px !important;
+}
+
+/* ── Grouped specifications (named sections — mirror Modifier groups 1:1) ── */
+.spec-ungrouped {
+  margin-top: 8px;
+}
+
+.spec-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* Borderless stacked sections — identical to .po-mod-group (no box). */
+.spec-group-head .po-mod-name-input {
+  font-weight: 600;
+}
+
+/* "Add section" stays a compact pill (mirrors "Add group") even though the
+   flex-column .cfg-block-body would otherwise stretch it full-width. */
+.cfg-block-body .po-mod-add-group {
+  align-self: flex-start;
 }
 
 .spec-copy-row {

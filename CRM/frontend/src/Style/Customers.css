@@ -1,0 +1,339 @@
+/* ── Customers page ──────────────────────────────────────────────
+   List reuses the .po-set-table card-stack (tilt + gloss via PoListRow).
+   Detail modal reuses .auth-modal / .cpm-modal shell.
+   Order-status + payment palettes mirror Orders.css / Project.css. */
+
+/* ── List table ── */
+/* Doubled/`:not()` selectors out-specify the base .po-set-row templates. */
+.po-set-row--head.cust-row,
+.po-set-row.cust-row:not(.po-set-row--head) {
+  grid-template-columns: 2.6fr 0.7fr 1fr 1fr 28px;
+}
+
+.po-set-row.cust-row--clickable {
+  cursor: pointer;
+}
+
+/* Primary cell — avatar + identity. */
+.cust-cell-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cust-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cust-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cust-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Secondary cells. */
+.cust-cell {
+  font-size: 13px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.cust-spent {
+  font-weight: 600;
+}
+
+.cust-muted {
+  color: var(--muted);
+}
+
+.cust-chevron {
+  display: flex;
+  justify-content: flex-end;
+  color: var(--muted);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.2s ease, transform 0.3s var(--ease-smooth);
+}
+
+.cust-chevron svg {
+  width: 13px;
+  height: 13px;
+}
+
+.po-set-row.cust-row--clickable:hover .cust-chevron {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* "Guest" pill — shared by list + modal. */
+.cust-guest {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+/* ── Avatar (list + modal) ── */
+.cust-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.cust-avatar--initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* ── Detail modal ── */
+.cust-overlay {
+  padding: 16px;
+}
+
+.cust-modal.cpm-modal {
+  width: 680px;
+  max-width: 680px;
+}
+
+.cust-modal-loading {
+  padding: 72px 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Header — profile block left, close button right. 16px inset per design system. */
+.cust-modal .auth-modal-head.cust-modal-head {
+  padding: 16px 16px 0;
+  align-items: flex-start;
+}
+
+.cust-profile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.cust-profile .cust-avatar {
+  width: 52px;
+  height: 52px;
+  font-size: 16px;
+}
+
+.cust-profile-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cust-profile-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.cust-profile-contacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cust-profile-contacts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cust-profile-contacts svg {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+
+.cust-verified {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.cust-profile-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+/* ── Stat tiles ── */
+.cust-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.cust-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.cust-stat-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.cust-stat-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── Order history ── */
+.cust-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.cust-orders {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.cust-order {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.cust-order + .cust-order {
+  border-top: 1px solid var(--bg);
+}
+
+.cust-order-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.cust-order-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cust-order-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cust-order-id {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cust-order-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cust-order-amount {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Payment status pill. */
+.cust-pay {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 999px;
+  text-transform: capitalize;
+  white-space: nowrap;
+  justify-self: start;
+}
+
+.cust-pay--ok    { background: var(--accent-tint);    color: var(--accent); }
+.cust-pay--muted { background: rgba(0, 0, 0, 0.05);   color: var(--muted);  }
+.cust-pay--warn  { background: rgba(217, 119, 6, 0.1); color: #d97706;      }
+.cust-pay--bad   { background: rgba(239, 68, 68, 0.1); color: #ef4444;      }
+
+/* Order-status badge — mirrors Orders.css / Project.css palette (no green). */
+.cust-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-transform: capitalize;
+  white-space: nowrap;
+  justify-self: start;
+}
+
+.cust-badge--new       { background: var(--accent-tint);    color: var(--accent); }
+.cust-badge--confirmed { background: rgba(0, 0, 0, 0.06);   color: var(--text);   }
+.cust-badge--shipped   { background: rgba(107, 114, 128, 0.1); color: #6b7280;    }
+.cust-badge--delivered { background: rgba(8, 145, 178, 0.1); color: #0891b2;      }
+.cust-badge--cancelled { background: rgba(239, 68, 68, 0.1); color: #ef4444;      }
+.cust-badge--refunded  { background: rgba(217, 119, 6, 0.1); color: #d97706;      }

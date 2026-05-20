@@ -27,6 +27,23 @@ function sumDeep(items, field) {
   return total;
 }
 
+// Weight is a per-SKU (leaf) attribute. Collect weight_g of every sellable leaf
+// under a node (leaf = no children); parents render the min–max range.
+function collectLeafWeights(node) {
+  const kids = node.configurations || node.children || [];
+  if (!kids.length) {
+    const w = node.weight_g;
+    return (w != null && !isNaN(Number(w))) ? [Number(w)] : [];
+  }
+  return kids.flatMap(collectLeafWeights);
+}
+function weightRangeLabel(node) {
+  const ws = collectLeafWeights(node);
+  if (!ws.length) return '—';
+  const lo = Math.min(...ws), hi = Math.max(...ws);
+  return lo === hi ? `${lo} g` : `${lo}–${hi} g`;
+}
+
 // Snapshot helpers for Undo — recursive plain-object tree consumed by /restore.
 function snapshotSpec(s) {
   return { spec_key: s.spec_key, spec_value: s.spec_value, position: s.position };
@@ -296,6 +313,7 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
   const [name,  setName]  = useState(v.variation_name || '');
   const [price, setPrice] = useState(v.price != null ? String(v.price) : '');
   const [cost,  setCost]  = useState(v.cost_price != null ? String(v.cost_price) : '');
+  const [weight, setWeight] = useState(v.weight_g != null ? String(v.weight_g) : '');
   // Disable tilt while dragging or while gallery popover is open so cursor moves don't fight the popup.
   const { ref, glossRef, handlers } = InteractiveSection(LAYER1_TILT, menuOpen || galleryOpen || isDragging);
 
@@ -354,6 +372,13 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
       return save(body);
     },
     registerUndo, label: `"${v.variation_name || 'Variation'}" cost`,
+  });
+  // Weight (g) — only meaningful on a leaf variation (no nested configurations).
+  useUndoableSave({
+    value: weight, setValue: setWeight,
+    serverValue: v.weight_g != null ? String(v.weight_g) : '',
+    save: (val) => save({ weight_g: val === '' ? null : parseFloat(val) }),
+    registerUndo, label: `"${v.variation_name || 'Variation'}" weight`,
   });
 
   // Multi-photo gallery is managed in <VariationGalleryPopover/> — drop targets,
@@ -436,6 +461,24 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
               placeholder="0.00"
               title={hidePrice ? `Price will be auto-set to cost × ${(1 + marginPct/100).toFixed(2)}` : 'Cost — used for margin reporting'} />
           </div>
+          {/* Weight: input on a leaf variation; min–max range when it has nested configs (the SKU lives deeper). */}
+          {hasChildren ? (
+            <div className="layer1-meta-row">
+              <span className="layer1-meta-label">Weight</span>
+              <span className="layer1-meta-range">{weightRangeLabel(v)}</span>
+            </div>
+          ) : (
+            <div className="layer1-meta-row">
+              <span className="layer1-meta-label">Weight (g)</span>
+              <input className="layer1-meta-input"
+                type="number" min="0" step="0.01"
+                value={weight}
+                onChange={e => setWeight(e.target.value)}
+                onClick={e => e.stopPropagation()}
+                placeholder="0"
+                title="Shipping weight per unit (g) — shown on the shipping label" />
+            </div>
+          )}
         </div>
       </div>
       <button ref={menuBtnRef} className="org-card-menu-btn pcard-menu-btn" type="button"
@@ -696,11 +739,12 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
       </div>
       <div className="cfg-block-body">
         <div className="cfg-list">
-          <div className={`cfg-list-head${inScope ? ' cfg-list-head--bulk-mode' : ''}${hidePrice ? ' cfg-list-head--hide-price' : ''}`}>
+          <div className={`cfg-list-head cfg-list-head--wt${inScope ? ' cfg-list-head--bulk-mode' : ''}${hidePrice ? ' cfg-list-head--hide-price' : ''}`}>
             {inScope && <span className="cfg-col cfg-col-bulk" />}
             <span className="cfg-col cfg-col-name">Configuration Name</span>
             {!hidePrice && <span className="cfg-col cfg-col-price">Price</span>}
             <span className="cfg-col cfg-col-cost">Cost</span>
+            <span className="cfg-col cfg-col-weight">Weight (g)</span>
             <span className="cfg-col cfg-col-actions" />
           </div>
 
@@ -819,6 +863,7 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
   const [price, setPrice] = useState(item.price != null ? String(item.price) : '');
   const [cost,  setCost]  = useState(item.cost_price != null ? String(item.cost_price) : '');
   const [stock, setStock] = useState(String(item.stock_quantity || 0));
+  const [weight, setWeight] = useState(item.weight_g != null ? String(item.weight_g) : '');
 
   const save = useCallback(async (body) => {
     const r = await fetch(`${API_BASE}/api/products/${productId}/layers/${layer}/${item.id}${pq}`, {
@@ -871,6 +916,14 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
     shouldSave: () => !hasChildren,
     debounceMs: 400,
   });
+  // Weight (g) — only on a leaf row (no children); parents show a range instead.
+  useUndoableSave({
+    value: weight, setValue: setWeight,
+    serverValue: item.weight_g != null ? String(item.weight_g) : '',
+    save: (val) => save({ weight_g: val === '' ? null : parseFloat(val) }),
+    registerUndo, label: `"${item.name || 'Row'}" weight`,
+    debounceMs: 400,
+  });
 
   const displayStock = hasChildren ? sumDeep(item.children, 'stock_quantity') : null;
   const displaySold  = hasChildren
@@ -881,7 +934,7 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
 
   return (
     <div ref={dragRef} style={dragStyle}
-      className={`cfg-row cfg-row--grabbable${selected ? ' cfg-row--selected' : ''}${!isLeaf ? ' cfg-row--clickable' : ''}${bulkSelected ? ' cfg-row--bulk' : ''}${bulkActive ? ' cfg-row--bulk-mode' : ''}${hidePrice ? ' cfg-row--hide-price' : ''}`}
+      className={`cfg-row cfg-row--grabbable cfg-row--wt${selected ? ' cfg-row--selected' : ''}${!isLeaf ? ' cfg-row--clickable' : ''}${bulkSelected ? ' cfg-row--bulk' : ''}${bulkActive ? ' cfg-row--bulk-mode' : ''}${hidePrice ? ' cfg-row--hide-price' : ''}`}
       onClick={(e) => {
         if (onRowClick?.(e, item.id)) return;
         onSelect?.();
@@ -909,6 +962,16 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
         onChange={e => setCost(e.target.value)}
         placeholder="0.00"
         title={hidePrice ? `Price will be auto-set to cost × ${(1 + marginPct/100).toFixed(2)}` : 'Cost (for margin reporting)'} />
+      {/* Weight: input on a leaf row; min–max range when the SKU lives deeper. */}
+      {hasChildren ? (
+        <span className="cfg-cell cfg-weight-range">{weightRangeLabel(item)}</span>
+      ) : (
+        <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
+          value={weight}
+          onChange={e => setWeight(e.target.value)}
+          placeholder="0"
+          title="Shipping weight per unit (g) — shown on the shipping label" />
+      )}
       <button type="button" className="cfg-col-actions cfg-delete-btn"
         onClick={e => { e.stopPropagation(); onDelete?.(); }}
         title="Delete">
@@ -947,11 +1010,14 @@ function LayerTableNewRow({ layer, parentId, productId, pq, onAdded }) {
   }, [name, price, parentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="cfg-row cfg-row--new">
+    <div className="cfg-row cfg-row--new cfg-row--wt">
       <input className="crm-input cfg-cell" value={name}
         onChange={e => setName(e.target.value)} placeholder="New configuration" />
       <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
         value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" />
+      {/* Cost + weight are set after the row is created (on the data row). */}
+      <span className="cfg-cell" />
+      <span className="cfg-cell" />
       <span className="cfg-col-actions" />
     </div>
   );

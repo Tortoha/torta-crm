@@ -294,8 +294,7 @@ export default function ProductOverview() {
           chain={chain}
           shownLayers={shownLayers}
           reloadProduct={reloadProduct}
-          registerUndo={registerUndo}
-          bulk={bulk} setBulk={setBulk} clearBulk={clearBulk} />
+          registerUndo={registerUndo} />
       )}
 
       {product.product_type !== 'service' && (

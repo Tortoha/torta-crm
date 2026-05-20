@@ -1,13 +1,9 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Trash, CaretDown, DotsSixVertical } from '@phosphor-icons/react';
+import { Trash, CaretDown, Plus } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import { useUndoableSave } from '../../Utils/useUndoableSave.js';
-import { RowContextMenu } from '../../Utils/RowContextMenu.jsx';
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 
 // Walk the product tree using `chain` to find the selected node at `layer` (1-based).
 function findNodeAt(product, chain, layer) {
@@ -22,7 +18,7 @@ function findNodeAt(product, chain, layer) {
   return null;
 }
 
-export default function SpecificationsBlock({ product, productId, pq, chain, shownLayers, reloadProduct, registerUndo, bulk, setBulk, clearBulk }) {
+export default function SpecificationsBlock({ product, productId, pq, chain, shownLayers, reloadProduct, registerUndo }) {
   const [layer, setLayer] = useState(1);
 
   // Clamp `layer` if shownLayers shrinks (user deleted last layer).
@@ -31,18 +27,32 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
   }, [shownLayers, layer]);
 
   const selectedNode = useMemo(() => findNodeAt(product, chain, layer), [product, chain, layer]);
-  const specs = selectedNode?.specifications || [];
+  const parentId   = selectedNode?.id;
+  const allSpecs   = selectedNode?.specifications || [];
+  const groups     = selectedNode?.spec_groups || [];
+  const ungrouped  = useMemo(() => allSpecs.filter(s => !s.group_id), [allSpecs]);
 
-  const updateLocal = useCallback((id, patch) => {
-    // Reload-driven sync; placeholder kept for future local mutation.
-    void id; void patch;
-  }, []);
+  // Brand-new node with nothing yet → still offer a loose row so the merchant
+  // can quick-add without first creating a group. Once groups exist and there
+  // are no loose specs, the ungrouped area disappears (everything is grouped).
+  const showUngrouped = ungrouped.length > 0 || groups.length === 0;
 
-  const removeSpec = async (id) => {
+  // ─── Spec CRUD ────────────────────────────────────────────────────
+  const createSpec = useCallback(async (body) => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/specifications${pq}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ layer, parent_id: parentId, ...body }),
+    });
+    if (r.ok) reloadProduct?.();
+    return r.ok;
+  }, [productId, pq, layer, parentId, reloadProduct]);
+
+  const removeSpec = useCallback(async (id) => {
     if (!confirm('Delete this specification?')) return;
-    const target = specs.find(s => s.id === id);
+    const target = allSpecs.find(s => s.id === id);
     const snapshot = target ? {
-      layer, parent_id: selectedNode?.id,
+      layer, parent_id: parentId, group_id: target.group_id || null,
       spec_key: target.spec_key, spec_value: target.spec_value,
     } : null;
     const res = await fetch(`${API_BASE}/api/products/${productId}/specifications/${id}${pq}`, {
@@ -63,11 +73,47 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
         },
       });
     }
+  }, [allSpecs, layer, parentId, productId, pq, reloadProduct, registerUndo]);
+
+  // ─── Group CRUD ───────────────────────────────────────────────────
+  const createGroup = async () => {
+    const r = await fetch(`${API_BASE}/api/products/${productId}/spec-groups${pq}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ layer, parent_id: parentId, name: '' }),
+    });
+    if (r.ok) reloadProduct?.();
+  };
+
+  const renameGroup = async (gid, name) => {
+    await fetch(`${API_BASE}/api/products/${productId}/spec-groups/${gid}${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    reloadProduct?.();
+  };
+
+  const deleteGroup = async (gid) => {
+    const g = groups.find(x => x.id === gid);
+    const count = g?.specs?.length || 0;
+    const msg = count
+      ? `Delete this section and its ${count} specification${count === 1 ? '' : 's'}?`
+      : 'Delete this section?';
+    if (!confirm(msg)) return;
+    await fetch(`${API_BASE}/api/products/${productId}/spec-groups/${gid}${pq}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    reloadProduct?.();
   };
 
   return (
     <section className="po-block">
       <h2 className="po-block-title">Specifications</h2>
+      <p className="po-block-hint">
+        Organise specs into named sections (e.g. “Display”, “Processor &amp; memory”). Each
+        section holds Name / Value rows. Rows left outside any section show at the top.
+      </p>
       <div className="cfg-block-body">
         <div className="spec-attach-field">
           <label className="po-field-label1">Linking specifications to a layer</label>
@@ -77,177 +123,86 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
         {!selectedNode ? (
           <div className="cfg-empty">Select a row in Layer {layer} above to add specifications.</div>
         ) : (
-          <div className="cfg-list">
-            <div className={`cfg-list-head spec-list-head${bulk?.scope === 'specs' && bulk.ids.length ? ' cfg-list-head--bulk-mode spec-list-head--bulk-mode' : ''}`}>
-              {bulk?.scope === 'specs' && bulk.ids.length > 0 && <span className="cfg-col cfg-col-bulk" />}
-              <span className="cfg-col">Name</span>
-              <span className="cfg-col">Value</span>
-              <span className="cfg-col cfg-col-actions" />
+          <>
+            {/* Ungrouped specs — legacy rows + a quick-add row (borderless, like Modifier items). */}
+            {showUngrouped && (
+              <div className="po-mod-items spec-ungrouped">
+                {ungrouped.map(s => (
+                  <SpecRow key={s.id} spec={s} productId={productId} pq={pq}
+                    reloadProduct={reloadProduct} registerUndo={registerUndo}
+                    onDelete={() => removeSpec(s.id)} />
+                ))}
+                <SpecNewRow resetKey={`u:${parentId}`} onCreate={createSpec} />
+              </div>
+            )}
+
+            {/* Section cards (mirror Modifier groups). */}
+            <div className="spec-groups">
+              {groups.map(g => (
+                <SpecGroupCard key={g.id} group={g}
+                  productId={productId} pq={pq}
+                  reloadProduct={reloadProduct} registerUndo={registerUndo}
+                  onRename={renameGroup}
+                  onDelete={() => deleteGroup(g.id)}
+                  onCreateSpec={createSpec}
+                  onRemoveSpec={removeSpec} />
+              ))}
             </div>
 
-            <SpecsSortable
-              specs={specs}
-              productId={productId} pq={pq}
-              layer={layer} parentId={selectedNode.id}
-              registerUndo={registerUndo} reloadProduct={reloadProduct}
-              onChange={updateLocal}
-              removeSpec={removeSpec}
-              bulk={bulk} setBulk={setBulk} clearBulk={clearBulk} />
-
-            <SpecNewRow
-              productId={productId} pq={pq}
-              layer={layer} parentId={selectedNode.id}
-              onAdded={() => reloadProduct?.()} />
-          </div>
+            <button type="button" className="po-mod-add-group" onClick={createGroup}>
+              <Plus weight="bold" /> Add section
+            </button>
+          </>
         )}
       </div>
     </section>
   );
 }
 
-function SpecsSortable({ specs, productId, pq, layer, parentId, registerUndo, reloadProduct, onChange, removeSpec,
-                          bulk, setBulk, clearBulk }) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
-  const ids = useMemo(() => specs.map(s => s.id), [specs]);
+// ── One section card: name header + Name/Value rows + quick-add ──────
+function SpecGroupCard({ group, productId, pq, reloadProduct, registerUndo, onRename, onDelete, onCreateSpec, onRemoveSpec }) {
+  const [name, setName] = useState(group.name || '');
+  const skip = useRef(true);
 
-  const SCOPE = 'specs';
-  const inScope = bulk?.scope === SCOPE;
-  const bulkIds = inScope ? bulk.ids : [];
-  const [ctxMenu, setCtxMenu] = useState(null);
+  useEffect(() => { skip.current = true; setName(group.name || ''); }, [group.id, group.name]);
 
-  const bulkDelete = useCallback(async (deleteIds) => {
-    if (!deleteIds.length) return;
-    const targets = specs.filter(s => deleteIds.includes(s.id));
-    const snapshots = targets.map(t => ({
-      layer, parent_id: parentId,
-      spec_key: t.spec_key, spec_value: t.spec_value,
-    }));
-    for (const id of deleteIds) {
-      await fetch(`${API_BASE}/api/products/${productId}/specifications/${id}${pq}`, {
-        method: 'DELETE', credentials: 'include',
-      });
-    }
-    clearBulk?.();
-    await reloadProduct?.();
-    if (snapshots.length && registerUndo) {
-      registerUndo({
-        description: `${deleteIds.length} spec${deleteIds.length === 1 ? '' : 's'} deleted`,
-        undo: async () => {
-          for (const snap of snapshots) {
-            await fetch(`${API_BASE}/api/products/${productId}/specifications${pq}`, {
-              method: 'POST', credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(snap),
-            });
-          }
-          await reloadProduct?.();
-        },
-      });
-    }
-  }, [specs, layer, parentId, productId, pq, clearBulk, reloadProduct, registerUndo]);
+  // Debounced rename — same pattern as ModifierGroupCard.
+  useEffect(() => {
+    if (skip.current) { skip.current = false; return; }
+    const t = setTimeout(() => { onRename(group.id, name); }, 500);
+    return () => clearTimeout(t);
+  }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const toggleInBulk = useCallback((id) => {
-    setBulk(prev => {
-      const list = prev.scope === SCOPE ? [...prev.ids] : [];
-      const idx = list.indexOf(id);
-      if (idx >= 0) list.splice(idx, 1);
-      else list.push(id);
-      return list.length ? {
-        scope: SCOPE, ids: list,
-        actions: { delete: () => bulkDelete(list) },
-      } : { scope: null, ids: [], actions: null };
-    });
-  }, [setBulk, bulkDelete]);
-
-  const onRowClick = useCallback((e, id) => {
-    if (!(e.shiftKey || e.metaKey || e.ctrlKey || inScope)) return false;
-    e.stopPropagation();
-    e.preventDefault();
-    toggleInBulk(id);
-    return true;
-  }, [inScope, toggleInBulk]);
-
-  const openCtxMenu = useCallback((e, id) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setCtxMenu({ x: e.clientX, y: e.clientY, id });
-  }, []);
-
-  const persistOrder = async (newIds) => {
-    await fetch(`${API_BASE}/api/products/${productId}/specifications/reorder${pq}`, {
-      method: 'PUT', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: newIds, layer, parent_id: parentId }),
-    });
-  };
-
-  const onDragEnd = async (event) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldOrder = ids;
-    const oldIdx = oldOrder.indexOf(active.id);
-    const newIdx = oldOrder.indexOf(over.id);
-    if (oldIdx < 0 || newIdx < 0) return;
-    const newOrder = arrayMove(oldOrder, oldIdx, newIdx);
-    await persistOrder(newOrder);
-    await reloadProduct?.();
-    registerUndo?.({
-      description: 'Specifications reordered',
-      undo: async () => { await persistOrder(oldOrder); await reloadProduct?.(); },
-    });
-  };
+  const specs = group.specs || [];
 
   return (
-    <>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-          {specs.map(s => (
-            <SortableSpecRow key={s.id} spec={s}
-              productId={productId} pq={pq}
-              registerUndo={registerUndo}
-              onChange={onChange}
-              onDelete={() => removeSpec(s.id)}
-              reloadProduct={reloadProduct}
-              onRowClick={onRowClick}
-              onContextMenu={(e) => openCtxMenu(e, s.id)}
-              bulkSelected={bulkIds.includes(s.id)}
-              bulkActive={inScope}
-              onBulkToggle={() => toggleInBulk(s.id)} />
-          ))}
-        </SortableContext>
-      </DndContext>
-      {ctxMenu && (
-        <RowContextMenu pos={ctxMenu}
-          onSelect={() => toggleInBulk(ctxMenu.id)}
-          onClose={() => setCtxMenu(null)} />
-      )}
-    </>
+    <div className="po-mod-group spec-group">
+      <div className="po-mod-group-head spec-group-head">
+        <div className="po-mod-name-wrap">
+          <input className="po-mod-name-input" value={name}
+            placeholder="Section name (e.g. Display)"
+            onChange={e => setName(e.target.value)} />
+        </div>
+        <button type="button" className="po-mod-group-del" onClick={onDelete} title="Delete section">
+          <Trash />
+        </button>
+      </div>
+
+      <div className="po-mod-items spec-group-body">
+        {specs.map(s => (
+          <SpecRow key={s.id} spec={s} productId={productId} pq={pq}
+            reloadProduct={reloadProduct} registerUndo={registerUndo}
+            onDelete={() => onRemoveSpec(s.id)} />
+        ))}
+        <SpecNewRow resetKey={`g:${group.id}`}
+          onCreate={(body) => onCreateSpec({ ...body, group_id: group.id })} />
+      </div>
+    </div>
   );
 }
 
-function SortableSpecRow(props) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.spec.id });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    background: isDragging ? 'var(--card)' : undefined,
-    boxShadow: isDragging ? 'var(--shadow-card)' : undefined,
-    zIndex: isDragging ? 5 : 'auto',
-    opacity: isDragging ? 0.92 : 1,
-  };
-  return (
-    <SpecRow
-      {...props}
-      dragRef={setNodeRef}
-      dragStyle={style}
-      dragHandleProps={{ ...attributes, ...listeners }}
-    />
-  );
-}
-
-function SpecRow({ spec, productId, pq, onChange, onDelete, reloadProduct, registerUndo,
-                    dragRef, dragStyle, dragHandleProps, onRowClick, onContextMenu,
-                    bulkSelected, bulkActive, onBulkToggle }) {
+// ── Editable Name/Value row (inline autosave, undoable) ──────────────
+function SpecRow({ spec, productId, pq, reloadProduct, registerUndo, onDelete }) {
   const [key,   setKey]   = useState(spec.spec_key   || '');
   const [value, setValue] = useState(spec.spec_value || '');
 
@@ -257,12 +212,9 @@ function SpecRow({ spec, productId, pq, onChange, onDelete, reloadProduct, regis
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (res.ok) {
-      onChange?.(spec.id, body);
-      reloadProduct?.();
-    }
+    if (res.ok) reloadProduct?.();
     return res.ok;
-  }, [productId, spec.id, pq, onChange, reloadProduct]);
+  }, [productId, spec.id, pq, reloadProduct]);
 
   useUndoableSave({
     value: key, setValue: setKey,
@@ -278,28 +230,46 @@ function SpecRow({ spec, productId, pq, onChange, onDelete, reloadProduct, regis
   });
 
   return (
-    <div ref={dragRef} style={dragStyle}
-      onClick={(e) => onRowClick?.(e, spec.id)}
-      onContextMenu={onContextMenu}
-      className={`cfg-row spec-row cfg-row--grabbable${bulkSelected ? ' cfg-row--bulk' : ''}${bulkActive ? ' cfg-row--bulk-mode spec-row--bulk-mode' : ''}`}
-      title="Right-click for actions · hold 0.3s to drag"
-      {...(dragHandleProps || {})}>
-      {bulkActive && (
-        <input type="checkbox" className="cat-prod-checkbox cfg-bulk-check"
-          checked={!!bulkSelected}
-          onChange={() => onBulkToggle?.()}
-          onClick={e => e.stopPropagation()}
-          onPointerDown={e => e.stopPropagation()}
-          aria-label="Toggle selection" />
-      )}
+    <div className="cfg-row spec-row">
       <input className="crm-input cfg-cell" value={key}
-        onChange={e => setKey(e.target.value)} placeholder="Material" />
+        onChange={e => setKey(e.target.value)} placeholder="Screen size" />
       <input className="crm-input cfg-cell" value={value}
-        onChange={e => setValue(e.target.value)} placeholder="Cotton" />
+        onChange={e => setValue(e.target.value)} placeholder="6.1 inch" />
       <button type="button" className="cfg-col-actions cfg-delete-btn"
         onClick={onDelete} title="Delete">
         <Trash />
       </button>
+    </div>
+  );
+}
+
+// ── Quick-add row: auto-creates when a name is typed ─────────────────
+function SpecNewRow({ onCreate, resetKey }) {
+  const [key,   setKey]   = useState('');
+  const [value, setValue] = useState('');
+  const busyRef = useRef(false);
+
+  // Reset draft when the owning node/group changes.
+  useEffect(() => { setKey(''); setValue(''); }, [resetKey]);
+
+  useEffect(() => {
+    if (!key.trim() || busyRef.current) return;
+    const t = setTimeout(async () => {
+      busyRef.current = true;
+      const ok = await onCreate({ spec_key: key.trim(), spec_value: value.trim() });
+      busyRef.current = false;
+      if (ok) { setKey(''); setValue(''); }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [key, value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="cfg-row cfg-row--new spec-row">
+      <input className="crm-input cfg-cell" value={key}
+        onChange={e => setKey(e.target.value)} placeholder="New specification" />
+      <input className="crm-input cfg-cell" value={value}
+        onChange={e => setValue(e.target.value)} placeholder="Value" />
+      <span className="cfg-col-actions" />
     </div>
   );
 }
@@ -367,44 +337,5 @@ function LayerSelect({ layer, setLayer, shownLayers }) {
         document.body
       )}
     </>
-  );
-}
-
-function SpecNewRow({ productId, pq, layer, parentId, onAdded }) {
-  const [key,   setKey]   = useState('');
-  const [value, setValue] = useState('');
-  const busyRef = useRef(false);
-
-  // Reset draft if user navigates to a different parent
-  useEffect(() => { setKey(''); setValue(''); }, [layer, parentId]);
-
-  useEffect(() => {
-    if (!key.trim() || busyRef.current) return;
-    const t = setTimeout(async () => {
-      busyRef.current = true;
-      const res = await fetch(`${API_BASE}/api/products/${productId}/specifications${pq}`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          layer, parent_id: parentId,
-          spec_key: key.trim(), spec_value: value.trim(),
-        }),
-      });
-      busyRef.current = false;
-      if (!res.ok) return;
-      onAdded?.();
-      setKey(''); setValue('');
-    }, 600);
-    return () => clearTimeout(t);
-  }, [key, value, layer, parentId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return (
-    <div className="cfg-row cfg-row--new spec-row">
-      <input className="crm-input cfg-cell" value={key}
-        onChange={e => setKey(e.target.value)} placeholder="New specification" />
-      <input className="crm-input cfg-cell" value={value}
-        onChange={e => setValue(e.target.value)} placeholder="Value" />
-      <span className="cfg-col-actions" />
-    </div>
   );
 }
