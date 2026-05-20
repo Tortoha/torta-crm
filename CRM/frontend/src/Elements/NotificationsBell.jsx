@@ -3,12 +3,16 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell, CheckCircle, Trash, Warehouse, ShoppingBag, Calendar, Lightning,
-  Target, ChatCircleDots, ArrowUUpLeft, Warning,
+  Target, ChatCircleDots, ArrowUUpLeft, Warning, X, CaretRight,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import { InteractiveSection } from '../Utils/InteractiveSection.js';
+import { PoListRow } from '../Utils/PoListRow.jsx';  // standard Inventory/Promo tilt (scale 1.052)
 import '../Style/Products.css';  // .po-set-table, .po-set-row, .po-set-row--head, .po-set-strong
 
+// Dropdown rows are small, so the tilt is dialed up (scale 1.086) to read.
+// The modal uses the standard PoListRow (scale 1.052) since its cards are
+// full-width — same IS feel as Inventory / Promo codes.
 const NOTIF_TILT = {
   maxAngleX: 10, maxAngleY: 4, lerp: 0.05, lerpOut: 0.07,
   scale: 1.086, perspective: 900,
@@ -54,10 +58,117 @@ function timeAgo(iso) {
   return `${d}d ago`;
 }
 
+// Shared row renderer. `Row` is the tilt-wrapper component — defaults to the
+// dropdown's bigger-tilt NotifRow; the modal passes PoListRow for the standard
+// Inventory-grade tilt on its full-width cards.
+function NotifItem({ it, onClick, Row = NotifRow }) {
+  return (
+    <Row
+      className={`notif-row notif-row--clickable${it.is_read ? '' : ' notif-row--unread'}`}
+      onClick={onClick}>
+      <span className="notif-row-body">
+        <span className="notif-row-icon">{TYPE_ICON[it.type] || <Bell weight="bold" />}</span>
+        <span className="notif-row-text">
+          <span className="po-set-strong notif-row-title">{it.title}</span>
+          <span className="notif-row-message">{it.message}</span>
+        </span>
+      </span>
+      <span className="notif-row-time">{timeAgo(it.created_at)}</span>
+    </Row>
+  );
+}
+
+// Bucket a timestamp into a date group label for the "all" modal.
+function dateBucket(iso) {
+  if (!iso) return 'Earlier';
+  const d = new Date(iso), now = new Date();
+  const sToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sItem  = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((sToday - sItem) / 86400000);
+  if (diff <= 0)  return 'Today';
+  if (diff === 1) return 'Yesterday';
+  if (diff < 7)   return 'This week';
+  if (diff < 30)  return 'This month';
+  return 'Earlier';
+}
+
+// Full-history modal — every notification grouped by date, rendered as the
+// Products-page list style (po-set-table rows). Fetches its own (larger) page.
+function AllNotificationsModal({ onClose, onOpenItem }) {
+  const [items, setItems]     = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/notifications?limit=200`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : { items: [] }))
+      .then(d => { setItems(d.items || []); setLoading(false); })
+      .catch(() => setLoading(false));
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  // Items arrive newest-first, so contiguous buckets group cleanly in one pass.
+  const groups = useMemo(() => {
+    const out = []; let cur = null;
+    for (const it of items) {
+      const b = dateBucket(it.created_at);
+      if (!cur || cur.label !== b) { cur = { label: b, items: [] }; out.push(cur); }
+      cur.items.push(it);
+    }
+    return out;
+  }, [items]);
+
+  // Window chrome copied from the New-promo-code modal (auth-modal / cpm-modal).
+  // notif-all-overlay drops the overlay's backdrop-filter blur: with the
+  // InteractiveSection tilt-cards animating inside, the blur forces a full
+  // re-composite every frame → the tilt lerp visibly lags (unlike Promo /
+  // Inventory rows which sit on the page with no blur). Dim stays for focus.
+  return createPortal(
+    <div className="auth-modal-overlay notif-all-overlay"
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="auth-modal cpm-modal notif-all-modal" onClick={e => e.stopPropagation()}>
+        <div className="auth-modal-head">
+          <div className="auth-modal-title-row">
+            <div>
+              <div className="auth-modal-title">All notifications</div>
+              <div className="auth-modal-subtitle-row">
+                <span className="auth-modal-subtitle">Everything you've received, grouped by date.</span>
+              </div>
+            </div>
+          </div>
+          <button className="auth-modal-close" onClick={onClose} type="button">
+            <X className="auth-modal-close-icon" />
+          </button>
+        </div>
+
+        <div className="auth-modal-body notif-all-body">
+          {loading && <p className="crm-placeholder">Loading…</p>}
+          {!loading && items.length === 0 && (
+            <p className="crm-placeholder">No notifications yet</p>
+          )}
+          {groups.map(g => (
+            <div className="notif-group" key={g.label}>
+              <div className="notif-group-label">{g.label}</div>
+              <div className="po-set-table notif-table">
+                {g.items.map(it => (
+                  <NotifItem key={it.id} it={it} onClick={() => onOpenItem(it)} Row={PoListRow} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export default function NotificationsBell() {
   const navigate = useNavigate();
   const btnRef   = useRef(null);
   const [open,        setOpen]        = useState(false);
+  const [showAll,     setShowAll]     = useState(false);
   const [pos,         setPos]         = useState(null);
   const [items,       setItems]       = useState([]);
   const [unread,      setUnread]      = useState(0);
@@ -169,27 +280,33 @@ export default function NotificationsBell() {
             )}
             {items.length > 0 && (
               <div className="po-set-table notif-table">
-                {items.map(it => (
-                  <NotifRow key={it.id}
-                    className={`notif-row notif-row--clickable${it.is_read ? '' : ' notif-row--unread'}`}
-                    onClick={() => onItemClick(it)}>
-                    <span className="notif-row-body">
-                      <span className="notif-row-icon">
-                        {TYPE_ICON[it.type] || <Bell weight="bold" />}
-                      </span>
-                      <span className="notif-row-text">
-                        <span className="po-set-strong notif-row-title">{it.title}</span>
-                        <span className="notif-row-message">{it.message}</span>
-                      </span>
-                    </span>
-                    <span className="notif-row-time">{timeAgo(it.created_at)}</span>
-                  </NotifRow>
+                {/* Cap the dropdown at 10; the 11th card is the "View all" CTA
+                    (same card style, inside the same stack — not a separate
+                    block). The rest live in the modal. */}
+                {items.slice(0, 10).map(it => (
+                  <NotifItem key={it.id} it={it} onClick={() => onItemClick(it)} />
                 ))}
+                {items.length > 10 && (
+                  <NotifRow className="notif-row notif-viewall-row"
+                    onClick={() => { setShowAll(true); setOpen(false); }}>
+                    <span className="notif-viewall-inner">
+                      View all notifications
+                      <CaretRight weight="bold" />
+                    </span>
+                  </NotifRow>
+                )}
               </div>
             )}
           </div>
         </div>,
         document.body
+      )}
+
+      {showAll && (
+        <AllNotificationsModal
+          onClose={() => setShowAll(false)}
+          onOpenItem={(it) => { onItemClick(it); setShowAll(false); }}
+        />
       )}
     </>
   );

@@ -703,7 +703,9 @@
 .notif-popover {
   position: fixed;
   width: 400px;
-  max-height: 540px;
+  /* Fits the capped 10 rows + "View all" footer without scrolling on a normal
+     screen; only a very short viewport triggers the (quiet) list scroll. */
+  max-height: min(680px, calc(100vh - 80px));
   /* background: var(--bg); */
   /* border-radius: 20px; */
   /* box-shadow: 0 8px 24px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.06); */
@@ -742,8 +744,9 @@
 .notif-list {
   flex: 1;
   min-height: 0;
-  /* overflow-y: auto; */
-  /* Quiet scrollbar to match the popover aesthetic (visible on hover only) */
+  /* No overflow here — the 10-cap + the bumped popover max-height keep the
+     11-card stack contained on a normal screen, and leaving overflow off
+     preserves the original full-width cards + un-clipped drop-shadows. */
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
 }
@@ -869,4 +872,74 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* ── 11th card = "View all notifications" CTA (inside the same po-set-table
+      stack, NOT a separate footer block). Single centered cell. ── */
+.notif-viewall-row {
+  grid-template-columns: 1fr !important;
+  cursor: pointer;
+}
+.notif-viewall-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.notif-viewall-inner svg { width: 13px; height: 13px; }
+
+/* ══════════════════════════════
+   ALL-NOTIFICATIONS MODAL — window chrome reused from the New-promo-code
+   modal (.auth-modal / .cpm-modal). Only the body + date groups are custom.
+   ══════════════════════════════ */
+/* Kill the overlay blur for this modal — backdrop-filter forces a full
+   re-composite every frame while the tilt-cards animate, which throttles the
+   InteractiveSection lerp to a crawl. The dim (rgba bg) alone keeps focus. */
+.notif-all-overlay {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Grey body so the white po-set-table cards float — the Products-list look. */
+.notif-all-body {
+  background: var(--bg);
+}
+
+.notif-group { margin-top: 16px; }
+.notif-group:first-child { margin-top: 2px; }
+
+.notif-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 6px 6px;
+}
+
+/* The modal isn't inside .notif-popover, so re-declare the card-stack chrome
+   (the popover-scoped rules don't reach here).
+   NO `filter: drop-shadow` here — a filter on the table forces the browser to
+   re-trace the whole shadow every frame the hovered card tilts (the same class
+   of cost as backdrop-filter), which is exactly why the tilt felt sluggish.
+   Inventory / Promo codes have no table filter → 60fps. The grey body + the
+   po-set-row dividers give the cards their definition instead. */
+.notif-all-modal .po-set-table {
+  margin-top: 0;
+}
+.notif-all-modal .po-set-table > .po-set-row:first-child { border-radius: 16px 16px 0 0; }
+.notif-all-modal .po-set-table > .po-set-row:last-child  { border-radius: 0 0 16px 16px; }
+.notif-all-modal .po-set-table > .po-set-row:only-child   { border-radius: 16px; }
+.notif-all-modal .notif-row--unread .notif-row-icon::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
 }
