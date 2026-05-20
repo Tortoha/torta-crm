@@ -111,6 +111,9 @@ function App() {
             <Route path="url-config" element={<Navigate to="../authentication" relative="path" replace />} />
             <Route path="orders"     element={<Orders />} />
             <Route path="booking"      element={<Booking />} />
+            {/* Legacy /bookings (plural) — stale notification links used it
+                before the External fix. Redirect so they don't dead-end. */}
+            <Route path="bookings"     element={<Navigate to="../booking" relative="path" replace />} />
             <Route path="integrations" element={<Integrations />} />
             <Route path="chat"         element={<Chat />} />
             <Route path="settings"     element={<ProjectSettings />} />

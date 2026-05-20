@@ -8063,14 +8063,30 @@ textarea.po-set-input,
    picker, no advanced-encoding toggles). The shared 720+480 + 16 + 64 ≈
    1280px footprint felt right for the barcode modal but spilled past the
    right edge on FullHD (1920×1080) once the user opened it on a 15.6"
-   laptop. Scope these overrides via .psl-modal (only present on the
-   shipping label left pane) so PrintBarcodesModal keeps its roomier
-   defaults for its richer content. */
-.psl-modal,
-.psl-modal + .print-bc-modal-right {
+   laptop. Scope these overrides via .psl-pair / .psl-modal (only present on
+   the shipping label modal) so PrintBarcodesModal keeps its roomier defaults
+   for its richer content.
+
+   HEIGHT — single source of truth on the PAIR, not the children. Previously
+   both panes carried their own `height: 78vh; max-height: 700px`, but the
+   left pane (.print-bc-modal-left.psl-modal) and right pane each also carry
+   the base `.auth-modal` class whose own max-height (90vh) could win
+   depending on CSS bundle import order — leaving the two panes at different
+   resolved heights (left followed 78vh ≈ full-viewport, right collapsed to
+   its iframe content height). Defining the height once on .psl-pair and
+   stretching both children to `height: 100%` makes equal height structural
+   and import-order-proof: the flex row's two items literally share the same
+   box height regardless of which stylesheet loads last. */
+.psl-pair {
   height: 78vh;
   max-height: 700px;
   min-height: 520px;
+}
+.psl-pair > .print-bc-modal-left,
+.psl-pair > .print-bc-modal-right {
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
 }
 /* Left pane narrowed -100px, right (preview) widened +200px per user
    feedback — the shipping label preview is the centerpiece of this modal,

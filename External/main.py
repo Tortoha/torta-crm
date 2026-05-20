@@ -10019,7 +10019,8 @@ def public_create_booking(req: PublicCreateBookingRequest,
             project_id, "new_booking",
             f"New booking — {svc_name}",
             f"{name} · {starts_local}",
-            f"/project/{api_key}/bookings?open={bid}" if api_key else None,
+            # Route is /booking (singular) — /bookings 404s and the page never renders.
+            f"/project/{api_key}/booking" if api_key else None,
         )
     except Exception as e:
         print(f"[notif] booking push failed: {e}")

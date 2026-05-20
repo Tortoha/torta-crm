@@ -6,16 +6,16 @@
 
 .pov-body {
   display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 24px;
-  align-items: start;
+  grid-template-columns: 1fr 1fr;   /* equal-width columns (was 1fr 320px) */
+  gap: 12px;
+  align-items: stretch;   /* both columns share the taller column's height */
   padding-top: 128px;
 }
 
 .pov-left {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .pov-body .crm-page-title {
@@ -256,7 +256,7 @@
 .pov-widget-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .pov-widget {
@@ -269,12 +269,34 @@
   padding: 14px 16px;
   cursor: pointer;
   text-align: left;
-  transition: background 0.18s ease;
   font-family: inherit;
+  /* InteractiveSection tilt + gloss (same chrome as Copy Keys / list rows) */
+  position: relative;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  transition: box-shadow 0.8s ease;
 }
 
+/* Same hover shadow as the Dashboard org cards (.db-card--tilt:hover). */
 .pov-widget:hover {
-  background: color-mix(in srgb, var(--card) 85%, var(--bg));
+  box-shadow: 4px 8px 32px rgba(1, 3, 32, 0.08);
+}
+
+/* Gloss overlay painted by InteractiveSection; content sits above it.
+   opacity transition matches .db-card-gloss so the gloss fades in/out. */
+.pov-widget-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  transition: opacity 0.3s ease;
+}
+.pov-widget > *:not(.pov-widget-gloss) {
+  position: relative;
+  z-index: 2;
 }
 
 .pov-widget-icon {
@@ -285,6 +307,10 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  /* All tiles share one accent-tinted icon treatment now — the status is
+     conveyed by the text below, not the icon colour. */
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .pov-widget-icon svg {
@@ -300,6 +326,12 @@
 .pov-widget-icon--neutral {
   background: rgba(0, 0, 0, 0.05);
   color: rgba(0, 0, 0, 0.4);
+}
+
+/* Subscription plan tile — accent-tinted crown (no green per design rules) */
+.pov-widget-icon--plan {
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .pov-widget-info {
@@ -323,13 +355,21 @@
 
 .pov-widget-status--ok   { color: var(--accent); }
 .pov-widget-status--warn { color: #d97706; }
-.pov-widget-status--none { color: var(--text); }
+.pov-widget-status--none { color: var(--accent); }
+.pov-widget-status--plan { color: var(--accent); }
 
 .pov-widget-arrow {
   width: 14px;
   height: 14px;
   color: rgba(0, 0, 0, 0.25);
   flex-shrink: 0;
+  transition: color 0.4s ease, transform 0.4s ease;
+}
+
+/* On hover the arrow turns accent-blue and slides 6px left. */
+.pov-widget:hover .pov-widget-arrow {
+  color: var(--accent);
+  transform: translateX(6px);
 }
 
 .pov-new-pill {
@@ -344,26 +384,145 @@
 }
 
 /* ══════════════════════════════
+   PROJECT HEALTH (Supabase-style)
+   ══════════════════════════════ */
+
+/* Mirrors the Recent Activity structure exactly: header pill on top, then a
+   po-set-table of floating rows. The header carries a squared accent icon so
+   it matches the widget tiles + the Recent Activity header. */
+.pov-health {
+  display: flex;
+  flex-direction: column;
+}
+
+.pov-health-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--card);
+  border-radius: 16px;
+}
+
+.pov-health-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.pov-health-icon svg { width: 18px; height: 18px; }
+
+.pov-health-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.pov-health-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.pov-health-pill--ok      { background: var(--accent-tint);     color: var(--accent); }
+.pov-health-pill--warn    { background: rgba(217,119,6,0.1);    color: #d97706;       }
+.pov-health-pill--loading { background: rgba(0,0,0,0.05);       color: var(--muted);  }
+
+.pov-health-loading {
+  margin-top: 8px;
+  padding: 22px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  background: var(--card);
+  border-radius: 16px;
+}
+
+/* Row grid: status dot | label | detail. !important beats the base
+   .po-set-row 7-col grid (same as the Recent Activity rows). */
+.pov-health-row {
+  grid-template-columns: 24px 1fr auto !important;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.pov-health-table > .po-set-row:first-child {
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+}
+.pov-health-table > .po-set-row:last-child {
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+}
+
+.pov-health-dot {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.pov-health-dot--ok   { color: var(--accent); }
+.pov-health-dot--warn { color: #d97706; }
+.pov-health-dot--info { color: rgba(0, 0, 0, 0.22); }
+
+.pov-health-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.pov-health-detail {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.pov-health-detail--warn { color: #d97706; font-weight: 500; }
+
+/* ══════════════════════════════
    RIGHT: RECENT ORDERS
    ══════════════════════════════ */
 
 .pov-right {
   position: sticky;
   top: 16px;
+  /* Fill the stretched grid cell so the recent feed can grow to the same
+     height as the left column (Project Health + widgets). */
+  display: flex;
+  flex-direction: column;
 }
 
+/* Recent feed mirrors the PromoCodes po-set-table look: a header pill on top,
+   then floating row-cards on the page background (NOT nested inside one big
+   card). The right column sits on --bg so the white rows read as a table.
+   flex: 1 lets the feed fill the column height for a cohesive left/right
+   block length. */
 .pov-recent {
-  background: var(--card);
-  border-radius: 16px;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 
 .pov-recent-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 12px 16px;
+  background: var(--card);
+  border-radius: 16px;
 }
 
 .pov-recent-title {
@@ -404,38 +563,86 @@
   height: 12px;
 }
 
-.pov-recent-list {
+/* Two "View all" links (Orders / Bookings) live side by side, separated by a
+   thin divider so they read as a pair rather than one run-on link. */
+.pov-recent-actions {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.pov-recent-actions .pov-recent-all + .pov-recent-all {
+  padding-left: 12px;
+  border-left: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .pov-recent-empty {
-  padding: 24px 16px;
+  margin-top: 8px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 16px;
   text-align: center;
   font-size: 13px;
   color: var(--muted);
+  background: var(--card);
+  border-radius: 16px;
 }
 
-.pov-recent-item {
+/* Table fills the column; rows grow equally to absorb the residual height so
+   the feed reaches the same bottom edge as the left column. */
+.pov-recent-table {
+  flex: 1;
+}
+.pov-recent-table > .po-set-row {
+  flex: 1 1 0;
+  min-height: 52px;
+  /* Cap growth so a near-empty feed (1-2 rows) doesn't balloon into giant
+     rows — they cap at 96px and leave a small bottom gap instead. */
+  max-height: 96px;
+}
+
+/* Row grid: kind icon | name(+sub) | date | status | amount.
+   !important beats the base `.po-set-row:not(.po-set-row--head)` 7-col grid
+   from Products.css (same specificity, import order is fragile). */
+.pov-recent-row {
+  grid-template-columns: 28px 1fr auto auto auto !important;
+  gap: 10px;
+  cursor: pointer;
+}
+
+/* Round the outer corners of the stack so the table doesn't look sliced off
+   right under the header pill. Base .po-set-row is square at rest (only
+   pill-rounds on hover); we round just the first row's top + last row's
+   bottom so the resting stack reads as one card. */
+.pov-recent-table > .po-set-row:first-child {
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+}
+.pov-recent-table > .po-set-row:last-child {
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+}
+
+.pov-recent-kind {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 11px 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-  cursor: pointer;
-  transition: background 0.15s ease;
-  gap: 12px;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent-tint);
+  color: var(--accent);
 }
+.pov-recent-kind svg { width: 16px; height: 16px; }
 
-.pov-recent-item:last-child { border-bottom: none; }
-.pov-recent-item:hover      { background: var(--bg); }
+.pov-recent-cell { display: flex; align-items: center; min-width: 0; }
 
-.pov-recent-info {
-  display: flex;
+.pov-recent-cell--name {
   flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
 }
 
 .pov-recent-name {
@@ -445,25 +652,32 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
-.pov-recent-date {
+.pov-recent-sub {
   font-size: 11px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
-.pov-recent-right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-  flex-shrink: 0;
+.pov-recent-cell--date {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
-.pov-recent-amount {
+.pov-recent-cell--status { justify-content: flex-start; }
+
+.pov-recent-cell--amount {
+  justify-content: flex-end;
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
 }
 
 /* ── Order status badges ── */
@@ -484,6 +698,191 @@
 .pov-order-badge--delivered { background: rgba(8,145,178,0.1);   color: #0891b2;       }
 .pov-order-badge--cancelled { background: rgba(239,68,68,0.1);   color: #ef4444;       }
 .pov-order-badge--refunded  { background: rgba(217,119,6,0.1);   color: #d97706;       }
+
+/* ══════════════════════════════
+   BELOW-THE-FOLD: Action Center + Advisor (Supabase-style sections)
+   ══════════════════════════════ */
+
+/* Page wrapper stacks the top 2-col block + the sections below it. The top
+   block keeps its own 128px header offset; sections follow with a gap. */
+.pov-page {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+
+.pov-section { display: flex; flex-direction: column; }
+
+.pov-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 10px;
+}
+.pov-section-head-icon { width: 16px; height: 16px; color: var(--muted); }
+.pov-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── Action Center — count tiles ── */
+.pov-action-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.pov-action-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--card);
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  /* InteractiveSection tilt + gloss — same chrome + hover shadow as widgets.
+     transform is JS-driven by IS, so only box-shadow gets a CSS transition. */
+  position: relative;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  transition: box-shadow 0.8s ease;
+}
+.pov-action-tile:hover {
+  box-shadow: 4px 8px 32px rgba(1, 3, 32, 0.08);
+}
+
+/* Gloss overlay painted by IS; content sits above it. */
+.pov-action-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  transition: opacity 0.3s ease;
+}
+.pov-action-tile > *:not(.pov-action-gloss) {
+  position: relative;
+  z-index: 2;
+}
+
+/* Top row: icon on the left, count pushed to the right at the icon's level. */
+.pov-action-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pov-action-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.05);
+  color: rgba(0, 0, 0, 0.4);
+}
+.pov-action-icon svg { width: 16px; height: 16px; }
+
+.pov-action-count {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: rgba(0, 0, 0, 0.35);
+  line-height: 1;
+}
+.pov-action-label { font-size: 12px; color: var(--muted); }
+
+/* When there's something to do, the tile turns accent so the eye lands on it. */
+.pov-action-tile--active .pov-action-icon  { background: var(--accent-tint); color: var(--accent); }
+.pov-action-tile--active .pov-action-count { color: var(--accent); }
+
+/* ── Store Advisor — severity rows ── */
+.pov-adv-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  margin-left: auto;
+}
+.pov-adv-pill--ok  { background: var(--accent-tint);  color: var(--accent); }
+.pov-adv-pill--has { background: rgba(217,119,6,0.1); color: #d97706;       }
+
+.pov-adv-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--card);
+  border-radius: 16px;
+}
+
+/* Rows reuse the po-set-table chrome (tilt + gloss); 3-col grid:
+   severity icon | text(title+detail) | arrow. */
+.pov-adv-row {
+  grid-template-columns: 22px 1fr 16px !important;
+  gap: 12px;
+  cursor: pointer;
+  min-height: 60px;
+}
+.pov-adv-table > .po-set-row:first-child {
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+}
+.pov-adv-table > .po-set-row:last-child {
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+}
+
+.pov-adv-icon { width: 18px; height: 18px; flex-shrink: 0; }
+.pov-adv-icon--critical { color: #ef4444; }
+.pov-adv-icon--warning  { color: #d97706; }
+.pov-adv-icon--info     { color: var(--accent); }
+
+.pov-adv-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pov-adv-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.pov-adv-detail {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pov-adv-arrow {
+  width: 14px;
+  height: 14px;
+  color: rgba(0, 0, 0, 0.25);
+  flex-shrink: 0;
+  transition: color 0.4s ease, transform 0.4s ease;
+}
+
+/* Same arrow micro-interaction as the widget tiles — on row hover the arrow
+   turns accent-blue and slides 6px left. */
+.pov-adv-row:hover .pov-adv-arrow {
+  color: var(--accent);
+  transform: translateX(-6px);
+}
+
+/* ── KPI grid (Analytics page) ─────────────────────────── */
 
 /* ── KPI grid (Analytics page) ─────────────────────────── */
 .kpi-grid {

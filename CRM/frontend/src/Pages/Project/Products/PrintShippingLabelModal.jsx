@@ -221,7 +221,7 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
   return createPortal(
     <div className="auth-modal-overlay print-bc-split-overlay"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="print-bc-split-pair"
+      <div className="print-bc-split-pair psl-pair"
         onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
 
         {/* LEFT — order table + format picker + print actions */}

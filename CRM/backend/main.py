@@ -3480,16 +3480,19 @@ if _RATE_LIMIT_AVAILABLE:
 
 
 # ── HTTP cache headers for safe-to-cache GETs ─────────────────────
-_CACHEABLE_PATHS = (
-    "/api/shipping-carriers",   # 35-row preset table, virtually static
-    "/api/orgs",                # rare changes
-    "/api/projects",            # rare changes
-    "/api/categories",          # rare changes
-)
+# EXACT-path matching only — a `startswith("/api/projects")` prefix used to
+# also catch dynamic per-project endpoints (`/api/projects/by-key/…`,
+# `/api/projects/{id}/overview-status`, …). That stale-cached the project's
+# currency (so "Today's Revenue" kept the old symbol after a currency switch)
+# and the health panel. Now we only cache the genuinely static / list GETs.
+_CACHEABLE_EXACT = {
+    "/api/shipping-carriers",   # 74-row preset table, virtually static
+    "/api/categories",          # per-project list, rare changes
+}
 @app.middleware("http")
 async def add_cache_headers(request, call_next):
     response = await call_next(request)
-    if request.method == "GET" and any(request.url.path.startswith(p) for p in _CACHEABLE_PATHS):
+    if request.method == "GET" and request.url.path in _CACHEABLE_EXACT:
         # 60s fresh + 5min SWR is conservative — these tables are
         # tweakable in CRM and we don't want a stale list lingering
         # for an hour after the merchant renames something.
@@ -12397,41 +12400,360 @@ def get_orders_stats(project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
     require_team_member_or_owner(user, project_id)
 
-    # One query for counters + revenue
-    summary = db_one(
-        """SELECT
-             COUNT(*) FILTER (WHERE status = 'new')              AS new_count,
-             COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)  AS today_orders,
-             COALESCE(SUM(total_amount) FILTER (WHERE created_at >= CURRENT_DATE), 0) AS today_revenue
-           FROM order_history
-           WHERE project_id = %s""",
+    # "Today" must be the calendar day in the PROJECT's timezone, matching the
+    # Analytics overview (which uses get_project_timezone). The old query used
+    # raw UTC CURRENT_DATE, so an order placed this evening local-time but past
+    # UTC-midnight silently dropped off the count — that was the real cause of
+    # "digital orders aren't counted" (they ARE in order_history; the day
+    # boundary just excluded them).
+    tz_obj = _tz(get_project_timezone(project_id))
+    _day0 = datetime.now(tz_obj).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start = _day0.astimezone(timezone.utc)
+    day_end   = (_day0 + timedelta(days=1)).astimezone(timezone.utc)
+
+    # new_count = all-time orders still in 'new' status (drives the "N new"
+    # pill). Today counts mirror the Analytics overview EXACTLY so the two
+    # surfaces never disagree: order_history (physical + digital) excluding
+    # cancelled/refunded, PLUS completed bookings (by starts_at — money is
+    # earned when the service is delivered, not when it's booked).
+    nc = db_one(
+        "SELECT COUNT(*) FILTER (WHERE status='new') AS n FROM order_history WHERE project_id=%s",
         (project_id,)
-    )
+    ) or {}
+    otoday = db_one(
+        """SELECT COUNT(*) AS cnt, COALESCE(SUM(total_amount), 0) AS rev
+             FROM order_history
+            WHERE project_id=%s AND created_at >= %s AND created_at < %s
+              AND status NOT IN ('cancelled', 'refunded')""",
+        (project_id, day_start, day_end)
+    ) or {}
+    btoday = db_one(
+        """SELECT COUNT(*) AS cnt,
+                  COALESCE(SUM(COALESCE(s.price, b.freeform_price, 0)), 0) AS rev
+             FROM bookings b
+             LEFT JOIN booking_services s ON s.id = b.service_id
+            WHERE b.project_id=%s AND b.starts_at >= %s AND b.starts_at < %s
+              AND b.status = 'completed'""",
+        (project_id, day_start, day_end)
+    ) or {}
+    new_count     = int(nc.get("n") or 0)
+    today_orders  = int(otoday.get("cnt") or 0) + int(btoday.get("cnt") or 0)
+    today_revenue = float(otoday.get("rev") or 0) + float(btoday.get("rev") or 0)
+    proj_currency = (db_one("SELECT currency FROM crm_projects WHERE id=%s", (project_id,))
+                     or {}).get("currency") or "USD"
+    # Recent feed merges store orders AND service bookings so the overview
+    # surfaces all customer activity, not just physical/digital sales. Each
+    # side is normalised to the same shape (kind discriminates the badge +
+    # icon on the frontend). Booking amount falls back through the catalog
+    # service price → freeform price → 0.
+    #
+    # Capped interleave (7 orders + 2 bookings) instead of a flat "newest":
+    # a busy store can have many orders newer than every booking, which would
+    # hide bookings from the feed entirely. Taking the newest of each kind
+    # then merge-sorting guarantees both streams are represented when they
+    # exist, while still ordering chronologically. 9 rows also fills the
+    # right column to match the left (health + widgets) height.
     recent = db_all(
-        """SELECT oh.id, oh.total_amount, oh.status, oh.recipient_name, oh.created_at,
-                  u.name AS customer_name
-           FROM order_history oh
-           LEFT JOIN users u ON oh.user_id=u.id
-           WHERE oh.project_id=%s
-           ORDER BY oh.created_at DESC LIMIT 5""",
-        (project_id,)
+        """SELECT * FROM (
+             (SELECT oh.id, oh.total_amount AS amount, oh.status,
+                     COALESCE(NULLIF(oh.recipient_name, ''), u.name, 'Guest') AS name,
+                     oh.created_at, 'order' AS kind, NULL AS detail,
+                     COALESCE(oh.payment_currency, %s) AS currency
+                FROM order_history oh
+                LEFT JOIN users u ON oh.user_id = u.id
+               WHERE oh.project_id = %s
+               ORDER BY oh.created_at DESC LIMIT 7)
+             UNION ALL
+             (SELECT b.id, COALESCE(s.price, b.freeform_price, 0) AS amount, b.status,
+                     COALESCE(NULLIF(b.customer_name, ''), 'Guest') AS name,
+                     b.created_at, 'booking' AS kind,
+                     COALESCE(s.name, b.freeform_service_name, 'Booking') AS detail,
+                     %s AS currency
+                FROM bookings b
+                LEFT JOIN booking_services s ON s.id = b.service_id
+               WHERE b.project_id = %s
+               ORDER BY b.created_at DESC LIMIT 2)
+           ) merged
+           ORDER BY created_at DESC""",
+        (proj_currency, project_id, proj_currency, project_id)
     )
     return {
-        "new_count":     int(summary["new_count"])     if summary else 0,
-        "today_orders":  int(summary["today_orders"])  if summary else 0,
-        "today_revenue": float(summary["today_revenue"]) if summary else 0,
+        "new_count":     new_count,
+        "today_orders":  today_orders,
+        "today_revenue": today_revenue,
+        "currency":      proj_currency,
         "recent":        [
             {
-                "id":            r["id"],
-                "total_amount":  r["total_amount"],
-                "status":        r["status"],
-                "recipient_name": r["recipient_name"],
-                "customer_name": r["customer_name"],
-                "created_at":    r["created_at"].isoformat() if r["created_at"] else None,
+                "id":           r["id"],
+                "kind":         r["kind"],
+                "amount":       float(r["amount"] or 0),
+                "status":       r["status"],
+                "name":         r["name"],
+                "detail":       r["detail"],
+                "currency":     r["currency"] or proj_currency,
+                "created_at":   r["created_at"].isoformat() if r["created_at"] else None,
             }
             for r in recent
         ],
     }
+
+
+# ── Project Overview — aggregated health/status panel (Supabase-style) ──
+# Bundles 5 cheap checks into one round-trip so the overview card can render
+# a "Healthy / N warnings" pill + a per-subsystem breakdown without the
+# frontend firing 5 separate requests. Severity model:
+#   ok   (green)  — configured and healthy
+#   info (grey)   — not configured yet (neutral; expected for a new project)
+#   warn (amber)  — a real anomaly that wants attention; counted in `warnings`
+@app.get("/api/projects/{project_id}/overview-status")
+def project_overview_status(project_id: int, user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    checks = []
+
+    # 1. URL Configuration — gates OAuth redirects + email links.
+    url_row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id=%s", (project_id,))
+    if url_row and (url_row.get("frontend_url") or "").strip():
+        checks.append({"key": "url_config", "label": "URL Configuration",
+                       "status": "ok", "detail": "Site URL connected"})
+    else:
+        checks.append({"key": "url_config", "label": "URL Configuration",
+                       "status": "info", "detail": "Not configured"})
+
+    # 2. Customer Authentication — any sign-in method live for the storefront?
+    methods = []
+    em = db_one("SELECT is_verified FROM crm_email_domains WHERE project_id=%s", (project_id,))
+    if em and em.get("is_verified"):
+        methods.append("Email")
+    oa = db_one("SELECT google_client_id FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
+    if oa and (oa.get("google_client_id") or "").strip():
+        methods.append("Google")
+    sms = db_one("SELECT is_enabled FROM crm_sms_settings WHERE project_id=%s", (project_id,))
+    if sms and sms.get("is_enabled"):
+        methods.append("Phone")
+    gen = db_one("SELECT COUNT(*) AS n FROM crm_auth_providers WHERE project_id=%s AND is_enabled=TRUE",
+                 (project_id,))
+    if gen and int(gen.get("n") or 0) > 0:
+        methods.append(f"+{int(gen['n'])} OAuth")
+    if methods:
+        checks.append({"key": "auth", "label": "Customer Authentication",
+                       "status": "ok", "detail": " · ".join(methods)})
+    else:
+        checks.append({"key": "auth", "label": "Customer Authentication",
+                       "status": "info", "detail": "No methods enabled"})
+
+    # 3. Alerts — active subscriptions + recently-fired count (last 7 days).
+    al = db_one(
+        """SELECT COUNT(*) FILTER (WHERE is_active) AS active,
+                  COUNT(*) FILTER (WHERE last_fired_at >= NOW() - INTERVAL '7 days') AS fired
+             FROM crm_alerts WHERE project_id=%s""",
+        (project_id,)
+    ) or {}
+    active_alerts = int(al.get("active") or 0)
+    fired_alerts  = int(al.get("fired") or 0)
+    if fired_alerts > 0:
+        checks.append({"key": "alerts", "label": "Alerts",
+                       "status": "warn",
+                       "detail": f"{fired_alerts} fired in last 7 days"})
+    elif active_alerts > 0:
+        checks.append({"key": "alerts", "label": "Alerts",
+                       "status": "ok", "detail": f"{active_alerts} active"})
+    else:
+        checks.append({"key": "alerts", "label": "Alerts",
+                       "status": "info", "detail": "Not configured"})
+
+    # 4. Inventory — out-of-stock + low-stock SKU counts. Mirrors the
+    #    canonical /api/analytics/inventory-health logic exactly: threshold 0
+    #    means "not configured" → fall back to the project-wide default of 10,
+    #    and out-of-stock (qty 0) is always counted regardless of threshold.
+    #    (The previous `low_stock_threshold > 0` filter hid every OOS SKU on
+    #    a store that never set per-product thresholds.)
+    inv = db_one(
+        """SELECT
+             COUNT(*) FILTER (WHERE l2.stock_quantity = 0) AS oos,
+             COUNT(*) FILTER (WHERE l2.stock_quantity > 0
+                AND l2.stock_quantity <= COALESCE(NULLIF(p.low_stock_threshold, 0), 10)) AS low
+           FROM product_configurations_l2 l2
+           JOIN product_configurations_l1 l1 ON l1.id = l2.variation_id
+           JOIN products p ON p.id = l1.product_id
+          WHERE p.project_id = %s AND p.is_archived = FALSE""",
+        (project_id,)
+    ) or {}
+    oos = int(inv.get("oos") or 0)
+    low = int(inv.get("low") or 0)
+    if oos > 0 or low > 0:
+        parts = []
+        if oos > 0: parts.append(f"{oos} out of stock")
+        if low > 0: parts.append(f"{low} low")
+        checks.append({"key": "inventory", "label": "Inventory",
+                       "status": "warn", "detail": " · ".join(parts)})
+    else:
+        checks.append({"key": "inventory", "label": "Inventory",
+                       "status": "ok", "detail": "Stock levels healthy"})
+
+    # 5. Analytics anomaly — revenue last 7d vs prior 7d. A >40% drop on a
+    #    non-trivial prior week is flagged; everything else reads "no anomalies".
+    rev = db_one(
+        """SELECT
+             COALESCE(SUM(total_amount) FILTER (
+               WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'), 0)  AS this_week,
+             COALESCE(SUM(total_amount) FILTER (
+               WHERE created_at >= CURRENT_DATE - INTERVAL '14 days'
+                 AND created_at <  CURRENT_DATE - INTERVAL '7 days'), 0)  AS prior_week
+           FROM order_history
+           WHERE project_id = %s
+             AND status NOT IN ('cancelled', 'refunded')""",
+        (project_id,)
+    ) or {}
+    this_week  = float(rev.get("this_week") or 0)
+    prior_week = float(rev.get("prior_week") or 0)
+    if prior_week >= 50 and this_week < prior_week * 0.6:
+        drop_pct = round((1 - this_week / prior_week) * 100)
+        checks.append({"key": "analytics", "label": "Analytics",
+                       "status": "warn",
+                       "detail": f"Revenue down {drop_pct}% vs last week"})
+    else:
+        checks.append({"key": "analytics", "label": "Analytics",
+                       "status": "ok", "detail": "No anomalies detected"})
+
+    warnings = sum(1 for c in checks if c["status"] == "warn")
+    return {
+        "overall":  "warning" if warnings > 0 else "healthy",
+        "warnings": warnings,
+        "checks":   checks,
+    }
+
+
+# ── Project Overview — Action Center + Store Advisor ──────────────────────
+# Two operational blocks shown below the top overview, deliberately distinct
+# from the Analytics page (which is metrics/trends). This is "what to do now"
+# (action queue) + "what to fix" (setup/health recommendations). One endpoint
+# so the page does a single round-trip.
+@app.get("/api/projects/{project_id}/overview-extra")
+def project_overview_extra(project_id: int, user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    proj = db_one("SELECT api_key, org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}
+    org_id = proj.get("org_id")
+
+    # ── Action Center — operational queue with quick-link routes ──
+    actions = []
+    fulfil = db_one(
+        "SELECT COUNT(*) AS n FROM order_history WHERE project_id=%s AND status IN ('new','confirmed')",
+        (project_id,)
+    ) or {}
+    actions.append({"key": "fulfill", "label": "Orders to fulfill",
+                    "count": int(fulfil.get("n") or 0), "route": "orders"})
+
+    ret = db_one(
+        "SELECT COUNT(*) AS n FROM order_returns WHERE project_id=%s AND status = ANY(%s)",
+        (project_id, list(RETURN_GROUP_ACTION))
+    ) or {}
+    actions.append({"key": "returns", "label": "Returns to review",
+                    "count": int(ret.get("n") or 0), "route": "orders?tab=returns"})
+
+    # Bookings happening today (project tz), still upcoming (pending/confirmed).
+    tz_obj = _tz(get_project_timezone(project_id))
+    _d0 = datetime.now(tz_obj).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start = _d0.astimezone(timezone.utc)
+    day_end   = (_d0 + timedelta(days=1)).astimezone(timezone.utc)
+    bk = db_one(
+        """SELECT COUNT(*) AS n FROM bookings
+            WHERE project_id=%s AND starts_at >= %s AND starts_at < %s
+              AND status IN ('pending', 'confirmed')""",
+        (project_id, day_start, day_end)
+    ) or {}
+    actions.append({"key": "bookings", "label": "Bookings today",
+                    "count": int(bk.get("n") or 0), "route": "booking"})
+
+    inv = db_one(
+        """SELECT COUNT(*) AS n
+             FROM product_configurations_l2 l2
+             JOIN product_configurations_l1 l1 ON l1.id = l2.variation_id
+             JOIN products p ON p.id = l1.product_id
+            WHERE p.project_id=%s AND p.is_archived=FALSE
+              AND l2.stock_quantity <= COALESCE(NULLIF(p.low_stock_threshold, 0), 10)""",
+        (project_id,)
+    ) or {}
+    actions.append({"key": "restock", "label": "Items to restock",
+                    "count": int(inv.get("n") or 0), "route": "products/inventory"})
+
+    msg = db_one(
+        "SELECT COUNT(*) AS n FROM crm_chat_conversations WHERE project_id=%s AND unread_count > 0",
+        (project_id,)
+    ) or {}
+    actions.append({"key": "messages", "label": "Unread messages",
+                    "count": int(msg.get("n") or 0), "route": "chat"})
+
+    # ── Store Advisor — fixable setup / best-practice issues ──
+    advisor = []
+
+    # Payment (org-level). 'manual' is a valid choice → info nudge; a real
+    # provider that isn't connected yet → critical (orders can't be charged).
+    if org_id:
+        org = db_one("SELECT slug, payment_provider FROM crm_organizations WHERE id=%s", (org_id,)) or {}
+        provider = (org.get("payment_provider") or "manual")
+        slug = org.get("slug")
+        pc = db_one("SELECT is_connected FROM crm_payment_credentials WHERE org_id=%s", (org_id,)) or {}
+        connected = bool(pc.get("is_connected"))
+        pay_route = f"/org/{slug}/payments" if slug else None
+        if provider == "manual":
+            advisor.append({"key": "payment", "severity": "info",
+                            "title": "No payment provider connected",
+                            "detail": "Orders are recorded but not auto-charged. Connect Stripe / PayPal / etc.",
+                            "route": pay_route})
+        elif not connected:
+            advisor.append({"key": "payment", "severity": "critical",
+                            "title": f"Finish connecting {provider.title()}",
+                            "detail": "Credentials saved but not verified — customers can't be charged yet.",
+                            "route": pay_route})
+
+    # Email domain (per-project). Unverified → confirmations may hit spam.
+    em = db_one("SELECT domain, is_verified FROM crm_email_domains WHERE project_id=%s", (project_id,)) or {}
+    if not em.get("domain"):
+        advisor.append({"key": "email", "severity": "info",
+                        "title": "No custom email domain",
+                        "detail": "Order emails send from the shared address. Add a domain to brand them.",
+                        "route": "authentication"})
+    elif not em.get("is_verified"):
+        advisor.append({"key": "email", "severity": "warning",
+                        "title": "Email domain not verified",
+                        "detail": "DNS records pending — confirmations may land in spam until verified.",
+                        "route": "authentication"})
+
+    # Catalog quality — counts of active products missing key fields.
+    cat = db_one(
+        """SELECT
+             COUNT(*) FILTER (WHERE NOT EXISTS (
+               SELECT 1 FROM product_configurations_l1 l1
+                WHERE l1.product_id = p.id AND COALESCE(array_length(l1.images, 1), 0) >= 1)) AS no_img,
+             COUNT(*) FILTER (WHERE COALESCE(p.description, '') = '')        AS no_desc,
+             COUNT(*) FILTER (WHERE COALESCE(p.seo_title, '') = ''
+                              AND COALESCE(p.seo_description, '') = '')        AS no_seo
+           FROM products p
+          WHERE p.project_id=%s AND p.is_archived=FALSE""",
+        (project_id,)
+    ) or {}
+    no_img  = int(cat.get("no_img") or 0)
+    no_desc = int(cat.get("no_desc") or 0)
+    no_seo  = int(cat.get("no_seo") or 0)
+    if no_img > 0:
+        advisor.append({"key": "no_images", "severity": "warning",
+                        "title": f"{no_img} product{'s' if no_img != 1 else ''} have no photos",
+                        "detail": "Products without images convert far worse — add at least one photo.",
+                        "route": "products"})
+    if no_desc > 0:
+        advisor.append({"key": "no_desc", "severity": "info",
+                        "title": f"{no_desc} product{'s' if no_desc != 1 else ''} missing a description",
+                        "detail": "A description helps customers decide and improves SEO.",
+                        "route": "products"})
+    if no_seo > 0:
+        advisor.append({"key": "no_seo", "severity": "info",
+                        "title": f"{no_seo} product{'s' if no_seo != 1 else ''} without SEO meta",
+                        "detail": "Set an SEO title + description so the page ranks in search.",
+                        "route": "products"})
+
+    sev_rank = {"critical": 0, "warning": 1, "info": 2}
+    advisor.sort(key=lambda a: sev_rank.get(a["severity"], 3))
+    return {"actions": actions, "advisor": advisor}
 
 
 @app.get("/api/orders/stream")
