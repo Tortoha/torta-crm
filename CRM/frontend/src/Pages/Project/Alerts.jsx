@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Bell, Plus, Trash, PencilSimple, X, CheckCircle, Warning, DotsThreeOutline,
   MagnifyingGlass, ArrowDown, SquaresFour, List,
@@ -16,54 +17,24 @@ import '../../Style/Targets.css';    // .t-card + status pills + .t-row-progress
 import '../../Style/Alerts.css';     // .al-fire-* (unchanged history list)
 
 // ── Alert-type catalog (must match ALERT_TYPES in CRM backend) ──────
+// Alert-type catalog. `tkey` resolves label/hint/thresholdLabel via i18n.
+// `hasThreshold` replaces the old thresholdLabel-truthiness check.
 const ALERT_TYPES = [
-  {
-    value: 'revenue_drop',
-    label: 'Revenue drop',
-    hint: 'Compares last 24 h to the prior 24 h. Fires when the drop exceeds your threshold percent.',
-    thresholdLabel: 'Drop threshold (%)',
-    thresholdPlaceholder: '20',
-    defaultThreshold: 20,
-  },
-  {
-    value: 'low_stock',
-    label: 'Low stock',
-    hint: 'Fires when ANY SKU is at or below this stock level (and > 0).',
-    thresholdLabel: 'Min stock units',
-    thresholdPlaceholder: '5',
-    defaultThreshold: 5,
-  },
-  {
-    value: 'daily_summary',
-    label: 'Daily summary',
-    hint: 'Daily revenue + order count digest. Sent once every 24 h regardless of activity.',
-    thresholdLabel: null, // no threshold needed
-    defaultThreshold: 0,
-  },
-  {
-    value: 'new_order',
-    label: 'New order',
-    hint: 'Fires when at least one new paid order has come in since the last evaluation cycle (max once per 4 h).',
-    thresholdLabel: null,
-    defaultThreshold: 0,
-  },
+  { value: 'revenue_drop',  tkey: 'revenueDrop',  hasThreshold: true,  thresholdPlaceholder: '20', defaultThreshold: 20 },
+  { value: 'low_stock',     tkey: 'lowStock',     hasThreshold: true,  thresholdPlaceholder: '5',  defaultThreshold: 5 },
+  { value: 'daily_summary', tkey: 'dailySummary', hasThreshold: false, defaultThreshold: 0 },
+  { value: 'new_order',     tkey: 'newOrder',     hasThreshold: false, defaultThreshold: 0 },
 ];
 
 const typeMeta = (v) => ALERT_TYPES.find(t => t.value === v) || ALERT_TYPES[0];
+// Resolve a type's display label / hint / thresholdLabel via the translator.
+const typeLabel = (t, v) => t(`project.alerts.types.${typeMeta(v).tkey}.label`);
+const typeHint  = (t, v) => t(`project.alerts.types.${typeMeta(v).tkey}.hint`);
+const typeThresholdLabel = (t, v) => {
+  const m = typeMeta(v);
+  return m.hasThreshold ? t(`project.alerts.types.${m.tkey}.thresholdLabel`) : null;
+};
 
-// Toolbar — status filter shape mirrors Targets / PromoCodes.
-const STATUS_FILTER_OPTIONS = [
-  { value: 'all',    label: 'All statuses' },
-  { value: 'active', label: 'Active'       },
-  { value: 'muted',  label: 'Muted'        },
-];
-
-// Toolbar — sort field options. Direction toggles on second click.
-const SORT_OPTIONS = [
-  { field: 'date',  label: 'Sort by date'   },
-  { field: 'type',  label: 'Sort by type'   },
-  { field: 'fired', label: 'Sort by recent fire' },
-];
 const SORT_DEFAULT_DIR = { date: 'desc', type: 'asc', fired: 'desc' };
 
 const fmtDateTime = (iso) => {
@@ -78,6 +49,12 @@ const fmtDateTime = (iso) => {
 
 // ── Sort toggle (sliding pill, mirrors Targets / PromoCodes) ───────────
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
+  const SORT_OPTIONS = [
+    { field: 'date',  label: t('project.alerts.sortByDate')   },
+    { field: 'type',  label: t('project.alerts.sortByType')   },
+    { field: 'fired', label: t('project.alerts.sortByRecentFire') },
+  ];
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -120,7 +97,13 @@ function SortToggle({ sort, onSort }) {
 }
 
 function Alerts() {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
+  const STATUS_FILTER_OPTIONS = [
+    { value: 'all',    label: t('project.alerts.statusAll') },
+    { value: 'active', label: t('project.alerts.statusActive') },
+    { value: 'muted',  label: t('project.alerts.statusMuted') },
+  ];
   const [alerts, setAlerts] = useState([]);
   const [fires,  setFires]  = useState([]);
   const [loading, setLoading] = useState(true);
@@ -161,11 +144,11 @@ function Alerts() {
   useEffect(() => { reload(); }, [reload]);
 
   const handleDelete = async (id) => {
-    if (!confirm('Delete this alert? Existing fires stay in the audit log.')) return;
+    if (!confirm(t('project.alerts.confirmDelete'))) return;
     const r = await fetch(`${API_BASE}/api/projects/${projectId}/alerts/${id}`,
                           { method: 'DELETE', credentials: 'include' });
     if (r.ok) {
-      showToast('Alert deleted');
+      showToast(t('project.alerts.toastDeleted'));
       reload();
     }
   };
@@ -198,7 +181,7 @@ function Alerts() {
     const q = search.trim().toLowerCase();
     const filt = alerts.filter(a => {
       if (q) {
-        const hay = `${a.type_label || ''} ${a.email || ''} ${typeMeta(a.type).label}`.toLowerCase();
+        const hay = `${a.type_label || ''} ${a.email || ''} ${typeLabel(t, a.type)}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       if (statusF === 'active' && !a.is_active) return false;
@@ -225,12 +208,10 @@ function Alerts() {
 
   return (
     <>
-      <h1 className="crm-page-title">Alerts</h1>
+      <h1 className="crm-page-title">{t('project.alerts.title')}</h1>
 
       <p className="po-block-hint">
-        Email notifications triggered by metric thresholds. The evaluator
-        runs every hour; per-alert throttling prevents spam when a
-        condition stays violated.
+        {t('project.alerts.hint')}
       </p>
 
       {/* Full toolbar — search · sort · status filter · view toggle · New.
@@ -238,7 +219,7 @@ function Alerts() {
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search alerts…"
+          <input className="org-search-input" placeholder={t('project.alerts.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
@@ -254,38 +235,38 @@ function Alerts() {
             style={{ transform: `translateX(${curView === 'list' ? 30 : 0}px)` }} />
           <button className={`org-view-btn${curView === 'grid' ? ' org-view-btn--current' : ''}`}
             onClick={() => setView('grid')} onMouseEnter={() => setViewHover('grid')}
-            title="Grid view" type="button">
+            title={t('project.alerts.gridView')} type="button">
             <SquaresFour className="org-view-icon" />
           </button>
           <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
             onClick={() => setView('list')} onMouseEnter={() => setViewHover('list')}
-            title="List view" type="button">
+            title={t('project.alerts.listView')} type="button">
             <List className="org-view-icon" />
           </button>
         </div>
 
         <button type="button" className="org-new-btn" onClick={() => setEditing('new')}>
-          <Plus className="org-new-icon" /> New alert
+          <Plus className="org-new-icon" /> {t('project.alerts.newAlert')}
         </button>
       </div>
 
       {loading ? (
-        <div className="crm-placeholder">Loading…</div>
+        <div className="crm-placeholder">{t('project.alerts.loading')}</div>
       ) : filtered.length === 0 ? (
         <div className="crm-placeholder">
           {search || statusF !== 'all'
-            ? 'No alerts match your filters.'
-            : 'No alerts yet. Click New alert to add one — pick a metric, set the threshold, and we\'ll email you when it trips.'}
+            ? t('project.alerts.emptyFiltered')
+            : t('project.alerts.empty')}
         </div>
       ) : view === 'list' ? (
         // ── List view — tabular rows like PromoCodes / Batches ────────
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head po-set-row--alert">
-            <span>Type</span>
-            <span>Threshold</span>
-            <span>Recipient</span>
-            <span>Last fired</span>
-            <span>Status</span>
+            <span>{t('project.alerts.colType')}</span>
+            <span>{t('project.alerts.colThreshold')}</span>
+            <span>{t('project.alerts.colRecipient')}</span>
+            <span>{t('project.alerts.colLastFired')}</span>
+            <span>{t('project.alerts.colStatus')}</span>
             <span />
           </div>
           {filtered.map(a => (
@@ -313,19 +294,19 @@ function Alerts() {
           followed by an odd boxy "history" panel. Rows are read-only —
           no menu, no click handler (history can't be edited). */}
       <h2 className="crm-section-title" style={{ marginTop: 32, marginBottom: 12 }}>
-        Recent fires
+        {t('project.alerts.recentFires')}
       </h2>
       {fires.length === 0 ? (
         <div className="crm-placeholder">
-          No fires yet — alerts haven't tripped or there's no history.
+          {t('project.alerts.noFires')}
         </div>
       ) : (
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head po-set-row--fire">
-            <span>Event</span>
-            <span>Message</span>
-            <span>Alert</span>
-            <span>Fired at</span>
+            <span>{t('project.alerts.fireEvent')}</span>
+            <span>{t('project.alerts.fireMessage')}</span>
+            <span>{t('project.alerts.fireAlert')}</span>
+            <span>{t('project.alerts.fireFiredAt')}</span>
           </div>
           {fires.map(f => (
             <PoListRow key={f.id} className="po-set-row--fire">
@@ -358,7 +339,7 @@ function Alerts() {
           alert={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => {
-            showToast(editing === 'new' ? 'Alert created' : 'Alert updated');
+            showToast(editing === 'new' ? t('project.alerts.toastCreated') : t('project.alerts.toastUpdated'));
             setEditing(null);
             reload();
           }} />
@@ -375,7 +356,9 @@ function Alerts() {
 // 3-dot menu for actions (Mute/Activate/Edit/Delete). Whole row clicks
 // open the editor, status-pill stopPropagation prevents the open.
 function AlertListRow({ alert, onEdit, onDelete, onToggle }) {
+  const { t } = useTranslation();
   const meta = typeMeta(alert.type);
+  const thresholdLabel = typeThresholdLabel(t, alert.type);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   return (
@@ -387,26 +370,26 @@ function AlertListRow({ alert, onEdit, onDelete, onToggle }) {
       <span className="po-set-strong"
         style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                  color: alert.is_active ? undefined : 'var(--muted)' }}>
-        {alert.type_label || meta.label}
+        {alert.type_label || typeLabel(t, alert.type)}
       </span>
       <span>
-        {meta.thresholdLabel
-          ? <><b>{alert.threshold}</b> <span style={{ color: 'var(--muted)' }}>{meta.thresholdLabel.replace(/^[^()]*\(([^)]+)\)/, '$1').toLowerCase()}</span></>
+        {thresholdLabel
+          ? <><b>{alert.threshold}</b> <span style={{ color: 'var(--muted)' }}>{thresholdLabel.replace(/^[^()]*\(([^)]+)\)/, '$1').toLowerCase()}</span></>
           : <span style={{ color: 'var(--muted)' }}>—</span>}
       </span>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {alert.email}
       </span>
       <span style={{ color: 'var(--muted)' }}>
-        {alert.last_fired_at ? fmtDateTime(alert.last_fired_at) : 'Never'}
+        {alert.last_fired_at ? fmtDateTime(alert.last_fired_at) : t('project.alerts.never')}
       </span>
       <span>
         <span className={`t-status ${alert.is_active ? 't-status--on-track' : 't-status--behind'}`}>
-          {alert.is_active ? 'ACTIVE' : 'MUTED'}
+          {alert.is_active ? t('project.alerts.statusActiveUpper') : t('project.alerts.statusMutedUpper')}
         </span>
       </span>
       <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
-        aria-label="Options"
+        aria-label={t('project.alerts.options')}
         onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
         <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
       </button>
@@ -425,6 +408,7 @@ function AlertListRow({ alert, onEdit, onDelete, onToggle }) {
 // escapes the card's z-index / overflow constraints. Same .org-card-dropdown
 // styles as PromoCodes / Products — single visual language across pages.
 function AlertMenu({ btnRef, onClose, isActive, onEdit, onToggle, onDelete }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
 
   useEffect(() => {
@@ -456,17 +440,17 @@ function AlertMenu({ btnRef, onClose, isActive, onEdit, onToggle, onDelete }) {
       onClick={(e) => e.stopPropagation()}>
       <button className="org-card-dropdown-item"
         onClick={() => { onClose(); onEdit(); }}>
-        <PencilSimple className="org-card-dropdown-icon" /> Edit
+        <PencilSimple className="org-card-dropdown-icon" /> {t('project.alerts.edit')}
       </button>
       <button className="org-card-dropdown-item"
         onClick={() => { onClose(); onToggle(); }}>
         <Bell className="org-card-dropdown-icon" />
-        {isActive ? 'Mute' : 'Activate'}
+        {isActive ? t('project.alerts.mute') : t('project.alerts.activate')}
       </button>
       <div className="org-card-dropdown-sep" />
       <button className="org-card-dropdown-item org-card-dropdown-item--danger"
         onClick={() => { onClose(); onDelete(); }}>
-        <Trash className="org-card-dropdown-icon" /> Delete
+        <Trash className="org-card-dropdown-icon" /> {t('project.alerts.delete')}
       </button>
     </div>,
     document.body,
@@ -478,7 +462,9 @@ function AlertMenu({ btnRef, onClose, isActive, onEdit, onToggle, onDelete }) {
 // soft shadow, 3-dot menu in top-right. Bell icon left-side stays — it's
 // the page's identity. Active/muted styling lives on the bell + left bar.
 function AlertCard({ alert, onEdit, onDelete, onToggle }) {
+  const { t } = useTranslation();
   const meta = typeMeta(alert.type);
+  const thresholdLabel = typeThresholdLabel(t, alert.type);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
 
@@ -500,20 +486,20 @@ function AlertCard({ alert, onEdit, onDelete, onToggle }) {
           <div style={{ minWidth: 0 }}>
             <h3 className="t-card-title"
               style={!alert.is_active ? { color: 'var(--muted)' } : undefined}>
-              {alert.type_label || meta.label}
+              {alert.type_label || typeLabel(t, alert.type)}
             </h3>
             <div className="t-card-sub">
-              {meta.thresholdLabel && (
+              {thresholdLabel && (
                 <>
-                  <span>{meta.thresholdLabel}: <b>{alert.threshold}</b></span>
+                  <span>{thresholdLabel}: <b>{alert.threshold}</b></span>
                   <span className="t-card-sub-dot" />
                 </>
               )}
-              <span>To <b>{alert.email}</b></span>
+              <span>{t('project.alerts.colRecipient')}: <b>{alert.email}</b></span>
               {alert.last_fired_at && (
                 <>
                   <span className="t-card-sub-dot" />
-                  <span>Last fired {fmtDateTime(alert.last_fired_at)}</span>
+                  <span>{t('project.alerts.colLastFired')}: {fmtDateTime(alert.last_fired_at)}</span>
                 </>
               )}
             </div>
@@ -521,10 +507,10 @@ function AlertCard({ alert, onEdit, onDelete, onToggle }) {
         </div>
         <div className="t-card-actions" onClick={(e) => e.stopPropagation()}>
           <span className={`t-status ${alert.is_active ? 't-status--on-track' : 't-status--behind'}`}>
-            {alert.is_active ? 'ACTIVE' : 'MUTED'}
+            {alert.is_active ? t('project.alerts.statusActiveUpper') : t('project.alerts.statusMutedUpper')}
           </span>
           <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
-            aria-label="Options"
+            aria-label={t('project.alerts.options')}
             onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
             <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
           </button>
@@ -542,6 +528,7 @@ function AlertCard({ alert, onEdit, onDelete, onToggle }) {
 
 // ── Create/edit modal — matches PromoCodes / Booking modal layout ────
 function AlertEditModal({ projectId, alert, onClose, onSaved }) {
+  const { t } = useTranslation();
   const isNew = !alert;
   const [type,      setType]      = useState(alert?.type || ALERT_TYPES[0].value);
   const [threshold, setThreshold] = useState(
@@ -566,17 +553,17 @@ function AlertEditModal({ projectId, alert, onClose, onSaved }) {
   const submit = async (e) => {
     e?.preventDefault?.();
     if (!email || !email.includes('@')) {
-      setErr('Valid email required');
+      setErr(t('project.alerts.modal.validEmail'));
       return;
     }
-    if (meta.thresholdLabel && (threshold === '' || isNaN(+threshold))) {
-      setErr('Threshold must be a number');
+    if (meta.hasThreshold && (threshold === '' || isNaN(+threshold))) {
+      setErr(t('project.alerts.modal.thresholdNumber'));
       return;
     }
     setBusy(true);
     const body = {
       type,
-      threshold: meta.thresholdLabel ? +threshold : 0,
+      threshold: meta.hasThreshold ? +threshold : 0,
       email:     email.trim(),
       is_active: !!isActive,
     };
@@ -593,7 +580,7 @@ function AlertEditModal({ projectId, alert, onClose, onSaved }) {
       if (r.ok) { onSaved(); }
       else {
         const j = await r.json().catch(() => ({}));
-        setErr(j.detail || 'Save failed');
+        setErr(j.detail || t('project.alerts.modal.saveFailed'));
       }
     } finally { setBusy(false); }
   };
@@ -605,11 +592,10 @@ function AlertEditModal({ projectId, alert, onClose, onSaved }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">{isNew ? 'New alert' : 'Edit alert'}</div>
+              <div className="auth-modal-title">{isNew ? t('project.alerts.modal.newTitle') : t('project.alerts.modal.editTitle')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Hourly evaluation. Per-alert throttling: daily summary
-                  fires once per 23 h, others at most once per 4 h.
+                  {t('project.alerts.modal.subtitle')}
                 </span>
               </div>
             </div>
@@ -623,16 +609,16 @@ function AlertEditModal({ projectId, alert, onClose, onSaved }) {
           <form className="cpm-form" onSubmit={submit} autoComplete="off">
 
             <div className="cpm-section">
-              <label className="po-field-label">Alert type</label>
+              <label className="po-field-label">{t('project.alerts.modal.alertType')}</label>
               <Combobox value={type}
-                options={ALERT_TYPES.map(t => ({ value: t.value, label: t.label }))}
+                options={ALERT_TYPES.map(at => ({ value: at.value, label: typeLabel(t, at.value) }))}
                 onChange={switchType} />
-              <span className="cpm-section-hint">{meta.hint}</span>
+              <span className="cpm-section-hint">{typeHint(t, type)}</span>
             </div>
 
-            {meta.thresholdLabel && (
+            {meta.hasThreshold && (
               <div className="cpm-section">
-                <label className="po-field-label">{meta.thresholdLabel}</label>
+                <label className="po-field-label">{typeThresholdLabel(t, type)}</label>
                 <input className="crm-input" type="number"
                   placeholder={meta.thresholdPlaceholder}
                   value={threshold}
@@ -641,13 +627,13 @@ function AlertEditModal({ projectId, alert, onClose, onSaved }) {
             )}
 
             <div className="cpm-section">
-              <label className="po-field-label">Recipient email</label>
+              <label className="po-field-label">{t('project.alerts.modal.recipientEmail')}</label>
               <input className="crm-input" type="email"
-                placeholder="ops@yourstore.com"
+                placeholder={t('project.alerts.modal.recipientPlaceholder')}
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); setErr(''); }} />
               <span className="cpm-section-hint">
-                Outbound via SES (ses.tortacrm.com). Bounces are not retried.
+                {t('project.alerts.modal.recipientHint')}
               </span>
             </div>
 
@@ -660,10 +646,10 @@ function AlertEditModal({ projectId, alert, onClose, onSaved }) {
                 <input type="checkbox" className="cat-prod-checkbox po-include-cb"
                   checked={isActive}
                   onChange={(e) => setIsActive(e.target.checked)} />
-                <span className="po-set-toggle-text">Active</span>
+                <span className="po-set-toggle-text">{t('project.alerts.modal.active')}</span>
               </label>
               <span className="cpm-section-hint">
-                Muted alerts keep their history but stop firing until re-enabled.
+                {t('project.alerts.modal.activeHint')}
               </span>
             </div>
 
@@ -671,10 +657,10 @@ function AlertEditModal({ projectId, alert, onClose, onSaved }) {
 
             <div className="auth-actions">
               <button className="crm-submit-btn" type="submit" disabled={busy}>
-                {busy ? 'Saving…' : (isNew ? 'Create alert' : 'Save changes')}
+                {busy ? t('project.alerts.modal.saving') : (isNew ? t('project.alerts.modal.create') : t('project.alerts.modal.saveChanges'))}
               </button>
               <button className="crm-submit-btn auth-btn-secondary"
-                type="button" disabled={busy} onClick={onClose}>Cancel</button>
+                type="button" disabled={busy} onClick={onClose}>{t('project.alerts.modal.cancel')}</button>
             </div>
           </form>
         </div>

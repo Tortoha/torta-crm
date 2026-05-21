@@ -4,6 +4,7 @@ import './Style/index.css'
 // Side-effect import: installs the auto-refresh fetch wrapper before any
 // component code runs, so even the very first /api/me call benefits.
 import './api.js'
+import './i18n'
 import App from './App.jsx'
 
 const rootElement = document.getElementById('root');

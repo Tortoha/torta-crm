@@ -1,0 +1,80 @@
+{
+  "header": {
+    "userMenu": {
+      "ariaLabel": "Меню пользователя",
+      "settings": "Настройки",
+      "logout": "Выйти"
+    },
+    "org": {
+      "showOrganizations": "Показать организации",
+      "searchPlaceholder": "Поиск организаций…",
+      "allOrganizations": "Все организации",
+      "newOrganization": "Новая организация",
+      "modalTitle": "Новая организация",
+      "nameLabel": "Название",
+      "namePlaceholder": "Название организации"
+    },
+    "project": {
+      "showProjects": "Показать проекты",
+      "searchPlaceholder": "Поиск проектов…",
+      "newProject": "Новый проект",
+      "modalTitle": "Новый проект",
+      "nameLabel": "Название",
+      "namePlaceholder": "Название проекта",
+      "urlLabel": "URL",
+      "urlPlaceholder": "URL вашего сайта, например https://shop.com"
+    },
+    "product": {
+      "fallbackName": "Товар",
+      "showProducts": "Показать товары",
+      "searchPlaceholder": "Поиск товаров…",
+      "allProducts": "Все товары",
+      "newProduct": "Новый товар"
+    },
+    "switcher": {
+      "noResults": "Ничего не найдено"
+    },
+    "form": {
+      "nameRequired": "Укажите название",
+      "frontendUrlRequired": "Укажите URL сайта",
+      "invalidUrl": "Введите корректный URL: http://... или https://...",
+      "error": "Ошибка",
+      "creating": "Создание…",
+      "create": "Создать"
+    },
+    "notifications": {
+      "title": "Уведомления",
+      "markAllRead": "Отметить все как прочитанные",
+      "viewAll": "Показать все уведомления",
+      "empty": "Нет уведомлений",
+      "loadingMore": "Загрузка…",
+      "allTitle": "Все уведомления",
+      "allSubtitle": "Всё, что вы получили, сгруппировано по датам.",
+      "buckets": {
+        "today": "Сегодня",
+        "yesterday": "Вчера",
+        "thisWeek": "На этой неделе",
+        "thisMonth": "В этом месяце",
+        "earlier": "Ранее"
+      },
+      "time": {
+        "justNow": "только что",
+        "minutesAgo": "{{count}} мин назад",
+        "hoursAgo": "{{count}} ч назад",
+        "daysAgo": "{{count}} дн назад"
+      }
+    },
+    "crop": {
+      "title": "Редактировать фото",
+      "close": "Закрыть",
+      "zoom": "Масштаб",
+      "rotate": "Поворот",
+      "zoomOut": "Уменьшить",
+      "zoomIn": "Увеличить",
+      "rotateLeft": "Повернуть влево",
+      "rotateRight": "Повернуть вправо",
+      "saving": "Сохранение…",
+      "savePhoto": "Сохранить фото"
+    }
+  }
+}

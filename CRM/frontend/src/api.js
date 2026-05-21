@@ -1,3 +1,5 @@
+import { syncLang } from "./i18n";
+
 export const API_BASE   = "http://localhost:8001";
 export const MAGAZ_BASE = "http://localhost:8000";
 
@@ -136,9 +138,12 @@ if (typeof window !== "undefined" && !window.fetch.__torta_patched) {
     // Non-CRM requests pass through unchanged
     if (!isCrmRequest(url)) return originalFetch(input, init);
 
-    // Inject X-CSRF-Token on state-changing requests
+    // Inject X-CSRF-Token on state-changing requests. If the cookie is missing
+    // (e.g. the initial GET /api/csrf failed because the backend wasn't up yet),
+    // fetch it on-demand so the very first mutation doesn't get a spurious 403.
     if (!CSRF_SAFE_METHODS.has(method)) {
-      const token = getCsrfToken();
+      let token = getCsrfToken();
+      if (!token) { await ensureCsrfToken(); token = getCsrfToken(); }
       if (token) {
         init = {
           ...init,
@@ -148,6 +153,18 @@ if (typeof window !== "undefined" && !window.fetch.__torta_patched) {
     }
 
     let res = await originalFetch(input, init);
+
+    // Apply the server-stored UI language whenever we load the current user,
+    // so it follows the account across devices/browsers (localStorage is just a cache).
+    if (res.ok && method === "GET") {
+      try {
+        const path = new URL(url, window.location.origin).pathname;
+        if (path.endsWith("/api/me")) {
+          res.clone().json().then(j => syncLang(j?.language)).catch(() => {});
+        }
+      } catch { /* ignore */ }
+    }
+
     if (res.status !== 401 || shouldSkipRefresh(url)) return res;
 
     const refreshed = await doRefresh(originalFetch);

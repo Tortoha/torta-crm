@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Eye, EyeSlash, Trash, CaretDown, ChatCircle } from '@phosphor-icons/react';
 import { Icon } from '@iconify/react';
 import { API_BASE } from '../../api.js';
@@ -256,6 +257,7 @@ const PROVIDER_HINT = {
 };
 
 function PhonePanel({ projectId, onSaved }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
 
   const [data,     setData]     = useState(null);
@@ -303,14 +305,14 @@ function PhonePanel({ projectId, onSaved }) {
         body: JSON.stringify(payload),
       });
       const json = await res.json();
-      if (res.ok) { showToast('Saved'); onSaved?.(payload.is_enabled); await load(); }
-      else        { setErr(json.detail || 'Error saving'); }
-    } catch { setErr('Network error'); }
+      if (res.ok) { showToast(t('common.saved')); onSaved?.(payload.is_enabled); await load(); }
+      else        { setErr(json.detail || t('authConfig.errorSaving')); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
   const del = async () => {
-    if (!confirm('Remove SMS settings?')) return;
+    if (!confirm(t('authConfig.phone.removeConfirm'))) return;
     setDeleting(true);
     await fetch(`${API_BASE}/api/sms-settings${pq}`, { method: 'DELETE', credentials: 'include' });
     setDeleting(false);
@@ -318,7 +320,7 @@ function PhonePanel({ projectId, onSaved }) {
     await load();
   };
 
-  if (!form) return <p className="crm-placeholder">Loading…</p>;
+  if (!form) return <p className="crm-placeholder">{t('common.loading')}</p>;
 
   const cur = findProvider(form.provider);
 
@@ -327,8 +329,8 @@ function PhonePanel({ projectId, onSaved }) {
       {/* ── Enable toggle ── */}
       <div className="auth-toggle-row">
         <div>
-          <span className="auth-toggle-label">Enable Phone provider</span>
-          <p className="auth-field-hint">This will enable phone-based login for your application.</p>
+          <span className="auth-toggle-label">{t('authConfig.phone.enableLabel')}</span>
+          <p className="auth-field-hint">{t('authConfig.phone.enableHint')}</p>
         </div>
         <label className="auth-toggle">
           <input type="checkbox" checked={form.is_enabled}
@@ -341,8 +343,8 @@ function PhonePanel({ projectId, onSaved }) {
 
       {/* ── SMS provider dropdown ── */}
       <div className="auth-field">
-        <label className="auth-label">SMS provider</label>
-        <p className="auth-field-hint">External provider that will handle sending SMS messages.</p>
+        <label className="auth-label">{t('authConfig.phone.smsProvider')}</label>
+        <p className="auth-field-hint">{t('authConfig.phone.smsProviderHint')}</p>
         <ProviderDropdown value={form.provider} onChange={v => update('provider', v)} />
         <p className="auth-field-hint" style={{ marginTop: 8 }}>{PROVIDER_HINT[form.provider]}</p>
       </div>
@@ -374,8 +376,8 @@ function PhonePanel({ projectId, onSaved }) {
       {/* ── Phone confirmations ── */}
       <div className="auth-toggle-row">
         <div>
-          <span className="auth-toggle-label">Enable phone confirmations</span>
-          <p className="auth-field-hint">Users will need to confirm their phone number before signing in.</p>
+          <span className="auth-toggle-label">{t('authConfig.phone.confirmationsLabel')}</span>
+          <p className="auth-field-hint">{t('authConfig.phone.confirmationsHint')}</p>
         </div>
         <label className="auth-toggle">
           <input type="checkbox" checked={form.enable_phone_confirmations}
@@ -386,25 +388,25 @@ function PhonePanel({ projectId, onSaved }) {
 
       {/* ── OTP behaviour ── */}
       <div className="auth-field">
-        <label className="auth-label">SMS OTP Expiry</label>
-        <p className="auth-field-hint">Duration before an SMS OTP expires (30–600 seconds).</p>
+        <label className="auth-label">{t('authConfig.phone.otpExpiry')}</label>
+        <p className="auth-field-hint">{t('authConfig.phone.otpExpiryHint')}</p>
         <input className="crm-input" type="number" min={30} max={600}
           value={form.otp_expiry_seconds}
           onChange={e => update('otp_expiry_seconds', parseInt(e.target.value, 10) || 60)} />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">SMS OTP Length</label>
-        <p className="auth-field-hint">Number of digits in the OTP (4–10).</p>
+        <label className="auth-label">{t('authConfig.phone.otpLength')}</label>
+        <p className="auth-field-hint">{t('authConfig.phone.otpLengthHint')}</p>
         <input className="crm-input" type="number" min={4} max={10}
           value={form.otp_length}
           onChange={e => update('otp_length', parseInt(e.target.value, 10) || 6)} />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">SMS Message</label>
+        <label className="auth-label">{t('authConfig.phone.smsMessage')}</label>
         <p className="auth-field-hint">
-          Template for the OTP message. Use <code>{'{{ .Code }}'}</code> as the code placeholder.
+          {t('authConfig.phone.smsMessageHint')} <code>{'{{ .Code }}'}</code>
         </p>
         <textarea className="crm-input phone-textarea" rows={3}
           value={form.message_template}
@@ -412,10 +414,9 @@ function PhonePanel({ projectId, onSaved }) {
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Test Phone Numbers and OTPs</label>
+        <label className="auth-label">{t('authConfig.phone.testNumbers')}</label>
         <p className="auth-field-hint">
-          Comma-separated <code>phone=otp</code> pairs that bypass the SMS provider for testing.
-          Example: <code>+18005550123=789012</code>. Codes are sensitive — keep them hidden when not editing.
+          {t('authConfig.phone.testNumbersHint1')} <code>phone=otp</code> {t('authConfig.phone.testNumbersHint2')} <code>+18005550123=789012</code>. {t('authConfig.phone.testNumbersHint3')}
         </p>
         <div style={{ position: 'relative' }}>
           <input className="crm-input"
@@ -426,7 +427,7 @@ function PhonePanel({ projectId, onSaved }) {
             style={{ paddingRight: 44 }} />
           <button type="button"
             onClick={() => setShowTestCodes(v => !v)}
-            aria-label={showTestCodes ? 'Hide test codes' : 'Show test codes'}
+            aria-label={showTestCodes ? t('authConfig.phone.hideTestCodes') : t('authConfig.phone.showTestCodes')}
             style={{
               position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
               background: 'transparent', border: 'none', cursor: 'pointer',
@@ -441,12 +442,12 @@ function PhonePanel({ projectId, onSaved }) {
 
       <div className="auth-actions">
         <button className="crm-submit-btn" onClick={save} disabled={saving} type="button">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('authConfig.saving') : t('common.save')}
         </button>
         {data?.configured && (
           <button className="auth-btn-danger" onClick={del} disabled={deleting} type="button">
             <Trash size={15} />
-            {deleting ? 'Deleting…' : 'Delete'}
+            {deleting ? t('authConfig.deleting') : t('common.delete')}
           </button>
         )}
       </div>

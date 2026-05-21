@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import {
   Truck, Package, Buildings, ArrowRight, CheckCircle, Stack, TreeStructure,
@@ -13,25 +14,15 @@ import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 
 const SHIPPING_CLASS_OPTIONS = [
-  { value: 'standard',   label: 'Standard' },
-  { value: 'fragile',    label: 'Fragile' },
-  { value: 'oversized',  label: 'Oversized' },
-  { value: 'hazmat',     label: 'Hazmat' },
-  { value: 'perishable', label: 'Perishable' },
+  { value: 'standard',   labelKey: 'products.settings.shippingClassOptions.standard' },
+  { value: 'fragile',    labelKey: 'products.settings.shippingClassOptions.fragile' },
+  { value: 'oversized',  labelKey: 'products.settings.shippingClassOptions.oversized' },
+  { value: 'hazmat',     labelKey: 'products.settings.shippingClassOptions.hazmat' },
+  { value: 'perishable', labelKey: 'products.settings.shippingClassOptions.perishable' },
 ];
 
-const FIELD_LABELS = {
-  shipping_class:        'Shipping class',
-  requires_shipping:     'Requires shipping',
-  ships_internationally: 'Ships internationally',
-  lead_time_days:        'Lead time (days)',
-  continue_selling_oos:  'Allow backorders',
-  low_stock_threshold:   'Low-stock alert threshold',
-  net_terms_days:        'Net terms (days)',
-  allow_po:              'Allow Purchase Orders',
-};
-
 export default function ProductsSettings() {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   const orgId = project?.org_id;
 
@@ -80,11 +71,11 @@ export default function ProductsSettings() {
       );
       if (r.ok) {
         const j = await r.json();
-        showToast(`Applied to ${j.affected} product${j.affected === 1 ? '' : 's'}`);
+        showToast(j.affected === 1 ? t('products.settings.toast.appliedOne', { count: j.affected }) : t('products.settings.toast.appliedMany', { count: j.affected }));
         setConfirm(false);
       } else {
         const j = await r.json().catch(() => ({}));
-        showToast(j.detail || 'Apply failed');
+        showToast(j.detail || t('products.settings.toast.applyFailed'));
       }
     } finally { setBusy(false); }
   };
@@ -95,40 +86,40 @@ export default function ProductsSettings() {
           renders a `crm-page-title` based on the active tab. Adding one
           here would produce a duplicate title on screen. */}
 
-      <Section icon={<Truck weight="duotone" />} title="Shipping & fulfillment"
-        subtitle="How orders ship — class, lead time, international defaults">
+      <Section icon={<Truck weight="duotone" />} title={t('products.settings.shippingTitle')}
+        subtitle={t('products.settings.shippingSubtitle')}>
         <BulkSelect icon="select"  field={shipping}  setField={setShipping}
-          label="Shipping class" hint="Default carrier-API class for all products"
-          options={SHIPPING_CLASS_OPTIONS} />
+          label={t('products.settings.shippingClass')} hint={t('products.settings.shippingClassHint')}
+          options={SHIPPING_CLASS_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} />
         <BulkToggle field={reqShip} setField={setReqShip}
-          label="Requires shipping"
-          hint="Off blocks the shipping step at checkout (digital goods)" />
+          label={t('products.settings.requiresShipping')}
+          hint={t('products.settings.requiresShippingHint')} />
         <BulkToggle field={intl} setField={setIntl}
-          label="Ships internationally"
-          hint="Off blocks foreign-address checkout" />
+          label={t('products.settings.shipsInternationally')}
+          hint={t('products.settings.shipsInternationallyHint')} />
         <BulkNumber field={leadTime} setField={setLeadTime}
-          label="Lead time" unit="days" min={0} max={365}
-          hint="Days from order to ship-out" />
+          label={t('products.settings.leadTime')} unit={t('products.settings.unitDays')} min={0} max={365}
+          hint={t('products.settings.leadTimeHint')} />
       </Section>
 
-      <Section icon={<Package weight="duotone" />} title="Inventory behaviour"
-        subtitle="Stock rules — backorders and low-stock alerts">
+      <Section icon={<Package weight="duotone" />} title={t('products.settings.inventoryTitle')}
+        subtitle={t('products.settings.inventorySubtitle')}>
         <BulkToggle field={contOos} setField={setContOos}
-          label="Allow backorders"
-          hint="When ON, customers can buy a product even at zero stock" />
+          label={t('products.settings.allowBackorders')}
+          hint={t('products.settings.allowBackordersHint')} />
         <BulkNumber field={lowStock} setField={setLowStock}
-          label="Low-stock alert threshold" unit="units" min={0} max={100000}
-          hint="Notify when stock drops to this number (0 = alerts off)" />
+          label={t('products.settings.lowStockThreshold')} unit={t('products.settings.unitUnits')} min={0} max={100000}
+          hint={t('products.settings.lowStockHint')} />
       </Section>
 
-      <Section icon={<Buildings weight="duotone" />} title="B2B / Wholesale"
-        subtitle="Net-term invoicing and purchase orders for business customers">
+      <Section icon={<Buildings weight="duotone" />} title={t('products.settings.b2bTitle')}
+        subtitle={t('products.settings.b2bSubtitle')}>
         <BulkNumber field={netTerms} setField={setNetTerms}
-          label="Net terms" unit="days" min={0} max={365}
-          hint="0 = pay immediately, 30 = invoice with 30-day terms" />
+          label={t('products.settings.netTerms')} unit={t('products.settings.unitDays')} min={0} max={365}
+          hint={t('products.settings.netTermsHint')} />
         <BulkToggle field={allowPo} setField={setAllowPo}
-          label="Allow Purchase Orders"
-          hint="Business customers can pay via PO number instead of card" />
+          label={t('products.settings.allowPo')}
+          hint={t('products.settings.allowPoHint')} />
       </Section>
 
       {/* Identification — SKU generation (org-wide setting; lives here because the
@@ -145,13 +136,13 @@ export default function ProductsSettings() {
         <div className="bulk-footer">
           <div className="bulk-footer-summary">
             <CheckCircle weight="fill" className="bulk-footer-icon" />
-            <span>
-              <b>{Object.keys(fields).length}</b> field{Object.keys(fields).length === 1 ? '' : 's'} ready to apply across every product in this project
-            </span>
+            <span dangerouslySetInnerHTML={{ __html: Object.keys(fields).length === 1
+              ? t('products.settings.footer.readyOne', { count: Object.keys(fields).length })
+              : t('products.settings.footer.readyMany', { count: Object.keys(fields).length }) }} />
           </div>
           <button type="button" className="crm-submit-btn bulk-footer-btn"
             disabled={busy} onClick={() => setConfirm(true)}>
-            Review & apply <ArrowRight weight="bold" />
+            {t('products.settings.footer.reviewApply')} <ArrowRight weight="bold" />
           </button>
         </div>
       )}
@@ -170,20 +161,21 @@ export default function ProductsSettings() {
 // Save-on-change section. Mirrors BatchGroupingSection's noswitch pattern.
 
 const SKU_MODE_OPTIONS = [
-  { value: 'numeric',      label: 'Digits' },
-  { value: 'letters',      label: 'Letters' },
-  { value: 'alphanumeric', label: 'Mix' },
-  { value: 'manual',       label: 'Manual' },
+  { value: 'numeric',      labelKey: 'products.settings.sku.modeNumeric' },
+  { value: 'letters',      labelKey: 'products.settings.sku.modeLetters' },
+  { value: 'alphanumeric', labelKey: 'products.settings.sku.modeAlphanumeric' },
+  { value: 'manual',       labelKey: 'products.settings.sku.modeManual' },
 ];
 
 const SKU_MODE_HINT = {
-  numeric:      'Random digits 0–9 (Wildberries-style, default).',
-  letters:      'Random uppercase A–Z.',
-  alphanumeric: 'Random letters + digits.',
-  manual:       'No auto-gen. Field stays empty until you type a value yourself.',
+  numeric:      'products.settings.sku.hintNumeric',
+  letters:      'products.settings.sku.hintLetters',
+  alphanumeric: 'products.settings.sku.hintAlphanumeric',
+  manual:       'products.settings.sku.hintManual',
 };
 
 function SkuGenerationSection({ orgId, showToast }) {
+  const { t } = useTranslation();
   const [mode,   setMode]   = useState('numeric');
   const [length, setLength] = useState(8);
   const [loaded, setLoaded] = useState(false);
@@ -208,7 +200,7 @@ function SkuGenerationSection({ orgId, showToast }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (r.ok) showToast?.('Saved');
+    if (r.ok) showToast?.(t('products.settings.toast.saved'));
   };
 
   const onModeChange = (next) => { setMode(next); save({ mode: next }); };
@@ -221,7 +213,7 @@ function SkuGenerationSection({ orgId, showToast }) {
 
   const regenerate = async () => {
     if (regen || !orgId) return;
-    if (!confirm('Regenerate SKU codes for every product and configuration in this organization? Existing values will be replaced.')) return;
+    if (!confirm(t('products.settings.sku.confirmRegen'))) return;
     setRegen(true);
     try {
       const r = await fetch(`${API_BASE}/api/orgs/${orgId}/sku-regenerate`, {
@@ -229,9 +221,9 @@ function SkuGenerationSection({ orgId, showToast }) {
       });
       if (r.ok) {
         const j = await r.json();
-        showToast?.(`Updated ${j.products_updated} products + ${j.skus_updated} SKUs`);
+        showToast?.(t('products.settings.toast.regenDone', { products: j.products_updated, skus: j.skus_updated }));
       } else {
-        showToast?.('Regenerate failed');
+        showToast?.(t('products.settings.toast.regenFailed'));
       }
     } finally { setRegen(false); }
   };
@@ -241,11 +233,8 @@ function SkuGenerationSection({ orgId, showToast }) {
       <header className="bulk-section-head">
         <div className="bulk-section-icon"><Hash weight="duotone" /></div>
         <div className="bulk-section-text">
-          <h2 className="bulk-section-title">SKU generation</h2>
-          <p className="bulk-section-sub">
-            New products and configurations get a random unique code on creation.
-            <b> Org-wide setting</b> — applies to every project in this organization. Saved on change.
-          </p>
+          <h2 className="bulk-section-title">{t('products.settings.sku.title')}</h2>
+          <p className="bulk-section-sub" dangerouslySetInnerHTML={{ __html: t('products.settings.sku.subtitle') }} />
         </div>
       </header>
 
@@ -254,13 +243,13 @@ function SkuGenerationSection({ orgId, showToast }) {
         <div className="bulk-field bulk-field--noswitch bulk-field--on">
           <div className="bulk-field-head">
             <div className="bulk-field-text">
-              <span className="bulk-field-label">Mode</span>
-              <span className="bulk-field-hint">{SKU_MODE_HINT[mode]}</span>
+              <span className="bulk-field-label">{t('products.settings.sku.mode')}</span>
+              <span className="bulk-field-hint">{t(SKU_MODE_HINT[mode])}</span>
             </div>
           </div>
           <div className="bulk-field-value">
             <SegmentSwitch value={mode} disabled={!loaded}
-              options={SKU_MODE_OPTIONS} onChange={onModeChange} />
+              options={SKU_MODE_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={onModeChange} />
           </div>
         </div>
 
@@ -269,8 +258,8 @@ function SkuGenerationSection({ orgId, showToast }) {
           <div className="bulk-field bulk-field--noswitch bulk-field--on">
             <div className="bulk-field-head">
               <div className="bulk-field-text">
-                <span className="bulk-field-label">Length</span>
-                <span className="bulk-field-hint">Number of characters per code (4–64). Default 8.</span>
+                <span className="bulk-field-label">{t('products.settings.sku.length')}</span>
+                <span className="bulk-field-hint">{t('products.settings.sku.lengthHint')}</span>
               </div>
             </div>
             <div className="bulk-field-value">
@@ -288,12 +277,8 @@ function SkuGenerationSection({ orgId, showToast }) {
         <div className="bulk-field bulk-field--noswitch bulk-field--on">
           <div className="bulk-field-head">
             <div className="bulk-field-text">
-              <span className="bulk-field-label">Regenerate all existing SKUs</span>
-              <span className="bulk-field-hint">
-                Wipes + re-randomises every <code>product.sku</code> and <code>l2.sku_code</code> in
-                the org under current settings. <b>Existing values are replaced</b> — barcodes printed
-                with old SKU codes will no longer match.
-              </span>
+              <span className="bulk-field-label">{t('products.settings.sku.regenLabel')}</span>
+              <span className="bulk-field-hint" dangerouslySetInnerHTML={{ __html: t('products.settings.sku.regenHint') }} />
             </div>
           </div>
           <div className="bulk-field-value">
@@ -301,7 +286,7 @@ function SkuGenerationSection({ orgId, showToast }) {
               disabled={regen || !loaded} onClick={regenerate}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <ArrowsClockwise weight="bold" size={14} />
-              {regen ? 'Regenerating…' : 'Regenerate all'}
+              {regen ? t('products.settings.sku.regenerating') : t('products.settings.sku.regenAll')}
             </button>
           </div>
         </div>
@@ -331,6 +316,7 @@ function Section({ icon, title, subtitle, children }) {
 // ── Field card — Apply switch + label + hint + value control ────────
 
 function FieldCard({ field, setField, label, hint, children }) {
+  const { t } = useTranslation();
   const on = field.apply;
   return (
     <div className={`bulk-field${on ? ' bulk-field--on' : ''}`}>
@@ -338,7 +324,7 @@ function FieldCard({ field, setField, label, hint, children }) {
         <button type="button"
           className={`bulk-apply-switch${on ? ' bulk-apply-switch--on' : ''}`}
           onClick={() => setField(s => ({ ...s, apply: !s.apply }))}
-          aria-pressed={on} title="Include this field in the bulk apply">
+          aria-pressed={on} title={t('products.settings.fieldCard.includeHint')}>
           <span className="bulk-apply-switch-knob" />
         </button>
         <div className="bulk-field-text">
@@ -354,13 +340,14 @@ function FieldCard({ field, setField, label, hint, children }) {
 }
 
 function BulkToggle({ field, setField, label, hint }) {
+  const { t } = useTranslation();
   const on = field.apply;
   return (
     <FieldCard field={field} setField={setField} label={label} hint={hint}>
       <SegmentSwitch
         value={field.value ? 'on' : 'off'}
         disabled={!on}
-        options={[{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }]}
+        options={[{ value: 'off', label: t('products.settings.off') }, { value: 'on', label: t('products.settings.on') }]}
         onChange={(v) => setField(s => ({ ...s, value: v === 'on' }))}
       />
     </FieldCard>
@@ -439,18 +426,19 @@ function BulkSelect({ field, setField, label, hint, options }) {
 // batches are scoped during a multi-SKU receive (and how dates auto-propagate).
 
 const GROUPING_OPTIONS = [
-  { value: 'config',  label: 'Per configuration' },
-  { value: 'product', label: 'Per product' },
-  { value: 'global',  label: 'One global' },
+  { value: 'config',  labelKey: 'products.settings.batchGrouping.perConfig' },
+  { value: 'product', labelKey: 'products.settings.batchGrouping.perProduct' },
+  { value: 'global',  labelKey: 'products.settings.batchGrouping.oneGlobal' },
 ];
 
 const GROUPING_HINT = {
-  config:  'Each (product × variation × SKU) gets its own batch. Most granular — recommended when shelf-life or production date varies per SKU.',
-  product: 'All variations of the same product share one batch. Receiving 5 colours × 3 sizes of a T-shirt creates one batch per product, not 15.',
-  global:  'The whole receipt is one batch. Set a date or rename once and it applies to every row.',
+  config:  'products.settings.batchGrouping.hintConfig',
+  product: 'products.settings.batchGrouping.hintProduct',
+  global:  'products.settings.batchGrouping.hintGlobal',
 };
 
 function BatchGroupingSection({ projectId, showToast }) {
+  const { t } = useTranslation();
   const [mode,   setMode]   = useState('config');
   const [loaded, setLoaded] = useState(false);
 
@@ -471,7 +459,7 @@ function BatchGroupingSection({ projectId, showToast }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ batch_grouping_mode: next }),
     });
-    if (r.ok) showToast?.('Saved');
+    if (r.ok) showToast?.(t('products.settings.toast.saved'));
   };
 
   return (
@@ -479,10 +467,9 @@ function BatchGroupingSection({ projectId, showToast }) {
       <header className="bulk-section-head">
         <div className="bulk-section-icon"><TreeStructure weight="duotone" /></div>
         <div className="bulk-section-text">
-          <h2 className="bulk-section-title">Batch grouping</h2>
+          <h2 className="bulk-section-title">{t('products.settings.batchGrouping.title')}</h2>
           <p className="bulk-section-sub">
-            How a multi-SKU stock receipt is split into batches. Affects auto-naming + how
-            production / expiry dates auto-fill across rows. Saved on change.
+            {t('products.settings.batchGrouping.subtitle')}
           </p>
         </div>
       </header>
@@ -491,13 +478,13 @@ function BatchGroupingSection({ projectId, showToast }) {
         <div className="bulk-field bulk-field--noswitch bulk-field--on">
           <div className="bulk-field-head">
             <div className="bulk-field-text">
-              <span className="bulk-field-label">Grouping mode</span>
-              <span className="bulk-field-hint">{GROUPING_HINT[mode]}</span>
+              <span className="bulk-field-label">{t('products.settings.batchGrouping.mode')}</span>
+              <span className="bulk-field-hint">{t(GROUPING_HINT[mode])}</span>
             </div>
           </div>
           <div className="bulk-field-value">
             <SegmentSwitch value={mode} disabled={!loaded}
-              options={GROUPING_OPTIONS} onChange={save} />
+              options={GROUPING_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={save} />
           </div>
         </div>
       </div>
@@ -508,6 +495,7 @@ function BatchGroupingSection({ projectId, showToast }) {
 // ── Batch naming section — distinct from bulk-apply fields (saves on change, no Apply switch) ──
 
 function BatchNamingSection({ projectId, showToast }) {
+  const { t } = useTranslation();
   const [mode,   setMode]   = useState('auto');
   const [format, setFormat] = useState('B-{YYYY}{MM}-{seq:03}');
   const [loaded, setLoaded] = useState(false);
@@ -531,7 +519,7 @@ function BatchNamingSection({ projectId, showToast }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
-    if (r.ok) showToast?.('Saved');
+    if (r.ok) showToast?.(t('products.settings.toast.saved'));
   };
 
   // Live preview of what an auto-name would look like RIGHT NOW.
@@ -569,9 +557,9 @@ function BatchNamingSection({ projectId, showToast }) {
       <header className="bulk-section-head">
         <div className="bulk-section-icon"><Stack weight="duotone" /></div>
         <div className="bulk-section-text">
-          <h2 className="bulk-section-title">Batch naming</h2>
+          <h2 className="bulk-section-title">{t('products.settings.batchNaming.title')}</h2>
           <p className="bulk-section-sub">
-            How new batch names are generated when you receive stock. Saved on change — no Apply needed.
+            {t('products.settings.batchNaming.subtitle')}
           </p>
         </div>
       </header>
@@ -581,9 +569,9 @@ function BatchNamingSection({ projectId, showToast }) {
         <div className="bulk-field bulk-field--noswitch bulk-field--on">
           <div className="bulk-field-head">
             <div className="bulk-field-text">
-              <span className="bulk-field-label">Naming mode</span>
+              <span className="bulk-field-label">{t('products.settings.batchNaming.mode')}</span>
               <span className="bulk-field-hint">
-                Auto fills the name from a template; Manual asks you on every receipt
+                {t('products.settings.batchNaming.modeHint')}
               </span>
             </div>
           </div>
@@ -591,7 +579,7 @@ function BatchNamingSection({ projectId, showToast }) {
             <SegmentSwitch
               value={mode}
               disabled={!loaded}
-              options={[{ value: 'manual', label: 'Manual' }, { value: 'auto', label: 'Auto' }]}
+              options={[{ value: 'manual', label: t('products.settings.batchNaming.manual') }, { value: 'auto', label: t('products.settings.batchNaming.auto') }]}
               onChange={(v) => { setMode(v); save({ batch_naming_mode: v }); }}
             />
           </div>
@@ -602,12 +590,9 @@ function BatchNamingSection({ projectId, showToast }) {
           <div className="bulk-field bulk-field--noswitch bulk-field--on">
             <div className="bulk-field-head">
               <div className="bulk-field-text">
-                <span className="bulk-field-label">Template</span>
-                <span className="bulk-field-hint">
-                  Each <code>seq</code> scope has its own counter — pick the reset cadence you want.
-                  Add <code>:NN</code> for zero-padding (e.g. <code>{'{seq:04}'}</code> → 0001).
-                  Put <code>{'{sku}'}</code> in the template and a multi-SKU receipt creates one batch per SKU.
-                </span>
+                <span className="bulk-field-label">{t('products.settings.batchNaming.template')}</span>
+                <span className="bulk-field-hint"
+                  dangerouslySetInnerHTML={{ __html: t('products.settings.batchNaming.templateHint', { seq04: '{seq:04}', sku: '{sku}' }) }} />
               </div>
             </div>
             <div className="bulk-field-value batch-template-value">
@@ -617,27 +602,27 @@ function BatchNamingSection({ projectId, showToast }) {
                 onBlur={(e) => save({ batch_naming_format: e.target.value })}
                 placeholder="B-{YYYY}{MM}-{seq:03}" />
               <div className="batch-template-preview">
-                <span className="batch-template-preview-label">Preview</span>
+                <span className="batch-template-preview-label">{t('products.settings.batchNaming.preview')}</span>
                 <code className="batch-template-preview-value">{preview}</code>
               </div>
 
               <div className="batch-template-tokens">
-                <span className="batch-template-tokens-label">Date</span>
-                <code>{'{YYYY}'}</code><span>year</span>
-                <code>{'{MM}'}</code><span>month</span>
-                <code>{'{DD}'}</code><span>day</span>
+                <span className="batch-template-tokens-label">{t('products.settings.batchNaming.tokensDate')}</span>
+                <code>{'{YYYY}'}</code><span>{t('products.settings.batchNaming.tokenYear')}</span>
+                <code>{'{MM}'}</code><span>{t('products.settings.batchNaming.tokenMonth')}</span>
+                <code>{'{DD}'}</code><span>{t('products.settings.batchNaming.tokenDay')}</span>
               </div>
               <div className="batch-template-tokens">
-                <span className="batch-template-tokens-label">Sequence</span>
-                <code>{'{seq}'}</code><span>monthly</span>
-                <code>{'{seq_day}'}</code><span>daily</span>
-                <code>{'{seq_year}'}</code><span>yearly</span>
-                <code>{'{seq_all}'}</code><span>all-time</span>
+                <span className="batch-template-tokens-label">{t('products.settings.batchNaming.tokensSequence')}</span>
+                <code>{'{seq}'}</code><span>{t('products.settings.batchNaming.tokenMonthly')}</span>
+                <code>{'{seq_day}'}</code><span>{t('products.settings.batchNaming.tokenDaily')}</span>
+                <code>{'{seq_year}'}</code><span>{t('products.settings.batchNaming.tokenYearly')}</span>
+                <code>{'{seq_all}'}</code><span>{t('products.settings.batchNaming.tokenAllTime')}</span>
               </div>
               <div className="batch-template-tokens">
-                <span className="batch-template-tokens-label">Other</span>
-                <code>{'{qty}'}</code><span>quantity received</span>
-                <code>{'{sku}'}</code><span>SKU code</span>
+                <span className="batch-template-tokens-label">{t('products.settings.batchNaming.tokensOther')}</span>
+                <code>{'{qty}'}</code><span>{t('products.settings.batchNaming.tokenQty')}</span>
+                <code>{'{sku}'}</code><span>{t('products.settings.batchNaming.tokenSku')}</span>
               </div>
             </div>
           </div>
@@ -650,22 +635,22 @@ function BatchNamingSection({ projectId, showToast }) {
 // ── Confirm modal — diff table + Apply button ──────────────────────
 
 function ConfirmModal({ fields, busy, onConfirm, onClose }) {
-  const fmt = (v) => typeof v === 'boolean' ? (v ? 'On' : 'Off') : String(v);
+  const { t } = useTranslation();
+  const fmt = (v) => typeof v === 'boolean' ? (v ? t('products.settings.on') : t('products.settings.off')) : String(v);
   const entries = Object.entries(fields);
   return createPortal(
     <div className="auth-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="auth-modal po-bulk-confirm-modal" onClick={(e) => e.stopPropagation()}>
         <div className="auth-modal-body">
-          <h2 className="po-block-title" style={{ marginTop: 0 }}>Apply to every product?</h2>
+          <h2 className="po-block-title" style={{ marginTop: 0 }}>{t('products.settings.confirm.title')}</h2>
           <p className="po-block-hint">
-            These fields will overwrite the current value on every product in this project.
-            Per-SKU stock, sku_code, barcode and OG image are NOT touched.
+            {t('products.settings.confirm.body')}
           </p>
 
           <div className="bulk-confirm-list">
             {entries.map(([k, v]) => (
               <div key={k} className="bulk-confirm-row">
-                <span className="bulk-confirm-label">{FIELD_LABELS[k] || k}</span>
+                <span className="bulk-confirm-label">{t(`products.settings.fieldLabels.${k}`, k)}</span>
                 <ArrowRight weight="bold" className="bulk-confirm-arrow" />
                 <span className="bulk-confirm-value">{fmt(v)}</span>
               </div>
@@ -675,10 +660,10 @@ function ConfirmModal({ fields, busy, onConfirm, onClose }) {
           <div className="auth-actions" style={{ marginTop: 18 }}>
             <button type="button" className="crm-submit-btn"
               disabled={busy} onClick={onConfirm}>
-              {busy ? 'Applying…' : `Apply ${entries.length} field${entries.length === 1 ? '' : 's'}`}
+              {busy ? t('products.settings.confirm.applying') : (entries.length === 1 ? t('products.settings.confirm.applyOne', { count: entries.length }) : t('products.settings.confirm.applyMany', { count: entries.length }))}
             </button>
             <button type="button" className="crm-submit-btn auth-btn-secondary"
-              disabled={busy} onClick={onClose}>Cancel</button>
+              disabled={busy} onClick={onClose}>{t('common.cancel')}</button>
           </div>
         </div>
       </div>

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, Link, useParams } from "react-router-dom";
+import { useTranslation } from 'react-i18next';
 import "./Style/Login.css";
 import PasswordInput from "./Elements/PasswordInput.jsx";
 
 import { API_BASE } from "./api.js"
 
 function Reset() {
+  const { t } = useTranslation();
   const { token } = useParams();
   const navigate = useNavigate();
 
@@ -20,10 +22,10 @@ function Reset() {
   const [pageLoading, setPageLoading] = useState(true);
 
   const validatePassword = (pwd) => {
-    if (/\s/.test(pwd))                   return ['No spaces allowed'];
-    if (pwd.length < 8 || pwd.length > 24) return ['Must be 8-24 characters'];
-    if (!/[\p{L}]/u.test(pwd))            return ['Must contain at least 1 letter'];
-    if (!/\d/.test(pwd))                  return ['Must contain at least 1 digit'];
+    if (/\s/.test(pwd))                   return [t('auth.validation.noSpaces')];
+    if (pwd.length < 8 || pwd.length > 24) return [t('auth.validation.length')];
+    if (!/[\p{L}]/u.test(pwd))            return [t('auth.validation.needLetter')];
+    if (!/\d/.test(pwd))                  return [t('auth.validation.needDigit')];
     return [];
   };
 
@@ -34,9 +36,9 @@ function Reset() {
       .then(({ ok, data }) => {
         if (ignore) return;
         if (ok) setEmail(data.email || "");
-        else setGeneralError(data.detail || "Invalid or expired reset link");
+        else setGeneralError(data.detail || t('auth.reset.invalidLink'));
       })
-      .catch(() => { if (!ignore) setGeneralError("Network error"); })
+      .catch(() => { if (!ignore) setGeneralError(t('auth.common.networkError')); })
       .finally(() => { if (!ignore) setPageLoading(false); });
     return () => { ignore = true; };
   }, [token]);
@@ -45,14 +47,14 @@ function Reset() {
     const value = e.target.value;
     setPassword(value);
     setPasswordErrors(validatePassword(value));
-    setRepeatError(repeatPassword && value !== repeatPassword ? "Passwords do not match" : "");
+    setRepeatError(repeatPassword && value !== repeatPassword ? t('auth.validation.passwordsMismatch') : "");
     setGeneralError("");
   };
 
   const handleRepeatPasswordChange = (e) => {
     const value = e.target.value;
     setRepeatPassword(value);
-    setRepeatError(value !== password ? "Passwords do not match" : "");
+    setRepeatError(value !== password ? t('auth.validation.passwordsMismatch') : "");
     setGeneralError("");
   };
 
@@ -76,13 +78,13 @@ function Reset() {
       });
       const data = await res.json();
       if (res.ok) {
-        setSuccessMessage("Password changed successfully");
+        setSuccessMessage(t('auth.reset.success'));
         setTimeout(() => navigate("/login"), 1200);
       } else {
-        setGeneralError(data.detail || "Failed to reset password");
+        setGeneralError(data.detail || t('auth.reset.failed'));
       }
     } catch {
-      setGeneralError("Network error");
+      setGeneralError(t('auth.common.networkError'));
     } finally {
       setLoading(false);
     }
@@ -91,13 +93,13 @@ function Reset() {
   return (
     <div className="regist">
       <section className="regis">
-        <h1 className="verify-h1">Reset Password</h1>
+        <h1 className="verify-h1">{t('auth.reset.title')}</h1>
 
         {/* Страница загружается — токен проверяется */}
         {pageLoading && (
           <div className="reg">
             <div className="secsh2">
-              <p className="loading-text">Loading...</p>
+              <p className="loading-text">{t('auth.reset.loading')}</p>
             </div>
           </div>
         )}
@@ -110,7 +112,7 @@ function Reset() {
             </div>
             <div className="secsh1">
               <Link to="/login">
-                <input className="button2" type="button" value="Back to Sign in" />
+                <input className="button2" type="button" value={t('auth.reset.backToSignIn')} />
               </Link>
             </div>
           </div>
@@ -119,14 +121,14 @@ function Reset() {
         {/* Основная форма */}
         {!pageLoading && email && (
           <>
-            <p className="verify-p">Create a new password for</p>
+            <p className="verify-p">{t('auth.reset.subtitle')}</p>
             <p className="verify-email">{email}</p>
 
             <div className="reg">
               <form onSubmit={handleSubmit}>
                 <div className="secsh">
                   <PasswordInput
-                    placeholder="New password"
+                    placeholder={t('auth.reset.newPasswordPlaceholder')}
                     value={password}
                     onChange={handlePasswordChange}
                     autoComplete="new-password"
@@ -138,7 +140,7 @@ function Reset() {
 
                 <div className="secsh0">
                   <PasswordInput
-                    placeholder="Repeat new password"
+                    placeholder={t('auth.reset.repeatNewPasswordPlaceholder')}
                     value={repeatPassword}
                     onChange={handleRepeatPasswordChange}
                     autoComplete="new-password"
@@ -153,14 +155,14 @@ function Reset() {
                   <input
                     className={isValid && !loading ? "button1" : "not-button"}
                     type="submit"
-                    value={loading ? "Saving..." : "Save password"}
+                    value={loading ? t('auth.reset.saving') : t('auth.reset.savePassword')}
                     disabled={!isValid || loading}
                   />
                 </div>
 
                 <div className="secsh1">
                   <Link to="/login">
-                    <input className="button2" type="button" value="Back to Sign in" />
+                    <input className="button2" type="button" value={t('auth.reset.backToSignIn')} />
                   </Link>
                 </div>
               </form>

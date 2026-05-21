@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import {
   Plus, MagnifyingGlass, DotsThreeOutline, PencilSimple, Power, Trash,
@@ -20,15 +21,15 @@ import '../../../Style/Organization.css';
 import '../../../Style/Booking.css';   // bk-date-pop / bk-time-pop / wheel styles for DateTimePicker
 
 const DISCOUNT_TYPE_OPTIONS = [
-  { value: 'all',        label: 'All types' },
-  { value: 'percentage', label: 'Percentage' },
-  { value: 'fixed',      label: 'Fixed amount' },
+  { value: 'all',        labelKey: 'products.promo.typeAll' },
+  { value: 'percentage', labelKey: 'products.promo.typePercentage' },
+  { value: 'fixed',      labelKey: 'products.promo.typeFixed' },
 ];
 
 const SORT_OPTIONS = [
-  { field: 'code', label: 'Sort by code' },
-  { field: 'date', label: 'Sort by date' },
-  { field: 'used', label: 'Sort by usage' },
+  { field: 'code', labelKey: 'products.promo.sortByCode' },
+  { field: 'date', labelKey: 'products.promo.sortByDate' },
+  { field: 'used', labelKey: 'products.promo.sortByUsage' },
 ];
 const SORT_DEFAULT_DIR = { code: 'asc', date: 'desc', used: 'desc' };
 
@@ -47,6 +48,7 @@ const TILT = {
 };
 
 export default function PromoCodes() {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   const pq = `?project_id=${projectId}`;
   // Project currency drives how promo amounts (Min order, $-off
@@ -87,18 +89,18 @@ export default function PromoCodes() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (r.ok) { showToast(id ? 'Saved' : 'Created'); setEditing(null); load(); return true; }
+    if (r.ok) { showToast(id ? t('products.promo.toast.saved') : t('products.promo.toast.created')); setEditing(null); load(); return true; }
     const j = await r.json().catch(() => ({}));
-    showToast(j.detail || 'Failed');
+    showToast(j.detail || t('products.promo.toast.failed'));
     return false;
   };
 
   const remove = async (id) => {
-    if (!confirm('Delete this promo code?')) return;
+    if (!confirm(t('products.promo.confirmDelete'))) return;
     const r = await fetch(`${API_BASE}/api/promo-codes/${id}${pq}`, {
       method: 'DELETE', credentials: 'include',
     });
-    if (r.ok) { showToast('Deleted'); load(); }
+    if (r.ok) { showToast(t('products.promo.toast.deleted')); load(); }
   };
 
   const filtered = useMemo(() => {
@@ -130,16 +132,16 @@ export default function PromoCodes() {
     <>
       {/* Hint sits directly under the page title — not under the toolbar. */}
       <p className="po-block-hint">
-        Customer-facing promo codes — applied at checkout via{' '}
-        <code className="po-api-code">POST /promo-code/apply</code>.
-        Tier pricing (wholesale) is on the next tab.
+        {t('products.promo.hintPrefix')}{' '}
+        <code className="po-api-code">POST /promo-code/apply</code>.{' '}
+        {t('products.promo.hintSuffix')}
       </p>
 
       <div className="org-toolbar">
         {/* Search ALWAYS on the left */}
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search codes…"
+          <input className="org-search-input" placeholder={t('products.promo.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
@@ -147,7 +149,7 @@ export default function PromoCodes() {
         <SortToggle sort={sort} onSort={handleSetSort} />
 
         <div className="po-cb-wrap po-cb-wrap--toolbar" style={{ width: 180, minWidth: 180 }}>
-          <Combobox value={typeF} options={DISCOUNT_TYPE_OPTIONS}
+          <Combobox value={typeF} options={DISCOUNT_TYPE_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
             onChange={(v) => setTypeF(v)} />
         </div>
 
@@ -156,30 +158,30 @@ export default function PromoCodes() {
             style={{ transform: `translateX(${curView === 'list' ? 30 : 0}px)` }} />
           <button className={`org-view-btn${curView === 'grid' ? ' org-view-btn--current' : ''}`}
             onClick={() => setView('grid')} onMouseEnter={() => setViewHover('grid')}
-            title="Grid view" type="button">
+            title={t('products.promo.gridView')} type="button">
             <SquaresFour className="org-view-icon" />
           </button>
           <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
             onClick={() => setView('list')} onMouseEnter={() => setViewHover('list')}
-            title="List view" type="button">
+            title={t('products.promo.listView')} type="button">
             <List className="org-view-icon" />
           </button>
         </div>
 
         <button type="button" className="org-new-btn" onClick={() => setEditing('new')}>
-          <Plus className="org-new-icon" /> New code
+          <Plus className="org-new-icon" /> {t('products.promo.newCode')}
         </button>
       </div>
 
       {filtered.length === 0 ? (
         <div className="crm-placeholder">{search || typeF !== 'all'
-          ? 'No codes match your filters.' : 'No promo codes yet.'}
+          ? t('products.promo.noMatch') : t('products.promo.empty')}
         </div>
       ) : view === 'list' ? (
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head po-set-row--promo">
-            <span>Code</span><span>Type</span><span>Value</span>
-            <span>Min order</span><span>Used</span><span>Validity</span><span>Status</span><span></span>
+            <span>{t('products.promo.colCode')}</span><span>{t('products.promo.colType')}</span><span>{t('products.promo.colValue')}</span>
+            <span>{t('products.promo.colMinOrder')}</span><span>{t('products.promo.colUsed')}</span><span>{t('products.promo.colValidity')}</span><span>{t('products.promo.colStatus')}</span><span></span>
           </div>
           {filtered.map(c => (
             <PromoRow key={c.id} code={c} categories={categories} currency={currency}
@@ -187,7 +189,7 @@ export default function PromoCodes() {
               onDelete={() => remove(c.id)}
               onToggleActive={() => persist({ is_active: !c.is_active }, c.id)} />
           ))}
-          {hasMore && <div ref={sentinelRef} className="inf-sentinel">Loading more…</div>}
+          {hasMore && <div ref={sentinelRef} className="inf-sentinel">{t('products.promo.loadingMore')}</div>}
         </div>
       ) : (
         <div className="promo-grid">
@@ -197,7 +199,7 @@ export default function PromoCodes() {
               onDelete={() => remove(c.id)}
               onToggleActive={() => persist({ is_active: !c.is_active }, c.id)} />
           ))}
-          {hasMore && <div ref={sentinelRef} className="inf-sentinel">Loading more…</div>}
+          {hasMore && <div ref={sentinelRef} className="inf-sentinel">{t('products.promo.loadingMore')}</div>}
         </div>
       )}
 
@@ -217,6 +219,7 @@ export default function PromoCodes() {
 
 // ── Sort toggle (mirrors Organization page) ──────────────────────────
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -237,7 +240,7 @@ function SortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         const isCur  = curField === field;
         return (
@@ -250,7 +253,7 @@ function SortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -262,28 +265,31 @@ function SortToggle({ sort, onSort }) {
 // `currency` is the project's currency code (e.g. 'USD', 'KZT'). Pass-
 // through so promo discount values render in the merchant's chosen
 // currency (a 10₸ off coupon should NOT show as "$10").
-function buildLabels(code, currency = 'USD') {
+function buildLabels(code, currency = 'USD', t = (k) => k) {
   const valueLabel = code.discount_type === 'percentage'
     ? `${code.discount_value}%`
     : formatMoney(code.discount_value, currency);
   const usedLabel = `${code.times_used}${code.usage_limit ? ` / ${code.usage_limit}` : ''}`;
   const f = code.valid_from  ? new Date(code.valid_from).toLocaleDateString()  : null;
-  const t = code.valid_until ? new Date(code.valid_until).toLocaleDateString() : null;
+  const u = code.valid_until ? new Date(code.valid_until).toLocaleDateString() : null;
   let validLabel;
-  if (!f && !t) validLabel = 'Always';
-  else if (f && t) validLabel = `${f} → ${t}`;
-  else if (f)      validLabel = `From ${f}`;
-  else             validLabel = `Until ${t}`;
+  if (!f && !u) validLabel = t('products.promo.always');
+  else if (f && u) validLabel = `${f} → ${u}`;
+  else if (f)      validLabel = t('products.promo.from', { date: f });
+  else             validLabel = t('products.promo.until', { date: u });
   return { valueLabel, usedLabel, validLabel };
 }
 
 // ── Promo row (list view) — clickable, opens edit on row click ──────
 function PromoRow({ code, categories, currency, onEdit, onDelete, onToggleActive }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   const status = statusOf(code);
-  const { valueLabel, usedLabel, validLabel } = buildLabels(code, currency);
+  const { valueLabel, usedLabel, validLabel } = buildLabels(code, currency, t);
   const catCount = (code.category_ids || []).length;
+  const typeLabel = code.discount_type === 'percentage' ? t('products.promo.typePercentage') : t('products.promo.typeFixed');
+  const statusLabel = t(`products.promo.status${status.charAt(0).toUpperCase()}${status.slice(1)}`);
 
   return (
     <PoListRow className="po-set-row--promo" frozen={menuOpen}
@@ -296,19 +302,19 @@ function PromoRow({ code, categories, currency, onEdit, onDelete, onToggleActive
               categories.find(c => c.id === id)?.name || `#${id}`
             ).join(', ')
           }>
-            {catCount} cat
+            {t('products.promo.catTag', { count: catCount })}
           </span>
         )}
       </span>
-      <span>{code.discount_type}</span>
+      <span>{typeLabel}</span>
       <span>{valueLabel}</span>
       <span>{formatMoney(code.min_order_amount || 0, currency)}</span>
       <span>{usedLabel}</span>
       <span className="po-set-note">{validLabel}</span>
       <span>
-        <span className={`promo-status promo-status--${status}`}>{status}</span>
+        <span className={`promo-status promo-status--${status}`}>{statusLabel}</span>
       </span>
-      <button ref={menuBtnRef} type="button" className="org-list-menu-btn" aria-label="Options"
+      <button ref={menuBtnRef} type="button" className="org-list-menu-btn" aria-label={t('products.promo.options')}
         onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
         <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
       </button>
@@ -323,12 +329,15 @@ function PromoRow({ code, categories, currency, onEdit, onDelete, onToggleActive
 
 // ── Promo card (grid view) — Organization-style 3D-tilt card ────────
 function PromoCard({ code, categories, currency, onEdit, onDelete, onToggleActive }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   const { ref, glossRef, handlers } = InteractiveSection(TILT, menuOpen);
   const status = statusOf(code);
-  const { valueLabel, usedLabel, validLabel } = buildLabels(code, currency);
+  const { valueLabel, usedLabel, validLabel } = buildLabels(code, currency, t);
   const catCount = (code.category_ids || []).length;
+  const typeLabel = code.discount_type === 'percentage' ? t('products.promo.typePercentage') : t('products.promo.typeFixed');
+  const statusLabel = t(`products.promo.status${status.charAt(0).toUpperCase()}${status.slice(1)}`);
 
   return (
     <div ref={ref} className={`promo-card${menuOpen ? ' promo-card--frozen' : ''}`}
@@ -338,39 +347,39 @@ function PromoCard({ code, categories, currency, onEdit, onDelete, onToggleActiv
       <div className="promo-card-head">
         <span className="promo-card-code">{code.code}</span>
         <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
-          aria-label="Options"
+          aria-label={t('products.promo.options')}
           onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
           <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
         </button>
       </div>
 
       <div className="promo-card-value">{valueLabel}
-        <span className="promo-card-type"> · {code.discount_type}</span>
+        <span className="promo-card-type"> · {typeLabel}</span>
       </div>
 
       <div className="promo-card-meta">
         <div className="promo-card-meta-row">
-          <span className="promo-card-meta-label">Min order</span>
+          <span className="promo-card-meta-label">{t('products.promo.minOrder')}</span>
           <span>{formatMoney(code.min_order_amount || 0, currency)}</span>
         </div>
         <div className="promo-card-meta-row">
-          <span className="promo-card-meta-label">Used</span>
+          <span className="promo-card-meta-label">{t('products.promo.used')}</span>
           <span>{usedLabel}</span>
         </div>
         <div className="promo-card-meta-row">
-          <span className="promo-card-meta-label">Validity</span>
+          <span className="promo-card-meta-label">{t('products.promo.validity')}</span>
           <span>{validLabel}</span>
         </div>
         {catCount > 0 && (
           <div className="promo-card-meta-row">
-            <span className="promo-card-meta-label">Categories</span>
+            <span className="promo-card-meta-label">{t('products.promo.categories')}</span>
             <span>{catCount}</span>
           </div>
         )}
       </div>
 
       <div className="promo-card-foot">
-        <span className={`promo-status promo-status--${status}`}>{status}</span>
+        <span className={`promo-status promo-status--${status}`}>{statusLabel}</span>
       </div>
 
       {menuOpen && (
@@ -384,6 +393,7 @@ function PromoCard({ code, categories, currency, onEdit, onDelete, onToggleActiv
 
 // Dropdown — portal'd to body so row overflow + tilt don't clip; positioned via getBoundingClientRect.
 function PromoMenu({ code, btnRef, onClose, onEdit, onDelete, onToggleActive }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
 
   useEffect(() => {
@@ -412,17 +422,17 @@ function PromoMenu({ code, btnRef, onClose, onEdit, onDelete, onToggleActive }) 
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       <button className="org-card-dropdown-item"
         onClick={() => { onClose(); onEdit(); }}>
-        <PencilSimple className="org-card-dropdown-icon" /> Edit
+        <PencilSimple className="org-card-dropdown-icon" /> {t('products.promo.menu.edit')}
       </button>
       <button className="org-card-dropdown-item"
         onClick={() => { onClose(); onToggleActive(); }}>
         <Power className="org-card-dropdown-icon" />
-        {code.is_active ? 'Deactivate' : 'Activate'}
+        {code.is_active ? t('products.promo.menu.deactivate') : t('products.promo.menu.activate')}
       </button>
       <div className="org-card-dropdown-sep" />
       <button className="org-card-dropdown-item org-card-dropdown-item--danger"
         onClick={() => { onClose(); onDelete(); }}>
-        <Trash className="org-card-dropdown-icon" /> Delete
+        <Trash className="org-card-dropdown-icon" /> {t('products.promo.menu.delete')}
       </button>
     </div>,
     document.body,
@@ -431,6 +441,7 @@ function PromoMenu({ code, btnRef, onClose, onEdit, onDelete, onToggleActive }) 
 
 // ── Edit / Create modal — uses shared <Modal> shell (proper close button) ──
 function PromoCodeModal({ code, categories, onSave, onClose }) {
+  const { t } = useTranslation();
   const isNew = !code;
   const [c, setC] = useState({
     code: code?.code || '',
@@ -475,8 +486,8 @@ function PromoCodeModal({ code, categories, onSave, onClose }) {
 
   // Type options reused for the in-modal dropdown (without the "all" filter row).
   const TYPE_OPTIONS_FOR_MODAL = [
-    { id: 'percentage', name: 'Percentage' },
-    { id: 'fixed',      name: 'Fixed amount' },
+    { id: 'percentage', name: t('products.promo.modal.typePercentage') },
+    { id: 'fixed',      name: t('products.promo.modal.typeFixed') },
   ];
 
   return createPortal(
@@ -486,12 +497,12 @@ function PromoCodeModal({ code, categories, onSave, onClose }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">{isNew ? 'New promo code' : 'Edit promo code'}</div>
+              <div className="auth-modal-title">{isNew ? t('products.promo.modal.newTitle') : t('products.promo.modal.editTitle')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {isNew
-                    ? 'Configure the code now — customers apply it at checkout via /promo-code/apply.'
-                    : `Editing ${code.code} — changes apply to future checkouts only.`}
+                    ? t('products.promo.modal.newSubtitle')
+                    : t('products.promo.modal.editSubtitle', { code: code.code })}
                 </span>
               </div>
             </div>
@@ -506,30 +517,30 @@ function PromoCodeModal({ code, categories, onSave, onClose }) {
             autoComplete="off">
 
             <div className="cpm-section">
-              <label className="po-field-label">Code</label>
+              <label className="po-field-label">{t('products.promo.modal.code')}</label>
               <input className="crm-input" autoFocus value={c.code}
                 autoComplete="off" spellCheck={false} maxLength={40}
                 placeholder="SUMMER20" onChange={(e) => update('code', e.target.value)} />
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Type</label>
+              <label className="po-field-label">{t('products.promo.modal.type')}</label>
               <CpmOptionSelect value={c.discount_type} options={TYPE_OPTIONS_FOR_MODAL}
                 onChange={(v) => update('discount_type', v)} />
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Discount value</label>
+              <label className="po-field-label">{t('products.promo.modal.discountValue')}</label>
               <input className="crm-input" type="number" min="0" step="0.01"
                 placeholder={c.discount_type === 'percentage' ? '20' : '50'}
                 value={c.discount_value} onChange={(e) => update('discount_value', e.target.value)} />
               <span className="cpm-section-hint">
-                {c.discount_type === 'percentage' ? 'A percent value, 0–100' : 'Currency amount subtracted from cart total'}
+                {c.discount_type === 'percentage' ? t('products.promo.modal.discountHintPercentage') : t('products.promo.modal.discountHintFixed')}
               </span>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Min order amount</label>
+              <label className="po-field-label">{t('products.promo.modal.minOrderAmount')}</label>
               <input className="crm-input" type="number" min="0" step="0.01"
                 placeholder="0" value={c.min_order_amount}
                 onChange={(e) => update('min_order_amount', e.target.value)} />
@@ -537,40 +548,40 @@ function PromoCodeModal({ code, categories, onSave, onClose }) {
 
             {c.discount_type === 'percentage' && (
               <div className="cpm-section">
-                <label className="po-field-label">Max discount</label>
+                <label className="po-field-label">{t('products.promo.modal.maxDiscount')}</label>
                 <input className="crm-input" type="number" min="0" step="0.01"
-                  placeholder="No cap" value={c.max_discount}
+                  placeholder={t('products.promo.modal.maxDiscountPlaceholder')} value={c.max_discount}
                   onChange={(e) => update('max_discount', e.target.value)} />
-                <span className="cpm-section-hint">Cap the absolute amount on percentage discounts</span>
+                <span className="cpm-section-hint">{t('products.promo.modal.maxDiscountHint')}</span>
               </div>
             )}
 
             <div className="cpm-section">
-              <label className="po-field-label">Total usage limit</label>
+              <label className="po-field-label">{t('products.promo.modal.usageLimit')}</label>
               <input className="crm-input" type="number" min="1"
-                placeholder="Unlimited" value={c.usage_limit}
+                placeholder={t('products.promo.modal.unlimited')} value={c.usage_limit}
                 onChange={(e) => update('usage_limit', e.target.value)} />
-              <span className="cpm-section-hint">Across all users; leave empty for unlimited</span>
+              <span className="cpm-section-hint">{t('products.promo.modal.usageLimitHint')}</span>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Per-user limit</label>
+              <label className="po-field-label">{t('products.promo.modal.perUserLimit')}</label>
               <input className="crm-input" type="number" min="1"
-                placeholder="Unlimited" value={c.per_user_limit}
+                placeholder={t('products.promo.modal.unlimited')} value={c.per_user_limit}
                 onChange={(e) => update('per_user_limit', e.target.value)} />
-              <span className="cpm-section-hint">Max times one user can apply this code</span>
+              <span className="cpm-section-hint">{t('products.promo.modal.perUserLimitHint')}</span>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Valid from</label>
+              <label className="po-field-label">{t('products.promo.modal.validFrom')}</label>
               <DateTimePicker value={c.valid_from} onChange={(v) => update('valid_from', v)} />
-              <span className="cpm-section-hint">Empty = effective immediately</span>
+              <span className="cpm-section-hint">{t('products.promo.modal.validFromHint')}</span>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Valid until</label>
+              <label className="po-field-label">{t('products.promo.modal.validUntil')}</label>
               <DateTimePicker value={c.valid_until} onChange={(v) => update('valid_until', v)} />
-              <span className="cpm-section-hint">Empty = no expiry</span>
+              <span className="cpm-section-hint">{t('products.promo.modal.validUntilHint')}</span>
             </div>
 
             <CategoriesPicker
@@ -581,10 +592,10 @@ function PromoCodeModal({ code, categories, onSave, onClose }) {
 
             <div className="auth-actions">
               <button className="crm-submit-btn" type="submit">
-                {isNew ? 'Create code' : 'Save changes'}
+                {isNew ? t('products.promo.modal.createCode') : t('products.promo.modal.saveChanges')}
               </button>
               <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-                Cancel
+                {t('products.promo.modal.cancel')}
               </button>
             </div>
           </form>
@@ -627,6 +638,7 @@ function DateTimePicker({ value, onChange }) {
 
 // CategoriesPicker — list with default "All"; empty selected[] = catalog-wide.
 function CategoriesPicker({ categories, selected, onChange }) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState('');
   const allOn = !selected || selected.length === 0;
 
@@ -655,25 +667,24 @@ function CategoriesPicker({ categories, selected, onChange }) {
     }
   };
 
-  const selectedCount = allOn ? 'All categories' : `${selected.length} selected`;
+  const selectedCount = allOn ? t('products.promo.categoriesPicker.allCategories') : t('products.promo.categoriesPicker.selected', { count: selected.length });
 
   return (
     <div className="cat-prod-section">
       <div className="cat-prod-section-head">
-        <label className="po-field-label" style={{ margin: 0 }}>Categories</label>
+        <label className="po-field-label" style={{ margin: 0 }}>{t('products.promo.categoriesPicker.categories')}</label>
         <span className="cat-prod-count">{selectedCount}</span>
       </div>
 
       <span className="cpm-section-hint">
-        "All" applies the code to every category. Pick specific ones to restrict —
-        the cart must contain ONLY items from chosen categories for the code to apply.
+        {t('products.promo.categoriesPicker.hint')}
       </span>
 
       {categories.length > 0 && (
         <div className="cat-prod-search-wrap">
           <MagnifyingGlass className="cat-prod-search-icon" />
           <input className="crm-input cat-prod-search-input"
-            placeholder="Search categories…"
+            placeholder={t('products.promo.categoriesPicker.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)} />
         </div>
@@ -681,7 +692,7 @@ function CategoriesPicker({ categories, selected, onChange }) {
 
       <div className="cat-prod-list">
         {categories.length === 0 ? (
-          <p className="cat-prod-empty">No categories defined for this project yet.</p>
+          <p className="cat-prod-empty">{t('products.promo.categoriesPicker.empty')}</p>
         ) : (
           <>
             {/* "All" pseudo-row — always first, default-checked. */}
@@ -689,13 +700,13 @@ function CategoriesPicker({ categories, selected, onChange }) {
               <input type="checkbox" className="cat-prod-checkbox"
                 checked={allOn} onChange={toggleAll} />
               <span className="cat-prod-title" style={{ fontWeight: 500 }}>
-                All categories
+                {t('products.promo.categoriesPicker.allCategories')}
               </span>
-              <span className="cat-prod-badge">Default</span>
+              <span className="cat-prod-badge">{t('products.promo.categoriesPicker.default')}</span>
             </label>
 
             {filtered.length === 0 && (
-              <p className="cat-prod-empty">No categories match your search.</p>
+              <p className="cat-prod-empty">{t('products.promo.categoriesPicker.noMatch')}</p>
             )}
 
             {filtered.map(cat => {

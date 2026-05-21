@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useTranslation } from 'react-i18next';
 import "./Style/Login.css";
 import { API_BASE } from "./api.js"
 
 function Verification() {
+  const { t } = useTranslation();
   const [code, setCode] = useState("");
   const [generalError, setGeneralError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -85,10 +87,10 @@ function Verification() {
         navigate("/dashboard");
         window.location.reload();
       } else {
-        setGeneralError(data.detail || "Verification failed");
+        setGeneralError(data.detail || t('auth.verify.failed'));
       }
     } catch {
-      setGeneralError("Network error");
+      setGeneralError(t('auth.common.networkError'));
     } finally {
       setLoading(false);
     }
@@ -115,7 +117,7 @@ function Verification() {
 
         localStorage.setItem("pendingResendUntil", String(resendUntil));
         setCooldown(resendSeconds);
-        setGeneralError("Code resent!");
+        setGeneralError(t('auth.verify.codeResent'));
       } else {
         if (res.status === 429) {
           const seconds = extractSecondsFromMessage(data.detail);
@@ -125,10 +127,10 @@ function Verification() {
           setCooldown(seconds);
         }
 
-        setGeneralError(data.detail || "Failed to resend");
+        setGeneralError(data.detail || t('auth.verify.resendFailed'));
       }
     } catch {
-      setGeneralError("Network error");
+      setGeneralError(t('auth.common.networkError'));
     } finally {
       setResending(false);
     }
@@ -149,8 +151,8 @@ function Verification() {
   return (
     <div className="regist">
       <section className="regis">
-        <h1 className="verify-h1">Verify Email</h1>
-        <p className="verify-p">Enter the 6-digit code sent to</p>
+        <h1 className="verify-h1">{t('auth.verify.title')}</h1>
+        <p className="verify-p">{t('auth.verify.subtitle')}</p>
         <p className="verify-email">{email}</p>
 
         <div className="reg">
@@ -160,7 +162,7 @@ function Verification() {
                 type="text"
                 id="code"
                 name="code"
-                placeholder="___ ___"
+                placeholder={t('auth.verify.codePlaceholder')}
                 value={formatCode(code)}
                 onChange={handleCodeChange}
                 maxLength={7}
@@ -176,7 +178,7 @@ function Verification() {
               <input
                 className={isValid && !loading ? "button1" : "not-button"}
                 type="submit"
-                value={loading ? "Verifying..." : "Continue"}
+                value={loading ? t('auth.verify.verifying') : t('auth.verify.continue')}
                 disabled={!isValid || loading}
               />
             </div>
@@ -187,10 +189,10 @@ function Verification() {
                 className={cooldown === 0 && !resending ? "button3" : "not-button3"}
                 value={
                   resending
-                    ? "Sending..."
+                    ? t('auth.verify.sending')
                     : cooldown > 0
-                    ? `Resend after ${cooldown}s`
-                    : "Resend code"
+                    ? t('auth.verify.resendAfter', { seconds: cooldown })
+                    : t('auth.verify.resendCode')
                 }
                 onClick={handleResend}
                 disabled={resending || cooldown > 0}
@@ -201,7 +203,7 @@ function Verification() {
               <input
                 type="button"
                 className="button2"
-                value="Back"
+                value={t('auth.verify.back')}
                 onClick={handleGoBack}
               />
             </div>

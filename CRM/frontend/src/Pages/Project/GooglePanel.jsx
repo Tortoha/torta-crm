@@ -1,9 +1,11 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle, Copy, Eye, EyeSlash, ArrowSquareOut, Trash } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 
 function GooglePanel({ projectId, onSaved }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [data,      setData]     = useState(null);
   const [clientId,  setClientId] = useState('');
@@ -53,14 +55,14 @@ function GooglePanel({ projectId, onSaved }) {
         }),
       });
       const json = await res.json();
-      if (res.ok) { showToast('Saved'); onSaved?.(enabled); await load(); }
-      else        { setErr(json.detail || 'Error saving'); }
-    } catch { setErr('Network error'); }
+      if (res.ok) { showToast(t('common.saved')); onSaved?.(enabled); await load(); }
+      else        { setErr(json.detail || t('authConfig.errorSaving')); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
   const del = async () => {
-    if (!confirm('Remove Google OAuth settings?')) return;
+    if (!confirm(t('authConfig.google.removeConfirm'))) return;
     setDeleting(true);
     await fetch(`${API_BASE}/api/oauth-settings${pq}`, { method: 'DELETE', credentials: 'include' });
     setDeleting(false);
@@ -68,14 +70,14 @@ function GooglePanel({ projectId, onSaved }) {
     await load();
   };
 
-  if (!data) return <p className="crm-placeholder">Loading…</p>;
+  if (!data) return <p className="crm-placeholder">{t('common.loading')}</p>;
 
   return (
     <>
       <div className="auth-toggle-row">
         <div>
-          <span className="auth-toggle-label">Enable Google OAuth</span>
-          <p className="auth-field-hint">Allow store users to sign in with their Google account.</p>
+          <span className="auth-toggle-label">{t('authConfig.google.enableLabel')}</span>
+          <p className="auth-field-hint">{t('authConfig.google.enableHint')}</p>
         </div>
         <label className="auth-toggle">
           <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
@@ -86,15 +88,15 @@ function GooglePanel({ projectId, onSaved }) {
       <div className="auth-sep" />
 
       <div className="auth-field">
-        <label className="auth-label">Client ID</label>
-        <p className="auth-field-hint">Found in Google Cloud Console under APIs &amp; Services → Credentials.</p>
+        <label className="auth-label">{t('authConfig.clientId')}</label>
+        <p className="auth-field-hint">{t('authConfig.google.clientIdHint')}</p>
         <input className="crm-input" placeholder="xxxxxxxxxx.apps.googleusercontent.com"
           value={clientId} onChange={e => setClientId(e.target.value)} autoComplete="off" />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Client Secret</label>
-        <p className="auth-field-hint">Keep this private — never expose it in client-side code.</p>
+        <label className="auth-label">{t('authConfig.clientSecret')}</label>
+        <p className="auth-field-hint">{t('authConfig.clientSecretHint')}</p>
         <div className="auth-secret-wrap">
           <input className="crm-input" type={showSec ? 'text' : 'password'}
             placeholder="GOCSPX-…" value={clientSec}
@@ -106,8 +108,8 @@ function GooglePanel({ projectId, onSaved }) {
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Redirect URI</label>
-        <p className="auth-field-hint">Add this URL to the Authorised redirect URIs list in Google Cloud Console.</p>
+        <label className="auth-label">{t('authConfig.redirectUri')}</label>
+        <p className="auth-field-hint">{t('authConfig.google.redirectHint')}</p>
         <div className="auth-uri-row">
           <code className="auth-uri-code">{data.redirect_uri}</code>
           <button className="auth-dns-copy" onClick={copyUri} type="button">
@@ -122,18 +124,18 @@ function GooglePanel({ projectId, onSaved }) {
 
       <div className="auth-actions">
         <button className="crm-submit-btn" onClick={save} disabled={saving} type="button">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('authConfig.saving') : t('common.save')}
         </button>
         {data.configured && (
           <button className="auth-btn-danger" onClick={del} disabled={deleting} type="button">
             <Trash size={15} />
-            {deleting ? 'Deleting…' : 'Delete'}
+            {deleting ? t('authConfig.deleting') : t('common.delete')}
           </button>
         )}
         <a href="https://console.cloud.google.com/apis/credentials"
           target="_blank" rel="noopener noreferrer"
           className="auth-btn-link" style={{ marginLeft: 'auto', textDecoration: 'none' }}>
-          <ArrowSquareOut size={14} /> Open Google Cloud Console
+          <ArrowSquareOut size={14} /> {t('authConfig.google.openConsole')}
         </a>
       </div>
 

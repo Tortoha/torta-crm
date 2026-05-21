@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import {
   MagnifyingGlass, CaretRight, CaretDown,
@@ -16,9 +17,9 @@ import '../../../Style/Products.css';
 import '../../../Style/Organization.css';
 
 const SORT_OPTIONS = [
-  { field: 'name',       label: 'Sort by name'  },
-  { field: 'stock',      label: 'Sort by stock' },
-  { field: 'variations', label: 'Sort by SKUs'  },
+  { field: 'name',       labelKey: 'products.discounts.sortByName'  },
+  { field: 'stock',      labelKey: 'products.discounts.sortByStock' },
+  { field: 'variations', labelKey: 'products.discounts.sortBySkus'  },
 ];
 const DEFAULT_DIR = { name: 'asc', stock: 'desc', variations: 'desc' };
 
@@ -121,6 +122,7 @@ function fmtRange(range) {
 }
 
 export default function Discounts() {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   // Push project's currency into the module global so fmtPrice picks
   // it up. Without this every price would render as USD regardless
@@ -263,18 +265,13 @@ export default function Discounts() {
   return (
     <>
       <p className="po-block-hint">
-        Automatic time-based discounts. Apply to a whole product, a single
-        variation, or one specific SKU — children inherit unless they have
-        their own. Pick type (percent / amount / fixed price) + window, and
-        the storefront automatically renders strike-through + "On sale" badge
-        while the window is open. For customer-entered codes use the Promo
-        codes tab.
+        {t('products.discounts.hint')}
       </p>
 
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search products…"
+          <input className="org-search-input" placeholder={t('products.discounts.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="po-toolbar-right">
@@ -285,15 +282,15 @@ export default function Discounts() {
       </div>
 
       {loading ? (
-        <p className="crm-placeholder">Loading…</p>
+        <p className="crm-placeholder">{t('common.loading')}</p>
       ) : filteredProducts.length === 0 ? (
         <p className="crm-placeholder">
-          {products.length === 0 ? 'No products yet.' : 'No products match the search.'}
+          {products.length === 0 ? t('products.discounts.emptyNoProducts') : t('products.discounts.noMatch')}
         </p>
       ) : (
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head" style={{ gridTemplateColumns: COLS }}>
-            <span>Name</span><span>Type</span><span>Value</span><span>Price</span><span>Window</span><span></span>
+            <span>{t('products.discounts.colName')}</span><span>{t('products.discounts.colType')}</span><span>{t('products.discounts.colValue')}</span><span>{t('products.discounts.colPrice')}</span><span>{t('products.discounts.colWindow')}</span><span></span>
           </div>
           {filteredProducts.map(p => {
             const e = expanded[p.id];
@@ -318,9 +315,9 @@ export default function Discounts() {
             const res = await saveDiscount(editTarget, body);
             if (res.ok) {
               await refreshAfterSave(editTarget, body);
-              showToast('Saved');
+              showToast(t('products.discounts.toast.saved'));
               setEditTarget(null);
-            } else { showToast(`Save failed: ${res.error}`); }
+            } else { showToast(t('products.discounts.toast.saveFailed', { error: res.error })); }
           }}
           onDelete={async () => {
             const cleared = {
@@ -330,9 +327,9 @@ export default function Discounts() {
             const res = await saveDiscount(editTarget, cleared);
             if (res.ok) {
               await refreshAfterSave(editTarget, cleared);
-              showToast('Discount removed');
+              showToast(t('products.discounts.toast.removed'));
               setEditTarget(null);
-            } else { showToast(`Delete failed: ${res.error}`); }
+            } else { showToast(t('products.discounts.toast.deleteFailed', { error: res.error })); }
           }} />
       )}
 
@@ -344,6 +341,7 @@ export default function Discounts() {
 // ── Branch components ────────────────────────────────────────────────
 
 function ProductBranch({ product, isOpen, hydrated, detail, openVar, onToggleProduct, onToggleVar, onEdit }) {
+  const { t } = useTranslation();
   const now = new Date();
   const variations = detail?.variations || [];
   const skuCount = variations.reduce((sum, v) => sum + (v.configurations?.length || 0), 0);
@@ -377,8 +375,8 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
           icon={<Folder weight="duotone" className="po-disc-cell--strong" />}>
           <span className="po-set-strong">{product.title}</span>
           <span className="po-set-note po-tree-meta">
-            · {product.variations_count || 0} variation{product.variations_count === 1 ? '' : 's'}
-            {hydrated ? ` · ${skuCount} SKU${skuCount === 1 ? '' : 's'}` : ''}
+            · {product.variations_count === 1 ? t('products.discounts.variationOne', { count: product.variations_count }) : t('products.discounts.variationMany', { count: product.variations_count || 0 })}
+            {hydrated ? ` · ${skuCount === 1 ? t('products.discounts.skuOne', { count: skuCount }) : t('products.discounts.skuMany', { count: skuCount })}` : ''}
           </span>
         </NameCell>
         <SaleTypeCell sale={prodSale} ownTuple={prodTuple} />
@@ -387,14 +385,14 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
         <SaleWindowCell sale={prodSale} fallback={prodTuple} />
         <button type="button" className="po-edit-btn"
           onClick={(e) => { e.stopPropagation(); openEditProduct(); }}>
-          <PencilSimple weight="bold" /> Edit
+          <PencilSimple weight="bold" /> {t('products.discounts.edit')}
         </button>
       </PoListRow>
 
       {isOpen && !hydrated && (
         <div className="po-set-row po-tree-loading-row"
           style={{ gridTemplateColumns: COLS }}>
-          <span className="po-tree-loading-text">Loading…</span>
+          <span className="po-tree-loading-text">{t('common.loading')}</span>
           <span></span><span></span><span></span><span></span><span></span>
         </div>
       )}
@@ -433,7 +431,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
                 icon={<VariationAvatar variation={v} />}>
                 <span className="po-set-strong">{v.variation_name || v.name || '—'}</span>
                 <span className="po-set-note po-tree-meta">
-                  · {confs.length} SKU{confs.length === 1 ? '' : 's'}
+                  · {confs.length === 1 ? t('products.discounts.skuOne', { count: confs.length }) : t('products.discounts.skuMany', { count: confs.length })}
                 </span>
               </NameCell>
               <SaleTypeCell sale={varSale} ownTuple={varTuple} />
@@ -442,7 +440,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
               <SaleWindowCell sale={varSale} fallback={varTuple} />
               <button type="button" className="po-edit-btn"
                 onClick={(e) => { e.stopPropagation(); openEditVar(); }}>
-                <PencilSimple weight="bold" /> Edit
+                <PencilSimple weight="bold" /> {t('products.discounts.edit')}
               </button>
             </PoListRow>
 
@@ -478,7 +476,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
                   <SaleWindowCell sale={cSale} fallback={cTuple} />
                   <button type="button" className="po-edit-btn"
                     onClick={(e) => { e.stopPropagation(); openEditCfg(); }}>
-                    <PencilSimple weight="bold" /> Edit
+                    <PencilSimple weight="bold" /> {t('products.discounts.edit')}
                   </button>
                 </PoListRow>
               );
@@ -493,6 +491,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
 // ── Sort + Category toolbar widgets (mirrors Inventory) ─────────────
 
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -520,7 +519,7 @@ function SortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         const isCur  = cur === field;
         return (
@@ -533,7 +532,7 @@ function SortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -542,6 +541,7 @@ function SortToggle({ sort, onSort }) {
 }
 
 function CategoryFilter({ value, categories, onChange }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos,  setPos]  = useState(null);
@@ -565,9 +565,9 @@ function CategoryFilter({ value, categories, onChange }) {
     };
   }, [open]);
 
-  const label = value === null ? 'All Categories'
-    : value === 'uncategorized' ? 'Uncategorized'
-    : (categories.find(c => c.id === value)?.name || 'Category');
+  const label = value === null ? t('products.discounts.allCategories')
+    : value === 'uncategorized' ? t('products.discounts.uncategorized')
+    : (categories.find(c => c.id === value)?.name || t('products.discounts.category'));
 
   return (
     <>
@@ -587,13 +587,13 @@ function CategoryFilter({ value, categories, onChange }) {
             className={`cat-filter-item${current === 'all' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('all')}
             onClick={() => { onChange(null); setOpen(false); }}>
-            All Categories
+            {t('products.discounts.allCategories')}
           </button>
           <button ref={setItemRef('uncat')}
             className={`cat-filter-item${current === 'uncat' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('uncat')}
             onClick={() => { onChange('uncategorized'); setOpen(false); }}>
-            Uncategorized
+            {t('products.discounts.uncategorized')}
           </button>
           {categories.map(c => {
             const k = `c:${c.id}`;
@@ -638,15 +638,16 @@ function VariationAvatar({ variation }) {
 }
 
 function SaleTypeCell({ sale, ownTuple }) {
+  const { t } = useTranslation();
   if (!sale) return <span className="po-set-note">—</span>;
   const inherited = !ownTuple;
-  const label = sale.type === 'percent' ? 'Percent'
-              : sale.type === 'amount'  ? 'Amount'
-              : 'Fixed price';
+  const label = sale.type === 'percent' ? t('products.discounts.typePercent')
+              : sale.type === 'amount'  ? t('products.discounts.typeAmount')
+              : t('products.discounts.typeFixed');
   return (
     <span className="po-disc-cell--active">
       {label}
-      {inherited && <span className="po-set-note po-tree-inherited">(inherited)</span>}
+      {inherited && <span className="po-set-note po-tree-inherited">{t('products.discounts.inherited')}</span>}
     </span>
   );
 }
@@ -671,10 +672,11 @@ function PriceCell({ node, sale }) {
 }
 
 function SaleWindowCell({ sale, fallback }) {
+  const { t } = useTranslation();
   const tup = sale ? [sale.type, sale.value, sale.starts, sale.ends] : fallback;
   if (!tup) return <span className="po-set-note">—</span>;
   const [, , ss, se] = tup;
-  if (!ss && !se) return <span className="po-set-note">Always</span>;
+  if (!ss && !se) return <span className="po-set-note">{t('products.discounts.always')}</span>;
   const fmt = (s) => s ? new Date(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '∞';
   return <span className="po-disc-cell--muted">{fmt(ss)} → {fmt(se)}</span>;
 }
@@ -682,12 +684,13 @@ function SaleWindowCell({ sale, fallback }) {
 // ── Edit modal ───────────────────────────────────────────────────────
 
 const TYPE_OPTIONS = [
-  { value: 'percent', label: 'Percent off',     Icon: Percent,         hint: 'e.g. 20 → 20% off the price' },
-  { value: 'amount',  label: 'Amount off',      Icon: CurrencyDollar,  hint: 'e.g. 5 → minus 5 from the price' },
-  { value: 'fixed',   label: 'Fixed final price', Icon: Tag,           hint: 'e.g. 99 → exact price during the window' },
+  { value: 'percent', labelKey: 'products.discounts.modal.typePercentLabel', Icon: Percent,        hintKey: 'products.discounts.modal.typePercentHint' },
+  { value: 'amount',  labelKey: 'products.discounts.modal.typeAmountLabel',  Icon: CurrencyDollar, hintKey: 'products.discounts.modal.typeAmountHint' },
+  { value: 'fixed',   labelKey: 'products.discounts.modal.typeFixedLabel',   Icon: Tag,            hintKey: 'products.discounts.modal.typeFixedHint' },
 ];
 
 function EditDiscountModal({ target, onClose, onSave, onDelete }) {
+  const { t } = useTranslation();
   const init = target.initial || {};
   const [type, setType]     = useState(init.sale_type || 'percent');
   const [value, setValue]   = useState(init.sale_value === '' ? '' : String(init.sale_value ?? ''));
@@ -711,14 +714,14 @@ function EditDiscountModal({ target, onClose, onSave, onDelete }) {
   };
 
   const remove = async () => {
-    if (!confirm('Remove discount? Pricing returns to the regular price.')) return;
+    if (!confirm(t('products.discounts.confirmRemove'))) return;
     setBusy(true);
     try { await onDelete(); } finally { setBusy(false); }
   };
 
-  const valueLabel = type === 'percent' ? 'Percent (0–100)'
-                   : type === 'amount'  ? 'Amount to subtract'
-                   : 'Final sale price';
+  const valueLabel = type === 'percent' ? t('products.discounts.modal.valuePercent')
+                   : type === 'amount'  ? t('products.discounts.modal.valueAmount')
+                   : t('products.discounts.modal.valueFixed');
 
   // Live preview — recomputes on value/type change.
   const previewSale = (() => {
@@ -738,11 +741,11 @@ function EditDiscountModal({ target, onClose, onSave, onDelete }) {
           <div className="auth-modal-title-row">
             <div>
               <div className="auth-modal-title">
-                {target.has_existing ? 'Edit discount' : 'New discount'}
+                {target.has_existing ? t('products.discounts.modal.editTitle') : t('products.discounts.modal.newTitle')}
               </div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Scope: <strong>{target.scope}</strong> · {target.breadcrumb}
+                  {t('products.discounts.modal.scope')} <strong>{target.scope}</strong> · {target.breadcrumb}
                 </span>
               </div>
             </div>
@@ -755,7 +758,7 @@ function EditDiscountModal({ target, onClose, onSave, onDelete }) {
         <div className="auth-modal-body">
           <form className="cpm-form" onSubmit={(e) => { e.preventDefault(); submit(); }}>
             <div className="cpm-section">
-              <label className="po-field-label">Discount type</label>
+              <label className="po-field-label">{t('products.discounts.modal.discountType')}</label>
               <div className="po-disc-type-list">
                 {TYPE_OPTIONS.map(o => (
                   <TypeOption key={o.value} option={o}
@@ -774,30 +777,30 @@ function EditDiscountModal({ target, onClose, onSave, onDelete }) {
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Starts at</label>
+              <label className="po-field-label">{t('products.discounts.modal.startsAt')}</label>
               <DateTimePicker value={starts} onChange={setStarts} />
-              <span className="cpm-section-hint">Empty = effective immediately</span>
+              <span className="cpm-section-hint">{t('products.discounts.modal.startsHint')}</span>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Ends at</label>
+              <label className="po-field-label">{t('products.discounts.modal.endsAt')}</label>
               <DateTimePicker value={ends} onChange={setEnds} />
-              <span className="cpm-section-hint">Empty = no end date</span>
+              <span className="cpm-section-hint">{t('products.discounts.modal.endsHint')}</span>
             </div>
 
             <div className="auth-actions po-disc-actions">
               <button className="crm-submit-btn" type="submit" disabled={busy || !value}>
-                {busy ? 'Saving…' : (target.has_existing ? 'Save changes' : 'Create discount')}
+                {busy ? t('products.discounts.modal.saving') : (target.has_existing ? t('products.discounts.modal.saveChanges') : t('products.discounts.modal.create'))}
               </button>
               {target.has_existing && (
                 <button type="button" className="auth-btn-danger"
                   disabled={busy} onClick={remove}>
-                  Delete
+                  {t('products.discounts.modal.delete')}
                 </button>
               )}
               <button type="button" className="crm-submit-btn auth-btn-secondary po-disc-cancel-btn"
                 disabled={busy} onClick={onClose}>
-                Cancel
+                {t('products.discounts.modal.cancel')}
               </button>
             </div>
           </form>
@@ -809,19 +812,20 @@ function EditDiscountModal({ target, onClose, onSave, onDelete }) {
 }
 
 function PreviewBlock({ before, after }) {
+  const { t } = useTranslation();
   if (!before) {
-    return <span className="cpm-section-hint">No SKU prices yet — add a configuration first to see the effect.</span>;
+    return <span className="cpm-section-hint">{t('products.discounts.modal.previewNoPrices')}</span>;
   }
   if (!after) {
     return (
       <span className="cpm-section-hint">
-        Current price: <strong>{fmtRange(before)}</strong>. Type a value to preview the sale price.
+        {t('products.discounts.modal.previewCurrentPrefix')} <strong>{fmtRange(before)}</strong>{t('products.discounts.modal.previewCurrentSuffix')}
       </span>
     );
   }
   return (
     <div className="po-disc-preview">
-      <span className="po-disc-preview-label">Preview:</span>
+      <span className="po-disc-preview-label">{t('products.discounts.modal.previewLabel')}</span>
       <span className="po-disc-price-before">{fmtRange(before)}</span>
       <span className="po-disc-price-arrow">→</span>
       <span className="po-disc-price-after">{fmtRange(after)}</span>
@@ -830,14 +834,15 @@ function PreviewBlock({ before, after }) {
 }
 
 function TypeOption({ option, selected, onSelect }) {
-  const { label, Icon, hint } = option;
+  const { t } = useTranslation();
+  const { labelKey, Icon, hintKey } = option;
   const cls = `po-disc-type-option${selected ? ' po-disc-type-option--selected' : ''}`;
   return (
     <button type="button" className={cls} onClick={onSelect}>
       <Icon weight="bold" size={18} className="po-disc-type-option-icon" />
       <div className="po-disc-type-option-body">
-        <div className="po-disc-type-option-label">{label}</div>
-        <div className="po-disc-type-option-hint">{hint}</div>
+        <div className="po-disc-type-option-label">{t(labelKey)}</div>
+        <div className="po-disc-type-option-hint">{t(hintKey)}</div>
       </div>
       {selected && <span className="po-disc-type-option-check">✓</span>}
     </button>

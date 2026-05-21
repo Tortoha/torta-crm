@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Trans, useTranslation } from 'react-i18next';
 import {
   X, Copy, CheckCircle, BookOpen, PaperPlaneTilt, Eye, EyeSlash,
 } from '@phosphor-icons/react';
@@ -8,47 +9,47 @@ import { CONNECTOR_BY_TYPE } from './connectors.js';
 import ConnectorIcon from './ConnectorIcon.jsx';
 
 const ALL_EVENTS = [
-  { value: 'order.created',     group: 'Orders'   },
-  { value: 'order.paid',        group: 'Orders'   },
-  { value: 'order.shipped',     group: 'Orders'   },
-  { value: 'order.delivered',   group: 'Orders'   },
-  { value: 'order.cancelled',   group: 'Orders'   },
-  { value: 'order.returned',    group: 'Orders'   },
-  { value: 'booking.created',   group: 'Bookings' },
-  { value: 'booking.confirmed', group: 'Bookings' },
-  { value: 'booking.completed', group: 'Bookings' },
-  { value: 'booking.cancelled', group: 'Bookings' },
-  { value: 'booking.no_show',   group: 'Bookings' },
-  { value: 'customer.created',  group: 'Other'    },
-  { value: 'payment.received',  group: 'Other'    },
-  { value: 'product.created',   group: 'Other'    },
-  { value: 'product.updated',   group: 'Other'    },
+  { value: 'order.created',     group: 'groupOrders'   },
+  { value: 'order.paid',        group: 'groupOrders'   },
+  { value: 'order.shipped',     group: 'groupOrders'   },
+  { value: 'order.delivered',   group: 'groupOrders'   },
+  { value: 'order.cancelled',   group: 'groupOrders'   },
+  { value: 'order.returned',    group: 'groupOrders'   },
+  { value: 'booking.created',   group: 'groupBookings' },
+  { value: 'booking.confirmed', group: 'groupBookings' },
+  { value: 'booking.completed', group: 'groupBookings' },
+  { value: 'booking.cancelled', group: 'groupBookings' },
+  { value: 'booking.no_show',   group: 'groupBookings' },
+  { value: 'customer.created',  group: 'groupOther'    },
+  { value: 'payment.received',  group: 'groupOther'    },
+  { value: 'product.created',   group: 'groupOther'    },
+  { value: 'product.updated',   group: 'groupOther'    },
 ];
 const EVENTS_BY_GROUP = ALL_EVENTS.reduce((acc, e) => {
   (acc[e.group] = acc[e.group] || []).push(e); return acc;
 }, {});
 
-// Default field schema for legacy webhook/slack/discord — kept as a fallback
-// so connectors that don't declare primaryLabel still render correctly.
-const DEFAULT_PRIMARY_BY_TYPE = {
-  webhook: {
-    label: 'Endpoint URL',
-    placeholder: 'https://your-server.com/torta-webhook',
-    help: 'Your server should accept POST and verify X-Torta-Signature.',
-  },
-  slack: {
-    label: 'Webhook URL',
-    placeholder: 'https://hooks.slack.com/services/T0…/B0…/…',
-    help: 'Get this from api.slack.com/messaging/webhooks',
-  },
-  discord: {
-    label: 'Webhook URL',
-    placeholder: 'https://discord.com/api/webhooks/…/…',
-    help: 'Server Settings → Integrations → Webhooks → New Webhook',
-  },
-};
-
 export default function ConnectorModal({ projectId, connectorType, existing, onClose, onSaved, onDeleted }) {
+  const { t } = useTranslation();
+  // Default field schema for legacy webhook/slack/discord — kept as a fallback
+  // so connectors that don't declare primaryLabel still render correctly.
+  const DEFAULT_PRIMARY_BY_TYPE = {
+    webhook: {
+      label: t('integrations.connector.defaults.webhook.label'),
+      placeholder: t('integrations.connector.defaults.webhook.placeholder'),
+      help: t('integrations.connector.defaults.webhook.help'),
+    },
+    slack: {
+      label: t('integrations.connector.defaults.slack.label'),
+      placeholder: t('integrations.connector.defaults.slack.placeholder'),
+      help: t('integrations.connector.defaults.slack.help'),
+    },
+    discord: {
+      label: t('integrations.connector.defaults.discord.label'),
+      placeholder: t('integrations.connector.defaults.discord.placeholder'),
+      help: t('integrations.connector.defaults.discord.help'),
+    },
+  };
   const pq = `?project_id=${projectId}`;
   const meta = CONNECTOR_BY_TYPE[connectorType] || {};
   const isEdit = !!existing;
@@ -65,7 +66,9 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
       };
     }
     return DEFAULT_PRIMARY_BY_TYPE[connectorType] || {
-      label: 'Webhook URL', placeholder: 'https://your-endpoint.com/hook', help: '',
+      label: t('integrations.connector.defaults.fallbackLabel'),
+      placeholder: t('integrations.connector.defaults.fallbackPlaceholder'),
+      help: '',
     };
   }, [meta, connectorType]);
 
@@ -135,11 +138,11 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
       // Webhook-like primary field is a URL; API-connector primary is an
       // identifier (G-XXX, list_id, token) — backend enforces both shapes.
       if (!u) {
-        setErr(`${primary.label} is required`);
+        setErr(t('integrations.connector.primaryRequired', { label: primary.label }));
         setBusy(false); return;
       }
       if (isWebhookLike && !/^https?:\/\//i.test(u)) {
-        setErr(`${primary.label} must start with http:// or https://`);
+        setErr(t('integrations.connector.primaryHttp', { label: primary.label }));
         setBusy(false); return;
       }
       const body = {
@@ -166,7 +169,7 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
       }
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setErr(j.detail || 'Save failed'); setBusy(false); return;
+        setErr(j.detail || t('integrations.connector.saveFailed')); setBusy(false); return;
       }
       const data = await res.json();
       if (!isEdit && data.secret) setSecret(data.secret);
@@ -176,7 +179,7 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
   };
 
   const test = async () => {
-    if (!isEdit) { setErr('Save the integration first, then test'); return; }
+    if (!isEdit) { setErr(t('integrations.connector.saveFirstThenTest')); return; }
     setErr(''); setTestRes(null); setBusy(true);
     try {
       const res = await fetch(`${API_BASE}/api/integrations/${existing.id}/test${pq}`, {
@@ -190,7 +193,7 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
 
   const remove = async () => {
     if (!isEdit) { onClose(); return; }
-    if (!confirm('Delete this integration? Logs are preserved.')) return;
+    if (!confirm(t('integrations.connector.confirmDelete'))) return;
     setBusy(true);
     try {
       await fetch(`${API_BASE}/api/integrations/${existing.id}${pq}`, {
@@ -226,7 +229,7 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
 
         <div className="auth-modal-body">
           <div className="auth-field">
-            <label className="auth-label">Name (internal)</label>
+            <label className="auth-label">{t('integrations.connector.nameLabel')}</label>
             <input className="crm-input" value={name}
               onChange={e => setName(e.target.value)} maxLength={120}
               placeholder={meta.name} />
@@ -256,7 +259,7 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
                   {isSecret && (
                     <button type="button" className="int-secret-reveal"
                       onClick={() => setShowSecretMap(m => ({ ...m, [f.key]: !m[f.key] }))}
-                      aria-label={reveal ? 'Hide' : 'Show'}>
+                      aria-label={reveal ? t('integrations.connector.hide') : t('integrations.connector.show')}>
                       {reveal ? <EyeSlash size={14} /> : <Eye size={14} />}
                     </button>
                   )}
@@ -268,18 +271,18 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
 
           {showHmacSecret && secret && (
             <div className="auth-field">
-              <label className="auth-label">Signing secret</label>
+              <label className="auth-label">{t('integrations.connector.signingSecret')}</label>
               <div className="int-secret-row">
                 <code className="int-secret">{secret}</code>
                 <button type="button" className="auth-btn-check int-copy-btn"
                   onClick={copySecret}>
-                  {copied ? <><CheckCircle weight="fill" size={14} /> Copied</>
-                          : <><Copy size={14} /> Copy</>}
+                  {copied ? <><CheckCircle weight="fill" size={14} /> {t('integrations.connector.copied')}</>
+                          : <><Copy size={14} /> {t('integrations.connector.copy')}</>}
                 </button>
               </div>
               <p className="auth-field-hint">
-                Verify <code>X-Torta-Signature: sha256=&lt;hex&gt;</code> on every request:
-                {' '}<code>HMAC-SHA256(body, secret)</code>.
+                <Trans i18nKey="integrations.connector.signingHint"
+                  components={[<code key="0" />, <code key="1" />]} />
               </p>
             </div>
           )}
@@ -289,13 +292,13 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
           <div className="auth-field">
             <label className="auth-toggle-row" style={{ cursor: 'pointer' }}>
               <div>
-                <span className="auth-toggle-label">Subscribe to all events</span>
+                <span className="auth-toggle-label">{t('integrations.connector.subscribeAll')}</span>
                 <p className="auth-field-hint">
                   {connectorType === 'mailchimp'
-                    ? 'Mailchimp listens to customer.created only — other events are silently skipped server-side.'
+                    ? t('integrations.connector.subscribeAllHintMailchimp')
                     : connectorType === 'ga4'
-                    ? 'GA4 maps order.paid → purchase, order.created → begin_checkout. Other events are skipped.'
-                    : 'When ON, every event from this project triggers this integration.'}
+                    ? t('integrations.connector.subscribeAllHintGa4')
+                    : t('integrations.connector.subscribeAllHintDefault')}
                 </p>
               </div>
               <span className="auth-toggle">
@@ -310,7 +313,7 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
             <div className="int-events-grid">
               {Object.entries(EVENTS_BY_GROUP).map(([group, list]) => (
                 <div key={group} className="int-events-group">
-                  <div className="int-events-group-title">{group}</div>
+                  <div className="int-events-group-title">{t(`integrations.connector.events.${group}`)}</div>
                   {list.map(e => (
                     <label key={e.value} className="int-event-check">
                       {/* Same square checkbox as Targets / Promo / Accounting modal —
@@ -332,8 +335,8 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
               <div className="auth-sep" />
               <div className="auth-toggle-row">
                 <div>
-                  <span className="auth-toggle-label">Active</span>
-                  <p className="auth-field-hint">Pause delivery without losing config.</p>
+                  <span className="auth-toggle-label">{t('integrations.connector.active')}</span>
+                  <p className="auth-field-hint">{t('integrations.connector.activeHint')}</p>
                 </div>
                 <label className="auth-toggle">
                   <input type="checkbox" checked={isActive}
@@ -361,24 +364,24 @@ export default function ConnectorModal({ projectId, connectorType, existing, onC
 
           <div className="auth-actions">
             <button className="crm-submit-btn" onClick={save} disabled={busy} type="button">
-              {busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Install')}
+              {busy ? t('integrations.connector.saving') : (isEdit ? t('integrations.connector.saveChanges') : t('integrations.connector.install'))}
             </button>
             {isEdit && (
               <button type="button" className="auth-btn-check" onClick={test} disabled={busy}>
-                <PaperPlaneTilt size={14} /> Test send
+                <PaperPlaneTilt size={14} /> {t('integrations.connector.testSend')}
               </button>
             )}
             {meta.docsUrl && (
               <a className="auth-btn-check" target="_blank" rel="noopener noreferrer"
                 href={meta.docsUrl} style={{ textDecoration: 'none' }}>
-                <BookOpen size={14} /> Docs
+                <BookOpen size={14} /> {t('integrations.connector.docs')}
               </a>
             )}
             {isEdit && (
               <button type="button" className="auth-btn-danger"
                 style={{ marginLeft: 'auto' }}
                 onClick={remove} disabled={busy}>
-                Delete
+                {t('integrations.connector.delete')}
               </button>
             )}
           </div>

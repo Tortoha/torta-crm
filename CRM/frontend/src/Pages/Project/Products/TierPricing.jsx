@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import {
   MagnifyingGlass, CaretRight, CaretDown,
@@ -18,9 +19,9 @@ import '../../../Style/Organization.css';
 const COLS = '2.4fr 1fr 1.6fr 1.2fr 110px';
 
 const SORT_OPTIONS = [
-  { field: 'name',       label: 'Sort by name'  },
-  { field: 'stock',      label: 'Sort by stock' },
-  { field: 'variations', label: 'Sort by SKUs'  },
+  { field: 'name',       labelKey: 'products.tier.sortByName'  },
+  { field: 'stock',      labelKey: 'products.tier.sortByStock' },
+  { field: 'variations', labelKey: 'products.tier.sortBySkus'  },
 ];
 const DEFAULT_DIR = { name: 'asc', stock: 'desc', variations: 'desc' };
 
@@ -37,6 +38,7 @@ function fmtPrice(p) {
 }
 
 export default function TierPricing() {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   useEffect(() => { setTierCurrency(project?.currency || 'USD'); }, [project?.currency]);
   const pq = `?project_id=${projectId}`;
@@ -147,16 +149,13 @@ export default function TierPricing() {
   return (
     <>
       <p className="po-block-hint">
-        Wholesale-style ladders. Set "buy N+ for $X each" per SKU and the
-        storefront automatically picks the highest tier whose threshold ≤ cart
-        quantity at checkout. Stacks with discounts: tier resolves first, then
-        the active sale (if any) applies on top.
+        {t('products.tier.hint')}
       </p>
 
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search products…"
+          <input className="org-search-input" placeholder={t('products.tier.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="po-toolbar-right">
@@ -167,15 +166,15 @@ export default function TierPricing() {
       </div>
 
       {loading ? (
-        <p className="crm-placeholder">Loading…</p>
+        <p className="crm-placeholder">{t('common.loading')}</p>
       ) : filteredProducts.length === 0 ? (
         <p className="crm-placeholder">
-          {products.length === 0 ? 'No products yet.' : 'No products match the search.'}
+          {products.length === 0 ? t('products.tier.emptyNoProducts') : t('products.tier.noMatch')}
         </p>
       ) : (
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head" style={{ gridTemplateColumns: COLS }}>
-            <span>Name</span><span>Base price</span><span>Tier ladder</span><span>SKU code</span><span></span>
+            <span>{t('products.tier.colName')}</span><span>{t('products.tier.colBasePrice')}</span><span>{t('products.tier.colTierLadder')}</span><span>{t('products.tier.colSkuCode')}</span><span></span>
           </div>
           {filteredProducts.map(p => {
             const e = expanded[p.id];
@@ -210,6 +209,7 @@ export default function TierPricing() {
 
 function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
                           openVar, onToggleProduct, onToggleVar, onEdit }) {
+  const { t } = useTranslation();
   const variations = detail?.variations || [];
   const skuCount = variations.reduce((sum, v) => sum + (v.configurations?.length || 0), 0);
   // Pre-hydration uses cheap list aggregate `tier_count`; post-hydration counts exact rows.
@@ -226,8 +226,8 @@ function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
           icon={<Folder weight="duotone" className="po-disc-cell--strong" />}>
           <span className="po-set-strong">{product.title}</span>
           <span className="po-set-note po-tree-meta">
-            · {product.variations_count || 0} variation{product.variations_count === 1 ? '' : 's'}
-            {hydrated ? ` · ${skuCount} SKU${skuCount === 1 ? '' : 's'}` : ''}
+            · {product.variations_count === 1 ? t('products.tier.variationOne', { count: product.variations_count }) : t('products.tier.variationMany', { count: product.variations_count || 0 })}
+            {hydrated ? ` · ${skuCount === 1 ? t('products.tier.skuOne', { count: skuCount }) : t('products.tier.skuMany', { count: skuCount })}` : ''}
           </span>
         </NameCell>
         <span className="po-numeric-left">
@@ -238,7 +238,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
             : '—'}
         </span>
         <span className={tierCount > 0 ? 'po-disc-cell--strong' : 'po-set-note'}>
-          {tierCount > 0 ? `${tierCount} tier${tierCount === 1 ? '' : 's'}` : 'No tiers'}
+          {tierCount > 0 ? (tierCount === 1 ? t('products.tier.tierOne', { count: tierCount }) : t('products.tier.tierMany', { count: tierCount })) : t('products.tier.noTiers')}
         </span>
         <span className="po-set-note">{product.sku || '—'}</span>
         <span></span>
@@ -246,7 +246,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
 
       {isOpen && !hydrated && (
         <div className="po-set-row po-tree-loading-row" style={{ gridTemplateColumns: COLS }}>
-          <span className="po-tree-loading-text">Loading…</span>
+          <span className="po-tree-loading-text">{t('common.loading')}</span>
           <span></span><span></span><span></span><span></span>
         </div>
       )}
@@ -266,12 +266,12 @@ function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
                 icon={<VariationAvatar variation={v} />}>
                 <span className="po-set-strong">{v.variation_name || v.name || '—'}</span>
                 <span className="po-set-note po-tree-meta">
-                  · {confs.length} SKU{confs.length === 1 ? '' : 's'}
+                  · {confs.length === 1 ? t('products.tier.skuOne', { count: confs.length }) : t('products.tier.skuMany', { count: confs.length })}
                 </span>
               </NameCell>
               <span></span>
               <span className={vTierCount > 0 ? 'po-disc-cell--strong' : 'po-set-note'}>
-                {vTierCount > 0 ? `${vTierCount} tier${vTierCount === 1 ? '' : 's'}` : 'No tiers'}
+                {vTierCount > 0 ? (vTierCount === 1 ? t('products.tier.tierOne', { count: vTierCount }) : t('products.tier.tierMany', { count: vTierCount })) : t('products.tier.noTiers')}
               </span>
               <span></span>
               <span></span>
@@ -301,7 +301,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
                   <span className="po-set-note">{c.sku_code || '—'}</span>
                   <button type="button" className="po-edit-btn"
                     onClick={(e) => { e.stopPropagation(); openEdit(); }}>
-                    <PencilSimple weight="bold" /> Edit
+                    <PencilSimple weight="bold" /> {t('products.tier.edit')}
                   </button>
                 </PoListRow>
               );
@@ -314,7 +314,8 @@ function ProductBranch({ product, isOpen, hydrated, detail, tiersBySku,
 }
 
 function TierLadderCell({ tiers }) {
-  if (!tiers || tiers.length === 0) return <span className="po-set-note">No tiers</span>;
+  const { t } = useTranslation();
+  if (!tiers || tiers.length === 0) return <span className="po-set-note">{t('products.tier.noTiers')}</span>;
   return (
     <span className="po-tier-ladder">
       {tiers.map(t => (
@@ -353,6 +354,7 @@ function VariationAvatar({ variation }) {
 // ── Sort + Category filter (mirror of Inventory / Discount) ────────
 
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -380,7 +382,7 @@ function SortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         const isCur  = cur === field;
         return (
@@ -393,7 +395,7 @@ function SortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -402,6 +404,7 @@ function SortToggle({ sort, onSort }) {
 }
 
 function CategoryFilter({ value, categories, onChange }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos,  setPos]  = useState(null);
@@ -425,9 +428,9 @@ function CategoryFilter({ value, categories, onChange }) {
     };
   }, [open]);
 
-  const label = value === null ? 'All Categories'
-    : value === 'uncategorized' ? 'Uncategorized'
-    : (categories.find(c => c.id === value)?.name || 'Category');
+  const label = value === null ? t('products.tier.allCategories')
+    : value === 'uncategorized' ? t('products.tier.uncategorized')
+    : (categories.find(c => c.id === value)?.name || t('products.tier.category'));
 
   return (
     <>
@@ -447,13 +450,13 @@ function CategoryFilter({ value, categories, onChange }) {
             className={`cat-filter-item${current === 'all' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('all')}
             onClick={() => { onChange(null); setOpen(false); }}>
-            All Categories
+            {t('products.tier.allCategories')}
           </button>
           <button ref={setItemRef('uncat')}
             className={`cat-filter-item${current === 'uncat' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('uncat')}
             onClick={() => { onChange('uncategorized'); setOpen(false); }}>
-            Uncategorized
+            {t('products.tier.uncategorized')}
           </button>
           {categories.map(c => {
             const k = `c:${c.id}`;
@@ -476,6 +479,7 @@ function CategoryFilter({ value, categories, onChange }) {
 // ── Edit tiers modal — list + add row, immediate persist on add/delete ─
 
 function EditTiersModal({ target, pq, onClose, onChanged, showToast }) {
+  const { t } = useTranslation();
   // Local list for optimistic UX. Synced with backend via add/delete calls.
   const [tiers, setTiers] = useState(target.tiers || []);
   const [newQty, setNewQty]   = useState('');
@@ -485,8 +489,8 @@ function EditTiersModal({ target, pq, onClose, onChanged, showToast }) {
   const addTier = async () => {
     const q = parseInt(newQty, 10);
     const p = parseFloat(newPrice);
-    if (!q || q < 1) { showToast('min qty must be ≥ 1'); return; }
-    if (isNaN(p) || p < 0) { showToast('price must be ≥ 0'); return; }
+    if (!q || q < 1) { showToast(t('products.tier.modal.errMinQty')); return; }
+    if (isNaN(p) || p < 0) { showToast(t('products.tier.modal.errPrice')); return; }
     setBusy(true);
     try {
       const r = await fetch(`${API_BASE}/api/products/${target.product_id}/tier-pricing${pq}`, {
@@ -501,7 +505,7 @@ function EditTiersModal({ target, pq, onClose, onChanged, showToast }) {
         onChanged?.();
       } else {
         const j = await r.json().catch(() => ({}));
-        showToast(j.detail || 'Failed to add tier');
+        showToast(j.detail || t('products.tier.modal.addFailed'));
       }
     } finally { setBusy(false); }
   };
@@ -515,7 +519,7 @@ function EditTiersModal({ target, pq, onClose, onChanged, showToast }) {
       if (r.ok) {
         setTiers(prev => prev.filter(t => t.id !== tierId));
         onChanged?.();
-      } else { showToast('Failed to remove tier'); }
+      } else { showToast(t('products.tier.modal.removeFailed')); }
     } finally { setBusy(false); }
   };
 
@@ -528,12 +532,12 @@ function EditTiersModal({ target, pq, onClose, onChanged, showToast }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Tier pricing</div>
+              <div className="auth-modal-title">{t('products.tier.modal.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {target.breadcrumb}
                   {target.sku_code && <> · {target.sku_code}</>}
-                  {basePrice != null && <> · base {fmtPrice(basePrice)}</>}
+                  {basePrice != null && <> · {t('products.tier.modal.base')} {fmtPrice(basePrice)}</>}
                 </span>
               </div>
             </div>
@@ -546,21 +550,21 @@ function EditTiersModal({ target, pq, onClose, onChanged, showToast }) {
         <div className="auth-modal-body">
           <div className="cpm-form">
             {tiers.length === 0 ? (
-              <p className="cpm-section-hint">No tiers yet — add one below to start the wholesale ladder.</p>
+              <p className="cpm-section-hint">{t('products.tier.modal.empty')}</p>
             ) : (
               <div className="po-tier-list">
-                {tiers.map(t => (
-                  <div key={t.id} className="po-tier-row">
-                    <span className="po-tier-row-qty">{t.min_qty}+</span>
-                    <span className="po-tier-row-price">{fmtPrice(t.price)} / pc</span>
-                    {basePrice != null && t.price < basePrice && (
+                {tiers.map(tier => (
+                  <div key={tier.id} className="po-tier-row">
+                    <span className="po-tier-row-qty">{tier.min_qty}+</span>
+                    <span className="po-tier-row-price">{t('products.tier.modal.perPc', { price: fmtPrice(tier.price) })}</span>
+                    {basePrice != null && tier.price < basePrice && (
                       <span className="po-tier-row-saving">
-                        −{Math.round((1 - t.price / basePrice) * 100)}%
+                        −{Math.round((1 - tier.price / basePrice) * 100)}%
                       </span>
                     )}
                     <button type="button" className="po-tier-row-del"
-                      disabled={busy} onClick={() => removeTier(t.id)}
-                      aria-label="Remove tier">
+                      disabled={busy} onClick={() => removeTier(tier.id)}
+                      aria-label={t('products.tier.modal.removeTier')}>
                       <Trash weight="bold" />
                     </button>
                   </div>
@@ -569,21 +573,21 @@ function EditTiersModal({ target, pq, onClose, onChanged, showToast }) {
             )}
 
             <div className="cpm-section">
-              <label className="po-field-label">Add a tier</label>
+              <label className="po-field-label">{t('products.tier.modal.addTier')}</label>
               <div className="po-tier-add-row">
                 <input className="crm-input po-tier-add-input" type="number"
-                  min="1" placeholder="Min quantity (e.g. 5)"
+                  min="1" placeholder={t('products.tier.modal.minQtyPlaceholder')}
                   value={newQty} onChange={e => setNewQty(e.target.value)} />
                 <input className="crm-input po-tier-add-input" type="number"
-                  min="0" step="0.01" placeholder="Price per piece"
+                  min="0" step="0.01" placeholder={t('products.tier.modal.pricePlaceholder')}
                   value={newPrice} onChange={e => setNewPrice(e.target.value)} />
                 <button type="button" className="crm-submit-btn"
                   disabled={busy || !newQty || !newPrice} onClick={addTier}>
-                  <Plus weight="bold" /> Add
+                  <Plus weight="bold" /> {t('products.tier.modal.add')}
                 </button>
               </div>
               <span className="cpm-section-hint">
-                Storefront picks the highest tier whose threshold ≤ cart qty.
+                {t('products.tier.modal.hint')}
               </span>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Storefront, ListBullets, MagnifyingGlass,
   CaretRight, CaretDown, CaretUp, ArrowClockwise, CheckCircle, Bell,
@@ -31,6 +32,7 @@ const ROW_TILT = {
 // ── Tab switcher (mirror of Authentication's auth-tab-switcher) ────────
 
 function TabSwitcher({ tab, setTab }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -49,8 +51,8 @@ function TabSwitcher({ tab, setTab }) {
   }, [curTab, tab]);
 
   const TABS = [
-    { key: 'browse', label: 'Browse', Icon: Storefront },
-    { key: 'logs',   label: 'Logs',   Icon: ListBullets },
+    { key: 'browse', label: t('integrations.tabs.browse'), Icon: Storefront },
+    { key: 'logs',   label: t('integrations.tabs.logs'),   Icon: ListBullets },
   ];
 
   return (
@@ -74,6 +76,7 @@ function TabSwitcher({ tab, setTab }) {
 // open the per-kind modal.
 
 function AvailableRow({ connector, installedCount, onClick, first, last }) {
+  const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
   const cls = [
     'auth-provider-row',
@@ -90,9 +93,11 @@ function AvailableRow({ connector, installedCount, onClick, first, last }) {
       <span className="auth-provider-desc">{connector.description}</span>
       {installedCount > 0
         ? <span className="auth-badge-enabled">
-            <CheckCircle weight="fill" size={11} /> Installed{installedCount > 1 ? ` ×${installedCount}` : ''}
+            <CheckCircle weight="fill" size={11} /> {installedCount > 1
+              ? t('integrations.row.installedTimes', { count: installedCount })
+              : t('integrations.row.installed')}
           </span>
-        : <span className="auth-badge-disabled">Not installed</span>}
+        : <span className="auth-badge-disabled">{t('integrations.row.notInstalled')}</span>}
       <CaretRight className="auth-provider-chevron" />
     </div>
   );
@@ -102,6 +107,7 @@ function AvailableRow({ connector, installedCount, onClick, first, last }) {
 // Click to flip a feature panel open; second click opens the request modal.
 
 function ComingSoonRow({ connector, first, last, onRequest }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const cls = [
     'auth-provider-row',
@@ -117,7 +123,7 @@ function ComingSoonRow({ connector, first, last, onRequest }) {
         </div>
         <span className="auth-provider-name int-soon-name">{connector.name}</span>
         <span className="auth-provider-desc">{connector.description}</span>
-        <span className="auth-badge-disabled">Coming soon</span>
+        <span className="auth-badge-disabled">{t('integrations.row.comingSoon')}</span>
         {open
           ? <CaretUp className="auth-provider-chevron" />
           : <CaretDown className="auth-provider-chevron" />}
@@ -126,7 +132,7 @@ function ComingSoonRow({ connector, first, last, onRequest }) {
         <div className={`int-soon-panel${last ? ' int-soon-panel--last' : ''}`}>
           {connector.features?.length > 0 && (
             <>
-              <div className="int-soon-panel-title">Planned features</div>
+              <div className="int-soon-panel-title">{t('integrations.row.plannedFeatures')}</div>
               <ul className="int-soon-feature-list">
                 {connector.features.map((f, i) => <li key={i}>{f}</li>)}
               </ul>
@@ -134,7 +140,7 @@ function ComingSoonRow({ connector, first, last, onRequest }) {
           )}
           <button type="button" className="auth-btn-check int-notify-btn"
             onClick={(e) => { e.stopPropagation(); onRequest(connector); }}>
-            <Bell size={14} weight="bold" /> Notify me when ready
+            <Bell size={14} weight="bold" /> {t('integrations.row.notifyMe')}
           </button>
         </div>
       )}
@@ -145,6 +151,7 @@ function ComingSoonRow({ connector, first, last, onRequest }) {
 // ── Browse tab ─────────────────────────────────────────────────────────
 
 function BrowseTab({ subscriptions, onPick, onRequest }) {
+  const { t } = useTranslation();
   const [search, setSearch]   = useState('');
   const [country, setCountry] = useState('all');
 
@@ -166,7 +173,7 @@ function BrowseTab({ subscriptions, onPick, onRequest }) {
       <div className="int-toolbar">
         <div className="org-search-wrap" style={{ flex: 1, maxWidth: 360 }}>
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search integrations…"
+          <input className="org-search-input" placeholder={t('integrations.browse.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="int-region-combo">
@@ -178,7 +185,7 @@ function BrowseTab({ subscriptions, onPick, onRequest }) {
 
       {filtered.length === 0 && (
         <div className="int-empty int-empty--small">
-          <p>No integrations match your filters.</p>
+          <p>{t('integrations.browse.noMatch')}</p>
         </div>
       )}
 
@@ -223,6 +230,7 @@ function StatusDot({ status }) {
 // ── Logs tab ───────────────────────────────────────────────────────────
 
 function LogsTab({ projectId }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [rows, setRows]   = useState([]);
   const [open, setOpen]   = useState(null);
@@ -268,9 +276,9 @@ function LogsTab({ projectId }) {
     const d = new Date(iso);
     const now = new Date();
     const diff = (now - d) / 1000;
-    if (diff < 60)     return `${Math.floor(diff)}s ago`;
-    if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 60)     return t('integrations.logs.ago.seconds', { n: Math.floor(diff) });
+    if (diff < 3600)   return t('integrations.logs.ago.minutes', { n: Math.floor(diff / 60) });
+    if (diff < 86400)  return t('integrations.logs.ago.hours',   { n: Math.floor(diff / 3600) });
     return d.toLocaleString();
   };
 
@@ -279,28 +287,28 @@ function LogsTab({ projectId }) {
       <div className="int-toolbar">
         <select className="int-filter-sel" value={filter.status}
           onChange={e => setFilter(f => ({ ...f, status: e.target.value }))}>
-          <option value="">All statuses</option>
-          <option value="success">Success only</option>
-          <option value="failed">Failed only</option>
+          <option value="">{t('integrations.logs.allStatuses')}</option>
+          <option value="success">{t('integrations.logs.successOnly')}</option>
+          <option value="failed">{t('integrations.logs.failedOnly')}</option>
         </select>
         <input className="org-search-input int-filter-input"
-          placeholder="Filter by event (e.g. order.paid)…"
+          placeholder={t('integrations.logs.eventFilterPlaceholder')}
           value={filter.event}
           onChange={e => setFilter(f => ({ ...f, event: e.target.value }))} />
         <button className="auth-btn-check" onClick={load} type="button" disabled={busy}>
-          <ArrowClockwise size={14} /> Refresh
+          <ArrowClockwise size={14} /> {t('integrations.logs.refresh')}
         </button>
       </div>
 
       <div className="int-logs-table">
         <div className="int-logs-head">
-          <span>Time</span><span>Event</span><span>Connector</span>
-          <span>Status</span><span>HTTP</span><span>Duration</span><span />
+          <span>{t('integrations.logs.colTime')}</span><span>{t('integrations.logs.colEvent')}</span><span>{t('integrations.logs.colConnector')}</span>
+          <span>{t('integrations.logs.colStatus')}</span><span>{t('integrations.logs.colHttp')}</span><span>{t('integrations.logs.colDuration')}</span><span />
         </div>
-        {busy && rows.length === 0 && <p className="crm-placeholder">Loading…</p>}
+        {busy && rows.length === 0 && <p className="crm-placeholder">{t('integrations.logs.loading')}</p>}
         {!busy && rows.length === 0 && (
           <div className="int-empty int-empty--small">
-            <p>No deliveries yet. Trigger an event (e.g. place a test order) or click "Test send" on an integration.</p>
+            <p>{t('integrations.logs.empty')}</p>
           </div>
         )}
         {rows.map(r => (
@@ -323,23 +331,23 @@ function LogsTab({ projectId }) {
               <div className="int-logs-detail">
                 <div className="int-logs-detail-grid">
                   <div>
-                    <div className="int-logs-detail-label">Payload</div>
+                    <div className="int-logs-detail-label">{t('integrations.logs.payload')}</div>
                     <pre className="int-logs-pre">
                       {detail[r.id]
                         ? JSON.stringify(detail[r.id].payload, null, 2)
-                        : 'Loading…'}
+                        : t('integrations.logs.loading')}
                     </pre>
                   </div>
                   <div>
-                    <div className="int-logs-detail-label">Response body</div>
+                    <div className="int-logs-detail-label">{t('integrations.logs.responseBody')}</div>
                     <pre className="int-logs-pre">
-                      {(detail[r.id]?.response_body) || '(empty)'}
+                      {(detail[r.id]?.response_body) || t('integrations.logs.emptyValue')}
                     </pre>
                   </div>
                 </div>
                 {r.status === 'failed' && (
                   <button className="auth-btn-check" onClick={() => retry(r.id)} type="button">
-                    <ArrowClockwise size={14} /> Retry
+                    <ArrowClockwise size={14} /> {t('integrations.logs.retry')}
                   </button>
                 )}
               </div>
@@ -354,6 +362,7 @@ function LogsTab({ projectId }) {
 // ── Page ───────────────────────────────────────────────────────────────
 
 export default function Integrations() {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
   const [tab,           setTab]           = useState('browse');
@@ -409,7 +418,7 @@ export default function Integrations() {
         });
         if (!res.ok) {
           const j = await res.json().catch(() => ({}));
-          showToast(j.detail || 'Could not install');
+          showToast(j.detail || t('integrations.toast.couldNotInstall'));
           return;
         }
         const created = await res.json();
@@ -441,11 +450,9 @@ export default function Integrations() {
       </div>
 
       <div className="auth-page int-page">
-        <h1 className="crm-page-title">Integrations</h1>
+        <h1 className="crm-page-title">{t('integrations.title')}</h1>
         <p className="auth-page-subtitle">
-          Connect external tools to receive events from your store, or export
-          accounting-ready files (1C / Kompra / QuickBooks / Xero / DATEV) on
-          demand or on a schedule.
+          {t('integrations.subtitle')}
         </p>
 
         {tab === 'browse' && (
@@ -461,8 +468,8 @@ export default function Integrations() {
             connectorType={modal.connector.type}
             existing={modal.existing}
             onClose={() => setModal(null)}
-            onSaved={() => { showToast(modal.existing ? 'Saved' : 'Installed'); load(); }}
-            onDeleted={() => { setModal(null); showToast('Deleted'); load(); }} />
+            onSaved={() => { showToast(modal.existing ? t('integrations.toast.saved') : t('integrations.toast.installed')); load(); }}
+            onDeleted={() => { setModal(null); showToast(t('integrations.toast.deleted')); load(); }} />
         )}
 
         {modal?.kind === 'accounting' && (
@@ -471,7 +478,7 @@ export default function Integrations() {
             sub={modal.existing}
             onClose={() => setModal(null)}
             onSaved={() => { load(); }}
-            onDeleted={() => { setModal(null); showToast('Deleted'); load(); }}
+            onDeleted={() => { setModal(null); showToast(t('integrations.toast.deleted')); load(); }}
             onToast={showToast} />
         )}
 
@@ -480,7 +487,7 @@ export default function Integrations() {
             projectId={projectId}
             connector={modal.connector}
             onClose={() => setModal(null)}
-            onSent={() => showToast('Request sent')} />
+            onSent={() => showToast(t('integrations.toast.requestSent'))} />
         )}
 
         {toast && createPortal(

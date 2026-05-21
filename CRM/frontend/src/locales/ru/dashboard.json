@@ -1,0 +1,19 @@
+{
+  "dashboard": {
+    "title": "Ваши организации",
+    "searchPlaceholder": "Поиск организаций…",
+    "newOrganization": "Новая организация",
+    "projectCount_one": "{{count}} проект",
+    "projectCount_few": "{{count}} проекта",
+    "projectCount_many": "{{count}} проектов",
+    "empty": "Пока нет организаций. Создайте первую, чтобы начать.",
+    "noResults": "Нет организаций по вашему запросу.",
+    "modalTitle": "Новая организация",
+    "nameLabel": "Название",
+    "namePlaceholder": "Название организации",
+    "creating": "Создание…",
+    "create": "Создать",
+    "nameRequired": "Название обязательно",
+    "error": "Ошибка"
+  }
+}

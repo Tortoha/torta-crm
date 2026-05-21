@@ -12,6 +12,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ChartLine, ChartLineUp, Users, MapPin, Star, ArrowUUpLeft,
   CalendarBlank, Package, Warning, Tag, GearSix, Funnel,
@@ -43,19 +44,25 @@ import '../../Style/Targets.css';       // .po-set-row--target, .t-row-progress*
 // user picks from/to dates the modal swaps period to the encoded
 // "YYYY-MM-DD_YYYY-MM-DD" form, which the backend's
 // _date_range_for_period regex parses out.
-const PERIOD_OPTIONS = [
-  { value: '1d',       label: '1 day'           },
-  { value: '3d',       label: '3 days'          },
-  { value: '1w',       label: '1 week'          },
-  { value: '2w',       label: '2 weeks'         },
-  { value: '1mo',      label: '1 month'         },
-  { value: '2mo',      label: '2 months'        },
-  { value: 'season',   label: '1 season (3 mo)' },
-  { value: 'halfyear', label: 'Half-year'       },
-  { value: '1y',       label: '1 year'          },
-  { value: '2y',       label: '2 years'         },
-  { value: 'custom',   label: 'Custom range…' },
+// Period codes + i18n key. Labels are resolved via the translator at render
+// (periodOptions() below) — kept as a flat value list here so PERIOD_ORDER
+// and other value-only consumers stay simple.
+const PERIOD_DEFS = [
+  { value: '1d',       pkey: '1d' },
+  { value: '3d',       pkey: '3d' },
+  { value: '1w',       pkey: '1w' },
+  { value: '2w',       pkey: '2w' },
+  { value: '1mo',      pkey: '1mo' },
+  { value: '2mo',      pkey: '2mo' },
+  { value: 'season',   pkey: 'season' },
+  { value: 'halfyear', pkey: 'halfyear' },
+  { value: '1y',       pkey: '1y' },
+  { value: '2y',       pkey: '2y' },
+  { value: 'custom',   pkey: 'custom' },
 ];
+// Build translated [{value,label}] for Comboboxes.
+const periodOptions = (t) => PERIOD_DEFS.map(p => ({ value: p.value, label: t(`project.analytics.period.${p.pkey}`) }));
+const PERIOD_OPTIONS = PERIOD_DEFS; // value-only consumers (PERIOD_ORDER)
 // Same codes as a plain array so we can step forward/back when the user
 // zooms the chart with Ctrl+wheel — +1 = wider window (zoom out), −1 =
 // narrower window (zoom in). Excludes 'custom' (it's not a position on
@@ -80,6 +87,7 @@ const formatCustomPeriod = (fromISO, toISO) => `${fromISO}_${toISO}`;
 // tables) are white tiles with shadow. The `Icon` prop is accepted but
 // intentionally ignored — design called for plain text headings.
 export function SectionShell({ title, periodValue, onPeriodChange, hidePeriod, headerControls, children }) {
+  const { t } = useTranslation();
   const [customOpen, setCustomOpen] = useState(false);
   const handlePeriodChange = (v) => {
     if (v === 'custom') {
@@ -94,14 +102,15 @@ export function SectionShell({ title, periodValue, onPeriodChange, hidePeriod, h
   // PERIOD_OPTIONS list by injecting a synthetic option that mirrors
   // the current custom range as a readable label.
   const dropdownOptions = useMemo(() => {
-    if (!isCustomPeriod(periodValue)) return PERIOD_OPTIONS;
+    const opts = periodOptions(t);
+    if (!isCustomPeriod(periodValue)) return opts;
     const { from, to } = parseCustomPeriod(periodValue);
     return [
-      ...PERIOD_OPTIONS.filter(o => o.value !== 'custom'),
+      ...opts.filter(o => o.value !== 'custom'),
       { value: periodValue, label: `${from} → ${to}` },
-      { value: 'custom',    label: 'Custom range…' },
+      { value: 'custom',    label: t('project.analytics.period.custom') },
     ];
-  }, [periodValue]);
+  }, [periodValue, t]);
   return (
     <section className="an-section">
       <header className="an-section-head">
@@ -139,6 +148,7 @@ export function SectionShell({ title, periodValue, onPeriodChange, hidePeriod, h
 // every analytics endpoint already supports custom ranges with zero
 // per-endpoint changes.
 function CustomRangeModal({ initialFrom, initialTo, onClose, onApply }) {
+  const { t } = useTranslation();
   const todayISO = new Date().toISOString().slice(0, 10);
   // Default to "last 7 days ending today" when no prior custom range.
   const defaultFromISO = new Date(Date.now() - 7 * 86400 * 1000)
@@ -149,11 +159,11 @@ function CustomRangeModal({ initialFrom, initialTo, onClose, onApply }) {
   const submit = (e) => {
     e?.preventDefault?.();
     if (!fromVal || !toVal) {
-      setErr('Pick both dates');
+      setErr(t('project.analytics.customRange.pickBoth'));
       return;
     }
     if (fromVal > toVal) {
-      setErr('"From" must be before "To"');
+      setErr(t('project.analytics.customRange.fromBeforeTo'));
       return;
     }
     onApply(fromVal, toVal);
@@ -163,7 +173,7 @@ function CustomRangeModal({ initialFrom, initialTo, onClose, onApply }) {
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="auth-modal an-range-modal" onClick={e => e.stopPropagation()}>
         <div className="auth-modal-head">
-          <div className="auth-modal-title">Custom date range</div>
+          <div className="auth-modal-title">{t('project.analytics.customRange.title')}</div>
           <button className="auth-modal-close" onClick={onClose} type="button">
             <X className="auth-modal-close-icon" />
           </button>
@@ -171,7 +181,7 @@ function CustomRangeModal({ initialFrom, initialTo, onClose, onApply }) {
         <form className="auth-modal-body an-range-form" onSubmit={submit}>
           <div className="an-range-fields">
             <label className="an-range-field">
-              <span>From</span>
+              <span>{t('project.analytics.customRange.from')}</span>
               {/* Reuse the calendar pop-up from BookingCreateModal — same
                   month grid + nav + DynamicBlock indicator as the booking
                   date picker, so the UI feels consistent across the app
@@ -181,16 +191,16 @@ function CustomRangeModal({ initialFrom, initialTo, onClose, onApply }) {
                 onChange={v => { setFromVal(v); setErr(''); }} />
             </label>
             <label className="an-range-field">
-              <span>To</span>
+              <span>{t('project.analytics.customRange.to')}</span>
               <DatePicker value={toVal}
                 onChange={v => { setToVal(v); setErr(''); }} />
             </label>
           </div>
           {err && <p className="auth-msg auth-msg--err">{err}</p>}
           <div className="auth-actions">
-            <button className="crm-submit-btn" type="submit">Apply</button>
+            <button className="crm-submit-btn" type="submit">{t('project.analytics.customRange.apply')}</button>
             <button className="crm-submit-btn auth-btn-secondary"
-              type="button" onClick={onClose}>Cancel</button>
+              type="button" onClick={onClose}>{t('project.analytics.customRange.cancel')}</button>
           </div>
         </form>
       </div>
@@ -313,14 +323,15 @@ function downloadCSV(filename, rows, columns) {
 // Convenience: a small "Download CSV" pill button that fits into
 // SectionShell's `headerControls` slot or the section body. Disabled
 // while there's no data yet.
-function CsvButton({ onClick, disabled, label = 'CSV' }) {
+function CsvButton({ onClick, disabled, label }) {
+  const { t } = useTranslation();
   return (
     <button type="button"
       className="an-csv-btn"
       onClick={onClick}
       disabled={disabled}
-      title="Download as CSV">
-      ↓ {label}
+      title={t('project.analytics.downloadCsv')}>
+      ↓ {label ?? t('project.analytics.csv')}
     </button>
   );
 }
@@ -894,9 +905,10 @@ function Skeleton({ height = 120 }) {
 // SECTION 1 — Overview KPIs
 // ════════════════════════════════════════════════════════════════════════
 function OverviewSection({ projectId, period, setPeriod }) {
+  const { t } = useTranslation();
   const { data, loading } = useSectionData('/api/analytics/overview', period, projectId);
   return (
-    <SectionShell title="Overview" Icon={ChartLine}
+    <SectionShell title={t('project.analytics.overview.title')} Icon={ChartLine}
       periodValue={period} onPeriodChange={setPeriod}
       headerControls={
         <CsvButton
@@ -907,27 +919,27 @@ function OverviewSection({ projectId, period, setPeriod }) {
             // by side, plus a "delta_%" column. Useful for the merchant
             // to paste into a board deck and show period-over-period.
             const rows = [
-              { metric: 'Revenue',
+              { metric: t('project.analytics.overview.revenue'),
                 current:  data.current.revenue,
                 previous: data.previous.revenue,
                 delta:    data.delta.revenue },
-              { metric: 'Orders',
+              { metric: t('project.analytics.overview.orders'),
                 current:  data.current.orders,
                 previous: data.previous.orders,
                 delta:    data.delta.orders },
-              { metric: 'Avg order',
+              { metric: t('project.analytics.overview.avgOrder'),
                 current:  data.current.aov,
                 previous: data.previous.aov,
                 delta:    data.delta.aov },
-              { metric: 'Conversion %',
+              { metric: t('project.analytics.overview.conversionPct'),
                 current:  data.current.conversion,
                 previous: data.previous.conversion,
                 delta:    data.delta.conversion },
-              { metric: 'Visitors',
+              { metric: t('project.analytics.overview.visitors'),
                 current:  data.current.visitors,
                 previous: data.previous.visitors,
                 delta:    data.delta.visitors },
-              { metric: 'Customers',
+              { metric: t('project.analytics.overview.customers'),
                 current:  data.current.customers,
                 previous: data.previous.customers,
                 delta:    data.delta.customers },
@@ -936,9 +948,9 @@ function OverviewSection({ projectId, period, setPeriod }) {
               `overview-${period}-${new Date().toISOString().slice(0,10)}.csv`,
               rows,
               [
-                { key: 'metric',   label: 'Metric' },
-                { key: 'current',  label: 'Current',  format: v => (+v || 0).toFixed(2) },
-                { key: 'previous', label: 'Previous', format: v => (+v || 0).toFixed(2) },
+                { key: 'metric',   label: t('project.analytics.overview.metric') },
+                { key: 'current',  label: t('project.analytics.overview.current'),  format: v => (+v || 0).toFixed(2) },
+                { key: 'previous', label: t('project.analytics.overview.previous'), format: v => (+v || 0).toFixed(2) },
                 { key: 'delta',    label: 'Δ%',       format: v => v == null ? '' : (+v).toFixed(1) },
               ]
             );
@@ -946,12 +958,12 @@ function OverviewSection({ projectId, period, setPeriod }) {
       }>
       {loading || !data ? <Skeleton height={120} /> : (
         <div className="an-kpi-grid">
-          <Kpi label="Revenue"      value={fmtMoney(data.current.revenue)}   delta={data.delta.revenue} />
-          <Kpi label="Orders"       value={fmtInt(data.current.orders)}      delta={data.delta.orders} />
-          <Kpi label="Avg order"    value={fmtMoney(data.current.aov)}       delta={data.delta.aov} />
-          <Kpi label="Conversion"   value={`${(data.current.conversion || 0).toFixed(1)}%`} delta={data.delta.conversion} />
-          <Kpi label="Visitors"     value={fmtInt(data.current.visitors)}    delta={data.delta.visitors} />
-          <Kpi label="Customers"    value={fmtInt(data.current.customers)}   delta={data.delta.customers} />
+          <Kpi label={t('project.analytics.overview.revenue')}    value={fmtMoney(data.current.revenue)}   delta={data.delta.revenue} />
+          <Kpi label={t('project.analytics.overview.orders')}     value={fmtInt(data.current.orders)}      delta={data.delta.orders} />
+          <Kpi label={t('project.analytics.overview.avgOrder')}   value={fmtMoney(data.current.aov)}       delta={data.delta.aov} />
+          <Kpi label={t('project.analytics.overview.conversion')} value={`${(data.current.conversion || 0).toFixed(1)}%`} delta={data.delta.conversion} />
+          <Kpi label={t('project.analytics.overview.visitors')}   value={fmtInt(data.current.visitors)}    delta={data.delta.visitors} />
+          <Kpi label={t('project.analytics.overview.customers')}  value={fmtInt(data.current.customers)}   delta={data.delta.customers} />
         </div>
       )}
     </SectionShell>
@@ -977,12 +989,14 @@ function Kpi({ label, value, delta, inverse }) {
 // Reuses Products' .org-sort-toggle visual: pill container + sliding accent
 // indicator that follows hover OR active selection. Three options:
 // Day / Week / Month.
-const GRAN_OPTIONS = [
-  { value: 'day',   label: 'Day'   },
-  { value: 'week',  label: 'Week'  },
-  { value: 'month', label: 'Month' },
+const GRAN_DEFS = [
+  { value: 'day',   gkey: 'day'   },
+  { value: 'week',  gkey: 'week'  },
+  { value: 'month', gkey: 'month' },
 ];
 export function GranularitySegmented({ value, onChange }) {
+  const { t } = useTranslation();
+  const GRAN_OPTIONS = GRAN_DEFS.map(g => ({ value: g.value, label: t(`project.analytics.gran.${g.gkey}`) }));
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -1035,6 +1049,7 @@ export function periodToViewportBuckets(period, gran) {
 export const CHUNK_DAYS = { day: 60, week: 365, month: 365 * 2 };
 
 function RevenueOverTimeSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const [gran,   setGran]   = useState('day');
   // `data` accumulates across multiple paginated fetches — initial load
@@ -1176,9 +1191,9 @@ function RevenueOverTimeSection({ projectId }) {
     `revenue-over-time-${new Date().toISOString().slice(0,10)}.csv`,
     data,
     [
-      { key: 'bucket',  label: 'Date' },
-      { key: 'revenue', label: 'Revenue', format: v => (+v || 0).toFixed(2) },
-      { key: 'orders',  label: 'Orders' },
+      { key: 'bucket',  label: t('project.analytics.revenueOverTime.colDate') },
+      { key: 'revenue', label: t('project.analytics.revenueOverTime.colRevenue'), format: v => (+v || 0).toFixed(2) },
+      { key: 'orders',  label: t('project.analytics.revenueOverTime.colOrders') },
     ]
   );
   // Fetch the comparison period series whenever comparePeriod / gran /
@@ -1229,21 +1244,21 @@ function RevenueOverTimeSection({ projectId }) {
   // range modal (handled inside SectionShell). Selected value is
   // displayed as e.g. "vs 1 week".
   const COMPARE_OPTIONS = useMemo(() => [
-    { value: 'off', label: 'No comparison' },
-    ...PERIOD_OPTIONS.map(o => ({
+    { value: 'off', label: t('project.analytics.revenueOverTime.noComparison') },
+    ...periodOptions(t).map(o => ({
       value: o.value,
-      label: o.value === 'custom' ? o.label : `vs ${o.label}`,
+      label: o.value === 'custom' ? o.label : t('project.analytics.revenueOverTime.vs', { label: o.label }),
     })),
-  ], []);
+  ], [t]);
   const compareDropdownOptions = useMemo(() => {
     if (!isCustomPeriod(comparePeriod)) return COMPARE_OPTIONS;
     const { from, to } = parseCustomPeriod(comparePeriod);
     return [
       ...COMPARE_OPTIONS.filter(o => o.value !== 'custom'),
-      { value: comparePeriod, label: `vs ${from} → ${to}` },
-      { value: 'custom', label: 'Custom range…' },
+      { value: comparePeriod, label: t('project.analytics.revenueOverTime.vsRange', { from, to }) },
+      { value: 'custom', label: t('project.analytics.period.custom') },
     ];
-  }, [comparePeriod, COMPARE_OPTIONS]);
+  }, [comparePeriod, COMPARE_OPTIONS, t]);
   const [compareCustomOpen, setCompareCustomOpen] = useState(false);
   const handleCompareChange = (v) => {
     if (v === 'custom') {
@@ -1269,13 +1284,13 @@ function RevenueOverTimeSection({ projectId }) {
     if (next !== i) setPeriod(PERIOD_ORDER[next]);
   };
   return (
-    <SectionShell title="Revenue over time" Icon={ChartLine}
+    <SectionShell title={t('project.analytics.revenueOverTime.title')} Icon={ChartLine}
       periodValue={period} onPeriodChange={setPeriod}
       headerControls={segmented}>
       <div className="an-tile">
         {loading ? <Skeleton height={240} /> : (
           data.length === 0
-            ? <p className="an-empty">No orders yet.</p>
+            ? <p className="an-empty">{t('project.analytics.revenueOverTime.noOrders')}</p>
             : <LineChart data={data}
                 compareData={compareData}
                 viewportBuckets={viewportBuckets}
@@ -1311,6 +1326,7 @@ function RevenueOverTimeSection({ projectId }) {
 // list of orders so the merchant can see "what drove that $X day".
 // Click a row to jump to the full Orders page (TODO when route exists).
 function DrillDownOrdersModal({ projectId, day, onClose }) {
+  const { t } = useTranslation();
   const [rows, setRows] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -1348,9 +1364,9 @@ function DrillDownOrdersModal({ projectId, day, onClose }) {
               <div className="auth-modal-title">{fmtDayLong(day)}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  {rows == null ? 'Loading…'
-                   : rows.length === 0 ? 'No orders on this day.'
-                   : `${rows.length} order${rows.length === 1 ? '' : 's'} · ${fmtMoney(total)} total`}
+                  {rows == null ? t('project.analytics.drill.loading')
+                   : rows.length === 0 ? t('project.analytics.drill.noOrders')
+                   : t('project.analytics.drill.summary', { count: rows.length, total: fmtMoney(total) })}
                 </span>
               </div>
             </div>
@@ -1363,16 +1379,16 @@ function DrillDownOrdersModal({ projectId, day, onClose }) {
           {rows == null ? (
             <Skeleton height={120} />
           ) : rows.length === 0 ? (
-            <p className="an-empty">Nothing to drill into for this day.</p>
+            <p className="an-empty">{t('project.analytics.drill.nothing')}</p>
           ) : (
             <div className="po-set-table">
               <div className="po-set-row po-set-row--head"
                    style={{ gridTemplateColumns: DRILL_COLS }}>
-                <span>Time</span>
-                <span>Customer</span>
-                <span style={{ textAlign: 'right' }}>Items</span>
-                <span style={{ textAlign: 'right' }}>Total</span>
-                <span>Status</span>
+                <span>{t('project.analytics.drill.colTime')}</span>
+                <span>{t('project.analytics.drill.colCustomer')}</span>
+                <span style={{ textAlign: 'right' }}>{t('project.analytics.drill.colItems')}</span>
+                <span style={{ textAlign: 'right' }}>{t('project.analytics.drill.colTotal')}</span>
+                <span>{t('project.analytics.drill.colStatus')}</span>
               </div>
               {rows.map(r => (
                 <div key={r.id} className="po-set-row po-tree-row"
@@ -1422,14 +1438,15 @@ function useFixedFetch(fullUrl) {
 // SECTION 3 — Revenue by category
 // ════════════════════════════════════════════════════════════════════════
 function RevenueByCategorySection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/revenue-by-category', period, projectId);
   return (
-    <SectionShell title="Revenue by category" Icon={Tag}
+    <SectionShell title={t('project.analytics.revenueByCategory.title')} Icon={Tag}
       periodValue={period} onPeriodChange={setPeriod}>
       <div className="an-tile">
         {loading || !data ? <Skeleton height={180} /> :
-          data.length === 0 ? <p className="an-empty">No category sales yet.</p> :
+          data.length === 0 ? <p className="an-empty">{t('project.analytics.revenueByCategory.empty')}</p> :
           <HorizontalBars data={data} valueKey="revenue" labelKey="category"
             formatValue={fmtMoney} />}
       </div>
@@ -1441,6 +1458,7 @@ function RevenueByCategorySection({ projectId }) {
 // SECTION 4 — Sales funnel
 // ════════════════════════════════════════════════════════════════════════
 function FunnelSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/funnel', period, projectId);
   // Backend returns the views count under the key `product_views` (see
@@ -1449,14 +1467,14 @@ function FunnelSection({ projectId }) {
   // how many product page views existed. THIS was the funnel bug we
   // chased for hours.
   const steps = data ? [
-    { key: 'visitors',  label: 'Site visits',     Icon: Eye,          value: data.visitors },
-    { key: 'views',     label: 'Product views',   Icon: ShoppingCart, value: data.product_views },
-    { key: 'atc',       label: 'Added to cart',   Icon: PlusCircle,   value: data.atc },
-    { key: 'paid',      label: 'Paid orders',     Icon: CheckCircle,  value: data.paid },
+    { key: 'visitors',  label: t('project.analytics.funnel.siteVisits'),   Icon: Eye,          value: data.visitors },
+    { key: 'views',     label: t('project.analytics.funnel.productViews'), Icon: ShoppingCart, value: data.product_views },
+    { key: 'atc',       label: t('project.analytics.funnel.addedToCart'),  Icon: PlusCircle,   value: data.atc },
+    { key: 'paid',      label: t('project.analytics.funnel.paidOrders'),   Icon: CheckCircle,  value: data.paid },
   ] : [];
   const max = steps[0]?.value || 1;
   return (
-    <SectionShell title="Sales funnel" Icon={Funnel}
+    <SectionShell title={t('project.analytics.funnel.title')} Icon={Funnel}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={200} /> : (
         <div className="an-tile an-funnel">
@@ -1507,26 +1525,25 @@ function FunnelSection({ projectId }) {
 // SECTION 5 — Funnel dynamics (per-day conversion rates)
 // ════════════════════════════════════════════════════════════════════════
 function FunnelDynamicsSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/funnel-dynamics', period, projectId);
   return (
-    <SectionShell title="Funnel dynamics" Icon={ChartLine}
+    <SectionShell title={t('project.analytics.funnelDynamics.title')} Icon={ChartLine}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={200} /> : data.length === 0 ? (
-        <p className="an-empty">Not enough traffic to compute conversion trends.</p>
+        <p className="an-empty">{t('project.analytics.funnelDynamics.empty')}</p>
       ) : (
         <>
           <p className="an-section-hint">
-            How efficiently each funnel step converts to the next, day by
-            day. Big number is the period average — line shows the daily
-            trend. Watch for sudden dips after a marketing push or site change.
+            {t('project.analytics.funnelDynamics.hint')}
           </p>
           <div className="an-multi-chart">
-            <SmallSeries title="Visit → ATC" hint="of visitors who added something to cart"
+            <SmallSeries title={t('project.analytics.funnelDynamics.visitToAtc')} hint={t('project.analytics.funnelDynamics.visitToAtcHint')}
               series={data} valueKey="visit_to_atc" suffix="%" />
-            <SmallSeries title="ATC → Paid"  hint="of cart-builders who actually paid"
+            <SmallSeries title={t('project.analytics.funnelDynamics.atcToPaid')}  hint={t('project.analytics.funnelDynamics.atcToPaidHint')}
               series={data} valueKey="atc_to_paid"  suffix="%" />
-            <SmallSeries title="Overall"     hint="of visitors who became paying customers"
+            <SmallSeries title={t('project.analytics.funnelDynamics.overall')}     hint={t('project.analytics.funnelDynamics.overallHint')}
               series={data} valueKey="overall"      suffix="%" />
           </div>
         </>
@@ -1535,6 +1552,7 @@ function FunnelDynamicsSection({ projectId }) {
   );
 }
 function SmallSeries({ title, hint, series, valueKey, suffix }) {
+  const { t } = useTranslation();
   const max = Math.max(1, ...series.map(d => +d[valueKey] || 0));
   const w = 240, h = 90, pad = 6;
   const path = series.map((d, i) => {
@@ -1550,7 +1568,7 @@ function SmallSeries({ title, hint, series, valueKey, suffix }) {
     <div className="an-small-series">
       <span className="an-small-series-title">{title}</span>
       <span className="an-small-series-value">{avg.toFixed(1)}{suffix}</span>
-      {hint && <span className="an-small-series-hint">avg · {hint}</span>}
+      {hint && <span className="an-small-series-hint">{t('project.analytics.funnelDynamics.avg')} · {hint}</span>}
       <svg className="an-small-series-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
         <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2" />
       </svg>
@@ -1561,14 +1579,16 @@ function SmallSeries({ title, hint, series, valueKey, suffix }) {
 // ════════════════════════════════════════════════════════════════════════
 // SECTION 6 — Heatmap (day of week × hour of day)
 // ════════════════════════════════════════════════════════════════════════
-const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DOW_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 function HeatmapSection({ projectId }) {
+  const { t } = useTranslation();
+  const DOW_LABELS = DOW_KEYS.map(k => t(`project.analytics.heatmap.dow.${k}`));
   const [period, setPeriod] = useState('2mo');
   const { data, loading } = useSectionData('/api/analytics/heatmap', period, projectId);
   const matrix = data?.matrix || Array.from({ length: 7 }, () => Array(24).fill(0));
   const max = Math.max(1, ...matrix.flat());
   return (
-    <SectionShell title="Orders by day-of-week × hour" Icon={CalendarBlank}
+    <SectionShell title={t('project.analytics.heatmap.title')} Icon={CalendarBlank}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading ? <Skeleton height={260} /> : (
         <div className="an-heatmap-wrap">
@@ -1616,33 +1636,36 @@ function HeatmapSection({ projectId }) {
 // SECTION 7 — Popular products (4 quadrants)
 // ════════════════════════════════════════════════════════════════════════
 function PopularProductsSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/popular-products', period, projectId);
   return (
-    <SectionShell title="Popular products" Icon={Package}
+    <SectionShell title={t('project.analytics.popular.title')} Icon={Package}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={300} /> : (
         <div className="an-quads">
-          <ProductMiniList title="Top by revenue" rows={data.by_revenue}
-            getValue={r => fmtMoney(r.revenue)} secondary={r => `${r.units} sold`} />
-          <ProductMiniList title="Top by units sold" rows={data.by_units}
+          <ProductMiniList title={t('project.analytics.popular.topByRevenue')} rows={data.by_revenue}
+            getValue={r => fmtMoney(r.revenue)} secondary={r => t('project.analytics.popular.sold', { count: r.units })} />
+          <ProductMiniList title={t('project.analytics.popular.topByUnits')} rows={data.by_units}
             getValue={r => `${r.units}`} secondary={r => fmtMoney(r.revenue)} />
-          <ProductMiniList title="Most favorited" rows={data.favorites}
+          <ProductMiniList title={t('project.analytics.popular.mostFavorited')} rows={data.favorites}
             getValue={r => `♥ ${r.favs}`} />
-          <ProductMiniList title="Slow movers (90d no sales)" rows={data.slow}
-            empty="None — everything moved in 90 days 🎉"
-            getValue={() => '0 sold'} />
+          <ProductMiniList title={t('project.analytics.popular.slowMovers')} rows={data.slow}
+            empty={t('project.analytics.popular.slowEmpty')}
+            getValue={() => t('project.analytics.popular.zeroSold')} />
         </div>
       )}
     </SectionShell>
   );
 }
-function ProductMiniList({ title, rows, getValue, secondary, empty = 'No data yet.' }) {
+function ProductMiniList({ title, rows, getValue, secondary, empty }) {
+  const { t } = useTranslation();
+  const emptyText = empty ?? t('project.analytics.popular.noData');
   return (
     <div className="an-mini">
       <h3 className="an-mini-title">{title}</h3>
       {!rows || rows.length === 0
-        ? <p className="an-mini-empty">{empty}</p>
+        ? <p className="an-mini-empty">{emptyText}</p>
         : (
           <ul className="an-mini-list">
             {rows.map(r => (
@@ -1664,6 +1687,7 @@ function ProductMiniList({ title, rows, getValue, secondary, empty = 'No data ye
 // SECTION 8 — Customer types + Top customers + Geographic
 // ════════════════════════════════════════════════════════════════════════
 function CustomerSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   // New-vs-returning chart fetches its OWN paginated data (matches the
   // Revenue-over-time scroll UX). Top customers + Top cities stick with
@@ -1761,22 +1785,17 @@ function CustomerSection({ projectId }) {
   const top = useSectionData('/api/analytics/top-customers', period, projectId);
   const geo = useSectionData('/api/analytics/geographic',    period, projectId);
   return (
-    <SectionShell title="Customers" Icon={Users}
+    <SectionShell title={t('project.analytics.customers.title')} Icon={Users}
       periodValue={period} onPeriodChange={setPeriod}>
       <p className="an-section-hint">
-        Who's buying from you. Left chart: daily split of orders placed
-        by first-time vs returning customers — a high "New" share means
-        marketing is bringing fresh traffic, a high "Returning" share
-        means loyalty is paying off. Drag the chart to pan through
-        history. Middle: top spenders. Right: most active shipping
-        cities (courier deliveries only).
+        {t('project.analytics.customers.hint')}
       </p>
       <div className="an-cust-grid">
         {/* New vs returning */}
         <div className="an-cust-cell an-cust-cell--wide">
-          <h3 className="an-mini-title">New vs returning customers</h3>
+          <h3 className="an-mini-title">{t('project.analytics.customers.newVsReturning')}</h3>
           {nrLoading ? <Skeleton height={180} /> :
-            nrData.length === 0 ? <p className="an-empty">No orders yet.</p> :
+            nrData.length === 0 ? <p className="an-empty">{t('project.analytics.customers.noOrders')}</p> :
             <NewReturningChart data={nrData}
               viewportBuckets={nrViewportBuckets}
               onLoadMore={nrHandleLoadMore}
@@ -1784,15 +1803,15 @@ function CustomerSection({ projectId }) {
         </div>
         {/* Top customers */}
         <div className="an-cust-cell">
-          <h3 className="an-mini-title">Top customers</h3>
+          <h3 className="an-mini-title">{t('project.analytics.customers.topCustomers')}</h3>
           {top.loading ? <Skeleton height={180} /> :
-            !top.data?.length ? <p className="an-mini-empty">No customers yet.</p> : (
+            !top.data?.length ? <p className="an-mini-empty">{t('project.analytics.customers.noCustomers')}</p> : (
               <table className="an-table">
                 <thead>
                   <tr>
-                    <th>Customer</th>
-                    <th className="an-table-num">Orders</th>
-                    <th className="an-table-num">Spent</th>
+                    <th>{t('project.analytics.customers.colCustomer')}</th>
+                    <th className="an-table-num">{t('project.analytics.customers.colOrders')}</th>
+                    <th className="an-table-num">{t('project.analytics.customers.colSpent')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1812,20 +1831,19 @@ function CustomerSection({ projectId }) {
         </div>
         {/* Geographic */}
         <div className="an-cust-cell">
-          <h3 className="an-mini-title">Top cities</h3>
+          <h3 className="an-mini-title">{t('project.analytics.customers.topCities')}</h3>
           {geo.loading ? <Skeleton height={180} /> :
             !geo.data?.length ? (
               <p className="an-mini-empty">
-                No city data yet. Only courier orders contribute — postal
-                and digital orders don't carry a shipping address.
+                {t('project.analytics.customers.noCityData')}
               </p>
             ) : (
               <table className="an-table">
                 <thead>
                   <tr>
-                    <th>City</th>
-                    <th className="an-table-num">Orders</th>
-                    <th className="an-table-num">Revenue</th>
+                    <th>{t('project.analytics.customers.colCity')}</th>
+                    <th className="an-table-num">{t('project.analytics.customers.colOrders')}</th>
+                    <th className="an-table-num">{t('project.analytics.customers.colRevenue')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1861,6 +1879,7 @@ function NewReturningChart({
   onLoadMore,
   loadingMore = false,
 }) {
+  const { t } = useTranslation();
   const wrapperRef     = useRef(null);
   const scrollGroupRef = useRef(null);
   const scrollXRef     = useRef(0);
@@ -2127,9 +2146,9 @@ function NewReturningChart({
             if (screenX < padL || screenX > wrapperW - padR) return null;
             const lines = [
               fmtDayFull(hoverPt.date),
-              `New: ${hoverPt.nw}`,
-              `Returning: ${hoverPt.rt}`,
-              `Total: ${hoverTotal}`,
+              t('project.analytics.customers.tipNew', { n: hoverPt.nw }),
+              t('project.analytics.customers.tipReturning', { n: hoverPt.rt }),
+              t('project.analytics.customers.tipTotal', { n: hoverTotal }),
             ];
             const longestChars = Math.max(...lines.map(l => l.length));
             const bw2 = Math.max(160, longestChars * 7 + 24);
@@ -2154,8 +2173,8 @@ function NewReturningChart({
         </svg>
       </div>
       <div className="an-legend">
-        <span className="an-legend-dot an-legend-dot--new" /> New (first-ever order)
-        <span className="an-legend-dot an-legend-dot--ret" /> Returning (≥2nd order)
+        <span className="an-legend-dot an-legend-dot--new" /> {t('project.analytics.customers.legendNew')}
+        <span className="an-legend-dot an-legend-dot--ret" /> {t('project.analytics.customers.legendReturning')}
       </div>
     </div>
   );
@@ -2165,6 +2184,7 @@ function NewReturningChart({
 // SECTION 9 — Cohort retention
 // ════════════════════════════════════════════════════════════════════════
 function CohortRetentionSection({ projectId }) {
+  const { t } = useTranslation();
   // Cohorts ignore period — period selector is hidden for this section.
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2178,22 +2198,18 @@ function CohortRetentionSection({ projectId }) {
       .finally(() => setLoading(false));
   }, [projectId]);
   return (
-    <SectionShell title="Cohort retention (last 6 months)" Icon={Users} hidePeriod>
+    <SectionShell title={t('project.analytics.cohort.title')} Icon={Users} hidePeriod>
       <p className="an-section-hint">
-        Groups customers by the month they placed their first ever
-        order ("cohort"). Each row tracks how many of that cohort came
-        back N months later. M0 = the month they joined (always 100%),
-        M1 = next month, etc. Reading a row across shows whether your
-        repeat-customer rate fades or holds steady over time.
+        {t('project.analytics.cohort.hint')}
       </p>
       {loading ? <Skeleton height={200} /> :
-        !data?.cohorts?.length ? <p className="an-empty">Need at least 2 months of orders to compute cohorts.</p> : (
+        !data?.cohorts?.length ? <p className="an-empty">{t('project.analytics.cohort.empty')}</p> : (
           <div className="an-tile an-cohort-wrap">
             <table className="an-cohort">
               <thead>
                 <tr>
-                  <th>Cohort</th>
-                  <th className="an-table-num">Size</th>
+                  <th>{t('project.analytics.cohort.colCohort')}</th>
+                  <th className="an-table-num">{t('project.analytics.cohort.colSize')}</th>
                   {Array.from({ length: data.months }, (_, i) => (
                     <th key={i} className="an-cohort-h">M{i}</th>
                   ))}
@@ -2237,49 +2253,51 @@ function CohortRetentionSection({ projectId }) {
 // ════════════════════════════════════════════════════════════════════════
 // SECTION 10 — Returns analysis
 // ════════════════════════════════════════════════════════════════════════
-const REASON_LABEL = {
-  damaged: 'Damaged', wrong_item: 'Wrong item', not_as_described: 'Not as described',
-  changed_mind: 'Changed mind', arrived_late: 'Arrived late',
-  quality_issue: 'Quality issue', other: 'Other',
+const REASON_TKEY = {
+  damaged: 'damaged', wrong_item: 'wrongItem', not_as_described: 'notAsDescribed',
+  changed_mind: 'changedMind', arrived_late: 'arrivedLate',
+  quality_issue: 'qualityIssue', other: 'other',
 };
 function ReturnsSection({ projectId }) {
+  const { t } = useTranslation();
+  const reasonLabel = (r) => REASON_TKEY[r] ? t(`project.analytics.returns.reason.${REASON_TKEY[r]}`) : r;
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/returns', period, projectId);
   return (
-    <SectionShell title="Returns analysis" Icon={ArrowUUpLeft}
+    <SectionShell title={t('project.analytics.returns.title')} Icon={ArrowUUpLeft}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={240} /> : (
         <div className="an-ret-grid">
           <div className="an-ret-cell">
-            <span className="an-ret-stat-label">Return rate</span>
+            <span className="an-ret-stat-label">{t('project.analytics.returns.returnRate')}</span>
             <span className="an-ret-stat-value">{data.return_rate_pct.toFixed(1)}%</span>
             <span className="an-ret-stat-sub">
-              {data.total_returns} of {data.total_delivered} delivered
+              {t('project.analytics.returns.ofDelivered', { returns: data.total_returns, delivered: data.total_delivered })}
             </span>
           </div>
           <div className="an-ret-cell">
-            <span className="an-ret-stat-label">Avg refund processing</span>
+            <span className="an-ret-stat-label">{t('project.analytics.returns.avgRefund')}</span>
             <span className="an-ret-stat-value">{fmtDays(data.median_processing_days)}</span>
-            <span className="an-ret-stat-sub">median requested → refunded</span>
+            <span className="an-ret-stat-sub">{t('project.analytics.returns.median')}</span>
           </div>
           <div className="an-ret-cell an-ret-cell--wide">
-            <h3 className="an-mini-title">Top return reasons</h3>
-            {data.reasons.length === 0 ? <p className="an-mini-empty">None this period.</p> : (
+            <h3 className="an-mini-title">{t('project.analytics.returns.topReasons')}</h3>
+            {data.reasons.length === 0 ? <p className="an-mini-empty">{t('project.analytics.returns.noneThisPeriod')}</p> : (
               <HorizontalBars
-                data={data.reasons.map(r => ({ label: REASON_LABEL[r.reason] || r.reason, count: r.count }))}
+                data={data.reasons.map(r => ({ label: reasonLabel(r.reason), count: r.count }))}
                 valueKey="count" labelKey="label" formatValue={(v) => `${v}`} />
             )}
           </div>
           <div className="an-ret-cell an-ret-cell--wide">
-            <h3 className="an-mini-title">Products with highest return rate</h3>
-            {data.top_products.length === 0 ? <p className="an-mini-empty">No data yet.</p> : (
+            <h3 className="an-mini-title">{t('project.analytics.returns.highestRate')}</h3>
+            {data.top_products.length === 0 ? <p className="an-mini-empty">{t('project.analytics.returns.noData')}</p> : (
               <table className="an-table">
                 <thead>
                   <tr>
-                    <th>Product</th>
-                    <th className="an-table-num">Sold</th>
-                    <th className="an-table-num">Returned</th>
-                    <th className="an-table-num">Rate</th>
+                    <th>{t('project.analytics.returns.colProduct')}</th>
+                    <th className="an-table-num">{t('project.analytics.returns.colSold')}</th>
+                    <th className="an-table-num">{t('project.analytics.returns.colReturned')}</th>
+                    <th className="an-table-num">{t('project.analytics.returns.colRate')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2305,19 +2323,20 @@ function ReturnsSection({ projectId }) {
 // SECTION 11 — Reviews quality
 // ════════════════════════════════════════════════════════════════════════
 function ReviewsSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/reviews-quality', period, projectId);
   return (
-    <SectionShell title="Reviews & ratings" Icon={Star}
+    <SectionShell title={t('project.analytics.reviews.title')} Icon={Star}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={240} /> : (
         <div className="an-rev-grid">
           <div className="an-rev-cell">
             <span className="an-rev-rating">★ {data.avg_rating.toFixed(2)}</span>
-            <span className="an-rev-count">{data.total_reviews} review{data.total_reviews === 1 ? '' : 's'}</span>
+            <span className="an-rev-count">{t('project.analytics.reviews.count', { count: data.total_reviews })}</span>
           </div>
           <div className="an-rev-cell an-rev-cell--wide">
-            <h3 className="an-mini-title">Rating distribution</h3>
+            <h3 className="an-mini-title">{t('project.analytics.reviews.distribution')}</h3>
             {[5, 4, 3, 2, 1].map(rating => {
               const row = data.distribution.find(d => d.rating === rating);
               const n = row?.count || 0;
@@ -2332,8 +2351,8 @@ function ReviewsSection({ projectId }) {
             })}
           </div>
           <div className="an-rev-cell">
-            <h3 className="an-mini-title">Top-rated products</h3>
-            {data.top_rated.length === 0 ? <p className="an-mini-empty">No reviews yet.</p> : (
+            <h3 className="an-mini-title">{t('project.analytics.reviews.topRated')}</h3>
+            {data.top_rated.length === 0 ? <p className="an-mini-empty">{t('project.analytics.reviews.noReviews')}</p> : (
               <ul className="an-mini-list">
                 {data.top_rated.slice(0, 5).map(p => (
                   <li key={p.id} className="an-mini-row">
@@ -2345,9 +2364,9 @@ function ReviewsSection({ projectId }) {
             )}
           </div>
           <div className="an-rev-cell">
-            <h3 className="an-mini-title">Needs attention (avg &lt; 3.5)</h3>
+            <h3 className="an-mini-title">{t('project.analytics.reviews.needsAttention')}</h3>
             {data.needs_attention.length === 0 ? (
-              <p className="an-mini-empty">All products rated well 🎉</p>
+              <p className="an-mini-empty">{t('project.analytics.reviews.allRatedWell')}</p>
             ) : (
               <ul className="an-mini-list">
                 {data.needs_attention.slice(0, 5).map(p => (
@@ -2370,29 +2389,30 @@ function ReviewsSection({ projectId }) {
 // SECTION 12 — Bookings analytics
 // ════════════════════════════════════════════════════════════════════════
 function BookingsSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/bookings', period, projectId);
   return (
-    <SectionShell title="Bookings" Icon={CalendarBlank}
+    <SectionShell title={t('project.analytics.bookings.title')} Icon={CalendarBlank}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={240} /> :
         data.total === 0 ? (
-          <p className="an-empty">No bookings in this period.</p>
+          <p className="an-empty">{t('project.analytics.bookings.empty')}</p>
         ) : (
           <div className="an-bk-grid">
-            <Kpi label="Total bookings" value={fmtInt(data.total)} />
-            <Kpi label="Completed"      value={fmtInt(data.completed)} />
-            <Kpi label="No-show rate"   value={`${data.no_show_rate_pct.toFixed(1)}%`}    inverse />
-            <Kpi label="Cancellation"   value={`${data.cancellation_rate_pct.toFixed(1)}%`} inverse />
+            <Kpi label={t('project.analytics.bookings.total')} value={fmtInt(data.total)} />
+            <Kpi label={t('project.analytics.bookings.completed')}      value={fmtInt(data.completed)} />
+            <Kpi label={t('project.analytics.bookings.noShowRate')}   value={`${data.no_show_rate_pct.toFixed(1)}%`}    inverse />
+            <Kpi label={t('project.analytics.bookings.cancellation')}   value={`${data.cancellation_rate_pct.toFixed(1)}%`} inverse />
             <div className="an-bk-cell an-bk-cell--wide">
-              <h3 className="an-mini-title">Cassa by service</h3>
-              {data.cassa_by_service.length === 0 ? <p className="an-mini-empty">No completed bookings.</p> :
+              <h3 className="an-mini-title">{t('project.analytics.bookings.cassaByService')}</h3>
+              {data.cassa_by_service.length === 0 ? <p className="an-mini-empty">{t('project.analytics.bookings.noCompleted')}</p> :
                 <HorizontalBars data={data.cassa_by_service.map(s => ({ service: s.service, cassa: s.cassa }))}
                   valueKey="cassa" labelKey="service" formatValue={fmtMoney} />}
             </div>
             <div className="an-bk-cell an-bk-cell--wide">
-              <h3 className="an-mini-title">Cassa by staff</h3>
-              {data.cassa_by_staff.length === 0 ? <p className="an-mini-empty">No staff with completed bookings.</p> :
+              <h3 className="an-mini-title">{t('project.analytics.bookings.cassaByStaff')}</h3>
+              {data.cassa_by_staff.length === 0 ? <p className="an-mini-empty">{t('project.analytics.bookings.noStaff')}</p> :
                 <HorizontalBars data={data.cassa_by_staff.map(s => ({
                   name: `${s.name}${s.commission_pct ? ` · ${s.commission_pct}%` : ''}`,
                   cassa: s.cassa,
@@ -2412,30 +2432,31 @@ function BookingsSection({ projectId }) {
 // performing without it being diluted by physical orders. Same layout as
 // CustomerSection (KPI strip + an-cust-grid: 1 wide + 2 narrow tables).
 function DigitalSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/digital', period, projectId);
   return (
-    <SectionShell title="Digital products" Icon={Package}
+    <SectionShell title={t('project.analytics.digital.title')} Icon={Package}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={240} /> :
         data.total === 0 ? (
-          <p className="an-empty">No digital sales in this period. Create a product with type "digital" to start tracking.</p>
+          <p className="an-empty">{t('project.analytics.digital.empty')}</p>
         ) : (
           <>
             {/* KPI strip — same 4-up Kpi pattern as Bookings/Margin sections. */}
             <div className="an-bk-grid">
-              <Kpi label="Orders"        value={fmtInt(data.total)} />
-              <Kpi label="Revenue"       value={fmtMoney(data.revenue)} />
-              <Kpi label="Avg order"     value={fmtMoney(data.aov)} />
-              <Kpi label="Unique buyers" value={fmtInt(data.unique_buyers)} />
+              <Kpi label={t('project.analytics.digital.orders')}        value={fmtInt(data.total)} />
+              <Kpi label={t('project.analytics.digital.revenue')}       value={fmtMoney(data.revenue)} />
+              <Kpi label={t('project.analytics.digital.avgOrder')}     value={fmtMoney(data.aov)} />
+              <Kpi label={t('project.analytics.digital.uniqueBuyers')} value={fmtInt(data.unique_buyers)} />
             </div>
             {/* an-cust-grid wide-cell + 2 narrow tables — same structure as
                 CustomerSection (top spenders + top cities). */}
             <div className="an-cust-grid">
               <div className="an-cust-cell an-cust-cell--wide">
-                <h3 className="an-mini-title">Top digital products</h3>
+                <h3 className="an-mini-title">{t('project.analytics.digital.topProducts')}</h3>
                 {data.top_products.length === 0
-                  ? <p className="an-mini-empty">No digital products sold in this period.</p>
+                  ? <p className="an-mini-empty">{t('project.analytics.digital.noProductsSold')}</p>
                   : <HorizontalBars
                       data={data.top_products.map(p => ({
                         product: p.title, revenue: p.revenue,
@@ -2443,16 +2464,16 @@ function DigitalSection({ projectId }) {
                       valueKey="revenue" labelKey="product" formatValue={fmtMoney} />}
               </div>
               <div className="an-cust-cell">
-                <h3 className="an-mini-title">Most units</h3>
+                <h3 className="an-mini-title">{t('project.analytics.digital.mostUnits')}</h3>
                 {data.top_products.length === 0
-                  ? <p className="an-mini-empty">No products yet.</p>
+                  ? <p className="an-mini-empty">{t('project.analytics.digital.noProducts')}</p>
                   : (
                     <table className="an-table">
                       <thead>
                         <tr>
-                          <th>Product</th>
-                          <th className="an-table-num">Units</th>
-                          <th className="an-table-num">Revenue</th>
+                          <th>{t('project.analytics.digital.colProduct')}</th>
+                          <th className="an-table-num">{t('project.analytics.digital.colUnits')}</th>
+                          <th className="an-table-num">{t('project.analytics.digital.colRevenue')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2473,16 +2494,16 @@ function DigitalSection({ projectId }) {
                   )}
               </div>
               <div className="an-cust-cell">
-                <h3 className="an-mini-title">Recent orders</h3>
+                <h3 className="an-mini-title">{t('project.analytics.digital.recentOrders')}</h3>
                 {data.recent.length === 0
-                  ? <p className="an-mini-empty">No recent orders.</p>
+                  ? <p className="an-mini-empty">{t('project.analytics.digital.noRecent')}</p>
                   : (
                     <table className="an-table">
                       <thead>
                         <tr>
-                          <th>Customer</th>
-                          <th className="an-table-num">Lines</th>
-                          <th className="an-table-num">Amount</th>
+                          <th>{t('project.analytics.digital.colCustomer')}</th>
+                          <th className="an-table-num">{t('project.analytics.digital.colLines')}</th>
+                          <th className="an-table-num">{t('project.analytics.digital.colAmount')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2513,43 +2534,39 @@ function DigitalSection({ projectId }) {
 // SECTION 12.a — Traffic sources (Direct / Organic / Social / Referral / UTM)
 // ════════════════════════════════════════════════════════════════════════
 function TrafficSourcesSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/traffic-sources', period, projectId);
   return (
-    <SectionShell title="Traffic sources" Icon={Globe}
+    <SectionShell title={t('project.analytics.traffic.title')} Icon={Globe}
       periodValue={period} onPeriodChange={setPeriod}>
       <p className="an-section-hint">
-        Where your visitors come from. Source breakdown buckets them
-        into 4 channels: direct (typed URL or bookmark), organic
-        (Google/Yandex search), social (FB/IG/X), referral (any other
-        external site). Top referrers — exact domains that linked to
-        you. Numbers = unique visitors; bar width = share of total
-        traffic.
+        {t('project.analytics.traffic.hint')}
       </p>
       {loading || !data ? <Skeleton height={200} /> : (
         <div className="an-traffic-grid">
           <div className="an-traffic-cell">
-            <h3 className="an-mini-title">Source breakdown</h3>
-            {data.sources.length === 0 ? <p className="an-mini-empty">No traffic yet.</p> :
+            <h3 className="an-mini-title">{t('project.analytics.traffic.sourceBreakdown')}</h3>
+            {data.sources.length === 0 ? <p className="an-mini-empty">{t('project.analytics.traffic.noTraffic')}</p> :
               <HorizontalBars data={data.sources} valueKey="visitors" labelKey="source"
                 mode="share" formatValue={(v) => `${v}`} />}
           </div>
           <div className="an-traffic-cell">
-            <h3 className="an-mini-title">Top referrers</h3>
-            {data.referrers.length === 0 ? <p className="an-mini-empty">No external referrers.</p> :
+            <h3 className="an-mini-title">{t('project.analytics.traffic.topReferrers')}</h3>
+            {data.referrers.length === 0 ? <p className="an-mini-empty">{t('project.analytics.traffic.noReferrers')}</p> :
               <HorizontalBars data={data.referrers} valueKey="visitors" labelKey="host"
                 mode="share" formatValue={(v) => `${v}`} />}
           </div>
           {data.campaigns.length > 0 && (
             <div className="an-traffic-cell an-traffic-cell--wide">
-              <h3 className="an-mini-title">UTM campaigns</h3>
+              <h3 className="an-mini-title">{t('project.analytics.traffic.utmCampaigns')}</h3>
               <table className="an-table">
                 <thead>
                   <tr>
-                    <th>Source</th>
-                    <th>Medium</th>
-                    <th>Campaign</th>
-                    <th className="an-table-num">Visitors</th>
+                    <th>{t('project.analytics.traffic.colSource')}</th>
+                    <th>{t('project.analytics.traffic.colMedium')}</th>
+                    <th>{t('project.analytics.traffic.colCampaign')}</th>
+                    <th className="an-table-num">{t('project.analytics.traffic.colVisitors')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2575,29 +2592,26 @@ function TrafficSourcesSection({ projectId }) {
 // SECTION 12.b — Device + browser breakdown
 // ════════════════════════════════════════════════════════════════════════
 function DevicesSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/devices', period, projectId);
   return (
-    <SectionShell title="Devices & browsers" Icon={DeviceMobile}
+    <SectionShell title={t('project.analytics.devices.title')} Icon={DeviceMobile}
       periodValue={period} onPeriodChange={setPeriod}>
       <p className="an-section-hint">
-        What your visitors browse on. Number = unique people (deduped
-        by IP); bar = share of the total. If mobile dominates
-        but your design is desktop-first, that's a UX gap to close. NB:
-        same person on the same machine in Chrome + Edge counts twice
-        — browsers don't share session cookies cross-app.
+        {t('project.analytics.devices.hint')}
       </p>
       {loading || !data ? <Skeleton height={160} /> : (
         <div className="an-traffic-grid">
           <div className="an-traffic-cell">
-            <h3 className="an-mini-title">Device type</h3>
-            {data.devices.length === 0 ? <p className="an-mini-empty">No data.</p> :
+            <h3 className="an-mini-title">{t('project.analytics.devices.deviceType')}</h3>
+            {data.devices.length === 0 ? <p className="an-mini-empty">{t('project.analytics.devices.noData')}</p> :
               <HorizontalBars data={data.devices} valueKey="visitors" labelKey="device"
                 mode="share" formatValue={(v) => `${v}`} />}
           </div>
           <div className="an-traffic-cell">
-            <h3 className="an-mini-title">Browser</h3>
-            {data.browsers.length === 0 ? <p className="an-mini-empty">No data.</p> :
+            <h3 className="an-mini-title">{t('project.analytics.devices.browser')}</h3>
+            {data.browsers.length === 0 ? <p className="an-mini-empty">{t('project.analytics.devices.noData')}</p> :
               <HorizontalBars data={data.browsers} valueKey="visitors" labelKey="browser"
                 mode="share" formatValue={(v) => `${v}`} />}
           </div>
@@ -2611,20 +2625,21 @@ function DevicesSection({ projectId }) {
 // SECTION 12.c — Countries
 // ════════════════════════════════════════════════════════════════════════
 function CountriesSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/countries', period, projectId);
   return (
-    <SectionShell title="Top countries" Icon={Globe}
+    <SectionShell title={t('project.analytics.countries.title')} Icon={Globe}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={200} /> :
-        data.length === 0 ? <p className="an-empty">No country data yet. Pre-2026-05 visits show as "Unknown" — only newer rows are enriched.</p> : (
+        data.length === 0 ? <p className="an-empty">{t('project.analytics.countries.empty')}</p> : (
           <div className="an-tile">
           <table className="an-table">
             <thead>
               <tr>
-                <th>Country</th>
-                <th className="an-table-num">Code</th>
-                <th className="an-table-num">Visitors</th>
+                <th>{t('project.analytics.countries.colCountry')}</th>
+                <th className="an-table-num">{t('project.analytics.countries.colCode')}</th>
+                <th className="an-table-num">{t('project.analytics.countries.colVisitors')}</th>
               </tr>
             </thead>
             <tbody>
@@ -2647,24 +2662,25 @@ function CountriesSection({ projectId }) {
 // SECTION 12.d — Search insights
 // ════════════════════════════════════════════════════════════════════════
 function SearchInsightsSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/search-insights', period, projectId);
   return (
-    <SectionShell title="Search insights" Icon={MagnifyingGlass}
+    <SectionShell title={t('project.analytics.search.title')} Icon={MagnifyingGlass}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={200} /> : (
         <div className="an-search-grid">
-          <Kpi label="Total searches"      value={fmtInt(data.total_searches)} />
-          <Kpi label="Zero-result queries" value={fmtInt(data.zero_result_searches)} inverse />
+          <Kpi label={t('project.analytics.search.totalSearches')}      value={fmtInt(data.total_searches)} />
+          <Kpi label={t('project.analytics.search.zeroResult')} value={fmtInt(data.zero_result_searches)} inverse />
           <div className="an-search-cell an-search-cell--wide">
-            <h3 className="an-mini-title">Top searches</h3>
-            {data.top.length === 0 ? <p className="an-mini-empty">No searches yet.</p> : (
+            <h3 className="an-mini-title">{t('project.analytics.search.topSearches')}</h3>
+            {data.top.length === 0 ? <p className="an-mini-empty">{t('project.analytics.search.noSearches')}</p> : (
               <table className="an-table">
                 <thead>
                   <tr>
-                    <th>Query</th>
-                    <th className="an-table-num">Searches</th>
-                    <th className="an-table-num">Avg results</th>
+                    <th>{t('project.analytics.search.colQuery')}</th>
+                    <th className="an-table-num">{t('project.analytics.search.colSearches')}</th>
+                    <th className="an-table-num">{t('project.analytics.search.colAvgResults')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2681,12 +2697,12 @@ function SearchInsightsSection({ projectId }) {
           </div>
           {data.zero.length > 0 && (
             <div className="an-search-cell an-search-cell--wide">
-              <h3 className="an-mini-title">Zero-result queries (catalog gaps)</h3>
+              <h3 className="an-mini-title">{t('project.analytics.search.zeroQueries')}</h3>
               <table className="an-table">
                 <thead>
                   <tr>
-                    <th>Query</th>
-                    <th className="an-table-num">Searches</th>
+                    <th>{t('project.analytics.search.colQuery')}</th>
+                    <th className="an-table-num">{t('project.analytics.search.colSearches')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2717,32 +2733,27 @@ function SearchInsightsSection({ projectId }) {
 // shared-helper file would be one tiny module for too little code reuse.
 
 const _G_TARGET_TYPES = {
-  revenue:              { label: 'Revenue',                unit: 'money'   },
-  orders_count:         { label: 'Orders count',           unit: 'count'   },
-  new_customers:        { label: 'New customers',          unit: 'count'   },
-  signups:              { label: 'Signups',                unit: 'count'   },
-  avg_order_value:      { label: 'Avg order value',        unit: 'money'   },
-  conversion_rate:      { label: 'Conversion rate (%)',    unit: 'percent' },
-  return_rate_max:      { label: 'Return rate ≤ (%)',      unit: 'percent' },
-  bookings_count:       { label: 'Bookings count',         unit: 'count'   },
-  avg_rating:           { label: 'Avg rating',             unit: 'rating'  },
-  repeat_purchase_rate: { label: 'Repeat-purchase rate %', unit: 'percent' },
-  custom_event_count:   { label: 'Custom event count',     unit: 'count'   },
+  revenue:              { tkey: 'revenue',            unit: 'money'   },
+  orders_count:         { tkey: 'ordersCount',        unit: 'count'   },
+  new_customers:        { tkey: 'newCustomers',       unit: 'count'   },
+  signups:              { tkey: 'signups',            unit: 'count'   },
+  avg_order_value:      { tkey: 'avgOrderValue',      unit: 'money'   },
+  conversion_rate:      { tkey: 'conversionRate',     unit: 'percent' },
+  return_rate_max:      { tkey: 'returnRateMax',      unit: 'percent' },
+  bookings_count:       { tkey: 'bookingsCount',      unit: 'count'   },
+  avg_rating:           { tkey: 'avgRating',          unit: 'rating'  },
+  repeat_purchase_rate: { tkey: 'repeatPurchaseRate', unit: 'percent' },
+  custom_event_count:   { tkey: 'customEventCount',   unit: 'count'   },
 };
-const _G_PERIOD_LABELS = {
-  '1d':       '1 day',
-  '1w':       '1 week',
-  '1mo':      '1 month',
-  'season':   '1 season (3 mo)',
-  '1y':       '1 year',
-  'all_time': 'Lifetime',
+const _G_PERIOD_PKEY = {
+  '1d': '1d', '1w': '1w', '1mo': '1mo', 'season': 'season', '1y': '1y', 'all_time': 'allTime',
 };
 const _G_STATUS_META = {
-  achieved:  { label: 'Achieved',   cls: 't-status--achieved',  Icon: CheckCircle },
-  on_track:  { label: 'On track',   cls: 't-status--on-track',  Icon: ChartLineUp },
-  behind:    { label: 'Behind',     cls: 't-status--behind',    Icon: Warning     },
-  at_risk:   { label: 'At risk',    cls: 't-status--at-risk',   Icon: Warning     },
-  inactive:  { label: 'Inactive',   cls: 't-status--behind',    Icon: Warning     },
+  achieved:  { skey: 'achieved', cls: 't-status--achieved',  Icon: CheckCircle },
+  on_track:  { skey: 'onTrack',  cls: 't-status--on-track',  Icon: ChartLineUp },
+  behind:    { skey: 'behind',   cls: 't-status--behind',    Icon: Warning     },
+  at_risk:   { skey: 'atRisk',   cls: 't-status--at-risk',   Icon: Warning     },
+  inactive:  { skey: 'inactive', cls: 't-status--behind',    Icon: Warning     },
 };
 function _gPillFor(t) {
   if (!t.is_active) return _G_STATUS_META.inactive;
@@ -2761,6 +2772,7 @@ function _gFmtValue(v, unit) {
 }
 
 function GoalsWidgetSection({ projectId }) {
+  const { t } = useTranslation();
   const [data, setData]       = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -2776,24 +2788,26 @@ function GoalsWidgetSection({ projectId }) {
   // show by default. Full list lives at the Targets page (link in header).
   const active = useMemo(() => data.filter(g => g.is_active).slice(0, 6), [data]);
   return (
-    <SectionShell title="Targets progress" Icon={Target} hidePeriod>
+    <SectionShell title={t('project.analytics.goalsWidget.title')} Icon={Target} hidePeriod>
       {loading ? <Skeleton height={180} /> :
         active.length === 0 ? (
           <p className="an-empty">
-            No active targets. Set them on the <a href="targets" className="an-link">Targets page</a>.
+            {t('project.analytics.goalsWidget.emptyPrefix')}<a href="targets" className="an-link">{t('project.analytics.goalsWidget.emptyLink')}</a>{t('project.analytics.goalsWidget.emptySuffix')}
           </p>
         ) : (
           <div className="po-set-table">
             <div className="po-set-row po-set-row--head po-set-row--target">
-              <span>Name</span>
-              <span>Type</span>
-              <span>Period</span>
-              <span>Progress</span>
-              <span>Status</span>
+              <span>{t('project.analytics.goalsWidget.colName')}</span>
+              <span>{t('project.analytics.goalsWidget.colType')}</span>
+              <span>{t('project.analytics.goalsWidget.colPeriod')}</span>
+              <span>{t('project.analytics.goalsWidget.colProgress')}</span>
+              <span>{t('project.analytics.goalsWidget.colStatus')}</span>
               <span />
             </div>
             {active.map(g => {
-              const type   = _G_TARGET_TYPES[g.goal_type] || { unit: 'count', label: g.goal_type };
+              const type   = _G_TARGET_TYPES[g.goal_type] || { unit: 'count' };
+              const typeText = _G_TARGET_TYPES[g.goal_type]
+                ? t(`project.analytics.goalsWidget.type.${type.tkey}`) : g.goal_type;
               const status = _gPillFor(g);
               const StatusIcon = status.Icon;
               const p   = g.progress || { current: 0, target: 1 };
@@ -2805,8 +2819,8 @@ function GoalsWidgetSection({ projectId }) {
                       {g.name}
                     </span>
                   </span>
-                  <span>{type.label}</span>
-                  <span>{_G_PERIOD_LABELS[g.period] || g.period}</span>
+                  <span>{typeText}</span>
+                  <span>{_G_PERIOD_PKEY[g.period] ? t(`project.analytics.goalsWidget.period.${_G_PERIOD_PKEY[g.period]}`) : g.period}</span>
                   <span className="t-row-progress">
                     <span className="t-row-progress-text" style={{ fontVariantNumeric: 'tabular-nums' }}>
                       <b>{_gFmtValue(p.current, type.unit)}</b>
@@ -2822,7 +2836,7 @@ function GoalsWidgetSection({ projectId }) {
                   </span>
                   <span>
                     <span className={`t-status ${status.cls}`}>
-                      <StatusIcon size={11} weight="fill" /> {status.label}
+                      <StatusIcon size={11} weight="fill" /> {t(`project.analytics.goalsWidget.status.${status.skey}`)}
                     </span>
                   </span>
                   <span />
@@ -2876,6 +2890,7 @@ function MarginNameCell({ depth = 0, chevron, onChevron, icon, children }) {
 }
 
 function MarginSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/margin', period, projectId);
   const [expanded,    setExpanded]    = useState({});  // product_id → bool
@@ -2909,52 +2924,47 @@ function MarginSection({ projectId }) {
       `margin-${period}-${new Date().toISOString().slice(0,10)}.csv`,
       flat,
       [
-        { key: 'product',    label: 'Product' },
+        { key: 'product',    label: t('project.analytics.margin.colProduct') },
         { key: 'variation',  label: 'Variation' },
         { key: 'sku',        label: 'SKU' },
         { key: 'sku_code',   label: 'SKU code' },
-        { key: 'units',      label: 'Units' },
-        { key: 'revenue',    label: 'Revenue', format: v => (+v || 0).toFixed(2) },
-        { key: 'cost',       label: 'Cost',    format: v => (+v || 0).toFixed(2) },
-        { key: 'profit',     label: 'Profit',  format: v => (+v || 0).toFixed(2) },
+        { key: 'units',      label: t('project.analytics.margin.colUnits') },
+        { key: 'revenue',    label: t('project.analytics.margin.colRevenue'), format: v => (+v || 0).toFixed(2) },
+        { key: 'cost',       label: t('project.analytics.margin.colCost'),    format: v => (+v || 0).toFixed(2) },
+        { key: 'profit',     label: t('project.analytics.margin.colProfit'),  format: v => (+v || 0).toFixed(2) },
         { key: 'margin_pct', label: 'Margin %', format: v => v == null ? '' : (+v).toFixed(1) },
       ]
     );
   };
   return (
-    <SectionShell title="Margin analysis" Icon={Percent}
+    <SectionShell title={t('project.analytics.margin.title')} Icon={Percent}
       periodValue={period} onPeriodChange={setPeriod}
       headerControls={<CsvButton onClick={exportCsv} disabled={!data?.products?.length} />}>
       <p className="an-section-hint">
-        Gross profit margin = (Revenue − Cost) / Revenue × 100%. Cost
-        comes from each SKU's cost_price field on the product page.
-        Click a product to expand variations, then a variation to see
-        per-SKU breakdown. Margins under 20% render in red — the line
-        is too thin to absorb shipping or returns without going
-        negative. Unsold SKUs show a dash for margin.
+        {t('project.analytics.margin.hint')}
       </p>
       {loading || !data ? <Skeleton height={240} /> :
         !data.products?.length ? (
-          <p className="an-empty">No sales yet for this period.</p>
+          <p className="an-empty">{t('project.analytics.margin.empty')}</p>
         ) : (
           <>
             <div className="an-margin-totals">
-              <Kpi label="Total revenue" value={fmtMoney(data.total_revenue)} />
-              <Kpi label="Total cost"    value={fmtMoney(data.total_cogs)} inverse />
-              <Kpi label="Gross profit"  value={fmtMoney(data.total_profit)} />
-              <Kpi label="Avg margin"
+              <Kpi label={t('project.analytics.margin.totalRevenue')} value={fmtMoney(data.total_revenue)} />
+              <Kpi label={t('project.analytics.margin.totalCost')}    value={fmtMoney(data.total_cogs)} inverse />
+              <Kpi label={t('project.analytics.margin.grossProfit')}  value={fmtMoney(data.total_profit)} />
+              <Kpi label={t('project.analytics.margin.avgMargin')}
                    value={data.total_margin_pct == null ? '—'
                           : `${data.total_margin_pct.toFixed(1)}%`} />
             </div>
             <div className="po-set-table">
               <div className="po-set-row po-set-row--head"
                    style={{ gridTemplateColumns: MARGIN_COLS }}>
-                <span>Product · Variation · SKU</span>
-                <span style={{ textAlign: 'right' }}>Units</span>
-                <span style={{ textAlign: 'right' }}>Revenue</span>
-                <span style={{ textAlign: 'right' }}>Cost</span>
-                <span style={{ textAlign: 'right' }}>Profit</span>
-                <span style={{ textAlign: 'right' }}>Margin</span>
+                <span>{t('project.analytics.margin.colTree')}</span>
+                <span style={{ textAlign: 'right' }}>{t('project.analytics.margin.colUnits')}</span>
+                <span style={{ textAlign: 'right' }}>{t('project.analytics.margin.colRevenue')}</span>
+                <span style={{ textAlign: 'right' }}>{t('project.analytics.margin.colCost')}</span>
+                <span style={{ textAlign: 'right' }}>{t('project.analytics.margin.colProfit')}</span>
+                <span style={{ textAlign: 'right' }}>{t('project.analytics.margin.colMargin')}</span>
               </div>
               {data.products.map(p => {
                 const isOpen = !!expanded[p.id];
@@ -2969,7 +2979,7 @@ function MarginSection({ projectId }) {
                         icon={<MarginThumb src={p.image} />}>
                         <span className="po-set-strong">{p.title}</span>
                         <span className="po-set-note po-tree-meta">
-                          · {p.variations.length} variation{p.variations.length === 1 ? '' : 's'}
+                          · {t('project.analytics.margin.variation', { count: p.variations.length })}
                         </span>
                       </MarginNameCell>
                       <span className="an-margin-numcell">{fmtInt(p.units)}</span>
@@ -2995,7 +3005,7 @@ function MarginSection({ projectId }) {
                               icon={<MarginThumb src={v.image} />}>
                               <span className="po-set-strong">{v.name}</span>
                               <span className="po-set-note po-tree-meta">
-                                · {v.skus.length} SKU{v.skus.length === 1 ? '' : 's'}
+                                · {t('project.analytics.margin.sku', { count: v.skus.length })}
                               </span>
                             </MarginNameCell>
                             <span className="an-margin-numcell">{fmtInt(v.units)}</span>
@@ -3044,6 +3054,7 @@ function MarginSection({ projectId }) {
 // SECTION 13 — Inventory health
 // ════════════════════════════════════════════════════════════════════════
 function InventorySection({ projectId }) {
+  const { t } = useTranslation();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -3056,7 +3067,7 @@ function InventorySection({ projectId }) {
       .finally(() => setLoading(false));
   }, [projectId]);
   return (
-    <SectionShell title="Inventory health" Icon={Package} hidePeriod>
+    <SectionShell title={t('project.analytics.inventory.title')} Icon={Package} hidePeriod>
       {loading || !data ? <Skeleton height={140} /> : (
         <div className="an-tile an-inv-grid">
           <div className="an-inv-bar-track">
@@ -3079,9 +3090,9 @@ function InventorySection({ projectId }) {
             )}
           </div>
           <div className="an-inv-legend">
-            <span><span className="an-inv-dot an-inv-dot--oos" />OOS · {data.oos}</span>
-            <span><span className="an-inv-dot an-inv-dot--low" />Low · {data.low}</span>
-            <span><span className="an-inv-dot an-inv-dot--healthy" />Healthy · {data.healthy}</span>
+            <span><span className="an-inv-dot an-inv-dot--oos" />{t('project.analytics.inventory.oos')} · {data.oos}</span>
+            <span><span className="an-inv-dot an-inv-dot--low" />{t('project.analytics.inventory.low')} · {data.low}</span>
+            <span><span className="an-inv-dot an-inv-dot--healthy" />{t('project.analytics.inventory.healthy')} · {data.healthy}</span>
           </div>
         </div>
       )}
@@ -3093,28 +3104,29 @@ function InventorySection({ projectId }) {
 // SECTION 14 — Promo codes performance
 // ════════════════════════════════════════════════════════════════════════
 function PromoSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/promo-performance', period, projectId);
   return (
-    <SectionShell title="Promo codes performance" Icon={Tag}
+    <SectionShell title={t('project.analytics.promo.title')} Icon={Tag}
       periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? <Skeleton height={200} /> : (
         <div className="an-promo-wrap">
           <div className="an-promo-summary">
-            <Kpi label="Total revenue"      value={fmtMoney(data.total_revenue)} />
-            <Kpi label="Discount given"     value={fmtMoney(data.total_discount_given)} inverse />
-            <Kpi label="Discount share"     value={`${data.discount_share_pct.toFixed(1)}%`} inverse />
+            <Kpi label={t('project.analytics.promo.totalRevenue')}      value={fmtMoney(data.total_revenue)} />
+            <Kpi label={t('project.analytics.promo.discountGiven')}     value={fmtMoney(data.total_discount_given)} inverse />
+            <Kpi label={t('project.analytics.promo.discountShare')}     value={`${data.discount_share_pct.toFixed(1)}%`} inverse />
           </div>
-          {data.codes.length === 0 ? <p className="an-empty">No promo codes redeemed.</p> : (
+          {data.codes.length === 0 ? <p className="an-empty">{t('project.analytics.promo.empty')}</p> : (
             <div className="an-tile">
             <table className="an-table">
               <thead>
                 <tr>
-                  <th>Code</th>
-                  <th className="an-table-num">Used</th>
-                  <th className="an-table-num">Revenue</th>
-                  <th className="an-table-num">Discount</th>
-                  <th className="an-table-num">Avg order</th>
+                  <th>{t('project.analytics.promo.colCode')}</th>
+                  <th className="an-table-num">{t('project.analytics.promo.colUsed')}</th>
+                  <th className="an-table-num">{t('project.analytics.promo.colRevenue')}</th>
+                  <th className="an-table-num">{t('project.analytics.promo.colDiscount')}</th>
+                  <th className="an-table-num">{t('project.analytics.promo.colAvgOrder')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -3141,20 +3153,14 @@ function PromoSection({ projectId }) {
 // SECTION 15 — Operations
 // ════════════════════════════════════════════════════════════════════════
 function OperationsSection({ projectId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useSectionData('/api/analytics/operations', period, projectId);
   return (
-    <SectionShell title="Operations" Icon={GearSix}
+    <SectionShell title={t('project.analytics.operations.title')} Icon={GearSix}
       periodValue={period} onPeriodChange={setPeriod}>
       <p className="an-section-hint">
-        Operational SLA — how fast your fulfilment + checkout work.
-        Order → shipped: median time from order placed to status
-        moving to shipped (your warehouse speed). Shipped → delivered:
-        courier transit time. Cart → paid: how long shoppers hesitate
-        between adding an item and paying — long values hint at price
-        doubts. Abandoned rate: % of carts that never converted.
-        Dashes (—) mean we have no data yet for that metric in this
-        period.
+        {t('project.analytics.operations.hint')}
       </p>
       {loading || !data ? <Skeleton height={140} /> : (
         <div className="an-ops-grid">
@@ -3162,10 +3168,10 @@ function OperationsSection({ projectId }) {
               days/hours which destroyed sub-minute precision, causing
               every metric to render "1 s" — the formatter's old zero-
               placeholder). fmtDuration picks the right unit per value. */}
-          <Kpi label="Order → shipped"     value={fmtDuration(data.median_processing_seconds)} />
-          <Kpi label="Shipped → delivered" value={fmtDuration(data.median_shipping_seconds)} />
-          <Kpi label="Cart → paid (median)"  value={fmtDuration(data.median_cart_to_paid_seconds)} />
-          <Kpi label="Abandoned rate"  value={`${data.abandoned_rate_pct.toFixed(1)}%`}
+          <Kpi label={t('project.analytics.operations.orderToShipped')}     value={fmtDuration(data.median_processing_seconds)} />
+          <Kpi label={t('project.analytics.operations.shippedToDelivered')} value={fmtDuration(data.median_shipping_seconds)} />
+          <Kpi label={t('project.analytics.operations.cartToPaid')}  value={fmtDuration(data.median_cart_to_paid_seconds)} />
+          <Kpi label={t('project.analytics.operations.abandonedRate')}  value={`${data.abandoned_rate_pct.toFixed(1)}%`}
             inverse delta={null} />
         </div>
       )}
@@ -3177,6 +3183,7 @@ function OperationsSection({ projectId }) {
 // Main page — stacks all sections vertically
 // ════════════════════════════════════════════════════════════════════════
 export default function Analytics() {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   // Project currency drives money formatting across all sections. Set
   // once at mount and on any project switch (different store = different
@@ -3195,7 +3202,7 @@ export default function Analytics() {
   // skeletons that turn into real content as they scroll.
   return (
     <>
-      <h1 className="crm-page-title">Analytics</h1>
+      <h1 className="crm-page-title">{t('project.analytics.title')}</h1>
       <div className="an-page">
         <OverviewSection         projectId={projectId} period={topPeriod} setPeriod={setTopPeriod} />
         <RevenueOverTimeSection  projectId={projectId} />

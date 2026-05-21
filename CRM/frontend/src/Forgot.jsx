@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from 'react-i18next';
 import "./Style/Login.css";
 import { API_BASE } from "./api.js"
 
 function Forgot() {
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
   const [generalError, setGeneralError] = useState("");
@@ -15,7 +17,7 @@ function Forgot() {
   const handleEmailChange = (e) => {
     const value = e.target.value;
     setEmail(value);
-    setEmailError(value && !emailFormatRegex.test(value) ? "Incorrect email" : "");
+    setEmailError(value && !emailFormatRegex.test(value) ? t('auth.validation.incorrectEmail') : "");
     setGeneralError("");
     setSuccessMessage("");
   };
@@ -42,13 +44,13 @@ function Forgot() {
 
       if (res.ok) {
         setSuccessMessage(
-          data.message || "If the account exists, a password reset email has been sent."
+          data.message || t('auth.forgot.success')
         );
       } else {
-        setGeneralError(data.detail || "Failed to send reset email");
+        setGeneralError(data.detail || t('auth.forgot.failed'));
       }
     } catch {
-      setGeneralError("Network error");
+      setGeneralError(t('auth.common.networkError'));
     } finally {
       setLoading(false);
     }
@@ -57,8 +59,8 @@ function Forgot() {
   return (
     <div className="regist">
       <section className="regis">
-        <h1>Forgot Password</h1>
-        <p className="verify-p">Enter your email to receive a reset link</p>
+        <h1>{t('auth.forgot.title')}</h1>
+        <p className="verify-p">{t('auth.forgot.subtitle')}</p>
 
         <div className="reg">
           <form onSubmit={handleSubmit}>
@@ -67,7 +69,7 @@ function Forgot() {
                 type="email"
                 id="email"
                 name="email"
-                placeholder="example@email.com"
+                placeholder={t('auth.forgot.emailPlaceholder')}
                 value={email}
                 onChange={handleEmailChange}
                 autoComplete="email"
@@ -83,14 +85,14 @@ function Forgot() {
               <input
                 className={isValid && !loading ? "button1" : "not-button"}
                 type="submit"
-                value={loading ? "Sending..." : "Send reset link"}
+                value={loading ? t('auth.forgot.sending') : t('auth.forgot.sendResetLink')}
                 disabled={!isValid || loading}
               />
             </div>
 
             <div className="secsh1">
               <Link to="/login">
-                <input className="button2" type="button" value="Back to Sign in" />
+                <input className="button2" type="button" value={t('auth.forgot.backToSignIn')} />
               </Link>
             </div>
           </form>

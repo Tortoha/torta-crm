@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle, Copy, Eye, EyeSlash, ArrowSquareOut, Trash } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 
@@ -26,6 +27,7 @@ const PROVIDER_INFO = {
 };
 
 function OAuthProviderPanel({ provider, projectId, onSaved }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const info = PROVIDER_INFO[provider.id] || {};
 
@@ -77,14 +79,14 @@ function OAuthProviderPanel({ provider, projectId, onSaved }) {
         }),
       });
       const json = await res.json();
-      if (res.ok) { showToast('Saved'); onSaved?.(enabled); await load(); }
-      else        { setErr(json.detail || 'Error saving'); }
-    } catch { setErr('Network error'); }
+      if (res.ok) { showToast(t('common.saved')); onSaved?.(enabled); await load(); }
+      else        { setErr(json.detail || t('authConfig.errorSaving')); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
   const del = async () => {
-    if (!confirm(`Remove ${provider.label} OAuth settings?`)) return;
+    if (!confirm(t('authConfig.oauth.removeConfirm', { provider: provider.label }))) return;
     setDeleting(true);
     await fetch(`${API_BASE}/api/auth-providers/${provider.id}${pq}`, { method: 'DELETE', credentials: 'include' });
     setDeleting(false);
@@ -92,14 +94,14 @@ function OAuthProviderPanel({ provider, projectId, onSaved }) {
     await load();
   };
 
-  if (!data) return <p className="crm-placeholder">Loading…</p>;
+  if (!data) return <p className="crm-placeholder">{t('common.loading')}</p>;
 
   return (
     <>
       <div className="auth-toggle-row">
         <div>
-          <span className="auth-toggle-label">Enable {provider.label} OAuth</span>
-          <p className="auth-field-hint">Allow store users to sign in with their {provider.label} account.</p>
+          <span className="auth-toggle-label">{t('authConfig.oauth.enableLabel', { provider: provider.label })}</span>
+          <p className="auth-field-hint">{t('authConfig.oauth.enableHint', { provider: provider.label })}</p>
         </div>
         <label className="auth-toggle">
           <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
@@ -110,15 +112,15 @@ function OAuthProviderPanel({ provider, projectId, onSaved }) {
       <div className="auth-sep" />
 
       <div className="auth-field">
-        <label className="auth-label">Client ID</label>
-        <p className="auth-field-hint">From the {provider.label} developer console for your registered OAuth app.</p>
+        <label className="auth-label">{t('authConfig.clientId')}</label>
+        <p className="auth-field-hint">{t('authConfig.oauth.clientIdHint', { provider: provider.label })}</p>
         <input className="crm-input" placeholder={info.id_ph || 'Client ID'}
           value={clientId} onChange={e => setClientId(e.target.value)} autoComplete="off" />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Client Secret</label>
-        <p className="auth-field-hint">Keep this private — never expose it in client-side code.</p>
+        <label className="auth-label">{t('authConfig.clientSecret')}</label>
+        <p className="auth-field-hint">{t('authConfig.clientSecretHint')}</p>
         <div className="auth-secret-wrap">
           <input className="crm-input" type={showSec ? 'text' : 'password'}
             placeholder={info.sec_ph || 'Client Secret'} value={clientSec}
@@ -130,9 +132,9 @@ function OAuthProviderPanel({ provider, projectId, onSaved }) {
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Redirect URI / Callback URL</label>
+        <label className="auth-label">{t('authConfig.oauth.redirectLabel')}</label>
         <p className="auth-field-hint">
-          Add this exact URL to the list of authorised redirect URIs in the {provider.label} developer console.
+          {t('authConfig.oauth.redirectHint', { provider: provider.label })}
         </p>
         <div className="auth-uri-row">
           <code className="auth-uri-code">{data.redirect_uri}</code>
@@ -148,18 +150,18 @@ function OAuthProviderPanel({ provider, projectId, onSaved }) {
 
       <div className="auth-actions">
         <button className="crm-submit-btn" onClick={save} disabled={saving} type="button">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('authConfig.saving') : t('common.save')}
         </button>
         {data.configured && (
           <button className="auth-btn-danger" onClick={del} disabled={deleting} type="button">
             <Trash size={15} />
-            {deleting ? 'Deleting…' : 'Delete'}
+            {deleting ? t('authConfig.deleting') : t('common.delete')}
           </button>
         )}
         {info.console && (
           <a href={info.console} target="_blank" rel="noopener noreferrer"
             className="auth-btn-link" style={{ marginLeft: 'auto', textDecoration: 'none' }}>
-            <ArrowSquareOut size={14} /> {info.console_label || `Open ${provider.label} Console`}
+            <ArrowSquareOut size={14} /> {info.console_label || t('authConfig.oauth.openConsole', { provider: provider.label })}
           </a>
         )}
       </div>

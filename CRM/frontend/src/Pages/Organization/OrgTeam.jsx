@@ -7,50 +7,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   UsersThree, ShieldCheck, EnvelopeSimple, Plus, X, Trash, Copy,
   PencilSimple, CaretRight, DotsThreeOutline,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
+import { SearchableCombobox, SegmentSwitch } from '../Project/ProjectSettings.jsx';
 import '../../Style/Authentication.css';   // auth-tab-* switcher + auth-modal
 import '../../Style/Organization.css';      // org-toolbar / org-new-btn / org-card-dropdown
 import '../../Style/Products.css';           // po-set-table / po-set-row / po-block-hint
 import '../../Style/OrgTeam.css';
 
-// Human labels for the permission-matrix rows. Backend ships the authoritative
-// `pages` list, so a new page shows up automatically (falls back to raw key).
-const PAGE_LABELS = {
-  overview: 'Overview',
-  products: 'Products', inventory: 'Inventory', batches: 'Batches',
-  promo_codes: 'Promo codes', discounts: 'Discount', tier_pricing: 'Tier pricing',
-  warehouses: 'Warehouses', archive: 'Archive', product_settings: 'Product settings',
-  orders: 'Orders', returns: 'Returns',
-  customers: 'Customers',
-  booking: 'Bookings', booking_services: 'Services', booking_staff: 'Staff',
-  booking_settings: 'Booking settings',
-  chat: 'Chat with Customers', channels: 'Channels',
-  emails: 'Emails', analytics: 'Analytics',
-  auth_providers: 'Auth Providers', url_config: 'URL Configuration',
-  integrations: 'Integrations', alerts: 'Alerts', goals: 'Targets',
-  documents: 'Documents', settings: 'Project Settings', api: 'API Keys',
-};
+// Human labels for the permission-matrix rows live in the `org.pages.*`
+// translation namespace. Backend ships the authoritative `pages` list, so a
+// new page shows up automatically (t() falls back to the raw key).
+const pageLabel = (t, pg) => t(`org.pages.${pg}`, { defaultValue: pg });
 
 // Visual grouping for the permission matrix (29 pages is a lot in one flat
 // list). Each group renders a small sub-header; only keys the backend actually
 // ships in `pages` are shown, so a future catalog change doesn't break this.
 const PAGE_GROUPS = [
-  { label: 'General',       keys: ['overview'] },
-  { label: 'Products',      keys: ['products', 'inventory', 'batches', 'promo_codes', 'discounts', 'tier_pricing', 'warehouses', 'archive', 'product_settings'] },
-  { label: 'Sales',         keys: ['orders', 'returns', 'customers'] },
-  { label: 'Booking',       keys: ['booking', 'booking_services', 'booking_staff', 'booking_settings'] },
-  { label: 'Engagement',    keys: ['chat', 'channels', 'emails', 'analytics', 'alerts', 'goals'] },
-  { label: 'Configuration', keys: ['auth_providers', 'url_config', 'integrations', 'documents', 'settings', 'api'] },
+  { key: 'general',       keys: ['overview'] },
+  { key: 'products',      keys: ['products', 'inventory', 'batches', 'promo_codes', 'discounts', 'tier_pricing', 'warehouses', 'archive', 'product_settings'] },
+  { key: 'sales',         keys: ['orders', 'returns', 'customers'] },
+  { key: 'booking',       keys: ['booking', 'booking_services', 'booking_staff', 'booking_settings'] },
+  { key: 'engagement',    keys: ['chat', 'channels', 'emails', 'analytics', 'alerts', 'goals'] },
+  { key: 'configuration', keys: ['auth_providers', 'url_config', 'integrations', 'documents', 'settings', 'api'] },
 ];
 const LEVELS = [
-  { value: 'none',   label: 'None'   },
-  { value: 'view',   label: 'View'   },
-  { value: 'manage', label: 'Manage' },
+  { value: 'none',   labelKey: 'org.team.levels.none'   },
+  { value: 'view',   labelKey: 'org.team.levels.view'   },
+  { value: 'manage', labelKey: 'org.team.levels.manage' },
 ];
 
 function Avatar({ name, email, url, size = 30 }) {
@@ -62,18 +51,15 @@ function Avatar({ name, email, url, size = 30 }) {
   return <div className="ot-avatar ot-avatar--initials" style={{ width: size, height: size, background: bg }}>{initials}</div>;
 }
 
-// 3-way None/View/Manage segment for the matrix.
+// 3-way None/View/Manage segment for the matrix. Uses the shared SegmentSwitch
+// (same Dynamic Block sliding pill as Project Settings) for a consistent look.
 function LevelPicker({ value, onChange }) {
+  const { t } = useTranslation();
   return (
-    <div className="ot-level">
-      {LEVELS.map(l => (
-        <button key={l.value} type="button"
-          className={`ot-level-btn${(value || 'none') === l.value ? ' ot-level-btn--on' : ''}`}
-          onClick={() => onChange(l.value)}>
-          {l.label}
-        </button>
-      ))}
-    </div>
+    <SegmentSwitch
+      value={value || 'none'}
+      options={LEVELS.map(l => ({ value: l.value, label: t(l.labelKey) }))}
+      onChange={onChange} />
   );
 }
 
@@ -156,6 +142,7 @@ function RowMenu({ btnRef, onClose, items }) {
 
 // ── Table rows ─────────────────────────────────────────────────────────
 function MemberRow({ m, onManage, onRemove }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const btnRef = useRef(null);
   const assigns = m.assignments || [];
@@ -163,31 +150,28 @@ function MemberRow({ m, onManage, onRemove }) {
     <PoListRow className="po-set-row--otm" frozen={menuOpen}>
       <span className="ot-id-cell">
         <Avatar name={m.name} email={m.email} url={m.avatar_url} size={30} />
-        <span className="po-set-strong ot-ellipsis">
-          {m.name || m.email}
-          {m.is_owner && <span className="crm-badge crm-badge--dark" style={{ marginLeft: 8 }}>Owner</span>}
-          {m.is_me && <span className="crm-badge crm-badge--light" style={{ marginLeft: 6 }}>You</span>}
-        </span>
+        <span className="po-set-strong ot-ellipsis">{m.name || m.email}</span>
+        {m.is_me && <span className="crm-badge crm-badge--light ot-you-badge">{t('org.team.members.you')}</span>}
       </span>
       <span className="ot-muted ot-ellipsis">{m.email}</span>
       <span style={{ minWidth: 0 }}>
-        {m.is_owner ? <span className="ot-access-full">Full access</span>
-          : assigns.length === 0 ? <span className="ot-access-none">No project access</span>
+        {m.is_owner ? <span className="ot-access-full">{t('org.team.members.fullAccess')}</span>
+          : assigns.length === 0 ? <span className="ot-access-none">{t('org.team.members.noProjectAccess')}</span>
           : <span className="ot-chips">
               {assigns.map(a => <span className="ot-chip" key={a.project_id}>{a.project_name}: <b>{a.role_name || '—'}</b></span>)}
             </span>}
       </span>
       {m.is_owner ? <span /> : (
-        <button ref={btnRef} type="button" className="org-list-menu-btn" aria-label="Options"
+        <button ref={btnRef} type="button" className="org-list-menu-btn" aria-label={t('org.team.options')}
           onClick={() => setMenuOpen(v => !v)}>
           <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
         </button>
       )}
       {menuOpen && (
         <RowMenu btnRef={btnRef} onClose={() => setMenuOpen(false)} items={[
-          { Icon: CaretRight, label: 'Manage access', onClick: onManage },
+          { Icon: CaretRight, label: t('org.team.members.manageAccess'), onClick: onManage },
           { sep: true },
-          { Icon: Trash, label: 'Remove', danger: true, onClick: onRemove },
+          { Icon: Trash, label: t('org.team.members.remove'), danger: true, onClick: onRemove },
         ]} />
       )}
     </PoListRow>
@@ -195,6 +179,7 @@ function MemberRow({ m, onManage, onRemove }) {
 }
 
 function RoleRow({ r, pagesCount, onEdit, onDelete }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const btnRef = useRef(null);
   const granted = Object.keys(r.permissions || {}).length;
@@ -202,20 +187,20 @@ function RoleRow({ r, pagesCount, onEdit, onDelete }) {
     <PoListRow className="po-set-row--otr" frozen={menuOpen}
       onClick={onEdit} style={{ cursor: 'pointer' }}>
       <span className="po-set-strong ot-ellipsis">{r.name}</span>
-      <span className="ot-muted">{granted} / {pagesCount} pages</span>
+      <span className="ot-muted">{t('org.team.roles.pagesGranted', { granted, total: pagesCount })}</span>
       <span>
         {r.is_preset
-          ? <span className="crm-badge crm-badge--gray">Preset</span>
-          : <span className="crm-badge crm-badge--light">Custom</span>}
+          ? <span className="crm-badge crm-badge--gray">{t('org.team.roles.preset')}</span>
+          : <span className="crm-badge crm-badge--light">{t('org.team.roles.custom')}</span>}
       </span>
-      <button ref={btnRef} type="button" className="org-list-menu-btn" aria-label="Options"
+      <button ref={btnRef} type="button" className="org-list-menu-btn" aria-label={t('org.team.options')}
         onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
         <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
       </button>
       {menuOpen && (
         <RowMenu btnRef={btnRef} onClose={() => setMenuOpen(false)} items={[
-          { Icon: PencilSimple, label: 'Edit', onClick: onEdit },
-          ...(r.is_preset ? [] : [{ sep: true }, { Icon: Trash, label: 'Delete', danger: true, onClick: onDelete }]),
+          { Icon: PencilSimple, label: t('org.team.roles.edit'), onClick: onEdit },
+          ...(r.is_preset ? [] : [{ sep: true }, { Icon: Trash, label: t('org.team.roles.delete'), danger: true, onClick: onDelete }]),
         ]} />
       )}
     </PoListRow>
@@ -223,13 +208,14 @@ function RoleRow({ r, pagesCount, onEdit, onDelete }) {
 }
 
 function InviteRow({ inv, onCopy, onRevoke }) {
+  const { t } = useTranslation();
   return (
     <PoListRow className="po-set-row--oti">
       <span className="po-set-strong ot-ellipsis">{inv.email}</span>
       <span className="ot-invite-url ot-ellipsis"><code>{inv.invite_url}</code></span>
       <span className="ot-row-actions">
-        <button className="crm-icon-btn" title="Copy link" onClick={onCopy}><Copy className="crm-icon" /></button>
-        <button className="crm-icon-btn crm-icon-btn--danger" title="Revoke" onClick={onRevoke}><Trash className="crm-icon" /></button>
+        <button className="crm-icon-btn" title={t('org.team.invites.copyLink')} onClick={onCopy}><Copy className="crm-icon" /></button>
+        <button className="crm-icon-btn crm-icon-btn--danger" title={t('org.team.invites.revoke')} onClick={onRevoke}><Trash className="crm-icon" /></button>
       </span>
     </PoListRow>
   );
@@ -237,11 +223,13 @@ function InviteRow({ inv, onCopy, onRevoke }) {
 
 // ── Role create/edit modal — name + permission matrix ──
 function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
+  const { t } = useTranslation();
   const editing = !!role;
   const [name, setName] = useState(role?.name || '');
   const [perms, setPerms] = useState(() => ({ ...(role?.permissions || {}) }));
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const roleIdRef   = useRef(role?.id || null);   // becomes set after the first create
+  const creatingRef = useRef(false);              // guards against a duplicate POST
 
   const setLevel = (page, level) => setPerms(p => {
     const next = { ...p };
@@ -251,21 +239,45 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
   });
   const setAll = (level) => setPerms(() => level === 'none' ? {} : Object.fromEntries(pages.map(pg => [pg, level])));
 
-  const save = async () => {
-    if (!name.trim()) { setErr('Role name is required'); return; }
-    setBusy(true); setErr('');
-    const url = editing
-      ? `${API_BASE}/api/orgs/${orgId}/roles/${role.id}`
-      : `${API_BASE}/api/orgs/${orgId}/roles`;
-    const r = await fetch(url, {
-      method: editing ? 'PUT' : 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name.trim(), permissions: perms }),
-    });
-    setBusy(false);
-    if (!r.ok) { const j = await r.json().catch(() => ({})); setErr(j.detail || 'Save failed'); return; }
-    showToast('Saved'); onSaved(); onClose();
-  };
+  // Save-on-change: a debounced PUT for an existing role, or a POST the first
+  // time a name is entered for a brand-new role (after which we switch to PUT).
+  // No Save button — name edits and permission toggles persist automatically,
+  // mirroring the per-project access modal.
+  const persist = useCallback(async (nm, pm) => {
+    const name2 = (nm || '').trim();
+    if (!name2) return;                          // can't create/rename to empty
+    const id = roleIdRef.current;
+    if (!id && creatingRef.current) return;      // a create POST is already in flight
+    if (!id) creatingRef.current = true;
+    setErr('');
+    try {
+      const url = id
+        ? `${API_BASE}/api/orgs/${orgId}/roles/${id}`
+        : `${API_BASE}/api/orgs/${orgId}/roles`;
+      const r = await fetch(url, {
+        method: id ? 'PUT' : 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name2, permissions: pm }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setErr(j.detail || t('org.team.roleEditor.saveFailed'));
+        return;
+      }
+      if (!id) { const j = await r.json().catch(() => ({})); if (j?.id) roleIdRef.current = j.id; }
+      showToast(t('common.saved'));
+      onSaved();
+    } finally {
+      if (!id) creatingRef.current = false;
+    }
+  }, [orgId, onSaved, showToast, t]);
+
+  const firstRun = useRef(true);
+  useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return; }
+    const timer = setTimeout(() => persist(name, perms), 500);
+    return () => clearTimeout(timer);
+  }, [name, perms, persist]);
 
   return createPortal(
     <div className="auth-modal-overlay"
@@ -274,12 +286,12 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">{editing ? 'Edit role' : 'New role'}</div>
+              <div className="auth-modal-title">{editing ? t('org.team.roleEditor.editTitle') : t('org.team.roleEditor.newTitle')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {editing
-                    ? `Editing "${role.name}" — choose what this role can see and do on each page.`
-                    : 'A role is a per-page permission set. Assign it to members per project.'}
+                    ? t('org.team.roleEditor.editSubtitle', { name: role.name })
+                    : t('org.team.roleEditor.newSubtitle')}
                 </span>
               </div>
             </div>
@@ -289,20 +301,20 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
           </button>
         </div>
         <div className="auth-modal-body">
-          <form className="cpm-form" onSubmit={(e) => { e.preventDefault(); save(); }} autoComplete="off">
+          <form className="cpm-form" onSubmit={(e) => e.preventDefault()} autoComplete="off">
             <div className="cpm-section">
-              <label className="po-field-label">Role name</label>
+              <label className="po-field-label">{t('org.team.roleEditor.nameLabel')}</label>
               <input className="crm-input" autoFocus maxLength={60}
-                placeholder="Store Manager"
+                placeholder={t('org.team.roleEditor.namePlaceholder')}
                 value={name} onChange={e => setName(e.target.value)} />
             </div>
             <div className="cpm-section">
               <div className="ot-matrix-head">
-                <label className="po-field-label" style={{ padding: 0 }}>Page access</label>
+                <label className="po-field-label" style={{ padding: 0 }}>{t('org.team.roleEditor.pageAccess')}</label>
                 <div className="ot-matrix-bulk">
-                  <button type="button" onClick={() => setAll('none')}>Clear all</button>
-                  <button type="button" onClick={() => setAll('view')}>All view</button>
-                  <button type="button" onClick={() => setAll('manage')}>All manage</button>
+                  <button type="button" onClick={() => setAll('none')}>{t('org.team.roleEditor.clearAll')}</button>
+                  <button type="button" onClick={() => setAll('view')}>{t('org.team.roleEditor.allView')}</button>
+                  <button type="button" onClick={() => setAll('manage')}>{t('org.team.roleEditor.allManage')}</button>
                 </div>
               </div>
               <div className="ot-matrix">
@@ -310,11 +322,11 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
                   const keys = group.keys.filter(k => pages.includes(k));
                   if (keys.length === 0) return null;
                   return (
-                    <div className="ot-matrix-group" key={group.label}>
-                      <div className="ot-matrix-group-label">{group.label}</div>
+                    <div className="ot-matrix-group" key={group.key}>
+                      <div className="ot-matrix-group-label">{t(`org.pageGroups.${group.key}`)}</div>
                       {keys.map(pg => (
                         <div className="ot-matrix-row" key={pg}>
-                          <span className="ot-matrix-label">{PAGE_LABELS[pg] || pg}</span>
+                          <span className="ot-matrix-label">{pageLabel(t, pg)}</span>
                           <LevelPicker value={perms[pg]} onChange={(l) => setLevel(pg, l)} />
                         </div>
                       ))}
@@ -323,19 +335,17 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
                 })}
                 {pages.filter(p => !PAGE_GROUPS.some(g => g.keys.includes(p))).map(pg => (
                   <div className="ot-matrix-row" key={pg}>
-                    <span className="ot-matrix-label">{PAGE_LABELS[pg] || pg}</span>
+                    <span className="ot-matrix-label">{pageLabel(t, pg)}</span>
                     <LevelPicker value={perms[pg]} onChange={(l) => setLevel(pg, l)} />
                   </div>
                 ))}
               </div>
             </div>
+            <p className="cpm-section-hint">{t('org.team.roleEditor.autosaveHint')}</p>
             {err && <p className="auth-msg auth-msg--err">{err}</p>}
             <div className="auth-actions">
-              <button className="crm-submit-btn" type="submit" disabled={busy}>
-                {busy ? 'Saving…' : (editing ? 'Save role' : 'Create role')}
-              </button>
-              <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-                Cancel
+              <button className="crm-submit-btn" type="button" onClick={onClose}>
+                {t('org.team.roleEditor.done')}
               </button>
             </div>
           </form>
@@ -346,12 +356,9 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
   );
 }
 
-// ── Add member modal ──
-function AddMemberModal({ orgId, onClose, onSaved, showToast }) {
-  const [email, setEmail] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-  const [emailInvite, setEmailInvite] = useState(null);   // personal link for an unregistered email
+// ── Add member modal — share a single reusable invite link ──
+function AddMemberModal({ orgId, onClose, showToast }) {
+  const { t } = useTranslation();
   const [link, setLink] = useState('');                    // reusable org share link
   const [resetting, setResetting] = useState(false);
 
@@ -363,26 +370,11 @@ function AddMemberModal({ orgId, onClose, onSaved, showToast }) {
   }, [orgId]);
 
   const resetLink = async () => {
-    if (!window.confirm('Reset the invite link? The current link will stop working.')) return;
+    if (!window.confirm(t('org.team.addMember.resetConfirm'))) return;
     setResetting(true);
     const r = await fetch(`${API_BASE}/api/orgs/${orgId}/invite-link/reset`, { method: 'POST', credentials: 'include' });
     setResetting(false);
-    if (r.ok) { const j = await r.json(); setLink(j.url); showToast('Link reset'); }
-  };
-
-  const submitEmail = async () => {
-    if (!email.trim() || !email.includes('@')) { setErr('Enter a valid email'); return; }
-    setBusy(true); setErr('');
-    const r = await fetch(`${API_BASE}/api/orgs/${orgId}/members`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email.trim() }),
-    });
-    setBusy(false);
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) { setErr(j.detail || 'Failed'); return; }
-    if (j.invited) { setEmailInvite(j.invite_url); showToast('Invite created'); onSaved(); }
-    else { showToast('Member added'); onSaved(); onClose(); }
+    if (r.ok) { const j = await r.json(); setLink(j.url); showToast(t('org.team.addMember.linkReset')); }
   };
 
   return createPortal(
@@ -392,10 +384,10 @@ function AddMemberModal({ orgId, onClose, onSaved, showToast }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Add employee</div>
+              <div className="auth-modal-title">{t('org.team.addMember.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Share the invite link, or add someone by email. New members join with <b>no access</b> — you grant pages and projects afterwards.
+                  {t('org.team.addMember.subtitlePre')}<b>{t('org.team.addMember.subtitleBold')}</b>{t('org.team.addMember.subtitlePost')}
                 </span>
               </div>
             </div>
@@ -406,58 +398,26 @@ function AddMemberModal({ orgId, onClose, onSaved, showToast }) {
         </div>
         <div className="auth-modal-body">
           <div className="cpm-form">
-            {/* Reusable share link — the easy path */}
             <div className="cpm-section">
-              <label className="po-field-label">Invite link</label>
+              <label className="po-field-label">{t('org.team.addMember.inviteLink')}</label>
               <div className="ot-invite-link">
-                <code>{link || 'Generating…'}</code>
-                <button type="button" className="crm-icon-btn" title="Copy link" disabled={!link}
-                  onClick={() => { navigator.clipboard?.writeText(link); showToast('Copied'); }}>
+                <code>{link || t('org.team.addMember.generating')}</code>
+                <button type="button" className="crm-icon-btn" title={t('org.team.addMember.copyLink')} disabled={!link}
+                  onClick={() => { navigator.clipboard?.writeText(link); showToast(t('org.team.addMember.copied')); }}>
                   <Copy className="crm-icon" />
                 </button>
               </div>
               <span className="cpm-section-hint">
-                Anyone who opens it and signs in joins the team — they see nothing until you grant access.{' '}
+                {t('org.team.addMember.shareHint')}
                 <button type="button" className="ot-link-reset" onClick={resetLink} disabled={resetting}>
-                  Reset link
+                  {t('org.team.addMember.resetLink')}
                 </button>
               </span>
             </div>
-
-            <div className="ot-or-sep"><span>or add by email</span></div>
-
-            {emailInvite ? (
-              <div className="cpm-section">
-                <label className="po-field-label">Personal invite link</label>
-                <div className="ot-invite-link">
-                  <code>{emailInvite}</code>
-                  <button type="button" className="crm-icon-btn" title="Copy"
-                    onClick={() => { navigator.clipboard?.writeText(emailInvite); showToast('Copied'); }}>
-                    <Copy className="crm-icon" />
-                  </button>
-                </div>
-                <span className="cpm-section-hint">No account exists for that email yet — send them this link.</span>
-              </div>
-            ) : (
-              <div className="cpm-section">
-                <label className="po-field-label">Email</label>
-                <input className="crm-input" type="email"
-                  placeholder="employee@email.com" value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submitEmail(); } }} />
-                {err && <p className="auth-msg auth-msg--err">{err}</p>}
-              </div>
-            )}
           </div>
           <div className="auth-actions">
-            {!emailInvite && (
-              <button className="crm-submit-btn" type="button" onClick={submitEmail}
-                disabled={busy || !email.trim()}>
-                {busy ? 'Adding…' : 'Add by email'}
-              </button>
-            )}
-            <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-              {emailInvite ? 'Done' : 'Cancel'}
+            <button className="crm-submit-btn" type="button" onClick={onClose}>
+              {t('org.team.addMember.done')}
             </button>
           </div>
         </div>
@@ -469,6 +429,7 @@ function AddMemberModal({ orgId, onClose, onSaved, showToast }) {
 
 // ── Member access (per-project role assignment) modal ──
 function AssignmentModal({ orgId, member, projects, roles, onClose, onSaved, showToast }) {
+  const { t } = useTranslation();
   const initial = useMemo(() => {
     const m = {};
     (member.assignments || []).forEach(a => { m[a.project_id] = a.role_id; });
@@ -483,8 +444,8 @@ function AssignmentModal({ orgId, member, projects, roles, onClose, onSaved, sho
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_id: projectId, role_id: roleId || null }),
     });
-    if (r.ok) { showToast('Saved'); onSaved(); }
-    else      { showToast('Save failed'); }
+    if (r.ok) { showToast(t('common.saved')); onSaved(); }
+    else      { showToast(t('common.saveFailed')); }
   };
 
   return createPortal(
@@ -494,10 +455,10 @@ function AssignmentModal({ orgId, member, projects, roles, onClose, onSaved, sho
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Manage access</div>
+              <div className="auth-modal-title">{t('org.team.assignment.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  {member.name || member.email} — pick a role per project. "No access" hides the project entirely.
+                  {t('org.team.assignment.subtitle', { name: member.name || member.email })}
                 </span>
               </div>
             </div>
@@ -508,21 +469,25 @@ function AssignmentModal({ orgId, member, projects, roles, onClose, onSaved, sho
         </div>
         <div className="auth-modal-body">
           <div className="ot-assign-list">
-            {projects.length === 0 && <div className="crm-placeholder">No projects in this organization yet.</div>}
+            {projects.length === 0 && <div className="crm-placeholder">{t('org.team.assignment.noProjects')}</div>}
             {projects.map(p => (
               <div className="ot-assign-row" key={p.id}>
                 <span className="ot-assign-project">{p.name}</span>
-                <select className="crm-input crm-input-select ot-assign-select"
-                  value={assign[p.id] || 0}
-                  onChange={e => change(p.id, parseInt(e.target.value) || 0)}>
-                  <option value={0}>No access</option>
-                  {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
+                <div className="ot-assign-select">
+                  <SearchableCombobox
+                    value={assign[p.id] || 0}
+                    options={[
+                      { value: 0, label: t('org.team.assignment.noAccess') },
+                      ...roles.map(r => ({ value: r.id, label: r.name })),
+                    ]}
+                    onChange={(v) => change(p.id, Number(v) || 0)}
+                    searchPlaceholder={t('common.search')} />
+                </div>
               </div>
             ))}
           </div>
           <div className="auth-actions">
-            <button className="crm-submit-btn" type="button" onClick={onClose}>Done</button>
+            <button className="crm-submit-btn" type="button" onClick={onClose}>{t('org.team.assignment.done')}</button>
           </div>
         </div>
       </div>
@@ -532,6 +497,7 @@ function AssignmentModal({ orgId, member, projects, roles, onClose, onSaved, sho
 }
 
 export default function OrgTeam() {
+  const { t } = useTranslation();
   const { org } = useOutletContext();
   const orgId = org?.id;
 
@@ -574,65 +540,65 @@ export default function OrgTeam() {
         getJSON(`${API_BASE}/api/orgs/${orgId}/projects`, []),
         getJSON(`${API_BASE}/api/orgs/${orgId}/invites`,  []),
       ]);
-      if (m && m._forbidden) { setError('Only the organization owner can manage the team.'); return; }
+      if (m && m._forbidden) { setError(t('org.team.forbidden')); return; }
       setMembers(Array.isArray(m) ? m : []);
       setRoles(Array.isArray(r?.roles) ? r.roles : []);
       setPages(Array.isArray(r?.pages) ? r.pages : []);
       setProjects(Array.isArray(p) ? p : []);
       setInvites(Array.isArray(i) ? i : []);
     } finally { setLoading(false); }
-  }, [orgId]);
+  }, [orgId, t]);
 
   useEffect(() => { load(); }, [load]);
 
   const removeMember = async (m) => {
-    if (!window.confirm(`Remove ${m.name || m.email} from the organization?`)) return;
+    if (!window.confirm(t('org.team.members.removeConfirm', { name: m.name || m.email }))) return;
     const r = await fetch(`${API_BASE}/api/orgs/${orgId}/members/${m.id}`, { method: 'DELETE', credentials: 'include' });
-    if (r.ok) { showToast('Removed'); load(); } else showToast('Failed');
+    if (r.ok) { showToast(t('org.team.members.removed')); load(); } else showToast(t('org.team.members.failed'));
   };
   const deleteRole = async (role) => {
-    if (!window.confirm(`Delete role "${role.name}"?`)) return;
+    if (!window.confirm(t('org.team.roles.deleteConfirm', { name: role.name }))) return;
     const r = await fetch(`${API_BASE}/api/orgs/${orgId}/roles/${role.id}`, { method: 'DELETE', credentials: 'include' });
-    if (r.ok) { showToast('Deleted'); load(); }
-    else { const j = await r.json().catch(() => ({})); showToast(j.detail || 'Failed'); }
+    if (r.ok) { showToast(t('org.team.roles.deleted')); load(); }
+    else { const j = await r.json().catch(() => ({})); showToast(j.detail || t('org.team.roles.failed')); }
   };
   const revokeInvite = async (inv) => {
     const r = await fetch(`${API_BASE}/api/orgs/${orgId}/invites/${inv.id}`, { method: 'DELETE', credentials: 'include' });
-    if (r.ok) { showToast('Revoked'); load(); }
+    if (r.ok) { showToast(t('org.team.invites.revoked')); load(); }
   };
 
   const TABS = [
-    { key: 'members', label: 'Members', Icon: UsersThree },
-    { key: 'roles',   label: 'Roles',   Icon: ShieldCheck },
-    { key: 'invites', label: 'Invites', Icon: EnvelopeSimple, badge: invites.length },
+    { key: 'members', label: t('org.team.tabs.members'), Icon: UsersThree },
+    { key: 'roles',   label: t('org.team.tabs.roles'),   Icon: ShieldCheck },
+    { key: 'invites', label: t('org.team.tabs.invites'), Icon: EnvelopeSimple, badge: invites.length },
   ];
 
   return (
     <div className="prod-page-wrap">
       <TabSwitcher tabs={TABS} activeKey={tab} onPick={setTab} />
-      <h1 className="crm-page-title">Team</h1>
+      <h1 className="crm-page-title">{t('org.team.title')}</h1>
 
       {error ? (
         <div className="crm-placeholder" style={{ marginTop: 24 }}>{error}</div>
       ) : loading ? (
-        <div className="crm-placeholder" style={{ marginTop: 24 }}>Loading…</div>
+        <div className="crm-placeholder" style={{ marginTop: 24 }}>{t('org.team.loading')}</div>
       ) : (
         <>
           {/* ── Members ── */}
           {tab === 'members' && (
             <>
               <p className="po-block-hint">
-                People in this organization and their per-project roles. The owner always has full access.
+                {t('org.team.members.hint')}
               </p>
               <div className="ot-toolbar">
-                <span className="ot-count">{members.length} {members.length === 1 ? 'person' : 'people'}</span>
+                <span className="ot-count">{t('org.team.members.count', { count: members.length })}</span>
                 <button className="org-new-btn" type="button" onClick={() => setAddOpen(true)}>
-                  <Plus className="org-new-icon" /> Add employee
+                  <Plus className="org-new-icon" /> {t('org.team.members.add')}
                 </button>
               </div>
               <div className="po-set-table">
                 <div className="po-set-row po-set-row--head po-set-row--otm">
-                  <span>Member</span><span>Email</span><span>Access</span><span />
+                  <span>{t('org.team.members.colMember')}</span><span>{t('org.team.members.colEmail')}</span><span>{t('org.team.members.colAccess')}</span><span />
                 </div>
                 {members.map(m => (
                   <MemberRow key={m.id} m={m}
@@ -646,17 +612,17 @@ export default function OrgTeam() {
           {tab === 'roles' && (
             <>
               <p className="po-block-hint">
-                A role is a per-page permission set (None / View / Manage). Assign roles to members per project.
+                {t('org.team.roles.hint')}
               </p>
               <div className="ot-toolbar">
-                <span className="ot-count">{roles.length} {roles.length === 1 ? 'role' : 'roles'}</span>
+                <span className="ot-count">{t('org.team.roles.count', { count: roles.length })}</span>
                 <button className="org-new-btn" type="button" onClick={() => setRoleModal({})}>
-                  <Plus className="org-new-icon" /> New role
+                  <Plus className="org-new-icon" /> {t('org.team.roles.new')}
                 </button>
               </div>
               <div className="po-set-table">
                 <div className="po-set-row po-set-row--head po-set-row--otr">
-                  <span>Role</span><span>Pages granted</span><span>Type</span><span />
+                  <span>{t('org.team.roles.colRole')}</span><span>{t('org.team.roles.colPagesGranted')}</span><span>{t('org.team.roles.colType')}</span><span />
                 </div>
                 {roles.map(r => (
                   <RoleRow key={r.id} r={r} pagesCount={pages.length}
@@ -670,24 +636,24 @@ export default function OrgTeam() {
           {tab === 'invites' && (
             <>
               <p className="po-block-hint">
-                Pending email invites. People join once they sign up with the invited address and accept the link.
+                {t('org.team.invites.hint')}
               </p>
               <div className="ot-toolbar">
-                <span className="ot-count">{invites.length} pending</span>
+                <span className="ot-count">{t('org.team.invites.count', { count: invites.length })}</span>
                 <button className="org-new-btn" type="button" onClick={() => setAddOpen(true)}>
-                  <Plus className="org-new-icon" /> Invite by email
+                  <Plus className="org-new-icon" /> {t('org.team.invites.inviteByEmail')}
                 </button>
               </div>
               {invites.length === 0 ? (
-                <div className="crm-placeholder">No pending invites.</div>
+                <div className="ot-empty">{t('org.team.invites.empty')}</div>
               ) : (
                 <div className="po-set-table">
                   <div className="po-set-row po-set-row--head po-set-row--oti">
-                    <span>Email</span><span>Invite link</span><span />
+                    <span>{t('org.team.invites.colEmail')}</span><span>{t('org.team.invites.colInviteLink')}</span><span />
                   </div>
                   {invites.map(inv => (
                     <InviteRow key={inv.id} inv={inv}
-                      onCopy={() => { navigator.clipboard?.writeText(inv.invite_url); showToast('Copied'); }}
+                      onCopy={() => { navigator.clipboard?.writeText(inv.invite_url); showToast(t('org.team.invites.copied')); }}
                       onRevoke={() => revokeInvite(inv)} />
                   ))}
                 </div>
@@ -698,7 +664,7 @@ export default function OrgTeam() {
       )}
 
       {addOpen && <AddMemberModal orgId={orgId} onClose={() => setAddOpen(false)}
-        onSaved={load} showToast={showToast} />}
+        showToast={showToast} />}
       {roleModal && <RoleEditorModal orgId={orgId} pages={pages} role={roleModal.role}
         onClose={() => setRoleModal(null)} onSaved={load} showToast={showToast} />}
       {assignFor && <AssignmentModal orgId={orgId} member={assignFor} projects={projects} roles={roles}

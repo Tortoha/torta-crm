@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { FolderSimple, ChartLine, ArrowLineLeft, ArrowLineRight,
          CreditCard, GearSix, UsersThree } from '@phosphor-icons/react';
 
-function buildItems(orgSlug, isOwner) {
+function buildItems(orgSlug, isOwner, t) {
   const base = `/org/${orgSlug}`;
   // Members only see the project list; the org-admin pages (Analytics / Team /
   // Payments / Settings) are owner-only (backend enforces require_org_owner).
-  const items = [{ to: base, label: 'Projects', Icon: FolderSimple, exact: true }];
+  const items = [{ to: base, label: t('nav.projects'), Icon: FolderSimple, exact: true }];
   if (isOwner) items.push(
-    { to: `${base}/analytics`, label: 'Analytics', Icon: ChartLine  },
-    { to: `${base}/team`,      label: 'Team',      Icon: UsersThree },
-    { to: `${base}/payments`,  label: 'Payments',  Icon: CreditCard },
-    { to: `${base}/settings`,  label: 'Settings',  Icon: GearSix    },
+    { to: `${base}/analytics`, label: t('nav.analytics'), Icon: ChartLine  },
+    { to: `${base}/team`,      label: t('nav.team'),      Icon: UsersThree },
+    { to: `${base}/payments`,  label: t('nav.payments'),  Icon: CreditCard },
+    { to: `${base}/settings`,  label: t('nav.settings'),  Icon: GearSix    },
   );
   return items;
 }
@@ -22,7 +23,8 @@ const isActive = (pathname, to, exact) =>
 
 function OrgSidebar({ collapsed, onToggle, orgSlug, isOwner }) {
   const location = useLocation();
-  const items    = buildItems(orgSlug, isOwner);
+  const { t }    = useTranslation();
+  const items    = buildItems(orgSlug, isOwner, t);
 
   const itemsEl  = useRef(null);
   const itemEls  = useRef({});
@@ -73,7 +75,7 @@ function OrgSidebar({ collapsed, onToggle, orgSlug, isOwner }) {
           <button className="sb-toggle-btn" onClick={onToggle} type="button" aria-label="Toggle sidebar">
             {collapsed
               ? <ArrowLineRight className="sb-toggle-icon" />
-              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">Collapse</span></>
+              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">{t('common.collapse')}</span></>
             }
           </button>
         </div>

@@ -66,6 +66,11 @@
   min-width: 0;
 }
 
+/* "You" badge sits beside the (ellipsised) name, never clipped by overflow. */
+.ot-you-badge {
+  flex-shrink: 0;
+}
+
 .ot-avatar {
   border-radius: 50%;
   object-fit: cover;
@@ -185,34 +190,16 @@
   color: var(--text);
 }
 
-.ot-level {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--card);
-  border-radius: 999px;
-}
-
-.ot-level-btn {
-  border: none;
-  background: none;
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
+/* Compact empty state (e.g. no pending invites) — sits in the page rhythm
+   instead of the global 200px crm-placeholder card. */
+.ot-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13px;
   color: var(--muted);
-  cursor: pointer;
-  transition: background 0.2s var(--ease-smooth), color 0.2s var(--ease-smooth);
-}
-
-.ot-level-btn:hover {
-  color: var(--text);
-}
-
-.ot-level-btn--on {
-  background: var(--accent);
-  color: #fff;
+  background: var(--card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
 }
 
 /* "or add by email" divider + inline reset-link button. */
@@ -239,7 +226,6 @@
   align-items: center;
   gap: 6px;
   background: var(--card);
-  border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 999px;
   padding: 5px 5px 5px 16px;
 }
@@ -283,5 +269,10 @@
 }
 
 .ot-assign-select {
-  max-width: 220px;
+  width: 220px;
+  flex-shrink: 0;
+}
+
+.ot-assign-select .cpm-cat-btn {
+  width: 100%;
 }

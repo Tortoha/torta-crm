@@ -1,0 +1,184 @@
+{
+  "integrations": {
+    "title": "Integrations",
+    "subtitle": "Connect external tools to receive events from your store, or export accounting-ready files (1C / Kompra / QuickBooks / Xero / DATEV) on demand or on a schedule.",
+    "tabs": {
+      "browse": "Browse",
+      "logs": "Logs"
+    },
+    "row": {
+      "installed": "Installed",
+      "installedTimes": "Installed ×{{count}}",
+      "notInstalled": "Not installed",
+      "comingSoon": "Coming soon",
+      "plannedFeatures": "Planned features",
+      "notifyMe": "Notify me when ready"
+    },
+    "browse": {
+      "searchPlaceholder": "Search integrations…",
+      "noMatch": "No integrations match your filters."
+    },
+    "logs": {
+      "allStatuses": "All statuses",
+      "successOnly": "Success only",
+      "failedOnly": "Failed only",
+      "eventFilterPlaceholder": "Filter by event (e.g. order.paid)…",
+      "refresh": "Refresh",
+      "colTime": "Time",
+      "colEvent": "Event",
+      "colConnector": "Connector",
+      "colStatus": "Status",
+      "colHttp": "HTTP",
+      "colDuration": "Duration",
+      "loading": "Loading…",
+      "empty": "No deliveries yet. Trigger an event (e.g. place a test order) or click \"Test send\" on an integration.",
+      "payload": "Payload",
+      "responseBody": "Response body",
+      "emptyValue": "(empty)",
+      "retry": "Retry",
+      "ago": {
+        "seconds": "{{n}}s ago",
+        "minutes": "{{n}}m ago",
+        "hours": "{{n}}h ago"
+      }
+    },
+    "toast": {
+      "saved": "Saved",
+      "installed": "Installed",
+      "deleted": "Deleted",
+      "requestSent": "Request sent",
+      "couldNotInstall": "Could not install"
+    },
+    "connector": {
+      "events": {
+        "groupOrders": "Orders",
+        "groupBookings": "Bookings",
+        "groupOther": "Other"
+      },
+      "defaults": {
+        "webhook": {
+          "label": "Endpoint URL",
+          "placeholder": "https://your-server.com/torta-webhook",
+          "help": "Your server should accept POST and verify X-Torta-Signature."
+        },
+        "slack": {
+          "label": "Webhook URL",
+          "placeholder": "https://hooks.slack.com/services/T0…/B0…/…",
+          "help": "Get this from api.slack.com/messaging/webhooks"
+        },
+        "discord": {
+          "label": "Webhook URL",
+          "placeholder": "https://discord.com/api/webhooks/…/…",
+          "help": "Server Settings → Integrations → Webhooks → New Webhook"
+        },
+        "fallbackLabel": "Webhook URL",
+        "fallbackPlaceholder": "https://your-endpoint.com/hook"
+      },
+      "nameLabel": "Name (internal)",
+      "primaryRequired": "{{label}} is required",
+      "primaryHttp": "{{label}} must start with http:// or https://",
+      "saveFailed": "Save failed",
+      "saveFirstThenTest": "Save the integration first, then test",
+      "confirmDelete": "Delete this integration? Logs are preserved.",
+      "signingSecret": "Signing secret",
+      "copied": "Copied",
+      "copy": "Copy",
+      "signingHint": "Verify <0>X-Torta-Signature: sha256=&lt;hex&gt;</0> on every request: <1>HMAC-SHA256(body, secret)</1>.",
+      "subscribeAll": "Subscribe to all events",
+      "subscribeAllHintMailchimp": "Mailchimp listens to customer.created only — other events are silently skipped server-side.",
+      "subscribeAllHintGa4": "GA4 maps order.paid → purchase, order.created → begin_checkout. Other events are skipped.",
+      "subscribeAllHintDefault": "When ON, every event from this project triggers this integration.",
+      "active": "Active",
+      "activeHint": "Pause delivery without losing config.",
+      "saving": "Saving…",
+      "saveChanges": "Save changes",
+      "install": "Install",
+      "testSend": "Test send",
+      "docs": "Docs",
+      "delete": "Delete",
+      "hide": "Hide",
+      "show": "Show"
+    },
+    "request": {
+      "comingSoon": "Coming soon",
+      "comingSoonSub": "Tell us you want it — we email you the day it ships and prioritise the most-requested ones.",
+      "plannedFeatures": "Planned features",
+      "notifyMe": "Notify me",
+      "yourEmail": "Your email",
+      "emailPlaceholder": "you@example.com",
+      "anythingSpecific": "Anything specific? (optional)",
+      "notePlaceholder": "What's your use case? Which fields matter most?",
+      "requestFailed": "Request failed",
+      "sending": " Sending…",
+      "sendRequest": " Send request",
+      "close": "Close",
+      "thanksTitle": "Thanks — we'll let you know.",
+      "thanksBody": "Your request has been logged. We'll email you when {{name}} goes live.",
+      "done": "Done"
+    },
+    "accounting": {
+      "period": {
+        "today": "Today",
+        "yesterday": "Yesterday",
+        "last7d": "Last 7 days",
+        "last30d": "Last 30 days",
+        "thisMonth": "This month",
+        "lastMonth": "Last month",
+        "thisQuarter": "This quarter",
+        "custom": "Custom range…"
+      },
+      "schedule": {
+        "off": "Off — manual downloads only",
+        "daily": "Daily — yesterday's orders",
+        "weekly": "Weekly — past 7 days",
+        "monthly": "Monthly — previous month"
+      },
+      "hourLabel": "{{h}}:00 UTC",
+      "fileFormat": "File format",
+      "periodLabel": "Period",
+      "includeUnpaid": "Include unpaid / pending",
+      "pickBothDates": "Pick both start and end dates for a custom range.",
+      "start": "Start",
+      "end": "End",
+      "preview": "Preview",
+      "refresh": "Refresh",
+      "orders": "Orders",
+      "revenue": "Revenue",
+      "window": "Window",
+      "loading": "Loading…",
+      "loadingPreview": "Loading preview…",
+      "previewFailed": "Preview failed",
+      "colOrder": "Order",
+      "colDate": "Date",
+      "colCustomer": "Customer",
+      "colItems": "Items",
+      "colAmount": "Amount",
+      "showingOf": "Showing {{shown}} of {{total}} orders. Download for the full file.",
+      "noMatchingOrders": "No matching orders in this period.",
+      "emailSchedule": "Email schedule",
+      "cadence": "Cadence",
+      "cadenceHint": "When set, we email a signed download link on your cadence — file bytes themselves stay on the CRM and the link is valid for 30 days.",
+      "hourUtc": "Hour (UTC)",
+      "recipientEmail": "Recipient email",
+      "recipientPlaceholder": "accountant@example.com",
+      "recipientHint": "Required only when the schedule is on. Leave blank for download-only.",
+      "active": "Active",
+      "activeHint": "Disabled integrations stop receiving scheduled exports until re-enabled.",
+      "howToImport": "How to import in {{name}}",
+      "setEmailOrOff": "Set a recipient email or switch the schedule to Off.",
+      "saveFailed": "Save failed",
+      "saved": "Saved",
+      "setRecipientFirst": "Set a recipient email first.",
+      "testSendFailed": "Test send failed",
+      "emailSentTo": "Email sent to {{email}}",
+      "confirmDelete": "Delete this accounting integration? Past downloads aren't affected.",
+      "download": "Download",
+      "downloadOrders": "Download · {{count}} order",
+      "downloadOrders_other": "Download · {{count}} orders",
+      "saving": "Saving…",
+      "saveSchedule": "Save schedule",
+      "testSend": "Test send",
+      "delete": "Delete"
+    }
+  }
+}

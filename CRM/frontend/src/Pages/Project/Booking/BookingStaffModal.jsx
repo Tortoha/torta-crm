@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { X, User, UploadSimple } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { TimePicker } from './BookingCreateModal.jsx';
 
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 // Modal for creating / editing a staff member, plus their per-day working hours.
 function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, onClose, onSaved }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const isEdit = !!member;
 
@@ -20,7 +22,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
     commission_pct: member?.commission_pct ?? 0,
   }));
   const [hours, setHours] = useState(() =>
-    DAY_NAMES.map((_, i) => ({ day_of_week: i, open_time: '10:00', close_time: '19:00', enabled: false }))
+    DAY_KEYS.map((_, i) => ({ day_of_week: i, open_time: '10:00', close_time: '19:00', enabled: false }))
   );
   const [saving,    setSaving]    = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -37,7 +39,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
       });
       const data = await res.json();
       if (res.ok && data.url) upd('avatar_url', data.url);
-      else setErr('Upload failed');
+      else setErr(t('booking.staffModal.uploadFailed'));
     } finally { setUploading(false); }
   };
 
@@ -46,7 +48,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
     if (!isEdit) return;
     fetch(`${API_BASE}/api/booking/hours${pq}&staff_id=${member.id}`, { credentials: 'include' })
       .then(r => r.json()).then(data => {
-        const next = DAY_NAMES.map((_, i) => {
+        const next = DAY_KEYS.map((_, i) => {
           const found = data.find(d => d.day_of_week === i);
           return found
             ? { day_of_week: i, open_time: found.open_time, close_time: found.close_time, enabled: true }
@@ -72,7 +74,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
   const updHour = (i, k, v) => setHours(prev => prev.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
 
   const save = async () => {
-    if (!form.name.trim()) { setErr('Name is required'); return; }
+    if (!form.name.trim()) { setErr(t('booking.staffModal.err.nameRequired')); return; }
     setSaving(true); setErr('');
     try {
       const url = isEdit
@@ -89,7 +91,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
       });
       if (!res.ok) {
         const j = await res.json();
-        setErr(j.detail || 'Error saving'); setSaving(false); return;
+        setErr(j.detail || t('booking.staffModal.err.saveError')); setSaving(false); return;
       }
       const data = await res.json();
       const staffId = isEdit ? member.id : data.id;
@@ -106,7 +108,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
         }),
       });
       onSaved();
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
@@ -121,9 +123,9 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
                 : <User size={24} className="auth-modal-icon-svg" />}
             </div>
             <div>
-              <div className="auth-modal-title">{isEdit ? 'Edit staff member' : 'New staff member'}</div>
+              <div className="auth-modal-title">{isEdit ? t('booking.staffModal.editTitle') : t('booking.staffModal.newTitle')}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">Set their services and weekly schedule.</span>
+                <span className="auth-modal-subtitle">{t('booking.staffModal.subtitle')}</span>
               </div>
             </div>
           </div>
@@ -134,14 +136,14 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
 
         <div className="auth-modal-body">
           <div className="auth-field">
-            <label className="auth-label">Name</label>
+            <label className="auth-label">{t('booking.staffModal.name')}</label>
             <input className="crm-input" value={form.name}
               onChange={e => upd('name', e.target.value)}
-              placeholder="John Smith" />
+              placeholder={t('booking.staffModal.namePlaceholder')} />
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">Staff photo (optional)</label>
+            <label className="auth-label">{t('booking.staffModal.photo')}</label>
             <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
               onChange={e => upload(e.target.files?.[0])} />
             {form.avatar_url ? (
@@ -150,21 +152,21 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
                 <div className="bk-svc-img-actions">
                   <button type="button" className="crm-submit-btn auth-btn-secondary"
                     onClick={() => fileRef.current?.click()} disabled={uploading}>
-                    {uploading ? 'Uploading…' : 'Replace'}
+                    {uploading ? t('booking.staffModal.uploading') : t('booking.staffModal.replace')}
                   </button>
                   <button type="button" className="auth-btn-danger"
-                    onClick={() => upd('avatar_url', '')}>Remove</button>
+                    onClick={() => upd('avatar_url', '')}>{t('booking.staffModal.remove')}</button>
                 </div>
               </div>
             ) : (
               <button type="button" className="bk-svc-img-drop"
                 onClick={() => fileRef.current?.click()} disabled={uploading}>
                 {uploading ? (
-                  <span>Uploading…</span>
+                  <span>{t('booking.staffModal.uploading')}</span>
                 ) : (
                   <>
                     <UploadSimple weight="bold" size={20} />
-                    <span>Click to upload a photo</span>
+                    <span>{t('booking.staffModal.uploadPhoto')}</span>
                   </>
                 )}
               </button>
@@ -172,17 +174,16 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">Bio (optional)</label>
+            <label className="auth-label">{t('booking.staffModal.bio')}</label>
             <textarea className="crm-input bk-textarea" rows={2}
               value={form.bio} onChange={e => upd('bio', e.target.value)}
-              placeholder="Senior stylist · 10 years experience" />
+              placeholder={t('booking.staffModal.bioPlaceholder')} />
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">Commission (%)</label>
+            <label className="auth-label">{t('booking.staffModal.commission')}</label>
             <p className="auth-field-hint">
-              Informational. Displayed in the staff analytics so you can compute
-              this person's payout manually — the CRM does not automate payroll.
+              {t('booking.staffModal.commissionHint')}
             </p>
             <input className="crm-input" type="number" min={0} max={100}
               value={form.commission_pct}
@@ -191,8 +192,8 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
 
           <div className="auth-toggle-row">
             <div>
-              <span className="auth-toggle-label">Active</span>
-              <p className="auth-field-hint">Inactive staff are hidden from booking forms.</p>
+              <span className="auth-toggle-label">{t('booking.staffModal.active')}</span>
+              <p className="auth-field-hint">{t('booking.staffModal.activeHint')}</p>
             </div>
             <label className="auth-toggle">
               <input type="checkbox" checked={form.is_active}
@@ -203,7 +204,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
 
           {allServices && allServices.length > 0 && (
             <div className="auth-field">
-              <label className="auth-label">Services this person can deliver</label>
+              <label className="auth-label">{t('booking.staffModal.servicesLabel')}</label>
               {/* Same checkbox row pattern as the Categories → Add products picker. */}
               <div className="bk-staff-services">
                 {allServices.map(s => {
@@ -215,7 +216,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
                         checked={checked} onChange={() => toggleService(s.id)} />
                       <span className="cat-prod-title">{s.name}</span>
                       <span className="cat-prod-badge">
-                        {s.duration_minutes} min · ${Number(s.price || 0).toFixed(0)}
+                        {t('booking.staffModal.serviceBadge', { minutes: s.duration_minutes, price: Number(s.price || 0).toFixed(0) })}
                       </span>
                     </label>
                   );
@@ -227,8 +228,8 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
           <div className="auth-sep" />
 
           <div className="auth-field">
-            <label className="auth-label">Weekly schedule</label>
-            <p className="auth-field-hint">Select days and set open/close times.</p>
+            <label className="auth-label">{t('booking.staffModal.weeklySchedule')}</label>
+            <p className="auth-field-hint">{t('booking.staffModal.weeklyScheduleHint')}</p>
             <div className="bk-hours-block">
               {hours.map((r, i) => (
                 <div key={i}
@@ -237,7 +238,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
                     <input type="checkbox" className="cat-prod-checkbox"
                       checked={r.enabled}
                       onChange={e => updHour(i, 'enabled', e.target.checked)} />
-                    <span>{DAY_NAMES[i]}</span>
+                    <span>{t(`booking.days.${DAY_KEYS[i]}`)}</span>
                   </label>
                   <div className="bk-hours-time-wrap" data-disabled={!r.enabled || undefined}>
                     <TimePicker value={r.open_time} slotInterval={slotInterval}
@@ -257,7 +258,7 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
 
           <div className="auth-actions">
             <button className="crm-submit-btn" onClick={save} disabled={saving} type="button">
-              {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create staff'}
+              {saving ? t('booking.staffModal.saving') : isEdit ? t('booking.staffModal.saveChanges') : t('booking.staffModal.createStaff')}
             </button>
           </div>
         </div>

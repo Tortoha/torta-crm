@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation, Trans } from 'react-i18next';
 import { X, UploadSimple, Image as ImageIcon } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 
@@ -8,6 +9,7 @@ import { API_BASE } from '../../../api.js';
 // service-specific fields. Only used for CREATE — editing existing services
 // jumps straight to /product/{hash} (see Booking.jsx → onEditService).
 function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const isEdit = !!service;
   const fileRef = useRef(null);
@@ -53,15 +55,15 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
       });
       const data = await res.json();
       if (res.ok && data.url) upd('image_url', data.url);
-      else setErr('Upload failed');
+      else setErr(t('booking.serviceModal.uploadFailed'));
     } finally { setUploading(false); }
   };
 
   // CREATE: products → backend auto-creates booking_service → PUT booking_service with details.
   // EDIT (legacy, for services without product_id): plain PUT /booking/services.
   const save = async () => {
-    if (!form.name.trim()) { setErr('Name is required'); return; }
-    if (form.duration_minutes < 5) { setErr('Duration must be ≥ 5 min'); return; }
+    if (!form.name.trim()) { setErr(t('booking.serviceModal.err.nameRequired')); return; }
+    if (form.duration_minutes < 5) { setErr(t('booking.serviceModal.err.durationMin')); return; }
     setSaving(true); setErr('');
     try {
       const payload = {
@@ -85,7 +87,7 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
           }),
         });
         const pData = await pRes.json();
-        if (!pRes.ok) { setErr(pData.detail || 'Error creating service'); return; }
+        if (!pRes.ok) { setErr(pData.detail || t('booking.serviceModal.err.createError')); return; }
 
         // 2) Find the booking_service the backend just created (one per product_id).
         const listRes = await fetch(`${API_BASE}/api/booking/services${pq}`, { credentials: 'include' });
@@ -109,8 +111,8 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
         body: JSON.stringify(payload),
       });
       if (res.ok) onSaved();
-      else { const j = await res.json(); setErr(j.detail || 'Error saving'); }
-    } catch { setErr('Network error'); }
+      else { const j = await res.json(); setErr(j.detail || t('booking.serviceModal.err.saveError')); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
@@ -120,9 +122,9 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">{isEdit ? 'Edit service' : 'New service'}</div>
+              <div className="auth-modal-title">{isEdit ? t('booking.serviceModal.editTitle') : t('booking.serviceModal.newTitle')}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">Configure how this service is booked.</span>
+                <span className="auth-modal-subtitle">{t('booking.serviceModal.subtitle')}</span>
               </div>
             </div>
           </div>
@@ -133,42 +135,42 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
 
         <div className="auth-modal-body">
           <div className="auth-field">
-            <label className="auth-label">Service name</label>
+            <label className="auth-label">{t('booking.serviceModal.serviceName')}</label>
             <input className="crm-input" value={form.name}
               onChange={e => upd('name', e.target.value)}
-              placeholder="Haircut, Yoga class, Consultation…" />
+              placeholder={t('booking.serviceModal.serviceNamePlaceholder')} />
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">Subtitle (optional)</label>
+            <label className="auth-label">{t('booking.serviceModal.subtitleLabel')}</label>
             <input className="crm-input" value={form.subtitle}
               onChange={e => upd('subtitle', e.target.value)}
-              placeholder="Short tagline shown under the title" />
+              placeholder={t('booking.serviceModal.subtitlePlaceholder')} />
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">Description (optional)</label>
+            <label className="auth-label">{t('booking.serviceModal.description')}</label>
             <textarea className="crm-input bk-textarea" rows={3}
               value={form.description} onChange={e => upd('description', e.target.value)}
-              placeholder="What's included, how to prepare, etc." />
+              placeholder={t('booking.serviceModal.descriptionPlaceholder')} />
           </div>
 
           <div className="bk-rules-grid">
             <div className="auth-field">
-              <label className="auth-label">Duration (minutes)</label>
+              <label className="auth-label">{t('booking.serviceModal.duration')}</label>
               <input className="crm-input" type="number" min={5} max={1440}
                 value={form.duration_minutes}
                 onChange={e => upd('duration_minutes', e.target.value)} />
             </div>
             <div className="auth-field">
-              <label className="auth-label">Price</label>
+              <label className="auth-label">{t('booking.serviceModal.price')}</label>
               <input className="crm-input" type="number" min={0} step="0.01"
                 value={form.price} onChange={e => upd('price', e.target.value)} />
             </div>
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">Image (optional)</label>
+            <label className="auth-label">{t('booking.serviceModal.image')}</label>
             <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
               onChange={e => upload(e.target.files?.[0])} />
             {form.image_url ? (
@@ -177,21 +179,21 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
                 <div className="bk-svc-img-actions">
                   <button type="button" className="crm-submit-btn auth-btn-secondary"
                     onClick={() => fileRef.current?.click()} disabled={uploading}>
-                    {uploading ? 'Uploading…' : 'Replace'}
+                    {uploading ? t('booking.serviceModal.uploading') : t('booking.serviceModal.replace')}
                   </button>
                   <button type="button" className="auth-btn-danger"
-                    onClick={() => upd('image_url', '')}>Remove</button>
+                    onClick={() => upd('image_url', '')}>{t('booking.serviceModal.remove')}</button>
                 </div>
               </div>
             ) : (
               <button type="button" className="bk-svc-img-drop"
                 onClick={() => fileRef.current?.click()} disabled={uploading}>
                 {uploading ? (
-                  <span>Uploading…</span>
+                  <span>{t('booking.serviceModal.uploading')}</span>
                 ) : (
                   <>
                     <UploadSimple weight="bold" size={20} />
-                    <span>Click to upload an image</span>
+                    <span>{t('booking.serviceModal.uploadImage')}</span>
                   </>
                 )}
               </button>
@@ -202,8 +204,8 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
 
           <div className="auth-toggle-row">
             <div>
-              <span className="auth-toggle-label">Visible to customers</span>
-              <p className="auth-field-hint">Hidden services don't appear in the storefront.</p>
+              <span className="auth-toggle-label">{t('booking.serviceModal.visible')}</span>
+              <p className="auth-field-hint">{t('booking.serviceModal.visibleHint')}</p>
             </div>
             <label className="auth-toggle">
               <input type="checkbox" checked={form.is_active}
@@ -214,10 +216,10 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
 
           <div className="auth-toggle-row">
             <div>
-              <span className="auth-toggle-label">Requires staff selection</span>
+              <span className="auth-toggle-label">{t('booking.serviceModal.requiresStaff')}</span>
               <p className="auth-field-hint">
-                When ON, customers must pick a specific staff member (each slot = one person at a time).<br />
-                When OFF, slots use the <b>capacity</b> below — useful for group classes / shared resources.
+                {t('booking.serviceModal.requiresStaffHintLine1')}<br />
+                <Trans i18nKey="booking.serviceModal.requiresStaffHintLine2" components={{ 1: <b /> }} />
               </p>
             </div>
             <label className="auth-toggle">
@@ -229,26 +231,26 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
 
           {!form.requires_staff && (
             <div className="auth-field">
-              <label className="auth-label">Capacity per slot</label>
-              <p className="auth-field-hint">How many simultaneous bookings fit into one slot (1 = exclusive).</p>
+              <label className="auth-label">{t('booking.serviceModal.capacity')}</label>
+              <p className="auth-field-hint">{t('booking.serviceModal.capacityHint')}</p>
               <input className="crm-input" type="number" min={1}
                 value={form.capacity} onChange={e => upd('capacity', e.target.value)} />
             </div>
           )}
 
           <div className="auth-field">
-            <label className="auth-label">Where this service is delivered</label>
+            <label className="auth-label">{t('booking.serviceModal.locationLabel')}</label>
             <p className="auth-field-hint">
-              <b>Shop</b> — customer comes to your location.&nbsp;
-              <b>Customer</b> — you go to them (an address will be required at booking time).&nbsp;
-              <b>Either</b> — customer chooses.
+              <b>{t('booking.serviceModal.locationHintShop')}</b>{t('booking.serviceModal.locationHintShopText')}&nbsp;
+              <b>{t('booking.serviceModal.locationHintCustomer')}</b>{t('booking.serviceModal.locationHintCustomerText')}&nbsp;
+              <b>{t('booking.serviceModal.locationHintEither')}</b>{t('booking.serviceModal.locationHintEitherText')}
             </p>
             <div className="bk-loc-pick">
               {['shop', 'customer', 'either'].map(opt => (
                 <button key={opt} type="button"
                   className={`bk-loc-pick-btn${form.location_type === opt ? ' bk-loc-pick-btn--on' : ''}`}
                   onClick={() => upd('location_type', opt)}>
-                  {opt === 'shop' ? 'At the shop' : opt === 'customer' ? "At customer's place" : 'Either'}
+                  {opt === 'shop' ? t('booking.serviceModal.locShop') : opt === 'customer' ? t('booking.serviceModal.locCustomer') : t('booking.serviceModal.locEither')}
                 </button>
               ))}
             </div>
@@ -256,11 +258,11 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
 
           {allStaff && allStaff.length > 0 && (
             <div className="auth-field">
-              <label className="auth-label">Staff that can deliver this service</label>
+              <label className="auth-label">{t('booking.serviceModal.staffLabel')}</label>
               <p className="auth-field-hint">
                 {form.requires_staff
-                  ? 'Customers will pick one of these.'
-                  : 'Optional reference list (informational when capacity-based).'}
+                  ? t('booking.serviceModal.staffHintRequired')
+                  : t('booking.serviceModal.staffHintOptional')}
               </p>
               <div className="bk-staff-pick">
                 {allStaff.map(s => (
@@ -281,7 +283,7 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
 
           <div className="auth-actions">
             <button className="crm-submit-btn" onClick={save} disabled={saving} type="button">
-              {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create service'}
+              {saving ? t('booking.serviceModal.saving') : isEdit ? t('booking.serviceModal.saveChanges') : t('booking.serviceModal.createService')}
             </button>
           </div>
         </div>

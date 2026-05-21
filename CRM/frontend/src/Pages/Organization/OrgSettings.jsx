@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Buildings, Warning } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { CURRENCIES, formatMoney, getCurrencyMeta } from '../../Utils/currency.js';
@@ -25,6 +26,7 @@ import '../../Style/Products.css';
 // currency IS a real FX rollup — so the copy here explains the rollup
 // behaviour instead of promising "numbers don't change".
 function OrgCurrencyWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
+  const { t } = useTranslation();
   const fromMeta = getCurrencyMeta(fromCode);
   const toMeta   = getCurrencyMeta(toCode);
   return (
@@ -32,13 +34,13 @@ function OrgCurrencyWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
       <div className="auth-modal" onClick={e => e.stopPropagation()} style={{ width: 520 }}>
         <div className="auth-modal-body">
           <div className="auth-modal-title-row">
-            <h2 className="auth-modal-title">Change organization currency?</h2>
+            <h2 className="auth-modal-title">{t('org.settings.currencyModal.title')}</h2>
           </div>
 
           <p className="cpm-section-hint" style={{ marginTop: 0 }}>
-            The Analytics page will roll every project up into{' '}
-            <b>{toMeta.name} ({toMeta.symbol})</b> instead of{' '}
-            <b>{fromMeta.name} ({fromMeta.symbol})</b>.
+            {t('org.settings.currencyModal.introPre')}
+            <b>{toMeta.name} ({toMeta.symbol})</b>{t('org.settings.currencyModal.introMid')}
+            <b>{fromMeta.name} ({fromMeta.symbol})</b>{t('org.settings.currencyModal.introPost')}
           </p>
 
           {/* Identity preview — code + symbol, NOT a converted amount, so we
@@ -50,12 +52,12 @@ function OrgCurrencyWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
             background: 'var(--accent-tint)', margin: '8px 0 12px',
           }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 4 }}>Was</div>
+              <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 4 }}>{t('org.settings.currencyModal.was')}</div>
               <div style={{ fontSize: 20, fontWeight: 600 }}>{fromMeta.code} {fromMeta.symbol}</div>
             </div>
             <div style={{ color: 'var(--muted)', fontSize: 18 }}>→</div>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 4 }}>Will be</div>
+              <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 4 }}>{t('org.settings.currencyModal.willBe')}</div>
               <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--accent)' }}>{toMeta.code} {toMeta.symbol}</div>
             </div>
           </div>
@@ -64,18 +66,18 @@ function OrgCurrencyWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
             margin: 0, padding: '0 0 0 18px',
             color: 'var(--muted)', fontSize: 13, lineHeight: 1.55,
           }}>
-            <li><b>Display-only rollup.</b> Each project keeps its own currency — nothing is re-priced.</li>
-            <li><b>Analytics FX-converts</b> every project's revenue into this currency before summing, so cross-project totals stay comparable.</li>
-            <li><b>Per-project pages are unaffected</b> — orders, products and invoices still use each project's own currency.</li>
+            <li>{t('org.settings.currencyModal.bullet1')}</li>
+            <li>{t('org.settings.currencyModal.bullet2')}</li>
+            <li>{t('org.settings.currencyModal.bullet3')}</li>
           </ul>
 
           <div className="auth-actions" style={{ marginTop: 16 }}>
             <button type="button" className="crm-submit-btn" onClick={onConfirm}>
-              Change to {toMeta.code}
+              {t('org.settings.currencyModal.confirm', { code: toMeta.code })}
             </button>
             <button type="button" className="auth-btn-danger"
               onClick={onCancel} style={{ marginLeft: 'auto' }}>
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -88,6 +90,7 @@ function OrgCurrencyWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
 // Blocked while the org still has projects (backend rejects it too). When
 // allowed, requires typing the org name to arm the irreversible delete.
 function DeleteOrgModal({ orgName, projectCount, busy, error, onCancel, onConfirm }) {
+  const { t } = useTranslation();
   const [confirmText, setConfirmText] = useState('');
   const blocked = (projectCount || 0) > 0;
   const armed = !blocked && confirmText.trim() === orgName.trim() && !busy;
@@ -96,19 +99,19 @@ function DeleteOrgModal({ orgName, projectCount, busy, error, onCancel, onConfir
       <div className="auth-modal" onClick={e => e.stopPropagation()} style={{ width: 480 }}>
         <div className="auth-modal-body">
           <div className="auth-modal-title-row">
-            <h2 className="auth-modal-title">Delete organization?</h2>
+            <h2 className="auth-modal-title">{t('org.settings.deleteModal.title')}</h2>
           </div>
 
           {blocked ? (
             <p className="cpm-section-hint" style={{ marginTop: 0 }}>
-              This organization still has <b>{projectCount} project{projectCount === 1 ? '' : 's'}</b>.
-              Delete every project first — an organization with projects can't be removed.
+              {t('org.settings.deleteModal.blockedPre')}
+              <b>{t('org.settings.deleteModal.blockedProjects', { count: projectCount })}</b>
+              {t('org.settings.deleteModal.blockedPost')}
             </p>
           ) : (
             <>
               <p className="cpm-section-hint" style={{ marginTop: 0 }}>
-                This permanently deletes <b>{orgName}</b>. This can't be undone.
-                Type the organization name to confirm.
+                {t('org.settings.deleteModal.allowedPre')}<b>{orgName}</b>{t('org.settings.deleteModal.allowedPost')}
               </p>
               <input className="crm-input" placeholder={orgName} value={confirmText}
                 onChange={e => setConfirmText(e.target.value)}
@@ -122,12 +125,12 @@ function DeleteOrgModal({ orgName, projectCount, busy, error, onCancel, onConfir
             {!blocked && (
               <button type="button" className="crm-submit-btn"
                 disabled={!armed} onClick={onConfirm}>
-                {busy ? 'Deleting…' : 'Delete organization'}
+                {busy ? t('org.settings.deleteModal.deleting') : t('org.settings.deleteModal.deleteButton')}
               </button>
             )}
             <button type="button" className="crm-submit-btn auth-btn-secondary"
               onClick={onCancel} style={{ marginLeft: blocked ? 0 : 'auto' }}>
-              {blocked ? 'Close' : 'Cancel'}
+              {blocked ? t('org.settings.deleteModal.close') : t('common.cancel')}
             </button>
           </div>
         </div>
@@ -138,6 +141,7 @@ function DeleteOrgModal({ orgName, projectCount, busy, error, onCancel, onConfir
 
 // ── Page ───────────────────────────────────────────────────────────────
 export default function OrgSettings() {
+  const { t } = useTranslation();
   const { org } = useOutletContext();
   const navigate = useNavigate();
 
@@ -161,16 +165,16 @@ export default function OrgSettings() {
     if (firstName.current) { firstName.current = false; return; }
     const v = name.trim();
     if (!v || !org?.id) return;
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       const r = await fetch(`${API_BASE}/api/orgs/${org.id}`, {
         method: 'PATCH', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: v }),
       });
-      showToast(r.ok ? 'Saved' : 'Save failed');
+      showToast(r.ok ? t('common.saved') : t('common.saveFailed'));
     }, 500);
-    return () => clearTimeout(t);
-  }, [name, org?.id, showToast]);
+    return () => clearTimeout(timer);
+  }, [name, org?.id, showToast, t]);
 
   const saveCurrency = async (next) => {
     const r = await fetch(`${API_BASE}/api/orgs/${org.id}/currency`, {
@@ -178,8 +182,8 @@ export default function OrgSettings() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currency: next }),
     });
-    if (r.ok) { setCurrency(next); showToast('Saved'); }
-    else showToast('Save failed');
+    if (r.ok) { setCurrency(next); showToast(t('common.saved')); }
+    else showToast(t('common.saveFailed'));
   };
 
   // ── Danger zone: project count gate + delete ──
@@ -204,9 +208,9 @@ export default function OrgSettings() {
       });
       if (r.ok) { navigate('/dashboard'); return; }
       const j = await r.json().catch(() => ({}));
-      setDeleteErr(j.detail || 'Could not delete organization');
+      setDeleteErr(j.detail || t('org.settings.deleteModal.couldNotDelete'));
     } catch {
-      setDeleteErr('Network error — try again');
+      setDeleteErr(t('org.settings.deleteModal.networkError'));
     } finally {
       setDeleting(false);
     }
@@ -216,27 +220,25 @@ export default function OrgSettings() {
 
   return (
     <>
-      <h1 className="crm-page-title">Settings</h1>
+      <h1 className="crm-page-title">{t('org.settings.title')}</h1>
 
       <div className="bulk-settings">
 
         {/* ── General ── */}
-        <Section icon={<Buildings weight="duotone" />} title="General"
-          subtitle="Organization name and the display currency used across org-level analytics.">
+        <Section icon={<Buildings weight="duotone" />} title={t('org.settings.general.title')}
+          subtitle={t('org.settings.general.subtitle')}>
 
-          <FieldCard label="Organization name"
-            hint="Shown in the breadcrumb switcher and on the dashboard.">
+          <FieldCard label={t('org.settings.general.nameLabel')}
+            hint={t('org.settings.general.nameHint')}>
             <input className="crm-input" value={name} maxLength={100}
               style={{ maxWidth: 360 }}
               onChange={(e) => setName(e.target.value)} />
           </FieldCard>
 
-          <FieldCard label="Display currency"
+          <FieldCard label={t('org.settings.general.currencyLabel')}
             hint={<>
-              The Analytics page rolls every project up into this currency.
-              <b> Each project keeps its own currency</b> — analytics FX-converts
-              their revenue into this one before summing, so cross-project totals
-              stay comparable. Per-project pages are unaffected.
+              {t('org.settings.general.currencyHintPre')}
+              <b>{t('org.settings.general.currencyHintBold')}</b>{t('org.settings.general.currencyHintPost')}
             </>}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'center' }}>
               <SearchableCombobox
@@ -245,7 +247,7 @@ export default function OrgSettings() {
                   if (next === currency) return;
                   setPendingCurrency(next);
                 }}
-                searchPlaceholder="Search 49 currencies (USD, ₸, tenge…)"
+                searchPlaceholder={t('org.settings.general.currencySearchPlaceholder')}
                 options={(() => {
                   const list = CURRENCIES.some(c => c.code === currency)
                     ? CURRENCIES
@@ -270,18 +272,18 @@ export default function OrgSettings() {
         </Section>
 
         {/* ── Danger zone ── */}
-        <Section icon={<Warning weight="duotone" />} title="Danger zone"
-          subtitle="Irreversible actions.">
-          <FieldCard label="Delete organization"
+        <Section icon={<Warning weight="duotone" />} title={t('org.settings.danger.title')}
+          subtitle={t('org.settings.danger.subtitle')}>
+          <FieldCard label={t('org.settings.danger.deleteLabel')}
             hint={
               hasProjects
-                ? <>This organization has <b>{projectCount} project{projectCount === 1 ? '' : 's'}</b>. Delete every project before you can remove the organization.</>
-                : <>Permanently removes this organization. This can't be undone.</>
+                ? <>{t('org.settings.danger.deleteHintBlockedPre')}<b>{t('org.settings.danger.deleteHintBlockedProjects', { count: projectCount })}</b>{t('org.settings.danger.deleteHintBlockedPost')}</>
+                : <>{t('org.settings.danger.deleteHintAllowed')}</>
             }>
             <button type="button" className="auth-btn-danger"
               disabled={hasProjects}
               onClick={() => { setDeleteErr(''); setShowDelete(true); }}>
-              Delete organization…
+              {t('org.settings.danger.deleteButton')}
             </button>
           </FieldCard>
         </Section>

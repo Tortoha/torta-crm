@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Copy, Check, CaretDown,
   Envelope, Package, CurrencyDollar, ArrowRight,
@@ -17,21 +18,23 @@ import '../../Style/Project.css';
 // Covers both store-order statuses AND booking statuses so the merged
 // Recent feed renders a correct badge for either kind.
 const STATUS_META = {
-  new:       { label: 'New',       cls: 'pov-order-badge--new'       },
-  confirmed: { label: 'Confirmed', cls: 'pov-order-badge--confirmed'  },
-  shipped:   { label: 'Shipped',   cls: 'pov-order-badge--shipped'    },
-  delivered: { label: 'Delivered', cls: 'pov-order-badge--delivered'  },
-  cancelled: { label: 'Cancelled', cls: 'pov-order-badge--cancelled'  },
-  refunded:  { label: 'Refunded',  cls: 'pov-order-badge--refunded'   },
+  new:       { key: 'new',       cls: 'pov-order-badge--new'       },
+  confirmed: { key: 'confirmed', cls: 'pov-order-badge--confirmed'  },
+  shipped:   { key: 'shipped',   cls: 'pov-order-badge--shipped'    },
+  delivered: { key: 'delivered', cls: 'pov-order-badge--delivered'  },
+  cancelled: { key: 'cancelled', cls: 'pov-order-badge--cancelled'  },
+  refunded:  { key: 'refunded',  cls: 'pov-order-badge--refunded'   },
   // Booking statuses
-  pending:   { label: 'Pending',   cls: 'pov-order-badge--new'       },
-  completed: { label: 'Completed', cls: 'pov-order-badge--delivered'  },
-  no_show:   { label: 'No-show',   cls: 'pov-order-badge--cancelled'  },
+  pending:   { key: 'pending',   cls: 'pov-order-badge--new'       },
+  completed: { key: 'completed', cls: 'pov-order-badge--delivered'  },
+  no_show:   { key: 'noShow',    cls: 'pov-order-badge--cancelled'  },
 };
 
 function StatusBadge({ status }) {
-  const m = STATUS_META[status] ?? { label: status, cls: '' };
-  return <span className={`pov-order-badge ${m.cls}`}>{m.label}</span>;
+  const { t } = useTranslation();
+  const m = STATUS_META[status];
+  const label = m ? t(`project.overview.status.${m.key}`) : status;
+  return <span className={`pov-order-badge ${m?.cls ?? ''}`}>{label}</span>;
 }
 
 // ── Health status dots (Supabase-style) ────────────────────────
@@ -44,8 +47,8 @@ const HEALTH_ICON = {
 // ── Copy Keys button — Header-style dropdown ──────────────────
 
 const COPY_ITEMS = [
-  { key: 'pub', label: 'Public Key',      hint: 'in URL'  },
-  { key: 'pk',  label: 'Publishable Key', hint: 'header'  },
+  { key: 'pub', labelKey: 'publicKey',      hintKey: 'publicKeyHint'  },
+  { key: 'pk',  labelKey: 'publishableKey', hintKey: 'publishableKeyHint'  },
 ];
 
 const BTN_TILT = {
@@ -55,6 +58,7 @@ const BTN_TILT = {
 };
 
 function CopyKeys({ apiKey, publishableKey }) {
+  const { t } = useTranslation();
   const [open,    setOpen]    = useState(false);
   const [copied,  setCopied]  = useState(null);
   const [toast,   setToast]   = useState('');
@@ -95,7 +99,7 @@ function CopyKeys({ apiKey, publishableKey }) {
     navigator.clipboard.writeText(value || '');
     setCopied(key);
     setTimeout(() => setCopied(null), 1500);
-    setToast(`${label} copied`);
+    setToast(t('project.overview.keyCopied', { label }));
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setToast(''), 3200);
     setOpen(false);
@@ -115,7 +119,7 @@ function CopyKeys({ apiKey, publishableKey }) {
         <div ref={btnGlossRef} className="pov-copykeys-btn-gloss" />
         <span className="pov-copykeys-btn-content">
           <Copy className="pov-copykeys-btn-icon" />
-          Copy Keys
+          {t('project.overview.copyKeys')}
           <CaretDown className={`pov-copykeys-caret${open ? ' pov-copykeys-caret--open' : ''}`} />
         </span>
       </button>
@@ -129,7 +133,9 @@ function CopyKeys({ apiKey, publishableKey }) {
           {/* Dynamic Block indicator */}
           <div className="pov-ck-ind" ref={indRef} />
 
-          {COPY_ITEMS.map(({ key, label, hint }) => (
+          {COPY_ITEMS.map(({ key, labelKey, hintKey }) => {
+            const label = t(`project.overview.${labelKey}`);
+            return (
             <button
               key={key}
               ref={el => { if (el) itemRefs.current[key] = el; else delete itemRefs.current[key]; }}
@@ -144,12 +150,13 @@ function CopyKeys({ apiKey, publishableKey }) {
               <span className="pov-ck-info">
                 <span className="pov-ck-label">
                   {label}
-                  <span className="pov-ck-hint">{hint}</span>
+                  <span className="pov-ck-hint">{t(`project.overview.${hintKey}`)}</span>
                 </span>
                 <span className="pov-ck-value">{masked[key]}</span>
               </span>
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -172,6 +179,7 @@ const fmtDate = (ts) => ts
 
 // ── Status card (Supabase-style health panel) ──────────────────
 function StatusCard({ status }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   // Where each subsystem links to when clicked.
   const ROUTES = {
@@ -184,26 +192,42 @@ function StatusCard({ status }) {
   const overall  = status?.overall;
   const warnings = status?.warnings ?? 0;
 
+  // Health rows carry stable keys from the backend; localise here.
+  const detailFor = (c) => {
+    if (c.key === 'auth' && (c.methods?.length || c.oauthCount)) {
+      const names = (c.methods || []).map(m => t(`project.overview.health.method.${m}`));
+      if (c.oauthCount > 0) names.push(t('project.overview.health.oauthCount', { count: c.oauthCount }));
+      return names.join(' · ');
+    }
+    if (c.key === 'inventory' && (c.oos || c.low)) {
+      const parts = [];
+      if (c.oos > 0) parts.push(t('project.overview.health.outOfStock', { count: c.oos }));
+      if (c.low > 0) parts.push(t('project.overview.health.lowStock', { count: c.low }));
+      return parts.join(' · ');
+    }
+    return c.detailKey ? t(`project.overview.health.${c.detailKey}`, c.detailParams || {}) : '';
+  };
+
   return (
     <div className="pov-health">
       {/* Header pill — squared accent icon matches the widget tiles below;
           status pill on the right (mirrors Recent Activity header). */}
       <div className="pov-health-header">
         <div className="pov-health-icon"><Pulse weight="regular" /></div>
-        <span className="pov-health-title">Project Health</span>
+        <span className="pov-health-title">{t('project.overview.projectHealth')}</span>
         <span className={`pov-health-pill ${
           status == null ? 'pov-health-pill--loading'
           : overall === 'warning' ? 'pov-health-pill--warn'
           : 'pov-health-pill--ok'}`}>
           {status == null ? '…'
             : overall === 'warning'
-              ? `${warnings} warning${warnings === 1 ? '' : 's'}`
-              : 'Healthy'}
+              ? t('project.overview.warnings', { count: warnings })
+              : t('project.overview.healthy')}
         </span>
       </div>
 
       {status == null ? (
-        <div className="pov-health-loading">Checking subsystems…</div>
+        <div className="pov-health-loading">{t('project.overview.checkingSubsystems')}</div>
       ) : (
         <div className="po-set-table pov-health-table">
           {status.checks.map(c => {
@@ -213,9 +237,9 @@ function StatusCard({ status }) {
               <PoListRow key={c.key} className="pov-health-row"
                 onClick={() => ROUTES[c.key] && navigate(ROUTES[c.key])}>
                 <Icon className={`pov-health-dot ${meta.cls}`} weight="fill" />
-                <span className="pov-health-label">{c.label}</span>
+                <span className="pov-health-label">{t(`project.overview.health.label.${c.labelKey}`)}</span>
                 <span className={`pov-health-detail ${c.status === 'warn' ? 'pov-health-detail--warn' : ''}`}>
-                  {c.detail}
+                  {detailFor(c)}
                 </span>
               </PoListRow>
             );
@@ -262,6 +286,7 @@ const ACTION_ICON = {
 
 // One tile = one InteractiveSection hook (can't call hooks inside .map()).
 function ActionTile({ action, navigate }) {
+  const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(WIDGET_TILT, false);
   const Icon = ACTION_ICON[action.key] ?? Circle;
   const has  = action.count > 0;
@@ -275,17 +300,18 @@ function ActionTile({ action, navigate }) {
         <div className="pov-action-icon"><Icon weight="regular" /></div>
         <span className="pov-action-count">{action.count}</span>
       </div>
-      <span className="pov-action-label">{action.label}</span>
+      <span className="pov-action-label">{t(`project.overview.actions.${action.key}`)}</span>
     </button>
   );
 }
 
 function ActionCenter({ actions, navigate }) {
+  const { t } = useTranslation();
   if (!actions) return null;
   return (
     <section className="pov-section">
       <div className="pov-section-head">
-        <span className="pov-section-title">Needs attention</span>
+        <span className="pov-section-title">{t('project.overview.needsAttention')}</span>
       </div>
       <div className="pov-action-grid">
         {actions.map(a => (
@@ -304,18 +330,19 @@ const ADVISOR_ICON = {
 };
 
 function StoreAdvisor({ advisor, navigate }) {
+  const { t } = useTranslation();
   if (!advisor) return null;
   const n = advisor.length;
   return (
     <section className="pov-section">
       <div className="pov-section-head">
-        <span className="pov-section-title">Advisor</span>
+        <span className="pov-section-title">{t('project.overview.advisor')}</span>
         <span className={`pov-adv-pill ${n === 0 ? 'pov-adv-pill--ok' : 'pov-adv-pill--has'}`}>
-          {n === 0 ? 'All clear' : `${n} suggestion${n === 1 ? '' : 's'}`}
+          {n === 0 ? t('project.overview.allClear') : t('project.overview.suggestions', { count: n })}
         </span>
       </div>
       {n === 0 ? (
-        <div className="pov-adv-empty">Nothing to fix — your store setup looks complete.</div>
+        <div className="pov-adv-empty">{t('project.overview.advisorEmpty')}</div>
       ) : (
         <div className="po-set-table pov-adv-table">
           {advisor.map(a => {
@@ -326,8 +353,8 @@ function StoreAdvisor({ advisor, navigate }) {
                 onClick={() => a.route && navigate(a.route)}>
                 <Icon className={`pov-adv-icon ${meta.cls}`} weight="fill" />
                 <span className="pov-adv-text">
-                  <span className="pov-adv-title">{a.title}</span>
-                  <span className="pov-adv-detail">{a.detail}</span>
+                  <span className="pov-adv-title">{t(`project.overview.advisorItems.${a.key}.title`, a.params || {})}</span>
+                  <span className="pov-adv-detail">{t(`project.overview.advisorItems.${a.key}.detail`, a.params || {})}</span>
                 </span>
                 <ArrowRight className="pov-adv-arrow" weight="bold" />
               </PoListRow>
@@ -342,6 +369,7 @@ function StoreAdvisor({ advisor, navigate }) {
 // ── Project Overview ───────────────────────────────────────────
 
 function Project() {
+  const { t } = useTranslation();
   const { projectId, project: ctxProject } = useOutletContext();
   const navigate = useNavigate();
   const pq = `?project_id=${projectId}`;
@@ -416,7 +444,7 @@ function Project() {
   const newCount        = stats?.new_count ?? 0;
   const currency        = stats?.currency || ctxProject?.currency || 'USD';
   // Plan is hardcoded Free until billing ships — single source of truth here.
-  const planLabel       = 'Free';
+  const planLabel       = t('project.overview.planFree');
 
   return (
     <div className="pov-page">
@@ -424,7 +452,7 @@ function Project() {
 
       {/* ── Left column: title + keys + status + widgets ── */}
       <div className="pov-left">
-        <h1 className="crm-page-title">{ctxProject?.name ?? 'Project'}</h1>
+        <h1 className="crm-page-title">{ctxProject?.name ?? t('project.overview.fallbackName')}</h1>
 
         <CopyKeys
           apiKey={ctxProject?.api_key}
@@ -438,20 +466,20 @@ function Project() {
           {/* Customer Email Login — "Enabled" once DKIM verified */}
           <PovWidget
             icon={<Envelope weight="regular" />}
-            label="Email Sign-in"
+            label={t('project.overview.emailSignin')}
             statusClass={emailVerified ? 'pov-widget-status--ok'
               : emailConfigured ? 'pov-widget-status--warn'
               : 'pov-widget-status--none'}
             status={emailDomain === undefined ? '…'
-              : emailVerified   ? 'Enabled'
-              : emailConfigured ? 'Pending DNS'
-              : 'Not configured'}
+              : emailVerified   ? t('project.overview.enabled')
+              : emailConfigured ? t('project.overview.pendingDns')
+              : t('project.overview.notConfigured')}
             onClick={() => navigate('authentication')} />
 
           {/* Subscription plan */}
           <PovWidget
             icon={<ShoppingBag weight="regular" />}
-            label="Subscription"
+            label={t('project.overview.subscription')}
             statusClass="pov-widget-status--plan"
             status={planLabel}
             onClick={() => navigate('settings')} />
@@ -459,15 +487,15 @@ function Project() {
           {/* Orders — count includes physical + digital + service bookings */}
           <PovWidget
             icon={<PackageIcon weight="regular" />}
-            label="Orders"
-            status={stats === null ? '…' : `${stats.today_orders ?? 0} today`}
-            pill={newCount > 0 ? <span className="pov-new-pill">{newCount} new</span> : null}
+            label={t('project.overview.orders')}
+            status={stats === null ? '…' : t('project.overview.ordersToday', { count: stats.today_orders ?? 0 })}
+            pill={newCount > 0 ? <span className="pov-new-pill">{t('project.overview.newPill', { count: newCount })}</span> : null}
             onClick={() => navigate('orders')} />
 
           {/* Revenue — sums products + bookings for today */}
           <PovWidget
             icon={<CurrencyDollar weight="regular" />}
-            label="Today's Revenue"
+            label={t('project.overview.todaysRevenue')}
             status={stats === null ? '…' : fmtMoney(stats.today_revenue, currency)}
             onClick={() => navigate('revenue')} />
 
@@ -478,22 +506,22 @@ function Project() {
       <div className="pov-right">
         <div className="pov-recent">
           <div className="pov-recent-header">
-            <span className="pov-recent-title">Recent Activity</span>
-            {newCount > 0 && <span className="pov-recent-new">{newCount} new</span>}
+            <span className="pov-recent-title">{t('project.overview.recentActivity')}</span>
+            {newCount > 0 && <span className="pov-recent-new">{t('project.overview.newPill', { count: newCount })}</span>}
             <div className="pov-recent-actions">
               <button className="pov-recent-all" onClick={() => navigate('orders')}>
-                Orders <ArrowRight weight="bold" />
+                {t('project.overview.ordersLink')} <ArrowRight weight="bold" />
               </button>
               <button className="pov-recent-all" onClick={() => navigate('booking')}>
-                Bookings <ArrowRight weight="bold" />
+                {t('project.overview.bookingsLink')} <ArrowRight weight="bold" />
               </button>
             </div>
           </div>
 
           {stats === null ? (
-            <div className="pov-recent-empty">Loading…</div>
+            <div className="pov-recent-empty">{t('project.overview.loading')}</div>
           ) : !stats.recent?.length ? (
-            <div className="pov-recent-empty">No activity yet</div>
+            <div className="pov-recent-empty">{t('project.overview.noActivity')}</div>
           ) : (
             <div className="po-set-table pov-recent-table">
               {stats.recent.map(item => {
@@ -511,7 +539,7 @@ function Project() {
                     <span className="pov-recent-cell pov-recent-cell--name">
                       <span className="pov-recent-name">{item.name}</span>
                       <span className="pov-recent-sub">
-                        {isBooking ? (item.detail || 'Booking') : `Order #${item.id}`}
+                        {isBooking ? (item.detail || t('project.overview.booking')) : t('project.overview.orderNumber', { id: item.id })}
                       </span>
                     </span>
                     <span className="pov-recent-cell pov-recent-cell--date">

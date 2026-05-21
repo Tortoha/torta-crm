@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { Plus, Trash, X } from '@phosphor-icons/react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, useSortable, rectSortingStrategy, arrayMove } from '@dnd-kit/sortable';
@@ -22,6 +23,7 @@ function mediaTypeOf(url) {
 }
 
 function GalleryTile({ url, onDelete, draggable }) {
+  const { t } = useTranslation();
   const sortable = useSortable({ id: url });
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = sortable;
   const style = {
@@ -40,15 +42,15 @@ function GalleryTile({ url, onDelete, draggable }) {
         <video src={url} className="vgal-img" muted playsInline preload="metadata" />
       )}
       {kind === 'video-embed' && (
-        <div className="vgal-media-placeholder">▶ Video</div>
+        <div className="vgal-media-placeholder">▶ {t('productDetail.gallery.videoLabel')}</div>
       )}
       {kind === 'model' && (
-        <div className="vgal-media-placeholder">⬢ 3D / AR</div>
+        <div className="vgal-media-placeholder">⬢ {t('productDetail.gallery.modelLabel')}</div>
       )}
       <button type="button" className="vgal-del"
         onPointerDown={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); onDelete(); }}
-        title="Delete this media">
+        title={t('productDetail.gallery.deleteMedia')}>
         <X weight="bold" size={11} />
       </button>
     </div>
@@ -58,6 +60,7 @@ function GalleryTile({ url, onDelete, draggable }) {
 export default function VariationGalleryPopover({
   anchorRef, productId, variationId, pq, initialImages, onClose, onChange,
 }) {
+  const { t } = useTranslation();
   const popRef     = useRef(null);
   const fileRef    = useRef(null);
   const anchorRect = useRef(null);
@@ -144,7 +147,7 @@ export default function VariationGalleryPopover({
 
   const submitUrl = async () => {
     const url = urlInput.trim();
-    if (!url) { setUrlError('Paste a URL first'); return; }
+    if (!url) { setUrlError(t('productDetail.gallery.pasteUrlFirst')); return; }
     setUploading(true); setUrlError('');
     const r = await fetch(`${API_BASE}/api/products/${productId}/layers/1/${variationId}/media-url${pq}`, {
       method: 'POST', credentials: 'include',
@@ -158,7 +161,7 @@ export default function VariationGalleryPopover({
       setUrlInput(''); setShowAddMenu(false);
     } else {
       const j = await r.json().catch(() => ({}));
-      setUrlError(j.detail || 'Failed to add URL');
+      setUrlError(j.detail || t('productDetail.gallery.failedToAddUrl'));
     }
     setUploading(false);
   };
@@ -230,6 +233,7 @@ export default function VariationGalleryPopover({
 // Add-Media modal — separate portal on top of gallery popover. Closes on X/backdrop/Esc.
 function AddMediaModal({ open, uploading, onPickFile, urlInput, setUrlInput,
                          urlError, onSubmitUrl, onClose }) {
+  const { t } = useTranslation();
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -244,40 +248,38 @@ function AddMediaModal({ open, uploading, onPickFile, urlInput, setUrlInput,
       onClick={(e) => e.stopPropagation()}>
       <div className="vgal-modal" onPointerDown={(e) => e.stopPropagation()}>
         <header className="vgal-modal-head">
-          <h2 className="vgal-modal-title">Add media</h2>
-          <button type="button" className="vgal-modal-close" onClick={onClose} aria-label="Close">
+          <h2 className="vgal-modal-title">{t('productDetail.gallery.addMedia')}</h2>
+          <button type="button" className="vgal-modal-close" onClick={onClose} aria-label={t('productDetail.gallery.close')}>
             <X weight="bold" size={14} />
           </button>
         </header>
         <p className="vgal-modal-hint">
-          Add image, video, or 3D / AR file. Upload from your computer or
-          paste a YouTube / Vimeo URL.
+          {t('productDetail.gallery.addMediaHint')}
         </p>
 
         <button type="button" className="vgal-modal-upload"
           onClick={onPickFile} disabled={uploading}>
-          {uploading ? 'Uploading…' : 'Choose file from computer'}
+          {uploading ? t('productDetail.gallery.uploading') : t('productDetail.gallery.chooseFile')}
         </button>
 
-        <div className="vgal-modal-divider"><span>or</span></div>
+        <div className="vgal-modal-divider"><span>{t('productDetail.gallery.or')}</span></div>
 
         <div className="vgal-modal-url-row">
           <input className="crm-input vgal-modal-url-input" type="text"
-            placeholder="https://youtube.com/watch?v=…  or  https://vimeo.com/…"
+            placeholder={t('productDetail.gallery.urlPlaceholder')}
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') onSubmitUrl(); }}
             autoFocus />
           <button type="button" className="crm-add-btn vgal-modal-url-btn"
             onClick={onSubmitUrl} disabled={uploading || !urlInput.trim()}>
-            Add URL
+            {t('productDetail.gallery.addUrl')}
           </button>
         </div>
         {urlError && <p className="vgal-modal-error">{urlError}</p>}
 
         <p className="vgal-modal-foot">
-          Allowed: images (jpg/png/webp/gif), video (mp4/webm/mov), 3D / AR (glb/usdz/gltf).
-          External URLs must be from YouTube or Vimeo over https.
+          {t('productDetail.gallery.allowed')}
         </p>
       </div>
     </div>,

@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation, Trans } from 'react-i18next';
 import {
   Globe, Stack, Barcode, Warning, CaretDown, MagnifyingGlass,
 } from '@phosphor-icons/react';
@@ -130,10 +131,13 @@ export function SegmentSwitch({ value, options, onChange, disabled }) {
 //     used to show currency symbol next to the name.
 export function SearchableCombobox({
   value, options, onChange,
-  placeholder = '— Select —',
-  searchPlaceholder = 'Search…',
+  placeholder,
+  searchPlaceholder,
   disabled = false,
 }) {
+  const { t } = useTranslation();
+  placeholder = placeholder ?? t('authConfig.settings.select');
+  searchPlaceholder = searchPlaceholder ?? t('common.search');
   const btnRef = useRef(null);
   const inputRef = useRef(null);
   const [open, setOpen] = useState(false);
@@ -260,7 +264,7 @@ export function SearchableCombobox({
                 padding: '16px 12px', color: 'var(--muted)',
                 fontSize: 13, textAlign: 'center',
               }}>
-                No matches.
+                {t('authConfig.settings.noMatches')}
               </div>
             )}
             {filtered.map(o => {
@@ -297,6 +301,7 @@ export function SearchableCombobox({
 // Shows side-by-side "before / after" for a sample amount so the merchant
 // can see at a glance: NUMBER stays, SYMBOL changes. No FX conversion.
 function CurrencyChangeWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
+  const { t } = useTranslation();
   const fromMeta = getCurrencyMeta(fromCode);
   const toMeta   = getCurrencyMeta(toCode);
   return (
@@ -305,12 +310,14 @@ function CurrencyChangeWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
         style={{ width: 520 }}>
         <div className="auth-modal-body">
           <div className="auth-modal-title-row">
-            <h2 className="auth-modal-title">Change currency?</h2>
+            <h2 className="auth-modal-title">{t('authConfig.settings.currencyModal.title')}</h2>
           </div>
 
           <p className="cpm-section-hint" style={{ marginTop: 0 }}>
-            You're switching from <b>{fromMeta.name} ({fromMeta.symbol})</b>{' '}
-            to <b>{toMeta.name} ({toMeta.symbol})</b>.
+            <Trans i18nKey="authConfig.settings.currencyModal.switching"
+              values={{ from: `${fromMeta.name} (${fromMeta.symbol})`, to: `${toMeta.name} (${toMeta.symbol})` }}>
+              <b>x</b><b>y</b>
+            </Trans>
           </p>
 
           {/* Before / after preview */}
@@ -322,14 +329,14 @@ function CurrencyChangeWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
             margin:'8px 0 12px',
           }}>
             <div style={{ textAlign:'center' }}>
-              <div style={{ color:'var(--muted)', fontSize:12, marginBottom:4 }}>Was</div>
+              <div style={{ color:'var(--muted)', fontSize:12, marginBottom:4 }}>{t('authConfig.settings.currencyModal.was')}</div>
               <div style={{ fontSize:20, fontWeight:600, fontVariantNumeric:'tabular-nums' }}>
                 {formatMoney(99.99, fromCode)}
               </div>
             </div>
             <div style={{ color:'var(--muted)', fontSize:18 }}>→</div>
             <div style={{ textAlign:'center' }}>
-              <div style={{ color:'var(--muted)', fontSize:12, marginBottom:4 }}>Will be</div>
+              <div style={{ color:'var(--muted)', fontSize:12, marginBottom:4 }}>{t('authConfig.settings.currencyModal.willBe')}</div>
               <div style={{ fontSize:20, fontWeight:600, color:'var(--accent)', fontVariantNumeric:'tabular-nums' }}>
                 {formatMoney(99.99, toCode)}
               </div>
@@ -341,27 +348,23 @@ function CurrencyChangeWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
             color:'var(--muted)', fontSize:13, lineHeight:1.55,
           }}>
             <li>
-              <b>Numbers don't change.</b> A product priced at 99.99
-              stays 99.99 — only the symbol updates.
+              <Trans i18nKey="authConfig.settings.currencyModal.bullet1"><b>x</b></Trans>
             </li>
             <li>
-              <b>Past orders keep their original currency.</b> An invoice
-              issued in {fromMeta.symbol} stays in {fromMeta.symbol} forever.
+              <Trans i18nKey="authConfig.settings.currencyModal.bullet2" values={{ symbol: fromMeta.symbol }}><b>x</b></Trans>
             </li>
             <li>
-              <b>No FX rate is applied.</b> If you want to re-price
-              products at the current exchange rate, use Products →
-              Bulk update price after switching.
+              <Trans i18nKey="authConfig.settings.currencyModal.bullet3"><b>x</b></Trans>
             </li>
           </ul>
 
           <div className="auth-actions" style={{ marginTop: 16 }}>
             <button type="button" className="crm-submit-btn" onClick={onConfirm}>
-              Change to {toMeta.code}
+              {t('authConfig.settings.currencyModal.changeTo', { code: toMeta.code })}
             </button>
             <button type="button" className="auth-btn-danger"
               onClick={onCancel} style={{ marginLeft: 'auto' }}>
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -373,6 +376,7 @@ function CurrencyChangeWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
 // ── Page ────────────────────────────────────────────────────────────────
 
 export default function ProjectSettings() {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const [toast, setToast] = useState('');
   const tref = useRef(null);
@@ -414,8 +418,8 @@ export default function ProjectSettings() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
-    if (r.ok) showToast('Saved');
-    else showToast('Save failed');
+    if (r.ok) showToast(t('common.saved'));
+    else showToast(t('common.saveFailed'));
   };
 
   // Manual dropdown selection → flips tz_auto off (user picked one
@@ -474,24 +478,24 @@ export default function ProjectSettings() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
-    if (r.ok) showToast('Saved');
+    if (r.ok) showToast(t('common.saved'));
   };
 
   return (
     <>
-      <h1 className="crm-page-title">Settings</h1>
+      <h1 className="crm-page-title">{t('authConfig.settings.title')}</h1>
 
       <div className="bulk-settings">
 
       {/* ── General ── */}
-      <Section icon={<Globe weight="duotone" />} title="General"
-        subtitle="Timezone and currency drive how dates and money render across the dashboard.">
+      <Section icon={<Globe weight="duotone" />} title={t('authConfig.settings.general')}
+        subtitle={t('authConfig.settings.generalSub')}>
 
-        <FieldCard label="Timezone"
+        <FieldCard label={t('authConfig.settings.timezone')}
           hint={
             tzAuto
-              ? <>Auto-detect mode — CRM syncs with your browser ({browserTz}) every 30 min and on every page load. Pick a zone below to lock it manually.</>
-              : <>Manual mode — locked to <b>{tz}</b>. Your browser reports <b>{browserTz}</b>.</>
+              ? <Trans i18nKey="authConfig.settings.tzAutoHint" values={{ tz: browserTz }} />
+              : <Trans i18nKey="authConfig.settings.tzManualHint" values={{ tz, browserTz }}><b>x</b><b>y</b></Trans>
           }>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 220px', minWidth: 220 }}>
@@ -499,7 +503,7 @@ export default function ProjectSettings() {
                 value={tz}
                 disabled={!loadedGen}
                 onChange={(v) => pickTimezone(v)}
-                searchPlaceholder="Search timezones…"
+                searchPlaceholder={t('authConfig.settings.searchTimezones')}
                 options={(() => {
                   // Compose options with the current value at top if it
                   // isn't in the preset list, then the standard preset
@@ -518,19 +522,14 @@ export default function ProjectSettings() {
             {(!tzAuto || tz !== browserTz) && (
               <button type="button" className="auth-btn-check"
                 onClick={useBrowser} disabled={!loadedGen}>
-                {tzAuto ? 'Resume auto-detect' : 'Use browser timezone'}
+                {tzAuto ? t('authConfig.settings.resumeAuto') : t('authConfig.settings.useBrowserTz')}
               </button>
             )}
           </div>
         </FieldCard>
 
-        <FieldCard label="Currency"
-          hint={<>
-            Every price on the dashboard — products, orders, analytics,
-            invoices — uses this currency's symbol and decimal style.
-            <b> Past orders snapshot their currency at the time of purchase</b>,
-            so historical reports stay accurate after you change this.
-          </>}>
+        <FieldCard label={t('authConfig.settings.currency')}
+          hint={<Trans i18nKey="authConfig.settings.currencyHint"><b>x</b></Trans>}>
           {/* Dropdown + live preview side-by-side */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'center' }}>
             <SearchableCombobox
@@ -541,7 +540,7 @@ export default function ProjectSettings() {
                 // Stage the change — modal asks for confirmation first.
                 setPendingCurrency(next);
               }}
-              searchPlaceholder="Search 49 currencies (USD, ₸, tenge…)"
+              searchPlaceholder={t('authConfig.settings.searchCurrencies')}
               options={(() => {
                 // `searchText` lets the user find a currency by code,
                 // symbol or name — type "₸" / "kzt" / "tenge" all hit
@@ -570,14 +569,14 @@ export default function ProjectSettings() {
       </Section>
 
       {/* ── Inventory ── */}
-      <Section icon={<Stack weight="duotone" />} title="Inventory"
-        subtitle="How stock partitions consume from batches, and how SKU prices are entered.">
+      <Section icon={<Stack weight="duotone" />} title={t('authConfig.settings.inventory')}
+        subtitle={t('authConfig.settings.inventorySub')}>
 
-        <FieldCard label="Batch consumption order"
+        <FieldCard label={t('authConfig.settings.batchOrder')}
           hint={
             invMode === 'fifo'
-              ? 'FIFO (first-in, first-out) — oldest batches sell first. Best for food, cosmetics, anything with an expiry date.'
-              : 'LIFO (last-in, first-out) — newest batches sell first. Uncommon — use only if you have a specific accounting reason.'
+              ? t('authConfig.settings.fifoHint')
+              : t('authConfig.settings.lifoHint')
           }>
           <SegmentSwitch value={invMode} disabled={!loadedInv}
             options={[
@@ -587,15 +586,12 @@ export default function ProjectSettings() {
             onChange={(v) => { setInvMode(v); saveBatchSetting({ batch_consumption_mode: v }); }} />
         </FieldCard>
 
-        <FieldCard label="Hide Price column — enter Cost only"
-          hint={<>
-            Product Overview hides the Price column for L2 SKUs. Merchant types <b>Cost</b>;
-            public price is auto-set to <b>Cost × (1 + margin / 100)</b>.
-          </>}>
+        <FieldCard label={t('authConfig.settings.hidePrice')}
+          hint={<Trans i18nKey="authConfig.settings.hidePriceHint"><b>x</b><b>y</b></Trans>}>
           <SegmentSwitch value={hidePrice ? 'on' : 'off'} disabled={!loadedInv}
             options={[
-              { value: 'off', label: 'Off' },
-              { value: 'on',  label: 'On'  },
+              { value: 'off', label: t('authConfig.settings.off') },
+              { value: 'on',  label: t('authConfig.settings.on')  },
             ]}
             onChange={(v) => {
               const on = v === 'on';
@@ -607,8 +603,8 @@ export default function ProjectSettings() {
         {/* Margin input — only relevant when hidePrice is ON, so dim
             otherwise. Disabled-state styling handled by the bulk-field
             class system. */}
-        <FieldCard label="Default margin %"
-          hint="Used to compute selling price when Hide Price is on. e.g. 50 → price = cost × 1.5.">
+        <FieldCard label={t('authConfig.settings.defaultMargin')}
+          hint={t('authConfig.settings.defaultMarginHint')}>
           <input className="crm-input" type="number" min="0" max="10000" step="0.1"
             style={{ maxWidth: 160, opacity: hidePrice ? 1 : 0.5 }}
             value={marginPct}
@@ -619,15 +615,15 @@ export default function ProjectSettings() {
       </Section>
 
       {/* ── Barcode defaults ── */}
-      <Section icon={<Barcode weight="duotone" />} title="Barcode defaults"
-        subtitle='These toggles pre-fill the "Advanced encoding" section in the Print barcodes modal.'>
+      <Section icon={<Barcode weight="duotone" />} title={t('authConfig.settings.barcodeDefaults')}
+        subtitle={t('authConfig.settings.barcodeSub')}>
 
-        <FieldCard label="Include production date"
-          hint="Appends -YYYYMMDD to the encoded value">
+        <FieldCard label={t('authConfig.settings.includeDate')}
+          hint={t('authConfig.settings.includeDateHint')}>
           <SegmentSwitch value={barcode.barcode_include_date ? 'on' : 'off'} disabled={!loadedBc}
             options={[
-              { value: 'off', label: 'Off' },
-              { value: 'on',  label: 'On'  },
+              { value: 'off', label: t('authConfig.settings.off') },
+              { value: 'on',  label: t('authConfig.settings.on')  },
             ]}
             onChange={(v) => {
               const on = v === 'on';
@@ -636,12 +632,12 @@ export default function ProjectSettings() {
             }} />
         </FieldCard>
 
-        <FieldCard label="Include batch name"
-          hint="Appends -B<batch> — useful for recall traceability">
+        <FieldCard label={t('authConfig.settings.includeBatch')}
+          hint={t('authConfig.settings.includeBatchHint')}>
           <SegmentSwitch value={barcode.barcode_include_batch ? 'on' : 'off'} disabled={!loadedBc}
             options={[
-              { value: 'off', label: 'Off' },
-              { value: 'on',  label: 'On'  },
+              { value: 'off', label: t('authConfig.settings.off') },
+              { value: 'on',  label: t('authConfig.settings.on')  },
             ]}
             onChange={(v) => {
               const on = v === 'on';
@@ -650,12 +646,12 @@ export default function ProjectSettings() {
             }} />
         </FieldCard>
 
-        <FieldCard label="Include quantity in batch"
-          hint="Appends -Q<n> — for production reporting">
+        <FieldCard label={t('authConfig.settings.includeQty')}
+          hint={t('authConfig.settings.includeQtyHint')}>
           <SegmentSwitch value={barcode.barcode_include_qty ? 'on' : 'off'} disabled={!loadedBc}
             options={[
-              { value: 'off', label: 'Off' },
-              { value: 'on',  label: 'On'  },
+              { value: 'off', label: t('authConfig.settings.off') },
+              { value: 'on',  label: t('authConfig.settings.on')  },
             ]}
             onChange={(v) => {
               const on = v === 'on';
@@ -664,12 +660,12 @@ export default function ProjectSettings() {
             }} />
         </FieldCard>
 
-        <FieldCard label="Include serial counter"
-          hint="Each printed sticker gets a unique -NNNN suffix">
+        <FieldCard label={t('authConfig.settings.includeSerial')}
+          hint={t('authConfig.settings.includeSerialHint')}>
           <SegmentSwitch value={barcode.barcode_include_serial ? 'on' : 'off'} disabled={!loadedBc}
             options={[
-              { value: 'off', label: 'Off' },
-              { value: 'on',  label: 'On'  },
+              { value: 'off', label: t('authConfig.settings.off') },
+              { value: 'on',  label: t('authConfig.settings.on')  },
             ]}
             onChange={(v) => {
               const on = v === 'on';
@@ -682,10 +678,10 @@ export default function ProjectSettings() {
       {/* ── Danger Zone ── */}
       {/* Placeholder until rotate-api-key + delete-project are wired up.
           Keeping the section visible signals intent to the merchant. */}
-      <Section icon={<Warning weight="duotone" />} title="Danger zone"
-        subtitle="Irreversible actions — rotate API key, delete project.">
-        <FieldCard label="Coming soon"
-          hint="Project rotation and deletion are not yet exposed in the UI. Until then, drop a request via support.">
+      <Section icon={<Warning weight="duotone" />} title={t('authConfig.settings.dangerZone')}
+        subtitle={t('authConfig.settings.dangerZoneSub')}>
+        <FieldCard label={t('authConfig.settings.comingSoon')}
+          hint={t('authConfig.settings.comingSoonHint')}>
           <span style={{ color: 'var(--muted)', fontSize: 13 }}>—</span>
         </FieldCard>
       </Section>

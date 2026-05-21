@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown,
          Receipt, ArrowUUpLeft, Printer } from '@phosphor-icons/react';
@@ -21,24 +22,18 @@ import '../../Style/Authentication.css';
 const ALL_STATUSES = ['new', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded'];
 
 const STATUS_META = {
-  new:       { label: 'New',       cls: 'ord-badge--new'       },
-  confirmed: { label: 'Confirmed', cls: 'ord-badge--confirmed'  },
-  shipped:   { label: 'Shipped',   cls: 'ord-badge--shipped'    },
-  delivered: { label: 'Delivered', cls: 'ord-badge--delivered'  },
-  cancelled: { label: 'Cancelled', cls: 'ord-badge--cancelled'  },
-  refunded:  { label: 'Refunded',  cls: 'ord-badge--refunded'   },
+  new:       { cls: 'ord-badge--new'       },
+  confirmed: { cls: 'ord-badge--confirmed'  },
+  shipped:   { cls: 'ord-badge--shipped'    },
+  delivered: { cls: 'ord-badge--delivered'  },
+  cancelled: { cls: 'ord-badge--cancelled'  },
+  refunded:  { cls: 'ord-badge--refunded'   },
 };
 
-const STATUS_TABS = [
-  { key: 'all', label: 'All' },
-  ...ALL_STATUSES.map(s => ({ key: s, label: STATUS_META[s].label })),
-];
+const statusLabel = (t, s) => t(`orders.status.${s}`);
 
-const SORT_OPTIONS = [
-  { field: 'date',   label: 'Sort by date'   },
-  { field: 'amount', label: 'Sort by amount' },
-  { field: 'name',   label: 'Sort by name'   },
-];
+const SORT_FIELDS = ['date', 'amount', 'name'];
+const SORT_FIELD_KEY = { date: 'sortByDate', amount: 'sortByAmount', name: 'sortByName' };
 const DEFAULT_DIR = { date: 'desc', amount: 'desc', name: 'asc' };
 
 // ── Tilt configs ───────────────────────────────────────────────
@@ -89,6 +84,7 @@ const fmtDateLong = ts => ts
 // Uses createPortal so the dropdown escapes overflow:hidden on prow rows.
 
 function StatusSelect({ orderId, currentStatus, pq, onUpdated, onOpenChange }) {
+  const { t } = useTranslation();
   const [open,    setOpen]    = useState(false);
   const [loading, setLoading] = useState(false);
   const [pos,     setPos]     = useState(null);
@@ -155,7 +151,8 @@ function StatusSelect({ orderId, currentStatus, pq, onUpdated, onOpenChange }) {
     } finally { setLoading(false); closeMenu(); }
   };
 
-  const m = STATUS_META[currentStatus] ?? { label: currentStatus, cls: '' };
+  const m = STATUS_META[currentStatus] ?? { cls: '' };
+  const curLabel = STATUS_META[currentStatus] ? statusLabel(t, currentStatus) : currentStatus;
 
   return (
     <>
@@ -166,7 +163,7 @@ function StatusSelect({ orderId, currentStatus, pq, onUpdated, onOpenChange }) {
         disabled={loading}
         type="button"
       >
-        {loading ? '…' : m.label}
+        {loading ? '…' : curLabel}
         <CaretDown className="ord-badge-caret" />
       </button>
 
@@ -188,7 +185,7 @@ function StatusSelect({ orderId, currentStatus, pq, onUpdated, onOpenChange }) {
                 onMouseEnter={() => setHovered(s)}
                 type="button"
               >
-                {STATUS_META[s].label}
+                {statusLabel(t, s)}
               </button>
             ))}
           </div>
@@ -202,6 +199,7 @@ function StatusSelect({ orderId, currentStatus, pq, onUpdated, onOpenChange }) {
 // ── Sort toggle ────────────────────────────────────────────────
 
 function OrdSortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -231,7 +229,8 @@ function OrdSortToggle({ sort, onSort }) {
   return (
     <div className="ord-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_FIELDS.map((field) => {
+        const label  = t(`orders.list.${SORT_FIELD_KEY[field]}`);
         const active = sort.field === field;
         const isCur  = curField === field;
         return (
@@ -261,10 +260,15 @@ function OrdSortToggle({ sort, onSort }) {
 // ── Status filter — Dynamic Block pill bar ────────────────────
 
 function OrdStatusFilter({ active, counts, onChange }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
   const cur = hovered ?? active;
+  const tabs = [
+    { key: 'all', label: t('orders.list.all') },
+    ...ALL_STATUSES.map(s => ({ key: s, label: statusLabel(t, s) })),
+  ];
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -281,7 +285,7 @@ function OrdStatusFilter({ active, counts, onChange }) {
   return (
     <div className="ord-filter" onMouseLeave={() => setHovered(null)}>
       <div className="ord-filter-ind" ref={indRef} />
-      {STATUS_TABS.map(({ key, label }) => (
+      {tabs.map(({ key, label }) => (
         <button
           key={key}
           ref={el => { if (el) btnRefs.current[key] = el; else delete btnRefs.current[key]; }}
@@ -310,6 +314,7 @@ function OrdStatusFilter({ active, counts, onChange }) {
 const SHIP_LABEL_STATUSES = new Set(['new', 'confirmed']);
 
 function OrderRow({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onContextMenu, onPrintLabel }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, menuOpen);
 
@@ -341,14 +346,14 @@ function OrderRow({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onCo
       <span className="ord-prow-customer">
         <span className="ord-prow-name">
           {formatCustomerName(order)}
-          {order.is_guest && <span className="ord-guest-badge">Guest</span>}
+          {order.is_guest && <span className="ord-guest-badge">{t('orders.list.guest')}</span>}
         </span>
         {order.customer_email && (
           <span className="ord-prow-email">{order.customer_email}</span>
         )}
       </span>
 
-      <span className="prow-cell">{order.items_count} item{order.items_count !== 1 ? 's' : ''}</span>
+      <span className="prow-cell">{t('orders.list.itemsCount', { count: order.items_count })}</span>
       <span className="prow-cell" style={{ fontWeight: 600, color: 'var(--text)' }}>
         {formatMoney(order.total_amount, order.payment_currency)}
       </span>
@@ -366,7 +371,7 @@ function OrderRow({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onCo
       <span className="ord-prow-actions" onClick={e => e.stopPropagation()}>
         {canPrint ? (
           <button type="button" className="ord-prow-action-btn"
-            title="Print shipping label"
+            title={t('orders.list.printLabel')}
             onClick={() => onPrintLabel?.(order.id)}>
             <Printer weight="bold" />
           </button>
@@ -379,6 +384,7 @@ function OrderRow({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onCo
 // ── Order card (cards view) — InteractiveSection tilt ─────────
 
 function OrderCard({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onPrintLabel }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, menuOpen);
 
@@ -394,7 +400,7 @@ function OrderCard({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onP
         <div className="ord-card-top">
           <span className="ord-card-id">
             {formatCustomerName(order)}
-            {order.is_guest && <span className="ord-guest-badge">Guest</span>}
+            {order.is_guest && <span className="ord-guest-badge">{t('orders.list.guest')}</span>}
           </span>
           <span onClick={e => e.stopPropagation()}>
             <StatusSelect orderId={order.id} currentStatus={order.status} pq={pq} onUpdated={onUpdated} onOpenChange={setMenuOpen} />
@@ -406,14 +412,14 @@ function OrderCard({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onP
         <div className="ord-card-meta">
           <span className="ord-card-amount">{formatMoney(order.total_amount, order.payment_currency)}</span>
           <span className="ord-card-dot">·</span>
-          <span>{order.items_count} item{order.items_count !== 1 ? 's' : ''}</span>
+          <span>{t('orders.list.itemsCount', { count: order.items_count })}</span>
           <span className="ord-card-dot">·</span>
           <span>{fmtDate(order.created_at)}</span>
         </div>
       </div>
       {canPrint && (
         <button type="button" className="ord-card-action-btn"
-          title="Print shipping label"
+          title={t('orders.list.printLabel')}
           onClick={(e) => { e.stopPropagation(); onPrintLabel?.(order.id); }}>
           <Printer weight="bold" />
         </button>
@@ -425,6 +431,7 @@ function OrderCard({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onP
 // ── Order modal — uses shared Modal component ──────────────────
 
 function OrderModal({ order, pq, onClose, onUpdated }) {
+  const { t } = useTranslation();
   const [detail,  setDetail]  = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -438,7 +445,7 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
   return (
     <Modal
       onClose={onClose}
-      title={`Order #${order.id}`}
+      title={t('orders.modal.title', { id: order.id })}
       subtitle={fmtDateLong(order.created_at)}
       extra={
         <StatusSelect
@@ -449,17 +456,17 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
         />
       }
     >
-      {loading && <div className="modal-loading">Loading…</div>}
+      {loading && <div className="modal-loading">{t('orders.modal.loading')}</div>}
 
       {!loading && !detail && (
-        <div className="modal-loading">Failed to load order details.</div>
+        <div className="modal-loading">{t('orders.modal.loadFailed')}</div>
       )}
 
       {!loading && detail && (
         <>
           {/* Customer */}
           <div className="modal-section">
-            <div className="modal-section-label">Customer</div>
+            <div className="modal-section-label">{t('orders.modal.customer')}</div>
             <div className="modal-section-value">{order.customer_name || order.recipient_name}</div>
             {order.customer_email && <div className="modal-section-sub">{order.customer_email}</div>}
             {detail.phone && <div className="modal-section-sub">{detail.phone}</div>}
@@ -467,13 +474,13 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
 
           {/* Delivery & Payment */}
           <div className="modal-section">
-            <div className="modal-section-label">Delivery & Payment</div>
+            <div className="modal-section-label">{t('orders.modal.deliveryPayment')}</div>
             <div className="modal-section-value">
-              {detail.delivery_method === 'courier' ? 'Courier' : 'Postal'}
+              {detail.delivery_method === 'courier' ? t('orders.modal.courier') : t('orders.modal.postal')}
               {detail.address ? ` — ${detail.address}` : ''}
             </div>
             <div className="modal-section-sub">
-              {detail.payment_method === 'card' ? 'Card payment' : 'Pay on Delivery'}
+              {detail.payment_method === 'card' ? t('orders.modal.cardPayment') : t('orders.modal.payOnDelivery')}
             </div>
             {detail.comment && (
               <div className="modal-section-sub" style={{ fontStyle: 'italic' }}>"{detail.comment}"</div>
@@ -483,7 +490,7 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
           {/* Items */}
           {detail.items?.length > 0 && (
             <div className="modal-section">
-              <div className="modal-section-label">Items</div>
+              <div className="modal-section-label">{t('orders.modal.items')}</div>
               <div className="ord-modal-items">
                 {detail.items.map((item, i) => (
                   <div key={i} className="ord-modal-item">
@@ -507,7 +514,7 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
 
           {/* Total */}
           <div className="modal-footer-row">
-            <span className="modal-footer-label">Total</span>
+            <span className="modal-footer-label">{t('orders.modal.total')}</span>
             <span className="modal-footer-value">
               {formatMoney(order.total_amount, detail.payment_currency || order.payment_currency)}
             </span>
@@ -566,11 +573,12 @@ function OrdersTopTabs({ tabs, tab, setTab, returnsActionCount }) {
 // ── Top-level page: Orders ↔ Returns ──────────────────────────
 
 function Orders() {
+  const { t } = useTranslation();
   const { projectId, project, access } = useOutletContext();
   const canView = (p) => !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[p]);
   const orderTabs = [
-    canView('orders')  && { key: 'orders',  label: 'Orders',  Icon: Receipt },
-    canView('returns') && { key: 'returns', label: 'Returns', Icon: ArrowUUpLeft },
+    canView('orders')  && { key: 'orders',  label: t('orders.topTabs.orders'),  Icon: Receipt },
+    canView('returns') && { key: 'returns', label: t('orders.topTabs.returns'), Icon: ArrowUUpLeft },
   ].filter(Boolean);
   // Keep date formatting in sync with the project's configured TZ so
   // Orders' "May 17, 2026" stays consistent with what Analytics shows
@@ -625,6 +633,7 @@ function Orders() {
 // ── Orders tab (the original orders list) ─────────────────────
 
 function OrdersTab() {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
 
@@ -715,11 +724,11 @@ function OrdersTab() {
 
   const curView = viewHover ?? view;
   const isEmpty = !loading && sorted.length === 0;
-  const emptyMsg = tab === 'all' && !search ? 'No orders yet' : 'No orders match your filter';
+  const emptyMsg = tab === 'all' && !search ? t('orders.list.emptyAll') : t('orders.list.emptyFiltered');
 
   return (
     <>
-      <h1 className="crm-page-title">Orders</h1>
+      <h1 className="crm-page-title">{t('orders.list.title')}</h1>
 
       {/* ── Toolbar ── */}
       <div className="org-toolbar">
@@ -727,7 +736,7 @@ function OrdersTab() {
           <MagnifyingGlass className="org-search-icon" />
           <input
             className="org-search-input"
-            placeholder="Search orders…"
+            placeholder={t('orders.list.searchPlaceholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -746,7 +755,7 @@ function OrdersTab() {
               className={`org-view-btn${curView === 'table' ? ' org-view-btn--current' : ''}`}
               onClick={() => setView('table')}
               onMouseEnter={() => setViewHover('table')}
-              title="Table view" type="button"
+              title={t('orders.list.tableView')} type="button"
             >
               <List className="org-view-icon" />
             </button>
@@ -754,7 +763,7 @@ function OrdersTab() {
               className={`org-view-btn${curView === 'cards' ? ' org-view-btn--current' : ''}`}
               onClick={() => setView('cards')}
               onMouseEnter={() => setViewHover('cards')}
-              title="Cards view" type="button"
+              title={t('orders.list.cardsView')} type="button"
             >
               <SquaresFour className="org-view-icon" />
             </button>
@@ -786,17 +795,17 @@ function OrdersTab() {
                   });
                 }} />
             </span>
-            <span className="org-list-th">Customer</span>
-            <span className="org-list-th">Items</span>
-            <span className="org-list-th">Amount</span>
-            <span className="org-list-th">Date</span>
-            <span className="org-list-th">Status</span>
+            <span className="org-list-th">{t('orders.list.colCustomer')}</span>
+            <span className="org-list-th">{t('orders.list.colItems')}</span>
+            <span className="org-list-th">{t('orders.list.colAmount')}</span>
+            <span className="org-list-th">{t('orders.list.colDate')}</span>
+            <span className="org-list-th">{t('orders.list.colStatus')}</span>
             {/* Empty header for the per-row Print-label action column. */}
             <span className="org-list-th" aria-hidden="true" />
           </div>
 
           {loading ? (
-            <div className="crm-placeholder">Loading orders…</div>
+            <div className="crm-placeholder">{t('orders.list.loading')}</div>
           ) : isEmpty ? (
             <div className="ord-empty">
               <Package className="ord-empty-icon" weight="duotone" />
@@ -816,7 +825,7 @@ function OrdersTab() {
                   onPrintLabel={(id) => setLabelOrderIds([id])}
                 />
               ))}
-              {hasMore && <div ref={ordersSentinelRef} className="inf-sentinel">Loading more…</div>}
+              {hasMore && <div ref={ordersSentinelRef} className="inf-sentinel">{t('orders.list.loadingMore')}</div>}
             </div>
           )}
         </div>
@@ -825,7 +834,7 @@ function OrdersTab() {
       {/* ── Cards view ── */}
       {view === 'cards' && (
         loading && orders.length === 0 ? (
-          <p className="crm-placeholder">Loading orders…</p>
+          <p className="crm-placeholder">{t('orders.list.loading')}</p>
         ) : isEmpty ? (
           <div className="ord-empty">
             <Package className="ord-empty-icon" weight="duotone" />
@@ -845,7 +854,7 @@ function OrdersTab() {
                 onPrintLabel={(id) => setLabelOrderIds([id])}
               />
             ))}
-            {hasMore && <div ref={ordersSentinelRef} className="inf-sentinel">Loading more…</div>}
+            {hasMore && <div ref={ordersSentinelRef} className="inf-sentinel">{t('orders.list.loadingMore')}</div>}
           </div>
         )
       )}
@@ -855,16 +864,16 @@ function OrdersTab() {
       {selectedIds.size > 0 && (
         <div className="ord-bulk-bar">
           <span className="ord-bulk-count">
-            {selectedIds.size} order{selectedIds.size === 1 ? '' : 's'} selected
+            {t('orders.list.selectedCount', { count: selectedIds.size })}
           </span>
           <button type="button" className="crm-submit-btn"
             onClick={() => setLabelOrderIds([...selectedIds])}>
             <Printer weight="bold" style={{ verticalAlign: '-3px', marginRight: 6 }} />
-            Print shipping labels
+            {t('orders.list.printLabels')}
           </button>
           <button type="button" className="auth-btn-check"
             onClick={() => setSelectedIds(new Set())}>
-            Clear selection
+            {t('orders.list.clearSelection')}
           </button>
         </div>
       )}

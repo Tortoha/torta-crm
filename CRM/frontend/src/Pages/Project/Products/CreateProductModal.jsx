@@ -1,16 +1,18 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, CaretDown } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
 
 const PRODUCT_TYPE_OPTIONS = [
-  { id: 'physical', name: 'Physical' },
-  { id: 'digital',  name: 'Digital'  },
-  { id: 'service',  name: 'Service'  },
+  { id: 'physical', nameKey: 'products.createModal.physical' },
+  { id: 'digital',  nameKey: 'products.createModal.digital'  },
+  { id: 'service',  nameKey: 'products.createModal.service'  },
 ];
 
 export default function CreateProductModal({ open, pq, onClose, onCreated }) {
+  const { t } = useTranslation();
   const [title,    setTitle]    = useState('');
   const [subtitle, setSubtitle] = useState('');
   const [desc,     setDesc]     = useState('');
@@ -42,15 +44,15 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
 
   const submit = async (e) => {
     e?.preventDefault();
-    const t = title.trim();
-    if (!t) return setErr('Title is required');
+    const titleVal = title.trim();
+    if (!titleVal) return setErr(t('products.createModal.titleRequired'));
     setErr(''); setBusy(true);
     try {
       const res = await fetch(`${API_BASE}/api/products${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: t,
+          title: titleVal,
           subtitle: subtitle.trim() || null,
           description: desc.trim() || null,
           category_id: catId === '' ? null : Number(catId),
@@ -59,7 +61,7 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        const detail = typeof data.detail === 'string' ? data.detail : 'Create failed';
+        const detail = typeof data.detail === 'string' ? data.detail : t('products.createModal.createFailed');
         setErr(detail); setBusy(false); return;
       }
 
@@ -73,7 +75,7 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
 
       onCreated(data);
     } catch {
-      setErr('Network error');
+      setErr(t('products.createModal.networkError'));
     } finally {
       setBusy(false);
     }
@@ -85,10 +87,10 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">New product</div>
+              <div className="auth-modal-title">{t('products.createModal.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Fill in basics now — you can add variations from the product page after creation.
+                  {t('products.createModal.subtitle')}
                 </span>
               </div>
             </div>
@@ -101,43 +103,43 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
         <div className="auth-modal-body">
           <form className="cpm-form" onSubmit={submit} autoComplete="off">
             <div className="cpm-section">
-              <label className="po-field-label">Title</label>
+              <label className="po-field-label">{t('products.createModal.fieldTitle')}</label>
               <input className="crm-input" autoFocus value={title}
                 autoComplete="off" spellCheck={false}
                 onChange={e => setTitle(e.target.value)}
-                placeholder="Product name" maxLength={200} />
+                placeholder={t('products.createModal.titlePlaceholder')} maxLength={200} />
             </div>
             <div className="cpm-section">
-              <label className="po-field-label">Subtitle</label>
+              <label className="po-field-label">{t('products.createModal.fieldSubtitle')}</label>
               <input className="crm-input" value={subtitle}
                 autoComplete="off" spellCheck={false}
                 onChange={e => setSubtitle(e.target.value)}
-                placeholder="Short tagline shown under the title" maxLength={300} />
+                placeholder={t('products.createModal.subtitlePlaceholder')} maxLength={300} />
             </div>
             <div className="cpm-section">
-              <label className="po-field-label">Description</label>
+              <label className="po-field-label">{t('products.createModal.description')}</label>
               <textarea className="crm-input cpm-textarea" rows={3} value={desc}
                 autoComplete="off" spellCheck={false}
                 onChange={e => setDesc(e.target.value)}
-                placeholder="Long body text — materials, features…" />
+                placeholder={t('products.createModal.descriptionPlaceholder')} />
             </div>
             <div className="cpm-section">
-              <label className="po-field-label">Category</label>
+              <label className="po-field-label">{t('products.createModal.category')}</label>
               <CpmCategorySelect value={catId} categories={categories} onChange={setCatId} />
             </div>
             <div className="cpm-section">
-              <label className="po-field-label">Type</label>
-              <CpmOptionSelect value={ptype} options={PRODUCT_TYPE_OPTIONS} onChange={setPtype} />
+              <label className="po-field-label">{t('products.createModal.type')}</label>
+              <CpmOptionSelect value={ptype} options={PRODUCT_TYPE_OPTIONS.map(o => ({ id: o.id, name: t(o.nameKey) }))} onChange={setPtype} />
             </div>
 
             {err && <span className="crm-form-error">{err}</span>}
 
             <div className="auth-actions">
               <button className="crm-submit-btn" type="submit" disabled={busy}>
-                {busy ? 'Creating…' : 'Create product'}
+                {busy ? t('products.createModal.creating') : t('products.createModal.create')}
               </button>
               <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-                Cancel
+                {t('products.createModal.cancel')}
               </button>
             </div>
           </form>
@@ -150,7 +152,9 @@ export default function CreateProductModal({ open, pq, onClose, onCreated }) {
 
 // Generic option-list select reusing the Category dropdown's look.
 // `options`: [{ id, name }, ...]. `value`: the currently selected id (or '').
-export function CpmOptionSelect({ value, options, onChange, placeholder = 'Select…' }) {
+export function CpmOptionSelect({ value, options, onChange, placeholder }) {
+  const { t } = useTranslation();
+  placeholder = placeholder ?? t('products.createModal.select');
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
@@ -218,6 +222,7 @@ export function CpmOptionSelect({ value, options, onChange, placeholder = 'Selec
 
 // ─── Custom Category dropdown (replaces native <select>) ──────
 export function CpmCategorySelect({ value, categories, onChange }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
@@ -252,7 +257,7 @@ export function CpmCategorySelect({ value, categories, onChange }) {
   const selected = value === ''
     ? null
     : categories.find(c => String(c.id) === String(value));
-  const label = selected ? selected.name : 'Uncategorized';
+  const label = selected ? selected.name : t('products.createModal.uncategorized');
 
   return (
     <>
@@ -273,7 +278,7 @@ export function CpmCategorySelect({ value, categories, onChange }) {
             className={`cat-filter-item${current === 'none' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('none')}
             onClick={() => { onChange(''); setOpen(false); }}>
-            Uncategorized
+            {t('products.createModal.uncategorized')}
           </button>
           {categories.map(c => {
             const k = `c:${c.id}`;

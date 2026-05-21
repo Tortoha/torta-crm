@@ -1,0 +1,30 @@
+{
+  "nav": {
+    "sections": {
+      "overview": "Overview",
+      "business": "Business",
+      "account": "Account"
+    },
+    "projectOverview": "Project Overview",
+    "analytics": "Analytics",
+    "alerts": "Alerts",
+    "targets": "Targets",
+    "products": "Products",
+    "orders": "Orders",
+    "bookings": "Bookings",
+    "customers": "Customers",
+    "emails": "Emails",
+    "chat": "Chat with Customers",
+    "authentication": "Authentication",
+    "integrations": "Integrations",
+    "documents": "Documents",
+    "settings": "Settings",
+    "productOverview": "Product Overview",
+    "editHistory": "Edit history",
+    "reviews": "Reviews",
+    "apiPreview": "API Preview",
+    "projects": "Projects",
+    "team": "Team",
+    "payments": "Payments"
+  }
+}

@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation, Trans } from 'react-i18next';
 import { CheckCircle, Copy, Eye, EyeSlash, ArrowSquareOut, Trash, Warning } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 
@@ -20,6 +21,7 @@ function isPEM(s) {
 }
 
 export default function ApplePanel({ provider, projectId, onSaved }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
 
   const [data,       setData]       = useState(null);
@@ -72,10 +74,10 @@ export default function ApplePanel({ provider, projectId, onSaved }) {
   const onP8Upload = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 8 * 1024) { setErr('.p8 file too large (>8KB)'); return; }
+    if (f.size > 8 * 1024) { setErr(t('authConfig.apple.errFileTooLarge')); return; }
     const text = await f.text();
     if (!isPEM(text)) {
-      setErr('That file doesn\'t look like a .p8 (missing -----BEGIN PRIVATE KEY----- header)');
+      setErr(t('authConfig.apple.errNotP8'));
       return;
     }
     setErr('');
@@ -89,10 +91,10 @@ export default function ApplePanel({ provider, projectId, onSaved }) {
     const tid = teamId.trim();
     const kid = keyId.trim();
     const pem = privateKey.trim();
-    if (!sid)               { setErr('Service ID is required'); setSaving(false); return; }
-    if (tid.length !== 10)  { setErr('Team ID must be exactly 10 characters'); setSaving(false); return; }
-    if (kid.length !== 10)  { setErr('Key ID must be exactly 10 characters'); setSaving(false); return; }
-    if (!isPEM(pem))        { setErr('Private Key must be the PEM contents of the .p8 file'); setSaving(false); return; }
+    if (!sid)               { setErr(t('authConfig.apple.errServiceId')); setSaving(false); return; }
+    if (tid.length !== 10)  { setErr(t('authConfig.apple.errTeamId')); setSaving(false); return; }
+    if (kid.length !== 10)  { setErr(t('authConfig.apple.errKeyId')); setSaving(false); return; }
+    if (!isPEM(pem))        { setErr(t('authConfig.apple.errPrivateKey')); setSaving(false); return; }
 
     try {
       const res  = await fetch(`${API_BASE}/api/auth-providers/apple${pq}`, {
@@ -105,14 +107,14 @@ export default function ApplePanel({ provider, projectId, onSaved }) {
         }),
       });
       const json = await res.json();
-      if (res.ok) { showToast('Saved'); onSaved?.(enabled); await load(); }
-      else        { setErr(json.detail || 'Error saving'); }
-    } catch { setErr('Network error'); }
+      if (res.ok) { showToast(t('common.saved')); onSaved?.(enabled); await load(); }
+      else        { setErr(json.detail || t('authConfig.errorSaving')); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
   const del = async () => {
-    if (!confirm('Remove Apple Sign-In configuration?')) return;
+    if (!confirm(t('authConfig.apple.removeConfirm'))) return;
     setDeleting(true);
     await fetch(`${API_BASE}/api/auth-providers/apple${pq}`, { method: 'DELETE', credentials: 'include' });
     setDeleting(false);
@@ -120,14 +122,14 @@ export default function ApplePanel({ provider, projectId, onSaved }) {
     await load();
   };
 
-  if (!data) return <p className="crm-placeholder">Loading…</p>;
+  if (!data) return <p className="crm-placeholder">{t('common.loading')}</p>;
 
   return (
     <>
       <div className="auth-toggle-row">
         <div>
-          <span className="auth-toggle-label">Enable Apple Sign-In</span>
-          <p className="auth-field-hint">Allow store users to sign in with their Apple ID.</p>
+          <span className="auth-toggle-label">{t('authConfig.apple.enableLabel')}</span>
+          <p className="auth-field-hint">{t('authConfig.apple.enableHint')}</p>
         </div>
         <label className="auth-toggle">
           <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
@@ -138,40 +140,38 @@ export default function ApplePanel({ provider, projectId, onSaved }) {
       <div className="auth-sep" />
 
       <div className="auth-field">
-        <label className="auth-label">Service ID</label>
+        <label className="auth-label">{t('authConfig.apple.serviceId')}</label>
         <p className="auth-field-hint">
-          Reverse-DNS identifier of the "Services ID" you created in Apple Developer
-          (e.g. <code>com.tortacrm.signin</code>). This is the OAuth client_id.
+          <Trans i18nKey="authConfig.apple.serviceIdHint"><code>com.tortacrm.signin</code></Trans>
         </p>
         <input className="crm-input" placeholder="com.tortacrm.signin"
           value={serviceId} onChange={e => setServiceId(e.target.value)} autoComplete="off" />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Team ID</label>
+        <label className="auth-label">{t('authConfig.apple.teamId')}</label>
         <p className="auth-field-hint">
-          10-character ID at top-right of <a href="https://developer.apple.com/account" target="_blank" rel="noopener noreferrer">developer.apple.com → Membership</a>.
+          <Trans i18nKey="authConfig.apple.teamIdHint">
+            <a href="https://developer.apple.com/account" target="_blank" rel="noopener noreferrer">developer.apple.com → Membership</a>
+          </Trans>
         </p>
         <input className="crm-input" placeholder="ABCDE12345" maxLength={10}
           value={teamId} onChange={e => setTeamId(e.target.value)} autoComplete="off" />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Key ID</label>
+        <label className="auth-label">{t('authConfig.apple.keyId')}</label>
         <p className="auth-field-hint">
-          10-character ID of the Sign-In key you created under
-          <strong> Apple Developer → Certificates, Identifiers & Profiles → Keys</strong> (with Sign-In with Apple enabled).
+          <Trans i18nKey="authConfig.apple.keyIdHint"><strong>x</strong></Trans>
         </p>
         <input className="crm-input" placeholder="ABCDE12345" maxLength={10}
           value={keyId} onChange={e => setKeyId(e.target.value)} autoComplete="off" />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Private Key (.p8 file contents)</label>
+        <label className="auth-label">{t('authConfig.apple.privateKey')}</label>
         <p className="auth-field-hint">
-          Paste the full PEM contents of the <code>AuthKey_*.p8</code> file you downloaded from Apple
-          (you can only download it ONCE) or upload the file directly.
-          We use this to sign Apple's ES256 client_secret JWT on every token exchange.
+          <Trans i18nKey="authConfig.apple.privateKeyHint"><code>AuthKey_*.p8</code></Trans>
         </p>
         <div className="auth-secret-wrap">
           <textarea className="crm-input apple-p8-textarea"
@@ -185,19 +185,18 @@ export default function ApplePanel({ provider, projectId, onSaved }) {
           </button>
         </div>
         <label className="auth-btn-check apple-p8-upload">
-          Upload .p8 file
+          {t('authConfig.apple.uploadP8')}
           <input type="file" accept=".p8,.pem,.txt"
             onChange={onP8Upload} style={{ display: 'none' }} />
         </label>
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Redirect URI / Return URL</label>
+        <label className="auth-label">{t('authConfig.apple.redirectLabel')}</label>
         <p className="auth-field-hint">
-          Add this exact URL to your Service ID configuration under
-          <strong> Sign In with Apple → Configure → Return URLs</strong>. Apple
-          requires HTTPS for this URL — local <code>http://</code> won't be
-          accepted by Apple even for testing.
+          <Trans i18nKey="authConfig.apple.redirectHint">
+            <strong>x</strong><code>http://</code>
+          </Trans>
         </p>
         <div className="auth-uri-row">
           <code className="auth-uri-code">{data.redirect_uri}</code>
@@ -213,9 +212,7 @@ export default function ApplePanel({ provider, projectId, onSaved }) {
       {data.redirect_uri?.startsWith('http://') && (
         <div className="auth-msg auth-msg--warn apple-https-warn">
           <Warning size={14} weight="fill" />
-          Apple rejects <code>http://</code> Return URLs. For local testing, expose
-          your dev server via ngrok / Cloudflare Tunnel and update the project's
-          Site URL to that HTTPS address.
+          <Trans i18nKey="authConfig.apple.httpsWarn"><code>http://</code></Trans>
         </div>
       )}
 
@@ -223,17 +220,17 @@ export default function ApplePanel({ provider, projectId, onSaved }) {
 
       <div className="auth-actions">
         <button className="crm-submit-btn" onClick={save} disabled={saving} type="button">
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('authConfig.saving') : t('common.save')}
         </button>
         {data.configured && (
           <button className="auth-btn-danger" onClick={del} disabled={deleting} type="button">
             <Trash size={15} />
-            {deleting ? 'Deleting…' : 'Delete'}
+            {deleting ? t('authConfig.deleting') : t('common.delete')}
           </button>
         )}
         <a href={APPLE_CONSOLE} target="_blank" rel="noopener noreferrer"
           className="auth-btn-link" style={{ marginLeft: 'auto', textDecoration: 'none' }}>
-          <ArrowSquareOut size={14} /> Open Apple Developer
+          <ArrowSquareOut size={14} /> {t('authConfig.apple.openConsole')}
         </a>
       </div>
 

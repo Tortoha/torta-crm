@@ -1,12 +1,13 @@
-// Security — bulk-style (mirrors Project Settings: Section + FieldCard).
-// Active sessions list + log-out-everywhere + a short "what is a session" note.
+// Security — bulk-section headers (icon + title), but full-width content:
+// the sessions list is a list (not a 2-col field grid), and the
+// log-out-everywhere action lives in the section header, right-aligned.
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Trash, DesktopTower, DeviceMobile, SignOut, Check, ShieldCheck, Info } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
-import { Section, FieldCard } from '../Project/ProjectSettings.jsx';
 import '../../Style/Authentication.css';
-import '../../Style/Products.css';
+import '../../Style/Products.css';   // bulk-section-* + crm-icon-btn
 import '../../Style/Settings.css';
 
 function detectDevice(ua) {
@@ -30,17 +31,18 @@ function detectOS(ua) {
   if (/linux/i.test(ua))        return 'Linux';
   return '';
 }
-function relativeTime(iso) {
+function relativeTime(iso, t) {
   if (!iso) return '';
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 60)        return 'just now';
-  if (diff < 3600)      return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400)     return `${Math.floor(diff / 3600)} h ago`;
-  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)} d ago`;
+  if (diff < 60)        return t('security.time.justNow');
+  if (diff < 3600)      return t('security.time.minAgo', { n: Math.floor(diff / 60) });
+  if (diff < 86400)     return t('security.time.hAgo',   { n: Math.floor(diff / 3600) });
+  if (diff < 86400 * 7) return t('security.time.dAgo',   { n: Math.floor(diff / 86400) });
   return new Date(iso).toLocaleDateString();
 }
 
 export default function Security() {
+  const { t } = useTranslation();
   const [sessions, setSessions]     = useState(null);
   const [busy, setBusy]             = useState(null);
   const [confirmAll, setConfirmAll] = useState(false);
@@ -71,16 +73,36 @@ export default function Security() {
 
   return (
     <>
-      <h1 className="crm-page-title">Security</h1>
+      <h1 className="crm-page-title">{t('security.title')}</h1>
 
       <div className="bulk-settings">
-        <Section icon={<ShieldCheck weight="duotone" />} title="Active sessions"
-          subtitle="Every device where you're signed in. Revoking ends that session immediately.">
+        <section className="bulk-section">
+          <header className="bulk-section-head">
+            <div className="bulk-section-icon"><ShieldCheck weight="duotone" /></div>
+            <div className="bulk-section-text">
+              <h2 className="bulk-section-title">{t('security.sessions.title')}</h2>
+              <p className="bulk-section-sub">{t('security.sessions.subtitle')}</p>
+            </div>
+            {sessions && sessions.length > 1 && (
+              confirmAll ? (
+                <div className="sett-sec-actions">
+                  <button className="auth-btn-check" type="button" onClick={() => setConfirmAll(false)}>{t('common.cancel')}</button>
+                  <button className="auth-btn-danger" type="button" onClick={logoutAll} disabled={busy === 'all'}>
+                    <SignOut size={14} /> {t('common.confirm')}
+                  </button>
+                </div>
+              ) : (
+                <button className="auth-btn-danger" type="button" onClick={() => setConfirmAll(true)}>
+                  <SignOut size={14} /> {t('security.sessions.logoutEverywhere')}
+                </button>
+              )
+            )}
+          </header>
 
           {sessions === null ? (
-            <div className="crm-placeholder">Loading sessions…</div>
+            <div className="crm-placeholder">{t('security.sessions.loading')}</div>
           ) : sessions.length === 0 ? (
-            <div className="crm-placeholder">No active sessions found.</div>
+            <div className="crm-placeholder">{t('security.sessions.empty')}</div>
           ) : (
             <div className="sett-sessions">
               {sessions.map(s => {
@@ -93,18 +115,18 @@ export default function Security() {
                       <span className="sett-session-name">
                         {detectBrowser(s.user_agent)}{os ? ` · ${os}` : ''}
                         {s.is_current && (
-                          <span className="auth-badge-enabled sett-session-badge"><Check size={11} /> This device</span>
+                          <span className="auth-badge-enabled sett-session-badge"><Check size={11} /> {t('security.sessions.thisDevice')}</span>
                         )}
                       </span>
                       <span className="sett-session-meta">
                         {s.ip && <>{s.ip} · </>}
-                        {s.last_used_at && <>last used {relativeTime(s.last_used_at)} · </>}
-                        signed in {relativeTime(s.created_at)}
+                        {s.last_used_at && <>{t('security.sessions.lastUsed', { time: relativeTime(s.last_used_at, t) })} · </>}
+                        {t('security.sessions.signedIn', { time: relativeTime(s.created_at, t) })}
                       </span>
                     </div>
                     {!s.is_current && (
                       <button className="crm-icon-btn crm-icon-btn--danger" type="button"
-                        title="Revoke session" disabled={busy === s.id} onClick={() => revoke(s.id)}>
+                        title={t('security.sessions.revoke')} disabled={busy === s.id} onClick={() => revoke(s.id)}>
                         <Trash size={16} />
                       </button>
                     )}
@@ -113,36 +135,18 @@ export default function Security() {
               })}
             </div>
           )}
+        </section>
 
-          {sessions && sessions.length > 1 && (
-            <FieldCard label="Log out everywhere"
-              hint="Ends every other session and signs this device out too.">
-              {confirmAll ? (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="auth-btn-check" type="button" onClick={() => setConfirmAll(false)}>Cancel</button>
-                  <button className="auth-btn-danger" type="button" onClick={logoutAll} disabled={busy === 'all'}>
-                    <SignOut size={14} /> Confirm — log out everywhere
-                  </button>
-                </div>
-              ) : (
-                <button className="auth-btn-danger" type="button" onClick={() => setConfirmAll(true)}>
-                  <SignOut size={14} /> Log out from all devices
-                </button>
-              )}
-            </FieldCard>
-          )}
-        </Section>
-
-        <Section icon={<Info weight="duotone" />} title="About sessions"
-          subtitle="How staying logged in works.">
-          <p className="sett-about-text">
-            A session is created every time you sign in (email code, Google, etc). Each one is a
-            short-lived access token (15 min) plus a long-lived refresh token (30 days) — your
-            browser silently swaps an expired access token for a new one, so you stay logged in
-            transparently. If you suspect someone has access to your account, log out from all
-            devices and change your password.
-          </p>
-        </Section>
+        <section className="bulk-section">
+          <header className="bulk-section-head">
+            <div className="bulk-section-icon"><Info weight="duotone" /></div>
+            <div className="bulk-section-text">
+              <h2 className="bulk-section-title">{t('security.about.title')}</h2>
+              <p className="bulk-section-sub">{t('security.about.subtitle')}</p>
+            </div>
+          </header>
+          <p className="sett-about-text">{t('security.about.text')}</p>
+        </section>
       </div>
     </>
   );

@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { API_BASE } from '../../api.js';
 import { decodeHash } from '../../Utils/hashids.js';
 import '../../Style/Products.css';
 
 export default function ProductReviews() {
+  const { t } = useTranslation();
   const { projectId, setProductContext } = useOutletContext();
   const { productHash } = useParams();
   const productId = decodeHash(productHash);
@@ -30,17 +32,17 @@ export default function ProductReviews() {
   return (
     <div className="prod-page po-page">
       <h1 className="crm-page-title">
-        Reviews{product ? ` · ${product.title}` : ''}
+        {t('productDetail.reviews.title')}{product ? ` · ${product.title}` : ''}
       </h1>
 
       <section className="po-block">
         <div className="po-block-card">
-          {loading && <p className="crm-placeholder">Loading…</p>}
-          {!loading && reviews.length === 0 && <div className="po-empty">No reviews yet.</div>}
+          {loading && <p className="crm-placeholder">{t('common.loading')}</p>}
+          {!loading && reviews.length === 0 && <div className="po-empty">{t('productDetail.reviews.empty')}</div>}
           {!loading && reviews.map(r => (
             <article key={r.id} className="po-review">
               <div className="po-review-head">
-                <span className="po-review-author">User #{r.user_id}</span>
+                <span className="po-review-author">{t('productDetail.reviews.author', { id: r.user_id })}</span>
                 <span className="po-review-stars">
                   {'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}
                 </span>

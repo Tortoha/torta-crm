@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Cropper from 'react-easy-crop';
 import 'react-easy-crop/react-easy-crop.css';
 import { X, Minus, Plus, ArrowCounterClockwise, ArrowClockwise } from '@phosphor-icons/react';
+import { useTranslation } from 'react-i18next';
 import '../Style/AvatarCrop.css';
 
 function createImage(url) {
@@ -45,6 +46,7 @@ async function getCroppedImg(imageSrc, pixelCrop, rotation = 0) {
 }
 
 function AvatarCropModal({ file, onSave, onClose }) {
+  const { t } = useTranslation();
   const [imageSrc, setImageSrc]             = useState(null);
   const [crop,     setCrop]                 = useState({ x: 0, y: 0 });
   const [zoom,     setZoom]                 = useState(1);
@@ -82,8 +84,8 @@ function AvatarCropModal({ file, onSave, onClose }) {
       <div className="crop-modal">
 
         <div className="crop-head">
-          <span className="crop-title">Edit photo</span>
-          <button className="crop-close" onClick={onClose} type="button" aria-label="Close">
+          <span className="crop-title">{t('header.crop.title')}</span>
+          <button className="crop-close" onClick={onClose} type="button" aria-label={t('header.crop.close')}>
             <X />
           </button>
         </div>
@@ -107,9 +109,9 @@ function AvatarCropModal({ file, onSave, onClose }) {
 
         <div className="crop-controls">
           <div className="crop-slider-row">
-            <span className="crop-slider-label">Zoom</span>
+            <span className="crop-slider-label">{t('header.crop.zoom')}</span>
             <div className="crop-slider-wrap">
-              <button type="button" className="crop-nudge" onClick={() => setZoom(z => Math.max(1, z - 0.1))} aria-label="Zoom out">
+              <button type="button" className="crop-nudge" onClick={() => setZoom(z => Math.max(1, z - 0.1))} aria-label={t('header.crop.zoomOut')}>
                 <Minus />
               </button>
               <input
@@ -118,16 +120,16 @@ function AvatarCropModal({ file, onSave, onClose }) {
                 value={zoom}
                 onChange={e => setZoom(Number(e.target.value))}
               />
-              <button type="button" className="crop-nudge" onClick={() => setZoom(z => Math.min(3, z + 0.1))} aria-label="Zoom in">
+              <button type="button" className="crop-nudge" onClick={() => setZoom(z => Math.min(3, z + 0.1))} aria-label={t('header.crop.zoomIn')}>
                 <Plus />
               </button>
             </div>
           </div>
 
           <div className="crop-slider-row">
-            <span className="crop-slider-label">Rotate</span>
+            <span className="crop-slider-label">{t('header.crop.rotate')}</span>
             <div className="crop-slider-wrap">
-              <button type="button" className="crop-nudge" onClick={() => setRotation(r => r - 90)} aria-label="Rotate left">
+              <button type="button" className="crop-nudge" onClick={() => setRotation(r => r - 90)} aria-label={t('header.crop.rotateLeft')}>
                 <ArrowCounterClockwise />
               </button>
               <input
@@ -136,7 +138,7 @@ function AvatarCropModal({ file, onSave, onClose }) {
                 value={rotation}
                 onChange={e => setRotation(Number(e.target.value))}
               />
-              <button type="button" className="crop-nudge" onClick={() => setRotation(r => r + 90)} aria-label="Rotate right">
+              <button type="button" className="crop-nudge" onClick={() => setRotation(r => r + 90)} aria-label={t('header.crop.rotateRight')}>
                 <ArrowClockwise />
               </button>
             </div>
@@ -144,9 +146,9 @@ function AvatarCropModal({ file, onSave, onClose }) {
         </div>
 
         <div className="crop-actions">
-          <button type="button" className="crop-btn-cancel" onClick={onClose}>Cancel</button>
+          <button type="button" className="crop-btn-cancel" onClick={onClose}>{t('common.cancel')}</button>
           <button type="button" className="crop-btn-save" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save photo'}
+            {saving ? t('header.crop.saving') : t('header.crop.savePhoto')}
           </button>
         </div>
 

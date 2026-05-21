@@ -9,6 +9,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   CaretRight, X, CheckCircle, Money, CreditCard,
 } from '@phosphor-icons/react';
@@ -29,37 +30,26 @@ import '../../Style/Authentication.css';
 // option.
 const AVAILABLE = [
   { id: 'stripe', label: 'Stripe',
-    desc: 'Global card payments — 50+ countries, Stripe Payment Intents + Refunds API',
     iconify: 'logos:stripe' },
   { id: 'paypal', label: 'PayPal',
-    desc: 'PayPal Orders v2 — works in 200+ markets, capture + refund',
     iconify: 'logos:paypal' },
   { id: 'adyen', label: 'Adyen',
-    desc: 'Enterprise unified payments — 250+ payment methods, hosted Drop-in',
     iconify: 'simple-icons:adyen', color: '#0ABF53' },
   { id: 'braintree', label: 'Braintree',
-    desc: 'PayPal-owned full-service gateway — cards + PayPal + Apple Pay + Google Pay',
     iconify: 'simple-icons:braintree', color: '#172A4E' },
   { id: 'square', label: 'Square',
-    desc: 'In-person + online payments — US, UK, AU, CA, JP, IE',
     iconify: 'simple-icons:square', color: '#3E4348' },
   { id: 'mollie', label: 'Mollie',
-    desc: 'European gateway — iDEAL, Bancontact, SOFORT, SEPA, cards',
     iconify: 'simple-icons:mollie', color: '#001B44' },
   { id: 'razorpay', label: 'Razorpay',
-    desc: 'India + South Asia gateway — cards, UPI, wallets, EMI',
     iconify: 'simple-icons:razorpay', color: '#0C2451' },
   { id: 'paddle', label: 'Paddle',
-    desc: 'Merchant of record for SaaS — handles tax + invoicing globally',
     iconify: 'simple-icons:paddle', color: '#0F1626' },
   { id: 'paybox', label: 'PayBox.money',
-    desc: 'Kazakhstan acquiring — KZT cards + KaspiPay + EasyPay',
     phosphor: CreditCard },
   { id: 'manual', label: 'Manual',
-    desc: 'No API integration — cash, bank transfer, etc. Refunds are record-only',
     phosphor: Money },
   { id: 'other', label: 'Other',
-    desc: 'Free-form provider — record references manually in Returns workflow',
     phosphor: CreditCard },
 ];
 
@@ -87,6 +77,7 @@ const ROW_TILT = {
 // ── Provider row (active) ───────────────────────────────────────────
 
 function ProviderRow({ provider, status, onClick, first, last }) {
+  const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
   const cls = [
     'auth-provider-row',
@@ -103,19 +94,19 @@ function ProviderRow({ provider, status, onClick, first, last }) {
       </div>
 
       <span className="auth-provider-name">{provider.label}</span>
-      <span className="auth-provider-desc">{provider.desc}</span>
+      <span className="auth-provider-desc">{t(`org.payments.providers.${provider.id}`)}</span>
 
       {status === 'connected'  && (
         <span className="auth-badge-enabled">
-          <CheckCircle weight="fill" size={11} /> Connected
+          <CheckCircle weight="fill" size={11} /> {t('org.payments.connected')}
         </span>
       )}
       {status === 'configured' && (
         <span className="auth-badge-enabled" style={{ background: '#F59E0B' }}>
-          Awaiting test
+          {t('org.payments.awaitingTest')}
         </span>
       )}
-      {status === 'idle'       && <span className="auth-badge-disabled">Not connected</span>}
+      {status === 'idle'       && <span className="auth-badge-disabled">{t('org.payments.notConnected')}</span>}
 
       <CaretRight className="auth-provider-chevron" />
     </div>
@@ -126,6 +117,7 @@ function ProviderRow({ provider, status, onClick, first, last }) {
 // ── Provider row (coming-soon, non-clickable) ───────────────────────
 
 function ComingSoonRow({ provider, first, last }) {
+  const { t } = useTranslation();
   const cls = [
     'auth-provider-row',
     'auth-provider-row--disabled',
@@ -139,8 +131,8 @@ function ComingSoonRow({ provider, first, last }) {
         <ProviderIcon provider={provider} size={24} />
       </div>
       <span className="auth-provider-name">{provider.label}</span>
-      <span className="auth-provider-desc">{provider.desc}</span>
-      <span className="auth-badge-disabled">Coming soon</span>
+      <span className="auth-provider-desc">{t(`org.payments.providers.${provider.id}`)}</span>
+      <span className="auth-badge-disabled">{t('org.payments.comingSoon')}</span>
       <CaretRight className="auth-provider-chevron" />
     </div>
   );
@@ -151,6 +143,7 @@ function ComingSoonRow({ provider, first, last }) {
 // Same structure as Authentication.jsx AuthModal.
 
 function PaymentModal({ provider, onClose, children }) {
+  const { t } = useTranslation();
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', h);
@@ -169,7 +162,7 @@ function PaymentModal({ provider, onClose, children }) {
             <div>
               <div className="auth-modal-title">{provider.label}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">{provider.desc}</span>
+                <span className="auth-modal-subtitle">{t(`org.payments.providers.${provider.id}`)}</span>
               </div>
             </div>
           </div>
@@ -188,6 +181,7 @@ function PaymentModal({ provider, onClose, children }) {
 // ── Page ────────────────────────────────────────────────────────────
 
 export default function OrgPayments() {
+  const { t } = useTranslation();
   const { org } = useOutletContext();
   const orgId = org?.id;
 
@@ -220,11 +214,9 @@ export default function OrgPayments() {
 
   return (
     <>
-      <h1 className="crm-page-title">Payments</h1>
+      <h1 className="crm-page-title">{t('org.payments.title')}</h1>
       <p className="auth-page-subtitle">
-        Connect your payment provider so customers can pay directly during checkout.
-        CRM never touches the money — payments flow straight to your provider account,
-        and refunds are processed through the provider's API when you handle returns.
+        {t('org.payments.subtitle')}
       </p>
 
       <div className="auth-providers-list">

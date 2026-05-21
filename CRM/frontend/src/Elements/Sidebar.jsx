@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   House, Tag, LockKey, GearSix,
   CaretDown, ArrowLineLeft, ArrowLineRight,
@@ -10,53 +11,53 @@ import {
 
 // ── Nav configs ────────────────────────────────────────────────
 
-function buildSections(apiKey) {
+function buildSections(apiKey, t) {
   const base = `/project/${apiKey}`;
   // `pages` = the permission keys this nav item covers. Section pages (Products,
   // Orders, Booking, Chat, Authentication) list every sub-tab key — the item is
   // shown if the member can view ANY of them.
   return [
     {
-      id: 'overview', label: 'Overview',
+      id: 'overview', label: t('nav.sections.overview'),
       items: [
-        { to: `${base}`,           label: 'Project Overview', Icon: House,     exact: true, pages: ['overview'] },
-        { to: `${base}/analytics`, label: 'Analytics',        Icon: ChartLine, pages: ['analytics'] },
-        { to: `${base}/alerts`,    label: 'Alerts',           Icon: Bell,      pages: ['alerts'] },
-        { to: `${base}/targets`,   label: 'Targets',          Icon: Target,    pages: ['goals'] },
+        { to: `${base}`,           label: t('nav.projectOverview'), Icon: House,     exact: true, pages: ['overview'] },
+        { to: `${base}/analytics`, label: t('nav.analytics'),       Icon: ChartLine, pages: ['analytics'] },
+        { to: `${base}/alerts`,    label: t('nav.alerts'),          Icon: Bell,      pages: ['alerts'] },
+        { to: `${base}/targets`,   label: t('nav.targets'),         Icon: Target,    pages: ['goals'] },
       ],
     },
     {
-      id: 'store', label: 'Business',
+      id: 'store', label: t('nav.sections.business'),
       items: [
-        { to: `${base}/products`,  label: 'Products',  Icon: Tag,
+        { to: `${base}/products`,  label: t('nav.products'),  Icon: Tag,
           pages: ['products', 'inventory', 'batches', 'promo_codes', 'discounts', 'tier_pricing', 'warehouses', 'archive', 'product_settings'] },
-        { to: `${base}/orders`,    label: 'Orders',    Icon: Package,       pages: ['orders', 'returns'] },
-        { to: `${base}/booking`,   label: 'Bookings',  Icon: CalendarBlank, pages: ['booking', 'booking_services', 'booking_staff', 'booking_settings'] },
-        { to: `${base}/customers`, label: 'Customers', Icon: UsersThree,    pages: ['customers'] },
-        { to: `${base}/emails`,    label: 'Emails', Icon: EnvelopeSimple,   pages: ['emails'] },
-        { to: `${base}/chat`,      label: 'Chat with Customers', Icon: ChatCircleDots, pages: ['chat', 'channels'] },
+        { to: `${base}/orders`,    label: t('nav.orders'),    Icon: Package,       pages: ['orders', 'returns'] },
+        { to: `${base}/booking`,   label: t('nav.bookings'),  Icon: CalendarBlank, pages: ['booking', 'booking_services', 'booking_staff', 'booking_settings'] },
+        { to: `${base}/customers`, label: t('nav.customers'), Icon: UsersThree,    pages: ['customers'] },
+        { to: `${base}/emails`,    label: t('nav.emails'), Icon: EnvelopeSimple,   pages: ['emails'] },
+        { to: `${base}/chat`,      label: t('nav.chat'), Icon: ChatCircleDots, pages: ['chat', 'channels'] },
       ],
     },
     {
-      id: 'account', label: 'Account',
+      id: 'account', label: t('nav.sections.account'),
       items: [
-        { to: `${base}/authentication`, label: 'Authentication', Icon: LockKey,  pages: ['auth_providers', 'url_config'] },
-        { to: `${base}/integrations`,   label: 'Integrations',   Icon: Plug,     pages: ['integrations'] },
-        { to: `${base}/documents`,      label: 'Documents',      Icon: FileText, pages: ['documents'] },
-        { to: `${base}/settings`,       label: 'Settings',       Icon: GearSix,  pages: ['settings'] },
+        { to: `${base}/authentication`, label: t('nav.authentication'), Icon: LockKey,  pages: ['auth_providers', 'url_config'] },
+        { to: `${base}/integrations`,   label: t('nav.integrations'),   Icon: Plug,     pages: ['integrations'] },
+        { to: `${base}/documents`,      label: t('nav.documents'),      Icon: FileText, pages: ['documents'] },
+        { to: `${base}/settings`,       label: t('nav.settings'),       Icon: GearSix,  pages: ['settings'] },
       ],
     },
   ];
 }
 
-function buildProductItems(productHash) {
+function buildProductItems(productHash, t) {
   const base = `/product/${productHash}`;
   return [
-    { to: base,                    label: 'Product Overview', Icon: Cube,            exact: true },
-    { to: `${base}/edit-history`,  label: 'Edit history',     Icon: ListBullets    },
-    { to: `${base}/reviews`,       label: 'Reviews',          Icon: ChatCircleText },
-    { to: `${base}/api-preview`,   label: 'API Preview',      Icon: Code           },
-    { to: `${base}/settings`,      label: 'Settings',         Icon: GearSix        },
+    { to: base,                    label: t('nav.productOverview'), Icon: Cube,            exact: true },
+    { to: `${base}/edit-history`,  label: t('nav.editHistory'),     Icon: ListBullets    },
+    { to: `${base}/reviews`,       label: t('nav.reviews'),         Icon: ChatCircleText },
+    { to: `${base}/api-preview`,   label: t('nav.apiPreview'),      Icon: Code           },
+    { to: `${base}/settings`,      label: t('nav.settings'),        Icon: GearSix        },
   ];
 }
 
@@ -206,6 +207,7 @@ function CollapsedNav({ items, pathname }) {
 export default function Sidebar({ collapsed, onToggle, access }) {
   const location   = useLocation();
   const { apiKey } = useParams();
+  const { t }      = useTranslation();
 
   // Hide nav items the member's role can't view (shown if ANY of the item's
   // pages is viewable). Owner / not-yet-loaded → show all (backend still
@@ -226,13 +228,13 @@ export default function Sidebar({ collapsed, onToggle, access }) {
   const productHash = productMatch?.[1] ?? null;
 
   const sections     = useMemo(
-    () => buildSections(apiKey)
+    () => buildSections(apiKey, t)
             .map(s => ({ ...s, items: s.items.filter(i => canView(i.pages)) }))
             .filter(s => s.items.length > 0),
-    [apiKey, access]);   // eslint-disable-line react-hooks/exhaustive-deps
+    [apiKey, access, t]);   // eslint-disable-line react-hooks/exhaustive-deps
   const productItems = useMemo(
-    () => productHash ? buildProductItems(productHash) : null,
-    [productHash]
+    () => productHash ? buildProductItems(productHash, t) : null,
+    [productHash, t]
   );
 
   // For section open/close state (only used in normal mode)
@@ -284,7 +286,7 @@ export default function Sidebar({ collapsed, onToggle, access }) {
           <button className="sb-toggle-btn" onClick={onToggle} type="button" aria-label="Toggle sidebar">
             {collapsed
               ? <ArrowLineRight className="sb-toggle-icon" />
-              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">Collapse</span></>
+              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">{t('common.collapse')}</span></>
             }
           </button>
         </div>

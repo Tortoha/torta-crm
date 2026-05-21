@@ -12,6 +12,7 @@
 
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Eye, EyeSlash, Trash, ArrowSquareOut, CheckCircle, Warning, ArrowsClockwise,
 } from '@phosphor-icons/react';
@@ -22,43 +23,30 @@ const MASKED_PLACEHOLDER = '••••••••';
 
 // Console links per provider so merchant can quickly jump to "where do I get these keys".
 const PROVIDER_CONSOLE = {
-  stripe:        { url: 'https://dashboard.stripe.com/apikeys',         label: 'Open Stripe Dashboard' },
-  tinkoff:       { url: 'https://business.tbank.ru/oplata/dashboard',   label: 'Open Tinkoff Business' },
-  cloudpayments: { url: 'https://merchant.cloudpayments.ru/',           label: 'Open CloudPayments Dashboard' },
-  yookassa:      { url: 'https://yookassa.ru/my',                       label: 'Open YooKassa Dashboard' },
-  paypal:        { url: 'https://developer.paypal.com/dashboard',       label: 'Open PayPal Developer' },
+  stripe:        { url: 'https://dashboard.stripe.com/apikeys',         name: 'Stripe Dashboard' },
+  tinkoff:       { url: 'https://business.tbank.ru/oplata/dashboard',   name: 'Tinkoff Business' },
+  cloudpayments: { url: 'https://merchant.cloudpayments.ru/',           name: 'CloudPayments Dashboard' },
+  yookassa:      { url: 'https://yookassa.ru/my',                       name: 'YooKassa Dashboard' },
+  paypal:        { url: 'https://developer.paypal.com/dashboard',       name: 'PayPal Developer' },
   adyen:         { url: 'https://ca-test.adyen.com/ca/ca/config/api_credentials_new.shtml',
-                                                                          label: 'Open Adyen Customer Area' },
-  braintree:     { url: 'https://sandbox.braintreegateway.com/login',   label: 'Open Braintree Sandbox' },
-  square:        { url: 'https://developer.squareup.com/apps',          label: 'Open Square Developer Dashboard' },
+                                                                          name: 'Adyen Customer Area' },
+  braintree:     { url: 'https://sandbox.braintreegateway.com/login',   name: 'Braintree Sandbox' },
+  square:        { url: 'https://developer.squareup.com/apps',          name: 'Square Developer Dashboard' },
   mollie:        { url: 'https://my.mollie.com/dashboard/developers/api-keys',
-                                                                          label: 'Open Mollie API Keys' },
-  razorpay:      { url: 'https://dashboard.razorpay.com/app/keys',      label: 'Open Razorpay Dashboard' },
+                                                                          name: 'Mollie API Keys' },
+  razorpay:      { url: 'https://dashboard.razorpay.com/app/keys',      name: 'Razorpay Dashboard' },
   paddle:        { url: 'https://sandbox-vendors.paddle.com/authentication',
-                                                                          label: 'Open Paddle Authentication' },
-  paybox:        { url: 'https://paybox.money/lk/',                     label: 'Open PayBox.money Dashboard' },
+                                                                          name: 'Paddle Authentication' },
+  paybox:        { url: 'https://paybox.money/lk/',                     name: 'PayBox.money Dashboard' },
 };
 
-// Free-form hint shown in the modal header for each provider.
-const PROVIDER_HINT = {
-  stripe:        'Process card payments globally. Test mode keys work without real money.',
-  tinkoff:       'Российский эквайринг от Т-Банка. Terminal_key + password из личного кабинета.',
-  cloudpayments: 'Российская платёжная система. Public ID safe to embed in storefront; api_secret stays server-side.',
-  yookassa:      'YooKassa (бывш. Яндекс.Касса). Один из самых популярных RU-провайдеров.',
-  paypal:        'PayPal Orders v2 API. Sandbox keys → test accounts; live keys → real money.',
-  adyen:         'Adyen Unified Commerce platform. Use test API key for sandbox, then switch to live. HMAC key signs webhooks.',
-  braintree:     'PayPal Braintree GraphQL API. Sandbox merchant_id starts with letters; live ids look different. Webhooks signed via private_key.',
-  square:        'Square Connect APIs. Use sandbox access_token (EAAAEy…) for testing; webhook_signature_key signs notifications.',
-  mollie:        'Mollie supports iDEAL, Bancontact, SEPA, cards. API key prefix (test_/live_) selects the mode automatically. Webhooks unsigned — we re-fetch payment status to verify.',
-  razorpay:      'Razorpay for India + South Asia. key_id is safe to expose on the frontend; key_secret stays on backend. Webhook secret signs notifications with HMAC-SHA256.',
-  paddle:        'Paddle Billing (new API). Merchant of record — handles VAT/tax globally. Catalog products usually required; non-catalog mode works for ad-hoc cart amounts.',
-  paybox:        'PayBox.money — Kazakhstan-focused acquiring. Supports KZT cards, KaspiPay, EasyPay. Signature-based auth (SHA1 over sorted params + secret_key).',
-  manual:        'No API. Orders recorded as payment_status="manual", refunds are record-only — you process money externally (cash / bank transfer).',
-  other:         'For providers we haven\'t integrated. You\'ll need to manually record references in the Returns workflow.',
-};
+// Free-form hint keys (resolved via t('org.payments.panel.hint.<key>')).
+// tinkoff/cloudpayments/yookassa are not in the UI catalog but kept for
+// self-hosters — they fall back to their raw key if no translation exists.
 
 
 export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose }) {
+  const { t } = useTranslation();
   const providerKey = provider.id;
   const consoleInfo = PROVIDER_CONSOLE[providerKey];
 
@@ -94,7 +82,7 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
       ]);
       const s = sRes.ok ? await sRes.json() : null;
       const c = cRes.ok ? await cRes.json() : null;
-      if (!c) { setErr('Failed to load credentials'); return; }
+      if (!c) { setErr(t('org.payments.panel.loadFailed')); return; }
 
       setData(c);
       setTestMode(!!c.is_test_mode);
@@ -116,9 +104,9 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
       }
       setDirty(false);
     } catch {
-      setErr('Network error');
+      setErr(t('org.payments.panel.networkError'));
     }
-  }, [orgId, providerKey]);
+  }, [orgId, providerKey, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -154,14 +142,14 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
           }),
         });
         const j = await r.json().catch(() => null);
-        if (!r.ok) { setErr(j?.detail || 'Save failed'); return; }
+        if (!r.ok) { setErr(j?.detail || t('org.payments.panel.saveFailed')); return; }
       }
-      showToast('Saved');
+      showToast(t('org.payments.panel.saved'));
       setDirty(false);
       onSaved?.();
       await load();
     } catch {
-      setErr('Network error');
+      setErr(t('org.payments.panel.networkError'));
     } finally { setSaving(false); }
   };
 
@@ -172,22 +160,22 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
         method: 'POST', credentials: 'include',
       });
       const j = await r.json().catch(() => null);
-      if (j?.ok) showToast('Connected ✓');
-      else       setErr(j?.error || 'Connection failed');
+      if (j?.ok) showToast(t('org.payments.panel.connectedToast'));
+      else       setErr(j?.error || t('org.payments.panel.connectionFailed'));
       await load();
       onSaved?.();
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('org.payments.panel.networkError')); }
     finally { setTesting(false); }
   };
 
   const disconnect = async () => {
-    if (!confirm('Disconnect this payment provider? Stored credentials will be erased.')) return;
+    if (!confirm(t('org.payments.panel.disconnectConfirm'))) return;
     setDeleting(true);
     try {
       await fetch(`${API_BASE}/api/orgs/${orgId}/payment-credentials`, {
         method: 'DELETE', credentials: 'include',
       });
-      showToast('Disconnected');
+      showToast(t('org.payments.panel.disconnected'));
       setCreds({});
       onSaved?.();
       await load();
@@ -207,14 +195,14 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
       // admin's browser would execute it in the CRM origin context.
       const safeDest = safeHttpUrl(j.redirect_url);
       if (safeDest) window.location.href = safeDest;
-      else setErr('Stripe Connect returned an invalid redirect URL.');
+      else setErr(t('org.payments.panel.stripeInvalidRedirect'));
     } else {
       const j = await r.json().catch(() => null);
-      setErr(j?.detail || 'Stripe Connect unavailable');
+      setErr(j?.detail || t('org.payments.panel.stripeUnavailable'));
     }
   };
 
-  if (!data) return <p className="crm-placeholder">Loading…</p>;
+  if (!data) return <p className="crm-placeholder">{t('org.payments.panel.loading')}</p>;
 
   const isManual = providerKey === 'manual' || providerKey === 'other';
   const isCurrentProvider = data.provider === providerKey;
@@ -230,13 +218,13 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
         <div>
           <span className="auth-toggle-label">
             {isConnected ? (
-              <><CheckCircle size={16} weight="fill" style={{ color: 'var(--accent)', verticalAlign: '-3px' }} /> Connected</>
-            ) : (isCurrentProvider ? 'Configured · awaiting test' : 'Not configured')}
+              <><CheckCircle size={16} weight="fill" style={{ color: 'var(--accent)', verticalAlign: '-3px' }} /> {t('org.payments.panel.connected')}</>
+            ) : (isCurrentProvider ? t('org.payments.panel.configuredAwaitingTest') : t('org.payments.panel.notConfigured'))}
           </span>
           <p className="auth-field-hint">
-            {PROVIDER_HINT[providerKey]}
+            {t(`org.payments.panel.hint.${providerKey}`, { defaultValue: providerKey })}
             {data.last_verified_at && isConnected && (
-              <> · Last verified {new Date(data.last_verified_at).toLocaleString()}</>
+              <>{t('org.payments.panel.lastVerified', { date: new Date(data.last_verified_at).toLocaleString() })}</>
             )}
           </p>
         </div>
@@ -250,10 +238,10 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
       </div>
       {!isManual && (
         <p className="auth-field-hint" style={{ marginTop: -8 }}>
-          Toggle is currently in <strong>{testMode ? 'Test' : 'Live'}</strong> mode.
+          {t('org.payments.panel.modeNotePre')}<strong>{testMode ? t('org.payments.panel.modeTest') : t('org.payments.panel.modeLive')}</strong>{t('org.payments.panel.modeNoteMid')}
           {testMode
-            ? ' No real money will be charged — use the provider\'s test cards.'
-            : ' Real card charges will be made. Switch to test mode for development.'}
+            ? t('org.payments.panel.modeTestHint')
+            : t('org.payments.panel.modeLiveHint')}
         </p>
       )}
 
@@ -261,7 +249,7 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
 
       {data.last_error && !isConnected && (
         <p className="auth-msg auth-msg--err">
-          <Warning weight="duotone" /> Last error: {data.last_error}
+          <Warning weight="duotone" /> {t('org.payments.panel.lastError', { error: data.last_error })}
         </p>
       )}
 
@@ -270,38 +258,37 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
         <div style={{ padding: 12, background: 'var(--accent-tint)', borderRadius: 12,
                        fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ flex: 1 }}>
-            <strong>Recommended:</strong> Connect via Stripe OAuth instead of pasting keys —
-            safer + revocable from your Stripe dashboard.
+            <strong>{t('org.payments.panel.stripeRecommendedBold')}</strong>{t('org.payments.panel.stripeRecommended')}
           </span>
           <button type="button" className="auth-btn-check" onClick={startStripeConnect}>
-            Connect with Stripe →
+            {t('org.payments.panel.connectWithStripe')}
           </button>
         </div>
       )}
       {providerKey === 'stripe' && connectMethod === 'oauth' && (
         <p className="auth-msg auth-msg--ok">
-          <CheckCircle size={14} weight="fill" /> Connected via Stripe OAuth · account{' '}
+          <CheckCircle size={14} weight="fill" /> {t('org.payments.panel.connectedViaOAuthPre')}
           <code>{data.stripe_account_id}</code>
         </p>
       )}
 
       {/* ── Display preferences (apply to Returns refund step) ── */}
       <div className="auth-field">
-        <label className="auth-label">Account label (optional)</label>
+        <label className="auth-label">{t('org.payments.panel.accountLabel')}</label>
         <p className="auth-field-hint">
-          Shown to your team in the Returns refund step — e.g. "Torta Cakes — main account".
+          {t('org.payments.panel.accountLabelHint')}
         </p>
         <input className="crm-input" type="text"
-          placeholder="e.g. Torta Cakes — main account"
+          placeholder={t('org.payments.panel.accountLabelPlaceholder')}
           value={accountLabel}
           onChange={e => { setAccountLabel(e.target.value); setDirty(true); }}
           autoComplete="off" />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Dashboard URL (optional)</label>
+        <label className="auth-label">{t('org.payments.panel.dashboardUrl')}</label>
         <p className="auth-field-hint">
-          Quick link from the Returns modal to your provider's refund page.
+          {t('org.payments.panel.dashboardUrlHint')}
         </p>
         <input className="crm-input" type="url"
           placeholder={consoleInfo?.url || 'https://...'}
@@ -317,8 +304,7 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
 
           {!data.encryption_ok && (
             <p className="auth-msg auth-msg--err">
-              ⚠ Server encryption is not configured (PAYMENT_ENCRYPTION_KEY missing in .env).
-              Credentials cannot be saved.
+              {t('org.payments.panel.encryptionMissing')}
             </p>
           )}
 
@@ -351,7 +337,7 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
               )}
               {creds[field.key]?.startsWith?.(MASKED_PLACEHOLDER) && (
                 <p className="auth-field-hint" style={{ marginTop: 4 }}>
-                  Saved value. Type a new one to replace.
+                  {t('org.payments.panel.savedValue')}
                 </p>
               )}
             </div>
@@ -366,28 +352,28 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
         <button type="button" className="crm-submit-btn"
           disabled={saving || !dirty || (!isManual && !data.encryption_ok)}
           onClick={save}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('org.payments.panel.saving') : t('org.payments.panel.save')}
         </button>
         {!isManual && (
           <button type="button" className="auth-btn-check"
             disabled={testing || dirty || !isCurrentProvider}
             onClick={test}
-            title={dirty ? 'Save first' : (!isCurrentProvider ? 'Save credentials first' : '')}>
+            title={dirty ? t('org.payments.panel.saveFirst') : (!isCurrentProvider ? t('org.payments.panel.saveCredsFirst') : '')}>
             <ArrowsClockwise size={14} />
-            {testing ? 'Testing…' : 'Test connection'}
+            {testing ? t('org.payments.panel.testing') : t('org.payments.panel.testConnection')}
           </button>
         )}
         {isCurrentProvider && data.credentials_masked && Object.keys(data.credentials_masked).filter(k => !k.endsWith('_present')).length > 0 && (
           <button type="button" className="auth-btn-danger"
             disabled={deleting} onClick={disconnect}>
             <Trash size={15} />
-            {deleting ? 'Disconnecting…' : 'Disconnect'}
+            {deleting ? t('org.payments.panel.disconnecting') : t('org.payments.panel.disconnect')}
           </button>
         )}
         {consoleInfo && (
           <a href={consoleInfo.url} target="_blank" rel="noopener noreferrer"
             className="auth-btn-link" style={{ marginLeft: 'auto', textDecoration: 'none' }}>
-            <ArrowSquareOut size={14} /> {consoleInfo.label}
+            <ArrowSquareOut size={14} /> {t('org.payments.panel.openConsole', { name: consoleInfo.name })}
           </a>
         )}
       </div>

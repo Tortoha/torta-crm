@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import { MagnifyingGlass, CaretRight, CaretDown, Folder, Cube, PencilSimple, X, ArrowDown, FolderSimple, Warehouse, Tag } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
@@ -17,9 +18,9 @@ import '../../../Style/Organization.css';
 const VISIBLE_TYPES = new Set(['physical']);
 
 const FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'low', label: 'Low stock' },
-  { key: 'oos', label: 'Out of stock' },
+  { key: 'all', labelKey: 'products.inventory.filterAll' },
+  { key: 'low', labelKey: 'products.inventory.filterLow' },
+  { key: 'oos', labelKey: 'products.inventory.filterOos' },
 ];
 
 // Low-stock threshold for the toolbar pills + per-SKU filter. A SKU is
@@ -29,9 +30,9 @@ const FILTERS = [
 const LOW_STOCK_THRESHOLD = 10;
 
 const SORT_OPTIONS = [
-  { field: 'name',       label: 'Sort by name'  },
-  { field: 'stock',      label: 'Sort by stock' },
-  { field: 'variations', label: 'Sort by SKUs'  },
+  { field: 'name',       labelKey: 'products.inventory.sortByName'  },
+  { field: 'stock',      labelKey: 'products.inventory.sortByStock' },
+  { field: 'variations', labelKey: 'products.inventory.sortBySkus'  },
 ];
 const DEFAULT_DIR = { name: 'asc', stock: 'desc', variations: 'desc' };
 
@@ -39,16 +40,16 @@ const DEFAULT_DIR = { name: 'asc', stock: 'desc', variations: 'desc' };
 // only make sense for manual adjustments. Order is intentional: incoming reasons
 // at the top (most common), outgoing reasons below the divider.
 const REASON_OPTIONS = [
-  { value: 'supplier_delivery', label: 'Supplier delivery' },
-  { value: 'initial_inventory', label: 'Initial inventory' },
-  { value: 'customer_return',   label: 'Customer return' },
-  { value: 'production',        label: 'Production' },
-  { value: 'recount_adjust',    label: 'Recount adjustment' },
-  { value: 'transfer_in',       label: 'External transfer in' },
-  { value: 'damage',            label: 'Damage / write-off' },
-  { value: 'transfer_out',      label: 'External transfer out' },
-  { value: 'manual',            label: 'Manual correction' },
-  { value: 'other',             label: 'Other' },
+  { value: 'supplier_delivery', labelKey: 'products.inventory.reason.supplierDelivery' },
+  { value: 'initial_inventory', labelKey: 'products.inventory.reason.initialInventory' },
+  { value: 'customer_return',   labelKey: 'products.inventory.reason.customerReturn' },
+  { value: 'production',        labelKey: 'products.inventory.reason.production' },
+  { value: 'recount_adjust',    labelKey: 'products.inventory.reason.recountAdjust' },
+  { value: 'transfer_in',       labelKey: 'products.inventory.reason.transferIn' },
+  { value: 'damage',            labelKey: 'products.inventory.reason.damage' },
+  { value: 'transfer_out',      labelKey: 'products.inventory.reason.transferOut' },
+  { value: 'manual',            labelKey: 'products.inventory.reason.manual' },
+  { value: 'other',             labelKey: 'products.inventory.reason.other' },
 ];
 
 // Inventory table layout (9 columns):
@@ -137,6 +138,7 @@ function rollupFinancials(skus) {
 }
 
 function ProductsInventory() {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   // Sync the module-level currency global before any child row renders.
   // Read currency from project metadata; default to USD until project
@@ -337,16 +339,13 @@ function ProductsInventory() {
 
   return (
     <>
-      <p className="po-block-hint">
-        Click a product to load its variations and SKUs. Clicking <em>Edit</em>{' '}
-        on a SKU opens the same adjustment dialog as the per-product Inventory
-        page (writes to the stock audit log).
-      </p>
+      <p className="po-block-hint"
+        dangerouslySetInnerHTML={{ __html: t('products.inventory.hint') }} />
 
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search products…"
+          <input className="org-search-input" placeholder={t('products.inventory.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="po-toolbar-right">
@@ -376,10 +375,10 @@ function ProductsInventory() {
       )}
 
       {loading ? (
-        <p className="crm-placeholder">Loading…</p>
+        <p className="crm-placeholder">{t('common.loading')}</p>
       ) : filteredProducts.length === 0 ? (
         <p className="crm-placeholder">
-          {products.length === 0 ? 'No products yet — create one first.' : 'No products match the search.'}
+          {products.length === 0 ? t('products.inventory.emptyNoProducts') : t('products.inventory.noMatch')}
         </p>
       ) : filter !== 'all' ? (
         <FlatMatchList rows={flatMatches} onEdit={setEditTarget} />
@@ -405,7 +404,7 @@ function ProductsInventory() {
           onSaved={() => {
             // Re-hydrate just that product so the row updates without full reload.
             hydrateProduct(editTarget.product_id);
-            showToast('Stock adjusted');
+            showToast(t('products.inventory.stockAdjusted'));
             setEditTarget(null);
           }}
           showToast={showToast} />
@@ -419,6 +418,7 @@ function ProductsInventory() {
 // ── Sort pill toggle (mirrors ProdSortToggle from ProductsList) ─────
 
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -446,7 +446,7 @@ function SortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         const isCur  = cur === field;
         return (
@@ -459,7 +459,7 @@ function SortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -470,6 +470,7 @@ function SortToggle({ sort, onSort }) {
 // ── Category dropdown (read-only mirror of ProductsList's CategoryFilter) ─
 
 function CategoryFilter({ value, categories, onChange }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos,  setPos]  = useState(null);
@@ -493,9 +494,9 @@ function CategoryFilter({ value, categories, onChange }) {
     };
   }, [open]);
 
-  const label = value === null ? 'All Categories'
-    : value === 'uncategorized' ? 'Uncategorized'
-    : (categories.find(c => c.id === value)?.name || 'Category');
+  const label = value === null ? t('products.inventory.allCategories')
+    : value === 'uncategorized' ? t('products.inventory.uncategorized')
+    : (categories.find(c => c.id === value)?.name || t('products.inventory.category'));
 
   return (
     <>
@@ -515,13 +516,13 @@ function CategoryFilter({ value, categories, onChange }) {
             className={`cat-filter-item${current === 'all' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('all')}
             onClick={() => { onChange(null); setOpen(false); }}>
-            All Categories
+            {t('products.inventory.allCategories')}
           </button>
           <button ref={setItemRef('uncat')}
             className={`cat-filter-item${current === 'uncat' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('uncat')}
             onClick={() => { onChange('uncategorized'); setOpen(false); }}>
-            Uncategorized
+            {t('products.inventory.uncategorized')}
           </button>
           {categories.map(c => {
             const k = `c:${c.id}`;
@@ -545,6 +546,7 @@ function CategoryFilter({ value, categories, onChange }) {
 // ── Warehouse-grouped view: WH → product → variation → SKU; SKU click opens cell-edit modal.
 
 function WarehouseGroups({ warehouses, products, summary, onEdit }) {
+  const { t } = useTranslation();
   // openWh: WH ids expanded; defaults to all open, collapses remembered per-WH.
   const [openWh, setOpenWh]     = useState(() => new Set());
   const [openProd, setOpenProd] = useState(() => new Set());
@@ -604,7 +606,7 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
   }, [summary, visibleProductIds]);
 
   if (warehouses.length === 0) {
-    return <p className="crm-placeholder">No active warehouses.</p>;
+    return <p className="crm-placeholder">{t('products.inventory.noActiveWarehouses')}</p>;
   }
 
   return (
@@ -623,24 +625,24 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
               <CaretDown weight="bold"
                 className={`po-wh-group-caret${isOpen ? '' : ' po-wh-group-caret--closed'}`} />
               {w.name}
-              {w.is_default && <span className="po-pwh-default-mark"> · default</span>}
+              {w.is_default && <span className="po-pwh-default-mark"> · {t('products.inventory.default')}</span>}
               <span className="prod-group-count">{productsList.length}</span>
-              <span className="po-set-note po-tree-meta">· {totalQty} units total</span>
+              <span className="po-set-note po-tree-meta">· {t('products.inventory.unitsTotal', { count: totalQty })}</span>
             </h2>
             {isOpen && (
               productsList.length === 0 ? (
-                <p className="crm-placeholder">No stock in this warehouse yet.</p>
+                <p className="crm-placeholder">{t('products.inventory.noStockInWarehouse')}</p>
               ) : (
                 <div className="po-set-table">
                   <div className="po-set-row po-set-row--head" style={ROW_STYLE}>
-                    <span>Name</span>
-                    <span className="po-num-head">Price</span>
-                    <span className="po-num-head">Cost</span>
-                    <span className="po-num-head">Profit</span>
-                    <span className="po-num-head">Margin</span>
-                    <span className="po-num-head">SKU code</span>
-                    <span className="po-num-head">Stock</span>
-                    <span className="po-num-head">Sold</span>
+                    <span>{t('products.inventory.colName')}</span>
+                    <span className="po-num-head">{t('products.inventory.colPrice')}</span>
+                    <span className="po-num-head">{t('products.inventory.colCost')}</span>
+                    <span className="po-num-head">{t('products.inventory.colProfit')}</span>
+                    <span className="po-num-head">{t('products.inventory.colMargin')}</span>
+                    <span className="po-num-head">{t('products.inventory.colSkuCode')}</span>
+                    <span className="po-num-head">{t('products.inventory.colStock')}</span>
+                    <span className="po-num-head">{t('products.inventory.colSold')}</span>
                     <span></span>
                   </div>
                   {productsList.map(p => {
@@ -667,8 +669,8 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                             icon={<Folder weight="duotone" className="po-disc-cell--strong" />}>
                             <span className="po-set-strong">{p.product_title}</span>
                             <span className="po-set-note po-tree-meta">
-                              · {variations.length} variation{variations.length === 1 ? '' : 's'}
-                              {' · '}{skuCount} SKU{skuCount === 1 ? '' : 's'}
+                              · {variations.length === 1 ? t('products.inventory.variationOne', { count: variations.length }) : t('products.inventory.variationMany', { count: variations.length })}
+                              {' · '}{skuCount === 1 ? t('products.inventory.skuOne', { count: skuCount }) : t('products.inventory.skuMany', { count: skuCount })}
                             </span>
                           </NameCell>
                           <span className="po-money-cell">{fmtMoney(pFin.price)}</span>
@@ -702,7 +704,7 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                                     : <span className="po-tree-avatar-fallback" />}>
                                   <span className="po-set-strong">{v.variation_name || '—'}</span>
                                   <span className="po-set-note po-tree-meta">
-                                    · {v.skus.length} SKU{v.skus.length === 1 ? '' : 's'}
+                                    · {v.skus.length === 1 ? t('products.inventory.skuOne', { count: v.skus.length }) : t('products.inventory.skuMany', { count: v.skus.length })}
                                   </span>
                                 </NameCell>
                                 <span className="po-money-cell">{fmtMoney(vFin.price)}</span>
@@ -747,7 +749,7 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                                     <span className="po-numeric-muted">{s.sold_quantity || 0}</span>
                                     <button type="button" className="po-edit-btn"
                                       onClick={(e) => { e.stopPropagation(); onEdit(payload); }}>
-                                      <PencilSimple weight="bold" /> Edit
+                                      <PencilSimple weight="bold" /> {t('products.inventory.edit')}
                                     </button>
                                   </PoListRow>
                                 );
@@ -771,6 +773,7 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
 // ── (legacy) View toggle — kept exported in case Products page reuses it ─
 
 function ViewToggle({ value, onChange }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -789,8 +792,8 @@ function ViewToggle({ value, onChange }) {
   }, [cur, value]);
 
   const opts = [
-    { key: 'product',   label: 'By product',   Icon: Tag       },
-    { key: 'warehouse', label: 'By warehouse', Icon: Warehouse },
+    { key: 'product',   label: t('products.inventory.byProduct'),   Icon: Tag       },
+    { key: 'warehouse', label: t('products.inventory.byWarehouse'), Icon: Warehouse },
   ];
 
   return (
@@ -812,6 +815,7 @@ function ViewToggle({ value, onChange }) {
 // ── "By warehouse" view — folder per WH using accurate summary endpoint.
 
 function WarehouseView({ projectId, pq, refreshKey, warehouses, onEdit }) {
+  const { t } = useTranslation();
   const [summary, setSummary] = useState(null);
   const [openWh, setOpenWh]   = useState(() => new Set());
 
@@ -834,15 +838,15 @@ function WarehouseView({ projectId, pq, refreshKey, warehouses, onEdit }) {
   }, [summary, warehouses]);
 
   if (warehouses.length === 0) {
-    return <p className="crm-placeholder">No active warehouses.</p>;
+    return <p className="crm-placeholder">{t('products.inventory.noActiveWarehouses')}</p>;
   }
   if (summary === null) {
-    return <p className="crm-placeholder">Loading…</p>;
+    return <p className="crm-placeholder">{t('common.loading')}</p>;
   }
   return (
     <div className="po-set-table">
       <div className="po-set-row po-set-row--head" style={{ gridTemplateColumns: '2.6fr 1fr 1fr 1fr 110px' }}>
-        <span>Warehouse · SKU</span><span>SKU code</span><span>Qty</span><span></span><span></span>
+        <span>{t('products.inventory.colWarehouseSku')}</span><span>{t('products.inventory.colSkuCode')}</span><span>{t('products.inventory.colQty')}</span><span></span><span></span>
       </div>
       {warehouses.map(w => {
         const skus = grouped[w.id] || [];
@@ -862,9 +866,9 @@ function WarehouseView({ projectId, pq, refreshKey, warehouses, onEdit }) {
                 onChevron={toggleWh}
                 icon={<Warehouse weight="duotone" className="po-disc-cell--strong" />}>
                 <span className="po-set-strong">{w.name}</span>
-                {w.is_default && <span className="po-set-note po-pwh-default-mark"> · default</span>}
+                {w.is_default && <span className="po-set-note po-pwh-default-mark"> · {t('products.inventory.default')}</span>}
                 <span className="po-set-note po-tree-meta">
-                  · {skus.length} SKU{skus.length === 1 ? '' : 's'}
+                  · {skus.length === 1 ? t('products.inventory.skuOne', { count: skus.length }) : t('products.inventory.skuMany', { count: skus.length })}
                 </span>
               </NameCell>
               <span></span>
@@ -875,7 +879,7 @@ function WarehouseView({ projectId, pq, refreshKey, warehouses, onEdit }) {
             {isOpen && skus.length === 0 && (
               <div className="po-set-row po-tree-loading-row"
                 style={{ gridTemplateColumns: '2.6fr 1fr 1fr 1fr 110px' }}>
-                <span className="po-tree-loading-text">No stock in this warehouse.</span>
+                <span className="po-tree-loading-text">{t('products.inventory.noStockInWarehouse')}</span>
                 <span></span><span></span><span></span><span></span>
               </div>
             )}
@@ -901,7 +905,7 @@ function WarehouseView({ projectId, pq, refreshKey, warehouses, onEdit }) {
                   <span className="po-numeric-muted"></span>
                   <button type="button" className="po-edit-btn"
                     onClick={(e) => { e.stopPropagation(); onEdit(payload); }}>
-                    <PencilSimple weight="bold" /> Edit
+                    <PencilSimple weight="bold" /> {t('products.inventory.edit')}
                   </button>
                 </PoListRow>
               );
@@ -916,6 +920,7 @@ function WarehouseView({ projectId, pq, refreshKey, warehouses, onEdit }) {
 // ── Filter pill toggle with sliding Dynamic Block indicator ─────────
 
 function FilterToggle({ value, onChange, counters }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -936,12 +941,12 @@ function FilterToggle({ value, onChange, counters }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {FILTERS.map(({ key, label }) => (
+      {FILTERS.map(({ key, labelKey }) => (
         <button key={key} ref={el => { btnRefs.current[key] = el; }}
           className={`org-sort-btn${cur === key ? ' org-sort-btn--current' : ''}`}
           onMouseEnter={() => setHovered(key)}
           onClick={() => onChange(key)} type="button">
-          {label} <span className="po-filter-count">({counters[key] ?? 0})</span>
+          {t(labelKey)} <span className="po-filter-count">({counters[key] ?? 0})</span>
         </button>
       ))}
     </div>
@@ -951,6 +956,7 @@ function FilterToggle({ value, onChange, counters }) {
 // ── Product folder + nested variations + leaf SKUs ───────────────────
 
 function ProductBranch({ product, isOpen, hydrated, detail, openVar, onToggleProduct, onToggleVar, onEdit }) {
+  const { t } = useTranslation();
   const variations = detail?.variations || [];
   const skuCount = variations.reduce((sum, v) => sum + (v.configurations?.length || 0), 0);
 
@@ -963,8 +969,8 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
           icon={<Folder weight="duotone" className="po-disc-cell--strong" />}>
           <span className="po-set-strong">{product.title}</span>
           <span className="po-set-note po-tree-meta">
-            · {product.variations_count || 0} variation{product.variations_count === 1 ? '' : 's'}
-            {hydrated ? ` · ${skuCount} SKU${skuCount === 1 ? '' : 's'}` : ''}
+            · {product.variations_count === 1 ? t('products.inventory.variationOne', { count: product.variations_count }) : t('products.inventory.variationMany', { count: product.variations_count || 0 })}
+            {hydrated ? ` · ${skuCount === 1 ? t('products.inventory.skuOne', { count: skuCount }) : t('products.inventory.skuMany', { count: skuCount })}` : ''}
           </span>
         </NameCell>
         <span className="po-set-note">{product.sku || '—'}</span>
@@ -976,7 +982,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
       {isOpen && !hydrated && (
         <div className="po-set-row po-tree-loading-row"
           style={{ gridTemplateColumns: COLS }}>
-          <span className="po-tree-loading-text">Loading…</span>
+          <span className="po-tree-loading-text">{t('common.loading')}</span>
           <span></span><span></span><span></span><span></span>
         </div>
       )}
@@ -996,7 +1002,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
                 icon={<VariationAvatar variation={v} />}>
                 <span className="po-set-strong">{v.variation_name || v.name || '—'}</span>
                 <span className="po-set-note po-tree-meta">
-                  · {confs.length} SKU{confs.length === 1 ? '' : 's'}
+                  · {confs.length === 1 ? t('products.inventory.skuOne', { count: confs.length }) : t('products.inventory.skuMany', { count: confs.length })}
                 </span>
               </NameCell>
               <span></span>
@@ -1035,7 +1041,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
                       current_stock: c.stock_quantity || 0,
                     });
                   }}>
-                  <PencilSimple weight="bold" /> Edit
+                  <PencilSimple weight="bold" /> {t('products.inventory.edit')}
                 </button>
               </PoListRow>
             ))}
@@ -1049,6 +1055,7 @@ function ProductBranch({ product, isOpen, hydrated, detail, openVar, onTogglePro
 // ── Cells ────────────────────────────────────────────────────────────
 
 function NameCell({ depth = 0, chevron, onChevron, icon, children }) {
+  const { t } = useTranslation();
   // Padding is the only depth-variable bit; everything else lives in CSS.
   const padLeft = 8 + depth * 24;
   return (
@@ -1056,7 +1063,7 @@ function NameCell({ depth = 0, chevron, onChevron, icon, children }) {
       {chevron ? (
         <button type="button" className="po-tree-chevron"
           onClick={(e) => { e.stopPropagation(); onChevron?.(); }}
-          aria-label={chevron === 'open' ? 'Collapse' : 'Expand'}>
+          aria-label={chevron === 'open' ? t('common.collapse') : t('products.inventory.expand')}>
           {chevron === 'open' ? <CaretDown weight="bold" /> : <CaretRight weight="bold" />}
         </button>
       ) : (
@@ -1075,30 +1082,32 @@ function VariationAvatar({ variation }) {
 }
 
 function StockCell({ stock, threshold }) {
+  const { t } = useTranslation();
   const oos = stock <= 0;
   const low = !oos && threshold > 0 && stock <= threshold;
   const cls = oos ? 'po-stock-cell po-stock-cell--out'
             : low ? 'po-stock-cell po-stock-cell--low'
             : 'po-stock-cell';
-  return <span className={cls}>{oos ? 'Out' : low ? `${stock} · low` : stock}</span>;
+  return <span className={cls}>{oos ? t('products.inventory.stockOut') : low ? t('products.inventory.stockLow', { count: stock }) : stock}</span>;
 }
 
 // ── Flat list shown when filter = Low / OOS ─────────────────────────
 
 function FlatMatchList({ rows, onEdit }) {
-  if (!rows) return <p className="crm-placeholder">Loading…</p>;
-  if (rows.length === 0) return <p className="crm-placeholder">No SKUs match this filter.</p>;
+  const { t } = useTranslation();
+  if (!rows) return <p className="crm-placeholder">{t('common.loading')}</p>;
+  if (rows.length === 0) return <p className="crm-placeholder">{t('products.inventory.noSkusMatch')}</p>;
   return (
     <div className="po-set-table">
       <div className="po-set-row po-set-row--head" style={ROW_STYLE}>
-        <span>Product · Variation · SKU</span>
-        <span className="po-num-head">Price</span>
-        <span className="po-num-head">Cost</span>
-        <span className="po-num-head">Profit</span>
-        <span className="po-num-head">Margin</span>
-        <span className="po-num-head">SKU code</span>
-        <span className="po-num-head">Stock</span>
-        <span className="po-num-head">Sold</span>
+        <span>{t('products.inventory.colProductVariationSku')}</span>
+        <span className="po-num-head">{t('products.inventory.colPrice')}</span>
+        <span className="po-num-head">{t('products.inventory.colCost')}</span>
+        <span className="po-num-head">{t('products.inventory.colProfit')}</span>
+        <span className="po-num-head">{t('products.inventory.colMargin')}</span>
+        <span className="po-num-head">{t('products.inventory.colSkuCode')}</span>
+        <span className="po-num-head">{t('products.inventory.colStock')}</span>
+        <span className="po-num-head">{t('products.inventory.colSold')}</span>
         <span></span>
       </div>
       {rows.map(r => {
@@ -1137,7 +1146,7 @@ function FlatMatchList({ rows, onEdit }) {
             <span className="po-numeric-muted">{r.sold}</span>
             <button type="button" className="po-edit-btn"
               onClick={(e) => { e.stopPropagation(); onEdit(payload); }}>
-              <PencilSimple weight="bold" /> Edit
+              <PencilSimple weight="bold" /> {t('products.inventory.edit')}
             </button>
           </PoListRow>
         );
@@ -1149,6 +1158,7 @@ function FlatMatchList({ rows, onEdit }) {
 // ── Edit stock modal ─────────────────────────────────────────────────
 
 function EditStockModal({ target, pq, projectId, warehouses, onClose, onSaved, showToast }) {
+  const { t } = useTranslation();
   const [delta,     setDelta]     = useState('');
   const [reason,    setReason]    = useState('supplier_delivery');
   const [note,      setNote]      = useState('');
@@ -1190,12 +1200,12 @@ function EditStockModal({ target, pq, projectId, warehouses, onClose, onSaved, s
     : null;
 
   const submit = async () => {
-    if (!dInt || isNaN(dInt)) { showToast('Change must be a non-zero integer'); return; }
-    if (!warehouse) { showToast('Pick a warehouse'); return; }
-    if (!batchChoice.startsWith('existing:')) { showToast('Pick a batch'); return; }
+    if (!dInt || isNaN(dInt)) { showToast(t('products.inventory.editModal.errNonZero')); return; }
+    if (!warehouse) { showToast(t('products.inventory.editModal.errPickWarehouse')); return; }
+    if (!batchChoice.startsWith('existing:')) { showToast(t('products.inventory.editModal.errPickBatch')); return; }
     // Client-side guard — backend also rejects this but a clear message is nicer.
     if (isNegative && selectedBatch && Math.abs(dInt) > selectedBatch.quantity_remaining) {
-      showToast(`Only ${selectedBatch.quantity_remaining} units left in this batch`); return;
+      showToast(t('products.inventory.editModal.errOnlyLeft', { count: selectedBatch.quantity_remaining })); return;
     }
     setBusy(true);
     try {
@@ -1213,7 +1223,7 @@ function EditStockModal({ target, pq, projectId, warehouses, onClose, onSaved, s
         body: JSON.stringify(body),
       });
       if (r.ok) { onSaved?.(); }
-      else { const j = await r.json().catch(() => ({})); showToast(j.detail || 'Failed'); }
+      else { const j = await r.json().catch(() => ({})); showToast(j.detail || t('products.inventory.editModal.failed')); }
     } finally { setBusy(false); }
   };
 
@@ -1224,10 +1234,10 @@ function EditStockModal({ target, pq, projectId, warehouses, onClose, onSaved, s
 
   // Only existing batches — Edit stock doesn't create new ones (use Plan stock receipt for that).
   const batchSelectOptions = batchOpts.map(b => {
-    const verb = isNegative ? 'Take from' : isPositive ? 'Add to' : 'Edit';
+    const verb = isNegative ? t('products.inventory.editModal.takeFrom') : isPositive ? t('products.inventory.editModal.addTo') : t('products.inventory.edit');
     return {
       value: `existing:${b.id}`,
-      label: `${verb}: ${b.batch_name} (${b.quantity_remaining} left)`,
+      label: t('products.inventory.editModal.batchOption', { verb, name: b.batch_name, count: b.quantity_remaining }),
     };
   });
   const noBatches = warehouse && batchOpts.length === 0;
@@ -1239,11 +1249,11 @@ function EditStockModal({ target, pq, projectId, warehouses, onClose, onSaved, s
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Edit stock</div>
+              <div className="auth-modal-title">{t('products.inventory.editModal.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {target.product_title} · {target.variation_name} · {target.configuration_name}
-                  {' · current '}<strong>{target.current_stock}</strong>
+                  {' · '}{t('products.inventory.editModal.current')}{' '}<strong>{target.current_stock}</strong>
                 </span>
               </div>
             </div>
@@ -1260,24 +1270,24 @@ function EditStockModal({ target, pq, projectId, warehouses, onClose, onSaved, s
 
             <div className="cpm-datetime-row">
               <div className="cpm-section">
-                <label className="po-field-label">Warehouse</label>
+                <label className="po-field-label">{t('products.inventory.editModal.warehouse')}</label>
                 <Combobox value={warehouse === '' ? '' : Number(warehouse)}
-                  placeholder="Pick a warehouse"
+                  placeholder={t('products.inventory.editModal.pickWarehouse')}
                   options={warehouses.map(w => ({
                     value: w.id,
-                    label: w.is_default ? `${w.name} · default` : w.name,
+                    label: w.is_default ? `${w.name} · ${t('products.inventory.default')}` : w.name,
                   }))}
                   onChange={(v) => setWarehouse(v === '' ? '' : Number(v))} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Change</label>
+                <label className="po-field-label">{t('products.inventory.editModal.change')}</label>
                 <input className="crm-input" type="number" autoFocus
-                  placeholder="e.g. +1000 or -3"
+                  placeholder={t('products.inventory.editModal.changePlaceholder')}
                   value={delta} onChange={e => setDelta(e.target.value)} />
                 <span className="cpm-section-hint">
-                  Positive adds stock, negative removes.
+                  {t('products.inventory.editModal.changeHint')}
                   {preview !== null && (
-                    <> &nbsp;·&nbsp; new stock:{' '}
+                    <> &nbsp;·&nbsp; {t('products.inventory.editModal.newStock')}{' '}
                       <strong className="po-disc-cell--strong">{preview}</strong>
                     </>
                   )}
@@ -1286,40 +1296,40 @@ function EditStockModal({ target, pq, projectId, warehouses, onClose, onSaved, s
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Batch <span className="po-field-required">*</span></label>
+              <label className="po-field-label">{t('products.inventory.editModal.batch')} <span className="po-field-required">*</span></label>
               <Combobox value={batchChoice}
                 options={batchSelectOptions}
-                placeholder={noBatches ? 'No batches at this warehouse' : 'Pick a batch to edit'}
+                placeholder={noBatches ? t('products.inventory.editModal.noBatchesPlaceholder') : t('products.inventory.editModal.pickBatchPlaceholder')}
                 onChange={(v) => setBatchChoice(v)} />
               <span className="cpm-section-hint">
                 {noBatches
-                  ? <>This SKU has no batches at this warehouse yet. Open <b>Plan stock receipt</b> first to create one.</>
+                  ? <span dangerouslySetInnerHTML={{ __html: t('products.inventory.editModal.noBatchesHint') }} />
                   : isNegative
-                    ? <>Stock can't go below zero in the chosen batch.{selectedBatch ? ` (${selectedBatch.quantity_remaining} available)` : ''}</>
-                    : <>Edit stock works on an existing batch only. New batches are created via <b>Plan stock receipt</b>.</>}
+                    ? <>{t('products.inventory.editModal.negativeHint')}{selectedBatch ? ` ${t('products.inventory.editModal.available', { count: selectedBatch.quantity_remaining })}` : ''}</>
+                    : <span dangerouslySetInnerHTML={{ __html: t('products.inventory.editModal.editHint') }} />}
               </span>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Reason</label>
-              <Combobox value={reason} options={REASON_OPTIONS}
+              <label className="po-field-label">{t('products.inventory.editModal.reason')}</label>
+              <Combobox value={reason} options={REASON_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
                 onChange={(v) => setReason(v)} />
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Note (optional)</label>
+              <label className="po-field-label">{t('products.inventory.editModal.note')}</label>
               <input className="crm-input" type="text"
-                placeholder="e.g. Restock from supplier #4521"
+                placeholder={t('products.inventory.editModal.notePlaceholder')}
                 value={note} onChange={e => setNote(e.target.value)} maxLength={1000} />
             </div>
 
             <div className="auth-actions">
               <button className="crm-submit-btn" type="submit" disabled={busy}>
-                {busy ? 'Applying…' : 'Apply'}
+                {busy ? t('products.inventory.editModal.applying') : t('products.inventory.editModal.apply')}
               </button>
               <button className="crm-submit-btn auth-btn-secondary"
                 type="button" disabled={busy} onClick={onClose}>
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
           </form>

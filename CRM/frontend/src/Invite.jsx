@@ -4,10 +4,12 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useTranslation, Trans } from 'react-i18next';
 import { UsersThree } from '@phosphor-icons/react';
 import { API_BASE } from './api.js';
 
 export default function Invite() {
+  const { t } = useTranslation();
   const { token } = useParams();
   const navigate = useNavigate();
   const [state, setState] = useState({ loading: true });
@@ -32,7 +34,7 @@ export default function Invite() {
     setBusy(false);
     if (r.ok) { navigate('/dashboard'); return; }
     const j = await r.json().catch(() => ({}));
-    setErr(j.detail || 'Could not accept the invitation');
+    setErr(j.detail || t('auth.invite.acceptFailed'));
   };
 
   const wrap = { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' };
@@ -40,43 +42,43 @@ export default function Invite() {
   const icon = { width: 56, height: 56, borderRadius: 16, background: 'var(--accent-tint)', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 };
 
   let body;
-  if (state.loading) body = <p className="crm-placeholder">Loading…</p>;
+  if (state.loading) body = <p className="crm-placeholder">{t('common.loading')}</p>;
   else if (state.needLogin) body = (
     <>
-      <h2 style={{ margin: '0 0 8px' }}>You've been invited</h2>
+      <h2 style={{ margin: '0 0 8px' }}>{t('auth.invite.invitedTitle')}</h2>
       <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 20 }}>
-        Sign in to accept this invitation, then open this link again.
+        {t('auth.invite.invitedText')}
       </p>
-      <Link to="/login" className="crm-submit-btn" style={{ textDecoration: 'none' }}>Sign in</Link>
+      <Link to="/login" className="crm-submit-btn" style={{ textDecoration: 'none' }}>{t('auth.invite.signIn')}</Link>
     </>
   );
   else if (state.invalid) body = (
     <>
-      <h2 style={{ margin: '0 0 8px' }}>Invitation not found</h2>
+      <h2 style={{ margin: '0 0 8px' }}>{t('auth.invite.notFoundTitle')}</h2>
       <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 20 }}>
-        This invitation is no longer valid or has already been used.
+        {t('auth.invite.notFoundText')}
       </p>
-      <Link to="/dashboard" className="crm-submit-btn" style={{ textDecoration: 'none' }}>Go to dashboard</Link>
+      <Link to="/dashboard" className="crm-submit-btn" style={{ textDecoration: 'none' }}>{t('auth.invite.goToDashboard')}</Link>
     </>
   );
   else if (!state.email_matches) body = (
     <>
-      <h2 style={{ margin: '0 0 8px' }}>Wrong account</h2>
+      <h2 style={{ margin: '0 0 8px' }}>{t('auth.invite.wrongAccountTitle')}</h2>
       <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 20 }}>
-        This invitation was sent to <b>{state.email}</b>. Sign in with that account to accept it.
+        <Trans i18nKey="auth.invite.wrongAccountText" values={{ email: state.email }} components={{ 1: <b /> }} />
       </p>
-      <Link to="/login" className="crm-submit-btn" style={{ textDecoration: 'none' }}>Switch account</Link>
+      <Link to="/login" className="crm-submit-btn" style={{ textDecoration: 'none' }}>{t('auth.invite.switchAccount')}</Link>
     </>
   );
   else body = (
     <>
-      <h2 style={{ margin: '0 0 8px' }}>Join {state.org_name}</h2>
+      <h2 style={{ margin: '0 0 8px' }}>{t('auth.invite.joinTitle', { org: state.org_name })}</h2>
       <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 20 }}>
-        You've been invited to join <b>{state.org_name}</b> as a team member.
+        <Trans i18nKey="auth.invite.joinText" values={{ org: state.org_name }} components={{ 1: <b /> }} />
       </p>
       {err && <p className="auth-msg auth-msg--err" style={{ marginBottom: 12 }}>{err}</p>}
       <button className="crm-submit-btn" onClick={accept} disabled={busy}>
-        {busy ? 'Joining…' : 'Accept invitation'}
+        {busy ? t('auth.invite.joining') : t('auth.invite.accept')}
       </button>
     </>
   );

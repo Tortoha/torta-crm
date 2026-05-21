@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   TextT, TextAlignLeft, Image as ImageIcon, Minus, ArrowsOutLineVertical,
   Hash, Receipt, Paperclip, Trash, Eye, EyeSlash,
@@ -7,6 +8,13 @@ import {
 import { API_BASE, pickError } from '../../api.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import { HexColorPicker, RgbaStringColorPicker } from 'react-colorful';
+
+// Translated block label. `BLOCK_DEFS[type].label` stays as English fallback;
+// the editor renders this instead so the layer/tool names localize.
+const blockLabel = (t, type) =>
+  t(`comms.editor.block.${type}`, { defaultValue: BLOCK_DEFS[type]?.label || type });
+const dynamicNote = (t, type) =>
+  DYNAMIC_NOTE[type] ? t(`comms.editor.dynamicNote.${type}`) : null;
 
 // Block palette — order shown in the bottom tools pill.
 export const BLOCK_DEFS = {
@@ -30,6 +38,7 @@ const DYNAMIC_NOTE = {
 let _previewSeq = 0;
 
 export default function EmailEditor({ projectId, previewType, subject, blocks, onChange, headerRight }) {
+  const { t } = useTranslation();
   // `background` is a non-rendered block holding the page background (colour / image); the rest is content.
   const bgBlock = blocks.find(b => b.type === 'background') || null;
   const content = blocks.filter(b => b.type !== 'background');
@@ -66,7 +75,7 @@ export default function EmailEditor({ projectId, previewType, subject, blocks, o
   // ── Live preview (server-rendered for fidelity), debounced ──
   useEffect(() => {
     const seq = ++_previewSeq;
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const r = await fetch(`${API_BASE}/api/email-preview?project_id=${projectId}`, {
           method: 'POST', credentials: 'include',
@@ -77,7 +86,7 @@ export default function EmailEditor({ projectId, previewType, subject, blocks, o
         if (seq === _previewSeq && r.ok) setPreviewHtml(d.html || '');
       } catch { /* preview is best-effort */ }
     }, 350);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [projectId, previewType, subject, blocks]);
 
   // ── Block ops (content indices) ──
@@ -165,14 +174,14 @@ export default function EmailEditor({ projectId, previewType, subject, blocks, o
   return (
     <div className="em-editor" onPaste={onPaste} onDragOver={(e) => e.preventDefault()} onDrop={onDrop} tabIndex={0}>
       <div className="em-subject-row">
-        <input className="em-subject" placeholder="Subject line" value={subject || ''}
+        <input className="em-subject" placeholder={t('comms.editor.subjectLine')} value={subject || ''}
                onChange={(e) => setSubject(e.target.value)} />
         {headerRight && <div className="em-subject-actions">{headerRight}</div>}
       </div>
 
       <div className="em-body">
         <aside className="em-card em-layers">
-          <div className="em-card-head">Layers</div>
+          <div className="em-card-head">{t('comms.editor.layers')}</div>
           <div className="em-layer-list" onMouseLeave={() => setHoverLayer(null)}>
             <div ref={layerInd} className="em-layer-ind" />
             <div className={`em-layer em-layer--pinned${sel === 'bg' ? ' em-layer--sel' : ''}`}
@@ -180,10 +189,11 @@ export default function EmailEditor({ projectId, previewType, subject, blocks, o
                  onMouseEnter={() => setHoverLayer('bg')}
                  onClick={() => setSel('bg')}>
               <PaintBucket className="em-layer-icon" />
-              <span className="em-layer-label">Background</span>
+              <span className="em-layer-label">{t('comms.editor.background')}</span>
             </div>
             {content.map((b, i) => {
               const D = BLOCK_DEFS[b.type] || { label: b.type, Icon: TextT };
+              const label = blockLabel(t, b.type);
               return (
                 <div key={i}
                      ref={setLayerRef(i)}
@@ -196,28 +206,28 @@ export default function EmailEditor({ projectId, previewType, subject, blocks, o
                      onClick={() => setSel(i)}>
                   <DotsSixVertical className="em-layer-grip" />
                   <D.Icon className="em-layer-icon" />
-                  <span className="em-layer-label">{D.label}</span>
-                  <button type="button" className="em-layer-act" title={b.hidden ? 'Show' : 'Hide'}
+                  <span className="em-layer-label">{label}</span>
+                  <button type="button" className="em-layer-act" title={b.hidden ? t('comms.editor.show') : t('comms.editor.hide')}
                           onClick={(e) => { e.stopPropagation(); commit(content.map((x, j) => j === i ? { ...x, hidden: !x.hidden } : x)); }}>
                     {b.hidden ? <EyeSlash /> : <Eye />}
                   </button>
-                  <button type="button" className="em-layer-act em-layer-act--danger" title="Delete"
+                  <button type="button" className="em-layer-act em-layer-act--danger" title={t('common.delete')}
                           onClick={(e) => { e.stopPropagation(); removeBlock(i); }}>
                     <Trash />
                   </button>
                 </div>
               );
             })}
-            {content.length === 0 && <div className="em-empty">No blocks yet — add one below.</div>}
+            {content.length === 0 && <div className="em-empty">{t('comms.editor.noBlocks')}</div>}
           </div>
         </aside>
 
         <main className="em-card em-canvas">
-          {busy && <div className="em-uploading">Uploading…</div>}
+          {busy && <div className="em-uploading">{t('comms.editor.uploading')}</div>}
           <div className="em-preview-wrap">
             <iframe title="preview" className="em-preview" srcDoc={previewHtml} />
           </div>
-          <div className="em-canvas-hint">Paste an image (Ctrl+V) or drop an image / PDF anywhere here.</div>
+          <div className="em-canvas-hint">{t('comms.editor.canvasHint')}</div>
         </main>
 
         <aside className="em-card em-inspector">
@@ -230,7 +240,7 @@ export default function EmailEditor({ projectId, previewType, subject, blocks, o
             : selected
               ? <Inspector block={selected} onField={(k, v) => patchBlock(sel, { [k]: v })}
                   onPickImage={() => fileInputRef.current?.click()} />
-              : <div className="em-empty">Select a block to edit it.</div>}
+              : <div className="em-empty">{t('comms.editor.selectBlock')}</div>}
         </aside>
       </div>
 
@@ -238,7 +248,7 @@ export default function EmailEditor({ projectId, previewType, subject, blocks, o
         <div ref={toolIndRef} className="em-tool-ind" />
         {Object.entries(BLOCK_DEFS).map(([type, d]) => (
           <button key={type} ref={el => { toolRefs.current[type] = el; }} type="button" className="em-tool"
-            title={`Add ${d.label}`} onMouseEnter={() => setHovTool(type)} onClick={() => addBlock(type)}>
+            title={t('comms.editor.addBlock', { block: blockLabel(t, type) })} onMouseEnter={() => setHovTool(type)} onClick={() => addBlock(type)}>
             <d.Icon />
           </button>
         ))}
@@ -260,8 +270,9 @@ function Field({ label, children }) {
   return <label className="em-field"><span className="em-field-label">{label}</span>{children}</label>;
 }
 
-const ALIGN_OPTS = [{ value: 'left', label: 'left' }, { value: 'center', label: 'center' }, { value: 'right', label: 'right' }];
-const SHADOW_OPTS = [{ value: 'none', label: 'None' }, { value: 'soft', label: 'Soft' }, { value: 'medium', label: 'Medium' }, { value: 'strong', label: 'Strong' }];
+// Option value lists — labels resolved through i18n at render via `optLabel`.
+const ALIGN_OPTS = [{ value: 'left' }, { value: 'center' }, { value: 'right' }];
+const SHADOW_OPTS = [{ value: 'none' }, { value: 'soft' }, { value: 'medium' }, { value: 'strong' }];
 const COLOR_PRESETS = ['#000000', '#1d1d1f', '#5f6368', '#9aa0a6', '#ffffff', '#0071e3',
                        '#34c759', '#ff9500', '#ff3b30', '#af52de', '#bcdadc', '#f4f4f5'];
 
@@ -326,89 +337,93 @@ function ColorField({ value, onChange, alpha }) {
 }
 
 function BackgroundInspector({ props, onField, onPickPanelImage, onPickPageImage, onClear }) {
+  const { t } = useTranslation();
   const p = props || {};
+  const shadowOpts = SHADOW_OPTS.map(o => ({ ...o, label: t(`comms.editor.shadow.${o.value}`) }));
   return (
     <div className="em-inspector-in">
-      <div className="em-insp-title">Background</div>
-      <div className="em-insp-note">Style the email panel and the page behind it — each can have its own colour and image.</div>
+      <div className="em-insp-title">{t('comms.editor.background')}</div>
+      <div className="em-insp-note">{t('comms.editor.bgNote')}</div>
 
-      <div className="em-insp-sub">Email panel</div>
-      <Field label="Colour"><ColorField alpha value={p.color || 'rgba(255,255,255,1)'} onChange={(v) => onField('color', v)} /></Field>
-      <Field label={`Corners — ${p.radius ?? 16}px`}>
+      <div className="em-insp-sub">{t('comms.editor.emailPanel')}</div>
+      <Field label={t('comms.editor.colour')}><ColorField alpha value={p.color || 'rgba(255,255,255,1)'} onChange={(v) => onField('color', v)} /></Field>
+      <Field label={t('comms.editor.corners', { px: p.radius ?? 16 })}>
         <input type="range" className="em-range" min="0" max="48" value={p.radius ?? 16} onChange={(e) => onField('radius', Number(e.target.value))} />
       </Field>
-      <Field label="Shadow"><Seg value={p.shadow || 'soft'} options={SHADOW_OPTS} onChange={(v) => onField('shadow', v)} /></Field>
-      <Field label="Image">
-        <button type="button" className="auth-btn-check em-upload-btn" onClick={onPickPanelImage}><UploadSimple /> Upload image</button>
+      <Field label={t('comms.editor.shadowLabel')}><Seg value={p.shadow || 'soft'} options={shadowOpts} onChange={(v) => onField('shadow', v)} /></Field>
+      <Field label={t('comms.editor.image')}>
+        <button type="button" className="auth-btn-check em-upload-btn" onClick={onPickPanelImage}><UploadSimple /> {t('comms.editor.uploadImage')}</button>
       </Field>
       {p.image && <>
         <img src={p.image} alt="panel" className="em-logo-preview" />
-        <button type="button" className="em-btn-ghost" onClick={() => onField('image', '')}>Remove panel image</button>
+        <button type="button" className="em-btn-ghost" onClick={() => onField('image', '')}>{t('comms.editor.removePanelImage')}</button>
       </>}
 
-      <div className="em-insp-sub">Page background</div>
-      <Field label="Colour"><ColorField value={p.page_color || '#ffffff'} onChange={(v) => onField('page_color', v)} /></Field>
-      <Field label="Image">
-        <button type="button" className="auth-btn-check em-upload-btn" onClick={onPickPageImage}><UploadSimple /> Upload image</button>
+      <div className="em-insp-sub">{t('comms.editor.pageBackground')}</div>
+      <Field label={t('comms.editor.colour')}><ColorField value={p.page_color || '#ffffff'} onChange={(v) => onField('page_color', v)} /></Field>
+      <Field label={t('comms.editor.image')}>
+        <button type="button" className="auth-btn-check em-upload-btn" onClick={onPickPageImage}><UploadSimple /> {t('comms.editor.uploadImage')}</button>
       </Field>
       {p.page_image && <>
         <img src={p.page_image} alt="page" className="em-logo-preview" />
-        <button type="button" className="em-btn-ghost" onClick={() => onField('page_image', '')}>Remove page image</button>
+        <button type="button" className="em-btn-ghost" onClick={() => onField('page_image', '')}>{t('comms.editor.removePageImage')}</button>
       </>}
 
-      <button type="button" className="em-btn-ghost em-btn-danger em-bg-clear" onClick={onClear}><Trash /> Reset background</button>
+      <button type="button" className="em-btn-ghost em-btn-danger em-bg-clear" onClick={onClear}><Trash /> {t('comms.editor.resetBackground')}</button>
     </div>
   );
 }
 
 function Inspector({ block, onField, onPickImage }) {
+  const { t } = useTranslation();
   const p = block.props || {};
-  const t = block.type;
+  const ty = block.type;
+  const alignOpts = ALIGN_OPTS.map(o => ({ ...o, label: t(`comms.editor.align.${o.value}`) }));
   const text  = (k, ph) => <input className="crm-input" value={p[k] ?? ''} placeholder={ph} onChange={(e) => onField(k, e.target.value)} />;
   const color = (k, fb) => <ColorField value={p[k] || fb} onChange={(v) => onField(k, v)} />;
   const num   = (k, ph) => <input className="crm-input" type="number" value={p[k] ?? ''} placeholder={ph} onChange={(e) => onField(k, e.target.value === '' ? '' : Number(e.target.value))} />;
-  const align = () => <Seg value={p.align || 'left'} options={ALIGN_OPTS} onChange={(v) => onField('align', v)} />;
+  const align = () => <Seg value={p.align || 'left'} options={alignOpts} onChange={(v) => onField('align', v)} />;
 
   return (
     <div className="em-inspector-in">
-      <div className="em-insp-title">{BLOCK_DEFS[t]?.label || t}</div>
-      {DYNAMIC_NOTE[t] && <div className="em-insp-note">{DYNAMIC_NOTE[t]}</div>}
+      <div className="em-insp-title">{blockLabel(t, ty)}</div>
+      {dynamicNote(t, ty) && <div className="em-insp-note">{dynamicNote(t, ty)}</div>}
 
-      {(t === 'heading' || t === 'text') && <>
-        <Field label="Text"><textarea className="crm-input em-textarea" value={p.text ?? ''} onChange={(e) => onField('text', e.target.value)} /></Field>
-        <Field label="Alignment">{align()}</Field>
-        <Field label="Text color">{color('color', '#1d1d1f')}</Field>
-        <Field label="Font size (px)">{num('fontSize', t === 'heading' ? '24' : '15')}</Field>
+      {(ty === 'heading' || ty === 'text') && <>
+        <Field label={t('comms.editor.f.text')}><textarea className="crm-input em-textarea" value={p.text ?? ''} onChange={(e) => onField('text', e.target.value)} /></Field>
+        <Field label={t('comms.editor.f.alignment')}>{align()}</Field>
+        <Field label={t('comms.editor.f.textColor')}>{color('color', '#1d1d1f')}</Field>
+        <Field label={t('comms.editor.f.fontSize')}>{num('fontSize', ty === 'heading' ? '24' : '15')}</Field>
       </>}
 
-      {t === 'button' && <>
-        <Field label="Label">{text('text', 'Click here')}</Field>
-        <Field label="Link URL">{text('url', 'https://')}</Field>
-        <Field label="Alignment">{align()}</Field>
-        <Field label="Background">{color('bg', '#0071E3')}</Field>
-        <Field label="Label color">{color('color', '#ffffff')}</Field>
-        <Field label="Corner radius">{text('radius', '999px')}</Field>
-        <Field label="Border">{text('border', 'none')}</Field>
-        <Field label="Shadow">{text('shadow', 'none')}</Field>
+      {ty === 'button' && <>
+        <Field label={t('comms.editor.f.label')}>{text('text', 'Click here')}</Field>
+        <Field label={t('comms.editor.f.linkUrl')}>{text('url', 'https://')}</Field>
+        <Field label={t('comms.editor.f.alignment')}>{align()}</Field>
+        <Field label={t('comms.editor.f.background')}>{color('bg', '#0071E3')}</Field>
+        <Field label={t('comms.editor.f.labelColor')}>{color('color', '#ffffff')}</Field>
+        <Field label={t('comms.editor.f.cornerRadius')}>{text('radius', '999px')}</Field>
+        <Field label={t('comms.editor.f.border')}>{text('border', 'none')}</Field>
+        <Field label={t('comms.editor.f.shadow')}>{text('shadow', 'none')}</Field>
       </>}
 
-      {t === 'image' && <>
-        <Field label="Image"><button type="button" className="auth-btn-check em-upload-btn" onClick={onPickImage}><UploadSimple /> Upload image</button></Field>
-        <Field label="Image URL">{text('src', 'https://')}</Field>
-        <Field label="Alt text">{text('alt', 'Description')}</Field>
-        <Field label="Alignment">{align()}</Field>
-        <Field label="Width (px)">{num('width', 'auto')}</Field>
-        <Field label="Corner radius">{text('radius', '0')}</Field>
+      {ty === 'image' && <>
+        <Field label={t('comms.editor.image')}><button type="button" className="auth-btn-check em-upload-btn" onClick={onPickImage}><UploadSimple /> {t('comms.editor.uploadImage')}</button></Field>
+        <Field label={t('comms.editor.f.imageUrl')}>{text('src', 'https://')}</Field>
+        <Field label={t('comms.editor.f.altText')}>{text('alt', 'Description')}</Field>
+        <Field label={t('comms.editor.f.alignment')}>{align()}</Field>
+        <Field label={t('comms.editor.f.width')}>{num('width', 'auto')}</Field>
+        <Field label={t('comms.editor.f.cornerRadius')}>{text('radius', '0')}</Field>
       </>}
 
-      {t === 'code' && <>
-        <Field label="Background">{color('bg', '#eaf3fd')}</Field>
-        <Field label="Code color">{color('color', '#0071E3')}</Field>
-        <Field label="Font size (px)">{num('fontSize', '34')}</Field>
+      {ty === 'code' && <>
+        <Field label={t('comms.editor.f.background')}>{color('bg', '#eaf3fd')}</Field>
+        <Field label={t('comms.editor.f.codeColor')}>{color('color', '#0071E3')}</Field>
+        <Field label={t('comms.editor.f.fontSize')}>{num('fontSize', '34')}</Field>
       </>}
 
-      {t === 'divider' && <Field label="Color">{color('color', '#e5e5e7')}</Field>}
-      {t === 'spacer' && <Field label="Height (px)">{num('height', '24')}</Field>}
+      {ty === 'divider' && <Field label={t('comms.editor.f.color')}>{color('color', '#e5e5e7')}</Field>}
+      {ty === 'spacer' && <Field label={t('comms.editor.f.height')}>{num('height', '24')}</Field>}
     </div>
   );
 }

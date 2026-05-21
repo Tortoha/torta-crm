@@ -1,0 +1,184 @@
+{
+  "integrations": {
+    "title": "Интеграции",
+    "subtitle": "Подключайте внешние инструменты, чтобы получать события из вашего магазина, или экспортируйте файлы для бухгалтерии (1C / Kompra / QuickBooks / Xero / DATEV) по запросу или по расписанию.",
+    "tabs": {
+      "browse": "Обзор",
+      "logs": "Журнал"
+    },
+    "row": {
+      "installed": "Установлено",
+      "installedTimes": "Установлено ×{{count}}",
+      "notInstalled": "Не установлено",
+      "comingSoon": "Скоро",
+      "plannedFeatures": "Планируемые возможности",
+      "notifyMe": "Уведомить, когда будет готово"
+    },
+    "browse": {
+      "searchPlaceholder": "Поиск интеграций…",
+      "noMatch": "Нет интеграций, подходящих под фильтры."
+    },
+    "logs": {
+      "allStatuses": "Все статусы",
+      "successOnly": "Только успешные",
+      "failedOnly": "Только неудачные",
+      "eventFilterPlaceholder": "Фильтр по событию (напр. order.paid)…",
+      "refresh": "Обновить",
+      "colTime": "Время",
+      "colEvent": "Событие",
+      "colConnector": "Коннектор",
+      "colStatus": "Статус",
+      "colHttp": "HTTP",
+      "colDuration": "Длительность",
+      "loading": "Загрузка…",
+      "empty": "Пока нет доставок. Запустите событие (напр. создайте тестовый заказ) или нажмите «Тестовая отправка» в интеграции.",
+      "payload": "Полезная нагрузка",
+      "responseBody": "Тело ответа",
+      "emptyValue": "(пусто)",
+      "retry": "Повторить",
+      "ago": {
+        "seconds": "{{n}} с назад",
+        "minutes": "{{n}} мин назад",
+        "hours": "{{n}} ч назад"
+      }
+    },
+    "toast": {
+      "saved": "Сохранено",
+      "installed": "Установлено",
+      "deleted": "Удалено",
+      "requestSent": "Запрос отправлен",
+      "couldNotInstall": "Не удалось установить"
+    },
+    "connector": {
+      "events": {
+        "groupOrders": "Заказы",
+        "groupBookings": "Записи",
+        "groupOther": "Прочее"
+      },
+      "defaults": {
+        "webhook": {
+          "label": "URL эндпоинта",
+          "placeholder": "https://your-server.com/torta-webhook",
+          "help": "Ваш сервер должен принимать POST и проверять X-Torta-Signature."
+        },
+        "slack": {
+          "label": "URL вебхука",
+          "placeholder": "https://hooks.slack.com/services/T0…/B0…/…",
+          "help": "Получите его на api.slack.com/messaging/webhooks"
+        },
+        "discord": {
+          "label": "URL вебхука",
+          "placeholder": "https://discord.com/api/webhooks/…/…",
+          "help": "Server Settings → Integrations → Webhooks → New Webhook"
+        },
+        "fallbackLabel": "URL вебхука",
+        "fallbackPlaceholder": "https://your-endpoint.com/hook"
+      },
+      "nameLabel": "Название (внутреннее)",
+      "primaryRequired": "Поле «{{label}}» обязательно",
+      "primaryHttp": "«{{label}}» должно начинаться с http:// или https://",
+      "saveFailed": "Не удалось сохранить",
+      "saveFirstThenTest": "Сначала сохраните интеграцию, затем тестируйте",
+      "confirmDelete": "Удалить эту интеграцию? Журналы сохранятся.",
+      "signingSecret": "Секрет подписи",
+      "copied": "Скопировано",
+      "copy": "Копировать",
+      "signingHint": "Проверяйте <0>X-Torta-Signature: sha256=&lt;hex&gt;</0> в каждом запросе: <1>HMAC-SHA256(body, secret)</1>.",
+      "subscribeAll": "Подписаться на все события",
+      "subscribeAllHintMailchimp": "Mailchimp слушает только customer.created — остальные события молча пропускаются на сервере.",
+      "subscribeAllHintGa4": "GA4 сопоставляет order.paid → purchase, order.created → begin_checkout. Остальные события пропускаются.",
+      "subscribeAllHintDefault": "Когда включено, каждое событие этого проекта запускает эту интеграцию.",
+      "active": "Активно",
+      "activeHint": "Приостановить доставку без потери настроек.",
+      "saving": "Сохранение…",
+      "saveChanges": "Сохранить изменения",
+      "install": "Установить",
+      "testSend": "Тестовая отправка",
+      "docs": "Документация",
+      "delete": "Удалить",
+      "hide": "Скрыть",
+      "show": "Показать"
+    },
+    "request": {
+      "comingSoon": "Скоро",
+      "comingSoonSub": "Сообщите, что вам это нужно — мы напишем в день запуска и в первую очередь добавим самые востребованные.",
+      "plannedFeatures": "Планируемые возможности",
+      "notifyMe": "Уведомить меня",
+      "yourEmail": "Ваш email",
+      "emailPlaceholder": "you@example.com",
+      "anythingSpecific": "Что-то конкретное? (необязательно)",
+      "notePlaceholder": "Какой у вас сценарий? Какие поля важнее всего?",
+      "requestFailed": "Не удалось отправить запрос",
+      "sending": " Отправка…",
+      "sendRequest": " Отправить запрос",
+      "close": "Закрыть",
+      "thanksTitle": "Спасибо — мы дадим знать.",
+      "thanksBody": "Ваш запрос зарегистрирован. Мы напишем, когда {{name}} станет доступна.",
+      "done": "Готово"
+    },
+    "accounting": {
+      "period": {
+        "today": "Сегодня",
+        "yesterday": "Вчера",
+        "last7d": "Последние 7 дней",
+        "last30d": "Последние 30 дней",
+        "thisMonth": "Этот месяц",
+        "lastMonth": "Прошлый месяц",
+        "thisQuarter": "Этот квартал",
+        "custom": "Свой диапазон…"
+      },
+      "schedule": {
+        "off": "Выкл — только ручные загрузки",
+        "daily": "Ежедневно — вчерашние заказы",
+        "weekly": "Еженедельно — последние 7 дней",
+        "monthly": "Ежемесячно — предыдущий месяц"
+      },
+      "hourLabel": "{{h}}:00 UTC",
+      "fileFormat": "Формат файла",
+      "periodLabel": "Период",
+      "includeUnpaid": "Включить неоплаченные / ожидающие",
+      "pickBothDates": "Выберите дату начала и окончания для своего диапазона.",
+      "start": "Начало",
+      "end": "Окончание",
+      "preview": "Предпросмотр",
+      "refresh": "Обновить",
+      "orders": "Заказы",
+      "revenue": "Выручка",
+      "window": "Окно",
+      "loading": "Загрузка…",
+      "loadingPreview": "Загрузка предпросмотра…",
+      "previewFailed": "Не удалось получить предпросмотр",
+      "colOrder": "Заказ",
+      "colDate": "Дата",
+      "colCustomer": "Клиент",
+      "colItems": "Позиции",
+      "colAmount": "Сумма",
+      "showingOf": "Показано {{shown}} из {{total}} заказов. Скачайте для полного файла.",
+      "noMatchingOrders": "Нет подходящих заказов за этот период.",
+      "emailSchedule": "Расписание email",
+      "cadence": "Частота",
+      "cadenceHint": "Если задано, мы отправляем подписанную ссылку для скачивания по вашему расписанию — сами файлы остаются в CRM, ссылка действует 30 дней.",
+      "hourUtc": "Час (UTC)",
+      "recipientEmail": "Email получателя",
+      "recipientPlaceholder": "accountant@example.com",
+      "recipientHint": "Требуется только при включённом расписании. Оставьте пустым для скачивания вручную.",
+      "active": "Активно",
+      "activeHint": "Отключённые интеграции перестают получать запланированные экспорты до повторного включения.",
+      "howToImport": "Как импортировать в {{name}}",
+      "setEmailOrOff": "Укажите email получателя или переключите расписание в «Выкл».",
+      "saveFailed": "Не удалось сохранить",
+      "saved": "Сохранено",
+      "setRecipientFirst": "Сначала укажите email получателя.",
+      "testSendFailed": "Не удалось отправить тест",
+      "emailSentTo": "Письмо отправлено на {{email}}",
+      "confirmDelete": "Удалить эту бухгалтерскую интеграцию? На прошлые загрузки это не повлияет.",
+      "download": "Скачать",
+      "downloadOrders": "Скачать · {{count}} заказ",
+      "downloadOrders_other": "Скачать · {{count}} заказов",
+      "saving": "Сохранение…",
+      "saveSchedule": "Сохранить расписание",
+      "testSend": "Тестовая отправка",
+      "delete": "Удалить"
+    }
+  }
+}

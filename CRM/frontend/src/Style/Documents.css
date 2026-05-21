@@ -1,23 +1,4 @@
-/* ════════════════════════════════════════════════════════════════════════
-   DOCUMENTS — PDF branding configuration page
-   ════════════════════════════════════════════════════════════════════════
-   This page owns the visual prefs that the backend stamps into every
-   generated PDF (invoices / acts / receipts / booking tickets):
-     • Template style (Modern / Classic / Minimal)
-     • Logo + company name
-     • Tax & legal identifiers
-     • Contact fields printed in the footer
-     • Accent colour + free-form footer note
 
-   The classes here were previously misplaced — `.doc-style-*` lived in
-   Integrations.css (despite being for this page), and the logo
-   uploader was reusing `.bk-svc-img-*` from Booking.css. Both source
-   pages were not imported by Documents.jsx, so the page rendered as
-   raw HTML with no styling. Consolidated here so the imports stay
-   self-contained and future maintenance doesn't break across files.
-   ──────────────────────────────────────────────────────────────────── */
-
-/* ── Template-style picker — three preview cards ──────────────────── */
 .doc-style-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

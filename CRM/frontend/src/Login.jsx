@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { useTranslation } from 'react-i18next';
 import "./Style/Login.css";
 import { API_BASE } from "./api.js";
 import PasswordInput from "./Elements/PasswordInput.jsx";
 import GoogleAuthButton from "./Elements/GoogleAuthButton.jsx";
 
 function Login() {
+  const { t } = useTranslation();
   const [email, setEmail]               = useState("");
   const [password, setPassword]         = useState("");
   const [emailError, setEmailError]     = useState("");
@@ -18,14 +20,14 @@ function Login() {
   const handleEmailChange = (e) => {
     const value = e.target.value;
     setEmail(value);
-    setEmailError(value && !emailFormatRegex.test(value) ? "Incorrect email" : "");
+    setEmailError(value && !emailFormatRegex.test(value) ? t('auth.validation.incorrectEmail') : "");
   };
 
   const validatePassword = (pwd) => {
-    if (/\s/.test(pwd))                   return ['No spaces allowed'];
-    if (pwd.length < 8 || pwd.length > 24) return ['Must be 8-24 characters'];
-    if (!/[\p{L}]/u.test(pwd))            return ['Must contain at least 1 letter'];
-    if (!/\d/.test(pwd))                  return ['Must contain at least 1 digit'];
+    if (/\s/.test(pwd))                   return [t('auth.validation.noSpaces')];
+    if (pwd.length < 8 || pwd.length > 24) return [t('auth.validation.length')];
+    if (!/[\p{L}]/u.test(pwd))            return [t('auth.validation.needLetter')];
+    if (!/\d/.test(pwd))                  return [t('auth.validation.needDigit')];
     return [];
   };
 
@@ -58,10 +60,10 @@ function Login() {
         localStorage.setItem("pendingResendUntil", String(Date.now() + Number(data.resend_available_in || 60) * 1000));
         navigate("/login/verification");
       } else {
-        setGeneralError(data.detail || "Login failed");
+        setGeneralError(data.detail || t('auth.login.failed'));
       }
     } catch {
-      setGeneralError("Network error");
+      setGeneralError(t('auth.common.networkError'));
     } finally {
       setLoading(false);
     }
@@ -70,12 +72,12 @@ function Login() {
   return (
     <div className="regist">
       <section className="regis">
-        <h1>Sign In</h1>
+        <h1>{t('auth.login.title')}</h1>
         <div className="reg">
           <form onSubmit={handleLogin}>
             <div className="secsh">
               <input
-                type="email" placeholder="example@email.com"
+                type="email" placeholder={t('auth.login.emailPlaceholder')}
                 value={email} onChange={handleEmailChange}
                 autoComplete="username" required
               />
@@ -83,27 +85,27 @@ function Login() {
             </div>
             <div className="secsh0">
               <PasswordInput
-                placeholder="Password" value={password}
+                placeholder={t('auth.login.passwordPlaceholder')} value={password}
                 onChange={handlePasswordChange}
                 autoComplete="current-password"
               />
               {passwordErrors.map((err, i) => <p className="error" key={i}>{err}</p>)}
             </div>
             <div className="auth-link-wrap">
-              <Link to="/forgot-password" className="auth-link">Forgot your password?</Link>
+              <Link to="/forgot-password" className="auth-link">{t('auth.login.forgotPassword')}</Link>
             </div>
             {generalError && <p className="error">{generalError}</p>}
             <div className="secsh1">
               <input
                 className={isValid && !loading ? "button1" : "not-button"}
-                type="submit" value={loading ? "Sending..." : "Next"}
+                type="submit" value={loading ? t('auth.login.sending') : t('auth.login.next')}
                 disabled={!isValid || loading}
               />
             </div>
             <GoogleAuthButton />
             <div className="secsh1">
               <Link to="/registration">
-                <input className="button2" type="button" value="Create account" />
+                <input className="button2" type="button" value={t('auth.login.createAccount')} />
               </Link>
             </div>
           </form>

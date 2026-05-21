@@ -1,0 +1,17 @@
+{
+  "utils": {
+    "country": {
+      "placeholder": "Выберите страну",
+      "searchPlaceholder": "Поиск стран…",
+      "noMatches": "Ничего не найдено"
+    },
+    "searchCombo": {
+      "placeholder": "Выберите…",
+      "searchPlaceholder": "Поиск…",
+      "noMatches": "Ничего не найдено"
+    },
+    "rowMenu": {
+      "select": "Выбрать"
+    }
+  }
+}

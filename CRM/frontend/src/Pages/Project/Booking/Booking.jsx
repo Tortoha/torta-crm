@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { encodeId } from '../../../Utils/hashids.js';
 import {
@@ -24,45 +25,28 @@ import '../../../Style/Booking.css';
 
 const ALL_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show'];
 
-const STATUS_META = {
-  pending:   { label: 'Pending',   cls: 'ord-badge--new'       },
-  confirmed: { label: 'Confirmed', cls: 'ord-badge--confirmed' },
-  // .ord-badge--bk-completed is a green variant defined in Booking.css —
-  // we don't reuse Orders' cyan .ord-badge--delivered because a completed
-  // booking is a different kind of "done" (it's a positive outcome, not a
-  // shipment status).
-  completed: { label: 'Completed', cls: 'ord-badge--bk-completed' },
-  cancelled: { label: 'Cancelled', cls: 'ord-badge--cancelled' },
-  no_show:   { label: 'No-show',   cls: 'ord-badge--refunded'  },
+// .ord-badge--bk-completed is a green variant defined in Booking.css —
+// we don't reuse Orders' cyan .ord-badge--delivered because a completed
+// booking is a different kind of "done" (it's a positive outcome, not a
+// shipment status).
+const STATUS_CLS = {
+  pending:   'ord-badge--new',
+  confirmed: 'ord-badge--confirmed',
+  completed: 'ord-badge--bk-completed',
+  cancelled: 'ord-badge--cancelled',
+  no_show:   'ord-badge--refunded',
 };
 
-// Period options for the staff-analytics combobox. Keys MUST match the
+const statusLabel = (t, s) => STATUS_CLS[s] ? t(`booking.status.${s}`) : s;
+
+// Period values for the staff-analytics combobox. Keys MUST match the
 // _STAFF_ANALYTICS_PERIODS dict in CRM/backend/main.py (booking_staff_analytics).
-const STAFF_PERIOD_OPTIONS = [
-  { value: '1d',       label: '1 day'    },
-  { value: '3d',       label: '3 days'   },
-  { value: '1w',       label: '1 week'   },
-  { value: '2w',       label: '2 weeks'  },
-  { value: '1mo',      label: '1 month'  },
-  { value: '2mo',      label: '2 months' },
-  { value: 'season',   label: '1 season (3 mo)' },
-  { value: 'halfyear', label: 'Half-year' },
-  { value: '1y',       label: '1 year'   },
-  { value: '2y',       label: '2 years'  },
-];
+const STAFF_PERIOD_VALUES = ['1d', '3d', '1w', '2w', '1mo', '2mo', 'season', 'halfyear', '1y', '2y'];
 
-const STATUS_TABS = [
-  { key: 'all', label: 'All' },
-  ...ALL_STATUSES.map(s => ({ key: s, label: STATUS_META[s].label })),
-];
-
-const SORT_OPTIONS = [
-  { field: 'date',     label: 'Sort by date'     },
-  { field: 'customer', label: 'Sort by customer' },
-];
+const SORT_FIELD_KEY = { date: 'sortByDate', customer: 'sortByCustomer' };
 const DEFAULT_DIR = { date: 'desc', customer: 'asc' };
 
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 // ── Tilt configs ───────────────────────────────────────────────
 
@@ -125,13 +109,14 @@ function TabSwitcher({ tabs, tab, setTab }) {
 // ── Status pill (clickable in row/card to change) ─────────────
 
 function StatusBadge({ status }) {
-  const m = STATUS_META[status] ?? { label: status, cls: '' };
-  return <span className={`ord-badge ${m.cls}`}>{m.label}</span>;
+  const { t } = useTranslation();
+  const cls = STATUS_CLS[status] ?? '';
+  return <span className={`ord-badge ${cls}`}>{statusLabel(t, status)}</span>;
 }
 
 // ── Sort toggle (shared with Orders style) ────────────────────
 
-function SortToggle({ sort, onSort, options = SORT_OPTIONS, defaultDirs = DEFAULT_DIR }) {
+function SortToggle({ sort, onSort, options, defaultDirs = DEFAULT_DIR }) {
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -182,18 +167,21 @@ function SortToggle({ sort, onSort, options = SORT_OPTIONS, defaultDirs = DEFAUL
   );
 }
 
-const SVC_SORT_OPTIONS  = [{field:'name',label:'Sort by name'},{field:'price',label:'Sort by price'},{field:'duration',label:'Sort by duration'}];
 const SVC_SORT_DIRS     = { name: 'asc', price: 'asc', duration: 'asc' };
-const STAFF_SORT_OPTIONS= [{field:'name',label:'Sort by name'},{field:'date',label:'Sort by date'}];
 const STAFF_SORT_DIRS   = { name: 'asc', date: 'desc' };
 
 // ── Status filter pill bar ────────────────────────────────────
 
 function StatusFilter({ active, counts, onChange }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
   const cur = hovered ?? active;
+  const tabs = [
+    { key: 'all', label: t('booking.list.all') },
+    ...ALL_STATUSES.map(s => ({ key: s, label: statusLabel(t, s) })),
+  ];
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -210,7 +198,7 @@ function StatusFilter({ active, counts, onChange }) {
   return (
     <div className="ord-filter" onMouseLeave={() => setHovered(null)}>
       <div className="ord-filter-ind" ref={indRef} />
-      {STATUS_TABS.map(({ key, label }) => (
+      {tabs.map(({ key, label }) => (
         <button key={key} ref={el => { btnRefs.current[key] = el; }}
           className={`ord-filter-btn${cur === key ? ' ord-filter-btn--current' : ''}`}
           onClick={() => onChange(key)}
@@ -228,6 +216,7 @@ function StatusFilter({ active, counts, onChange }) {
 // ── Booking row (table view) ─────────────────────────────────
 
 function BookingRow({ booking, onOpen, onRowClick, isSelected }) {
+  const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
   return (
     <div ref={ref}
@@ -246,7 +235,7 @@ function BookingRow({ booking, onOpen, onRowClick, isSelected }) {
       <span className="bk-prow-cell">
         {booking.staff_name
           ? <span className="bk-staff-chip"><User size={12} /> {booking.staff_name}</span>
-          : <span className="bk-no-staff">— Any —</span>}
+          : <span className="bk-no-staff">{t('booking.list.anyStaff')}</span>}
       </span>
 
       <span className="bk-prow-cell">
@@ -297,6 +286,7 @@ function BookingCard({ booking, onOpen, onRowClick, isSelected }) {
 // like one product in the same CRM, not two different pages.
 
 function ServiceMenu({ btnRef, onEdit, onDelete, onClose }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
   useEffect(() => {
     if (btnRef.current) {
@@ -312,11 +302,11 @@ function ServiceMenu({ btnRef, onEdit, onDelete, onClose }) {
     <div className="org-card-dropdown" style={{ top: pos.top, left: pos.left }}
       onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
       <button className="org-card-dropdown-item" onClick={onEdit}>
-        <Pencil className="org-card-dropdown-icon" /> Edit
+        <Pencil className="org-card-dropdown-icon" /> {t('booking.services.edit')}
       </button>
       <div className="org-card-dropdown-sep" />
       <button className="org-card-dropdown-item org-card-dropdown-item--danger" onClick={onDelete}>
-        <Trash className="org-card-dropdown-icon" /> Delete
+        <Trash className="org-card-dropdown-icon" /> {t('booking.services.delete')}
       </button>
     </div>,
     document.body
@@ -324,6 +314,7 @@ function ServiceMenu({ btnRef, onEdit, onDelete, onClose }) {
 }
 
 function ServiceRow({ service, staff, onEdit, onDelete }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, menuOpen);
@@ -340,8 +331,8 @@ function ServiceRow({ service, staff, onEdit, onDelete }) {
   }, [menuOpen]);
 
   const capLabel = service.requires_staff
-    ? '1:1'
-    : service.capacity > 1 ? `${service.capacity} seats` : '—';
+    ? t('booking.services.oneToOne')
+    : service.capacity > 1 ? t('booking.services.seats', { n: service.capacity }) : '—';
   const staffLabel = linked.length === 0 ? '—'
     : linked.length === 1 ? linked[0].name
     : `${linked[0].name} +${linked.length - 1}`;
@@ -357,7 +348,7 @@ function ServiceRow({ service, staff, onEdit, onDelete }) {
           : <div className="prow-img-empty"><Briefcase size={14} /></div>}
       </div>
       <span className="prow-name">{service.name}</span>
-      <span className="prow-cell">{service.duration_minutes} min</span>
+      <span className="prow-cell">{t('booking.services.minutes', { n: service.duration_minutes })}</span>
       <span className="prow-cell">{fmtMoney(service.price)}</span>
       <span className="prow-cell">{capLabel}</span>
       <span className="prow-cell">{staffLabel}</span>
@@ -376,6 +367,7 @@ function ServiceRow({ service, staff, onEdit, onDelete }) {
 }
 
 function ServiceCard({ service, staff, onEdit, onDelete }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, menuOpen);
@@ -393,9 +385,9 @@ function ServiceCard({ service, staff, onEdit, onDelete }) {
 
   // Bottom-right badge (mirrors pcard-cat-badge): hidden state wins, then capacity for group sessions.
   let badge = null;
-  if (!service.is_active)                 badge = 'Hidden';
-  else if (service.requires_staff)        badge = '1:1';
-  else if (service.capacity > 1)          badge = `${service.capacity} seats`;
+  if (!service.is_active)                 badge = t('booking.services.hidden');
+  else if (service.requires_staff)        badge = t('booking.services.oneToOne');
+  else if (service.capacity > 1)          badge = t('booking.services.seats', { n: service.capacity });
 
   return (
     <div ref={ref}
@@ -411,7 +403,7 @@ function ServiceCard({ service, staff, onEdit, onDelete }) {
         <div className="pcard-body">
           <div className="pcard-title">{service.name}</div>
           <div className="pcard-row1">
-            <span className="pcard-price">{service.duration_minutes} min</span>
+            <span className="pcard-price">{t('booking.services.minutes', { n: service.duration_minutes })}</span>
             <span className="pcard-pipe">|</span>
             <span className="pcard-stock">{fmtMoney(service.price)}</span>
           </div>
@@ -499,6 +491,7 @@ function StaffRow({ member, services, analytics, onEdit, onDelete }) {
 // Staff card — mirrors ServiceCard / ProductCard. Round avatar instead of
 // square image, but same prod-card shell + tilt + 3-dot menu + bottom-right badge.
 function StaffCard({ member, services, analytics, onEdit, onDelete }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, menuOpen);
@@ -514,8 +507,8 @@ function StaffCard({ member, services, analytics, onEdit, onDelete }) {
     return () => document.removeEventListener('pointerdown', h);
   }, [menuOpen]);
 
-  const badge = !member.is_active ? 'Hidden'
-              : linked.length > 0 ? `${linked.length} service${linked.length === 1 ? '' : 's'}`
+  const badge = !member.is_active ? t('booking.staff.hidden')
+              : linked.length > 0 ? t('booking.staff.servicesCount', { count: linked.length })
               : null;
 
   return (
@@ -549,7 +542,7 @@ function StaffCard({ member, services, analytics, onEdit, onDelete }) {
               the owner can compute the payout in their head if they want. */}
           <div className="bk-stf-metrics">
             <div className="bk-stf-metric">
-              <span className="bk-stf-metric-label">Cassa
+              <span className="bk-stf-metric-label">{t('booking.staff.cassa')}
                 {member.commission_pct > 0 && (
                   <span className="bk-stf-metric-commission"> · {member.commission_pct}%</span>
                 )}
@@ -559,15 +552,15 @@ function StaffCard({ member, services, analytics, onEdit, onDelete }) {
               </span>
             </div>
             <div className="bk-stf-metric">
-              <span className="bk-stf-metric-label">Bookings</span>
+              <span className="bk-stf-metric-label">{t('booking.staff.bookings')}</span>
               <span className="bk-stf-metric-value">{analytics?.bookings_count ?? 0}</span>
             </div>
             <div className="bk-stf-metric">
-              <span className="bk-stf-metric-label">Hours</span>
+              <span className="bk-stf-metric-label">{t('booking.staff.hours')}</span>
               <span className="bk-stf-metric-value">{(analytics?.hours_worked ?? 0).toFixed(1)}</span>
             </div>
             <div className="bk-stf-metric">
-              <span className="bk-stf-metric-label">Avg ticket</span>
+              <span className="bk-stf-metric-label">{t('booking.staff.avgTicket')}</span>
               <span className="bk-stf-metric-value">{fmtMoney(analytics?.avg_ticket ?? 0)}</span>
             </div>
           </div>
@@ -590,6 +583,7 @@ function StaffCard({ member, services, analytics, onEdit, onDelete }) {
 
 // ─── Stats block (Settings tab) ────────────────────────────────
 function StatsBlock({ projectId }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [stats, setStats] = useState(null);
 
@@ -598,22 +592,22 @@ function StatsBlock({ projectId }) {
       .then(r => r.ok ? r.json() : null).then(setStats);
   }, [projectId]);
 
-  if (!stats) return <p className="crm-placeholder">Loading…</p>;
+  if (!stats) return <p className="crm-placeholder">{t('booking.settings.loading')}</p>;
   const wow = stats.last_week_count
     ? Math.round(((stats.week_count - stats.last_week_count) / stats.last_week_count) * 100)
     : null;
 
   return (
     <div className="bk-stats-grid">
-      <StatCard label="Total bookings" value={stats.total} />
-      <StatCard label="This week" value={stats.week_count}
-        delta={wow != null ? `${wow >= 0 ? '+' : ''}${wow}% vs last week` : ''} />
-      <StatCard label="Avg ticket" value={fmtMoney(stats.avg_ticket)} />
-      <StatCard label="No-show rate" value={`${stats.no_show_rate}%`}
+      <StatCard label={t('booking.settings.stats.total')} value={stats.total} />
+      <StatCard label={t('booking.settings.stats.thisWeek')} value={stats.week_count}
+        delta={wow != null ? t('booking.settings.stats.vsLastWeek', { pct: `${wow >= 0 ? '+' : ''}${wow}` }) : ''} />
+      <StatCard label={t('booking.settings.stats.avgTicket')} value={fmtMoney(stats.avg_ticket)} />
+      <StatCard label={t('booking.settings.stats.noShowRate')} value={`${stats.no_show_rate}%`}
         tone={stats.no_show_rate > 15 ? 'warn' : 'ok'} />
       {stats.top_staff.length > 0 && (
         <div className="bk-stats-card bk-stats-card--wide">
-          <span className="bk-stats-label">Top staff (completed)</span>
+          <span className="bk-stats-label">{t('booking.settings.stats.topStaff')}</span>
           <div className="bk-stats-staff-list">
             {stats.top_staff.map(s => (
               <div key={s.id} className="bk-stats-staff-row">
@@ -645,8 +639,9 @@ function StatCard({ label, value, delta, tone }) {
 // last edit — no Save button.
 
 function HoursEditor({ projectId, showToast, onSaved }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
-  const [rows, setRows] = useState(() => DAY_NAMES.map((_, i) =>
+  const [rows, setRows] = useState(() => DAY_KEYS.map((_, i) =>
     ({ day_of_week: i, open_time: '10:00', close_time: '19:00', enabled: false })
   ));
   // `hydrated` flips to true after the first GET completes. Without it, the
@@ -665,7 +660,7 @@ function HoursEditor({ projectId, showToast, onSaved }) {
   useEffect(() => {
     fetch(`${API_BASE}/api/booking/hours${pq}`, { credentials: 'include' })
       .then(r => r.json()).then(data => {
-        const next = DAY_NAMES.map((_, i) => {
+        const next = DAY_KEYS.map((_, i) => {
           const found = (data || []).find(d => d.day_of_week === i);
           return found
             ? { day_of_week: i, open_time: found.open_time.slice(0, 5),
@@ -687,7 +682,7 @@ function HoursEditor({ projectId, showToast, onSaved }) {
   useEffect(() => {
     if (!hydrated) return;
     if (skipNextSave.current) { skipNextSave.current = false; return; }
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const body = {
           staff_id: null,
@@ -703,12 +698,12 @@ function HoursEditor({ projectId, showToast, onSaved }) {
           body: JSON.stringify(body),
         });
         if (res.ok) {
-          cbRef.current.showToast?.('Working hours updated');
+          cbRef.current.showToast?.(t('booking.settings.toast.hoursUpdated'));
           cbRef.current.onSaved?.();
         }
       } catch { /* silent — next edit will retry */ }
     }, 600);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [rows, hydrated, pq]);
 
   return (
@@ -719,7 +714,7 @@ function HoursEditor({ projectId, showToast, onSaved }) {
           <input type="checkbox" className="cat-prod-checkbox"
             checked={r.enabled}
             onChange={e => updateRow(i, 'enabled', e.target.checked)} />
-          <span className="bk-hours-day-name">{DAY_NAMES[i]}</span>
+          <span className="bk-hours-day-name">{t(`booking.days.${DAY_KEYS[i]}`)}</span>
           <div className="bk-hours-time-wrap" data-disabled={r.enabled ? undefined : 'true'}>
             <TimePicker value={r.open_time || '10:00'}
               onChange={v => updateRow(i, 'open_time', v)}
@@ -740,6 +735,7 @@ function HoursEditor({ projectId, showToast, onSaved }) {
 // ─── Booking Rules ────────────────────────────────────────────
 
 function RulesEditor({ projectId, showToast, onSaved }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [form, setForm] = useState(null);
   // `hydrated` mirrors HoursEditor — first state set from the GET response
@@ -823,7 +819,7 @@ function RulesEditor({ projectId, showToast, onSaved }) {
       // Pretty city name: last segment with underscores → spaces.
       // "America/Argentina/Buenos_Aires" → "Buenos Aires".
       const city = name.split('/').pop().replace(/_/g, ' ');
-      const suffix = name === browserTz ? ' (your local)' : '';
+      const suffix = name === browserTz ? t('booking.settings.rules.yourLocal') : '';
       return {
         value: name,
         label: name === 'UTC' ? 'UTC' : `${offLabel} · ${city}${suffix}`,
@@ -855,7 +851,7 @@ function RulesEditor({ projectId, showToast, onSaved }) {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
             });
-            showToast?.(`Business timezone set to ${browserTz}`);
+            showToast?.(t('booking.settings.toast.timezoneSet', { tz: browserTz }));
             onSaved?.();
           } catch { /* will save next time merchant edits */ }
         }
@@ -870,7 +866,7 @@ function RulesEditor({ projectId, showToast, onSaved }) {
   useEffect(() => {
     if (!hydrated || !form) return;
     if (skipNextSave.current) { skipNextSave.current = false; return; }
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const { configured, ...payload } = form;
         const res = await fetch(`${API_BASE}/api/booking/settings${pq}`, {
@@ -879,67 +875,64 @@ function RulesEditor({ projectId, showToast, onSaved }) {
           body: JSON.stringify(payload),
         });
         if (res.ok) {
-          cbRef.current.showToast?.('Booking rules updated');
+          cbRef.current.showToast?.(t('booking.settings.toast.rulesUpdated'));
           cbRef.current.onSaved?.();
         }
       } catch { /* silent — next edit will retry */ }
     }, 600);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [form, hydrated, pq]);
 
-  if (!form) return <p className="crm-placeholder">Loading…</p>;
+  if (!form) return <p className="crm-placeholder">{t('booking.settings.loading')}</p>;
 
   const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   return (
     <div className="bk-rules-grid">
       <div className="auth-field">
-        <label className="auth-label">Slot interval (minutes)</label>
-        <p className="auth-field-hint">Step between adjacent bookable times.</p>
+        <label className="auth-label">{t('booking.settings.rules.slotInterval')}</label>
+        <p className="auth-field-hint">{t('booking.settings.rules.slotIntervalHint')}</p>
         <input className="crm-input" type="number" min={5} max={240}
           value={form.slot_interval_minutes}
           onChange={e => upd('slot_interval_minutes', parseInt(e.target.value, 10) || 15)} />
       </div>
       <div className="auth-field">
-        <label className="auth-label">Min advance time (minutes)</label>
-        <p className="auth-field-hint">Earliest booking is now + this many minutes.</p>
+        <label className="auth-label">{t('booking.settings.rules.minAdvance')}</label>
+        <p className="auth-field-hint">{t('booking.settings.rules.minAdvanceHint')}</p>
         <input className="crm-input" type="number" min={0}
           value={form.min_advance_minutes}
           onChange={e => upd('min_advance_minutes', parseInt(e.target.value, 10) || 0)} />
       </div>
       <div className="auth-field">
-        <label className="auth-label">Max advance (days)</label>
-        <p className="auth-field-hint">Customers can book this many days ahead.</p>
+        <label className="auth-label">{t('booking.settings.rules.maxAdvance')}</label>
+        <p className="auth-field-hint">{t('booking.settings.rules.maxAdvanceHint')}</p>
         <input className="crm-input" type="number" min={1} max={365}
           value={form.max_advance_days}
           onChange={e => upd('max_advance_days', parseInt(e.target.value, 10) || 1)} />
       </div>
       <div className="auth-field">
-        <label className="auth-label">Cancellation window (minutes)</label>
-        <p className="auth-field-hint">Customers can cancel up to this many minutes before the start.</p>
+        <label className="auth-label">{t('booking.settings.rules.cancellationWindow')}</label>
+        <p className="auth-field-hint">{t('booking.settings.rules.cancellationWindowHint')}</p>
         <input className="crm-input" type="number" min={0}
           value={form.cancellation_window_minutes}
           onChange={e => upd('cancellation_window_minutes', parseInt(e.target.value, 10) || 0)} />
       </div>
 
       <div className="auth-field" style={{ gridColumn: '1 / -1' }}>
-        <label className="auth-label">Business timezone</label>
+        <label className="auth-label">{t('booking.settings.rules.timezone')}</label>
         <p className="auth-field-hint">
-          Working hours and slot times are interpreted in this timezone. Pick the
-          UTC offset that matches your business's actual location — labels show the
-          current offset (incl. daylight saving). Your local zone is marked
-          "(your local)" — likely the right pick.
+          {t('booking.settings.rules.timezoneHint')}
         </p>
         <Combobox value={form.timezone || browserTz}
           options={tzOptions}
-          placeholder="Pick a timezone"
+          placeholder={t('booking.settings.rules.timezonePlaceholder')}
           onChange={v => upd('timezone', v)} />
       </div>
 
       <div className="auth-toggle-row" style={{ gridColumn: '1 / -1' }}>
         <div>
-          <span className="auth-toggle-label">Auto-confirm bookings</span>
-          <p className="auth-field-hint">When off, new bookings start as <code>pending</code> and you confirm manually.</p>
+          <span className="auth-toggle-label">{t('booking.settings.rules.autoConfirm')}</span>
+          <p className="auth-field-hint">{t('booking.settings.rules.autoConfirmHintPre')}<code>pending</code>{t('booking.settings.rules.autoConfirmHintPost')}</p>
         </div>
         <label className="auth-toggle">
           <input type="checkbox" checked={form.auto_confirm}
@@ -957,14 +950,19 @@ function RulesEditor({ projectId, showToast, onSaved }) {
 // ═══════════════════════════════════════════════════════════════
 
 function Booking() {
+  const { t } = useTranslation();
   const { projectId, project, access } = useOutletContext();
   const canView = (p) => !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[p]);
   const bookingTabs = [
-    canView('booking')          && { key: 'bookings', label: 'Bookings', Icon: CalendarBlank },
-    canView('booking_services') && { key: 'services', label: 'Services', Icon: Briefcase },
-    canView('booking_staff')    && { key: 'staff',    label: 'Staff',    Icon: Users },
-    canView('booking_settings') && { key: 'settings', label: 'Settings', Icon: GearSix },
+    canView('booking')          && { key: 'bookings', label: t('booking.tabs.bookings'), Icon: CalendarBlank },
+    canView('booking_services') && { key: 'services', label: t('booking.tabs.services'), Icon: Briefcase },
+    canView('booking_staff')    && { key: 'staff',    label: t('booking.tabs.staff'),    Icon: Users },
+    canView('booking_settings') && { key: 'settings', label: t('booking.tabs.settings'), Icon: GearSix },
   ].filter(Boolean);
+  const sortOptions      = [{ field: 'date', label: t('booking.list.sortByDate') }, { field: 'customer', label: t('booking.list.sortByCustomer') }];
+  const svcSortOptions   = [{ field: 'name', label: t('booking.services.sortByName') }, { field: 'price', label: t('booking.services.sortByPrice') }, { field: 'duration', label: t('booking.services.sortByDuration') }];
+  const staffSortOptions = [{ field: 'name', label: t('booking.staff.sortByName') }, { field: 'date', label: t('booking.staff.sortByDate') }];
+  const staffPeriodOptions = STAFF_PERIOD_VALUES.map(v => ({ value: v, label: t(`booking.staff.period.${v}`) }));
   // Sync the module-level currency so fmtMoney() inside Service/Staff
   // sub-components reuses the project's choice without prop drilling.
   // Layout effect → fires before paint so the first render already uses
@@ -1043,7 +1041,8 @@ function Booking() {
 
   const bulkSetStatus = async (status) => {
     if (!selected.size) return;
-    if (!confirm(`Set ${selected.size} booking${selected.size === 1 ? '' : 's'} to "${status}"?`)) return;
+    if (!confirm(t('booking.bulk.setStatusConfirm', { count: selected.size, status: statusLabel(t, status) }))) return;
+    const n = selected.size;
     await Promise.all(Array.from(selected).map(id =>
       fetch(`${API_BASE}/api/booking/bookings/${id}${pq}`, {
         method: 'PATCH', credentials: 'include',
@@ -1053,18 +1052,19 @@ function Booking() {
     ));
     setBookings(prev => prev.map(b => selected.has(b.id) ? { ...b, status } : b));
     clearSel();
-    showToast(`${selected.size} booking${selected.size === 1 ? '' : 's'} updated`);
+    showToast(t('booking.toast.bookingsUpdated', { count: n }));
   };
 
   const bulkDelete = async () => {
     if (!selected.size) return;
-    if (!confirm(`Delete ${selected.size} booking${selected.size === 1 ? '' : 's'} permanently?`)) return;
+    if (!confirm(t('booking.bulk.deleteConfirm', { count: selected.size }))) return;
+    const n = selected.size;
     await Promise.all(Array.from(selected).map(id =>
       fetch(`${API_BASE}/api/booking/bookings/${id}${pq}`, { method: 'DELETE', credentials: 'include' })
     ));
     setBookings(prev => prev.filter(b => !selected.has(b.id)));
     clearSel();
-    showToast(`${selected.size} booking${selected.size === 1 ? '' : 's'} deleted`);
+    showToast(t('booking.toast.bookingsDeleted', { count: n }));
   };
 
   // Esc clears selection.
@@ -1144,7 +1144,7 @@ function Booking() {
             });
             if (r.ok) {
               setSettings({ ...s, timezone: browserTz });
-              showToast?.(`Business timezone set to ${browserTz}`);
+              showToast?.(t('booking.settings.toast.timezoneSet', { tz: browserTz }));
             }
           } catch { /* will retry next time */ }
         }
@@ -1252,12 +1252,12 @@ function Booking() {
 
   // ── Service / staff handlers ──
   const deleteService = async (id) => {
-    if (!confirm('Delete this service? Existing bookings will keep referencing it.')) return;
+    if (!confirm(t('booking.services.deleteConfirm'))) return;
     await fetch(`${API_BASE}/api/booking/services/${id}${pq}`, { method: 'DELETE', credentials: 'include' });
     reload();
   };
   const deleteStaff = async (id) => {
-    if (!confirm('Delete this staff member?')) return;
+    if (!confirm(t('booking.staff.deleteConfirm'))) return;
     await fetch(`${API_BASE}/api/booking/staff/${id}${pq}`, { method: 'DELETE', credentials: 'include' });
     reload();
   };
@@ -1273,14 +1273,14 @@ function Booking() {
   };
 
   const deleteBooking = async (id) => {
-    if (!confirm('Delete this booking permanently?')) return;
+    if (!confirm(t('booking.detail.deleteConfirm'))) return;
     await fetch(`${API_BASE}/api/booking/bookings/${id}${pq}`, { method: 'DELETE', credentials: 'include' });
     setBookings(prev => prev.filter(b => b.id !== id));
     setOpenBooking(null);
   };
 
   const isEmpty = !loading && sorted.length === 0;
-  const emptyMsg = statusTab === 'all' && !search ? 'No bookings yet' : 'No bookings match your filter';
+  const emptyMsg = statusTab === 'all' && !search ? t('booking.list.emptyAll') : t('booking.list.emptyFiltered');
 
   return (
     <>
@@ -1294,17 +1294,17 @@ function Booking() {
         {/* ───────────────────────────  BOOKINGS TAB  ─────────────────────────── */}
         {tab === 'bookings' && (
           <>
-            <h1 className="crm-page-title">Bookings</h1>
+            <h1 className="crm-page-title">{t('booking.list.title')}</h1>
 
             {/* Single flat toolbar (matches Products / Orders pattern) */}
             <div className="org-toolbar bk-toolbar">
               <div className="org-search-wrap">
                 <MagnifyingGlass className="org-search-icon" />
-                <input className="org-search-input" placeholder="Search bookings…"
+                <input className="org-search-input" placeholder={t('booking.list.searchPlaceholder')}
                   value={search} onChange={e => setSearch(e.target.value)} />
               </div>
 
-              <SortToggle sort={sort} onSort={setSort} />
+              <SortToggle sort={sort} onSort={setSort} options={sortOptions} />
               <StatusFilter active={statusTab} counts={counts} onChange={setStatusTab} />
 
               <div className="org-view-toggle bk-view-toggle" onMouseLeave={() => setViewHover(null)}>
@@ -1312,23 +1312,23 @@ function Booking() {
                   style={{ transform: `translateX(${curView === 'list' ? 0 : curView === 'cards' ? 30 : 60}px)` }} />
                 <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
                   onClick={() => setView('list')} onMouseEnter={() => setViewHover('list')}
-                  title="List view" type="button">
+                  title={t('booking.list.listView')} type="button">
                   <List className="org-view-icon" />
                 </button>
                 <button className={`org-view-btn${curView === 'cards' ? ' org-view-btn--current' : ''}`}
                   onClick={() => setView('cards')} onMouseEnter={() => setViewHover('cards')}
-                  title="Cards view" type="button">
+                  title={t('booking.list.cardsView')} type="button">
                   <SquaresFour className="org-view-icon" />
                 </button>
                 <button className={`org-view-btn${curView === 'calendar' ? ' org-view-btn--current' : ''}`}
                   onClick={() => setView('calendar')} onMouseEnter={() => setViewHover('calendar')}
-                  title="Calendar view" type="button">
+                  title={t('booking.list.calendarView')} type="button">
                   <CalendarCheck className="org-view-icon" />
                 </button>
               </div>
 
               <button className="org-new-btn" type="button" onClick={() => setCreateOpen(true)}>
-                <Plus className="org-new-icon" /> New booking
+                <Plus className="org-new-icon" /> {t('booking.list.newBooking')}
               </button>
             </div>
 
@@ -1336,14 +1336,14 @@ function Booking() {
             {view === 'list' && (
               <div className="prod-list">
                 <div className="bk-list-head">
-                  <span className="org-list-th">Customer</span>
-                  <span className="org-list-th">Service</span>
-                  <span className="org-list-th">Staff</span>
-                  <span className="org-list-th">When</span>
-                  <span className="org-list-th">Status</span>
+                  <span className="org-list-th">{t('booking.list.colCustomer')}</span>
+                  <span className="org-list-th">{t('booking.list.colService')}</span>
+                  <span className="org-list-th">{t('booking.list.colStaff')}</span>
+                  <span className="org-list-th">{t('booking.list.colWhen')}</span>
+                  <span className="org-list-th">{t('booking.list.colStatus')}</span>
                 </div>
                 {loading ? (
-                  <p className="crm-placeholder">Loading bookings…</p>
+                  <p className="crm-placeholder">{t('booking.list.loading')}</p>
                 ) : isEmpty ? (
                   <div className="ord-empty">
                     <CalendarBlank className="ord-empty-icon" weight="duotone" />
@@ -1363,7 +1363,7 @@ function Booking() {
             {/* Cards view */}
             {view === 'cards' && (
               loading ? (
-                <p className="crm-placeholder">Loading bookings…</p>
+                <p className="crm-placeholder">{t('booking.list.loading')}</p>
               ) : isEmpty ? (
                 <div className="ord-empty">
                   <CalendarBlank className="ord-empty-icon" weight="duotone" />
@@ -1394,8 +1394,8 @@ function Booking() {
                 onMoveBooking={async (id, iso) => {
                   const res = await fetch(`${API_BASE}/api/booking/bookings/${id}/move${pq}&starts_at=${encodeURIComponent(iso)}`,
                     { method: 'PUT', credentials: 'include' });
-                  if (res.ok) { reload(); showToast('Booking moved'); }
-                  else showToast('Move failed');
+                  if (res.ok) { reload(); showToast(t('booking.toast.bookingMoved')); }
+                  else showToast(t('booking.toast.moveFailed'));
                 }}
                 onStatusChange={updateBookingStatus}
               />
@@ -1406,40 +1406,40 @@ function Booking() {
         {/* ───────────────────────────  SERVICES TAB  ─────────────────────────── */}
         {tab === 'services' && (
           <>
-            <h1 className="crm-page-title">Services</h1>
+            <h1 className="crm-page-title">{t('booking.services.title')}</h1>
             <div className="org-toolbar bk-toolbar">
               <div className="org-search-wrap">
                 <MagnifyingGlass className="org-search-icon" />
-                <input className="org-search-input" placeholder="Search services…"
+                <input className="org-search-input" placeholder={t('booking.services.searchPlaceholder')}
                   value={svcSearch} onChange={e => setSvcSearch(e.target.value)} />
               </div>
               <SortToggle sort={svcSort} onSort={setSvcSort}
-                options={SVC_SORT_OPTIONS} defaultDirs={SVC_SORT_DIRS} />
+                options={svcSortOptions} defaultDirs={SVC_SORT_DIRS} />
               <div className="org-view-toggle" onMouseLeave={() => setSvcViewHover(null)}>
                 <div className="org-view-indicator"
                   style={{ transform: `translateX(${curSvcView === 'cards' ? 30 : 0}px)` }} />
                 <button className={`org-view-btn${curSvcView === 'list' ? ' org-view-btn--current' : ''}`}
                   onClick={() => setSvcView('list')} onMouseEnter={() => setSvcViewHover('list')}
-                  title="List view" type="button">
+                  title={t('booking.services.listView')} type="button">
                   <List className="org-view-icon" />
                 </button>
                 <button className={`org-view-btn${curSvcView === 'cards' ? ' org-view-btn--current' : ''}`}
                   onClick={() => setSvcView('cards')} onMouseEnter={() => setSvcViewHover('cards')}
-                  title="Cards view" type="button">
+                  title={t('booking.services.cardsView')} type="button">
                   <SquaresFour className="org-view-icon" />
                 </button>
               </div>
               <button className="org-new-btn" type="button" onClick={() => setEditService({})}>
-                <Plus className="org-new-icon" /> New service
+                <Plus className="org-new-icon" /> {t('booking.services.newService')}
               </button>
             </div>
             {loading ? (
-              <p className="crm-placeholder">Loading services…</p>
+              <p className="crm-placeholder">{t('booking.services.loading')}</p>
             ) : servicesSorted.length === 0 ? (
               <div className="bk-empty-block">
                 {services.length === 0
-                  ? 'No services yet — add one to start accepting bookings.'
-                  : 'No services match your search.'}
+                  ? t('booking.services.empty')
+                  : t('booking.services.emptySearch')}
               </div>
             ) : svcView === 'cards' ? (
               <div className="prod-grid">
@@ -1452,11 +1452,11 @@ function Booking() {
             ) : (
               <div className="prod-list">
                 <div className="prod-list-head bk-svc-list-head">
-                  <span /><span className="org-list-th">Title</span>
-                  <span className="org-list-th">Duration</span>
-                  <span className="org-list-th">Price</span>
-                  <span className="org-list-th">Capacity</span>
-                  <span className="org-list-th">Staff</span>
+                  <span /><span className="org-list-th">{t('booking.services.colTitle')}</span>
+                  <span className="org-list-th">{t('booking.services.colDuration')}</span>
+                  <span className="org-list-th">{t('booking.services.colPrice')}</span>
+                  <span className="org-list-th">{t('booking.services.colCapacity')}</span>
+                  <span className="org-list-th">{t('booking.services.colStaff')}</span>
                   <span />
                 </div>
                 <div className="prod-list-block">
@@ -1474,50 +1474,50 @@ function Booking() {
         {/* ───────────────────────────  STAFF TAB  ─────────────────────────── */}
         {tab === 'staff' && (
           <>
-            <h1 className="crm-page-title">Staff</h1>
+            <h1 className="crm-page-title">{t('booking.staff.title')}</h1>
             <div className="org-toolbar bk-toolbar">
               <div className="org-search-wrap">
                 <MagnifyingGlass className="org-search-icon" />
-                <input className="org-search-input" placeholder="Search staff…"
+                <input className="org-search-input" placeholder={t('booking.staff.searchPlaceholder')}
                   value={stfSearch} onChange={e => setStfSearch(e.target.value)} />
               </div>
               <SortToggle sort={stfSort} onSort={setStfSort}
-                options={STAFF_SORT_OPTIONS} defaultDirs={STAFF_SORT_DIRS} />
+                options={staffSortOptions} defaultDirs={STAFF_SORT_DIRS} />
               <div className="org-view-toggle" onMouseLeave={() => setStfViewHover(null)}>
                 <div className="org-view-indicator"
                   style={{ transform: `translateX(${curStfView === 'cards' ? 30 : 0}px)` }} />
                 <button className={`org-view-btn${curStfView === 'list' ? ' org-view-btn--current' : ''}`}
                   onClick={() => setStfView('list')} onMouseEnter={() => setStfViewHover('list')}
-                  title="List view" type="button">
+                  title={t('booking.staff.listView')} type="button">
                   <List className="org-view-icon" />
                 </button>
                 <button className={`org-view-btn${curStfView === 'cards' ? ' org-view-btn--current' : ''}`}
                   onClick={() => setStfView('cards')} onMouseEnter={() => setStfViewHover('cards')}
-                  title="Cards view" type="button">
+                  title={t('booking.staff.cardsView')} type="button">
                   <SquaresFour className="org-view-icon" />
                 </button>
               </div>
               <button className="org-new-btn" type="button" onClick={() => setEditStaff({})}>
-                <Plus className="org-new-icon" /> New staff
+                <Plus className="org-new-icon" /> {t('booking.staff.newStaff')}
               </button>
             </div>
             {/* Analytics period picker — drives the 4 metrics on each card/row.
                 Combobox is the same widget used everywhere else (timezone, status,
                 etc.) so the UI stays consistent. */}
             <div className="bk-stf-analytics-bar">
-              <span className="bk-stf-analytics-label">Analytics period</span>
+              <span className="bk-stf-analytics-label">{t('booking.staff.analyticsPeriod')}</span>
               <div className="bk-stf-analytics-cb">
-                <Combobox value={stfPeriod} options={STAFF_PERIOD_OPTIONS}
+                <Combobox value={stfPeriod} options={staffPeriodOptions}
                   onChange={setStfPeriod} />
               </div>
             </div>
             {loading ? (
-              <p className="crm-placeholder">Loading staff…</p>
+              <p className="crm-placeholder">{t('booking.staff.loading')}</p>
             ) : staffSorted.length === 0 ? (
               <div className="bk-empty-block">
                 {staff.length === 0
-                  ? 'No staff configured. Services without a required staff member will be booked by capacity instead.'
-                  : 'No staff match your search.'}
+                  ? t('booking.staff.empty')
+                  : t('booking.staff.emptySearch')}
               </div>
             ) : stfView === 'cards' ? (
               <div className="prod-grid">
@@ -1531,12 +1531,12 @@ function Booking() {
             ) : (
               <div className="prod-list">
                 <div className="prod-list-head bk-stf-list-head">
-                  <span /><span className="org-list-th">Name</span>
-                  <span className="org-list-th">Bio</span>
-                  <span className="org-list-th">Services</span>
-                  <span className="org-list-th">Cassa</span>
-                  <span className="org-list-th">Bookings</span>
-                  <span className="org-list-th">Hours</span>
+                  <span /><span className="org-list-th">{t('booking.staff.colName')}</span>
+                  <span className="org-list-th">{t('booking.staff.colBio')}</span>
+                  <span className="org-list-th">{t('booking.staff.colServices')}</span>
+                  <span className="org-list-th">{t('booking.staff.colCassa')}</span>
+                  <span className="org-list-th">{t('booking.staff.colBookings')}</span>
+                  <span className="org-list-th">{t('booking.staff.colHours')}</span>
                   <span />
                 </div>
                 <div className="prod-list-block">
@@ -1555,31 +1555,31 @@ function Booking() {
         {/* ───────────────────────────  SETTINGS TAB  ─────────────────────────── */}
         {tab === 'settings' && (
           <>
-            <h1 className="crm-page-title">Booking Settings</h1>
+            <h1 className="crm-page-title">{t('booking.settings.title')}</h1>
             <p className="auth-page-subtitle">
-              Working hours and booking rules for this business.
+              {t('booking.settings.subtitle')}
             </p>
 
             <section className="bk-section">
               <div className="bk-section-head">
-                <h2 className="bk-section-title">Stats</h2>
+                <h2 className="bk-section-title">{t('booking.settings.statsHeading')}</h2>
               </div>
               <StatsBlock projectId={projectId} />
             </section>
 
             <section className="bk-section">
               <div className="bk-section-head">
-                <h2 className="bk-section-title">Working hours</h2>
+                <h2 className="bk-section-title">{t('booking.settings.workingHoursHeading')}</h2>
               </div>
               <p className="auth-field-hint" style={{ marginBottom: 12 }}>
-                Default hours of operation. Used for services without a specific staff member.
+                {t('booking.settings.workingHoursHint')}
               </p>
               <HoursEditor projectId={projectId} showToast={showToast} onSaved={reload} />
             </section>
 
             <section className="bk-section">
               <div className="bk-section-head">
-                <h2 className="bk-section-title">Booking rules</h2>
+                <h2 className="bk-section-title">{t('booking.settings.bookingRulesHeading')}</h2>
               </div>
               <RulesEditor projectId={projectId} showToast={showToast} onSaved={reload} />
             </section>
@@ -1609,7 +1609,7 @@ function Booking() {
           slotInterval={settings?.slot_interval_minutes || 30}
           presetStart={typeof createOpen === 'object' ? createOpen.presetStart : null}
           onClose={() => setCreateOpen(false)}
-          onCreated={() => { setCreateOpen(false); reload(); showToast('Booking created'); }}
+          onCreated={() => { setCreateOpen(false); reload(); showToast(t('booking.toast.bookingCreated')); }}
         />
       )}
 
@@ -1619,7 +1619,7 @@ function Booking() {
           service={editService.id ? editService : null}
           allStaff={staff}
           onClose={() => setEditService(null)}
-          onSaved={() => { setEditService(null); reload(); showToast('Service saved'); }}
+          onSaved={() => { setEditService(null); reload(); showToast(t('booking.toast.serviceSaved')); }}
         />
       )}
 
@@ -1630,7 +1630,7 @@ function Booking() {
           allServices={services}
           slotInterval={settings?.slot_interval_minutes || 30}
           onClose={() => setEditStaff(null)}
-          onSaved={() => { setEditStaff(null); reload(); showToast('Staff saved'); }}
+          onSaved={() => { setEditStaff(null); reload(); showToast(t('booking.toast.staffSaved')); }}
         />
       )}
 
@@ -1642,16 +1642,16 @@ function Booking() {
         <div className="bulk-bar" role="toolbar">
           <span className="bulk-bar-count">
             <span className="bulk-bar-dot" />
-            {selected.size} booking{selected.size === 1 ? '' : 's'}
+            {t('booking.bulk.count', { count: selected.size })}
           </span>
           <div className="bulk-bar-divider" />
-          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('confirmed')}>Confirm</button>
-          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('completed')}>Completed</button>
-          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('cancelled')}>Cancel</button>
-          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('no_show')}>No-show</button>
+          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('confirmed')}>{t('booking.bulk.confirm')}</button>
+          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('completed')}>{t('booking.bulk.completed')}</button>
+          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('cancelled')}>{t('booking.bulk.cancel')}</button>
+          <button type="button" className="bulk-bar-btn" onClick={() => bulkSetStatus('no_show')}>{t('booking.bulk.noShow')}</button>
           <div className="bulk-bar-divider" />
-          <button type="button" className="bulk-bar-btn bulk-bar-btn--danger" onClick={bulkDelete}>Delete</button>
-          <button type="button" className="bulk-bar-btn" onClick={clearSel}>Cancel</button>
+          <button type="button" className="bulk-bar-btn bulk-bar-btn--danger" onClick={bulkDelete}>{t('booking.bulk.delete')}</button>
+          <button type="button" className="bulk-bar-btn" onClick={clearSel}>{t('booking.bulk.cancel')}</button>
         </div>,
         document.body
       )}

@@ -13,6 +13,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Target, Plus, Pencil, Trash, CheckCircle, Warning, X, ChartLineUp,
   DotsThreeOutline, MagnifyingGlass, ArrowDown, SquaresFour, List,
@@ -27,37 +28,53 @@ import '../../Style/Products.css';        // .po-block-hint, .po-set-table, .po-
 import '../../Style/Targets.css';
 
 // ── Target type catalog (mirrors GOAL_TYPES in CRM backend) ─────────────
+// `tkey` resolves label + hint via i18n at render.
 const TARGET_TYPES = [
-  { value: 'revenue',              label: 'Revenue',                unit: 'money',   hint: 'Sum of paid order totals' },
-  { value: 'orders_count',         label: 'Orders count',           unit: 'count',   hint: 'Number of non-cancelled orders' },
-  { value: 'new_customers',        label: 'New customers',          unit: 'count',   hint: 'Customers whose first order is in this cycle' },
-  { value: 'signups',              label: 'Signups',                unit: 'count',   hint: 'New user accounts created' },
-  { value: 'avg_order_value',      label: 'Avg order value',        unit: 'money',   hint: 'Average order total' },
-  { value: 'conversion_rate',      label: 'Conversion rate (%)',    unit: 'percent', hint: 'Paid orders / unique visitors × 100' },
-  { value: 'return_rate_max',      label: 'Return rate ≤ (%)',      unit: 'percent', hint: 'Target is an UPPER bound — staying below is good', inverse: true },
-  { value: 'bookings_count',       label: 'Bookings count',         unit: 'count',   hint: 'Non-cancelled service bookings' },
-  { value: 'avg_rating',           label: 'Avg rating',             unit: 'rating',  hint: 'Mean product rating (0–5)' },
-  { value: 'repeat_purchase_rate', label: 'Repeat-purchase rate %', unit: 'percent', hint: 'Customers with ≥2 orders this cycle' },
-  { value: 'custom_event_count',   label: 'Custom event count',     unit: 'count',   hint: 'Fired from your storefront via client.track.goal()' },
+  { value: 'revenue',              tkey: 'revenue',            unit: 'money'   },
+  { value: 'orders_count',         tkey: 'ordersCount',        unit: 'count'   },
+  { value: 'new_customers',        tkey: 'newCustomers',       unit: 'count'   },
+  { value: 'signups',              tkey: 'signups',            unit: 'count'   },
+  { value: 'avg_order_value',      tkey: 'avgOrderValue',      unit: 'money'   },
+  { value: 'conversion_rate',      tkey: 'conversionRate',     unit: 'percent' },
+  { value: 'return_rate_max',      tkey: 'returnRateMax',      unit: 'percent', inverse: true },
+  { value: 'bookings_count',       tkey: 'bookingsCount',      unit: 'count'   },
+  { value: 'avg_rating',           tkey: 'avgRating',          unit: 'rating'  },
+  { value: 'repeat_purchase_rate', tkey: 'repeatPurchaseRate', unit: 'percent' },
+  { value: 'custom_event_count',   tkey: 'customEventCount',   unit: 'count'   },
 ];
 const TYPE_BY_VALUE = Object.fromEntries(TARGET_TYPES.map(t => [t.value, t]));
-
-const PERIOD_OPTIONS = [
-  { value: '1d',       label: '1 day'           },
-  { value: '1w',       label: '1 week'          },
-  { value: '1mo',      label: '1 month'         },
-  { value: 'season',   label: '1 season (3 mo)' },
-  { value: '1y',       label: '1 year'          },
-  { value: 'all_time', label: 'Lifetime'        },
-];
-
-const STATUS_META = {
-  achieved:  { label: 'Achieved',   cls: 't-status--achieved',  icon: CheckCircle },
-  on_track:  { label: 'On track',   cls: 't-status--on-track',  icon: ChartLineUp },
-  behind:    { label: 'Behind',     cls: 't-status--behind',    icon: Warning     },
-  at_risk:   { label: 'At risk',    cls: 't-status--at-risk',   icon: Warning     },
-  inactive:  { label: 'Inactive',   cls: 't-status--behind',    icon: Warning     },
+const typeLabel = (t, v) => {
+  const m = TYPE_BY_VALUE[v];
+  return m ? t(`project.targets.type.${m.tkey}`) : v;
 };
+const typeHint = (t, v) => {
+  const m = TYPE_BY_VALUE[v];
+  return m ? t(`project.targets.typeHint.${m.tkey}`) : '';
+};
+
+// Period codes → i18n key.
+const PERIOD_KEYS = [
+  { value: '1d',       pkey: '1d' },
+  { value: '1w',       pkey: '1w' },
+  { value: '1mo',      pkey: '1mo' },
+  { value: 'season',   pkey: 'season' },
+  { value: '1y',       pkey: '1y' },
+  { value: 'all_time', pkey: 'allTime' },
+];
+const periodLabel = (t, v) => {
+  const m = PERIOD_KEYS.find(p => p.value === v);
+  return m ? t(`project.targets.period.${m.pkey}`) : v;
+};
+
+// Status code → cls/icon (+ skey for label).
+const STATUS_META = {
+  achieved:  { skey: 'achieved', cls: 't-status--achieved',  icon: CheckCircle },
+  on_track:  { skey: 'onTrack',  cls: 't-status--on-track',  icon: ChartLineUp },
+  behind:    { skey: 'behind',   cls: 't-status--behind',    icon: Warning     },
+  at_risk:   { skey: 'atRisk',   cls: 't-status--at-risk',   icon: Warning     },
+  inactive:  { skey: 'inactive', cls: 't-status--behind',    icon: Warning     },
+};
+const statusLabel = (t, status) => t(`project.targets.status.${(STATUS_META[status] || STATUS_META.on_track).skey}`);
 
 // Computed pill state — when the user mutes a target (is_active = false),
 // the backend's auto-computed `status` ("on_track" / "behind" / etc.) is
@@ -71,19 +88,6 @@ function pillFor(target) {
 // that matters for most workflows; "Achieved" is a useful subset (active
 // AND progress hit target). Old on-track / behind / at-risk values are
 // computed signals that overlap and confuse — dropped from the filter.
-const STATUS_FILTER_OPTIONS = [
-  { value: 'all',       label: 'All targets'  },
-  { value: 'active',    label: 'Active'       },
-  { value: 'inactive',  label: 'Inactive'     },
-  { value: 'achieved',  label: 'Achieved'     },
-];
-
-// Toolbar sort fields — mirrors PromoCodes sort layout.
-const SORT_OPTIONS = [
-  { field: 'date',     label: 'Sort by date'     },
-  { field: 'name',     label: 'Sort by name'     },
-  { field: 'progress', label: 'Sort by progress' },
-];
 const SORT_DEFAULT_DIR = { date: 'desc', name: 'asc', progress: 'desc' };
 
 // ── Currency-aware value formatter ─────────────────────────────────────
@@ -102,6 +106,12 @@ function fmtValue(v, unit) {
 // hover, falls back to active field. Direction arrow only renders for
 // the active field.
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
+  const SORT_OPTIONS = [
+    { field: 'date',     label: t('project.targets.sortByDate')     },
+    { field: 'name',     label: t('project.targets.sortByName')     },
+    { field: 'progress', label: t('project.targets.sortByProgress') },
+  ];
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -149,6 +159,7 @@ function SortToggle({ sort, onSort }) {
 // `.org-card-dropdown-item` styles so menus look identical across
 // Targets / PromoCodes / Batches / Products. Esc / outside-click closes.
 function TargetMenu({ btnRef, onClose, isActive, onEdit, onToggle, onDelete }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
 
   useEffect(() => {
@@ -180,7 +191,7 @@ function TargetMenu({ btnRef, onClose, isActive, onEdit, onToggle, onDelete }) {
       onClick={(e) => e.stopPropagation()}>
       <button className="org-card-dropdown-item"
         onClick={() => { onClose(); onEdit(); }}>
-        <Pencil className="org-card-dropdown-icon" /> Edit
+        <Pencil className="org-card-dropdown-icon" /> {t('project.targets.edit')}
       </button>
       {/* Active/Inactive quick-toggle — saves a round-trip through the
           full edit modal when the merchant just wants to pause/resume a
@@ -188,12 +199,12 @@ function TargetMenu({ btnRef, onClose, isActive, onEdit, onToggle, onDelete }) {
       <button className="org-card-dropdown-item"
         onClick={() => { onClose(); onToggle(); }}>
         <Target className="org-card-dropdown-icon" />
-        {isActive ? 'Set inactive' : 'Set active'}
+        {isActive ? t('project.targets.setInactive') : t('project.targets.setActive')}
       </button>
       <div className="org-card-dropdown-sep" />
       <button className="org-card-dropdown-item org-card-dropdown-item--danger"
         onClick={() => { onClose(); onDelete(); }}>
-        <Trash className="org-card-dropdown-icon" /> Delete
+        <Trash className="org-card-dropdown-icon" /> {t('project.targets.delete')}
       </button>
     </div>,
     document.body,
@@ -211,7 +222,8 @@ function progressPct(t) {
 // then we render the cells: name (+ status pill inline) / type / period /
 // current/target / progress bar / status / menu.
 function TargetListRow({ target, onEdit, onDelete, onToggle }) {
-  const type   = TYPE_BY_VALUE[target.goal_type] || { unit: 'count', label: target.goal_type };
+  const { t } = useTranslation();
+  const type   = TYPE_BY_VALUE[target.goal_type] || { unit: 'count' };
   const status = pillFor(target);
   const StatusIcon = status.icon;
   const p = target.progress || { current: 0, target: 1 };
@@ -227,8 +239,8 @@ function TargetListRow({ target, onEdit, onDelete, onToggle }) {
           {target.name}
         </span>
       </span>
-      <span>{type.label}</span>
-      <span>{PERIOD_OPTIONS.find(po => po.value === target.period)?.label || target.period}</span>
+      <span>{typeLabel(t, target.goal_type)}</span>
+      <span>{periodLabel(t, target.period)}</span>
       {/* Merged progress cell: "9 / 10" + inline thin bar + "90%". Renders
           as one visual unit instead of two adjacent siblings — keeps the
           row alignment clean even on narrow viewports. */}
@@ -245,11 +257,11 @@ function TargetListRow({ target, onEdit, onDelete, onToggle }) {
       </span>
       <span>
         <span className={`t-status ${status.cls}`}>
-          <StatusIcon size={11} weight="fill" /> {status.label}
+          <StatusIcon size={11} weight="fill" /> {t(`project.targets.status.${status.skey}`)}
         </span>
       </span>
       <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
-        aria-label="Options"
+        aria-label={t('project.targets.options')}
         onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
         <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
       </button>
@@ -267,7 +279,8 @@ function TargetListRow({ target, onEdit, onDelete, onToggle }) {
 // Bigger, more visual variant for the grid view — the 34-px focal value
 // sits over a thin progress track. Hover lifts the card 1 px.
 function TargetGridCard({ target, onEdit, onDelete, onToggle }) {
-  const type   = TYPE_BY_VALUE[target.goal_type] || { unit: 'count', label: target.goal_type };
+  const { t } = useTranslation();
+  const type   = TYPE_BY_VALUE[target.goal_type] || { unit: 'count' };
   const status = pillFor(target);
   const StatusIcon = status.icon;
   const p = target.progress || { current: 0, target: 1 };
@@ -286,18 +299,18 @@ function TargetGridCard({ target, onEdit, onDelete, onToggle }) {
           <div style={{ minWidth: 0 }}>
             <h3 className="t-card-title">{target.name}</h3>
             <div className="t-card-sub">
-              <span>{type.label}</span>
+              <span>{typeLabel(t, target.goal_type)}</span>
               <span className="t-card-sub-dot" />
-              <span>{PERIOD_OPTIONS.find(po => po.value === target.period)?.label || target.period}</span>
+              <span>{periodLabel(t, target.period)}</span>
             </div>
           </div>
         </div>
         <div className="t-card-actions" onClick={(e) => e.stopPropagation()}>
           <span className={`t-status ${status.cls}`}>
-            <StatusIcon size={11} weight="fill" /> {status.label}
+            <StatusIcon size={11} weight="fill" /> {t(`project.targets.status.${status.skey}`)}
           </span>
           <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
-            aria-label="Options"
+            aria-label={t('project.targets.options')}
             onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
             <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
           </button>
@@ -329,6 +342,7 @@ function TargetGridCard({ target, onEdit, onDelete, onToggle }) {
 
 // ── Create / Edit target modal ─────────────────────────────────────────
 function TargetModal({ target, projectId, onClose, onSaved }) {
+  const { t } = useTranslation();
   const isEdit = !!target;
   const pq = `?project_id=${projectId}`;
   const [form, setForm] = useState({
@@ -353,12 +367,12 @@ function TargetModal({ target, projectId, onClose, onSaved }) {
 
   const submit = async (e) => {
     e?.preventDefault?.();
-    if (!form.name.trim()) { setErr('Name is required'); return; }
+    if (!form.name.trim()) { setErr(t('project.targets.modal.nameRequired')); return; }
     if (!form.target_value || +form.target_value <= 0) {
-      setErr('Target value must be > 0'); return;
+      setErr(t('project.targets.modal.targetPositive')); return;
     }
     if (form.goal_type === 'custom_event_count' && !form.custom_event_name.trim()) {
-      setErr('Custom event name is required for custom-event targets'); return;
+      setErr(t('project.targets.modal.customEventRequired')); return;
     }
     setSaving(true); setErr('');
     const url = isEdit
@@ -382,7 +396,7 @@ function TargetModal({ target, projectId, onClose, onSaved }) {
       if (r.ok) onSaved();
       else {
         const j = await r.json().catch(() => ({}));
-        setErr(j.detail || 'Failed to save');
+        setErr(j.detail || t('project.targets.modal.saveFailed'));
       }
     } finally { setSaving(false); }
   };
@@ -394,12 +408,12 @@ function TargetModal({ target, projectId, onClose, onSaved }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">{isEdit ? 'Edit target' : 'New target'}</div>
+              <div className="auth-modal-title">{isEdit ? t('project.targets.modal.editTitle') : t('project.targets.modal.newTitle')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {isEdit
-                    ? `Editing "${target.name}" — progress is recomputed on save.`
-                    : 'Numeric targets that fire push notifications when hit.'}
+                    ? t('project.targets.modal.editSubtitle', { name: target.name })
+                    : t('project.targets.modal.newSubtitle')}
                 </span>
               </div>
             </div>
@@ -413,31 +427,31 @@ function TargetModal({ target, projectId, onClose, onSaved }) {
           <form className="cpm-form" onSubmit={submit} autoComplete="off">
 
             <div className="cpm-section">
-              <label className="po-field-label">Name *</label>
+              <label className="po-field-label">{t('project.targets.modal.name')}</label>
               <input className="crm-input" autoFocus maxLength={120}
-                placeholder="Hit $10k in monthly revenue"
+                placeholder={t('project.targets.modal.namePlaceholder')}
                 value={form.name} onChange={e => set('name', e.target.value)} />
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Description</label>
+              <label className="po-field-label">{t('project.targets.modal.description')}</label>
               <textarea className="crm-input cpm-textarea" rows={2} maxLength={1000}
-                placeholder="Why this target matters (visible only to your team)"
+                placeholder={t('project.targets.modal.descriptionPlaceholder')}
                 value={form.description} onChange={e => set('description', e.target.value)} />
             </div>
 
             <div className="po-wh-grid">
               <div className="cpm-section">
-                <label className="po-field-label">Type *</label>
+                <label className="po-field-label">{t('project.targets.modal.type')}</label>
                 <Combobox value={form.goal_type}
-                  options={TARGET_TYPES.map(t => ({ value: t.value, label: t.label }))}
+                  options={TARGET_TYPES.map(tt => ({ value: tt.value, label: typeLabel(t, tt.value) }))}
                   onChange={v => set('goal_type', v)} />
                 <span className="cpm-section-hint">
-                  {TYPE_BY_VALUE[form.goal_type]?.hint}
+                  {typeHint(t, form.goal_type)}
                 </span>
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Target value *</label>
+                <label className="po-field-label">{t('project.targets.modal.targetValue')}</label>
                 <input className="crm-input" type="number" min="0" step="any"
                   value={form.target_value}
                   onChange={e => set('target_value', e.target.value)}
@@ -446,26 +460,24 @@ function TargetModal({ target, projectId, onClose, onSaved }) {
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Period *</label>
+              <label className="po-field-label">{t('project.targets.modal.period')}</label>
               <Combobox value={form.period}
-                options={PERIOD_OPTIONS}
+                options={PERIOD_KEYS.map(p => ({ value: p.value, label: periodLabel(t, p.value) }))}
                 onChange={v => set('period', v)} />
               <span className="cpm-section-hint">
-                Lifetime ("all-time") keeps counting forever; periodic resets
-                each cycle and fires the webhook once per cycle.
+                {t('project.targets.modal.periodHint')}
               </span>
             </div>
 
             {form.goal_type === 'custom_event_count' && (
               <div className="cpm-section">
-                <label className="po-field-label">Custom event name *</label>
+                <label className="po-field-label">{t('project.targets.modal.customEventName')}</label>
                 <input className="crm-input" maxLength={120}
-                  placeholder="newsletter_signup"
+                  placeholder={t('project.targets.modal.customEventPlaceholder')}
                   value={form.custom_event_name}
                   onChange={e => set('custom_event_name', e.target.value)} />
                 <span className="cpm-section-hint">
-                  Your storefront fires <code>client.track.goal("name")</code> —
-                  only events matching this exact name are counted.
+                  {t('project.targets.modal.customEventHintPrefix')}<code>client.track.goal("name")</code>{t('project.targets.modal.customEventHintSuffix')}
                 </span>
               </div>
             )}
@@ -475,10 +487,10 @@ function TargetModal({ target, projectId, onClose, onSaved }) {
                 <input type="checkbox" className="cat-prod-checkbox po-include-cb"
                   checked={form.is_active}
                   onChange={e => set('is_active', e.target.checked)} />
-                <span className="po-set-toggle-text">Active</span>
+                <span className="po-set-toggle-text">{t('project.targets.modal.active')}</span>
               </label>
               <span className="cpm-section-hint">
-                Inactive targets stop counting and won't fire achievement webhooks.
+                {t('project.targets.modal.activeHint')}
               </span>
             </div>
 
@@ -486,10 +498,10 @@ function TargetModal({ target, projectId, onClose, onSaved }) {
 
             <div className="auth-actions">
               <button type="submit" className="crm-submit-btn" disabled={saving}>
-                {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create target')}
+                {saving ? t('project.targets.modal.saving') : (isEdit ? t('project.targets.modal.saveChanges') : t('project.targets.modal.create'))}
               </button>
               <button type="button" className="crm-submit-btn auth-btn-secondary"
-                onClick={onClose}>Cancel</button>
+                onClick={onClose}>{t('project.targets.modal.cancel')}</button>
             </div>
           </form>
         </div>
@@ -501,7 +513,14 @@ function TargetModal({ target, projectId, onClose, onSaved }) {
 
 // ── Main page ──────────────────────────────────────────────────────────
 export default function Targets() {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
+  const STATUS_FILTER_OPTIONS = [
+    { value: 'all',       label: t('project.targets.statusAll') },
+    { value: 'active',    label: t('project.targets.statusActive') },
+    { value: 'inactive',  label: t('project.targets.statusInactive') },
+    { value: 'achieved',  label: t('project.targets.statusAchieved') },
+  ];
   useEffect(() => { setTargetsCurrency(project?.currency || 'USD'); }, [project?.currency]);
   const pq = `?project_id=${projectId}`;
 
@@ -526,9 +545,9 @@ export default function Targets() {
   };
   useEffect(() => { load(); }, [projectId]);
 
-  const onDelete = async (t) => {
-    if (!confirm(`Delete target "${t.name}"?`)) return;
-    await fetch(`${API_BASE}/api/goals/${t.id}${pq}`,
+  const onDelete = async (target) => {
+    if (!confirm(t('project.targets.confirmDelete', { name: target.name }))) return;
+    await fetch(`${API_BASE}/api/goals/${target.id}${pq}`,
       { method: 'DELETE', credentials: 'include' });
     load();
   };
@@ -536,18 +555,18 @@ export default function Targets() {
   // Quick toggle of is_active — saves a round trip through the full
   // edit modal. PUT echoes the existing target with the flipped flag;
   // backend recomputes progress and status on the next evaluator tick.
-  const onToggle = async (t) => {
-    await fetch(`${API_BASE}/api/goals/${t.id}${pq}`, {
+  const onToggle = async (g) => {
+    await fetch(`${API_BASE}/api/goals/${g.id}${pq}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name:              t.name,
-        description:       t.description || null,
-        goal_type:         t.goal_type,
-        target_value:      t.target_value,
-        period:            t.period,
-        custom_event_name: t.custom_event_name || null,
-        is_active:         !t.is_active,
+        name:              g.name,
+        description:       g.description || null,
+        goal_type:         g.goal_type,
+        target_value:      g.target_value,
+        period:            g.period,
+        custom_event_name: g.custom_event_name || null,
+        is_active:         !g.is_active,
       }),
     });
     load();
@@ -591,12 +610,10 @@ export default function Targets() {
 
   return (
     <>
-      <h1 className="crm-page-title">Targets</h1>
+      <h1 className="crm-page-title">{t('project.targets.title')}</h1>
 
       <p className="po-block-hint">
-        Numeric KPIs with progress tracking. When a target is hit we fire
-        a <code className="po-api-code">goal.achieved</code> webhook
-        + push notification.
+        {t('project.targets.hintPrefix')}<code className="po-api-code">goal.achieved</code>{t('project.targets.hintSuffix')}
       </p>
 
       {/* Full toolbar — same shape as PromoCodes / Batches:
@@ -604,7 +621,7 @@ export default function Targets() {
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search targets…"
+          <input className="org-search-input" placeholder={t('project.targets.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
@@ -621,38 +638,38 @@ export default function Targets() {
             style={{ transform: `translateX(${curView === 'list' ? 30 : 0}px)` }} />
           <button className={`org-view-btn${curView === 'grid' ? ' org-view-btn--current' : ''}`}
             onClick={() => setView('grid')} onMouseEnter={() => setViewHover('grid')}
-            title="Grid view" type="button">
+            title={t('project.targets.gridView')} type="button">
             <SquaresFour className="org-view-icon" />
           </button>
           <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
             onClick={() => setView('list')} onMouseEnter={() => setViewHover('list')}
-            title="List view" type="button">
+            title={t('project.targets.listView')} type="button">
             <List className="org-view-icon" />
           </button>
         </div>
 
         <button type="button" className="org-new-btn" onClick={() => setEditing({})}>
-          <Plus className="org-new-icon" /> New target
+          <Plus className="org-new-icon" /> {t('project.targets.newTarget')}
         </button>
       </div>
 
       {loading ? (
-        <div className="crm-placeholder">Loading targets…</div>
+        <div className="crm-placeholder">{t('project.targets.loading')}</div>
       ) : filtered.length === 0 ? (
         <div className="crm-placeholder">
           {search || statusF !== 'all'
-            ? 'No targets match your filters.'
-            : 'No targets yet. Click New target to add one — track revenue, signups, conversion rate, or any custom event from your storefront.'}
+            ? t('project.targets.emptyFiltered')
+            : t('project.targets.empty')}
         </div>
       ) : view === 'list' ? (
         // ── List view ─ tabular rows mirror PromoCodes' .po-set-table ──
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head po-set-row--target">
-            <span>Name</span>
-            <span>Type</span>
-            <span>Period</span>
-            <span>Progress</span>
-            <span>Status</span>
+            <span>{t('project.targets.colName')}</span>
+            <span>{t('project.targets.colType')}</span>
+            <span>{t('project.targets.colPeriod')}</span>
+            <span>{t('project.targets.colProgress')}</span>
+            <span>{t('project.targets.colStatus')}</span>
             <span />
           </div>
           {filtered.map(t => (

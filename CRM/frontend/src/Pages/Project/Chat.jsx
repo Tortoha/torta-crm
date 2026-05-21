@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Plug, X, XCircle, CaretRight, CaretDown, CheckCircle, ChatCircleDots,
   PaperPlaneRight, ChatsCircle, ArrowCounterClockwise,
@@ -171,6 +172,15 @@ const ROW_TILT = {
   gloss: { opacity: 0.10, spread: 40 },
 };
 
+// i18n helpers — the CHANNELS catalogue keeps English strings as fallback
+// defaults; these resolve the localized copy at render time.
+const channelDesc  = (t, id, fallback) =>
+  t(`comms.chat.channel.${id}.desc`, { defaultValue: fallback });
+const fieldLabel   = (t, id, key, fallback) =>
+  t(`comms.chat.channel.${id}.field.${key}.label`, { defaultValue: fallback });
+const fieldHint    = (t, id, key, fallback) =>
+  t(`comms.chat.channel.${id}.field.${key}.hint`, { defaultValue: fallback });
+
 // ─── Utils ────────────────────────────────────────────────────────────────────
 
 const fmtTime = iso => {
@@ -257,21 +267,22 @@ const ROW_TILT_CONV = {
 };
 
 function ConvRow({ c, active, onSelect, onCloseConv, onReopenConv, onMarkRead, showToast }) {
+  const { t } = useTranslation();
   const [menu, setMenu] = useState(null);
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT_CONV, !!menu);
   const meta = channelMeta(c.channel);
   const ChannelIcon = meta.Icon;
 
   const items = [
-    ...(c.unread_count > 0 ? [{ icon: Eye, label: 'Mark as read', onClick: () => onMarkRead?.(c.id) }] : []),
-    { icon: Copy, label: 'Copy ID', onClick: () => {
+    ...(c.unread_count > 0 ? [{ icon: Eye, label: t('comms.chat.markAsRead'), onClick: () => onMarkRead?.(c.id) }] : []),
+    { icon: Copy, label: t('comms.chat.copyId'), onClick: () => {
         navigator.clipboard?.writeText(c.contact_uid);
-        showToast?.('ID copied');
+        showToast?.(t('comms.chat.idCopied'));
       } },
     'sep',
     c.is_active
-      ? { icon: XCircle, label: 'Close chat',  onClick: () => onCloseConv?.(c.id),  danger: true }
-      : { icon: ArrowCounterClockwise, label: 'Reopen chat', onClick: () => onReopenConv?.(c.id) },
+      ? { icon: XCircle, label: t('comms.chat.closeChat'),  onClick: () => onCloseConv?.(c.id),  danger: true }
+      : { icon: ArrowCounterClockwise, label: t('comms.chat.reopenChat'), onClick: () => onReopenConv?.(c.id) },
   ];
 
   return (
@@ -359,6 +370,7 @@ function generateWaveform(seed) {
 
 // Instagram-style voice/audio player — purple gradient pill with play button + waveform + duration. Bars fill white as audio plays.
 function VoicePlayer({ src, duration, msgId, idx }) {
+  const { t } = useTranslation();
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);   // 0..1
   const [actualDur, setActualDur] = useState(duration || 0);
@@ -409,7 +421,7 @@ function VoicePlayer({ src, duration, msgId, idx }) {
     <div className="chat-voice">
       <audio ref={audioRef} src={src} preload="metadata" />
       <button type="button" className="chat-voice-btn" onClick={toggle}
-              aria-label={playing ? 'Pause' : 'Play'}>
+              aria-label={playing ? t('comms.chat.pause') : t('comms.chat.play')}>
         {playing ? <Pause weight="fill" size={16} /> : <Play weight="fill" size={16} />}
       </button>
       <div className="chat-voice-bars" onClick={seek}>
@@ -429,6 +441,7 @@ function VoicePlayer({ src, duration, msgId, idx }) {
 
 // WhatsApp/Telegram-style image lightbox — wheel to zoom, drag to pan, download/close buttons.
 function ImageLightbox({ src, alt, filename, onClose }) {
+  const { t } = useTranslation();
   const [scale, setScale] = useState(1);
   const [pan,   setPan]   = useState({ x: 0, y: 0 });
   const dragRef = useRef(null);
@@ -472,17 +485,17 @@ function ImageLightbox({ src, alt, filename, onClose }) {
       onMouseDown={(e) => e.target.classList.contains('chat-lightbox') && onClose()}
       onWheel={onWheel}>
       <div className="chat-lightbox-toolbar" onMouseDown={(e) => e.stopPropagation()}>
-        <button type="button" onClick={() => setScale(s => Math.max(0.5, s - 0.25))} title="Zoom out">
+        <button type="button" onClick={() => setScale(s => Math.max(0.5, s - 0.25))} title={t('comms.chat.zoomOut')}>
           <MagnifyingGlassMinus weight="bold" size={18} />
         </button>
         <span className="chat-lightbox-zoom">{Math.round(scale * 100)}%</span>
-        <button type="button" onClick={() => setScale(s => Math.min(5, s + 0.25))} title="Zoom in">
+        <button type="button" onClick={() => setScale(s => Math.min(5, s + 0.25))} title={t('comms.chat.zoomIn')}>
           <MagnifyingGlassPlus weight="bold" size={18} />
         </button>
-        <button type="button" onClick={() => downloadAs('png')} title="Download as PNG">
+        <button type="button" onClick={() => downloadAs('png')} title={t('comms.chat.downloadPng')}>
           <DownloadSimple weight="bold" size={18} /> PNG
         </button>
-        <button type="button" onClick={onClose} title="Close" className="chat-lightbox-close">
+        <button type="button" onClick={onClose} title={t('comms.chat.close')} className="chat-lightbox-close">
           <X weight="bold" size={18} />
         </button>
       </div>
@@ -504,13 +517,14 @@ function ImageLightbox({ src, alt, filename, onClose }) {
 
 // Backend always sets att.url — either direct CDN (Discord/Meta/Viber) or a signed CRM proxy URL (Telegram/WhatsApp/Email).
 function AttachmentItem({ msg, idx, att, onImageClick }) {
+  const { t } = useTranslation();
   const src = att.url;
   if (!src) return null;
   if (att.type === 'image') {
     return (
       <button type="button" className="chat-att chat-att--image"
         onClick={() => onImageClick?.(src, att.filename)}>
-        <img src={src} alt={att.filename || 'image'} loading="lazy" />
+        <img src={src} alt={att.filename || t('comms.chat.image')} loading="lazy" />
       </button>
     );
   }
@@ -527,7 +541,7 @@ function AttachmentItem({ msg, idx, att, onImageClick }) {
     <a href={src} target="_blank" rel="noreferrer" download={att.filename || true}
        className="chat-att chat-att--file">
       <FileText size={20} weight="duotone" />
-      <span className="chat-att-name">{att.filename || 'attachment'}</span>
+      <span className="chat-att-name">{att.filename || t('comms.chat.attachment')}</span>
       {sizeKb && <span className="chat-att-size">{sizeKb}</span>}
       <DownloadSimple size={14} />
     </a>
@@ -546,26 +560,27 @@ function MessageAttachments({ msg, onImageClick }) {
 
 // One message bubble — handles its own right-click menu (Copy/Download/Delete).
 function MessageBubble({ msg, onImageClick, onDelete, onDownloadPng, showToast }) {
+  const { t } = useTranslation();
   const [menu, setMenu] = useState(null);
 
   const firstImg = (msg.attachments || []).find(a => a.type === 'image');
   const items = [
     ...(msg.text ? [{
-      icon: Copy, label: 'Copy text', onClick: () => {
+      icon: Copy, label: t('comms.chat.copyText'), onClick: () => {
         navigator.clipboard?.writeText(msg.text);
-        showToast?.('Copied');
+        showToast?.(t('comms.chat.copied'));
       }
     }] : []),
     ...(firstImg ? [{
-      icon: DownloadSimple, label: 'Download as PNG',
+      icon: DownloadSimple, label: t('comms.chat.downloadPng'),
       onClick: () => onDownloadPng?.(firstImg.url, firstImg.filename),
     }] : []),
     ...(msg.attachments?.length ? [{
-      icon: DownloadSimple, label: 'Open original',
+      icon: DownloadSimple, label: t('comms.chat.openOriginal'),
       onClick: () => window.open(msg.attachments[0].url, '_blank'),
     }] : []),
     'sep',
-    { icon: Trash, label: 'Delete', onClick: () => onDelete?.(msg.id), danger: true },
+    { icon: Trash, label: t('common.delete'), onClick: () => onDelete?.(msg.id), danger: true },
   ];
 
   return (
@@ -586,6 +601,7 @@ function MessageBubble({ msg, onImageClick, onDelete, onDownloadPng, showToast }
 // ─── Message Thread ───────────────────────────────────────────────────────────
 
 function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, showToast }) {
+  const { t } = useTranslation();
   const [messages, setMessages] = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [text,     setText]     = useState('');
@@ -604,7 +620,7 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
     fetch(`${API_BASE}/api/chat/conversations/${conversation.id}/messages${pq}`, { credentials: 'include' })
       .then(r => r.json())
       .then(j => { if (!stop) { setMessages(j.messages || []); setLoading(false); } })
-      .catch(() => { if (!stop) { setLoading(false); setErr('Failed to load messages'); } });
+      .catch(() => { if (!stop) { setLoading(false); setErr(t('comms.chat.failedLoad')); } });
     fetch(`${API_BASE}/api/chat/conversations/${conversation.id}/read${pq}`,
           { method: 'POST', credentials: 'include' }).catch(() => {});
     return () => { stop = true; };
@@ -630,13 +646,13 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
   }, [conversation?.id]);
 
   const deleteMessage = async (msgId) => {
-    if (!confirm('Delete this message? This only removes it from your CRM, not from the messenger.')) return;
+    if (!confirm(t('comms.chat.deleteMsgConfirm'))) return;
     try {
       const r = await fetch(`${API_BASE}/api/chat/messages/${msgId}${pq}`,
                             { method: 'DELETE', credentials: 'include' });
       if (r.ok) setMessages(prev => prev.filter(m => m.id !== msgId));
-      else      showToast?.('Failed to delete');
-    } catch { showToast?.('Network error'); }
+      else      showToast?.(t('comms.chat.failedDelete'));
+    } catch { showToast?.(t('common.networkError')); }
   };
 
   const downloadImageAsPng = async (src, filename) => {
@@ -647,7 +663,7 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
       a.download = (filename || 'image').replace(/\.[^.]+$/, '') + '.png';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    } catch { showToast?.('Download failed'); }
+    } catch { showToast?.(t('comms.chat.downloadFailed')); }
   };
 
   useLayoutEffect(() => {
@@ -659,8 +675,8 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
     return (
       <div className="chat-thread chat-thread--empty">
         <ChatCircleDots size={56} weight="thin" className="chat-thread-empty-icon" />
-        <div className="chat-thread-empty-title">Select a conversation</div>
-        <div className="chat-thread-empty-desc">Choose a chat from the list to view messages.</div>
+        <div className="chat-thread-empty-title">{t('comms.chat.selectConversation')}</div>
+        <div className="chat-thread-empty-desc">{t('comms.chat.selectConversationDesc')}</div>
       </div>
     );
   }
@@ -669,24 +685,24 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
   const ChannelIcon = meta.Icon;
 
   const send = async () => {
-    const t = text.trim();
-    if (!t || sending) return;
+    const body = text.trim();
+    if (!body || sending) return;
     setSending(true); setErr('');
     try {
       const res  = await fetch(`${API_BASE}/api/chat/conversations/${conversation.id}/messages${pq}`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: t }),
+        body: JSON.stringify({ text: body }),
       });
       const json = await res.json();
       if (res.ok) {
         setText('');
         setMessages(prev => prev.some(m => m.id === json.message.id) ? prev : [...prev, json.message]);
-        onSent?.(conversation.id, t);
+        onSent?.(conversation.id, body);
       } else {
-        setErr(json.detail || 'Failed to send');
+        setErr(json.detail || t('comms.chat.failedSend'));
       }
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSending(false); }
   };
 
@@ -722,21 +738,21 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
           <ChannelIcon size={20} />
         </div>
         <div className="chat-thread-id-block">
-          <button type="button" className="chat-thread-uid" onClick={copyUid} title="Copy ID">
+          <button type="button" className="chat-thread-uid" onClick={copyUid} title={t('comms.chat.copyId')}>
             {conversation.contact_uid}
             {copied ? <CheckCircle weight="fill" size={13} /> : <Copy size={13} />}
           </button>
-          <div className="chat-thread-channel">via {meta.label}</div>
+          <div className="chat-thread-channel">{t('comms.chat.via', { channel: meta.label })}</div>
         </div>
         {conversation.is_active ? (
           <button type="button" className="chat-thread-action chat-thread-action--danger"
             onClick={close} disabled={actionBusy}>
-            <XCircle size={15} /> Close chat
+            <XCircle size={15} /> {t('comms.chat.closeChat')}
           </button>
         ) : (
           <button type="button" className="chat-thread-action"
             onClick={reopen} disabled={actionBusy}>
-            <ArrowCounterClockwise size={15} /> Reopen
+            <ArrowCounterClockwise size={15} /> {t('comms.chat.reopen')}
           </button>
         )}
       </div>
@@ -745,7 +761,7 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
         {loading ? (
           <div className="chat-thread-loading"><CircleNotch className="chat-spin" size={20} /></div>
         ) : messages.length === 0 ? (
-          <div className="chat-thread-empty-msgs">No messages yet.</div>
+          <div className="chat-thread-empty-msgs">{t('comms.chat.noMessages')}</div>
         ) : messages.map(m => (
           <MessageBubble key={m.id} msg={m}
             onImageClick={(src, filename) => setLightbox({ src, filename })}
@@ -757,18 +773,18 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
 
       {conversation.is_active ? (
         <div className="chat-composer">
-          <input type="text" className="chat-composer-input" placeholder="Type a message…"
+          <input type="text" className="chat-composer-input" placeholder={t('comms.chat.typeMessage')}
             value={text} onChange={e => { setText(e.target.value); setErr(''); }}
             onKeyDown={e => e.key === 'Enter' && send()}
             disabled={sending} maxLength={4000} />
           <button type="button" className="chat-composer-send"
-            onClick={send} disabled={sending || !text.trim()} aria-label="Send">
+            onClick={send} disabled={sending || !text.trim()} aria-label={t('comms.chat.send')}>
             <PaperPlaneRight weight="fill" size={16} />
           </button>
         </div>
       ) : (
         <div className="chat-composer chat-composer--closed">
-          This chat is closed. Reopen it to reply.
+          {t('comms.chat.chatClosed')}
         </div>
       )}
 
@@ -785,6 +801,7 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
 // ─── Chat Panel (the WhatsApp-style two-column layout) ────────────────────────
 
 function ChatPanel({ projectId }) {
+  const { t } = useTranslation();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
@@ -893,16 +910,16 @@ function ChatPanel({ projectId }) {
       await fetch(`${API_BASE}/api/chat/conversations/${id}/close${pq}`,
                   { method: 'POST', credentials: 'include' });
       handleClosed(id);
-      showToast('Chat closed');
-    } catch { showToast('Failed'); }
+      showToast(t('comms.chat.chatClosedToast'));
+    } catch { showToast(t('comms.chat.failed')); }
   };
   const reopenConv = async (id) => {
     try {
       await fetch(`${API_BASE}/api/chat/conversations/${id}/reopen${pq}`,
                   { method: 'POST', credentials: 'include' });
       handleReopened(id);
-      showToast('Chat reopened');
-    } catch { showToast('Failed'); }
+      showToast(t('comms.chat.chatReopenedToast'));
+    } catch { showToast(t('comms.chat.failed')); }
   };
   const markRead = async (id) => {
     try {
@@ -914,12 +931,12 @@ function ChatPanel({ projectId }) {
 
   return (
     <>
-      <h1 className="crm-page-title">Chat with Customers</h1>
+      <h1 className="crm-page-title">{t('comms.chat.pageTitle')}</h1>
       <div className="chat-shell">
         <aside className="chat-aside">
           <div className="chat-aside-search">
             <MagnifyingGlass className="chat-search-icon" weight="bold" />
-            <input className="chat-search-input" placeholder="Search conversations…"
+            <input className="chat-search-input" placeholder={t('comms.chat.searchConversations')}
               value={filter} onChange={e => setFilter(e.target.value)} />
           </div>
           <div className="chat-aside-scroll">
@@ -927,18 +944,18 @@ function ChatPanel({ projectId }) {
               <div className="chat-aside-loading"><CircleNotch className="chat-spin" size={20} /></div>
             ) : (
               <>
-                <ConvFolder title="Active" count={active.length}
+                <ConvFolder title={t('comms.chat.active')} count={active.length}
                   conversations={active} selectedId={selectedId} onSelect={handleSelect}
                   open={openFolders.active}
                   onToggle={() => setOpenFolders(p => ({ ...p, active: !p.active }))}
-                  emptyHint="No active chats yet"
+                  emptyHint={t('comms.chat.noActiveChats')}
                   onCloseConv={closeConv} onReopenConv={reopenConv}
                   onMarkRead={markRead} showToast={showToast} />
-                <ConvFolder title="Inactive" count={inactive.length}
+                <ConvFolder title={t('comms.chat.inactive')} count={inactive.length}
                   conversations={inactive} selectedId={selectedId} onSelect={handleSelect}
                   open={openFolders.inactive}
                   onToggle={() => setOpenFolders(p => ({ ...p, inactive: !p.inactive }))}
-                  emptyHint="Closed chats appear here"
+                  emptyHint={t('comms.chat.closedChatsAppear')}
                   onCloseConv={closeConv} onReopenConv={reopenConv}
                   onMarkRead={markRead} showToast={showToast} />
               </>
@@ -957,6 +974,7 @@ function ChatPanel({ projectId }) {
 // ─── Channel Modal — generic per-channel config form ──────────────────────────
 
 function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
+  const { t } = useTranslation();
   const meta = channelMeta(channel);
   const Icon = meta.Icon;
   const fields = meta.fields || [];
@@ -1041,14 +1059,14 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
       });
       const json = await res.json();
       if (res.ok) {
-        showToast('Connected.');
+        showToast(t('comms.chat.connectedToast'));
         setValues(Object.fromEntries(fields.map(f => [f.key, ''])));
         setSavedExtra(json);
         onSaved?.({ channel, bot_username: json.bot_username });
       } else {
-        setErr(json.detail || 'Failed to save');
+        setErr(json.detail || t('comms.chat.failedSave'));
       }
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
@@ -1087,10 +1105,10 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
             <div>
               <div className="auth-modal-title">{meta.label}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">{meta.desc}</span>
+                <span className="auth-modal-subtitle">{channelDesc(t, meta.id, meta.desc)}</span>
                 {integration && (
                   <span className="auth-badge-enabled">
-                    <CheckCircle weight="fill" size={11} /> Connected
+                    <CheckCircle weight="fill" size={11} /> {t('comms.chat.connected')}
                   </span>
                 )}
               </div>
@@ -1105,35 +1123,31 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
           <div className="chat-modal-form">
             {integration?.bot_username && (
               <div className="chat-modal-info">
-                Connected as <strong>{integration.bot_username}</strong>
+                {t('comms.chat.connectedAs')} <strong>{integration.bot_username}</strong>
               </div>
             )}
 
             {webhookUrl && (
               <div className="chat-modal-webhook">
-                <div className="chat-modal-webhook-title">Webhook URL</div>
+                <div className="chat-modal-webhook-title">{t('comms.chat.webhookUrl')}</div>
                 <div className="chat-modal-webhook-url">{webhookUrl}</div>
                 <div className="chat-modal-webhook-hint">
-                  Paste this into the platform's webhook settings.
-                  Requires public HTTPS — works in production, not on localhost.
+                  {t('comms.chat.webhookHint')}
                 </div>
               </div>
             )}
 
             {isEmail && emailLoading && (
-              <p className="chat-modal-hint">Checking verified email domain…</p>
+              <p className="chat-modal-hint">{t('comms.chat.checkingDomain')}</p>
             )}
 
             {isEmail && !emailLoading && !emailReady && (
               <div className="chat-modal-warn">
                 <Warning weight="fill" size={16} />
                 <div>
-                  <div className="chat-modal-warn-title">No verified email domain</div>
+                  <div className="chat-modal-warn-title">{t('comms.chat.noVerifiedDomain')}</div>
                   <div className="chat-modal-warn-body">
-                    Email channel reuses the domain you've already verified for
-                    sending OTP codes. Open <a href={`/project/${projectId}/authentication`}>Authentication
-                    → Email</a> and finish DKIM/SPF/DMARC verification, then come back
-                    here.
+                    {t('comms.chat.noVerifiedDomainBody1')} <a href={`/project/${projectId}/authentication`}>{t('comms.chat.authEmailLink')}</a> {t('comms.chat.noVerifiedDomainBody2')}
                   </div>
                 </div>
               </div>
@@ -1141,24 +1155,22 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
 
             {isEmail && emailReady && (
               <div className="chat-modal-webhook">
-                <div className="chat-modal-webhook-title">DNS — MX record</div>
+                <div className="chat-modal-webhook-title">{t('comms.chat.dnsMxTitle')}</div>
                 <div className="chat-modal-webhook-url">
                   {emailDomain}.&nbsp;&nbsp;MX&nbsp;&nbsp;10&nbsp;&nbsp;mail.tortacrm.com.
                 </div>
                 <div className="chat-modal-webhook-hint">
-                  Add this MX record to your domain so incoming mail reaches our
-                  servers. Any address at this domain (<code>support@</code>,
-                  <code> hello@</code>, <code>info@</code>, …) will land in this chat.
+                  {t('comms.chat.dnsMxHint1')} (<code>support@</code>,
+                  <code> hello@</code>, <code>info@</code>, …) {t('comms.chat.dnsMxHint2')}
                 </div>
               </div>
             )}
 
             {fields.length === 0 && !integration && !isEmail && (
               <div className="chat-modal-empty">
-                <div className="chat-modal-empty-title">No setup required</div>
+                <div className="chat-modal-empty-title">{t('comms.chat.noSetup')}</div>
                 <div className="chat-modal-empty-desc">
-                  Web Chat uses your project's existing API credentials. Click Connect
-                  and the support widget will appear on every page of your storefront.
+                  {t('comms.chat.noSetupDesc')}
                 </div>
               </div>
             )}
@@ -1172,19 +1184,17 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
                   if (!emailReady) return null;
                   return (
                     <div key={f.key} className="chat-modal-field">
-                      <label className="chat-modal-label">{f.label}</label>
+                      <label className="chat-modal-label">{fieldLabel(t, meta.id, f.key, f.label)}</label>
                       <div className="chat-modal-locked-input">
                         <input className="crm-input" value={`@${emailDomain}`}
                           readOnly disabled
-                          title="Locked to your verified email domain" />
+                          title={t('comms.chat.lockedToDomain')} />
                         <span className="chat-modal-lock-badge">
-                          <CheckCircle weight="fill" size={11} /> Verified
+                          <CheckCircle weight="fill" size={11} /> {t('authConfig.verified')}
                         </span>
                       </div>
                       <p className="chat-modal-hint">
-                        Locked to your verified email domain. To change it, update
-                        the domain in <a href={`/project/${projectId}/authentication`}>
-                        Authentication → Email</a> first.
+                        {t('comms.chat.lockedHint1')} <a href={`/project/${projectId}/authentication`}>{t('comms.chat.authEmailLink')}</a> {t('comms.chat.lockedHint2')}
                       </p>
                     </div>
                   );
@@ -1195,7 +1205,7 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
                   if (!emailReady) return null;
                   return (
                     <div key={f.key} className="chat-modal-field">
-                      <label className="chat-modal-label">{f.label}</label>
+                      <label className="chat-modal-label">{fieldLabel(t, meta.id, f.key, f.label)}</label>
                       <div className="chat-modal-split-input">
                         <input className="crm-input chat-modal-split-input__left"
                           placeholder={f.placeholder || 'support'}
@@ -1208,7 +1218,7 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
                           autoComplete="off" maxLength={64} />
                         <span className="chat-modal-split-input__suffix">@{emailDomain}</span>
                       </div>
-                      {f.hint && <p className="chat-modal-hint">{f.hint}</p>}
+                      {f.hint && <p className="chat-modal-hint">{fieldHint(t, meta.id, f.key, f.hint)}</p>}
                     </div>
                   );
                 }
@@ -1217,12 +1227,12 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
               }
               return (
                 <div key={f.key} className="chat-modal-field">
-                  <label className="chat-modal-label">{f.label}</label>
+                  <label className="chat-modal-label">{fieldLabel(t, meta.id, f.key, f.label)}</label>
                   <input className="crm-input" placeholder={f.placeholder || ''}
                     value={values[f.key] || ''}
                     onChange={e => { setValues(v => ({ ...v, [f.key]: e.target.value })); setErr(''); }}
                     autoComplete="off" />
-                  {f.hint && <p className="chat-modal-hint">{f.hint}</p>}
+                  {f.hint && <p className="chat-modal-hint">{fieldHint(t, meta.id, f.key, f.hint)}</p>}
                 </div>
               );
             })}
@@ -1231,7 +1241,7 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
                 From field. Updates as the merchant types reply_local / reply_name. */}
             {isEmail && emailReady && (values.reply_local || values.reply_name) && (
               <div className="chat-modal-preview">
-                <div className="chat-modal-preview-label">Customer will see in their inbox</div>
+                <div className="chat-modal-preview-label">{t('comms.chat.customerWillSee')}</div>
                 <div className="chat-modal-preview-from">
                   <strong>{values.reply_name?.trim() || 'Support'}</strong>
                   &nbsp;&lt;{(values.reply_local?.trim() || 'support')}@{emailDomain}&gt;
@@ -1244,12 +1254,12 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
             <div className="auth-actions">
               <button className="crm-submit-btn" onClick={save}
                 disabled={saving || !canSave || !emailReady} type="button">
-                {saving ? 'Saving…' : (integration ? 'Update' : 'Connect')}
+                {saving ? t('authConfig.saving') : (integration ? t('comms.chat.update') : t('comms.chat.connect'))}
               </button>
               {integration && (
                 <button className="auth-btn-danger" onClick={remove}
                   disabled={removing} type="button">
-                  <Trash size={13} /> {removing ? 'Removing…' : 'Disconnect'}
+                  <Trash size={13} /> {removing ? t('comms.chat.removing') : t('comms.chat.disconnect')}
                 </button>
               )}
             </div>
@@ -1265,6 +1275,7 @@ function ChannelModal({ channel, projectId, integration, onClose, onSaved }) {
 // ─── Channel Row & Disabled Row (mirrors Authentication ProviderRow) ──────────
 
 function ChannelRow({ channel, integration, onClick, first, last }) {
+  const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
   const Icon = channel.Icon;
   const cls = [
@@ -1274,8 +1285,8 @@ function ChannelRow({ channel, integration, onClick, first, last }) {
   ].filter(Boolean).join(' ');
 
   const desc = integration?.bot_username
-    ? `Connected as ${integration.bot_username}`
-    : channel.desc;
+    ? t('comms.chat.connectedAsName', { name: integration.bot_username })
+    : channelDesc(t, channel.id, channel.desc);
 
   return (
     <div ref={ref} className={cls} onClick={onClick} {...handlers}>
@@ -1286,8 +1297,8 @@ function ChannelRow({ channel, integration, onClick, first, last }) {
       <span className="auth-provider-name">{channel.label}</span>
       <span className="auth-provider-desc">{desc}</span>
       {integration
-        ? <span className="auth-badge-enabled"><CheckCircle weight="fill" size={11} /> Connected</span>
-        : <span className="auth-badge-disabled">{channel.realtime ? 'Real-time' : 'Webhook'}</span>}
+        ? <span className="auth-badge-enabled"><CheckCircle weight="fill" size={11} /> {t('comms.chat.connected')}</span>
+        : <span className="auth-badge-disabled">{channel.realtime ? t('comms.chat.realtime') : t('comms.chat.webhook')}</span>}
       <CaretRight className="auth-provider-chevron" />
     </div>
   );
@@ -1296,6 +1307,7 @@ function ChannelRow({ channel, integration, onClick, first, last }) {
 // ─── Channels Panel ───────────────────────────────────────────────────────────
 
 function ChannelsPanel({ projectId, onIntegrationsChange }) {
+  const { t } = useTranslation();
   const [integrations, setIntegrations] = useState([]);
   const [modal, setModal] = useState(null);
 
@@ -1314,9 +1326,9 @@ function ChannelsPanel({ projectId, onIntegrationsChange }) {
 
   return (
     <>
-      <h1 className="crm-page-title">Channels</h1>
+      <h1 className="crm-page-title">{t('comms.chat.channels')}</h1>
       <p className="auth-page-subtitle">
-        Connect messaging channels to receive customer messages right inside your CRM.
+        {t('comms.chat.channelsSubtitle')}
       </p>
 
       <div className="auth-providers-list">
@@ -1341,11 +1353,12 @@ function ChannelsPanel({ projectId, onIntegrationsChange }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Chat() {
+  const { t } = useTranslation();
   const { projectId, access } = useOutletContext();
   const canView = (p) => !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[p]);
   const chatTabs = [
-    canView('chat')     && { key: 'chats',    label: 'Chats',    Icon: ChatsCircle },
-    canView('channels') && { key: 'channels', label: 'Channels', Icon: Plug },
+    canView('chat')     && { key: 'chats',    label: t('comms.chat.tabChats'),    Icon: ChatsCircle },
+    canView('channels') && { key: 'channels', label: t('comms.chat.tabChannels'), Icon: Plug },
   ].filter(Boolean);
   const [tab, setTab] = useState(chatTabs[0]?.key || 'chats');
 

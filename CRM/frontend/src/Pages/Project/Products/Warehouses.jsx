@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import {
   Plus, MagnifyingGlass, DotsThreeOutline, PencilSimple, Power, Trash,
@@ -18,16 +19,16 @@ import '../../../Style/Organization.css';
 
 // Status filter options for the toolbar combobox.
 const STATUS_OPTIONS = [
-  { value: 'all',      label: 'All statuses' },
-  { value: 'active',   label: 'Active' },
-  { value: 'inactive', label: 'Inactive' },
+  { value: 'all',      labelKey: 'products.warehouses.statusAll' },
+  { value: 'active',   labelKey: 'products.warehouses.statusActive' },
+  { value: 'inactive', labelKey: 'products.warehouses.statusInactive' },
 ];
 
 // Sort options mirror Promo Codes; defaults are intuitive per field (alpha asc, dates desc).
 const SORT_OPTIONS = [
-  { field: 'name', label: 'Sort by name' },
-  { field: 'code', label: 'Sort by code' },
-  { field: 'date', label: 'Sort by date' },
+  { field: 'name', labelKey: 'products.warehouses.sortByName' },
+  { field: 'code', labelKey: 'products.warehouses.sortByCode' },
+  { field: 'date', labelKey: 'products.warehouses.sortByDate' },
 ];
 const SORT_DEFAULT_DIR = { name: 'asc', code: 'asc', date: 'desc' };
 
@@ -58,6 +59,7 @@ function shortLocation(w) {
 }
 
 export default function Warehouses() {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
   const [list, setList] = useState([]);
@@ -90,9 +92,9 @@ export default function Warehouses() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (r.ok) { showToast(id ? 'Saved' : 'Warehouse created'); setEditing(null); load(); return true; }
+    if (r.ok) { showToast(id ? t('products.warehouses.toast.saved') : t('products.warehouses.toast.created')); setEditing(null); load(); return true; }
     const j = await r.json().catch(() => ({}));
-    showToast(j.detail || 'Failed');
+    showToast(j.detail || t('products.warehouses.toast.failed'));
     return false;
   };
 
@@ -104,16 +106,16 @@ export default function Warehouses() {
       body: JSON.stringify(body),
     });
     if (r.ok) { load(); }
-    else { const j = await r.json().catch(() => ({})); showToast(j.detail || 'Failed'); }
+    else { const j = await r.json().catch(() => ({})); showToast(j.detail || t('products.warehouses.toast.failed')); }
   };
 
   const remove = async (id) => {
-    if (!confirm('Delete this warehouse?')) return;
+    if (!confirm(t('products.warehouses.confirmDelete'))) return;
     const r = await fetch(`${API_BASE}/api/warehouses/${id}${pq}`, {
       method: 'DELETE', credentials: 'include',
     });
-    if (r.ok) { showToast('Deleted'); load(); }
-    else { const j = await r.json().catch(() => ({})); showToast(j.detail || 'Failed'); }
+    if (r.ok) { showToast(t('products.warehouses.toast.deleted')); load(); }
+    else { const j = await r.json().catch(() => ({})); showToast(j.detail || t('products.warehouses.toast.failed')); }
   };
 
   // Filter+sort. Search matches name/code/any address field (so "Berlin" finds a "EU" warehouse).
@@ -158,16 +160,14 @@ export default function Warehouses() {
     <>
       {/* Hint directly under page title — same pattern as Promo Codes / Tier Pricing. */}
       <p className="po-block-hint">
-        Each project starts with one default warehouse. Per-SKU stock per
-        warehouse lives on individual product Inventory pages; the default
-        warehouse holds the legacy <code className="po-api-code">stock_quantity</code> for back-compat.
+        {t('products.warehouses.hintPrefix')} <code className="po-api-code">stock_quantity</code> {t('products.warehouses.hintSuffix')}
       </p>
 
       <div className="org-toolbar">
         {/* Search ALWAYS on the left. */}
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search warehouses…"
+          <input className="org-search-input" placeholder={t('products.warehouses.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
@@ -175,7 +175,7 @@ export default function Warehouses() {
         <SortToggle sort={sort} onSort={handleSetSort} />
 
         <div className="po-cb-wrap po-cb-wrap--toolbar" style={{ width: 180, minWidth: 180 }}>
-          <Combobox value={statusF} options={STATUS_OPTIONS}
+          <Combobox value={statusF} options={STATUS_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
             onChange={(v) => setStatusF(v)} />
         </div>
 
@@ -184,33 +184,33 @@ export default function Warehouses() {
             style={{ transform: `translateX(${curView === 'list' ? 30 : 0}px)` }} />
           <button className={`org-view-btn${curView === 'grid' ? ' org-view-btn--current' : ''}`}
             onClick={() => setView('grid')} onMouseEnter={() => setViewHover('grid')}
-            title="Grid view" type="button">
+            title={t('products.warehouses.gridView')} type="button">
             <SquaresFour className="org-view-icon" />
           </button>
           <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
             onClick={() => setView('list')} onMouseEnter={() => setViewHover('list')}
-            title="List view" type="button">
+            title={t('products.warehouses.listView')} type="button">
             <List className="org-view-icon" />
           </button>
         </div>
 
         <button type="button" className="org-new-btn" onClick={() => setEditing('new')}>
-          <Plus className="org-new-icon" /> New warehouse
+          <Plus className="org-new-icon" /> {t('products.warehouses.newWarehouse')}
         </button>
       </div>
 
       {filtered.length === 0 ? (
         <div className="crm-placeholder">
           {search || statusF !== 'all'
-            ? 'No warehouses match your filters.'
-            : 'No warehouses yet.'}
+            ? t('products.warehouses.noMatch')
+            : t('products.warehouses.empty')}
         </div>
       ) : view === 'list' ? (
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head po-set-row--wh">
-            <span>Name</span><span>Code</span><span>Location</span>
-            <span>Region</span><span>Contact</span>
-            <span>Status</span><span>Default</span><span></span>
+            <span>{t('products.warehouses.colName')}</span><span>{t('products.warehouses.colCode')}</span><span>{t('products.warehouses.colLocation')}</span>
+            <span>{t('products.warehouses.colRegion')}</span><span>{t('products.warehouses.colContact')}</span>
+            <span>{t('products.warehouses.colStatus')}</span><span>{t('products.warehouses.colDefault')}</span><span></span>
           </div>
           {filtered.map(w => (
             <WarehouseRow key={w.id} w={w}
@@ -247,6 +247,7 @@ export default function Warehouses() {
 
 // ── Sort toggle (mirrors Organization / Promo Codes) ─────────────────
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -267,7 +268,7 @@ function SortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         const isCur  = curField === field;
         return (
@@ -280,7 +281,7 @@ function SortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -290,9 +291,11 @@ function SortToggle({ sort, onSort }) {
 
 // ── Warehouse row (list view) — clickable, opens edit on row click ───
 function WarehouseRow({ w, onEdit, onDelete, onToggleActive, onMakeDefault }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   const status = statusOf(w);
+  const statusLabel = status === 'active' ? t('products.warehouses.labelActive') : t('products.warehouses.labelInactive');
   const location = shortLocation(w);
   const contact = (w.contact_name || '').trim();
   const phone   = (w.contact_phone || '').trim();
@@ -315,21 +318,21 @@ function WarehouseRow({ w, onEdit, onDelete, onToggleActive, onMakeDefault }) {
         ) : '—'}
       </span>
       <span>
-        <span className={`promo-status promo-status--${status}`}>{status}</span>
+        <span className={`promo-status promo-status--${status}`}>{statusLabel}</span>
       </span>
       <span>
         {w.is_default ? (
           <span className="po-wh-default-pill">
-            <Star weight="fill" /> Default
+            <Star weight="fill" /> {t('products.warehouses.default')}
           </span>
         ) : (
           <button type="button" className="po-mod-required-btn"
             onClick={(e) => { e.stopPropagation(); onMakeDefault(); }}>
-            Make default
+            {t('products.warehouses.makeDefault')}
           </button>
         )}
       </span>
-      <button ref={menuBtnRef} type="button" className="org-list-menu-btn" aria-label="Options"
+      <button ref={menuBtnRef} type="button" className="org-list-menu-btn" aria-label={t('products.warehouses.options')}
         onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
         <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
       </button>
@@ -346,10 +349,12 @@ function WarehouseRow({ w, onEdit, onDelete, onToggleActive, onMakeDefault }) {
 
 // ── Warehouse card (grid view) — Organization-style 3D tilt card ─────
 function WarehouseCard({ w, onEdit, onDelete, onToggleActive, onMakeDefault }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   const { ref, glossRef, handlers } = InteractiveSection(TILT, menuOpen);
   const status = statusOf(w);
+  const statusLabel = status === 'active' ? t('products.warehouses.labelActive') : t('products.warehouses.labelInactive');
   const location = shortLocation(w);
   const contact = (w.contact_name || '').trim();
   const phone   = (w.contact_phone || '').trim();
@@ -365,45 +370,45 @@ function WarehouseCard({ w, onEdit, onDelete, onToggleActive, onMakeDefault }) {
           {w.code && <span className="wh-card-code">{w.code}</span>}
         </div>
         <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
-          aria-label="Options"
+          aria-label={t('products.warehouses.options')}
           onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
           <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
         </button>
       </div>
 
-      <div className="wh-card-location">{location || 'No address'}</div>
+      <div className="wh-card-location">{location || t('products.warehouses.noAddress')}</div>
 
       <div className="wh-card-meta">
         {w.region && (
           <div className="wh-card-meta-row">
-            <span className="wh-card-meta-label">Region</span>
+            <span className="wh-card-meta-label">{t('products.warehouses.region')}</span>
             <span>{w.region}</span>
           </div>
         )}
         {contact && (
           <div className="wh-card-meta-row">
-            <span className="wh-card-meta-label">Contact</span>
+            <span className="wh-card-meta-label">{t('products.warehouses.contact')}</span>
             <span>{contact}</span>
           </div>
         )}
         {phone && (
           <div className="wh-card-meta-row">
-            <span className="wh-card-meta-label">Phone</span>
+            <span className="wh-card-meta-label">{t('products.warehouses.phone')}</span>
             <span>{phone}</span>
           </div>
         )}
       </div>
 
       <div className="wh-card-foot">
-        <span className={`promo-status promo-status--${status}`}>{status}</span>
+        <span className={`promo-status promo-status--${status}`}>{statusLabel}</span>
         {w.is_default ? (
           <span className="po-wh-default-pill">
-            <Star weight="fill" /> Default
+            <Star weight="fill" /> {t('products.warehouses.default')}
           </span>
         ) : (
           <button type="button" className="po-mod-required-btn"
             onClick={(e) => { e.stopPropagation(); onMakeDefault(); }}>
-            Make default
+            {t('products.warehouses.makeDefault')}
           </button>
         )}
       </div>
@@ -421,6 +426,7 @@ function WarehouseCard({ w, onEdit, onDelete, onToggleActive, onMakeDefault }) {
 
 // Dropdown — portal'd to body so row overflow+tilt don't clip; right-aligned via trigger rect.
 function WarehouseMenu({ w, btnRef, onClose, onEdit, onDelete, onToggleActive, onMakeDefault }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
 
   useEffect(() => {
@@ -450,23 +456,23 @@ function WarehouseMenu({ w, btnRef, onClose, onEdit, onDelete, onToggleActive, o
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       <button className="org-card-dropdown-item"
         onClick={() => { onClose(); onEdit(); }}>
-        <PencilSimple className="org-card-dropdown-icon" /> Edit
+        <PencilSimple className="org-card-dropdown-icon" /> {t('products.warehouses.menu.edit')}
       </button>
       {!w.is_default && (
         <>
           <button className="org-card-dropdown-item"
             onClick={() => { onClose(); onMakeDefault(); }}>
-            <Star className="org-card-dropdown-icon" /> Make default
+            <Star className="org-card-dropdown-icon" /> {t('products.warehouses.menu.makeDefault')}
           </button>
           <button className="org-card-dropdown-item"
             onClick={() => { onClose(); onToggleActive(); }}>
             <Power className="org-card-dropdown-icon" />
-            {w.is_active ? 'Deactivate' : 'Activate'}
+            {w.is_active ? t('products.warehouses.menu.deactivate') : t('products.warehouses.menu.activate')}
           </button>
           <div className="org-card-dropdown-sep" />
           <button className="org-card-dropdown-item org-card-dropdown-item--danger"
             onClick={() => { onClose(); onDelete(); }}>
-            <Trash className="org-card-dropdown-icon" /> Delete
+            <Trash className="org-card-dropdown-icon" /> {t('products.warehouses.menu.delete')}
           </button>
         </>
       )}
@@ -477,6 +483,7 @@ function WarehouseMenu({ w, btnRef, onClose, onEdit, onDelete, onToggleActive, o
 
 // ── New / Edit modal — same shell, different defaults + button text ──
 function WarehouseModal({ warehouse, onSave, onClose }) {
+  const { t } = useTranslation();
   const isNew = !warehouse;
   const [form, setForm] = useState({
     name:          warehouse?.name          || '',
@@ -541,13 +548,13 @@ function WarehouseModal({ warehouse, onSave, onClose }) {
           <div className="auth-modal-title-row">
             <div>
               <div className="auth-modal-title">
-                {isNew ? 'New warehouse' : 'Edit warehouse'}
+                {isNew ? t('products.warehouses.modal.newTitle') : t('products.warehouses.modal.editTitle')}
               </div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {isNew
-                    ? 'Stock will live here once you transfer or restock into it.'
-                    : `Editing ${warehouse.name} — changes apply immediately.`}
+                    ? t('products.warehouses.modal.newSubtitle')
+                    : t('products.warehouses.modal.editSubtitle', { name: warehouse.name })}
                 </span>
               </div>
             </div>
@@ -561,80 +568,80 @@ function WarehouseModal({ warehouse, onSave, onClose }) {
           <form className="cpm-form" onSubmit={submit} autoComplete="off">
 
             {/* — Identification — */}
-            <div className="po-wh-section-label">Identification</div>
+            <div className="po-wh-section-label">{t('products.warehouses.modal.identification')}</div>
             <div className="cpm-section">
-              <label className="po-field-label">Name *</label>
+              <label className="po-field-label">{t('products.warehouses.modal.name')}</label>
               <input className="crm-input" autoFocus maxLength={120}
-                placeholder="Central Warehouse"
+                placeholder={t('products.warehouses.modal.namePlaceholder')}
                 value={form.name} onChange={e => set('name', e.target.value)} />
-              <span className="cpm-section-hint">Shown in pickers and the inventory header.</span>
+              <span className="cpm-section-hint">{t('products.warehouses.modal.nameHint')}</span>
             </div>
             <div className="cpm-section">
-              <label className="po-field-label">Code</label>
+              <label className="po-field-label">{t('products.warehouses.modal.code')}</label>
               <input className="crm-input" maxLength={40}
-                placeholder="WH-001"
+                placeholder={t('products.warehouses.modal.codePlaceholder')}
                 value={form.code} onChange={e => set('code', e.target.value)} />
-              <span className="cpm-section-hint">Short identifier for printouts and exports.</span>
+              <span className="cpm-section-hint">{t('products.warehouses.modal.codeHint')}</span>
             </div>
 
             {/* — Address — */}
-            <div className="po-wh-section-label">Address</div>
+            <div className="po-wh-section-label">{t('products.warehouses.modal.address')}</div>
             <div className="po-wh-grid">
               <div className="cpm-section">
-                <label className="po-field-label">Country</label>
+                <label className="po-field-label">{t('products.warehouses.modal.country')}</label>
                 <CountryCombo
                   value={form.country}
                   onChange={(name) => set('country', name)} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Region / state</label>
+                <label className="po-field-label">{t('products.warehouses.modal.regionState')}</label>
                 <input className="crm-input" maxLength={120}
-                  placeholder="California"
+                  placeholder={t('products.warehouses.modal.regionPlaceholder')}
                   value={form.region} onChange={e => set('region', e.target.value)} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">City</label>
+                <label className="po-field-label">{t('products.warehouses.modal.city')}</label>
                 <input className="crm-input" maxLength={120}
-                  placeholder="San Francisco"
+                  placeholder={t('products.warehouses.modal.cityPlaceholder')}
                   value={form.city} onChange={e => set('city', e.target.value)} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Postal code</label>
+                <label className="po-field-label">{t('products.warehouses.modal.postalCode')}</label>
                 <input className="crm-input" maxLength={40}
-                  placeholder="94103"
+                  placeholder={t('products.warehouses.modal.postalPlaceholder')}
                   value={form.postal_code} onChange={e => set('postal_code', e.target.value)} />
               </div>
             </div>
             <div className="cpm-section">
-              <label className="po-field-label">Street</label>
+              <label className="po-field-label">{t('products.warehouses.modal.street')}</label>
               <input className="crm-input" maxLength={255}
-                placeholder="1 Market Street, Suite 200"
+                placeholder={t('products.warehouses.modal.streetPlaceholder')}
                 value={form.street} onChange={e => set('street', e.target.value)} />
-              <span className="cpm-section-hint">House number, building, floor / office.</span>
+              <span className="cpm-section-hint">{t('products.warehouses.modal.streetHint')}</span>
             </div>
 
             {/* — Operations contact (optional) — */}
-            <div className="po-wh-section-label">Operations contact</div>
+            <div className="po-wh-section-label">{t('products.warehouses.modal.opsContact')}</div>
             <div className="po-wh-grid">
               <div className="cpm-section">
-                <label className="po-field-label">Contact name</label>
+                <label className="po-field-label">{t('products.warehouses.modal.contactName')}</label>
                 <input className="crm-input" maxLength={120}
-                  placeholder="Alex Morgan"
+                  placeholder={t('products.warehouses.modal.contactNamePlaceholder')}
                   value={form.contact_name} onChange={e => set('contact_name', e.target.value)} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Phone</label>
+                <label className="po-field-label">{t('products.warehouses.modal.phone')}</label>
                 <input className="crm-input" maxLength={40}
-                  placeholder="+1 (555) 123-4567"
+                  placeholder={t('products.warehouses.modal.phonePlaceholder')}
                   value={form.contact_phone} onChange={e => set('contact_phone', e.target.value)} />
               </div>
             </div>
 
             {/* — Notes — */}
             <div className="cpm-section">
-              <label className="po-field-label">Notes</label>
+              <label className="po-field-label">{t('products.warehouses.modal.notes')}</label>
               <textarea className="crm-input cpm-textarea" rows={3} maxLength={2000}
-                placeholder="Hours, access instructions, anything operations should know."
+                placeholder={t('products.warehouses.modal.notesPlaceholder')}
                 value={form.notes} onChange={e => set('notes', e.target.value)} />
             </div>
 
@@ -642,40 +649,39 @@ function WarehouseModal({ warehouse, onSave, onClose }) {
                  the storefront. Pickup makes this warehouse appear in the
                  checkout location picker; ETA fields populate the
                  "Delivery in 2–4 days" hint for courier orders. */}
-            <div className="po-wh-section-label">Customer fulfillment</div>
+            <div className="po-wh-section-label">{t('products.warehouses.modal.customerFulfillment')}</div>
             <div className="cpm-section">
               <label className="po-set-field po-set-field--toggle po-wh-toggle-row">
                 <input type="checkbox" className="cat-prod-checkbox po-include-cb"
                   checked={form.is_pickup_enabled}
                   onChange={e => set('is_pickup_enabled', e.target.checked)} />
-                <span className="po-set-toggle-text">Allow customer pickup at this location</span>
+                <span className="po-set-toggle-text">{t('products.warehouses.modal.allowPickup')}</span>
               </label>
               <span className="cpm-section-hint">
-                When enabled, this warehouse shows up as a "Pickup at store"
-                option on the storefront checkout, free of any delivery fee.
+                {t('products.warehouses.modal.pickupHint')}
               </span>
             </div>
             {form.is_pickup_enabled && (
               <div className="cpm-section">
-                <label className="po-field-label">Pickup hours</label>
+                <label className="po-field-label">{t('products.warehouses.modal.pickupHours')}</label>
                 <input className="crm-input" maxLength={200}
-                  placeholder="Mon–Fri 10:00–19:00 · Sat 11:00–17:00"
+                  placeholder={t('products.warehouses.modal.pickupHoursPlaceholder')}
                   value={form.pickup_hours} onChange={e => set('pickup_hours', e.target.value)} />
                 <span className="cpm-section-hint">
-                  Free-form text shown to the customer right under the pickup address.
+                  {t('products.warehouses.modal.pickupHoursHint')}
                 </span>
               </div>
             )}
             <div className="po-wh-grid">
               <div className="cpm-section">
-                <label className="po-field-label">Delivery ETA · min days</label>
+                <label className="po-field-label">{t('products.warehouses.modal.etaMin')}</label>
                 <input className="crm-input" type="number" min={0} max={180}
                   placeholder="2"
                   value={form.delivery_eta_min_days}
                   onChange={e => set('delivery_eta_min_days', e.target.value)} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Delivery ETA · max days</label>
+                <label className="po-field-label">{t('products.warehouses.modal.etaMax')}</label>
                 <input className="crm-input" type="number" min={0} max={180}
                   placeholder="4"
                   value={form.delivery_eta_max_days}
@@ -683,8 +689,7 @@ function WarehouseModal({ warehouse, onSave, onClose }) {
               </div>
             </div>
             <span className="cpm-section-hint">
-              Used for the "Delivery in 2–4 days" hint on storefront product
-              cards / checkout. Leave blank to skip the hint entirely.
+              {t('products.warehouses.modal.etaHint')}
             </span>
 
             {/* Default flag only on create — when editing, "Make default" lives on row/card. */}
@@ -694,21 +699,20 @@ function WarehouseModal({ warehouse, onSave, onClose }) {
                   <input type="checkbox" className="cat-prod-checkbox po-include-cb"
                     checked={form.is_default}
                     onChange={e => set('is_default', e.target.checked)} />
-                  <span className="po-set-toggle-text">Make this the default warehouse</span>
+                  <span className="po-set-toggle-text">{t('products.warehouses.modal.makeThisDefault')}</span>
                 </label>
                 <span className="cpm-section-hint">
-                  New stock entries (and the existing checkout flow) write to the default warehouse
-                  unless you pick another one explicitly.
+                  {t('products.warehouses.modal.makeDefaultHint')}
                 </span>
               </div>
             )}
 
             <div className="auth-actions">
               <button type="submit" className="crm-submit-btn" disabled={!form.name.trim()}>
-                {isNew ? 'Create warehouse' : 'Save changes'}
+                {isNew ? t('products.warehouses.modal.createWarehouse') : t('products.warehouses.modal.saveChanges')}
               </button>
               <button type="button" className="crm-submit-btn auth-btn-secondary"
-                onClick={onClose}>Cancel</button>
+                onClick={onClose}>{t('products.warehouses.modal.cancel')}</button>
             </div>
           </form>
         </div>

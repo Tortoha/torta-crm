@@ -6,14 +6,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Camera, UserCircle, SlidersHorizontal } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { syncLang } from '../../i18n.js';
 import AvatarCropModal from '../../Elements/AvatarCropModal.jsx';
 import { Section, FieldCard, SegmentSwitch, SearchableCombobox } from '../Project/ProjectSettings.jsx';
 import '../../Style/Authentication.css';   // auth-toast / auth-btn-check
 import '../../Style/Products.css';           // bulk-* / cpm-* / crm-input
 import '../../Style/Settings.css';
 
+// Language names are shown in their own language — not translated.
 const LANGUAGES = [
   { value: 'en', label: 'English'  },
   { value: 'ru', label: 'Русский'  },
@@ -32,6 +35,7 @@ function InitialsAvatar({ name, size = 56 }) {
 }
 
 export default function Settings() {
+  const { t } = useTranslation();
   const { updateUser } = useOutletContext() || {};
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +72,7 @@ export default function Settings() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
-    showToast(r.ok ? 'Saved' : 'Save failed');
+    showToast(r.ok ? t('common.saved') : t('common.saveFailed'));
     return r.ok;
   };
 
@@ -84,7 +88,7 @@ export default function Settings() {
     return () => clearTimeout(t);
   }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const pickLanguage = (v) => { setLanguage(v); savePrefs({ language: v }); };
+  const pickLanguage = (v) => { setLanguage(v); syncLang(v); savePrefs({ language: v }); };
   const pickTheme    = (v) => { setTheme(v); savePrefs({ theme: v }); };
 
   const handleAvatarChange = (e) => {
@@ -102,65 +106,65 @@ export default function Settings() {
     try {
       const res  = await fetch(`${API_BASE}/api/upload/avatar`, { method: 'POST', credentials: 'include', body: form });
       const json = await res.json();
-      if (!res.ok) { showToast(json.detail || 'Upload failed'); return; }
+      if (!res.ok) { showToast(json.detail || t('settings.profile.uploadFailed')); return; }
       const bustedUrl = json.url + '?v=' + Date.now();
       setData(prev => ({ ...prev, avatar_url: bustedUrl }));
       setAvatarImgFailed(false);
       updateUser?.({ avatar_url: bustedUrl });
-      showToast('Photo updated');
-    } catch { showToast('Network error'); }
+      showToast(t('settings.profile.photoUpdated'));
+    } catch { showToast(t('common.networkError')); }
     finally { setAvatarUploading(false); }
   };
 
-  if (loading) return <div className="crm-placeholder" style={{ marginTop: 40 }}>Loading…</div>;
+  if (loading) return <div className="crm-placeholder" style={{ marginTop: 40 }}>{t('common.loading')}</div>;
 
   return (
     <>
-      <h1 className="crm-page-title">Settings</h1>
+      <h1 className="crm-page-title">{t('settings.title')}</h1>
 
       <div className="bulk-settings">
-        <Section icon={<UserCircle weight="duotone" />} title="Profile"
-          subtitle="Your photo, display name and login email.">
+        <Section icon={<UserCircle weight="duotone" />} title={t('settings.profile.title')}
+          subtitle={t('settings.profile.subtitle')}>
 
-          <FieldCard label="Photo" hint="Upload a square image — it's cropped to a circle.">
+          <FieldCard label={t('settings.profile.photo')} hint={t('settings.profile.photoHint')}>
             <div className="sett-photo-row">
               {data?.avatar_url && !avatarImgFailed
                 ? <img src={data.avatar_url} alt="" className="sett-avatar-img2" onError={() => setAvatarImgFailed(true)} />
                 : <InitialsAvatar name={data?.name} size={56} />}
               <button type="button" className="auth-btn-check" disabled={avatarUploading}
                 onClick={() => avatarInputRef.current?.click()}>
-                <Camera weight="bold" /> {avatarUploading ? 'Uploading…' : 'Change photo'}
+                <Camera weight="bold" /> {avatarUploading ? t('settings.profile.uploading') : t('settings.profile.changePhoto')}
               </button>
               <input ref={avatarInputRef} type="file" accept="image/*"
                 style={{ display: 'none' }} onChange={handleAvatarChange} />
             </div>
           </FieldCard>
 
-          <FieldCard label="Display name" hint="Shown across the dashboard and to your team.">
+          <FieldCard label={t('settings.profile.displayName')} hint={t('settings.profile.displayNameHint')}>
             <input className="crm-input" style={{ maxWidth: 360 }} value={name} maxLength={80}
-              placeholder="Your name" onChange={e => setName(e.target.value)} />
+              placeholder={t('settings.profile.namePlaceholder')} onChange={e => setName(e.target.value)} />
           </FieldCard>
 
-          <FieldCard label="Email address" hint="Used to sign in — can't be changed.">
+          <FieldCard label={t('settings.profile.email')} hint={t('settings.profile.emailHint')}>
             <input className="crm-input" style={{ maxWidth: 360, opacity: 0.6 }}
               value={data?.email || ''} readOnly tabIndex={-1} />
           </FieldCard>
         </Section>
 
-        <Section icon={<SlidersHorizontal weight="duotone" />} title="Preferences"
-          subtitle="Personal interface options for your account.">
+        <Section icon={<SlidersHorizontal weight="duotone" />} title={t('settings.preferences.title')}
+          subtitle={t('settings.preferences.subtitle')}>
 
-          <FieldCard label="Language" hint="Interface language for your account.">
+          <FieldCard label={t('settings.preferences.language')} hint={t('settings.preferences.languageHint')}>
             <div style={{ maxWidth: 240 }}>
               <SearchableCombobox value={language}
                 options={LANGUAGES.map(l => ({ value: l.value, label: l.label }))}
-                onChange={pickLanguage} searchPlaceholder="Search…" />
+                onChange={pickLanguage} searchPlaceholder={t('common.search')} />
             </div>
           </FieldCard>
 
-          <FieldCard label="Theme" hint="Choose your preferred appearance.">
+          <FieldCard label={t('settings.preferences.theme')} hint={t('settings.preferences.themeHint')}>
             <SegmentSwitch value={theme}
-              options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]}
+              options={[{ value: 'light', label: t('settings.preferences.light') }, { value: 'dark', label: t('settings.preferences.dark') }, { value: 'system', label: t('settings.preferences.system') }]}
               onChange={pickTheme} />
           </FieldCard>
         </Section>

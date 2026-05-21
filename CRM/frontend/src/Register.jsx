@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { useTranslation } from 'react-i18next';
 import "./Style/Login.css";
 import { API_BASE } from "./api.js";
 import PasswordInput from "./Elements/PasswordInput.jsx";
 import GoogleAuthButton from "./Elements/GoogleAuthButton.jsx";
 
 function Register() {
+  const { t } = useTranslation();
   const [name, setName]                     = useState("");
   const [email, setEmail]                   = useState("");
   const [password, setPassword]             = useState("");
@@ -22,20 +24,20 @@ function Register() {
   const handleNameChange = (e) => {
     const value = e.target.value;
     setName(value);
-    setNameError(value.length > 20 ? "No more than 20 characters" : "");
+    setNameError(value.length > 20 ? t('auth.validation.nameTooLong') : "");
   };
 
   const handleEmailChange = (e) => {
     const value = e.target.value;
     setEmail(value);
-    setEmailError(value && !emailFormatRegex.test(value) ? "Incorrect email" : "");
+    setEmailError(value && !emailFormatRegex.test(value) ? t('auth.validation.incorrectEmail') : "");
   };
 
   const validatePassword = (pwd) => {
-    if (/\s/.test(pwd))                   return ['No spaces allowed'];
-    if (pwd.length < 8 || pwd.length > 24) return ['Must be 8-24 characters'];
-    if (!/[\p{L}]/u.test(pwd))            return ['Must contain at least 1 letter'];
-    if (!/\d/.test(pwd))                  return ['Must contain at least 1 digit'];
+    if (/\s/.test(pwd))                   return [t('auth.validation.noSpaces')];
+    if (pwd.length < 8 || pwd.length > 24) return [t('auth.validation.length')];
+    if (!/[\p{L}]/u.test(pwd))            return [t('auth.validation.needLetter')];
+    if (!/\d/.test(pwd))                  return [t('auth.validation.needDigit')];
     return [];
   };
 
@@ -43,13 +45,13 @@ function Register() {
     const value = e.target.value;
     setPassword(value);
     setPasswordErrors(validatePassword(value));
-    setRepeatError(repeatPassword && value !== repeatPassword ? "Passwords do not match" : "");
+    setRepeatError(repeatPassword && value !== repeatPassword ? t('auth.validation.passwordsMismatch') : "");
   };
 
   const handleRepeatPasswordChange = (e) => {
     const value = e.target.value;
     setRepeatPassword(value);
-    setRepeatError(value !== password ? "Passwords do not match" : "");
+    setRepeatError(value !== password ? t('auth.validation.passwordsMismatch') : "");
   };
 
   const isValid =
@@ -76,10 +78,10 @@ function Register() {
         localStorage.setItem("pendingResendUntil", String(Date.now() + Number(data.resend_available_in || 60) * 1000));
         navigate("/registration/verification");
       } else {
-        setGeneralError(data.detail || "Registration failed");
+        setGeneralError(data.detail || t('auth.register.failed'));
       }
     } catch {
-      setGeneralError("Network error");
+      setGeneralError(t('auth.common.networkError'));
     } finally {
       setLoading(false);
     }
@@ -88,33 +90,33 @@ function Register() {
   return (
     <div className="regist">
       <section className="regis">
-        <h1>Create Account</h1>
+        <h1>{t('auth.register.title')}</h1>
         <div className="reg" id="r">
           <form onSubmit={handleRegister}>
             <div className="secsh2">
               <input
-                type="text" placeholder="Your name"
+                type="text" placeholder={t('auth.register.namePlaceholder')}
                 value={name} onChange={handleNameChange} required
               />
               {nameError && <p className="error">{nameError}</p>}
             </div>
             <div className="secsh0">
               <input
-                type="email" placeholder="example@email.com"
+                type="email" placeholder={t('auth.register.emailPlaceholder')}
                 value={email} onChange={handleEmailChange} required
               />
               {emailError && <p className="error">{emailError}</p>}
             </div>
             <div className="secsh0">
               <PasswordInput
-                placeholder="Create password" value={password}
+                placeholder={t('auth.register.passwordPlaceholder')} value={password}
                 onChange={handlePasswordChange}
               />
               {passwordErrors.map((err, i) => <p className="error" key={i}>{err}</p>)}
             </div>
             <div className="secsh0">
               <PasswordInput
-                placeholder="Repeat password" value={repeatPassword}
+                placeholder={t('auth.register.repeatPasswordPlaceholder')} value={repeatPassword}
                 onChange={handleRepeatPasswordChange}
               />
               {repeatError && <p className="error">{repeatError}</p>}
@@ -123,14 +125,14 @@ function Register() {
             <div className="secsh1">
               <input
                 className={isValid && !loading ? "button1" : "not-button"}
-                type="submit" value={loading ? "Sending..." : "Next"}
+                type="submit" value={loading ? t('auth.register.sending') : t('auth.register.next')}
                 disabled={!isValid || loading}
               />
             </div>
             <GoogleAuthButton />
             <div className="secsh1">
               <Link to="/login">
-                <input className="button2" type="button" value="Sign in" />
+                <input className="button2" type="button" value={t('auth.register.signIn')} />
               </Link>
             </div>
           </form>

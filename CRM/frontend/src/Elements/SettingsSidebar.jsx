@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { UserCircle, Lock, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
-
-// Preferences live on the Profile page; Notifications are handled by the bell —
-// so the account settings only need Profile + Security.
-const items = [
-  { to: '/settings/account',  label: 'Profile',  Icon: UserCircle },
-  { to: '/settings/security', label: 'Security', Icon: Lock },
-];
 
 function SettingsSidebar({ collapsed, onToggle }) {
   const location = useLocation();
+  const { t }    = useTranslation();
+
+  // Preferences live on the Profile page; Notifications are handled by the bell —
+  // so the account settings only need Profile + Security.
+  const items = [
+    { to: '/settings/account',  label: t('settings.profile.title'),  Icon: UserCircle },
+    { to: '/settings/security', label: t('security.title'),          Icon: Lock },
+  ];
 
   const itemsEl = useRef(null);
   const itemEls = useRef({});
@@ -60,7 +62,7 @@ function SettingsSidebar({ collapsed, onToggle }) {
           <button className="sb-toggle-btn" onClick={onToggle} type="button" aria-label="Toggle sidebar">
             {collapsed
               ? <ArrowLineRight className="sb-toggle-icon" />
-              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">Collapse</span></>
+              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">{t('common.collapse')}</span></>
             }
           </button>
         </div>

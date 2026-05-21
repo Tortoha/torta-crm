@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Envelope, PhoneCall,
   CaretRight, X, CheckCircle, Globe, ShieldCheck, Trash,
@@ -43,6 +44,15 @@ const PROVIDERS = [
   { id: 'keycloak',  label: 'KeyCloak',        desc: 'Sign in with KeyCloak',       configurable: true, iconify: 'simple-icons:keycloak',  color: '#4D4D4D' },
 ];
 
+
+// Translate a provider's row description. Email / Phone / Google have unique
+// copy; every generic OAuth provider is "Sign in with <brand>".
+const providerDesc = (t, provider) => {
+  if (['email', 'phone', 'google'].includes(provider.id)) {
+    return t(`authConfig.providerDesc.${provider.id}`);
+  }
+  return t('authConfig.providerDesc.signInWith', { provider: provider.label });
+};
 
 const ProviderIcon = ({ provider, size = 24 }) =>
   provider.iconify
@@ -95,6 +105,7 @@ function TabSwitcher({ tabs, tab, setTab }) {
 // ─── Provider Rows ────────────────────────────────────────────────────────────
 
 function ProviderRow({ provider, enabled, onClick, first, last }) {
+  const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
 
   const cls = [
@@ -112,11 +123,11 @@ function ProviderRow({ provider, enabled, onClick, first, last }) {
       </div>
 
       <span className="auth-provider-name">{provider.label}</span>
-      <span className="auth-provider-desc">{provider.desc}</span>
+      <span className="auth-provider-desc">{providerDesc(t, provider)}</span>
 
       {enabled
-        ? <span className="auth-badge-enabled"><CheckCircle weight="fill" size={11} /> Enabled</span>
-        : <span className="auth-badge-disabled">Disabled</span>}
+        ? <span className="auth-badge-enabled"><CheckCircle weight="fill" size={11} /> {t('authConfig.enabled')}</span>
+        : <span className="auth-badge-disabled">{t('authConfig.disabled')}</span>}
 
       <CaretRight className="auth-provider-chevron" />
     </div>
@@ -124,6 +135,7 @@ function ProviderRow({ provider, enabled, onClick, first, last }) {
 }
 
 function DisabledProviderRow({ provider, first, last }) {
+  const { t } = useTranslation();
   const cls = [
     'auth-provider-row',
     'auth-provider-row--disabled',
@@ -137,8 +149,8 @@ function DisabledProviderRow({ provider, first, last }) {
         <ProviderIcon provider={provider} size={24} />
       </div>
       <span className="auth-provider-name">{provider.label}</span>
-      <span className="auth-provider-desc">{provider.desc}</span>
-      <span className="auth-badge-disabled">Disabled</span>
+      <span className="auth-provider-desc">{providerDesc(t, provider)}</span>
+      <span className="auth-badge-disabled">{t('authConfig.disabled')}</span>
       <CaretRight className="auth-provider-chevron" />
     </div>
   );
@@ -184,6 +196,7 @@ function AuthModal({ title, subtitle, iconEl, onClose, children, badge }) {
 // ─── URL Config Panel ─────────────────────────────────────────────────────────
 
 function UrlConfigPanel({ projectId }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [siteUrl,      setSiteUrl]      = useState('');
   const [original,     setOriginal]     = useState('');
@@ -226,9 +239,9 @@ function UrlConfigPanel({ projectId }) {
         body: JSON.stringify({ frontend_url: siteUrl.trim() }),
       });
       const json = await res.json();
-      if (res.ok) { showToast('Saved.'); setOriginal(siteUrl.trim()); }
-      else        { setSiteErr(json.detail || 'Error'); }
-    } catch { setSiteErr('Network error'); }
+      if (res.ok) { showToast(t('common.saved')); setOriginal(siteUrl.trim()); }
+      else        { setSiteErr(json.detail || t('authConfig.error')); }
+    } catch { setSiteErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
@@ -244,8 +257,8 @@ function UrlConfigPanel({ projectId }) {
       });
       const json = await res.json();
       if (res.ok) { setNewUrl(''); await loadRedirects(); }
-      else        { setAddErr(json.detail || 'Error'); }
-    } catch { setAddErr('Network error'); }
+      else        { setAddErr(json.detail || t('authConfig.error')); }
+    } catch { setAddErr(t('common.networkError')); }
     finally { setAdding(false); }
   };
 
@@ -267,9 +280,9 @@ function UrlConfigPanel({ projectId }) {
       {/* ── Card 1: Site URL ── */}
       <div className="auth-urlcfg-card">
         <div className="urlcfg-card-header">
-          <h2 className="urlcfg-card-title">Site URL</h2>
+          <h2 className="urlcfg-card-title">{t('authConfig.urls.siteUrl')}</h2>
           <p className="urlcfg-card-desc">
-            The main URL of your storefront. Used as the default redirect after login, sign-up, and password reset.
+            {t('authConfig.urls.siteUrlDesc')}
           </p>
         </div>
         <div className="urlcfg-inline-row">
@@ -279,7 +292,7 @@ function UrlConfigPanel({ projectId }) {
             autoComplete="off" />
           <button className="urlcfg-save-btn" onClick={saveSite}
             disabled={saving || !siteChanged} type="button">
-            {saving ? 'Saving…' : 'Save changes'}
+            {saving ? t('authConfig.saving') : t('authConfig.urls.saveChanges')}
           </button>
         </div>
         {siteErr && <p className="auth-msg auth-msg--err">{siteErr}</p>}
@@ -288,10 +301,9 @@ function UrlConfigPanel({ projectId }) {
       {/* ── Card 2: Redirect URLs ── */}
       <div className="auth-urlcfg-card">
         <div className="urlcfg-card-header">
-          <h2 className="urlcfg-card-title">Redirect URLs</h2>
+          <h2 className="urlcfg-card-title">{t('authConfig.urls.redirectUrls')}</h2>
           <p className="urlcfg-card-desc">
-            URLs that auth providers are permitted to redirect to after authentication.
-            Wildcards allowed, e.g. <code>https://*.domain.com</code>
+            {t('authConfig.urls.redirectUrlsDesc')} <code>https://*.domain.com</code>
           </p>
         </div>
 
@@ -303,7 +315,7 @@ function UrlConfigPanel({ projectId }) {
             autoComplete="off" />
           <button className="auth-add-btn" onClick={addUrl}
             disabled={adding || !newUrl.trim()} type="button">
-            {adding ? 'Adding…' : 'Add URL'}
+            {adding ? t('authConfig.urls.adding') : t('authConfig.urls.addUrl')}
           </button>
         </div>
 
@@ -316,14 +328,14 @@ function UrlConfigPanel({ projectId }) {
                 <Globe size={13} className="auth-redirect-icon" />
                 <span className="auth-redirect-url">{row.url}</span>
                 <button className="urlcfg-del-btn"
-                  onClick={() => deleteUrl(row.id)} disabled={deletingId === row.id} title="Remove">
+                  onClick={() => deleteUrl(row.id)} disabled={deletingId === row.id} title={t('authConfig.urls.remove')}>
                   <Trash size={13} />
                 </button>
               </div>
             ))}
           </div>
         ) : (
-          <p className="urlcfg-empty">No redirect URLs added yet.</p>
+          <p className="urlcfg-empty">{t('authConfig.urls.empty')}</p>
         )}
       </div>
 
@@ -340,11 +352,12 @@ function UrlConfigPanel({ projectId }) {
 // ─── Authentication ───────────────────────────────────────────────────────────
 
 function Authentication() {
+  const { t } = useTranslation();
   const { projectId, access } = useOutletContext();
   const canView = (p) => !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[p]);
   const authTabs = [
-    canView('auth_providers') && { key: 'providers', label: 'Auth Providers',    Icon: ShieldCheck },
-    canView('url_config')     && { key: 'urls',      label: 'URL Configuration', Icon: Globe },
+    canView('auth_providers') && { key: 'providers', label: t('authConfig.tabs.providers'),    Icon: ShieldCheck },
+    canView('url_config')     && { key: 'urls',      label: t('authConfig.tabs.urls'), Icon: Globe },
   ].filter(Boolean);
   const [tab,             setTab]             = useState(authTabs[0]?.key || 'providers');
   const [modal,           setModal]           = useState(null); // null | provider.id
@@ -418,9 +431,9 @@ function Authentication() {
       <div className="auth-page">
         {tab === 'providers' && (
           <>
-            <h1 className="crm-page-title">Auth Providers</h1>
+            <h1 className="crm-page-title">{t('authConfig.tabs.providers')}</h1>
             <p className="auth-page-subtitle">
-              Authenticate your store users through a suite of providers and login methods.
+              {t('authConfig.providersSubtitle')}
             </p>
 
             <div className="auth-providers-list">
@@ -440,9 +453,9 @@ function Authentication() {
 
         {tab === 'urls' && (
           <>
-            <h1 className="crm-page-title">URL Configuration</h1>
+            <h1 className="crm-page-title">{t('authConfig.tabs.urls')}</h1>
             <p className="auth-page-subtitle">
-              Configure site URL and redirect URLs for authentication flows.
+              {t('authConfig.urlsSubtitle')}
             </p>
             <UrlConfigPanel projectId={projectId} />
           </>
@@ -451,7 +464,7 @@ function Authentication() {
 
       {/* ── Modals ── */}
       {modal === 'email' && (
-        <AuthModal title="Email" subtitle="Code-based login via email OTP"
+        <AuthModal title={t('authConfig.providerLabel.email')} subtitle={t('authConfig.providerDesc.email')}
           iconEl={<Envelope size={24} className="auth-modal-icon-svg" />}
           onClose={() => setModal(null)}>
           <EmailPanel projectId={projectId} onVerifiedChange={(verified) => {
@@ -461,7 +474,7 @@ function Authentication() {
       )}
 
       {modal === 'google' && (
-        <AuthModal title="Google" subtitle="Sign in with Google account"
+        <AuthModal title={t('authConfig.providerLabel.google')} subtitle={t('authConfig.providerDesc.google')}
           iconEl={<Icon icon="logos:google-icon" width={24} height={24} />}
           onClose={() => setModal(null)}>
           <GooglePanel projectId={projectId} onSaved={setGoogleEnabled} />
@@ -469,7 +482,7 @@ function Authentication() {
       )}
 
       {modal === 'phone' && (
-        <AuthModal title="Phone" subtitle="Code-based login via SMS"
+        <AuthModal title={t('authConfig.providerLabel.phone')} subtitle={t('authConfig.providerDesc.phone')}
           iconEl={<PhoneCall size={24} className="auth-modal-icon-svg" />}
           onClose={() => setModal(null)}>
           <PhonePanel projectId={projectId} onSaved={setPhoneEnabled} />
@@ -479,7 +492,7 @@ function Authentication() {
       {modalProvider && (
         <AuthModal
           title={modalProvider.label}
-          subtitle={modalProvider.desc}
+          subtitle={providerDesc(t, modalProvider)}
           iconEl={<ProviderIcon provider={modalProvider} size={24} />}
           onClose={() => setModal(null)}>
           {modalProvider.id === 'apple' ? (

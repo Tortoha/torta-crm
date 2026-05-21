@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { X, Bell, PaperPlaneTilt } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import ConnectorIcon from './ConnectorIcon.jsx';
@@ -10,6 +11,7 @@ import ConnectorIcon from './ConnectorIcon.jsx';
 // on the backend).
 
 export default function RequestIntegrationModal({ projectId, connector, onClose, onSent }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [email, setEmail] = useState('');
   const [note,  setNote]  = useState('');
@@ -37,7 +39,7 @@ export default function RequestIntegrationModal({ projectId, connector, onClose,
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setErr(j.detail || 'Request failed');
+        setErr(j.detail || t('integrations.request.requestFailed'));
       } else {
         setSent(true);
         onSent?.();
@@ -70,16 +72,16 @@ export default function RequestIntegrationModal({ projectId, connector, onClose,
               <div className="acc-soon-banner">
                 <Bell weight="fill" size={16} />
                 <div>
-                  <div className="acc-soon-title">Coming soon</div>
+                  <div className="acc-soon-title">{t('integrations.request.comingSoon')}</div>
                   <div className="acc-soon-sub">
-                    Tell us you want it — we email you the day it ships and prioritise the most-requested ones.
+                    {t('integrations.request.comingSoonSub')}
                   </div>
                 </div>
               </div>
 
               {connector.features?.length > 0 && (
                 <section className="acc-section">
-                  <div className="acc-section-title">Planned features</div>
+                  <div className="acc-section-title">{t('integrations.request.plannedFeatures')}</div>
                   <ul className="acc-feature-list">
                     {connector.features.map((f, i) => <li key={i}>{f}</li>)}
                   </ul>
@@ -87,19 +89,19 @@ export default function RequestIntegrationModal({ projectId, connector, onClose,
               )}
 
               <section className="acc-section">
-                <div className="acc-section-title">Notify me</div>
+                <div className="acc-section-title">{t('integrations.request.notifyMe')}</div>
                 <div className="acc-field acc-field--grow">
-                  <span className="acc-field-label">Your email</span>
+                  <span className="acc-field-label">{t('integrations.request.yourEmail')}</span>
                   <input className="crm-input" type="email" value={email}
                     onChange={e => setEmail(e.target.value)} maxLength={200}
-                    placeholder="you@example.com" />
+                    placeholder={t('integrations.request.emailPlaceholder')} />
                 </div>
                 <div className="acc-field acc-field--grow">
-                  <span className="acc-field-label">Anything specific? (optional)</span>
+                  <span className="acc-field-label">{t('integrations.request.anythingSpecific')}</span>
                   <textarea className="crm-input acc-textarea" rows={3}
                     value={note} maxLength={2000}
                     onChange={e => setNote(e.target.value)}
-                    placeholder="What's your use case? Which fields matter most?" />
+                    placeholder={t('integrations.request.notePlaceholder')} />
                 </div>
               </section>
 
@@ -109,11 +111,11 @@ export default function RequestIntegrationModal({ projectId, connector, onClose,
                 <button type="button" className="crm-submit-btn"
                   onClick={submit} disabled={busy}>
                   <PaperPlaneTilt size={14} weight="bold" />
-                  {busy ? ' Sending…' : ' Send request'}
+                  {busy ? t('integrations.request.sending') : t('integrations.request.sendRequest')}
                 </button>
                 <button type="button" className="auth-btn-check"
                   onClick={onClose} style={{ marginLeft: 'auto' }}>
-                  Close
+                  {t('integrations.request.close')}
                 </button>
               </div>
             </>
@@ -122,9 +124,9 @@ export default function RequestIntegrationModal({ projectId, connector, onClose,
           {sent && (
             <div className="acc-soon-thanks">
               <div className="acc-soon-thanks-icon">✓</div>
-              <h3>Thanks — we'll let you know.</h3>
-              <p>Your request has been logged. We'll email you when {connector.name} goes live.</p>
-              <button type="button" className="crm-submit-btn" onClick={onClose}>Done</button>
+              <h3>{t('integrations.request.thanksTitle')}</h3>
+              <p>{t('integrations.request.thanksBody', { name: connector.name })}</p>
+              <button type="button" className="crm-submit-btn" onClick={onClose}>{t('integrations.request.done')}</button>
             </div>
           )}
         </div>

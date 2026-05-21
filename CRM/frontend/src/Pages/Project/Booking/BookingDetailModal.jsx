@@ -1,16 +1,11 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { X, Clock, User, CalendarBlank, Phone, EnvelopeSimple, Trash, Note, MapPin } from '@phosphor-icons/react';
 import { Combobox } from './BookingCreateModal.jsx';
 import { formatMoney } from '../../../Utils/currency.js';
 
-const STATUS_OPTIONS = [
-  { value: 'pending',   label: 'Pending'   },
-  { value: 'confirmed', label: 'Confirmed' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'cancelled', label: 'Cancelled' },
-  { value: 'no_show',   label: 'No-show'   },
-];
+const STATUS_VALUES = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show'];
 
 const fmtDateLong = ts => ts
   ? new Date(ts).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
@@ -21,6 +16,8 @@ const fmtTime = ts => ts
 
 // Read-only-ish booking details with status changer + delete.
 function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, currency = 'USD' }) {
+  const { t } = useTranslation();
+  const statusOptions = STATUS_VALUES.map(v => ({ value: v, label: t(`booking.status.${v}`) }));
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', h);
@@ -36,7 +33,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
               <CalendarBlank size={24} className="auth-modal-icon-svg" />
             </div>
             <div>
-              <div className="auth-modal-title">Booking #{booking.id}</div>
+              <div className="auth-modal-title">{t('booking.detail.title', { id: booking.id })}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">{fmtDateLong(booking.starts_at)} · {fmtTime(booking.starts_at)}</span>
               </div>
@@ -53,7 +50,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
             <div className="bk-detail-row">
               <Clock size={16} className="bk-detail-icon" />
               <div>
-                <div className="bk-detail-label">When</div>
+                <div className="bk-detail-label">{t('booking.detail.when')}</div>
                 <div className="bk-detail-value">
                   {fmtDateLong(booking.starts_at)} · {fmtTime(booking.starts_at)} – {fmtTime(booking.ends_at)}
                 </div>
@@ -64,11 +61,11 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
               <CalendarBlank size={16} className="bk-detail-icon" />
               <div>
                 <div className="bk-detail-label">
-                  {booking.service_id ? 'Service' : 'Service (freeform)'}
+                  {booking.service_id ? t('booking.detail.service') : t('booking.detail.serviceFreeform')}
                 </div>
                 <div className="bk-detail-value">
                   {booking.service_name || '—'}
-                  {booking.service_duration && <> · {booking.service_duration} min</>}
+                  {booking.service_duration && <> · {booking.service_duration}{t('booking.detail.minutesSuffix')}</>}
                   {booking.service_price > 0 && <> · {formatMoney(booking.service_price, currency)}</>}
                 </div>
               </div>
@@ -78,7 +75,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
               <div className="bk-detail-row">
                 <User size={16} className="bk-detail-icon" />
                 <div>
-                  <div className="bk-detail-label">Staff</div>
+                  <div className="bk-detail-label">{t('booking.detail.staff')}</div>
                   <div className="bk-detail-value">{booking.staff_name}</div>
                 </div>
               </div>
@@ -92,7 +89,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
             <div className="bk-detail-row">
               <User size={16} className="bk-detail-icon" />
               <div>
-                <div className="bk-detail-label">Customer</div>
+                <div className="bk-detail-label">{t('booking.detail.customer')}</div>
                 <div className="bk-detail-value">{booking.customer_name || '—'}</div>
               </div>
             </div>
@@ -100,7 +97,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
               <div className="bk-detail-row">
                 <Phone size={16} className="bk-detail-icon" />
                 <div>
-                  <div className="bk-detail-label">Phone</div>
+                  <div className="bk-detail-label">{t('booking.detail.phone')}</div>
                   <div className="bk-detail-value">
                     <a href={`tel:${booking.customer_phone}`}>{booking.customer_phone}</a>
                   </div>
@@ -111,7 +108,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
               <div className="bk-detail-row">
                 <EnvelopeSimple size={16} className="bk-detail-icon" />
                 <div>
-                  <div className="bk-detail-label">Email</div>
+                  <div className="bk-detail-label">{t('booking.detail.email')}</div>
                   <div className="bk-detail-value">
                     <a href={`mailto:${booking.customer_email}`}>{booking.customer_email}</a>
                   </div>
@@ -122,7 +119,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
               <div className="bk-detail-row">
                 <MapPin size={16} className="bk-detail-icon" />
                 <div>
-                  <div className="bk-detail-label">Address</div>
+                  <div className="bk-detail-label">{t('booking.detail.address')}</div>
                   <div className="bk-detail-value">
                     <a target="_blank" rel="noreferrer"
                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(booking.customer_address)}`}>
@@ -136,7 +133,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
               <div className="bk-detail-row">
                 <Note size={16} className="bk-detail-icon" />
                 <div>
-                  <div className="bk-detail-label">Notes</div>
+                  <div className="bk-detail-label">{t('booking.detail.notes')}</div>
                   <div className="bk-detail-value">{booking.notes}</div>
                 </div>
               </div>
@@ -149,15 +146,15 @@ function BookingDetailModal({ booking, onClose, onStatusChange, onDelete, curren
               the CRM (Calendar staff filter, New-promo categories, Booking
               Settings timezone). The native <select> looked out of place. */}
           <div className="auth-field">
-            <label className="auth-label">Status</label>
+            <label className="auth-label">{t('booking.detail.status')}</label>
             <Combobox value={booking.status}
-              options={STATUS_OPTIONS}
+              options={statusOptions}
               onChange={v => onStatusChange(booking.id, v)} />
           </div>
 
           <div className="auth-actions">
             <button className="auth-btn-danger" type="button" onClick={() => onDelete(booking.id)}>
-              <Trash size={15} /> Delete booking
+              <Trash size={15} /> {t('booking.detail.deleteBooking')}
             </button>
           </div>
         </div>

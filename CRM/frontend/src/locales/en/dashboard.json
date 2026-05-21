@@ -1,0 +1,18 @@
+{
+  "dashboard": {
+    "title": "Your Organizations",
+    "searchPlaceholder": "Search organizations…",
+    "newOrganization": "New organization",
+    "projectCount_one": "{{count}} project",
+    "projectCount_other": "{{count}} projects",
+    "empty": "No organizations yet. Create one to get started.",
+    "noResults": "No organizations match your search.",
+    "modalTitle": "New organization",
+    "nameLabel": "Name",
+    "namePlaceholder": "Organization name",
+    "creating": "Creating…",
+    "create": "Create",
+    "nameRequired": "Name is required",
+    "error": "Error"
+  }
+}

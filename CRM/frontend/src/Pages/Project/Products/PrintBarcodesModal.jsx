@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -11,10 +12,10 @@ import '../../../Style/Products.css';         // .print-bc-* layout + tree
 import '../../../Style/Booking.css';          // .bk-date-pop for DatePicker
 
 const FORMAT_OPTIONS = [
-  { value: '50x30', label: 'Thermal · 50 × 30 mm' },
-  { value: '70x40', label: 'Thermal · 70 × 40 mm' },
-  { value: 'a4_24', label: 'A4 sheet · 24 per page' },
-  { value: 'a4_30', label: 'A4 sheet · 30 per page' },
+  { value: '50x30', labelKey: 'products.printBarcodes.formatThermal50' },
+  { value: '70x40', labelKey: 'products.printBarcodes.formatThermal70' },
+  { value: 'a4_24', labelKey: 'products.printBarcodes.formatA4_24' },
+  { value: 'a4_30', labelKey: 'products.printBarcodes.formatA4_30' },
 ];
 
 // What gets printed for each selected product. Three encoding families × three
@@ -26,15 +27,15 @@ const FORMAT_OPTIONS = [
 //            product_configurations_l2.barcode and is auto-generated for every
 //            product + SKU using GS1 in-store prefix 200/201).
 const SCOPE_OPTIONS = [
-  { value: 'product',        label: 'Product barcode (SKU)' },
-  { value: 'config',         label: 'Configuration barcodes (SKU)' },
-  { value: 'both',           label: 'Product + configuration (SKU)' },
-  { value: 'product-batch',  label: 'Product barcode (Batch)' },
-  { value: 'config-batch',   label: 'Configuration barcodes (Batch)' },
-  { value: 'both-batch',     label: 'Product + configuration (Batch)' },
-  { value: 'product-ean13',  label: 'Product barcode (EAN-13)' },
-  { value: 'config-ean13',   label: 'Configuration barcodes (EAN-13)' },
-  { value: 'both-ean13',     label: 'Product + configuration (EAN-13)' },
+  { value: 'product',        labelKey: 'products.printBarcodes.scopeProductSku' },
+  { value: 'config',         labelKey: 'products.printBarcodes.scopeConfigSku' },
+  { value: 'both',           labelKey: 'products.printBarcodes.scopeBothSku' },
+  { value: 'product-batch',  labelKey: 'products.printBarcodes.scopeProductBatch' },
+  { value: 'config-batch',   labelKey: 'products.printBarcodes.scopeConfigBatch' },
+  { value: 'both-batch',     labelKey: 'products.printBarcodes.scopeBothBatch' },
+  { value: 'product-ean13',  labelKey: 'products.printBarcodes.scopeProductEan' },
+  { value: 'config-ean13',   labelKey: 'products.printBarcodes.scopeConfigEan' },
+  { value: 'both-ean13',     labelKey: 'products.printBarcodes.scopeBothEan' },
 ];
 
 // Symbology — split into format family + specific code. Only formats we can
@@ -42,9 +43,9 @@ const SCOPE_OPTIONS = [
 // QR Code (2D). Other symbologies removed to avoid confusing the merchant
 // with options that silently fall back to Code 128.
 const SYMBOLOGY_FAMILIES = [
-  { value: '1d',     label: '1D Codes' },
-  { value: 'eanupc', label: 'EAN / UPC' },
-  { value: '2d',     label: '2D Codes' },
+  { value: '1d',     labelKey: 'products.printBarcodes.family1d' },
+  { value: 'eanupc', labelKey: 'products.printBarcodes.familyEanUpc' },
+  { value: '2d',     labelKey: 'products.printBarcodes.family2d' },
 ];
 
 // 1D + EAN-UPC entries render with their real python-barcode class. 2D entries
@@ -55,7 +56,7 @@ const SYMBOLOGY_CHOICES = {
   '1d': [
     { value: 'code128', label: 'Code 128' },
     { value: 'code39',  label: 'Code 39' },
-    { value: 'itf',     label: 'Interleaved 2 of 5 (ITF)' },
+    { value: 'itf',     labelKey: 'products.printBarcodes.symITF' },
     { value: 'gs1_128', label: 'GS1-128' },
   ],
   eanupc: [
@@ -64,8 +65,8 @@ const SYMBOLOGY_CHOICES = {
     { value: 'upca',  label: 'UPC-A' },
   ],
   '2d': [
-    { value: 'qr',     label: 'QR Code' },
-    { value: 'gs1_qr', label: 'GS1 QR Code' },
+    { value: 'qr',     labelKey: 'products.printBarcodes.symQr' },
+    { value: 'gs1_qr', labelKey: 'products.printBarcodes.symGs1Qr' },
   ],
 };
 
@@ -79,6 +80,7 @@ const USER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 //   - mode='sku' + productIds + filterVariationId  → only SKUs under one Layer-1 variation
 export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filterVariationId,
                                               mode = 'sku', qrMode = false, onClose }) {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const [items,   setItems]   = useState([]);   // [{key, depth, kind, label, sub, payload, hasQty}]
   const [loading, setLoading] = useState(true);
@@ -270,8 +272,8 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
           list.push({
             key: `phead:${p.id}`, depth: 0, kind: 'product-header',
             label: p.title,
-            sub: scope === 'product' ? (p.sku || p.barcode || '(no SKU)')
-               : `${layer1.length} variation${layer1.length === 1 ? '' : 's'}`,
+            sub: scope === 'product' ? (p.sku || p.barcode || t('products.printBarcodes.noSku'))
+               : t('products.printBarcodes.productHeader', { count: layer1.length }),
             hasQty: false,
             imageUrl: productImg,
           });
@@ -283,7 +285,7 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
               // resolves this via the same product_id payload + encode_field hint.
               list.push({
                 key: `pe:${p.id}`, depth: 1, kind: 'product-ean13',
-                label: 'Product EAN-13', sub: p.barcode || '(will be minted)',
+                label: t('products.printBarcodes.productEan'), sub: p.barcode || t('products.printBarcodes.willBeMinted'),
                 payload: { product_id: p.id, encode_field: 'ean13' }, hasQty: true,
               });
             } else if (scope === 'product-batch' || scope === 'both-batch') {
@@ -296,21 +298,21 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
               if (latest) {
                 list.push({
                   key: `pb:${p.id}`, depth: 1, kind: 'product-batch',
-                  label: 'Product batch barcode', sub: latest.batch_name,
+                  label: t('products.printBarcodes.productBatchBarcode'), sub: latest.batch_name,
                   payload: { batch_id: latest.id }, hasQty: true,
                 });
               } else {
                 // No batches — degrade to SKU encoding so the row isn't useless.
                 list.push({
                   key: `p:${p.id}`, depth: 1, kind: 'product',
-                  label: 'Product barcode (no batch yet)', sub: p.sku || '(no SKU)',
+                  label: t('products.printBarcodes.productBarcodeNoBatch'), sub: p.sku || t('products.printBarcodes.noSku'),
                   payload: { product_id: p.id }, hasQty: true,
                 });
               }
             } else {
               list.push({
                 key: `p:${p.id}`, depth: 1, kind: 'product',
-                label: 'Product barcode', sub: p.sku || p.barcode || '(no SKU)',
+                label: t('products.printBarcodes.productBarcode'), sub: p.sku || p.barcode || t('products.printBarcodes.noSku'),
                 payload: { product_id: p.id }, hasQty: true,
               });
             }
@@ -327,7 +329,7 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
               list.push({
                 key: `vhead:${v.id}`, depth: 1, kind: 'variation-header',
                 label: v.variation_name || v.name || '—',
-                sub: `${layer2.length} SKU${layer2.length === 1 ? '' : 's'}`,
+                sub: layer2.length === 1 ? t('products.tier.skuOne', { count: layer2.length }) : t('products.tier.skuMany', { count: layer2.length }),
                 hasQty: false,
                 imageUrl: vArr[0] || null,
               });
@@ -337,7 +339,7 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
                   list.push({
                     key: `ce:${c.id}`, depth: 2, kind: 'sku-ean13',
                     label: c.configuration_name || c.name || '—',
-                    sub: c.barcode || '(will be minted)',
+                    sub: c.barcode || t('products.printBarcodes.willBeMinted'),
                     payload: { sku_id: c.id, encode_field: 'ean13' }, hasQty: true,
                   });
                 } else if (scope === 'config-batch' || scope === 'both-batch') {
@@ -347,14 +349,14 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
                     list.push({
                       key: `cb:${c.id}`, depth: 2, kind: 'sku-batch',
                       label: c.configuration_name || c.name || '—',
-                      sub: `batch: ${latest.batch_name}`,
+                      sub: t('products.printBarcodes.batchPrefix', { name: latest.batch_name }),
                       payload: { batch_id: latest.id }, hasQty: true,
                     });
                   } else {
                     list.push({
                       key: `s:${c.id}`, depth: 2, kind: 'sku',
                       label: c.configuration_name || c.name || '—',
-                      sub: `${c.sku_code || ''} · no batch yet`,
+                      sub: `${c.sku_code || ''} · ${t('products.printBarcodes.noBatchYetSuffix')}`,
                       payload: { sku_id: c.id }, hasQty: true,
                     });
                   }
@@ -382,7 +384,7 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
         // they don't want, same UX as Pick SKUs to receive stock for.
         setSelected(new Set(list.filter(it => it.hasQty).map(it => it.key)));
       } catch (e) {
-        setErr('Failed to load items');
+        setErr(t('products.printBarcodes.errLoad'));
       } finally {
         setLoading(false);
       }
@@ -408,8 +410,8 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
       const payloadItems = items
         .filter(it => it.hasQty && selected.has(it.key) && (qtyMap[it.key] || 0) > 0)
         .map(it => ({ ...it.payload, qty: qtyMap[it.key] }));
-      if (payloadItems.length === 0) { setErr('Select at least one row + set qty ≥ 1'); setBusy(false); return; }
-      if (totalLabels > 2000) { setErr('Too many labels (max 2000)'); setBusy(false); return; }
+      if (payloadItems.length === 0) { setErr(t('products.printBarcodes.errSelectRow')); setBusy(false); return; }
+      if (totalLabels > 2000) { setErr(t('products.printBarcodes.errTooMany')); setBusy(false); return; }
 
       // Map UI symbology to the backend value — backend knows every entry in
       // SYMBOLOGY_CHOICES directly. The qr_mode flag still flips the renderer
@@ -438,7 +440,7 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
           qr_mode:          sendQrMode,
         }),
       });
-      if (!res.ok) { setErr('Server error'); setBusy(false); return; }
+      if (!res.ok) { setErr(t('products.printBarcodes.errServer')); setBusy(false); return; }
       const html = await res.text();
       const blob = new Blob([html], { type: 'text/html' });
       if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl);
@@ -460,7 +462,7 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
     const f = iframeRef.current;
     if (!f) return;
     try { f.contentWindow.focus(); f.contentWindow.print(); }
-    catch { setErr('Print failed — try downloading instead'); }
+    catch { setErr(t('products.printBarcodes.errPrint')); }
   };
 
   const downloadHtml = () => {
@@ -483,10 +485,10 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Print barcodes</div>
+              <div className="auth-modal-title">{t('products.printBarcodes.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  <b>{totalLabels}</b> label{totalLabels === 1 ? '' : 's'} total
+                  {t('products.printBarcodes.labelsTotal', { count: totalLabels })}
                 </span>
               </div>
             </div>
@@ -499,8 +501,8 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
           <form className="cpm-form" onSubmit={(e) => e.preventDefault()}>
 
             <div className="cpm-section">
-              <label className="po-field-label">Scope</label>
-              <Combobox value={scope} options={SCOPE_OPTIONS} onChange={setScope} />
+              <label className="po-field-label">{t('products.printBarcodes.scope')}</label>
+              <Combobox value={scope} options={SCOPE_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={setScope} />
             </div>
 
             {/* Batches Combobox — only when scope is a batch variant. Lists
@@ -508,51 +510,51 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
                 One logical batch covers many SKUs/warehouses sharing the same name. */}
             {isBatchScope && (
               <div className="cpm-section">
-                <label className="po-field-label">Batches</label>
+                <label className="po-field-label">{t('products.printBarcodes.batches')}</label>
                 <Combobox value={batchFilter}
                   options={[
-                    { value: 'all', label: `All batches (latest per row, ${batchListForUI.length} names)` },
+                    { value: 'all', label: t('products.printBarcodes.allBatches', { count: batchListForUI.length }) },
                     ...batchListForUI.map(b => ({
                       value: b.name,
-                      label: `${b.name} · ${b.count} row${b.count === 1 ? '' : 's'}`,
+                      label: t('products.printBarcodes.batchOption', { name: b.name, count: b.count }),
                     })),
                   ]}
                   onChange={setBatchFilter} />
                 <span className="cpm-section-hint">
-                  Pick one batch to print only its labels, or leave "All" to use the latest batch per row.
+                  {t('products.printBarcodes.batchesHint')}
                 </span>
               </div>
             )}
 
             {/* Symbology — 2 comboboxes, family + specific code. Mirrors tec-it.com. */}
             <div className="cpm-section">
-              <label className="po-field-label">Symbology</label>
+              <label className="po-field-label">{t('products.printBarcodes.symbology')}</label>
               <div className="print-bc-symbology-row">
-                <Combobox value={symFamily} options={SYMBOLOGY_FAMILIES} onChange={changeFamily} />
-                <Combobox value={symbology} options={SYMBOLOGY_CHOICES[symFamily] || []} onChange={setSymbology} />
+                <Combobox value={symFamily} options={SYMBOLOGY_FAMILIES.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={changeFamily} />
+                <Combobox value={symbology} options={(SYMBOLOGY_CHOICES[symFamily] || []).map(o => ({ value: o.value, label: o.labelKey ? t(o.labelKey) : o.label }))} onChange={setSymbology} />
               </div>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Label format</label>
-              <Combobox value={format} options={FORMAT_OPTIONS} onChange={setFormat} />
+              <label className="po-field-label">{t('products.printBarcodes.labelFormat')}</label>
+              <Combobox value={format} options={FORMAT_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={setFormat} />
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Show on label</label>
+              <label className="po-field-label">{t('products.printBarcodes.showOnLabel')}</label>
               <div className="print-bc-checks">
-                <label><input type="checkbox" className="cat-prod-checkbox" checked={showTitle}   onChange={e => setShowTitle(e.target.checked)}   /> Title</label>
-                <label><input type="checkbox" className="cat-prod-checkbox" checked={showBarcode} onChange={e => setShowBarcode(e.target.checked)} /> Barcode</label>
-                <label><input type="checkbox" className="cat-prod-checkbox" checked={showSku}     onChange={e => setShowSku(e.target.checked)}     /> SKU</label>
-                <label><input type="checkbox" className="cat-prod-checkbox" checked={showPrice}   onChange={e => setShowPrice(e.target.checked)}   /> Price</label>
+                <label><input type="checkbox" className="cat-prod-checkbox" checked={showTitle}   onChange={e => setShowTitle(e.target.checked)}   /> {t('products.printBarcodes.showTitle')}</label>
+                <label><input type="checkbox" className="cat-prod-checkbox" checked={showBarcode} onChange={e => setShowBarcode(e.target.checked)} /> {t('products.printBarcodes.showBarcode')}</label>
+                <label><input type="checkbox" className="cat-prod-checkbox" checked={showSku}     onChange={e => setShowSku(e.target.checked)}     /> {t('products.printBarcodes.showSku')}</label>
+                <label><input type="checkbox" className="cat-prod-checkbox" checked={showPrice}   onChange={e => setShowPrice(e.target.checked)}   /> {t('products.printBarcodes.showPrice')}</label>
               </div>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Copies per row</label>
+              <label className="po-field-label">{t('products.printBarcodes.copiesPerRow')}</label>
               <input type="number" min="1" max="50" className="crm-input" value={copiesAll}
                 onChange={e => setCopiesAll(Math.max(1, Math.min(50, parseInt(e.target.value || '1', 10))))} />
-              <span className="cpm-section-hint">Multiplied with per-row quantity in the items tree. Up to 50.</span>
+              <span className="cpm-section-hint">{t('products.printBarcodes.copiesHint')}</span>
             </div>
 
             {/* Advanced encoding — date / batch name / qty / serial */}
@@ -560,15 +562,15 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
               <button type="button" className="print-bc-toggle-btn"
                 onClick={() => setShowAdvanced(v => !v)}>
                 {showAdvanced ? <CaretDown weight="bold" /> : <CaretRight weight="bold" />}
-                Advanced encoding
-                <span className="po-set-note">{showAdvanced ? '' : 'date · batch · qty · serial'}</span>
+                {t('products.printBarcodes.advancedEncoding')}
+                <span className="po-set-note">{showAdvanced ? '' : t('products.printBarcodes.advancedSummary')}</span>
               </button>
               {showAdvanced && (
                 <div className="print-bc-adv">
                   <label className="print-bc-check-row">
                     <input type="checkbox" className="cat-prod-checkbox" checked={includeDate}
                       onChange={e => setIncludeDate(e.target.checked)} />
-                    <span>Include production date</span>
+                    <span>{t('products.printBarcodes.includeDate')}</span>
                     {includeDate && (
                       <span style={{ marginLeft: 'auto', minWidth: 160 }}>
                         <DatePicker value={productionDate} onChange={setProductionDate} tz={USER_TZ} />
@@ -578,17 +580,17 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
                   <label className="print-bc-check-row">
                     <input type="checkbox" className="cat-prod-checkbox" checked={includeBatch}
                       onChange={e => setIncludeBatch(e.target.checked)} />
-                    <span>Include batch name</span>
+                    <span>{t('products.printBarcodes.includeBatch')}</span>
                     {includeBatch && (
                       <input type="text" className="crm-input crm-input--sm" style={{ marginLeft: 'auto', width: 160 }}
                         value={batchName} onChange={e => setBatchName(e.target.value)}
-                        placeholder="B-202605-001" maxLength={20} />
+                        placeholder={t('products.printBarcodes.batchNamePlaceholder')} maxLength={20} />
                     )}
                   </label>
                   <label className="print-bc-check-row">
                     <input type="checkbox" className="cat-prod-checkbox" checked={includeQty}
                       onChange={e => setIncludeQty(e.target.checked)} />
-                    <span>Include quantity in batch</span>
+                    <span>{t('products.printBarcodes.includeQty')}</span>
                     {includeQty && (
                       <input type="number" min="1" className="crm-input crm-input--sm" style={{ marginLeft: 'auto', width: 90 }}
                         value={qtyInBatch} onChange={e => setQtyInBatch(e.target.value)} placeholder="100" />
@@ -597,7 +599,7 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
                   <label className="print-bc-check-row">
                     <input type="checkbox" className="cat-prod-checkbox" checked={includeSerial}
                       onChange={e => setIncludeSerial(e.target.checked)} />
-                    <span>Include serial counter (NNNN per unit)</span>
+                    <span>{t('products.printBarcodes.includeSerial')}</span>
                   </label>
                 </div>
               )}
@@ -605,10 +607,10 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
 
             {/* Items tree — Pick SKUs to receive stock for style: chevron + folder + cube + TriCheckbox */}
             <div className="cpm-section">
-              <label className="po-field-label">Items</label>
+              <label className="po-field-label">{t('products.printBarcodes.items')}</label>
               <div className="po-bulk-tree print-bc-tree-list">
-                {loading && <p className="crm-placeholder">Loading…</p>}
-                {!loading && items.length === 0 && <p className="crm-placeholder">Nothing to print</p>}
+                {loading && <p className="crm-placeholder">{t('common.loading')}</p>}
+                {!loading && items.length === 0 && <p className="crm-placeholder">{t('products.printBarcodes.nothingToPrint')}</p>}
                 {!loading && renderItemsTree(items, collapsed).map(it => (
                   <ItemTreeRow key={it.key} item={it}
                     items={items}
@@ -630,10 +632,10 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
           <div className="auth-actions print-bc-actions">
             <button className="crm-submit-btn" disabled={busy || !previewBlobUrl}
               onClick={triggerPrint} type="button">
-              Print {totalLabels} label{totalLabels === 1 ? '' : 's'}
+              {t('products.printBarcodes.printLabels', { count: totalLabels })}
             </button>
             <button className="auth-btn-check print-bc-download-btn" disabled={!previewBlobUrl}
-              onClick={downloadHtml} type="button" title="Download as HTML">
+              onClick={downloadHtml} type="button" title={t('products.printBarcodes.downloadHtml')}>
               <DownloadSimple weight="bold" />
             </button>
           </div>
@@ -645,10 +647,10 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Preview</div>
+              <div className="auth-modal-title">{t('products.printBarcodes.preview')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Exactly what the printer will produce
+                  {t('products.printBarcodes.previewSub')}
                 </span>
               </div>
             </div>
@@ -659,12 +661,12 @@ export default function PrintBarcodesModal({ open, pq, productIds, skuIds, filte
         </div>
         <div className="auth-modal-body print-bc-preview-body">
           <div className="print-bc-preview">
-            {busy && <div className="print-bc-busy">Generating preview…</div>}
+            {busy && <div className="print-bc-busy">{t('products.printBarcodes.generating')}</div>}
             {!busy && !previewBlobUrl && (
-              <div className="print-bc-empty">Adjust settings to see a live preview</div>
+              <div className="print-bc-empty">{t('products.printBarcodes.adjustSettings')}</div>
             )}
             {previewBlobUrl && (
-              <iframe ref={iframeRef} title="Print preview" src={previewBlobUrl}
+              <iframe ref={iframeRef} title={t('products.printBarcodes.preview')} src={previewBlobUrl}
                 className="print-bc-iframe" />
             )}
           </div>

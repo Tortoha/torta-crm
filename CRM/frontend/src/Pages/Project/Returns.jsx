@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import {
   X, MagnifyingGlass, ArrowUUpLeft, CheckCircle, ArrowRight, Warning,
@@ -21,49 +22,31 @@ import '../../Style/Returns.css';
 
 // ── Constants ──────────────────────────────────────────────────
 
-const STATUS_META = {
-  requested:  { label: 'Requested',  cls: 'ret-badge--requested'  },
-  approved:   { label: 'Approved',   cls: 'ret-badge--approved'   },
-  received:   { label: 'Received',   cls: 'ret-badge--received'   },
-  inspected:  { label: 'Inspected',  cls: 'ret-badge--inspected'  },
-  refunded:   { label: 'Refunded',   cls: 'ret-badge--refunded'   },
-  rejected:   { label: 'Rejected',   cls: 'ret-badge--rejected'   },
-  cancelled:  { label: 'Cancelled',  cls: 'ret-badge--cancelled'  },
+const STATUS_CLS = {
+  requested:  'ret-badge--requested',
+  approved:   'ret-badge--approved',
+  received:   'ret-badge--received',
+  inspected:  'ret-badge--inspected',
+  refunded:   'ret-badge--refunded',
+  rejected:   'ret-badge--rejected',
+  cancelled:  'ret-badge--cancelled',
 };
 
-const REASON_LABEL = {
-  damaged:           'Damaged',
-  wrong_item:        'Wrong item',
-  not_as_described:  'Not as described',
-  changed_mind:      'Changed mind',
-  arrived_late:      'Arrived late',
-  quality_issue:     'Quality issue',
-  other:             'Other',
-};
+const statusLabel = (t, s) => STATUS_CLS[s] ? t(`orders.returns.status.${s}`) : s;
+const reasonLabel = (t, r) => t(`orders.returns.reason.${r}`, { defaultValue: r });
+const providerLabel = (t, p) => t(`orders.returns.provider.${p}`, { defaultValue: p });
 
-const STEPS = [
-  { key: 'requested',  label: 'Requested',  desc: 'Customer submitted return request' },
-  { key: 'approved',   label: 'Approved',   desc: 'Awaiting customer to ship items back' },
-  { key: 'received',   label: 'Received',   desc: 'Items physically arrived at warehouse' },
-  { key: 'inspected',  label: 'Inspected',  desc: 'Per-item condition + restock decisions made' },
-  { key: 'refunded',   label: 'Refunded',   desc: 'Money refund recorded in payment provider' },
-];
-
-const PROVIDER_LABEL = {
-  stripe:        'Stripe',
-  tinkoff:       'Tinkoff',
-  cloudpayments: 'CloudPayments',
-  yookassa:      'YooKassa',
-  paypal:        'PayPal',
-  manual:        'Manual',
-  other:         'Other',
+const STEPS = ['requested', 'approved', 'received', 'inspected', 'refunded'];
+const STEP_DESC_KEY = {
+  requested: 'requestedDesc', approved: 'approvedDesc', received: 'receivedDesc',
+  inspected: 'inspectedDesc', refunded: 'refundedDesc',
 };
 
 const GROUPS = [
-  { key: 'action',   label: 'Action needed', statuses: ['requested', 'received'] },
-  { key: 'progress', label: 'In progress',   statuses: ['approved', 'inspected'] },
-  { key: 'done',     label: 'Completed',     statuses: ['refunded'] },
-  { key: 'closed',   label: 'Closed',        statuses: ['rejected', 'cancelled'] },
+  { key: 'action',   statuses: ['requested', 'received'] },
+  { key: 'progress', statuses: ['approved', 'inspected'] },
+  { key: 'done',     statuses: ['refunded'] },
+  { key: 'closed',   statuses: ['rejected', 'cancelled'] },
 ];
 
 // Tilt config for ReturnRow (matches ProdListRow's gentle 3D tilt).
@@ -96,8 +79,9 @@ function groupOf(status) {
 // with 3D tilt + gloss. Columns: # · Customer · Order · Items · Reason · Status · Date.
 
 function ReturnRow({ ret, onOpen, currency }) {
+  const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
-  const m = STATUS_META[ret.status] ?? { label: ret.status, cls: '' };
+  const cls = STATUS_CLS[ret.status] ?? '';
   // Per-order snapshot wins (the order was placed in that currency);
   // only when an old row has no snapshot do we fall back to the
   // project's current currency.
@@ -110,7 +94,7 @@ function ReturnRow({ ret, onOpen, currency }) {
       <div ref={glossRef} className="org-list-gloss" />
       <span className="prow-cell ret-prow-id">#{ret.id}</span>
       <span className="prow-cell ret-prow-customer">
-        <span className="ret-prow-name">{ret.customer_name || ret.recipient_name || 'Anonymous'}</span>
+        <span className="ret-prow-name">{ret.customer_name || ret.recipient_name || t('orders.returns.anonymous')}</span>
         {ret.customer_email && (
           <span className="ret-prow-email">{ret.customer_email}</span>
         )}
@@ -119,11 +103,11 @@ function ReturnRow({ ret, onOpen, currency }) {
         #{ret.order_id} · {formatMoney(ret.order_total, cur)}
       </span>
       <span className="prow-cell">
-        {ret.units_count} unit{ret.units_count !== 1 ? 's' : ''}
+        {t('orders.returns.unitsCount', { count: ret.units_count })}
       </span>
-      <span className="prow-cell">{REASON_LABEL[ret.reason] || ret.reason}</span>
+      <span className="prow-cell">{reasonLabel(t, ret.reason)}</span>
       <span className="prow-cell">
-        <span className={`ret-badge ${m.cls}`}>{m.label}</span>
+        <span className={`ret-badge ${cls}`}>{statusLabel(t, ret.status)}</span>
       </span>
       <span className="prow-cell ret-prow-date">{fmtDate(ret.created_at)}</span>
     </div>
@@ -135,22 +119,23 @@ function ReturnRow({ ret, onOpen, currency }) {
 // flat heading + count badge, then a `.prod-list` table with column heads.
 
 function GroupSection({ group, items, onOpen, currency }) {
+  const { t } = useTranslation();
   if (items.length === 0) return null;
   return (
     <section className="prod-group">
       <h2 className="prod-group-title">
-        {group.label}
+        {t(`orders.returns.groups.${group.key}`)}
         <span className="prod-group-count">{items.length}</span>
       </h2>
       <div className="prod-list">
         <div className="prod-list-head ret-list-head">
-          <span className="org-list-th">#</span>
-          <span className="org-list-th">Customer</span>
-          <span className="org-list-th">Order</span>
-          <span className="org-list-th">Items</span>
-          <span className="org-list-th">Reason</span>
-          <span className="org-list-th">Status</span>
-          <span className="org-list-th">Date</span>
+          <span className="org-list-th">{t('orders.returns.colNumber')}</span>
+          <span className="org-list-th">{t('orders.returns.colCustomer')}</span>
+          <span className="org-list-th">{t('orders.returns.colOrder')}</span>
+          <span className="org-list-th">{t('orders.returns.colItems')}</span>
+          <span className="org-list-th">{t('orders.returns.colReason')}</span>
+          <span className="org-list-th">{t('orders.returns.colStatus')}</span>
+          <span className="org-list-th">{t('orders.returns.colDate')}</span>
         </div>
         <div className="prod-list-block">
           {items.map(ret => (
@@ -165,6 +150,7 @@ function GroupSection({ group, items, onOpen, currency }) {
 // ── Stepper ───────────────────────────────────────────────────
 
 function Stepper({ status }) {
+  const { t } = useTranslation();
   const isTerminalReject = (status === 'rejected' || status === 'cancelled');
   // For a rejected return, the active step is whatever it was before — we'll just mark all done up to current.
   // Active = the next step waiting on action.
@@ -172,7 +158,7 @@ function Stepper({ status }) {
   if (isTerminalReject) {
     activeIdx = -1;
   } else {
-    const idx = STEPS.findIndex(s => s.key === status);
+    const idx = STEPS.findIndex(s => s === status);
     activeIdx = idx === -1 ? 0 : idx;
   }
 
@@ -188,11 +174,11 @@ function Stepper({ status }) {
           future  && 'ret-step--future',
         ].filter(Boolean).join(' ');
         return (
-          <div key={s.key} className={cls}>
+          <div key={s} className={cls}>
             <div className="ret-step-dot">{done ? '✓' : i + 1}</div>
             <div className="ret-step-info">
-              <span className="ret-step-label">{s.label}</span>
-              <span className="ret-step-desc">{s.desc}</span>
+              <span className="ret-step-label">{statusLabel(t, s)}</span>
+              <span className="ret-step-desc">{t(`orders.returns.steps.${STEP_DESC_KEY[s]}`)}</span>
             </div>
             {i < STEPS.length - 1 && <div className="ret-step-bar" />}
           </div>
@@ -207,14 +193,14 @@ function Stepper({ status }) {
 // Condition / Warehouse / Batch — all pickers use our custom Combobox
 // (pill button + portal dropdown + DynamicBlock sliding indicator) so the
 // modal stops mixing styled inputs with the OS-native <select> chrome.
-const CONDITION_OPTIONS = [
-  { value: 'pending',       label: '— pick one —' },
-  { value: 'resellable',    label: 'Resellable (return to stock)' },
-  { value: 'damaged',       label: "Damaged (don't restock)" },
-  { value: 'unrecoverable', label: 'Unrecoverable (write off)' },
-];
+const CONDITION_KEYS = ['pending', 'resellable', 'damaged', 'unrecoverable'];
 
 function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
+  const { t } = useTranslation();
+  const CONDITION_OPTIONS = CONDITION_KEYS.map(k => ({
+    value: k,
+    label: t(`orders.returns.condition.${k === 'pending' ? 'pickOne' : k}`),
+  }));
   const skuBatches = batchesBySku[item.configuration_id] || [];
   const filtered = value.restock_warehouse_id
     ? skuBatches.filter(b => b.warehouse_id === value.restock_warehouse_id)
@@ -223,14 +209,14 @@ function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
   // Combobox needs `value` to match an option exactly — '' for the "auto"
   // batch fallback, otherwise the numeric id stringified.
   const warehouseOptions = [
-    { value: '', label: '— select warehouse —' },
+    { value: '', label: t('orders.returns.selectWarehouse') },
     ...warehouses.map(w => ({ value: w.id, label: w.name })),
   ];
   const batchOptions = [
-    { value: '', label: 'Auto-create "Returns" batch' },
+    { value: '', label: t('orders.returns.autoBatch') },
     ...filtered.map(b => ({
       value: b.id,
-      label: `${b.batch_name} (${b.quantity_remaining} left)`,
+      label: t('orders.returns.batchLabel', { name: b.batch_name, count: b.quantity_remaining }),
     })),
   ];
 
@@ -246,7 +232,7 @@ function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
         </div>
 
         <div className="ret-inspect-row">
-          <span className="ret-inspect-label">Condition</span>
+          <span className="ret-inspect-label">{t('orders.returns.inspectCondition')}</span>
           <Combobox value={value.condition} options={CONDITION_OPTIONS}
             onChange={(v) => onChange({
               ...value,
@@ -260,10 +246,10 @@ function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
         {value.condition === 'resellable' && (
           <>
             <div className="ret-inspect-row">
-              <span className="ret-inspect-label">Warehouse</span>
+              <span className="ret-inspect-label">{t('orders.returns.inspectWarehouse')}</span>
               <Combobox value={value.restock_warehouse_id || ''}
                 options={warehouseOptions}
-                placeholder="— select warehouse —"
+                placeholder={t('orders.returns.selectWarehouse')}
                 onChange={(v) => onChange({
                   ...value,
                   restock_warehouse_id: v ? parseInt(v, 10) : null,
@@ -271,10 +257,10 @@ function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
                 })} />
             </div>
             <div className="ret-inspect-row">
-              <span className="ret-inspect-label">Batch</span>
+              <span className="ret-inspect-label">{t('orders.returns.inspectBatch')}</span>
               <Combobox value={value.restock_batch_id || ''}
                 options={batchOptions}
-                placeholder='Auto-create "Returns" batch'
+                placeholder={t('orders.returns.autoBatch')}
                 onChange={(v) => onChange({
                   ...value,
                   restock_batch_id: v ? parseInt(v, 10) : null,
@@ -284,7 +270,7 @@ function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
         )}
 
         <textarea className="crm-input ret-inspect-notes"
-          placeholder="Item notes (optional)…"
+          placeholder={t('orders.returns.itemNotes')}
           value={value.item_notes || ''}
           onChange={e => onChange({ ...value, item_notes: e.target.value })} />
       </div>
@@ -295,6 +281,7 @@ function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
 // ── Detail modal ──────────────────────────────────────────────
 
 function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }) {
+  const { t } = useTranslation();
   // Detail modal uses the order's snapshot currency once `detail` is
   // loaded (`detail.payment_currency`). While loading, fall back to
   // the project's house currency from props.
@@ -395,7 +382,7 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
       );
       const j = await r.json().catch(() => null);
       if (!r.ok) {
-        showToast(j?.detail || 'Action failed');
+        showToast(j?.detail || t('orders.returns.toast.actionFailed'));
         return false;
       }
       return true;
@@ -403,10 +390,10 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
   };
 
   const onApprove = async () => {
-    if (await callAction('approve')) { showToast('Approved'); refresh(); }
+    if (await callAction('approve')) { showToast(t('orders.returns.toast.approved')); refresh(); }
   };
   const onReceive = async () => {
-    if (await callAction('receive')) { showToast('Marked as received'); refresh(); }
+    if (await callAction('receive')) { showToast(t('orders.returns.toast.markedReceived')); refresh(); }
   };
   const onInspect = async () => {
     const items = Object.entries(inspectItems).map(([id, v]) => ({
@@ -417,27 +404,27 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
       item_notes: v.item_notes || '',
     }));
     if (items.some(it => it.condition === 'pending')) {
-      showToast('Pick a condition for every item');
+      showToast(t('orders.returns.toast.pickCondition'));
       return;
     }
     if (items.some(it => it.condition === 'resellable' && !it.restock_warehouse_id)) {
-      showToast('Resellable items need a warehouse');
+      showToast(t('orders.returns.toast.resellableNeedsWarehouse'));
       return;
     }
     if (await callAction('inspect', { items, internal_notes: inspectNotes })) {
-      showToast('Inspection saved');
+      showToast(t('orders.returns.toast.inspectionSaved'));
       refresh();
     }
   };
   const onRefund = async () => {
     const amount = parseFloat(refundAmount);
-    if (Number.isNaN(amount) || amount < 0) { showToast('Invalid refund amount'); return; }
+    if (Number.isNaN(amount) || amount < 0) { showToast(t('orders.returns.toast.invalidRefund')); return; }
     // Pre-flight cap check — backend enforces this with a 409, but we'd
     // rather show the user a friendly toast than a raw "Refund cannot
     // exceed what was paid" from the API.
     const cap = Number(detail?.order_total);
     if (cap && amount > cap + 0.001) {
-      showToast(`Refund cannot exceed order total (${formatMoney(cap, cur(detail))})`);
+      showToast(t('orders.returns.toast.refundExceedsTotal', { max: formatMoney(cap, cur(detail)) }));
       return;
     }
     if (await callAction('refund', {
@@ -446,14 +433,14 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
       refund_reference: refundReference,
       restocking_fee: parseFloat(restockingFee) || 0,
     })) {
-      showToast('Refund recorded');
+      showToast(t('orders.returns.toast.refundRecorded'));
       refresh();
     }
   };
   const onReject = async () => {
-    if (!rejectReason.trim()) { showToast('Reason is required'); return; }
+    if (!rejectReason.trim()) { showToast(t('orders.returns.toast.reasonRequired')); return; }
     if (await callAction('reject', { reason: rejectReason.trim() })) {
-      showToast('Return rejected');
+      showToast(t('orders.returns.toast.returnRejected'));
       setShowRejectForm(false);
       refresh();
     }
@@ -470,7 +457,7 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Return #{returnId}</div>
+              <div className="auth-modal-title">{t('orders.returns.modalTitle', { id: returnId })}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {detail ? fmtDateLong(detail.created_at) : ''}
@@ -479,9 +466,9 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
             </div>
           </div>
           {detail && (
-            <span className={`ret-badge ${STATUS_META[detail.status]?.cls || ''}`}
+            <span className={`ret-badge ${STATUS_CLS[detail.status] || ''}`}
               style={{ marginRight: 8 }}>
-              {STATUS_META[detail.status]?.label || detail.status}
+              {statusLabel(t, detail.status)}
             </span>
           )}
           <button className="auth-modal-close" onClick={onClose} type="button">
@@ -490,8 +477,8 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
         </div>
 
         <div className="auth-modal-body">
-          {loading && <div className="crm-placeholder">Loading…</div>}
-          {!loading && !detail && <div className="crm-placeholder">Failed to load.</div>}
+          {loading && <div className="crm-placeholder">{t('orders.modal.loading')}</div>}
+          {!loading && !detail && <div className="crm-placeholder">{t('orders.returns.loadFailed')}</div>}
 
           {!loading && detail && (
             <form className="cpm-form" onSubmit={(e) => e.preventDefault()}>
@@ -499,10 +486,10 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
 
               {/* ── 1. Customer + reason ── */}
               <div className="cpm-section">
-                <label className="po-field-label">Customer & reason</label>
+                <label className="po-field-label">{t('orders.returns.customerAndReason')}</label>
                 <div className="ret-block">
                   <div className="ret-flat-value">
-                    {detail.customer_name || detail.recipient_name || 'Anonymous'}
+                    {detail.customer_name || detail.recipient_name || t('orders.returns.anonymous')}
                   </div>
                   {detail.customer_email && (
                     <span className="cpm-section-hint" style={{ padding: 0 }}>
@@ -510,7 +497,7 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
                     </span>
                   )}
                   <div className="ret-detail-reason">
-                    <strong>{REASON_LABEL[detail.reason] || detail.reason}</strong>
+                    <strong>{reasonLabel(t, detail.reason)}</strong>
                     {detail.customer_message && (
                       <p className="ret-detail-msg">"{detail.customer_message}"</p>
                     )}
@@ -537,15 +524,18 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
 
               {/* ── 2. Order context ── */}
               <div className="cpm-section">
-                <label className="po-field-label">Order</label>
+                <label className="po-field-label">{t('orders.returns.orderSection')}</label>
                 <div className="ret-block">
                   <div className="ret-flat-value">
-                    Order #{detail.order_id} · {formatMoney(detail.order_total, cur(detail))} ·{' '}
-                    {detail.recipient_name}
+                    {t('orders.returns.orderLine', {
+                      id: detail.order_id,
+                      total: formatMoney(detail.order_total, cur(detail)),
+                      recipient: detail.recipient_name,
+                    })}
                   </div>
                   <span className="cpm-section-hint" style={{ padding: 0 }}>
-                    Placed {fmtDate(detail.order_created_at)}
-                    {detail.delivered_at && ` · Delivered ${fmtDate(detail.delivered_at)}`}
+                    {t('orders.returns.placed', { date: fmtDate(detail.order_created_at) })}
+                    {detail.delivered_at && t('orders.returns.deliveredSuffix', { date: fmtDate(detail.delivered_at) })}
                   </span>
                 </div>
               </div>
@@ -553,7 +543,7 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
               {/* ── 3. Items / inspect ── */}
               {detail.status === 'received' ? (
                 <div className="cpm-section">
-                  <label className="po-field-label">Inspect items</label>
+                  <label className="po-field-label">{t('orders.returns.inspectItems')}</label>
                   <div className="ret-block">
                     <div className="ret-inspect-list">
                       {detail.items.map(item => (
@@ -566,14 +556,14 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
                     </div>
                     <textarea className="crm-input ret-inspect-notes"
                       style={{ marginTop: 12 }}
-                      placeholder="Internal notes (optional)…"
+                      placeholder={t('orders.returns.internalNotes')}
                       value={inspectNotes}
                       onChange={e => setInspectNotes(e.target.value)} />
                   </div>
                 </div>
               ) : (
                 <div className="cpm-section">
-                  <label className="po-field-label">Items</label>
+                  <label className="po-field-label">{t('orders.returns.itemsSection')}</label>
                   <div className="ret-block">
                     <div className="ret-items-flat">
                       {detail.items.map(item => (
@@ -604,17 +594,17 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
               {/* ── 4. Refund form when inspected ── */}
               {detail.status === 'inspected' && (
                 <div className="cpm-section">
-                  <label className="po-field-label">Record refund</label>
+                  <label className="po-field-label">{t('orders.returns.recordRefund')}</label>
                   <div className="ret-block">
                     <div className="ret-detail-provider">
                       <Warning weight="duotone" />
                       <div>
-                        <strong>Payment provider: {PROVIDER_LABEL[detail.payment_provider] || detail.payment_provider}</strong>
-                        <p>Process the refund in your provider's dashboard, then record it here.</p>
+                        <strong>{t('orders.returns.paymentProvider', { provider: providerLabel(t, detail.payment_provider) })}</strong>
+                        <p>{t('orders.returns.providerHint')}</p>
                         {detail.payment_dashboard_url && (
                           <a href={detail.payment_dashboard_url} target="_blank" rel="noreferrer"
                              className="auth-btn-check" style={{ marginTop: 8, display: 'inline-block' }}>
-                            Open dashboard
+                            {t('orders.returns.openDashboard')}
                           </a>
                         )}
                       </div>
@@ -622,24 +612,24 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
 
                     <div className="ret-refund-grid">
                       <label className="ret-refund-field">
-                        <span>Refund amount · max {formatMoney(detail.order_total, cur(detail))}</span>
+                        <span>{t('orders.returns.refundAmountMax', { max: formatMoney(detail.order_total, cur(detail)) })}</span>
                         <input className="crm-input" type="number" step="0.01"
                           min="0" max={detail.order_total}
                           value={refundAmount} onChange={e => setRefundAmount(e.target.value)} />
                       </label>
                       <label className="ret-refund-field">
-                        <span>Restocking fee</span>
+                        <span>{t('orders.returns.restockingFee')}</span>
                         <input className="crm-input" type="number" step="0.01"
                           value={restockingFee} onChange={e => setRestockingFee(e.target.value)} />
                       </label>
                       <label className="ret-refund-field">
-                        <span>Method</span>
-                        <input className="crm-input" placeholder="card / transfer / cash"
+                        <span>{t('orders.returns.method')}</span>
+                        <input className="crm-input" placeholder={t('orders.returns.methodPlaceholder')}
                           value={refundMethod} onChange={e => setRefundMethod(e.target.value)} />
                       </label>
                       <label className="ret-refund-field">
-                        <span>Provider reference</span>
-                        <input className="crm-input" placeholder="re_3N… / charge id"
+                        <span>{t('orders.returns.providerReference')}</span>
+                        <input className="crm-input" placeholder={t('orders.returns.providerReferencePlaceholder')}
                           value={refundReference} onChange={e => setRefundReference(e.target.value)} />
                       </label>
                     </div>
@@ -650,19 +640,19 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
               {/* ── 5. Already-refunded summary ── */}
               {detail.status === 'refunded' && (
                 <div className="cpm-section">
-                  <label className="po-field-label">Refund recorded</label>
+                  <label className="po-field-label">{t('orders.returns.refundRecorded')}</label>
                   <div className="ret-block">
                     <div className="ret-flat-value">
                       {formatMoney(detail.refund_amount, cur(detail))}
                       {detail.refund_method && ` · ${detail.refund_method}`}
                     </div>
                     <span className="cpm-section-hint" style={{ padding: 0 }}>
-                      {detail.refund_reference && `Ref: ${detail.refund_reference} · `}
+                      {detail.refund_reference && t('orders.returns.refundRefPrefix', { ref: detail.refund_reference })}
                       {fmtDateLong(detail.refund_processed_at)}
                     </span>
                     {detail.restocking_fee > 0 && (
                       <span className="cpm-section-hint" style={{ padding: 0 }}>
-                        Restocking fee withheld: {formatMoney(detail.restocking_fee, cur(detail))}
+                        {t('orders.returns.restockingFeeWithheld', { fee: formatMoney(detail.restocking_fee, cur(detail)) })}
                       </span>
                     )}
                   </div>
@@ -672,7 +662,7 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
               {/* ── Rejected reason ── */}
               {detail.status === 'rejected' && detail.rejected_reason && (
                 <div className="cpm-section">
-                  <label className="po-field-label">Rejection reason</label>
+                  <label className="po-field-label">{t('orders.returns.rejectionReason')}</label>
                   <div className="ret-block">
                     <div className="ret-flat-value">{detail.rejected_reason}</div>
                   </div>
@@ -685,23 +675,23 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
                   <>
                     <button className="crm-submit-btn" disabled={busy} onClick={onApprove}
                       type="button">
-                      Approve return <ArrowRight />
+                      {t('orders.returns.approveReturn')} <ArrowRight />
                     </button>
                     {!showRejectForm
                       ? <button className="auth-btn-danger" type="button"
                           onClick={() => setShowRejectForm(true)}>
-                          Reject
+                          {t('orders.returns.reject')}
                         </button>
                       : (
                         <div className="ret-reject-row">
-                          <input className="crm-input" placeholder="Reason for rejection…"
+                          <input className="crm-input" placeholder={t('orders.returns.rejectReasonPlaceholder')}
                             value={rejectReason} onChange={e => setRejectReason(e.target.value)} />
                           <button className="auth-btn-danger" disabled={busy} onClick={onReject}
                             type="button">
-                            Confirm reject
+                            {t('orders.returns.confirmReject')}
                           </button>
                           <button className="auth-btn-secondary" type="button"
-                            onClick={() => setShowRejectForm(false)}>Cancel</button>
+                            onClick={() => setShowRejectForm(false)}>{t('common.cancel')}</button>
                         </div>
                       )}
                   </>
@@ -710,21 +700,21 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
                 {detail.status === 'approved' && (
                   <button className="crm-submit-btn" disabled={busy} onClick={onReceive}
                     type="button">
-                    Mark as received <ArrowRight />
+                    {t('orders.returns.markReceived')} <ArrowRight />
                   </button>
                 )}
 
                 {detail.status === 'received' && (
                   <button className="crm-submit-btn" disabled={busy} onClick={onInspect}
                     type="button">
-                    Save inspection <ArrowRight />
+                    {t('orders.returns.saveInspection')} <ArrowRight />
                   </button>
                 )}
 
                 {detail.status === 'inspected' && (
                   <button className="crm-submit-btn" disabled={busy} onClick={onRefund}
                     type="button">
-                    Record refund <CheckCircle weight="fill" />
+                    {t('orders.returns.recordRefund')} <CheckCircle weight="fill" />
                   </button>
                 )}
               </div>
@@ -742,6 +732,7 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
 // ── Returns page (list view) ─────────────────────────────────
 
 export default function Returns({ onActionCountChange }) {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   // Project's "house" currency — used as fallback when an individual
   // return/order row doesn't have its own payment_currency snapshot
@@ -783,7 +774,7 @@ export default function Returns({ onActionCountChange }) {
     if (!q) return true;
     const hay = [
       r.customer_name, r.customer_email, r.recipient_name,
-      String(r.id), String(r.order_id), REASON_LABEL[r.reason],
+      String(r.id), String(r.order_id), reasonLabel(t, r.reason),
     ].filter(Boolean).join(' ').toLowerCase();
     return hay.includes(q);
   });
@@ -798,26 +789,26 @@ export default function Returns({ onActionCountChange }) {
 
   return (
     <>
-      <h1 className="crm-page-title">Returns</h1>
+      <h1 className="crm-page-title">{t('orders.returns.title')}</h1>
 
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
           <input
             className="org-search-input"
-            placeholder="Search by customer, order, or reason…"
+            placeholder={t('orders.returns.searchPlaceholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
         </div>
       </div>
 
-      {loading && <p className="crm-placeholder">Loading returns…</p>}
+      {loading && <p className="crm-placeholder">{t('orders.returns.loading')}</p>}
 
       {isEmpty && (
         <div className="ord-empty">
           <ArrowUUpLeft className="ord-empty-icon" weight="duotone" />
-          <p>{search ? 'No returns match your search' : 'No returns yet — customers can request a return from their order history.'}</p>
+          <p>{search ? t('orders.returns.emptySearch') : t('orders.returns.empty')}</p>
         </div>
       )}
 

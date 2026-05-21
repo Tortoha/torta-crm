@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation, Trans } from 'react-i18next';
 import { X, CalendarPlus, CaretDown, CaretLeft, CaretRight, Calendar as CalendarIcon, Clock, Briefcase, PencilSimple } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
@@ -38,7 +39,9 @@ function buildIsoWithTz(date, time, tz) {
 
 // ── Generic combobox (Service / Status) — same UX as CpmCategorySelect: pill button + portal dropdown + DynamicBlock. ──
 
-export function Combobox({ value, options, placeholder = '— Select —', onChange, searchable = false }) {
+export function Combobox({ value, options, placeholder, onChange, searchable = false }) {
+  const { t } = useTranslation();
+  placeholder = placeholder ?? t('booking.create.select');
   const btnRef = useRef(null);
   const searchRef = useRef(null);
   const [open, setOpen] = useState(false);
@@ -148,7 +151,7 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
                 ref={searchRef}
                 type="text"
                 className="bk-cb-search-input"
-                placeholder="Search…"
+                placeholder={t('booking.create.search')}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -164,7 +167,7 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
           <div className="bk-cb-list">
             <div ref={indRef} className="cat-filter-indicator" />
             {filteredOptions.length === 0 ? (
-              <div className="bk-cb-empty">No matches</div>
+              <div className="bk-cb-empty">{t('booking.create.noMatches')}</div>
             ) : (
               filteredOptions.map(o => {
                 const k = String(o.value);
@@ -189,6 +192,7 @@ export function Combobox({ value, options, placeholder = '— Select —', onCha
 // ── Date picker — portal dropdown with month grid, prev/next nav, DynamicBlock pill on hover. ──
 
 export function DatePicker({ value, onChange, tz }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const indRef = useRef(null);
   const cellRefs = useRef({});
@@ -284,7 +288,7 @@ export function DatePicker({ value, onChange, tz }) {
   const display = value
     ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
         .format(new Date(`${value}T00:00:00Z`))
-    : 'Pick a date';
+    : t('booking.create.pickDate');
 
   return (
     <>
@@ -317,7 +321,7 @@ export function DatePicker({ value, onChange, tz }) {
             </button>
           </div>
           <div className="bk-date-dow">
-            {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => <span key={d}>{d}</span>)}
+            {['mo', 'tu', 'we', 'th', 'fr', 'sa', 'su'].map(d => <span key={d}>{t(`booking.calendar.dow.${d}`)}</span>)}
           </div>
           <div className="bk-date-grid">
             <div ref={indRef} className="bk-date-indicator" />
@@ -545,6 +549,7 @@ export function TimePicker({ value, onChange, workingHours, slotInterval, dayOfW
 // Same pill-indicator look as the main Bookings page tabs — copy of
 // `auth-tab-switcher` so the visual language is consistent.
 function ModeTabs({ freeform, setFreeform, catalogDisabled }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -564,8 +569,8 @@ function ModeTabs({ freeform, setFreeform, catalogDisabled }) {
   }, [current, active]);
 
   const TABS = [
-    { key: 'catalog',  label: 'From catalog', Icon: Briefcase,     disabled: catalogDisabled },
-    { key: 'freeform', label: 'Freeform',     Icon: PencilSimple,  disabled: false },
+    { key: 'catalog',  label: t('booking.create.modeCatalog'),  Icon: Briefcase,     disabled: catalogDisabled },
+    { key: 'freeform', label: t('booking.create.modeFreeform'), Icon: PencilSimple,  disabled: false },
   ];
 
   return (
@@ -590,6 +595,7 @@ function ModeTabs({ freeform, setFreeform, catalogDisabled }) {
 // ── Modal ──────────────────────────────────────────────────────────
 
 function BookingCreateModal({ projectId, services, staff, businessTz, workingHours, slotInterval, presetStart, onClose, onCreated }) {
+  const { t } = useTranslation();
   const tz = businessTz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const pq = `?project_id=${projectId}`;
 
@@ -648,18 +654,18 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
   }, [onClose]);
 
   const create = async () => {
-    if (!freeform && !serviceId) { setErr('Pick a service'); return; }
+    if (!freeform && !serviceId) { setErr(t('booking.create.err.pickService')); return; }
     if (freeform) {
-      if (!freeName.trim())           { setErr('Service name is required'); return; }
+      if (!freeName.trim())           { setErr(t('booking.create.err.serviceNameRequired')); return; }
       const d = parseInt(freeDur, 10);
-      if (!d || d < 5 || d > 1440)    { setErr('Duration must be 5–1440 minutes'); return; }
+      if (!d || d < 5 || d > 1440)    { setErr(t('booking.create.err.durationRange')); return; }
     }
-    if (!customerName.trim()) { setErr('Customer name required'); return; }
+    if (!customerName.trim()) { setErr(t('booking.create.err.customerNameRequired')); return; }
     if (service?.requires_staff && !staffId) {
-      setErr('This service requires choosing a staff member'); return;
+      setErr(t('booking.create.err.staffRequired')); return;
     }
     if (addressRequired && !customerAddress.trim()) {
-      setErr('This service is delivered at the customer’s location — please add the address.');
+      setErr(t('booking.create.err.addressRequired'));
       return;
     }
     setSaving(true); setErr('');
@@ -689,22 +695,22 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
         body: JSON.stringify(body),
       });
       if (res.ok) onCreated();
-      else { const j = await res.json(); setErr(j.detail || 'Error creating booking'); }
-    } catch { setErr('Network error'); }
+      else { const j = await res.json(); setErr(j.detail || t('booking.create.err.createError')); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
   // Build option lists for the comboboxes.
   const serviceOptions = services.map(s => ({
-    value: s.id, label: `${s.name} · ${s.duration_minutes} min`,
+    value: s.id, label: t('booking.create.serviceOption', { name: s.name, minutes: s.duration_minutes }),
   }));
   const staffOptions = [
-    { value: '', label: '— Any —' },
+    { value: '', label: t('booking.create.anyStaff') },
     ...eligibleStaff.map(s => ({ value: s.id, label: s.name })),
   ];
   const statusOptions = [
-    { value: 'confirmed', label: 'Confirmed' },
-    { value: 'pending',   label: 'Pending'   },
+    { value: 'confirmed', label: t('booking.status.confirmed') },
+    { value: 'pending',   label: t('booking.status.pending')   },
   ];
 
   return createPortal(
@@ -716,9 +722,9 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
               <CalendarPlus size={24} className="auth-modal-icon-svg" />
             </div>
             <div>
-              <div className="auth-modal-title">New booking</div>
+              <div className="auth-modal-title">{t('booking.create.title')}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">Add an appointment manually.</span>
+                <span className="auth-modal-subtitle">{t('booking.create.subtitle')}</span>
               </div>
             </div>
           </div>
@@ -736,26 +742,26 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
 
           {(!freeform && services.length === 0) ? (
             <p className="crm-placeholder">
-              No services configured yet — switch to <b>Freeform</b> above or open the Settings tab and create a service first.
+              <Trans i18nKey="booking.create.noServices" components={{ 1: <b /> }} />
             </p>
           ) : (
             <>
               {freeform ? (
                 <>
                   <div className="auth-field">
-                    <label className="auth-label">Service name</label>
+                    <label className="auth-label">{t('booking.create.serviceName')}</label>
                     <input className="crm-input" value={freeName}
                       onChange={e => setFreeName(e.target.value)}
-                      placeholder="House call · Custom repair · Anything" />
+                      placeholder={t('booking.create.serviceNamePlaceholder')} />
                   </div>
                   <div className="bk-rules-grid">
                     <div className="auth-field">
-                      <label className="auth-label">Duration (minutes)</label>
+                      <label className="auth-label">{t('booking.create.duration')}</label>
                       <input className="crm-input" type="number" min={5} max={1440}
                         value={freeDur} onChange={e => setFreeDur(e.target.value)} />
                     </div>
                     <div className="auth-field">
-                      <label className="auth-label">Price (optional)</label>
+                      <label className="auth-label">{t('booking.create.priceOptional')}</label>
                       <input className="crm-input" type="number" min={0} step="0.01"
                         value={freePrice} onChange={e => setFreePrice(e.target.value)}
                         placeholder="0.00" />
@@ -765,7 +771,7 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
               ) : (
                 <>
                   <div className="auth-field">
-                    <label className="auth-label">Service</label>
+                    <label className="auth-label">{t('booking.create.service')}</label>
                     <Combobox value={serviceId} options={serviceOptions}
                       onChange={(v) => { setServiceId(v); setStaffId(''); }} />
                   </div>
@@ -773,10 +779,10 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
                   {(service?.requires_staff || eligibleStaff.length > 0) && (
                     <div className="auth-field">
                       <label className="auth-label">
-                        Staff{service?.requires_staff ? '' : ' (optional)'}
+                        {t('booking.create.staff')}{service?.requires_staff ? '' : t('booking.create.staffOptional')}
                       </label>
                       <Combobox value={staffId} options={staffOptions}
-                        onChange={setStaffId} placeholder="— Any —" />
+                        onChange={setStaffId} placeholder={t('booking.create.anyStaff')} />
                     </div>
                   )}
                 </>
@@ -784,21 +790,21 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
 
               {freeform && (
                 <div className="auth-field">
-                  <label className="auth-label">Staff (optional)</label>
+                  <label className="auth-label">{t('booking.create.staffOptionalLabel')}</label>
                   <Combobox value={staffId}
-                    options={[{ value: '', label: '— Any —' }, ...staff.map(s => ({ value: s.id, label: s.name }))]}
-                    onChange={setStaffId} placeholder="— Any —" />
+                    options={[{ value: '', label: t('booking.create.anyStaff') }, ...staff.map(s => ({ value: s.id, label: s.name }))]}
+                    onChange={setStaffId} placeholder={t('booking.create.anyStaff')} />
                 </div>
               )}
 
               <div className="bk-rules-grid">
                 <div className="auth-field">
-                  <label className="auth-label">Date</label>
+                  <label className="auth-label">{t('booking.create.date')}</label>
                   <DatePicker value={date} onChange={setDate} tz={tz} />
                 </div>
                 <div className="auth-field">
                   <label className="auth-label">
-                    Time <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: 11 }}>· {tz}</span>
+                    {t('booking.create.time')} <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: 11 }}>· {tz}</span>
                   </label>
                   <TimePicker value={time} onChange={setTime}
                     workingHours={workingHours} slotInterval={slotInterval} dayOfWeek={dow} />
@@ -806,50 +812,50 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
               </div>
 
               <div className="auth-field">
-                <label className="auth-label">Customer name</label>
+                <label className="auth-label">{t('booking.create.customerName')}</label>
                 <input className="crm-input" value={customerName}
                   onChange={e => setCustomerName(e.target.value)}
-                  placeholder="Jane Doe" />
+                  placeholder={t('booking.create.customerNamePlaceholder')} />
               </div>
 
               <div className="bk-rules-grid">
                 <div className="auth-field">
-                  <label className="auth-label">Phone</label>
+                  <label className="auth-label">{t('booking.detail.phone')}</label>
                   <input className="crm-input" value={customerPhone}
                     onChange={e => setCustomerPhone(e.target.value)}
-                    placeholder="+1 555 0100" />
+                    placeholder={t('booking.create.phonePlaceholder')} />
                 </div>
                 <div className="auth-field">
-                  <label className="auth-label">Email</label>
+                  <label className="auth-label">{t('booking.detail.email')}</label>
                   <input className="crm-input" type="email" value={customerEmail}
                     onChange={e => setCustomerEmail(e.target.value)}
-                    placeholder="jane@example.com" />
+                    placeholder={t('booking.create.emailPlaceholder')} />
                 </div>
               </div>
 
               <div className="auth-field">
                 <label className="auth-label">
-                  Customer address{addressRequired ? '' : ' (optional)'}
+                  {t('booking.create.customerAddress')}{addressRequired ? '' : t('booking.create.customerAddressOptional')}
                 </label>
                 {addressRequired && (
                   <p className="auth-field-hint">
-                    This service is delivered at the customer's location.
+                    {t('booking.create.addressDeliveredHint')}
                   </p>
                 )}
                 <input className="crm-input" value={customerAddress}
                   onChange={e => setCustomerAddress(e.target.value)}
-                  placeholder="221B Baker Street, London" />
+                  placeholder={t('booking.create.addressPlaceholder')} />
               </div>
 
               <div className="auth-field">
-                <label className="auth-label">Notes (optional)</label>
+                <label className="auth-label">{t('booking.create.notesOptional')}</label>
                 <textarea className="crm-input bk-textarea" rows={2}
                   value={notes} onChange={e => setNotes(e.target.value)}
-                  placeholder="Special requests, allergies, etc." />
+                  placeholder={t('booking.create.notesPlaceholder')} />
               </div>
 
               <div className="auth-field">
-                <label className="auth-label">Initial status</label>
+                <label className="auth-label">{t('booking.create.initialStatus')}</label>
                 <Combobox value={status} options={statusOptions} onChange={setStatus} />
               </div>
 
@@ -857,7 +863,7 @@ function BookingCreateModal({ projectId, services, staff, businessTz, workingHou
 
               <div className="auth-actions">
                 <button className="crm-submit-btn" onClick={create} disabled={saving} type="button">
-                  {saving ? 'Creating…' : 'Create booking'}
+                  {saving ? t('booking.create.creating') : t('booking.create.createBooking')}
                 </button>
               </div>
             </>

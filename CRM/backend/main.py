@@ -4822,10 +4822,15 @@ def resend_code_endpoint(request: ResendCodeRequest):
 
 @app.get("/api/me")
 def get_me(user: dict = Depends(get_current_user)):
-    return db_one(
+    u = db_one(
         "SELECT id, name, email, role, avatar_url FROM crm_users WHERE id = %s AND is_active = TRUE",
         (user["id"],)
-    ) or HTTPException(401, "User not found")
+    )
+    if not u:
+        raise HTTPException(401, "User not found")
+    s = db_one("SELECT language FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
+    u["language"] = (s or {}).get("language", "en")
+    return u
 
 
 @app.post("/api/logout")
@@ -12566,9 +12571,14 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
         VALID_SORTS = ("name_asc", "name_desc", "date_asc", "date_desc")
         if request.org_sort is not None and request.org_sort in VALID_SORTS: upd["org_sort"] = request.org_sort
         if upd:
-            sets = ", ".join(f"{k}=%s" for k in upd)
-            cur.execute(f"UPDATE crm_settings SET {sets} WHERE crm_user_id=%s",
-                        list(upd.values()) + [user["id"]])
+            cols = list(upd.keys())
+            sets = ", ".join(f"{k}=EXCLUDED.{k}" for k in cols)
+            placeholders = ", ".join(["%s"] * len(cols))
+            cur.execute(
+                f"INSERT INTO crm_settings (crm_user_id, {', '.join(cols)}) "
+                f"VALUES (%s, {placeholders}) "
+                f"ON CONFLICT (crm_user_id) DO UPDATE SET {sets}",
+                [user["id"]] + list(upd.values()))
         conn.commit()
     return {"ok": True}
 
@@ -13421,35 +13431,36 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
     checks = []
 
     # 1. URL Configuration — gates OAuth redirects + email links.
+    # NOTE: checks carry stable labelKey/detailKey (+ params); the frontend
+    # localises them via i18n. No human-readable English is sent from here.
     url_row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id=%s", (project_id,))
     if url_row and (url_row.get("frontend_url") or "").strip():
-        checks.append({"key": "url_config", "label": "URL Configuration",
-                       "status": "ok", "detail": "Site URL connected"})
+        checks.append({"key": "url_config", "labelKey": "urlConfig",
+                       "status": "ok", "detailKey": "siteUrlConnected"})
     else:
-        checks.append({"key": "url_config", "label": "URL Configuration",
-                       "status": "info", "detail": "Not configured"})
+        checks.append({"key": "url_config", "labelKey": "urlConfig",
+                       "status": "info", "detailKey": "notConfigured"})
 
     # 2. Customer Authentication — any sign-in method live for the storefront?
     methods = []
     em = db_one("SELECT is_verified FROM crm_email_domains WHERE project_id=%s", (project_id,))
     if em and em.get("is_verified"):
-        methods.append("Email")
+        methods.append("email")
     oa = db_one("SELECT google_client_id FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
     if oa and (oa.get("google_client_id") or "").strip():
-        methods.append("Google")
+        methods.append("google")
     sms = db_one("SELECT is_enabled FROM crm_sms_settings WHERE project_id=%s", (project_id,))
     if sms and sms.get("is_enabled"):
-        methods.append("Phone")
+        methods.append("phone")
     gen = db_one("SELECT COUNT(*) AS n FROM crm_auth_providers WHERE project_id=%s AND is_enabled=TRUE",
                  (project_id,))
-    if gen and int(gen.get("n") or 0) > 0:
-        methods.append(f"+{int(gen['n'])} OAuth")
-    if methods:
-        checks.append({"key": "auth", "label": "Customer Authentication",
-                       "status": "ok", "detail": " · ".join(methods)})
+    oauth_count = int(gen.get("n") or 0) if gen else 0
+    if methods or oauth_count > 0:
+        checks.append({"key": "auth", "labelKey": "auth", "status": "ok",
+                       "methods": methods, "oauthCount": oauth_count})
     else:
-        checks.append({"key": "auth", "label": "Customer Authentication",
-                       "status": "info", "detail": "No methods enabled"})
+        checks.append({"key": "auth", "labelKey": "auth",
+                       "status": "info", "detailKey": "noMethods"})
 
     # 3. Alerts — active subscriptions + recently-fired count (last 7 days).
     al = db_one(
@@ -13461,15 +13472,14 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
     active_alerts = int(al.get("active") or 0)
     fired_alerts  = int(al.get("fired") or 0)
     if fired_alerts > 0:
-        checks.append({"key": "alerts", "label": "Alerts",
-                       "status": "warn",
-                       "detail": f"{fired_alerts} fired in last 7 days"})
+        checks.append({"key": "alerts", "labelKey": "alerts", "status": "warn",
+                       "detailKey": "alertsFired", "detailParams": {"count": fired_alerts}})
     elif active_alerts > 0:
-        checks.append({"key": "alerts", "label": "Alerts",
-                       "status": "ok", "detail": f"{active_alerts} active"})
+        checks.append({"key": "alerts", "labelKey": "alerts", "status": "ok",
+                       "detailKey": "alertsActive", "detailParams": {"count": active_alerts}})
     else:
-        checks.append({"key": "alerts", "label": "Alerts",
-                       "status": "info", "detail": "Not configured"})
+        checks.append({"key": "alerts", "labelKey": "alerts",
+                       "status": "info", "detailKey": "notConfigured"})
 
     # 4. Inventory — out-of-stock + low-stock SKU counts. Mirrors the
     #    canonical /api/analytics/inventory-health logic exactly: threshold 0
@@ -13491,14 +13501,11 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
     oos = int(inv.get("oos") or 0)
     low = int(inv.get("low") or 0)
     if oos > 0 or low > 0:
-        parts = []
-        if oos > 0: parts.append(f"{oos} out of stock")
-        if low > 0: parts.append(f"{low} low")
-        checks.append({"key": "inventory", "label": "Inventory",
-                       "status": "warn", "detail": " · ".join(parts)})
+        checks.append({"key": "inventory", "labelKey": "inventory",
+                       "status": "warn", "oos": oos, "low": low})
     else:
-        checks.append({"key": "inventory", "label": "Inventory",
-                       "status": "ok", "detail": "Stock levels healthy"})
+        checks.append({"key": "inventory", "labelKey": "inventory",
+                       "status": "ok", "detailKey": "stockHealthy"})
 
     # 5. Analytics anomaly — revenue last 7d vs prior 7d. A >40% drop on a
     #    non-trivial prior week is flagged; everything else reads "no anomalies".
@@ -13518,12 +13525,11 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
     prior_week = float(rev.get("prior_week") or 0)
     if prior_week >= 50 and this_week < prior_week * 0.6:
         drop_pct = round((1 - this_week / prior_week) * 100)
-        checks.append({"key": "analytics", "label": "Analytics",
-                       "status": "warn",
-                       "detail": f"Revenue down {drop_pct}% vs last week"})
+        checks.append({"key": "analytics", "labelKey": "analytics", "status": "warn",
+                       "detailKey": "revenueDown", "detailParams": {"pct": drop_pct}})
     else:
-        checks.append({"key": "analytics", "label": "Analytics",
-                       "status": "ok", "detail": "No anomalies detected"})
+        checks.append({"key": "analytics", "labelKey": "analytics",
+                       "status": "ok", "detailKey": "noAnomalies"})
 
     warnings = sum(1 for c in checks if c["status"] == "warn")
     return {
@@ -13550,14 +13556,14 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
         "SELECT COUNT(*) AS n FROM order_history WHERE project_id=%s AND status IN ('new','confirmed')",
         (project_id,)
     ) or {}
-    actions.append({"key": "fulfill", "label": "Orders to fulfill",
+    actions.append({"key": "fulfill",
                     "count": int(fulfil.get("n") or 0), "route": "orders"})
 
     ret = db_one(
         "SELECT COUNT(*) AS n FROM order_returns WHERE project_id=%s AND status = ANY(%s)",
         (project_id, list(RETURN_GROUP_ACTION))
     ) or {}
-    actions.append({"key": "returns", "label": "Returns to review",
+    actions.append({"key": "returns",
                     "count": int(ret.get("n") or 0), "route": "orders?tab=returns"})
 
     # Bookings happening today (project tz), still upcoming (pending/confirmed).
@@ -13571,7 +13577,7 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
               AND status IN ('pending', 'confirmed')""",
         (project_id, day_start, day_end)
     ) or {}
-    actions.append({"key": "bookings", "label": "Bookings today",
+    actions.append({"key": "bookings",
                     "count": int(bk.get("n") or 0), "route": "booking"})
 
     inv = db_one(
@@ -13583,14 +13589,14 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
               AND l2.stock_quantity <= COALESCE(NULLIF(p.low_stock_threshold, 0), 10)""",
         (project_id,)
     ) or {}
-    actions.append({"key": "restock", "label": "Items to restock",
+    actions.append({"key": "restock",
                     "count": int(inv.get("n") or 0), "route": "products/inventory"})
 
     msg = db_one(
         "SELECT COUNT(*) AS n FROM crm_chat_conversations WHERE project_id=%s AND unread_count > 0",
         (project_id,)
     ) or {}
-    actions.append({"key": "messages", "label": "Unread messages",
+    actions.append({"key": "messages",
                     "count": int(msg.get("n") or 0), "route": "chat"})
 
     # ── Store Advisor — fixable setup / best-practice issues ──
@@ -13605,29 +13611,20 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
         pc = db_one("SELECT is_connected FROM crm_payment_credentials WHERE org_id=%s", (org_id,)) or {}
         connected = bool(pc.get("is_connected"))
         pay_route = f"/org/{slug}/payments" if slug else None
+        # Advisor entries carry a stable key (+ params); the frontend localises
+        # title/detail via i18n — no English text is sent from here.
         if provider == "manual":
-            advisor.append({"key": "payment", "severity": "info",
-                            "title": "No payment provider connected",
-                            "detail": "Orders are recorded but not auto-charged. Connect Stripe / PayPal / etc.",
-                            "route": pay_route})
+            advisor.append({"key": "payment_none", "severity": "info", "route": pay_route})
         elif not connected:
-            advisor.append({"key": "payment", "severity": "critical",
-                            "title": f"Finish connecting {provider.title()}",
-                            "detail": "Credentials saved but not verified — customers can't be charged yet.",
-                            "route": pay_route})
+            advisor.append({"key": "payment_connect", "severity": "critical",
+                            "params": {"provider": provider.title()}, "route": pay_route})
 
     # Email domain (per-project). Unverified → confirmations may hit spam.
     em = db_one("SELECT domain, is_verified FROM crm_email_domains WHERE project_id=%s", (project_id,)) or {}
     if not em.get("domain"):
-        advisor.append({"key": "email", "severity": "info",
-                        "title": "No custom email domain",
-                        "detail": "Order emails send from the shared address. Add a domain to brand them.",
-                        "route": "authentication"})
+        advisor.append({"key": "email_none", "severity": "info", "route": "authentication"})
     elif not em.get("is_verified"):
-        advisor.append({"key": "email", "severity": "warning",
-                        "title": "Email domain not verified",
-                        "detail": "DNS records pending — confirmations may land in spam until verified.",
-                        "route": "authentication"})
+        advisor.append({"key": "email_unverified", "severity": "warning", "route": "authentication"})
 
     # Catalog quality — counts of active products missing key fields.
     cat = db_one(
@@ -13647,19 +13644,13 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
     no_seo  = int(cat.get("no_seo") or 0)
     if no_img > 0:
         advisor.append({"key": "no_images", "severity": "warning",
-                        "title": f"{no_img} product{'s' if no_img != 1 else ''} have no photos",
-                        "detail": "Products without images convert far worse — add at least one photo.",
-                        "route": "products"})
+                        "params": {"count": no_img}, "route": "products"})
     if no_desc > 0:
         advisor.append({"key": "no_desc", "severity": "info",
-                        "title": f"{no_desc} product{'s' if no_desc != 1 else ''} missing a description",
-                        "detail": "A description helps customers decide and improves SEO.",
-                        "route": "products"})
+                        "params": {"count": no_desc}, "route": "products"})
     if no_seo > 0:
         advisor.append({"key": "no_seo", "severity": "info",
-                        "title": f"{no_seo} product{'s' if no_seo != 1 else ''} without SEO meta",
-                        "detail": "Set an SEO title + description so the page ranks in search.",
-                        "route": "products"})
+                        "params": {"count": no_seo}, "route": "products"})
 
     sev_rank = {"critical": 0, "warning": 1, "info": 2}
     advisor.sort(key=lambda a: sev_rank.get(a["severity"], 3))

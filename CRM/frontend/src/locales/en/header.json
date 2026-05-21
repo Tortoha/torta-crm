@@ -1,0 +1,80 @@
+{
+  "header": {
+    "userMenu": {
+      "ariaLabel": "User menu",
+      "settings": "Settings",
+      "logout": "Log out"
+    },
+    "org": {
+      "showOrganizations": "Show organizations",
+      "searchPlaceholder": "Search organizations…",
+      "allOrganizations": "All Organizations",
+      "newOrganization": "New organization",
+      "modalTitle": "New organization",
+      "nameLabel": "Name",
+      "namePlaceholder": "Organization name"
+    },
+    "project": {
+      "showProjects": "Show projects",
+      "searchPlaceholder": "Search projects…",
+      "newProject": "New project",
+      "modalTitle": "New project",
+      "nameLabel": "Name",
+      "namePlaceholder": "Project name",
+      "urlLabel": "URL",
+      "urlPlaceholder": "The URL of your website, e.g. https://shop.com"
+    },
+    "product": {
+      "fallbackName": "Product",
+      "showProducts": "Show products",
+      "searchPlaceholder": "Search products…",
+      "allProducts": "All Products",
+      "newProduct": "New product"
+    },
+    "switcher": {
+      "noResults": "No results"
+    },
+    "form": {
+      "nameRequired": "Name is required",
+      "frontendUrlRequired": "Frontend URL is required",
+      "invalidUrl": "Enter a valid URL: http://... or https://...",
+      "error": "Error",
+      "creating": "Creating…",
+      "create": "Create"
+    },
+    "notifications": {
+      "title": "Notifications",
+      "markAllRead": "Mark all read",
+      "viewAll": "View all notifications",
+      "empty": "No notifications yet",
+      "loadingMore": "Loading more…",
+      "allTitle": "All notifications",
+      "allSubtitle": "Everything you've received, grouped by date.",
+      "buckets": {
+        "today": "Today",
+        "yesterday": "Yesterday",
+        "thisWeek": "This week",
+        "thisMonth": "This month",
+        "earlier": "Earlier"
+      },
+      "time": {
+        "justNow": "just now",
+        "minutesAgo": "{{count}}m ago",
+        "hoursAgo": "{{count}}h ago",
+        "daysAgo": "{{count}}d ago"
+      }
+    },
+    "crop": {
+      "title": "Edit photo",
+      "close": "Close",
+      "zoom": "Zoom",
+      "rotate": "Rotate",
+      "zoomOut": "Zoom out",
+      "zoomIn": "Zoom in",
+      "rotateLeft": "Rotate left",
+      "rotateRight": "Rotate right",
+      "saving": "Saving…",
+      "savePhoto": "Save photo"
+    }
+  }
+}

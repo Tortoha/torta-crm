@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle } from '@phosphor-icons/react';
 
 // Right-click context menu with the same Dynamic Block sliding indicator as ProdMenu/CardMenu (org-menu-* classes).
 //   1. Legacy: pass only `onSelect` → renders a single "Select" entry.
 //   2. Extended: pass `items={[{label, icon, onClick, danger?}]}` → renders the full menu.
 export function RowContextMenu({ pos, items, onSelect, onClose }) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(null);
   const indRef   = useRef(null);
   const itemEls  = useRef({});
@@ -25,7 +27,7 @@ export function RowContextMenu({ pos, items, onSelect, onClose }) {
   }, [onClose]);
 
   const list = items || (onSelect ? [{
-    label: 'Select',
+    label: t('utils.rowMenu.select'),
     icon: <CheckCircle weight="bold" className="org-card-dropdown-icon" />,
     onClick: onSelect,
   }] : []);

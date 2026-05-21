@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import {
   X, CaretRight, CaretDown, Folder, Cube,
   ArrowsLeftRight, ArrowRight, Trash,
@@ -10,15 +11,17 @@ import { API_BASE } from '../../../api.js';
 import { Combobox } from '../Booking/BookingCreateModal.jsx';
 
 export function BulkTransferButton({ onClick, disabled }) {
+  const { t } = useTranslation();
   return (
     <button type="button" className="org-new-btn"
       onClick={onClick} disabled={disabled}>
-      <ArrowsLeftRight weight="bold" className="org-new-icon" /> Distribute
+      <ArrowsLeftRight weight="bold" className="org-new-icon" /> {t('products.bulkTransfer.distribute')}
     </button>
   );
 }
 
 export default function BulkTransferWizard({ projectId, onClose, onApplied, showToast }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [step, setStep] = useState(1);
   const [products, setProducts] = useState([]);   // hydrated tree per chevron click
@@ -145,7 +148,7 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
 
   // ── Step 2 plan defaults — fired the moment we transition to step 2 ──
   const goToStep2 = () => {
-    if (selected.size === 0) { showToast('Pick at least one SKU'); return; }
+    if (selected.size === 0) { showToast(t('products.bulkTransfer.pickAtLeastOne')); return; }
     const next = {};
     for (const sid of selected) {
       const meta = skuMeta[sid];
@@ -234,11 +237,11 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
       });
       if (r.ok) {
         const j = await r.json();
-        showToast(`Transferred ${j.transfers_applied} lines across ${j.skus_affected} SKUs`);
+        showToast(t('products.bulkTransfer.toastTransferred', { lines: j.transfers_applied, skus: j.skus_affected }));
         onApplied?.();
       } else {
         const j = await r.json().catch(() => ({}));
-        showToast(j.detail || 'Transfer failed');
+        showToast(j.detail || t('products.bulkTransfer.transferFailed'));
       }
     } finally { setBusy(false); }
   };
@@ -252,11 +255,11 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
           <div className="auth-modal-title-row">
             <div>
               <div className="auth-modal-title">
-                {step === 1 ? 'Pick SKUs to transfer' : 'Plan the transfers'}
+                {step === 1 ? t('products.bulkTransfer.pickStepTitle') : t('products.bulkTransfer.planStepTitle')}
               </div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Step {step} of 2 · {selected.size} SKU{selected.size === 1 ? '' : 's'} selected
+                  {t('products.bulkTransfer.stepProgress', { step, count: selected.size })}
                 </span>
               </div>
             </div>
@@ -299,23 +302,23 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
               <>
                 <button type="button" className="crm-submit-btn"
                   disabled={selected.size === 0} onClick={goToStep2}>
-                  Next <ArrowRight weight="bold" />
+                  {t('products.bulkTransfer.next')} <ArrowRight weight="bold" />
                 </button>
                 <button type="button" className="crm-submit-btn auth-btn-secondary po-disc-cancel-btn"
-                  onClick={onClose}>Cancel</button>
+                  onClick={onClose}>{t('products.bulkTransfer.cancel')}</button>
               </>
             ) : (
               <>
                 <button type="button" className="crm-submit-btn auth-btn-secondary"
                   onClick={() => setStep(1)} disabled={busy}>
-                  ← Back
+                  {t('products.bulkTransfer.back')}
                 </button>
                 <button type="button" className="crm-submit-btn"
                   disabled={!allValid || busy} onClick={apply}>
-                  {busy ? 'Applying…' : `Apply ${validRows.length} transfer${validRows.length === 1 ? '' : 's'}`}
+                  {busy ? t('products.bulkTransfer.applying') : t('products.bulkTransfer.applyTransfers', { count: validRows.length })}
                 </button>
                 <button type="button" className="crm-submit-btn auth-btn-secondary po-disc-cancel-btn"
-                  onClick={onClose} disabled={busy}>Cancel</button>
+                  onClick={onClose} disabled={busy}>{t('products.bulkTransfer.cancel')}</button>
               </>
             )}
           </div>
@@ -331,6 +334,7 @@ export default function BulkTransferWizard({ projectId, onClose, onApplied, show
 function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMany,
                       productAggState, variationAggState,
                       skuIdsOfProduct, skuIdsOfVariation }) {
+  const { t } = useTranslation();
   const [openProducts, setOpenProducts] = useState(new Set());
   const [openVars, setOpenVars] = useState(new Set());
   // Products whose checkbox was clicked while still hydrating — shows brief loading state.
@@ -376,7 +380,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
   };
 
   if (productList.length === 0) {
-    return <p className="crm-placeholder">No products to transfer.</p>;
+    return <p className="crm-placeholder">{t('products.bulkTransfer.noProducts')}</p>;
   }
 
   return (
@@ -400,12 +404,12 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
               <Folder weight="duotone" className="po-disc-cell--strong" />
               <span className="po-set-strong">{p.title}</span>
               <span className="po-set-note po-tree-meta">
-                · {p.variations_count || 0} variation{p.variations_count === 1 ? '' : 's'}
-                {isBusy && <span className="po-bulk-tree-loading-inline"> · loading…</span>}
+                · {p.variations_count === 1 ? t('products.bulkTransfer.variationOne', { count: p.variations_count }) : t('products.bulkTransfer.variationMany', { count: p.variations_count || 0 })}
+                {isBusy && <span className="po-bulk-tree-loading-inline"> · {t('products.bulkTransfer.loadingInline')}</span>}
               </span>
             </div>
             {isOpen && !pdState?.hydrated && (
-              <div className="po-bulk-tree-loading">Loading…</div>
+              <div className="po-bulk-tree-loading">{t('products.bulkTransfer.loading')}</div>
             )}
             {isOpen && pd && (pd.variations || []).map(v => {
               const vKey = `${p.id}-${v.id}`;
@@ -422,7 +426,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
                       onChange={(checked) => setMany(skuIdsOfVariation(v), checked)} />
                     <span className="po-set-strong">{v.variation_name || v.name || '—'}</span>
                     <span className="po-set-note po-tree-meta">
-                      · {(v.configurations || []).length} SKU{(v.configurations || []).length === 1 ? '' : 's'}
+                      · {(v.configurations || []).length === 1 ? t('products.bulkTransfer.skuOne', { count: (v.configurations || []).length }) : t('products.bulkTransfer.skuMany', { count: (v.configurations || []).length })}
                     </span>
                   </div>
                   {vOpen && (v.configurations || []).map(c => (
@@ -434,7 +438,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
                       <Cube className="po-disc-cell--muted" />
                       <span>{c.configuration_name || c.name || '—'}</span>
                       <span className="po-set-note po-tree-meta">
-                        · stock {c.stock_quantity ?? 0}
+                        · {t('products.bulkTransfer.stock', { count: c.stock_quantity ?? 0 })}
                       </span>
                     </div>
                   ))}
@@ -452,20 +456,21 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
 
 function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, removeRow,
                      batchOptionsBySkuWh, loadBatchesFor }) {
+  const { t } = useTranslation();
   const planEntries = Object.entries(plan);
   if (planEntries.length === 0) {
-    return <p className="crm-placeholder">Nothing selected — go back and pick SKUs.</p>;
+    return <p className="crm-placeholder">{t('products.bulkTransfer.nothingSelected')}</p>;
   }
 
   return (
     <>
       <div className="po-bulk-plan-toolbar">
-        <span className="cpm-section-hint">Quick action:</span>
+        <span className="cpm-section-hint">{t('products.bulkTransfer.quickAction')}</span>
         <span className="po-cb-wrap po-bulk-plan-quick-cb">
-          <Combobox value="" placeholder="Set all destinations to…"
+          <Combobox value="" placeholder={t('products.bulkTransfer.setAllDestinations')}
             options={warehouses.map(w => ({
               value: w.id,
-              label: w.is_default ? `${w.name} · default` : w.name,
+              label: w.is_default ? `${w.name} · ${t('products.bulkTransfer.default')}` : w.name,
             }))}
             onChange={(v) => v && setAllTo(Number(v))} />
         </span>
@@ -473,13 +478,13 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, 
 
       <div className="po-bulk-plan-table po-bulk-plan-table--batch">
         <div className="po-bulk-plan-row po-bulk-plan-row--head po-bulk-plan-row--batch">
-          <span>SKU</span>
-          <span>From</span>
+          <span>{t('products.bulkTransfer.colSku')}</span>
+          <span>{t('products.bulkTransfer.colFrom')}</span>
           <span></span>
-          <span>To</span>
-          <span>Batch</span>
-          <span>Qty</span>
-          <span>Avail.</span>
+          <span>{t('products.bulkTransfer.colTo')}</span>
+          <span>{t('products.bulkTransfer.colBatch')}</span>
+          <span>{t('products.bulkTransfer.colQty')}</span>
+          <span>{t('products.bulkTransfer.colAvail')}</span>
           <span></span>
         </div>
         {planEntries.map(([sidStr, p]) => {
@@ -498,7 +503,7 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, 
           const choice = p.batch_choice || '';
           const batchSelectOptions = batchOpts.map(b => ({
             value: `existing:${b.id}`,
-            label: `${b.batch_name} (${b.quantity_remaining} left)`,
+            label: t('products.bulkTransfer.batchOption', { name: b.batch_name, count: b.quantity_remaining }),
           }));
 
           return (
@@ -510,14 +515,14 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, 
               </span>
               <span className="po-cb-wrap">
                 <Combobox value={p.from_wh === '' ? '' : Number(p.from_wh)}
-                  placeholder="From"
+                  placeholder={t('products.bulkTransfer.from')}
                   options={warehouses.map(w => ({ value: w.id, label: w.name }))}
                   onChange={(v) => updateRow(sid, { from_wh: v === '' ? '' : Number(v) })} />
               </span>
               <ArrowRight weight="bold" className="po-bulk-plan-arrow" />
               <span className="po-cb-wrap">
                 <Combobox value={p.to_wh === '' ? '' : Number(p.to_wh)}
-                  placeholder="To"
+                  placeholder={t('products.bulkTransfer.to')}
                   options={warehouses
                     .filter(w => w.id !== Number(p.from_wh))
                     .map(w => ({ value: w.id, label: w.name }))}
@@ -531,10 +536,10 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, 
                 <Combobox value={choice}
                   options={batchSelectOptions}
                   placeholder={toWhNum == null
-                    ? 'Pick destination first'
+                    ? t('products.bulkTransfer.pickDestinationFirst')
                     : batchOpts.length === 0
-                      ? 'No batches here — pick another WH'
-                      : 'Pick a batch'}
+                      ? t('products.bulkTransfer.noBatchesHere')
+                      : t('products.bulkTransfer.pickBatch')}
                   onChange={(v) => updateRow(sid, { batch_choice: v })} />
               </span>
               <input type="number" min="1" className="crm-input po-bulk-plan-qty"
@@ -556,7 +561,7 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, 
                 {havStr === '—' ? '—' : `/ ${havStr}`}
               </span>
               <button type="button" className="po-tier-row-del"
-                aria-label="Remove" onClick={() => removeRow(sid)}>
+                aria-label={t('products.bulkTransfer.remove')} onClick={() => removeRow(sid)}>
                 <Trash weight="bold" />
               </button>
             </div>
@@ -566,7 +571,7 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows, setAllTo, updateRow, 
 
       {validRows.some(r => !r.isValid) && (
         <p className="po-bulk-plan-warning">
-          Some rows are invalid: pick From / To / Batch (existing at destination) and qty ≤ available.
+          {t('products.bulkTransfer.invalidRows')}
         </p>
       )}
     </>

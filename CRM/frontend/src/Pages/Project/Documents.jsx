@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   FileText, Buildings, IdentificationBadge, Palette, UploadSimple,
   EnvelopeSimple,
@@ -24,11 +25,7 @@ import '../../Style/Products.css';
 // stranded before.
 import '../../Style/Documents.css';
 
-const STYLE_OPTIONS = [
-  { key: 'modern',  label: 'Modern',  hint: 'Coloured banner + accent stripes (default).' },
-  { key: 'classic', label: 'Classic', hint: 'Centered, serif, formal — invoice-style.' },
-  { key: 'minimal', label: 'Minimal', hint: 'Black & white, no decoration, prints small.' },
-];
+const STYLE_KEYS = ['modern', 'classic', 'minimal'];
 
 function StyleCard({ option, current, onPick }) {
   const active = option.key === current;
@@ -86,7 +83,13 @@ function FieldCard({ label, hint, children }) {
 // ── Page ────────────────────────────────────────────────────────────────
 
 export default function Documents() {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
+  const STYLE_OPTIONS = STYLE_KEYS.map(key => ({
+    key,
+    label: t(`project.documents.style.${key}`),
+    hint: t(`project.documents.style.${key}Hint`),
+  }));
   const pq = `?project_id=${projectId}`;
   const fileRef = useRef(null);
   const [form, setForm]           = useState(null);
@@ -125,8 +128,8 @@ export default function Documents() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(next),
     });
-    if (res.ok) showToast('Saved');
-    else showToast('Save failed');
+    if (res.ok) showToast(t('project.documents.saved'));
+    else showToast(t('project.documents.saveFailed'));
   }, [form, pq, showToast]);
 
   const upload = async (file) => {
@@ -139,23 +142,23 @@ export default function Documents() {
       });
       const data = await res.json();
       if (res.ok && data.url) persist({ logo_url: data.url });
-      else showToast('Upload failed');
+      else showToast(t('project.documents.uploadFailed'));
     } finally { setUploading(false); }
   };
 
-  if (!form) return <div className="crm-placeholder">Loading…</div>;
+  if (!form) return <div className="crm-placeholder">{t('project.documents.loading')}</div>;
 
   return (
     <>
-      <h1 className="crm-page-title">Documents</h1>
+      <h1 className="crm-page-title">{t('project.documents.title')}</h1>
 
       <div className="bulk-settings">
 
       {/* Template style — three preview cards. Each card is a button; clicking
           commits immediately so the merchant sees the preview in any
           freshly-generated PDF straight away. */}
-      <Section icon={<FileText weight="duotone" />} title="Template style"
-        subtitle="Pick the visual layout. You can change it any time.">
+      <Section icon={<FileText weight="duotone" />} title={t('project.documents.templateStyle')}
+        subtitle={t('project.documents.templateStyleSub')}>
         <div className="doc-style-row">
           {STYLE_OPTIONS.map(opt => (
             <StyleCard key={opt.key} option={opt}
@@ -167,19 +170,19 @@ export default function Documents() {
       {/* Company info — name + logo. Logo is uploaded to S3 via the standard
           /api/upload/image endpoint; the returned URL is stamped into PDF
           headers at 28×28 mm. */}
-      <Section icon={<Buildings weight="duotone" />} title="Company info"
-        subtitle="The brand identity printed at the top of every PDF.">
-        <FieldCard label="Company / brand name"
-          hint="Shown as the document header. Use the legal name if PDFs are used for tax filings.">
+      <Section icon={<Buildings weight="duotone" />} title={t('project.documents.companyInfo')}
+        subtitle={t('project.documents.companyInfoSub')}>
+        <FieldCard label={t('project.documents.companyName')}
+          hint={t('project.documents.companyNameHint')}>
           <input className="crm-input" value={form.company_name || ''}
             onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))}
             onBlur={e => persist({ company_name: e.target.value })}
             maxLength={200}
-            placeholder="Acme Inc, ИП Иванов, etc." />
+            placeholder={t('project.documents.companyNamePlaceholder')} />
         </FieldCard>
 
-        <FieldCard label="Logo"
-          hint="Square or wide image. Rendered at 28×28 mm in the PDF header. PNG with transparent background recommended.">
+        <FieldCard label={t('project.documents.logo')}
+          hint={t('project.documents.logoHint')}>
           <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
             onChange={e => upload(e.target.files?.[0])} />
           {form.logo_url ? (
@@ -188,17 +191,17 @@ export default function Documents() {
               <div className="doc-logo-actions">
                 <button type="button" className="crm-submit-btn auth-btn-secondary"
                   onClick={() => fileRef.current?.click()} disabled={uploading}>
-                  {uploading ? 'Uploading…' : 'Replace'}
+                  {uploading ? t('project.documents.uploading') : t('project.documents.replace')}
                 </button>
                 <button type="button" className="auth-btn-danger"
-                  onClick={() => persist({ logo_url: null })}>Remove</button>
+                  onClick={() => persist({ logo_url: null })}>{t('project.documents.remove')}</button>
               </div>
             </div>
           ) : (
             <button type="button" className="doc-logo-drop"
               onClick={() => fileRef.current?.click()} disabled={uploading}>
-              {uploading ? 'Uploading…' : (
-                <><UploadSimple weight="bold" size={20} /> <span>Click to upload a logo</span></>
+              {uploading ? t('project.documents.uploading') : (
+                <><UploadSimple weight="bold" size={20} /> <span>{t('project.documents.clickToUpload')}</span></>
               )}
             </button>
           )}
@@ -208,49 +211,49 @@ export default function Documents() {
       {/* Tax & legal — the bit that makes the PDF usable for actual accounting.
           BIN/VAT/EIN/ИНН label is configurable because the right code depends
           on the merchant's country. */}
-      <Section icon={<IdentificationBadge weight="duotone" />} title="Tax & legal"
-        subtitle="Identification used by your accountant or customer's bookkeeper.">
-        <FieldCard label="Tax ID label"
-          hint="Label shown before the number. Examples: BIN (KZ), VAT (EU), EIN (US), ИНН (RU).">
+      <Section icon={<IdentificationBadge weight="duotone" />} title={t('project.documents.taxLegal')}
+        subtitle={t('project.documents.taxLegalSub')}>
+        <FieldCard label={t('project.documents.taxIdLabel')}
+          hint={t('project.documents.taxIdLabelHint')}>
           <input className="crm-input" value={form.tax_id_label || ''}
             onChange={e => setForm(f => ({ ...f, tax_id_label: e.target.value }))}
             onBlur={e => persist({ tax_id_label: e.target.value })}
             maxLength={40}
-            placeholder="Tax ID" />
+            placeholder={t('project.documents.taxIdLabelPlaceholder')} />
         </FieldCard>
-        <FieldCard label="Tax ID value"
-          hint="Your registered tax/business identifier.">
+        <FieldCard label={t('project.documents.taxIdValue')}
+          hint={t('project.documents.taxIdValueHint')}>
           <input className="crm-input" value={form.tax_id || ''}
             onChange={e => setForm(f => ({ ...f, tax_id: e.target.value }))}
             onBlur={e => persist({ tax_id: e.target.value })}
             maxLength={80}
             placeholder="123456789012" />
         </FieldCard>
-        <FieldCard label="Address"
-          hint="Legal address printed under the company name.">
+        <FieldCard label={t('project.documents.address')}
+          hint={t('project.documents.addressHint')}>
           <textarea className="crm-input bk-textarea" rows={3}
             value={form.address || ''}
             onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
             onBlur={e => persist({ address: e.target.value })}
-            placeholder="Street, city, postal code, country"
+            placeholder={t('project.documents.addressPlaceholder')}
             maxLength={500} />
         </FieldCard>
       </Section>
 
       {/* Contact info — printed in the footer so customers know how to reach
           support after receiving the PDF. */}
-      <Section icon={<EnvelopeSimple weight="duotone" />} title="Contact"
-        subtitle="Where customers reply to questions about the PDF.">
-        <FieldCard label="Contact email"
-          hint="Printed in the footer. Recipients reply here for invoice questions.">
+      <Section icon={<EnvelopeSimple weight="duotone" />} title={t('project.documents.contact')}
+        subtitle={t('project.documents.contactSub')}>
+        <FieldCard label={t('project.documents.contactEmail')}
+          hint={t('project.documents.contactEmailHint')}>
           <input className="crm-input" type="email" value={form.contact_email || ''}
             onChange={e => setForm(f => ({ ...f, contact_email: e.target.value }))}
             onBlur={e => persist({ contact_email: e.target.value })}
             maxLength={200}
             placeholder="billing@company.com" />
         </FieldCard>
-        <FieldCard label="Contact phone"
-          hint="International format recommended (e.g. +1 555 0100).">
+        <FieldCard label={t('project.documents.contactPhone')}
+          hint={t('project.documents.contactPhoneHint')}>
           <input className="crm-input" value={form.contact_phone || ''}
             onChange={e => setForm(f => ({ ...f, contact_phone: e.target.value }))}
             onBlur={e => persist({ contact_phone: e.target.value })}
@@ -261,10 +264,10 @@ export default function Documents() {
 
       {/* Visual customisation — accent colour (used by the Modern template
           for the banner and total row) + a free-form footer note. */}
-      <Section icon={<Palette weight="duotone" />} title="Visual customisation"
-        subtitle="Accent colour and footer text. Apply only to the Modern template.">
-        <FieldCard label="Accent colour"
-          hint="Used for the banner and total row in the Modern template. Hex format (#RRGGBB).">
+      <Section icon={<Palette weight="duotone" />} title={t('project.documents.visualCustomisation')}
+        subtitle={t('project.documents.visualCustomisationSub')}>
+        <FieldCard label={t('project.documents.accentColour')}
+          hint={t('project.documents.accentColourHint')}>
           <div className="doc-accent-row">
             <input type="color" className="doc-accent-swatch"
               value={form.accent_color || '#0071E3'}
@@ -277,13 +280,13 @@ export default function Documents() {
               placeholder="#0071E3" />
           </div>
         </FieldCard>
-        <FieldCard label="Footer note"
-          hint="Optional thank-you / terms line. Limited to 200 characters.">
+        <FieldCard label={t('project.documents.footerNote')}
+          hint={t('project.documents.footerNoteHint')}>
           <input className="crm-input" value={form.footer_note || ''}
             onChange={e => setForm(f => ({ ...f, footer_note: e.target.value }))}
             onBlur={e => persist({ footer_note: e.target.value })}
             maxLength={200}
-            placeholder="Thank you for your business" />
+            placeholder={t('project.documents.footerNotePlaceholder')} />
         </FieldCard>
       </Section>
 

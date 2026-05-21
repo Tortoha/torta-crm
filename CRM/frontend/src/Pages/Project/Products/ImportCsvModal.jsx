@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { UploadSimple, FileCsv, Check, Warning, X } from '@phosphor-icons/react';
@@ -37,6 +38,7 @@ function parseCsv(text) {
 }
 
 export default function ImportCsvModal({ pq, onClose, onDone }) {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const [file,    setFile]    = useState(null);
   const [rows,    setRows]    = useState([]);
@@ -59,17 +61,17 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
   const onPickFile = async (f) => {
     if (!f) return;
     if (!/\.csv$/i.test(f.name) && f.type !== 'text/csv' && f.type !== 'application/vnd.ms-excel') {
-      setErr('File must be a .csv'); return;
+      setErr(t('products.import.errNotCsv')); return;
     }
-    if (f.size > 5 * 1024 * 1024) { setErr('File too large (max 5 MB)'); return; }
+    if (f.size > 5 * 1024 * 1024) { setErr(t('products.import.errTooLarge')); return; }
     setErr(''); setFile(f);
     try {
       const text = await f.text();
       const parsed = parseCsv(text);
-      if (parsed.length < 2) { setErr('CSV must include a header row + at least one data row'); return; }
+      if (parsed.length < 2) { setErr(t('products.import.errNeedRows')); return; }
       const hdr = parsed[0].map(h => h.trim().toLowerCase());
       for (const r of REQUIRED_HEADERS) {
-        if (!hdr.includes(r)) { setErr(`Missing required column: ${r}`); return; }
+        if (!hdr.includes(r)) { setErr(t('products.import.errMissingColumn', { col: r })); return; }
       }
       setHeaders(hdr); setRows(parsed.slice(1)); setStage('preview');
 
@@ -86,10 +88,10 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
         body: JSON.stringify({ rows: objs, dry_run: true }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) { setErr(data?.detail || 'Dry-run failed'); return; }
+      if (!res.ok || !data?.ok) { setErr(data?.detail || t('products.import.errDryRun')); return; }
       setDryRes(data);
     } catch (e) {
-      setErr(`Parse error: ${String(e).slice(0, 200)}`);
+      setErr(t('products.import.errParse', { msg: String(e).slice(0, 200) }));
     }
   };
 
@@ -110,10 +112,10 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.ok) {
-        setErr(data?.detail || 'Import failed'); setStage('preview'); return;
+        setErr(data?.detail || t('products.import.errImport')); setStage('preview'); return;
       }
       setStage('done'); setDryRes(data);
-      showToast(`Imported ${data.products_created} products, ${data.skus_created + data.skus_updated} SKUs`);
+      showToast(t('products.import.toastDone', { products: data.products_created, skus: data.skus_created + data.skus_updated }));
       onDone?.();
     } catch (e) {
       setErr(String(e).slice(0, 200)); setStage('preview');
@@ -136,10 +138,10 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Import products from CSV</div>
+              <div className="auth-modal-title">{t('products.import.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Bulk-load your catalog — title, variation, SKU, price and stock in one CSV
+                  {t('products.import.subtitle')}
                 </span>
               </div>
             </div>
@@ -158,19 +160,19 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
                 onDragLeave={onDragLeave} onDrop={onDrop}>
                 <FileCsv weight="duotone" className="csv-dropzone-icon" />
                 <div className="csv-dropzone-title">
-                  {dragOver ? 'Drop your CSV to upload' : 'Drag your CSV file here'}
+                  {dragOver ? t('products.import.dropNow') : t('products.import.dropHere')}
                 </div>
-                <div className="csv-dropzone-or">or</div>
+                <div className="csv-dropzone-or">{t('products.import.or')}</div>
                 <div className="csv-dropzone-pick">
-                  <UploadSimple weight="bold" /> Choose CSV file
+                  <UploadSimple weight="bold" /> {t('products.import.chooseFile')}
                 </div>
                 <input type="file" accept=".csv,text/csv" style={{ display: 'none' }}
                   onChange={(e) => onPickFile(e.target.files?.[0])} />
-                <div className="csv-dropzone-hint">Max 5 MB · 5000 rows · UTF-8</div>
+                <div className="csv-dropzone-hint">{t('products.import.fileHint')}</div>
               </label>
 
               <div className="cpm-section">
-                <label className="po-field-label">Expected columns</label>
+                <label className="po-field-label">{t('products.import.expectedColumns')}</label>
                 <div className="csv-cols">
                   {KNOWN_HEADERS.map(h => (
                     <span key={h} className={`csv-col-chip${REQUIRED_HEADERS.includes(h) ? ' csv-col-chip--req' : ''}`}>
@@ -178,10 +180,8 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
                     </span>
                   ))}
                 </div>
-                <span className="cpm-section-hint">
-                  Only <b>title</b> is required. The rest are optional — any column not in the list will be ignored.
-                  Multiple SKU rows can share the same <b>title</b> to attach them to the same product.
-                </span>
+                <span className="cpm-section-hint"
+                  dangerouslySetInnerHTML={{ __html: t('products.import.columnsHint') }} />
               </div>
             </>
           )}
@@ -193,25 +193,25 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
                   <FileCsv weight="duotone" className="csv-file-icon" />
                   <div style={{ flex: 1 }}>
                     <div className="csv-file-name">{file?.name}</div>
-                    <div className="csv-file-meta">{rows.length} rows · {(file?.size / 1024).toFixed(1)} KB</div>
+                    <div className="csv-file-meta">{t('products.import.rowsMeta', { rows: rows.length, size: (file?.size / 1024).toFixed(1) })}</div>
                   </div>
                   <button type="button" className="auth-btn-danger"
                     onClick={() => { setStage('pick'); setRows([]); setHeaders([]); setDryRes(null); setFile(null); }}>
-                    Change file
+                    {t('products.import.changeFile')}
                   </button>
                 </div>
 
                 {dryRes && (
                   <div className="csv-summary">
                     <span className="csv-summary-item">
-                      <Check weight="bold" /> New products: <b>{dryRes.products_created}</b>
+                      <Check weight="bold" /> {t('products.import.newProducts')} <b>{dryRes.products_created}</b>
                     </span>
                     <span className="csv-summary-item">
-                      <Check weight="bold" /> New SKUs: <b>{dryRes.skus_created}</b>
+                      <Check weight="bold" /> {t('products.import.newSkus')} <b>{dryRes.skus_created}</b>
                     </span>
                     {dryRes.errors?.length > 0 && (
                       <span className="csv-summary-item csv-summary-item--warn">
-                        <Warning weight="bold" /> Errors: <b>{dryRes.errors.length}</b>
+                        <Warning weight="bold" /> {t('products.import.errors')} <b>{dryRes.errors.length}</b>
                       </span>
                     )}
                   </div>
@@ -219,10 +219,10 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
 
                 {dryRes?.errors?.length > 0 && (
                   <details className="csv-errors-details">
-                    <summary>Show errors ({dryRes.errors.length})</summary>
+                    <summary>{t('products.import.showErrors', { count: dryRes.errors.length })}</summary>
                     <ul>
                       {dryRes.errors.slice(0, 50).map((e, i) => (
-                        <li key={i}>Row {e.row}: {e.error}</li>
+                        <li key={i}>{t('products.import.rowError', { row: e.row, error: e.error })}</li>
                       ))}
                     </ul>
                   </details>
@@ -230,7 +230,7 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
               </div>
 
               <div className="cpm-section">
-                <label className="po-field-label">Preview · first 10 rows</label>
+                <label className="po-field-label">{t('products.import.preview')}</label>
                 <div className="csv-preview-wrap">
                   <table className="csv-preview-table">
                     <thead>
@@ -248,7 +248,7 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
               <div className="auth-actions">
                 <button className="crm-submit-btn" disabled={stage === 'committing'}
                   onClick={commit} type="button">
-                  {stage === 'committing' ? 'Importing…' : `Import ${rows.length} row(s)`}
+                  {stage === 'committing' ? t('products.import.importing') : t('products.import.importRows', { count: rows.length })}
                 </button>
               </div>
             </>
@@ -257,11 +257,10 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
           {stage === 'done' && (
             <div className="csv-done">
               <div className="csv-done-circle"><Check weight="bold" /></div>
-              <div className="csv-done-title">Import complete</div>
-              <div className="csv-done-sub">
-                Imported <b>{dryRes.products_created}</b> products, <b>{dryRes.skus_created + dryRes.skus_updated}</b> SKUs
-              </div>
-              <button className="crm-submit-btn" onClick={onClose} type="button">Close</button>
+              <div className="csv-done-title">{t('products.import.complete')}</div>
+              <div className="csv-done-sub"
+                dangerouslySetInnerHTML={{ __html: t('products.import.completeSub', { products: dryRes.products_created, skus: dryRes.skus_created + dryRes.skus_updated }) }} />
+              <button className="crm-submit-btn" onClick={onClose} type="button">{t('products.import.close')}</button>
             </div>
           )}
 

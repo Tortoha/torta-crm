@@ -1,0 +1,247 @@
+{
+  "comms": {
+    "chat": {
+      "pageTitle": "Chat with Customers",
+      "tabChats": "Chats",
+      "tabChannels": "Channels",
+      "channels": "Channels",
+      "channelsSubtitle": "Connect messaging channels to receive customer messages right inside your CRM.",
+      "searchConversations": "Search conversations…",
+      "active": "Active",
+      "inactive": "Inactive",
+      "noActiveChats": "No active chats yet",
+      "closedChatsAppear": "Closed chats appear here",
+      "selectConversation": "Select a conversation",
+      "selectConversationDesc": "Choose a chat from the list to view messages.",
+      "noMessages": "No messages yet.",
+      "typeMessage": "Type a message…",
+      "send": "Send",
+      "chatClosed": "This chat is closed. Reopen it to reply.",
+      "closeChat": "Close chat",
+      "reopen": "Reopen",
+      "via": "via {{channel}}",
+      "copyId": "Copy ID",
+      "idCopied": "ID copied",
+      "markAsRead": "Mark as read",
+      "reopenChat": "Reopen chat",
+      "copyText": "Copy text",
+      "copied": "Copied",
+      "downloadPng": "Download as PNG",
+      "openOriginal": "Open original",
+      "image": "image",
+      "attachment": "attachment",
+      "play": "Play",
+      "pause": "Pause",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "close": "Close",
+      "failedLoad": "Failed to load messages",
+      "failedSend": "Failed to send",
+      "failedDelete": "Failed to delete",
+      "downloadFailed": "Download failed",
+      "deleteMsgConfirm": "Delete this message? This only removes it from your CRM, not from the messenger.",
+      "chatClosedToast": "Chat closed",
+      "chatReopenedToast": "Chat reopened",
+      "failed": "Failed",
+      "connected": "Connected",
+      "connectedAs": "Connected as",
+      "connectedAsName": "Connected as {{name}}",
+      "realtime": "Real-time",
+      "webhook": "Webhook",
+      "webhookUrl": "Webhook URL",
+      "webhookHint": "Paste this into the platform's webhook settings. Requires public HTTPS — works in production, not on localhost.",
+      "checkingDomain": "Checking verified email domain…",
+      "noVerifiedDomain": "No verified email domain",
+      "noVerifiedDomainBody1": "Email channel reuses the domain you've already verified for sending OTP codes. Open",
+      "noVerifiedDomainBody2": "and finish DKIM/SPF/DMARC verification, then come back here.",
+      "authEmailLink": "Authentication → Email",
+      "dnsMxTitle": "DNS — MX record",
+      "dnsMxHint1": "Add this MX record to your domain so incoming mail reaches our servers. Any address at this domain",
+      "dnsMxHint2": "will land in this chat.",
+      "noSetup": "No setup required",
+      "noSetupDesc": "Web Chat uses your project's existing API credentials. Click Connect and the support widget will appear on every page of your storefront.",
+      "lockedToDomain": "Locked to your verified email domain",
+      "lockedHint1": "Locked to your verified email domain. To change it, update the domain in",
+      "lockedHint2": "first.",
+      "customerWillSee": "Customer will see in their inbox",
+      "connectedToast": "Connected.",
+      "failedSave": "Failed to save",
+      "update": "Update",
+      "connect": "Connect",
+      "removing": "Removing…",
+      "disconnect": "Disconnect",
+      "channel": {
+        "webchat": { "desc": "Embed a support widget on your website. Customers chat anonymously." },
+        "telegram": {
+          "desc": "Connect a Telegram bot to receive direct messages from customers.",
+          "field": { "bot_token": { "label": "Bot token", "hint": "Talk to @BotFather on Telegram, create a bot, then paste the token here." } }
+        },
+        "discord": {
+          "desc": "Connect a Discord bot to receive direct messages from users.",
+          "field": { "bot_token": { "label": "Bot token", "hint": "Discord Developer Portal → Applications → New App → Bot → Reset Token. Enable Privileged Gateway Intent: MESSAGE CONTENT." } }
+        },
+        "whatsapp": {
+          "desc": "Receive customer messages via the WhatsApp Cloud API.",
+          "field": {
+            "phone_number_id": { "label": "Phone number ID", "hint": "From Meta for Developers → WhatsApp → API Setup." },
+            "access_token": { "label": "Permanent access token", "hint": "System User token with whatsapp_business_messaging scope." },
+            "verify_token": { "label": "Webhook verify token", "hint": "Make up any string. Paste the same string into Meta when subscribing the webhook." },
+            "app_secret": { "label": "App secret", "hint": "From your Meta App → Settings → Basic. Used to verify X-Hub-Signature-256." }
+          }
+        },
+        "instagram": {
+          "desc": "Receive Instagram Direct messages from your business profile.",
+          "field": {
+            "page_id": { "label": "Instagram page ID", "hint": "The IG Business Account ID linked to a Facebook Page." },
+            "access_token": { "label": "Page access token", "hint": "Long-lived Page token with instagram_manage_messages scope." },
+            "verify_token": { "label": "Webhook verify token", "hint": "Used during the Meta subscription handshake." },
+            "app_secret": { "label": "App secret", "hint": "From your Meta App → Settings → Basic." }
+          }
+        },
+        "facebook": {
+          "desc": "Receive Facebook Messenger conversations from your Page.",
+          "field": {
+            "page_id": { "label": "Facebook Page ID", "hint": "Numeric ID of your Page." },
+            "access_token": { "label": "Page access token", "hint": "Long-lived Page token with pages_messaging scope." },
+            "verify_token": { "label": "Webhook verify token", "hint": "Used during the Meta subscription handshake." },
+            "app_secret": { "label": "App secret", "hint": "From your Meta App → Settings → Basic." }
+          }
+        },
+        "viber": {
+          "desc": "Receive customer messages from your Viber bot.",
+          "field": { "auth_token": { "label": "Auth token", "hint": "Viber Admin Panel → Account info → Authentication token. Webhook URL is registered automatically when you have HTTPS." } }
+        },
+        "x": {
+          "desc": "Receive Direct Messages from your X account.",
+          "field": {
+            "bearer_token": { "label": "OAuth 2.0 Bearer token", "hint": "X Developer Portal → Project → Keys and Tokens → Bearer Token. Requires Elevated access for DM endpoints." },
+            "handle": { "label": "Account handle", "hint": "For display only — used to label this integration." },
+            "app_secret": { "label": "App secret", "hint": "Consumer secret used to verify webhook signatures." }
+          }
+        },
+        "email": {
+          "desc": "Receive customer emails sent to any address @your-verified-domain. Replies are threaded.",
+          "field": {
+            "domain": { "label": "Verified email domain", "hint": "Must be a domain you've already verified in Authentication → Email (DKIM/SPF/DMARC). Any address at this domain will be routed to this chat." },
+            "reply_local": { "label": "Reply-from address", "hint": "Local part only. Customer replies will land in the same chat regardless of this — this only controls what they see in the From field." },
+            "reply_name": { "label": "Reply-from display name", "hint": "Shown as the sender name in the customer's inbox. Leave blank to reuse the Auth Providers display name." }
+          }
+        }
+      }
+    },
+    "emails": {
+      "tab": {
+        "verification": "Verification",
+        "password_reset": "Password reset",
+        "order_confirmation": "Order",
+        "booking_reminder": "Booking",
+        "abandoned_cart": "Abandoned cart",
+        "restock": "Restock",
+        "broadcasts": "Broadcasts"
+      },
+      "title": {
+        "verification": "Verification code",
+        "password_reset": "Password reset",
+        "order_confirmation": "Order confirmation",
+        "booking_reminder": "Booking reminder",
+        "abandoned_cart": "Abandoned cart",
+        "restock": "Restock",
+        "broadcasts": "Broadcasts"
+      },
+      "status": {
+        "draft": "draft",
+        "scheduled": "scheduled",
+        "recurring": "recurring",
+        "sending": "sending",
+        "sent": "sent"
+      },
+      "dow": {
+        "mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun"
+      },
+      "resetConfirm": "Reset this email to the default design?",
+      "resetDone": "Reset to default",
+      "resetToDefault": "Reset to default",
+      "requiredWarn": "This email must include {{vars}} — changes won't save until you add it back.",
+      "broadcastsHint": "Send a campaign to all your customers — now or on a schedule.",
+      "newCampaign": "New campaign",
+      "noCampaigns": "No campaigns yet. Create your first broadcast.",
+      "untitled": "Untitled",
+      "noSubject": "No subject",
+      "sentCount": "{{sent}}/{{total}} sent",
+      "campaignName": "Campaign name",
+      "back": "Back",
+      "draftSendNow": "Draft / send now",
+      "oneTime": "One-time",
+      "weekly": "Weekly",
+      "excludeGuests": "Exclude guests",
+      "schedule": "Schedule",
+      "sendToAll": "Send to all",
+      "testPlaceholder": "Send a test to you@example.com",
+      "sendTest": "Send test",
+      "scheduled": "Scheduled",
+      "sendingToAll": "Sending to all customers…",
+      "testSent": "Test sent",
+      "deleteConfirm": "Delete this campaign?"
+    },
+    "editor": {
+      "subjectLine": "Subject line",
+      "layers": "Layers",
+      "background": "Background",
+      "noBlocks": "No blocks yet — add one below.",
+      "uploading": "Uploading…",
+      "canvasHint": "Paste an image (Ctrl+V) or drop an image / PDF anywhere here.",
+      "selectBlock": "Select a block to edit it.",
+      "show": "Show",
+      "hide": "Hide",
+      "addBlock": "Add {{block}}",
+      "bgNote": "Style the email panel and the page behind it — each can have its own colour and image.",
+      "emailPanel": "Email panel",
+      "pageBackground": "Page background",
+      "colour": "Colour",
+      "corners": "Corners — {{px}}px",
+      "shadowLabel": "Shadow",
+      "image": "Image",
+      "uploadImage": "Upload image",
+      "removePanelImage": "Remove panel image",
+      "removePageImage": "Remove page image",
+      "resetBackground": "Reset background",
+      "block": {
+        "heading": "Heading",
+        "text": "Text",
+        "button": "Button",
+        "image": "Image",
+        "divider": "Divider",
+        "spacer": "Spacer",
+        "code": "Code (OTP)",
+        "order_summary": "Order summary",
+        "downloads": "Downloads"
+      },
+      "dynamicNote": {
+        "code": "Renders the live verification code at send time.",
+        "order_summary": "Renders the order items and total at send time.",
+        "downloads": "Renders digital download links at send time (digital orders only)."
+      },
+      "align": { "left": "left", "center": "center", "right": "right" },
+      "shadow": { "none": "None", "soft": "Soft", "medium": "Medium", "strong": "Strong" },
+      "f": {
+        "text": "Text",
+        "alignment": "Alignment",
+        "textColor": "Text color",
+        "fontSize": "Font size (px)",
+        "label": "Label",
+        "linkUrl": "Link URL",
+        "background": "Background",
+        "labelColor": "Label color",
+        "cornerRadius": "Corner radius",
+        "border": "Border",
+        "shadow": "Shadow",
+        "imageUrl": "Image URL",
+        "altText": "Alt text",
+        "width": "Width (px)",
+        "codeColor": "Code color",
+        "color": "Color",
+        "height": "Height (px)"
+      }
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import {
@@ -17,14 +18,15 @@ const CARD_TILT = { maxAngle: 10, lerp: 0.05, lerpOut: 0.07, scale: 1.03, perspe
 
 // ── Sort options ─────────────────────────────────────────────────────────
 const SORT_OPTIONS = [
-  { field: 'name',  label: 'Sort by name'     },
-  { field: 'count', label: 'Sort by products' },
-  { field: 'date',  label: 'Sort by date'     },
+  { field: 'name',  labelKey: 'products.categories.sortByName'     },
+  { field: 'count', labelKey: 'products.categories.sortByProducts' },
+  { field: 'date',  labelKey: 'products.categories.sortByDate'     },
 ];
 const DEFAULT_DIR = { name: 'asc', count: 'desc', date: 'desc' };
 
 // ─── Sort toggle (mirror of ProductsList) ───────────────────────────────
 function CatSortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -52,7 +54,7 @@ function CatSortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         const isCur  = curField === field;
         return (
@@ -65,7 +67,7 @@ function CatSortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -74,6 +76,7 @@ function CatSortToggle({ sort, onSort }) {
 }
 
 function CatMenu({ btnRef, hasProducts, onEdit, onDeleteKeep, onDeleteMove, onDeleteAll, onClose }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
   const [hovered, setHovered] = useState(null);
   const { indRef, setItemRef } = DynamicBlock(hovered);
@@ -90,9 +93,9 @@ function CatMenu({ btnRef, hasProducts, onEdit, onDeleteKeep, onDeleteMove, onDe
   if (!pos) return null;
 
   const dangerItems = [
-    { key: 'delKeep', label: 'Delete (keep products)',   Icon: Trash,           onClick: onDeleteKeep, disabled: false },
-    { key: 'delMove', label: 'Delete & move products…',  Icon: ArrowsLeftRight, onClick: onDeleteMove, disabled: !hasProducts },
-    { key: 'delAll',  label: 'Delete with all products', Icon: Warning,         onClick: onDeleteAll,  disabled: !hasProducts },
+    { key: 'delKeep', label: t('products.categories.deleteKeep'), Icon: Trash,           onClick: onDeleteKeep, disabled: false },
+    { key: 'delMove', label: t('products.categories.deleteMove'), Icon: ArrowsLeftRight, onClick: onDeleteMove, disabled: !hasProducts },
+    { key: 'delAll',  label: t('products.categories.deleteAll'),  Icon: Warning,         onClick: onDeleteAll,  disabled: !hasProducts },
   ];
 
   return createPortal(
@@ -105,7 +108,7 @@ function CatMenu({ btnRef, hasProducts, onEdit, onDeleteKeep, onDeleteMove, onDe
           className={`org-card-dropdown-item org-menu-item${hovered === 'edit' ? ' org-menu-item--current' : ''}`}
           onMouseEnter={() => setHovered('edit')}
           onClick={onEdit}>
-          <PencilSimple className="org-card-dropdown-icon" /> Edit
+          <PencilSimple className="org-card-dropdown-icon" /> {t('products.categories.edit')}
         </button>
       </div>
 
@@ -126,6 +129,7 @@ function CatMenu({ btnRef, hasProducts, onEdit, onDeleteKeep, onDeleteMove, onDe
 
 // ─── Category card — minimal: text + 3-dot on a single row ─────────────
 function CategoryCard({ c, onEdit, onDeleteKeep, onDeleteMove, onDeleteAll }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const { ref, glossRef, handlers } = InteractiveSection(CARD_TILT, false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -153,12 +157,12 @@ function CategoryCard({ c, onEdit, onDeleteKeep, onDeleteMove, onDeleteAll }) {
       <div className="cat-card-body">
         <span className="cat-card-title">{c.name}</span>
         <span className="cat-card-meta">
-          {c.products_count === 0 ? 'No products' : c.products_count === 1 ? '1 product' : `${c.products_count} products`}
+          {c.products_count === 0 ? t('products.categories.noProducts') : c.products_count === 1 ? t('products.categories.oneProduct') : t('products.categories.manyProducts', { count: c.products_count })}
         </span>
       </div>
       <button ref={menuBtnRef} className="org-card-menu-btn cat-card-menu-btn" type="button"
         onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}
-        aria-label="Menu">
+        aria-label={t('products.categories.menu')}>
         <DotsThreeOutline weight="fill" />
       </button>
       {menuOpen && (
@@ -174,6 +178,7 @@ function CategoryCard({ c, onEdit, onDeleteKeep, onDeleteMove, onDeleteAll }) {
 }
 
 function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(initial?.name ?? '');
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState('');
@@ -221,7 +226,7 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
     if (!open || !isEdit) return;
     const trimmed = name.trim();
     if (!trimmed || trimmed === lastSavedName.current) return;
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       const res = await fetch(`${API_BASE}/api/categories/${initial.id}${pq}`, {
         method: 'PATCH', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -233,10 +238,10 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
         setErr('');
       } else {
         const d = await res.json().catch(() => ({}));
-        setErr(d.detail || 'Error');
+        setErr(d.detail || t('products.categories.editModal.error'));
       }
     }, 400);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [name, isEdit, open, initial, pq]);
 
   if (!open) return null;
@@ -250,7 +255,7 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
     });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
-      setErr(d.detail || 'Failed to assign products');
+      setErr(d.detail || t('products.categories.editModal.assignFailed'));
       return false;
     }
     dirty.current = true;
@@ -289,7 +294,7 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
   const submit = async e => {
     e.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) return setErr('Name is required');
+    if (!trimmed) return setErr(t('products.categories.editModal.nameRequired'));
     setBusy(true); setErr('');
 
     const res = await fetch(`${API_BASE}/api/categories${pq}`, {
@@ -298,7 +303,7 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
       body: JSON.stringify({ name: trimmed }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) { setErr(data.detail || 'Error'); setBusy(false); return; }
+    if (!res.ok) { setErr(data.detail || t('products.categories.editModal.error')); setBusy(false); return; }
 
     if (data.id && selected.size > 0) {
       const res2 = await fetch(`${API_BASE}/api/categories/${data.id}/products${pq}`, {
@@ -308,7 +313,7 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
       });
       if (!res2.ok) {
         const d2 = await res2.json().catch(() => ({}));
-        setErr(d2.detail || 'Failed to assign products');
+        setErr(d2.detail || t('products.categories.editModal.assignFailed'));
         setBusy(false);
         return;
       }
@@ -326,10 +331,10 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">{isEdit ? 'Edit category' : 'New category'}</div>
+              <div className="auth-modal-title">{isEdit ? t('products.categories.editModal.editTitle') : t('products.categories.editModal.newTitle')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  {isEdit ? 'Changes are saved automatically.' : 'A URL slug will be auto-generated from the name.'}
+                  {isEdit ? t('products.categories.editModal.editSubtitle') : t('products.categories.editModal.newSubtitle')}
                 </span>
               </div>
             </div>
@@ -342,40 +347,40 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
         <div className="auth-modal-body">
           <form onSubmit={submit} className="cat-edit-form">
             <div className="auth-field cat-edit-field">
-              <label className="auth-label">Name</label>
+              <label className="auth-label">{t('products.categories.editModal.name')}</label>
               <input className="crm-input" autoFocus value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder="Trousers, Shoes, Drinks…" maxLength={100} />
+                placeholder={t('products.categories.editModal.namePlaceholder')} maxLength={100} />
             </div>
 
             {/* ── Products picker ─────────────────────────────────────── */}
             <div className="cat-prod-section">
               <div className="cat-prod-section-head">
                 <label className="auth-label" style={{ margin: 0 }}>
-                  {isEdit ? 'Products in this category' : 'Add products'}
+                  {isEdit ? t('products.categories.editModal.productsInCategory') : t('products.categories.editModal.addProducts')}
                 </label>
                 <span className="cat-prod-count">
-                  {selectedCount} selected
+                  {t('products.categories.editModal.selected', { count: selectedCount })}
                 </span>
               </div>
 
               <div className="cat-prod-search-wrap">
                 <MagnifyingGlass className="cat-prod-search-icon" />
                 <input className="crm-input cat-prod-search-input"
-                  placeholder="Search products…"
+                  placeholder={t('products.categories.editModal.searchProducts')}
                   value={prodSearch}
                   onChange={e => setProdSearch(e.target.value)} />
               </div>
 
               <div className="cat-prod-list">
-                {prodLoading && <p className="cat-prod-empty">Loading…</p>}
+                {prodLoading && <p className="cat-prod-empty">{t('products.categories.editModal.loading')}</p>}
                 {!prodLoading && filteredProducts.length === 0 && (
                   <p className="cat-prod-empty">
                     {prodSearch
-                      ? 'No products match your search.'
+                      ? t('products.categories.editModal.noMatch')
                       : isEdit
-                        ? 'No products in this category yet, and nothing uncategorized to add.'
-                        : 'No uncategorized products available.'}
+                        ? t('products.categories.editModal.emptyEdit')
+                        : t('products.categories.editModal.emptyNew')}
                   </p>
                 )}
                 {!prodLoading && filteredProducts.map(p => {
@@ -391,9 +396,9 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
                           ? <img className="cat-prod-thumb" src={p.first_image} alt="" />
                           : <div className="cat-prod-thumb-empty" />}
                       </div>
-                      <span className="cat-prod-title">{p.title || 'Untitled'}</span>
+                      <span className="cat-prod-title">{p.title || t('products.categories.editModal.untitled')}</span>
                       {isEdit && !inThisCat && (
-                        <span className="cat-prod-badge">Uncategorized</span>
+                        <span className="cat-prod-badge">{t('products.categories.editModal.uncategorizedBadge')}</span>
                       )}
                     </label>
                   );
@@ -405,10 +410,10 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
             {!isEdit && (
               <div className="auth-actions">
                 <button className="crm-submit-btn" type="submit" disabled={busy}>
-                  {busy ? 'Saving…' : 'Create'}
+                  {busy ? t('products.categories.editModal.saving') : t('products.categories.editModal.create')}
                 </button>
                 <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-                  Cancel
+                  {t('common.cancel')}
                 </button>
               </div>
             )}
@@ -427,6 +432,7 @@ function slugifyPreview(name) {
 
 // ─── Delete: keep products (simple confirm) ─────────────────────────────
 function DeleteKeepModal({ category, pq, onClose, onDone }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   if (!category) return null;
   const count = category.products_count;
@@ -443,9 +449,9 @@ function DeleteKeepModal({ category, pq, onClose, onDone }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Delete category</div>
+              <div className="auth-modal-title">{t('products.categories.deleteKeepModal.title')}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">Products inside will become uncategorized — they are NOT deleted.</span>
+                <span className="auth-modal-subtitle">{t('products.categories.deleteKeepModal.subtitle')}</span>
               </div>
             </div>
           </div>
@@ -455,15 +461,15 @@ function DeleteKeepModal({ category, pq, onClose, onDone }) {
         </div>
         <div className="auth-modal-body">
           <p className="cat-modal-text">
-            Delete <b>{category.name}</b>?
-            {count > 0 && <> {count === 1 ? '1 product' : `${count} products`} will move to <b>Uncategorized</b>.</>}
+            {t('products.categories.deleteKeepModal.promptPrefix')} <b>{category.name}</b>?
+            {count > 0 && <> {count === 1 ? t('products.categories.deleteKeepModal.moveOne') : t('products.categories.deleteKeepModal.moveMany', { count })} <b>{t('products.categories.deleteKeepModal.uncategorized')}</b>.</>}
           </p>
           <div className="auth-actions">
             <button className="crm-submit-btn auth-btn-danger" onClick={go} disabled={busy}>
-              {busy ? 'Deleting…' : 'Delete category'}
+              {busy ? t('products.categories.deleteKeepModal.deleting') : t('products.categories.deleteKeepModal.deleteCategory')}
             </button>
             <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -475,6 +481,7 @@ function DeleteKeepModal({ category, pq, onClose, onDone }) {
 
 // ─── Delete & move (pick destination) ───────────────────────────────────
 function DeleteMoveModal({ category, allCategories, pq, onClose, onDone }) {
+  const { t } = useTranslation();
   const [target, setTarget] = useState('');
   const [busy,   setBusy]   = useState(false);
   const [err,    setErr]    = useState('');
@@ -483,13 +490,13 @@ function DeleteMoveModal({ category, allCategories, pq, onClose, onDone }) {
   const count = category.products_count;
 
   const go = async () => {
-    if (!target) return setErr('Pick a destination category');
+    if (!target) return setErr(t('products.categories.deleteMoveModal.pickDestination'));
     setBusy(true); setErr('');
     const res = await fetch(`${API_BASE}/api/categories/${category.id}${pq}&mode=move&target_id=${target}`, {
       method: 'DELETE', credentials: 'include',
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) { setErr(data.detail || 'Error'); setBusy(false); return; }
+    if (!res.ok) { setErr(data.detail || t('products.categories.deleteMoveModal.error')); setBusy(false); return; }
     onDone(); setBusy(false);
   };
 
@@ -499,9 +506,9 @@ function DeleteMoveModal({ category, allCategories, pq, onClose, onDone }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Delete &amp; move products</div>
+              <div className="auth-modal-title">{t('products.categories.deleteMoveModal.title')}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">All products will be moved to another category before deletion.</span>
+                <span className="auth-modal-subtitle">{t('products.categories.deleteMoveModal.subtitle')}</span>
               </div>
             </div>
           </div>
@@ -511,15 +518,15 @@ function DeleteMoveModal({ category, allCategories, pq, onClose, onDone }) {
         </div>
         <div className="auth-modal-body">
           <p className="cat-modal-text">
-            Move {count === 1 ? '1 product' : `${count} products`} from <b>{category.name}</b> to:
+            {count === 1 ? t('products.categories.deleteMoveModal.moveOne') : t('products.categories.deleteMoveModal.moveMany', { count })} <b>{category.name}</b> {t('products.categories.deleteMoveModal.to')}:
           </p>
           {choices.length === 0 ? (
-            <p className="cat-modal-hint">No other categories exist. Create one first, or use a different delete option.</p>
+            <p className="cat-modal-hint">{t('products.categories.deleteMoveModal.noOther')}</p>
           ) : (
             <div className="auth-field cat-edit-field">
-              <label className="auth-label">Destination</label>
+              <label className="auth-label">{t('products.categories.deleteMoveModal.destination')}</label>
               <select className="crm-input" value={target} onChange={e => setTarget(e.target.value)}>
-                <option value="">— Select destination —</option>
+                <option value="">{t('products.categories.deleteMoveModal.selectDestination')}</option>
                 {choices.map(c => (
                   <option key={c.id} value={c.id}>{c.name} ({c.products_count})</option>
                 ))}
@@ -530,10 +537,10 @@ function DeleteMoveModal({ category, allCategories, pq, onClose, onDone }) {
           <div className="auth-actions">
             <button className="crm-submit-btn auth-btn-danger" onClick={go}
               disabled={busy || !target || choices.length === 0}>
-              {busy ? 'Moving…' : 'Move & Delete'}
+              {busy ? t('products.categories.deleteMoveModal.moving') : t('products.categories.deleteMoveModal.moveAndDelete')}
             </button>
             <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -545,6 +552,7 @@ function DeleteMoveModal({ category, allCategories, pq, onClose, onDone }) {
 
 // ─── Delete with all products (type-to-confirm) ─────────────────────────
 function DeleteAllModal({ category, pq, onClose, onDone }) {
+  const { t } = useTranslation();
   const [typed, setTyped] = useState('');
   const [busy,  setBusy]  = useState(false);
   if (!category) return null;
@@ -566,9 +574,9 @@ function DeleteAllModal({ category, pq, onClose, onDone }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Delete with all products</div>
+              <div className="auth-modal-title">{t('products.categories.deleteAllModal.title')}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle cat-modal-danger-text">This action cannot be undone.</span>
+                <span className="auth-modal-subtitle cat-modal-danger-text">{t('products.categories.deleteAllModal.subtitle')}</span>
               </div>
             </div>
           </div>
@@ -578,13 +586,13 @@ function DeleteAllModal({ category, pq, onClose, onDone }) {
         </div>
         <div className="auth-modal-body">
           <p className="cat-modal-text">
-            This will permanently delete the category <b>{category.name}</b>{' '}
-            and {count === 1 ? '1 product' : `all ${count} products`} inside it,
-            including their variations, sizes, reviews, and cart entries.
+            {t('products.categories.deleteAllModal.bodyPrefix')} <b>{category.name}</b>{' '}
+            {count === 1 ? t('products.categories.deleteAllModal.bodyOne') : t('products.categories.deleteAllModal.bodyMany', { count })}{' '}
+            {t('products.categories.deleteAllModal.bodySuffix')}
           </p>
           <div className="auth-field cat-edit-field">
             <label className="auth-label">
-              Type <code className="cat-modal-code">{category.name}</code> to confirm
+              {t('products.categories.deleteAllModal.typePrefix')} <code className="cat-modal-code">{category.name}</code> {t('products.categories.deleteAllModal.typeSuffix')}
             </label>
             <input className="crm-input" value={typed}
               onChange={e => setTyped(e.target.value)}
@@ -592,10 +600,10 @@ function DeleteAllModal({ category, pq, onClose, onDone }) {
           </div>
           <div className="auth-actions">
             <button className="crm-submit-btn auth-btn-danger" onClick={go} disabled={!matches || busy}>
-              {busy ? 'Deleting…' : `Delete category${count > 0 ? ` + ${count} product${count === 1 ? '' : 's'}` : ''}`}
+              {busy ? t('products.categories.deleteAllModal.deleting') : (count > 0 ? t('products.categories.deleteAllModal.deleteWithProducts', { count }) : t('products.categories.deleteAllModal.deleteCategory'))}
             </button>
             <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -607,6 +615,7 @@ function DeleteAllModal({ category, pq, onClose, onDone }) {
 
 // ─── Main page ──────────────────────────────────────────────────────────
 export default function Categories() {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
 
@@ -647,21 +656,21 @@ export default function Categories() {
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search categories…"
+          <input className="org-search-input" placeholder={t('products.categories.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <CatSortToggle sort={sort} onSort={setSort} />
         <button className="org-new-btn" onClick={() => setEditTarget({})} type="button">
-          <Plus className="org-new-icon" /> New Category
+          <Plus className="org-new-icon" /> {t('products.categories.newCategory')}
         </button>
       </div>
 
       {/* Grid only */}
       <div className="prod-content">
-        {loading && <p className="crm-placeholder">Loading…</p>}
+        {loading && <p className="crm-placeholder">{t('common.loading')}</p>}
         {!loading && sorted.length === 0 && (
           <p className="crm-placeholder">
-            {search ? 'No categories match your search.' : 'No categories yet. Click "New Category" to add one.'}
+            {search ? t('products.categories.noMatch') : t('products.categories.empty')}
           </p>
         )}
         {!loading && sorted.length > 0 && (

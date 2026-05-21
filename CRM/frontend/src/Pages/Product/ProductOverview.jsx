@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Plus, Trash, CaretDown, ArrowCounterClockwise, DotsSixVertical, ArrowsOut, X, MagicWand } from '@phosphor-icons/react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json as cmJson } from '@codemirror/lang-json';
@@ -26,6 +27,7 @@ import '../../Style/Booking.css';
 
 
 export default function ProductOverview() {
+  const { t } = useTranslation();
   const { projectId, setProductContext } = useOutletContext();
   const { productHash } = useParams();
   const productId = decodeHash(productHash);
@@ -180,7 +182,7 @@ export default function ProductOverview() {
 
   const deleteLastLayer = async () => {
     if (shownLayers <= 1) return;
-    if (!confirm(`Delete entire Layer ${shownLayers}?\nAll rows at this layer will be lost. Carts/orders referencing them will break.`)) return;
+    if (!confirm(t('productDetail.layer.deleteLayerConfirm', { n: shownLayers }))) return;
     // Snapshot every row at the target layer (with subtree) for Undo.
     const layerN = shownLayers;
     const rows = [];
@@ -204,7 +206,7 @@ export default function ProductOverview() {
     await reloadProduct();
     if (rows.length && registerUndo) {
       registerUndo({
-        description: `Layer ${layerN} deleted (${rows.length} row${rows.length === 1 ? '' : 's'})`,
+        description: t('productDetail.layer.layerDeletedUndo', { layer: layerN, count: rows.length }),
         undo: async () => {
           const r = await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
             method: 'POST', credentials: 'include',
@@ -219,15 +221,15 @@ export default function ProductOverview() {
     }
   };
 
-  if (loading)  return <Shell><p className="crm-placeholder">Loading…</p></Shell>;
-  if (notFound) return <Shell><p className="crm-placeholder">Product not found.</p></Shell>;
+  if (loading)  return <Shell><p className="crm-placeholder">{t('common.loading')}</p></Shell>;
+  if (notFound) return <Shell><p className="crm-placeholder">{t('productDetail.common.notFound')}</p></Shell>;
 
   const lastLayerItems = layers?.[shownLayers - 1]?.items || [];
   const canCreateNewLayer = shownLayers < 5 && lastLayerItems.length > 0;
 
   return (
     <Shell>
-      <h1 className="crm-page-title">{product.title || 'Untitled'}</h1>
+      <h1 className="crm-page-title">{product.title || t('productDetail.common.untitled')}</h1>
 
       <GeneralBlock product={product} pq={pq} setProduct={setProduct}
         setProductContext={setProductContext} productHash={productHash}
@@ -277,7 +279,7 @@ export default function ProductOverview() {
 
       {product.product_type !== 'digital' && product.product_type !== 'service' && canCreateNewLayer && (
         <button className="po-add-layer-btn" type="button" onClick={createNewLayer}>
-          <Plus weight="bold" /> Create Configuration Layer {shownLayers + 1}
+          <Plus weight="bold" /> {t('productDetail.layer.createLayer', { n: shownLayers + 1 })}
         </button>
       )}
 
@@ -317,8 +319,8 @@ export default function ProductOverview() {
           <ArrowCounterClockwise weight="bold" className="undo-toast-icon" />
           <span className="undo-toast-text">{undoToast.description}</span>
           <button type="button" className="undo-toast-btn"
-            onClick={() => { performUndo(); }}>Undo</button>
-          <button type="button" className="undo-toast-close" aria-label="Dismiss"
+            onClick={() => { performUndo(); }}>{t('productDetail.undoToast.undo')}</button>
+          <button type="button" className="undo-toast-close" aria-label={t('productDetail.undoToast.dismiss')}
             onClick={dismissUndo}>×</button>
         </div>,
         document.body
@@ -346,45 +348,45 @@ export default function ProductOverview() {
 
 // Figma-style floating bulk-select toolbar.
 function BulkBar({ bulk, clearBulk }) {
-  const label = bulkScopeLabel(bulk.scope, bulk.ids.length);
+  const { t } = useTranslation();
+  const label = bulkScopeLabel(bulk.scope, bulk.ids.length, t);
   return (
-    <div className="bulk-bar" role="toolbar" aria-label="Bulk actions">
+    <div className="bulk-bar" role="toolbar" aria-label={t('productDetail.bulk.ariaActions')}>
       <span className="bulk-bar-count">
         <span className="bulk-bar-dot" />
         {bulk.ids.length} {label}
       </span>
       <div className="bulk-bar-divider" />
       <button type="button" className="bulk-bar-btn bulk-bar-btn--danger"
-        onClick={() => bulk.actions?.delete?.()} title="Delete selected (or press Delete)">
-        <Trash weight="bold" /> Delete
+        onClick={() => bulk.actions?.delete?.()} title={t('productDetail.bulk.deleteTitle')}>
+        <Trash weight="bold" /> {t('common.delete')}
       </button>
-      <button type="button" className="bulk-bar-btn" onClick={clearBulk} title="Cancel (Esc)">
-        Cancel
+      <button type="button" className="bulk-bar-btn" onClick={clearBulk} title={t('productDetail.bulk.cancelTitle')}>
+        {t('common.cancel')}
       </button>
     </div>
   );
 }
 
-function bulkScopeLabel(scope, n) {
-  const plural = n === 1 ? '' : 's';
-  if (scope === 'layer1')   return `variation${plural}`;
-  if (scope === 'specs')    return `spec${plural}`;
-  if (scope === 'cf')       return `field${plural}`;
-  if (scope?.startsWith?.('layer-')) return `row${plural}`;
-  return `item${plural}`;
+function bulkScopeLabel(scope, n, t) {
+  if (scope === 'layer1')   return t('productDetail.bulk.scope.variation', { count: n });
+  if (scope === 'specs')    return t('productDetail.bulk.scope.spec', { count: n });
+  if (scope === 'cf')       return t('productDetail.bulk.scope.field', { count: n });
+  if (scope?.startsWith?.('layer-')) return t('productDetail.bulk.scope.row', { count: n });
+  return t('productDetail.bulk.scope.item', { count: n });
 }
 
 function Shell({ children }) {
   return <div className="prod-page po-page">{children}</div>;
 }
 
-const PRODUCT_TYPE_OPTIONS = [
-  { value: 'physical', label: 'Physical' },
-  { value: 'digital',  label: 'Digital'  },
-  { value: 'service',  label: 'Service'  },
-];
+const PRODUCT_TYPE_VALUES = ['physical', 'digital', 'service'];
 
 function GeneralBlock({ product, pq, setProduct, setProductContext, productHash, showToast, registerUndo }) {
+  const { t } = useTranslation();
+  const PRODUCT_TYPE_OPTIONS = PRODUCT_TYPE_VALUES.map(v => ({
+    value: v, label: t(`productDetail.overview.productType.${v}`),
+  }));
   const [title,    setTitle]    = useState(product.title || '');
   const [subtitle, setSubtitle] = useState(product.subtitle || '');
   const [desc,     setDesc]     = useState(product.description || '');
@@ -405,11 +407,11 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) { showToast('Save failed'); return false; }
+    if (!res.ok) { showToast(t('productDetail.settings.saveFailed')); return false; }
     setProduct(p => ({ ...p, ...body }));
-    showToast('Saved');
+    showToast(t('productDetail.settings.saved'));
     return true;
-  }, [product.id, pq, setProduct, showToast]);
+  }, [product.id, pq, setProduct, showToast, t]);
 
   useUndoableSave({
     value: title, setValue: setTitle, serverValue: product.title || '',
@@ -420,30 +422,30 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
       if (ok) setProductContext?.({ name: trimmed, hash: productHash });
       return ok;
     },
-    registerUndo, label: 'Title',
+    registerUndo, label: t('productDetail.overview.undoLabel.title'),
     shouldSave: (v) => !!(v || '').trim(),
   });
   useUndoableSave({
     value: subtitle, setValue: setSubtitle, serverValue: product.subtitle || '',
     save: (v) => patch({ subtitle: v }),
-    registerUndo, label: 'Subtitle',
+    registerUndo, label: t('productDetail.overview.undoLabel.subtitle'),
   });
   useUndoableSave({
     value: desc, setValue: setDesc, serverValue: product.description || '',
     save: (v) => patch({ description: v }),
-    registerUndo, label: 'Description',
+    registerUndo, label: t('productDetail.overview.undoLabel.description'),
   });
   useUndoableSave({
     value: catId, setValue: setCatId, serverValue: product.category_id ?? '',
     save: (v) => patch({ category_id: v === '' ? null : Number(v) }),
-    registerUndo, label: 'Category',
+    registerUndo, label: t('productDetail.overview.undoLabel.category'),
     silent: false,
     debounceMs: 50,
   });
   useUndoableSave({
     value: ptype, setValue: setPtype, serverValue: product.product_type || 'physical',
     save: (v) => patch({ product_type: v }),
-    registerUndo, label: 'Type',
+    registerUndo, label: t('productDetail.overview.undoLabel.type'),
     silent: false,
     debounceMs: 50,
   });
@@ -453,30 +455,30 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
   return (
     <section className="po-block">
       <div className="po-form">
-        <Field label="Title" required error={titleEmpty ? 'Title is required' : null}>
+        <Field label={t('productDetail.overview.title.title')} required error={titleEmpty ? t('productDetail.overview.titleRequired') : null}>
           <input className={`crm-input po-input${titleEmpty ? ' po-input--invalid' : ''}`} value={title}
             onChange={e => setTitle(e.target.value)}
-            placeholder="Product name" maxLength={200} />
+            placeholder={t('productDetail.overview.titlePlaceholder')} maxLength={200} />
         </Field>
-        <Field label="Subtitle">
+        <Field label={t('productDetail.overview.title.subtitle')}>
           <input className="crm-input po-input" value={subtitle}
             onChange={e => setSubtitle(e.target.value)}
-            placeholder="Short tagline shown under the title" maxLength={300} />
+            placeholder={t('productDetail.overview.subtitlePlaceholder')} maxLength={300} />
         </Field>
-        <Field label="Description">
+        <Field label={t('productDetail.overview.title.description')}>
           <textarea className="crm-input po-textarea" value={desc} rows={5}
             onChange={e => setDesc(e.target.value)}
-            placeholder="Full product description, materials, features…" />
+            placeholder={t('productDetail.overview.descriptionPlaceholder')} />
         </Field>
         {ptype !== 'service' && (
-          <Field label="Category">
+          <Field label={t('productDetail.overview.title.category')}>
             <CpmCategorySelect
               value={catId == null ? '' : String(catId)}
               categories={categories}
               onChange={setCatId} />
           </Field>
         )}
-        <Field label="Type">
+        <Field label={t('productDetail.overview.title.type')}>
           <CfCombobox value={ptype} options={PRODUCT_TYPE_OPTIONS} onChange={setPtype} size="md" />
         </Field>
       </div>
@@ -507,12 +509,16 @@ const CF_TYPE_OPTIONS = [
   { value: 'file',     label: 'file'     },
   { value: 'json',     label: 'json'     },
 ];
-const CF_GLOBAL_OPTIONS = [
-  { value: 'no',  label: 'No'  },
-  { value: 'yes', label: 'Yes' },
-];
+// Build the No/Yes global combobox options with the current translator.
+function cfGlobalOptions(t) {
+  return [
+    { value: 'no',  label: t('productDetail.customFields.no')  },
+    { value: 'yes', label: t('productDetail.customFields.yes') },
+  ];
+}
 
 function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, registerUndo, bulk, setBulk, clearBulk }) {
+  const { t } = useTranslation();
   const fields = product.custom_fields || [];
   const realKeys = fields.filter(f => !f.is_placeholder).map(f => f.field_key);
 
@@ -523,7 +529,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) { showToast('Save failed'); return false; }
+    if (!res.ok) { showToast(t('productDetail.customFields.saveFailed')); return false; }
     const data = await res.json().catch(() => ({}));
     const saved = { ...body, field_key: data.field_key || body.field_key, is_placeholder: false };
     setProduct(p => {
@@ -542,7 +548,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      showToast(err.detail || 'Save failed');
+      showToast(err.detail || t('productDetail.customFields.saveFailed'));
       return false;
     }
     const data = await res.json().catch(() => ({}));
@@ -560,27 +566,27 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
     if (!target) return;
     const isGlobal = !!target.is_global;
     const msg = isGlobal
-      ? `Delete global field "${key}"?\nIt will be removed from EVERY product in this project.`
-      : `Delete field "${key}"?`;
+      ? t('productDetail.customFields.deleteGlobalConfirm', { key })
+      : t('productDetail.customFields.deleteConfirm', { key });
     if (!confirm(msg)) return;
     const res = await fetch(`${API_BASE}/api/products/${productId}/custom-fields/${encodeURIComponent(key)}${pq}`, {
       method: 'DELETE', credentials: 'include',
     });
-    if (!res.ok) { showToast('Delete failed'); return; }
+    if (!res.ok) { showToast(t('productDetail.customFields.deleteFailed')); return; }
     const data = await res.json().catch(() => ({}));
     const removedRows = Array.isArray(data?.removed) ? data.removed : [];
     setProduct(p => ({ ...p, custom_fields: (p.custom_fields || []).filter(f => f.field_key !== key) }));
     registerUndo?.({
       description: isGlobal
-        ? `Global field "${key}" deleted (${removedRows.length} product${removedRows.length === 1 ? '' : 's'})`
-        : `Field "${key}" deleted`,
+        ? t('productDetail.customFields.globalFieldDeleted', { key, count: removedRows.length })
+        : t('productDetail.customFields.fieldDeleted', { key }),
       undo: async () => {
         const r = await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: 'custom_fields', rows: removedRows }),
         });
-        if (!r.ok) { showToast('Restore failed'); return; }
+        if (!r.ok) { showToast(t('productDetail.customFields.restoreFailed')); return; }
         // Other products' rows reappear on their own next reload.
         const ownRow = removedRows.find(rr => rr.product_id === productId);
         if (ownRow) {
@@ -592,7 +598,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
             ],
           }));
         }
-        showToast(isGlobal ? 'Field restored across all products' : 'Field restored');
+        showToast(isGlobal ? t('productDetail.customFields.fieldRestoredAll') : t('productDetail.customFields.fieldRestored'));
       },
     });
   };
@@ -626,7 +632,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
     });
     await persistOrder(newOrder);
     registerUndo?.({
-      description: 'Custom fields reordered',
+      description: t('productDetail.customFields.fieldsReordered'),
       undo: async () => {
         await persistOrder(oldOrder);
         setProduct(p => {
@@ -661,10 +667,10 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
     }
     setProduct(p => ({ ...p, custom_fields: (p.custom_fields || []).filter(f => !keys.includes(f.field_key)) }));
     clearBulk?.();
-    showToast(`${keys.length} field${keys.length === 1 ? '' : 's'} deleted`);
+    showToast(t('productDetail.customFields.fieldsDeleted', { count: keys.length }));
     if (allRemoved.length && registerUndo) {
       registerUndo({
-        description: `${keys.length} field${keys.length === 1 ? '' : 's'} deleted`,
+        description: t('productDetail.customFields.fieldsDeleted', { count: keys.length }),
         undo: async () => {
           await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
             method: 'POST', credentials: 'include',
@@ -680,7 +686,7 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
         },
       });
     }
-  }, [productId, pq, setProduct, clearBulk, showToast, registerUndo]);
+  }, [productId, pq, setProduct, clearBulk, showToast, registerUndo, t]);
 
   const toggleInBulk = useCallback((fieldKey) => {
     setBulk(prev => {
@@ -711,18 +717,18 @@ function CustomFieldsBlock({ product, productId, pq, setProduct, showToast, regi
 
   return (
     <section className="po-block">
-      <h2 className="po-block-title">Custom Fields</h2>
+      <h2 className="po-block-title">{t('productDetail.customFields.title')}</h2>
       <p className="po-block-hint">
-        Free-form attributes returned by the storefront API. Set Global to Yes to make the key appear on every product in the project — each product still has its own value.
+        {t('productDetail.customFields.hint')}
       </p>
       <div className="cfg-block-body">
         <div className="cfg-list">
           <div className={`cfg-list-head cf-list-head${inScope ? ' cfg-list-head--bulk-mode cf-list-head--bulk-mode' : ''}`}>
             {inScope && <span className="cfg-col cfg-col-bulk" />}
-            <span className="cfg-col">Key</span>
-            <span className="cfg-col">Value</span>
-            <span className="cfg-col">Type</span>
-            <span className="cfg-col">Global</span>
+            <span className="cfg-col">{t('productDetail.customFields.colKey')}</span>
+            <span className="cfg-col">{t('productDetail.customFields.colValue')}</span>
+            <span className="cfg-col">{t('productDetail.customFields.colType')}</span>
+            <span className="cfg-col">{t('productDetail.customFields.colGlobal')}</span>
             <span className="cfg-col cfg-col-actions" />
           </div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
@@ -782,6 +788,7 @@ function SortableCfRow(props) {
 function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
                   dragRef, dragStyle, dragHandleProps, onRowClick, onContextMenu,
                   bulkSelected, bulkActive, onBulkToggle, productId, pq }) {
+  const { t } = useTranslation();
   const isPlaceholder = !!field.is_placeholder;
   const originalKeyRef = useRef(field.field_key);
   const [key,    setKey]    = useState(field.field_key);
@@ -836,7 +843,7 @@ function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
           originalKeyRef.current = trimmed;
           prevServer.current = { ...body };
           registerUndo?.({
-            description: `Field "${before.field_key}" changed`,
+            description: t('productDetail.customFields.fieldChanged', { key: before.field_key }),
             silent: true,
             undo: async () => { await onUpdate(trimmed, before); },
           });
@@ -864,7 +871,7 @@ function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
       onClick={(e) => onRowClick?.(e, field.field_key)}
       onContextMenu={isPlaceholder ? undefined : onContextMenu}
       className={`cfg-row cf-row${!isPlaceholder ? ' cfg-row--grabbable' : ''}${type === 'json' ? ' cf-row--json' : ''}${isPlaceholder ? ' cf-row--placeholder' : ''}${bulkSelected ? ' cfg-row--bulk' : ''}${bulkActive ? ' cfg-row--bulk-mode cf-row--bulk-mode' : ''}`}
-      title={isPlaceholder ? undefined : 'Right-click for actions · hold 0.3s to drag'}
+      title={isPlaceholder ? undefined : t('productDetail.customFields.rowTitle')}
       {...grabProps}>
       {bulkActive && (showCheckbox ? (
         <input type="checkbox" className="cat-prod-checkbox cfg-bulk-check"
@@ -872,18 +879,18 @@ function CfRow({ field, onCreate, onUpdate, onDelete, registerUndo,
           onChange={() => onBulkToggle?.()}
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          aria-label="Toggle selection" />
+          aria-label={t('productDetail.customFields.toggleSelection')} />
       ) : <span className="cfg-col cfg-col-bulk" />)}
       <input className={`crm-input cfg-cell${keyEmpty ? ' cfg-cell--invalid' : ''}`} value={key} readOnly={isPlaceholder}
-        onChange={e => setKey(e.target.value)} placeholder="field_key *"
-        title={keyEmpty ? 'Field key is required' : undefined} />
+        onChange={e => setKey(e.target.value)} placeholder={t('productDetail.customFields.keyPlaceholder')}
+        title={keyEmpty ? t('productDetail.customFields.keyRequired') : undefined} />
       <CfValueInput type={type} value={value} onChange={setValue} productId={productId} pq={pq} />
       <CfCombobox value={type} options={CF_TYPE_OPTIONS} onChange={changeType} />
-      <CfCombobox value={global ? 'yes' : 'no'} options={CF_GLOBAL_OPTIONS}
+      <CfCombobox value={global ? 'yes' : 'no'} options={cfGlobalOptions(t)}
         onChange={(v) => setGlobal(v === 'yes')} />
       {persisted.current ? (
         <button type="button" className="cfg-col-actions cfg-delete-btn"
-          onClick={onDelete} title="Delete field">
+          onClick={onDelete} title={t('productDetail.customFields.deleteField')}>
           <Trash />
         </button>
       ) : <span className="cfg-col-actions" />}
@@ -902,6 +909,7 @@ function normalizeForType(value, type) {
 }
 
 function CfNewRow({ existingKeys, onSave, bulkActive, productId, pq }) {
+  const { t } = useTranslation();
   const [key, setKey] = useState('');
   const [val, setVal] = useState('');
   const [type, setType] = useState('string');
@@ -931,10 +939,10 @@ function CfNewRow({ existingKeys, onSave, bulkActive, productId, pq }) {
     <div className={`cfg-row cfg-row--new cf-row${type === 'json' ? ' cf-row--json' : ''}${bulkActive ? ' cfg-row--bulk-mode cf-row--bulk-mode' : ''}`}>
       {bulkActive && <span className="cfg-col cfg-col-bulk" />}
       <input className="crm-input cfg-cell" value={key}
-        onChange={e => setKey(e.target.value)} placeholder="field_key" />
+        onChange={e => setKey(e.target.value)} placeholder={t('productDetail.customFields.keyPlaceholderPlain')} />
       <CfValueInput type={type} value={val} onChange={setVal} productId={productId} pq={pq} />
       <CfCombobox value={type} options={CF_TYPE_OPTIONS} onChange={changeType} />
-      <CfCombobox value={global ? 'yes' : 'no'} options={CF_GLOBAL_OPTIONS}
+      <CfCombobox value={global ? 'yes' : 'no'} options={cfGlobalOptions(t)}
         onChange={(v) => setGlobal(v === 'yes')} />
       <span className="cfg-col-actions" />
     </div>
@@ -943,14 +951,15 @@ function CfNewRow({ existingKeys, onSave, bulkActive, productId, pq }) {
 
 // Type-aware value editor.
 function CfValueInput({ type, value, onChange, productId, pq }) {
+  const { t } = useTranslation();
   if (type === 'boolean') {
     const v = value === 'true' ? 'true' : value === 'false' ? 'false' : '';
     return (
       <CfCombobox
         value={v || 'false'}
         options={[
-          { value: 'true',  label: 'Yes' },
-          { value: 'false', label: 'No'  },
+          { value: 'true',  label: t('productDetail.customFields.yes') },
+          { value: 'false', label: t('productDetail.customFields.no')  },
         ]}
         onChange={onChange} />
     );
@@ -963,7 +972,7 @@ function CfValueInput({ type, value, onChange, productId, pq }) {
           const v = e.target.value;
           if (v === '' || /^-?\d*\.?\d*$/.test(v)) onChange(v);
         }}
-        placeholder="0" />
+        placeholder={t('productDetail.customFields.valueNumberPlaceholder')} />
     );
   }
   if (type === 'datetime') {
@@ -980,12 +989,13 @@ function CfValueInput({ type, value, onChange, productId, pq }) {
   }
   return (
     <input className="crm-input cfg-cell" value={value}
-      onChange={e => onChange(e.target.value)} placeholder="value" />
+      onChange={e => onChange(e.target.value)} placeholder={t('productDetail.customFields.valuePlaceholder')} />
   );
 }
 
 // File-upload value editor: drop/click → POST /api/upload/file → store URL as field_value.
 function CfFileInput({ value, onChange, productId, pq }) {
+  const { t } = useTranslation();
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const fileName = value ? decodeURIComponent(value.split('/').pop().replace(/^[a-f0-9]{24}_/, '')) : '';
@@ -1013,17 +1023,17 @@ function CfFileInput({ value, onChange, productId, pq }) {
               in the CRM admin's session when clicked. */}
           <a href={safeHttpUrl(value, '#')} target="_blank" rel="noopener noreferrer"
             className="cf-file-link" title={value} onClick={e => e.stopPropagation()}>
-            {fileName || 'Download'}
+            {fileName || t('productDetail.customFields.file.download')}
           </a>
           <button type="button" className="cf-file-replace"
             onClick={() => inputRef.current?.click()} disabled={busy}>
-            {busy ? 'Uploading…' : 'Replace'}
+            {busy ? t('productDetail.customFields.file.uploading') : t('productDetail.customFields.file.replace')}
           </button>
         </>
       ) : (
         <button type="button" className="cf-file-empty"
           onClick={() => inputRef.current?.click()} disabled={busy}>
-          {busy ? 'Uploading…' : 'Upload file'}
+          {busy ? t('productDetail.customFields.file.uploading') : t('productDetail.customFields.file.uploadFile')}
         </button>
       )}
     </div>
@@ -1034,6 +1044,7 @@ function CfFileInput({ value, onChange, productId, pq }) {
 const CF_JSON_EXTENSIONS = [cmJson()];
 
 function CfJsonInput({ value, onChange }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const valid = useMemo(() => {
     if (!value || !value.trim()) return true;
@@ -1054,19 +1065,19 @@ function CfJsonInput({ value, onChange }) {
     <div className={`cf-json-wrap${valid ? '' : ' cf-json-wrap--invalid'}`}>
       <div className="cf-json-toolbar" onClick={e => e.stopPropagation()}>
         <span className={`cf-json-status${valid ? '' : ' cf-json-status--invalid'}`}>
-          {value && value.trim() ? (valid ? 'Valid JSON' : 'Invalid JSON') : 'Empty'}
+          {value && value.trim() ? (valid ? t('productDetail.customFields.json.valid') : t('productDetail.customFields.json.invalid')) : t('productDetail.customFields.json.empty')}
         </span>
         <div className="cf-json-toolbar-spacer" />
         <button type="button" className="cf-json-tool-btn"
           onClick={format}
           disabled={!valid || !value.trim()}
-          title={valid ? 'Format / Prettify' : 'Cannot format invalid JSON'}>
-          <MagicWand weight="bold" /> Format
+          title={valid ? t('productDetail.customFields.json.formatTitle') : t('productDetail.customFields.json.cannotFormat')}>
+          <MagicWand weight="bold" /> {t('productDetail.customFields.json.format')}
         </button>
         <button type="button" className="cf-json-tool-btn"
           onClick={() => setExpanded(true)}
-          title="Open in modal editor">
-          <ArrowsOut weight="bold" /> Expand
+          title={t('productDetail.customFields.json.expandTitle')}>
+          <ArrowsOut weight="bold" /> {t('productDetail.customFields.json.expand')}
         </button>
       </div>
       <CodeMirror
@@ -1095,6 +1106,7 @@ function CfJsonInput({ value, onChange }) {
 }
 
 function CfJsonModal({ value, onChange, onClose }) {
+  const { t } = useTranslation();
   // Local draft so Cancel discards; Save commits via parent onChange.
   const [draft, setDraft] = useState(value);
   const valid = useMemo(() => {
@@ -1118,16 +1130,16 @@ function CfJsonModal({ value, onChange, onClose }) {
     <div className="cf-json-modal-backdrop" onClick={onClose}>
       <div className="cf-json-modal" onClick={e => e.stopPropagation()}>
         <div className="cf-json-modal-head">
-          <h3 className="cf-json-modal-title">Edit JSON</h3>
+          <h3 className="cf-json-modal-title">{t('productDetail.customFields.json.modalTitle')}</h3>
           <span className={`cf-json-status${valid ? '' : ' cf-json-status--invalid'}`}>
-            {draft && draft.trim() ? (valid ? 'Valid JSON' : 'Invalid JSON') : 'Empty'}
+            {draft && draft.trim() ? (valid ? t('productDetail.customFields.json.valid') : t('productDetail.customFields.json.invalid')) : t('productDetail.customFields.json.empty')}
           </span>
           <div className="cf-json-toolbar-spacer" />
           <button type="button" className="cf-json-tool-btn"
             onClick={format} disabled={!valid || !draft.trim()}>
-            <MagicWand weight="bold" /> Format
+            <MagicWand weight="bold" /> {t('productDetail.customFields.json.format')}
           </button>
-          <button type="button" className="cf-json-modal-close" onClick={onClose} aria-label="Close">
+          <button type="button" className="cf-json-modal-close" onClick={onClose} aria-label={t('productDetail.customFields.json.close')}>
             <X weight="bold" />
           </button>
         </div>
@@ -1149,10 +1161,10 @@ function CfJsonModal({ value, onChange, onClose }) {
         </div>
         <div className="cf-json-modal-foot">
           <button type="button" className="crm-submit-btn auth-btn-secondary" onClick={onClose}>
-            Cancel
+            {t('productDetail.customFields.json.cancel')}
           </button>
           <button type="button" className="crm-submit-btn" onClick={save} disabled={!valid}>
-            Save
+            {t('productDetail.customFields.json.save')}
           </button>
         </div>
       </div>
@@ -1232,6 +1244,7 @@ function CfCombobox({ value, options, onChange, size = 'sm' }) {
 // Inline editor that hits PUT /api/booking/services/{id} so service products
 // can be fully managed from the Product page (no need to jump to Bookings).
 function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
+  const { t } = useTranslation();
   const [svc, setSvc] = useState(null);     // linked booking_services row
   const [staff, setStaff] = useState([]);   // all staff in project (for picker)
   const fileRef = useRef(null);
@@ -1291,9 +1304,9 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
     });
     if (res.ok) {
       setSvc(s => s ? { ...s, ...body } : s);
-      showToast?.('Service saved');
+      showToast?.(t('productDetail.service.saved'));
     } else {
-      showToast?.('Save failed');
+      showToast?.(t('productDetail.service.saveFailed'));
     }
     return res.ok;
   }, [svc, product, duration, price, capacity, active, reqStaff, staffIds, imageUrl, pq, showToast]);
@@ -1317,7 +1330,7 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
       });
       const data = await res.json();
       if (res.ok && data.url) setImageUrl(data.url);
-      else showToast?.('Upload failed');
+      else showToast?.(t('productDetail.service.uploadFailed'));
     } finally { setUploading(false); }
   };
 
@@ -1329,33 +1342,33 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
     <section className="po-block po-service-link">
       <div className="po-service-link-icon">⏱</div>
       <div className="po-service-link-body">
-        <h2 className="po-block-title">Service details</h2>
-        <p className="po-block-hint">Linking this product to a booking service…</p>
+        <h2 className="po-block-title">{t('productDetail.service.linkTitle')}</h2>
+        <p className="po-block-hint">{t('productDetail.service.linking')}</p>
       </div>
     </section>
   );
 
   return (
     <section className="po-block">
-      <h2 className="po-block-title">Service details</h2>
+      <h2 className="po-block-title">{t('productDetail.service.title')}</h2>
       <p className="po-block-hint">
-        How customers book this service — duration, price, image, staff. Editing here mirrors Bookings → Services.
+        {t('productDetail.service.hint')}
       </p>
 
       <div className="po-form">
         <div className="po-svc-grid">
-          <Field label="Duration (minutes)">
+          <Field label={t('productDetail.service.duration')}>
             <input className="crm-input po-input" type="number" min="5" max="1440"
               value={duration} onChange={e => setDuration(e.target.value)} />
           </Field>
-          <Field label="Price">
+          <Field label={t('productDetail.service.price')}>
             <input className="crm-input po-input" type="number" min="0" step="0.01"
               value={price} onChange={e => setPrice(e.target.value)} />
           </Field>
         </div>
 
         <div className="po-field" style={{ marginTop: 12 }}>
-          <label className="po-field-label1">Image (optional)</label>
+          <label className="po-field-label1">{t('productDetail.service.imageOptional')}</label>
           <input ref={fileRef} type="file" accept="image/*" className="hidden-input"
             onChange={e => upload(e.target.files?.[0])} />
           {imageUrl ? (
@@ -1364,16 +1377,16 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
               <div className="bk-svc-img-actions">
                 <button type="button" className="crm-submit-btn auth-btn-secondary"
                   onClick={() => fileRef.current?.click()} disabled={uploading}>
-                  {uploading ? 'Uploading…' : 'Replace'}
+                  {uploading ? t('productDetail.service.uploading') : t('productDetail.service.replace')}
                 </button>
                 <button type="button" className="auth-btn-danger"
-                  onClick={() => setImageUrl('')}>Remove</button>
+                  onClick={() => setImageUrl('')}>{t('productDetail.service.remove')}</button>
               </div>
             </div>
           ) : (
             <button type="button" className="bk-svc-img-drop"
               onClick={() => fileRef.current?.click()} disabled={uploading}>
-              {uploading ? 'Uploading…' : 'Click to upload an image'}
+              {uploading ? t('productDetail.service.uploading') : t('productDetail.service.clickToUpload')}
             </button>
           )}
         </div>
@@ -1382,8 +1395,8 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
 
         <div className="auth-toggle-row">
           <div>
-            <span className="auth-toggle-label">Visible to customers</span>
-            <p className="auth-field-hint">Hidden services don't appear in the storefront.</p>
+            <span className="auth-toggle-label">{t('productDetail.service.visibleLabel')}</span>
+            <p className="auth-field-hint">{t('productDetail.service.visibleHint')}</p>
           </div>
           <label className="auth-toggle">
             <input type="checkbox" checked={active}
@@ -1394,10 +1407,10 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
 
         <div className="auth-toggle-row">
           <div>
-            <span className="auth-toggle-label">Requires staff selection</span>
+            <span className="auth-toggle-label">{t('productDetail.service.requiresStaffLabel')}</span>
             <p className="auth-field-hint">
-              When ON, customers must pick a specific staff member (each slot = one person at a time).<br />
-              When OFF, slots use the <b>capacity</b> below — useful for group classes / shared resources.
+              {t('productDetail.service.requiresStaffHintOn')}<br />
+              {t('productDetail.service.requiresStaffHintOff')}
             </p>
           </div>
           <label className="auth-toggle">
@@ -1409,9 +1422,9 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
 
         {!reqStaff && (
           <div className="po-field" style={{ marginTop: 12 }}>
-            <label className="po-field-label1">Capacity per slot</label>
+            <label className="po-field-label1">{t('productDetail.service.capacityLabel')}</label>
             <p className="po-block-hint" style={{ marginTop: 0, marginBottom: 8 }}>
-              How many simultaneous bookings fit into one slot (1 = exclusive).
+              {t('productDetail.service.capacityHint')}
             </p>
             <input className="crm-input po-input" type="number" min="1"
               value={capacity} onChange={e => setCapacity(e.target.value)} />
@@ -1421,11 +1434,11 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
 
       {staff.length > 0 && (
         <div className="po-svc-staff">
-          <label className="po-field-label1">Staff that can deliver this service</label>
+          <label className="po-field-label1">{t('productDetail.service.staffLabel')}</label>
           <p className="po-block-hint" style={{ marginTop: 0, marginBottom: 8 }}>
             {reqStaff
-              ? 'Customers will pick one of these.'
-              : 'Optional reference list (informational when capacity-based).'}
+              ? t('productDetail.service.staffHintRequired')
+              : t('productDetail.service.staffHintOptional')}
           </p>
           <div className="po-svc-staff-row">
             {staff.map(s => {
@@ -1455,6 +1468,7 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
 // type=file with `field_key = file_<n>`. Customers see download links in
 // their order confirmation email (via the digital_html block in External).
 function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
+  const { t } = useTranslation();
   const inputRef = useRef(null);
   const fileFields = (product.custom_fields || [])
     .filter(f => !f.is_placeholder && f.field_type === 'file' && f.field_value);
@@ -1466,7 +1480,7 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
       method: 'POST', credentials: 'include', body: fd,
     });
     const upData = await upRes.json();
-    if (!upRes.ok || !upData.url) { showToast?.('Upload failed'); return; }
+    if (!upRes.ok || !upData.url) { showToast?.(t('productDetail.digital.uploadFailed')); return; }
     // Pick a unique file_<n> key.
     const taken = new Set(fileFields.map(f => f.field_key));
     let n = 1;
@@ -1477,16 +1491,16 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ field_key: key, field_value: upData.url, field_type: 'file', is_global: false }),
     });
-    if (!cfRes.ok) { showToast?.('Save failed'); return; }
+    if (!cfRes.ok) { showToast?.(t('productDetail.digital.saveFailed')); return; }
     setProduct(p => ({ ...p,
       custom_fields: [...(p.custom_fields || []),
         { field_key: key, field_value: upData.url, field_type: 'file', is_global: false, is_placeholder: false }],
     }));
-    showToast?.('File added');
+    showToast?.(t('productDetail.digital.fileAdded'));
   };
 
   const remove = async (key) => {
-    if (!confirm(`Remove "${key}"?`)) return;
+    if (!confirm(t('productDetail.digital.removeConfirm', { key }))) return;
     const res = await fetch(`${API_BASE}/api/products/${productId}/custom-fields/${encodeURIComponent(key)}${pq}`, {
       method: 'DELETE', credentials: 'include',
     });
@@ -1496,13 +1510,13 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
 
   return (
     <section className="po-block">
-      <h2 className="po-block-title">Files</h2>
+      <h2 className="po-block-title">{t('productDetail.digital.title')}</h2>
       <p className="po-block-hint">
-        Files customers receive after purchase. URLs are signed and emailed automatically when the order is paid.
+        {t('productDetail.digital.hint')}
       </p>
       <div className="po-files-list">
         {fileFields.length === 0 && (
-          <p className="po-files-empty">No files yet. Add the digital product (PDF, image, archive…) below.</p>
+          <p className="po-files-empty">{t('productDetail.digital.empty')}</p>
         )}
         {fileFields.map(f => {
           const fname = decodeURIComponent(f.field_value.split('/').pop().replace(/^[a-f0-9]{24}_/, ''));
@@ -1525,7 +1539,7 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
         onChange={e => { upload(e.target.files?.[0]); e.target.value = ''; }} />
       <button type="button" className="po-add-pill po-files-add"
         onClick={() => inputRef.current?.click()}>
-        <Plus weight="bold" /> Upload file
+        <Plus weight="bold" /> {t('productDetail.digital.uploadFile')}
       </button>
     </section>
   );
@@ -1536,6 +1550,7 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
 // DnD: groups reorder vertically; items reorder within group AND cross-group via
 // shared DndContext + per-group SortableContext (multi-container pattern).
 function ModifiersBlock({ product, productId, pq, reloadProduct, registerUndo }) {
+  const { t } = useTranslation();
   const groups = product.modifier_groups || [];
 
   // ─── Group CRUD ───────────────────────────────────────────────────
@@ -1559,7 +1574,7 @@ function ModifiersBlock({ product, productId, pq, reloadProduct, registerUndo })
   };
 
   const deleteGroup = async (gid) => {
-    if (!confirm('Delete this group and all its items?')) return;
+    if (!confirm(t('productDetail.modifiers.deleteGroupConfirm'))) return;
     const r = await fetch(`${API_BASE}/api/products/${productId}/modifier-groups/${gid}${pq}`, {
       method: 'DELETE', credentials: 'include',
     });
@@ -1672,10 +1687,9 @@ function ModifiersBlock({ product, productId, pq, reloadProduct, registerUndo })
 
   return (
     <section className="po-block">
-      <h2 className="po-block-title">Modifiers</h2>
+      <h2 className="po-block-title">{t('productDetail.modifiers.title')}</h2>
       <p className="po-block-hint">
-        Group add-ons by category. Each group is either Checkbox (multi-select) or Radio (single-select),
-        with optional min / max selection and required flag. Drag items between groups, drag whole groups to reorder.
+        {t('productDetail.modifiers.hint')}
       </p>
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
@@ -1695,13 +1709,14 @@ function ModifiersBlock({ product, productId, pq, reloadProduct, registerUndo })
       </DndContext>
 
       <button type="button" className="po-mod-add-group" onClick={createGroup}>
-        <Plus weight="bold" /> Add group
+        <Plus weight="bold" /> {t('productDetail.modifiers.addGroup')}
       </button>
     </section>
   );
 }
 
 function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange, onItemDelete, registerUndo }) {
+  const { t } = useTranslation();
   const sortable = useSortable({ id: `group:${group.id}` });
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = sortable;
   const style = {
@@ -1786,7 +1801,7 @@ function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange,
           <input
             className="po-mod-name-input"
             value={name}
-            placeholder="Group name (e.g. Sauces)"
+            placeholder={t('productDetail.modifiers.groupNamePlaceholder')}
             onChange={e => setName(e.target.value)}
             {...stopDrag}
           />
@@ -1796,8 +1811,8 @@ function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange,
         <div className="po-mod-ctrl-toggle" onMouseLeave={() => setCtrlHovered(null)} {...stopDrag}>
           <div ref={ctrlIndRef} className="po-mod-ctrl-indicator" />
           {[
-            { val: 'checkbox', label: 'Checkbox' },
-            { val: 'radio',    label: 'Radio'    },
+            { val: 'checkbox', label: t('productDetail.modifiers.checkbox') },
+            { val: 'radio',    label: t('productDetail.modifiers.radio')    },
           ].map(({ val, label }) => (
             <button
               key={val}
@@ -1814,13 +1829,13 @@ function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange,
 
         {/* Min / Max — single grouped pill with two number inputs. */}
         <div className="po-mod-num-group" {...stopDrag}>
-          <span className="po-mod-num-label">Min</span>
+          <span className="po-mod-num-label">{t('productDetail.modifiers.min')}</span>
           <input
             className="po-mod-num-input" type="number" min="0"
             value={minSel} onChange={e => setMinSel(e.target.value)}
           />
           <span className="po-mod-num-divider" />
-          <span className="po-mod-num-label">Max</span>
+          <span className="po-mod-num-label">{t('productDetail.modifiers.max')}</span>
           <input
             className="po-mod-num-input" type="number" min="0"
             value={maxSel} placeholder={ctrl === 'radio' ? '1' : '∞'}
@@ -1836,7 +1851,7 @@ function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange,
           {...stopDrag}
         >
           <span className="po-mod-required-dot" />
-          Required
+          {t('productDetail.modifiers.required')}
         </button>
 
         {/* Default-item — radio-only Combobox (same widget as CpmCategorySelect /
@@ -1846,12 +1861,12 @@ function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange,
           <div className="po-mod-default-cb" {...stopDrag}>
             <Combobox
               value={defItem === '' ? '' : Number(defItem)}
-              placeholder="No default"
+              placeholder={t('productDetail.modifiers.noDefault')}
               options={[
-                { value: '', label: 'No default' },
+                { value: '', label: t('productDetail.modifiers.noDefault') },
                 ...items.map(it => ({
                   value: it.id,
-                  label: `Default: ${it.name || `#${it.id}`}`,
+                  label: t('productDetail.modifiers.default', { name: it.name || `#${it.id}` }),
                 })),
               ]}
               onChange={(v) => setDefItem(v === '' ? '' : v)}
@@ -1861,7 +1876,7 @@ function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange,
 
         <button
           type="button" className="po-mod-group-del"
-          onClick={onDelete} title="Delete group"
+          onClick={onDelete} title={t('productDetail.modifiers.deleteGroup')}
           {...stopDrag}
         >
           <Trash />
@@ -1878,10 +1893,10 @@ function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange,
           ))}
         </SortableContext>
         {items.length === 0 && (
-          <div className="po-mod-items-empty">No items yet — add one below.</div>
+          <div className="po-mod-items-empty">{t('productDetail.modifiers.noItems')}</div>
         )}
         <button type="button" className="po-mod-add-item" onClick={onAddItem}>
-          <Plus weight="bold" /> Add item
+          <Plus weight="bold" /> {t('productDetail.modifiers.addItem')}
         </button>
       </div>
     </div>
@@ -1889,6 +1904,7 @@ function ModifierGroupCard({ group, onChange, onDelete, onAddItem, onItemChange,
 }
 
 function ModifierItemRow({ item, onUpdate, onDelete, registerUndo }) {
+  const { t } = useTranslation();
   const sortable = useSortable({ id: String(item.id) });
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = sortable;
   const style = {
@@ -1909,16 +1925,16 @@ function ModifierItemRow({ item, onUpdate, onDelete, registerUndo }) {
 
   useEffect(() => {
     if (skip.current) { skip.current = false; return; }
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       const before = { name: item.name, price_delta: item.price_delta };
       const ok = await onUpdate(item.id, { name: name || '', price_delta: parseFloat(price) || 0 });
       if (ok) registerUndo?.({
-        description: `Modifier item "${item.name || '—'}" changed`,
+        description: t('productDetail.modifiers.itemChanged', { name: item.name || '—' }),
         silent: true,
         undo: async () => { await onUpdate(item.id, before); },
       });
     }, 500);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [name, price]); // eslint-disable-line
 
   // Long-press anywhere on the row starts drag; pointerdown on inputs/buttons
@@ -1930,7 +1946,7 @@ function ModifierItemRow({ item, onUpdate, onDelete, registerUndo }) {
       <input
         className="po-mod-item-name" value={name}
         onChange={e => setName(e.target.value)}
-        placeholder="Item name"
+        placeholder={t('productDetail.modifiers.itemNamePlaceholder')}
         {...stopDrag}
       />
       <input
@@ -1939,7 +1955,7 @@ function ModifierItemRow({ item, onUpdate, onDelete, registerUndo }) {
         placeholder="0.00"
         {...stopDrag}
       />
-      <button type="button" className="po-mod-item-del" onClick={onDelete} title="Delete item" {...stopDrag}>
+      <button type="button" className="po-mod-item-del" onClick={onDelete} title={t('productDetail.modifiers.deleteItem')} {...stopDrag}>
         <Trash />
       </button>
     </div>
@@ -1949,6 +1965,7 @@ function ModifierItemRow({ item, onUpdate, onDelete, registerUndo }) {
 
 // ─── SEO ──────────────────────────────────────────────────────────
 function SeoBlock({ product, pq, setProduct, showToast, registerUndo }) {
+  const { t } = useTranslation();
   const [seoTitle, setSeoTitle] = useState(product.seo_title || '');
   const [seoDesc,  setSeoDesc]  = useState(product.seo_description || '');
   const [seoKw,    setSeoKw]    = useState(product.seo_keywords || '');
@@ -1959,42 +1976,42 @@ function SeoBlock({ product, pq, setProduct, showToast, registerUndo }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) { showToast('Save failed'); return false; }
+    if (!res.ok) { showToast(t('productDetail.settings.saveFailed')); return false; }
     setProduct(p => ({ ...p, ...body }));
-    showToast('Saved');
+    showToast(t('productDetail.settings.saved'));
     return true;
-  }, [product.id, pq, setProduct, showToast]);
+  }, [product.id, pq, setProduct, showToast, t]);
 
   useUndoableSave({
     value: seoTitle, setValue: setSeoTitle, serverValue: product.seo_title || '',
-    save: (v) => patch({ seo_title: v }), registerUndo, label: 'SEO Title',
+    save: (v) => patch({ seo_title: v }), registerUndo, label: t('productDetail.seo.undoTitle'),
   });
   useUndoableSave({
     value: seoDesc, setValue: setSeoDesc, serverValue: product.seo_description || '',
-    save: (v) => patch({ seo_description: v }), registerUndo, label: 'SEO Description',
+    save: (v) => patch({ seo_description: v }), registerUndo, label: t('productDetail.seo.undoDescription'),
   });
   useUndoableSave({
     value: seoKw, setValue: setSeoKw, serverValue: product.seo_keywords || '',
-    save: (v) => patch({ seo_keywords: v }), registerUndo, label: 'SEO Keywords',
+    save: (v) => patch({ seo_keywords: v }), registerUndo, label: t('productDetail.seo.undoKeywords'),
   });
 
   return (
     <section className="po-block">
-      <h2 className="crm-page-title1">SEO</h2>
-      <p className="po-block-hint">Used by the storefront for search-engine results.</p>
+      <h2 className="crm-page-title1">{t('productDetail.seo.title')}</h2>
+      <p className="po-block-hint">{t('productDetail.seo.hint')}</p>
       <div className="po-form">
-        <Field label="SEO Title">
+        <Field label={t('productDetail.seo.seoTitle')}>
           <input className="crm-input po-input" value={seoTitle}
-            onChange={e => setSeoTitle(e.target.value)} placeholder="e.g. Buy Trousers Online" maxLength={200} />
+            onChange={e => setSeoTitle(e.target.value)} placeholder={t('productDetail.seo.seoTitlePlaceholder')} maxLength={200} />
         </Field>
-        <Field label={<>SEO Description <span className="po-char-count">{seoDesc.length}/160</span></>}>
+        <Field label={<>{t('productDetail.seo.seoDescription')} <span className="po-char-count">{seoDesc.length}/160</span></>}>
           <textarea className="crm-input po-textarea" rows={3} maxLength={160} value={seoDesc}
             onChange={e => setSeoDesc(e.target.value)}
-            placeholder="Brief page description for search results…" />
+            placeholder={t('productDetail.seo.seoDescriptionPlaceholder')} />
         </Field>
-        <Field label="Keywords">
+        <Field label={t('productDetail.seo.keywords')}>
           <input className="crm-input po-input" value={seoKw}
-            onChange={e => setSeoKw(e.target.value)} placeholder="trousers, pants, fashion" maxLength={300} />
+            onChange={e => setSeoKw(e.target.value)} placeholder={t('productDetail.seo.keywordsPlaceholder')} maxLength={300} />
         </Field>
       </div>
     </section>

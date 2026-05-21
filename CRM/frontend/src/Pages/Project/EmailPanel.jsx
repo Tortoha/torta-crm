@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Copy, CheckCircle, Warning, ArrowClockwise, Trash } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
@@ -18,6 +19,7 @@ const PREVIEW_TILT = {
 // ─── DNS Row ──────────────────────────────────────────────────────────────────
 
 function AuthDnsRow({ type, host, value, status, first, last }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(null);
   const { ref, glossRef, handlers } = InteractiveSection(DNS_TILT, false);
 
@@ -55,8 +57,8 @@ function AuthDnsRow({ type, host, value, status, first, last }) {
         <span className="auth-dns-value" title={value}>{value}</span>
       </div>
       <div className={`auth-dns-status auth-dns-status--${status}`}>
-        {status === 'ok'      && <><span className="auth-dns-dot auth-dns-dot--ok" /> OK</>}
-        {status === 'pending' && <><Warning size={11} weight="fill" /> Pending</>}
+        {status === 'ok'      && <><span className="auth-dns-dot auth-dns-dot--ok" /> {t('authConfig.email.dns.ok')}</>}
+        {status === 'pending' && <><Warning size={11} weight="fill" /> {t('authConfig.pending')}</>}
         {status === 'unknown' && <span className="auth-dns-dot auth-dns-dot--unknown" />}
       </div>
     </div>
@@ -66,6 +68,7 @@ function AuthDnsRow({ type, host, value, status, first, last }) {
 // ─── Email Panel ──────────────────────────────────────────────────────────────
 
 function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [data,            setData]            = useState(null);
   const [domain,          setDomain]          = useState('');
@@ -130,12 +133,12 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
         body: JSON.stringify({ domain, from_name: fromName, from_email: fullFromEmail }),
       });
       const json = await res.json();
-      if (!res.ok) { setErr(json.detail || 'Error'); return; }
+      if (!res.ok) { setErr(json.detail || t('authConfig.error')); return; }
       setData(json); setVerifyRes(null);
       initialRef.current = { domain, fromName, fromEmailPrefix };
       onConfiguredChange?.(!!json.configured);
-      showToast('Saved. Add the DNS records below to your domain registrar.');
-    } catch { setErr('Network error'); }
+      showToast(t('authConfig.email.savedDns'));
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
@@ -149,21 +152,21 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
       setVerifyRes({ dkim: json.dkim_ok, spf: json.spf_ok, dmarc: json.dmarc_ok });
       onVerifiedChange?.(json.all_ok);
       if (json.all_ok) {
-        showToast('Domain fully verified — DKIM, SPF and DMARC are active.');
+        showToast(t('authConfig.email.fullyVerified'));
         load();
       } else {
         const parts = [];
-        if (!json.dkim_ok)  parts.push('DKIM not found');
-        if (!json.spf_ok)   parts.push('SPF not found');
-        if (!json.dmarc_ok) parts.push('DMARC not found');
-        setErr(parts.join(' · ') + '. DNS may take up to 24h to propagate.');
+        if (!json.dkim_ok)  parts.push(t('authConfig.email.dkimNotFound'));
+        if (!json.spf_ok)   parts.push(t('authConfig.email.spfNotFound'));
+        if (!json.dmarc_ok) parts.push(t('authConfig.email.dmarcNotFound'));
+        setErr(parts.join(' · ') + t('authConfig.email.propagateSuffix'));
       }
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally { setVerifying(false); }
   };
 
   const handleDelete = async () => {
-    if (!confirm('Remove this email domain? DKIM keys will be deleted.')) return;
+    if (!confirm(t('authConfig.email.removeConfirm'))) return;
     setDeleting(true);
     try {
       await fetch(`${API_BASE}/api/email-domain${pq}`, { method: 'DELETE', credentials: 'include' });
@@ -173,7 +176,7 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
       onVerifiedChange?.(false);
       onConfiguredChange?.(false);
       setVerifyRes(null); setErr(''); setToast('');
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally { setDeleting(false); }
   };
 
@@ -194,7 +197,7 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
     ? fromName.trim().split(/\s+/).map(w => w[0].toUpperCase()).slice(0, 2).join('')
     : '?';
 
-  if (!data) return <p className="crm-placeholder">Loading…</p>;
+  if (!data) return <p className="crm-placeholder">{t('common.loading')}</p>;
 
   const isVerified  = data.dkim_ok && data.spf_ok && data.dmarc_ok;
   const previewAddr = fullFromEmail || `support@${domain || 'yourdomain.com'}`;
@@ -210,22 +213,22 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
         <form onSubmit={handleSave} className="auth-form">
 
           <div className="auth-field">
-            <label className="auth-label">Domain</label>
-            <p className="auth-field-hint">Domain name for sending and receiving emails.</p>
+            <label className="auth-label">{t('authConfig.email.domain')}</label>
+            <p className="auth-field-hint">{t('authConfig.email.domainHint')}</p>
             <input className="crm-input" placeholder="yourdomain.com"
               value={domain} onChange={e => setDomain(e.target.value)} required />
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">From name</label>
-            <p className="auth-field-hint">Displayed as the sender name in inboxes.</p>
+            <label className="auth-label">{t('authConfig.email.fromName')}</label>
+            <p className="auth-field-hint">{t('authConfig.email.fromNameHint')}</p>
             <input className="crm-input" placeholder="My Store"
               value={fromName} onChange={e => setFromName(e.target.value)} required maxLength={100} />
           </div>
 
           <div className="auth-field">
-            <label className="auth-label">From email</label>
-            <p className="auth-field-hint">The address emails will be sent from.</p>
+            <label className="auth-label">{t('authConfig.email.fromEmail')}</label>
+            <p className="auth-field-hint">{t('authConfig.email.fromEmailHint')}</p>
             <div className="auth-email-split">
               <input className="crm-input auth-email-prefix" placeholder="support"
                 value={fromEmailPrefix}
@@ -239,13 +242,13 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
 
           <div className="auth-actions">
             <button className="crm-submit-btn" type="submit" disabled={saving || !canSave}>
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? t('authConfig.saving') : t('common.save')}
             </button>
             {data.configured && (
               <button type="button" className="auth-btn-danger"
                 onClick={handleDelete} disabled={deleting}>
                 <Trash size={14} />
-                {deleting ? 'Deleting…' : 'Delete'}
+                {deleting ? t('authConfig.deleting') : t('common.delete')}
               </button>
             )}
           </div>
@@ -262,15 +265,15 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
                 </div>
                 <div className="auth-preview-meta">
                   <div className="auth-preview-from">
-                    <span className="auth-preview-name">{fromName || 'Your Name'}</span>
+                    <span className="auth-preview-name">{fromName || t('authConfig.email.previewYourName')}</span>
                     <span className="auth-preview-addr">&lt;{previewAddr}&gt;</span>
                   </div>
-                  <span className="auth-preview-to">to me</span>
+                  <span className="auth-preview-to">{t('authConfig.email.previewToMe')}</span>
                 </div>
-                <span className="auth-preview-time">now</span>
+                <span className="auth-preview-time">{t('authConfig.email.previewNow')}</span>
               </div>
               <div className="auth-preview-divider" />
-              <div className="auth-preview-subject-line">Your subject line</div>
+              <div className="auth-preview-subject-line">{t('authConfig.email.previewSubject')}</div>
               <div className="auth-preview-body">
                 <div className="auth-preview-line" style={{ width: '82%' }} />
                 <div className="auth-preview-line" style={{ width: '65%' }} />
@@ -287,26 +290,26 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
         <>
           <div className="auth-dns-header-block">
             <div>
-              <h3 className="auth-dns-card-title">DNS Records</h3>
+              <h3 className="auth-dns-card-title">{t('authConfig.email.dns.title')}</h3>
               <p className="auth-dns-card-desc">
-                Add these records to your domain registrar. Propagation can take up to 24 hours.
+                {t('authConfig.email.dns.desc')}
               </p>
             </div>
             <div className="auth-dns-header-right">
               {isVerified
-                ? <span className="auth-dns-verified"><CheckCircle weight="fill" size={11} /> Verified</span>
-                : <span className="auth-dns-pending"><Warning weight="fill" size={11} /> Not verified</span>}
+                ? <span className="auth-dns-verified"><CheckCircle weight="fill" size={11} /> {t('authConfig.verified')}</span>
+                : <span className="auth-dns-pending"><Warning weight="fill" size={11} /> {t('authConfig.notVerified')}</span>}
               <button type="button" className="auth-btn-check"
                 onClick={handleVerify} disabled={verifying}>
                 <ArrowClockwise size={14} />
-                {verifying ? 'Checking…' : 'Check DNS'}
+                {verifying ? t('authConfig.email.checking') : t('authConfig.email.checkDns')}
               </button>
             </div>
           </div>
 
           <div className="auth-dns-thead-block">
             <div className="auth-dns-thead">
-              <span>Type</span><span>Host</span><span>Value</span><span>Status</span>
+              <span>{t('authConfig.email.dns.type')}</span><span>{t('authConfig.email.dns.host')}</span><span>{t('authConfig.email.dns.value')}</span><span>{t('authConfig.email.dns.status')}</span>
             </div>
           </div>
 
@@ -323,7 +326,7 @@ function EmailPanel({ projectId, onVerifiedChange, onConfiguredChange }) {
             {records.length > 3 && (
               <button className="auth-dns-show-all" type="button"
                 onClick={() => setShowAll(v => !v)}>
-                {showAll ? 'Show less' : `Show all ${records.length} records`}
+                {showAll ? t('authConfig.email.dns.showLess') : t('authConfig.email.dns.showAll', { count: records.length })}
               </button>
             )}
           </div>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import {
   X, DownloadSimple, PaperPlaneTilt, ArrowClockwise,
   CheckCircle, Warning, EnvelopeSimple, FloppyDisk, Trash,
@@ -20,27 +21,6 @@ import { PoListRow } from '../../../Utils/PoListRow.jsx';
 // directly or set up a daily/weekly/monthly email schedule that delivers a
 // signed download link to a chosen address.
 
-const PERIOD_OPTIONS = [
-  { value: 'today',        label: 'Today' },
-  { value: 'yesterday',    label: 'Yesterday' },
-  { value: 'last_7d',      label: 'Last 7 days' },
-  { value: 'last_30d',     label: 'Last 30 days' },
-  { value: 'this_month',   label: 'This month' },
-  { value: 'last_month',   label: 'Last month' },
-  { value: 'this_quarter', label: 'This quarter' },
-  { value: 'custom',       label: 'Custom range…' },
-];
-const SCHEDULE_OPTIONS = [
-  { value: 'off',     label: 'Off — manual downloads only' },
-  { value: 'daily',   label: 'Daily — yesterday\'s orders' },
-  { value: 'weekly',  label: 'Weekly — past 7 days' },
-  { value: 'monthly', label: 'Monthly — previous month' },
-];
-const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({
-  value: String(h),
-  label: `${String(h).padStart(2, '0')}:00 UTC`,
-}));
-
 function fmtMoney(amount, currency) {
   try {
     return new Intl.NumberFormat('en-US', {
@@ -54,6 +34,27 @@ function fmtMoney(amount, currency) {
 export default function AccountingExportModal({
   projectId, sub, onClose, onSaved, onDeleted, onToast,
 }) {
+  const { t } = useTranslation();
+  const PERIOD_OPTIONS = [
+    { value: 'today',        label: t('integrations.accounting.period.today') },
+    { value: 'yesterday',    label: t('integrations.accounting.period.yesterday') },
+    { value: 'last_7d',      label: t('integrations.accounting.period.last7d') },
+    { value: 'last_30d',     label: t('integrations.accounting.period.last30d') },
+    { value: 'this_month',   label: t('integrations.accounting.period.thisMonth') },
+    { value: 'last_month',   label: t('integrations.accounting.period.lastMonth') },
+    { value: 'this_quarter', label: t('integrations.accounting.period.thisQuarter') },
+    { value: 'custom',       label: t('integrations.accounting.period.custom') },
+  ];
+  const SCHEDULE_OPTIONS = [
+    { value: 'off',     label: t('integrations.accounting.schedule.off') },
+    { value: 'daily',   label: t('integrations.accounting.schedule.daily') },
+    { value: 'weekly',  label: t('integrations.accounting.schedule.weekly') },
+    { value: 'monthly', label: t('integrations.accounting.schedule.monthly') },
+  ];
+  const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({
+    value: String(h),
+    label: t('integrations.accounting.hourLabel', { h: String(h).padStart(2, '0') }),
+  }));
   const pq = `?project_id=${projectId}`;
   const meta = CONNECTOR_BY_TYPE[sub.type] || {};
 
@@ -95,7 +96,7 @@ export default function AccountingExportModal({
     if (period === 'custom') {
       if (!customStart || !customEnd) {
         setPreview(null); setPreviewBusy(false);
-        setPreviewErr('Pick both start and end dates for a custom range.');
+        setPreviewErr(t('integrations.accounting.pickBothDates'));
         return;
       }
       params.set('start', customStart);
@@ -107,7 +108,7 @@ export default function AccountingExportModal({
         { credentials: 'include' });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setPreviewErr(j.detail || 'Preview failed');
+        setPreviewErr(j.detail || t('integrations.accounting.previewFailed'));
         setPreview(null);
       } else {
         setPreview(await res.json());
@@ -145,7 +146,7 @@ export default function AccountingExportModal({
     setErr(''); setBusy(true);
     try {
       if (schedule !== 'off' && !emailTo.includes('@')) {
-        setErr('Set a recipient email or switch the schedule to Off.');
+        setErr(t('integrations.accounting.setEmailOrOff'));
         setBusy(false); return;
       }
       const body = {
@@ -168,10 +169,10 @@ export default function AccountingExportModal({
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setErr(j.detail || 'Save failed');
+        setErr(j.detail || t('integrations.accounting.saveFailed'));
       } else {
         onSaved?.();
-        onToast?.('Saved');
+        onToast?.(t('integrations.accounting.saved'));
       }
     } catch (e) { setErr(String(e)); }
     setBusy(false);
@@ -179,7 +180,7 @@ export default function AccountingExportModal({
 
   const testSend = async () => {
     if (!emailTo.includes('@')) {
-      setErr('Set a recipient email first.');
+      setErr(t('integrations.accounting.setRecipientFirst'));
       return;
     }
     setErr(''); setBusy(true);
@@ -190,16 +191,16 @@ export default function AccountingExportModal({
         { method: 'POST', credentials: 'include' });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setErr(j.detail || 'Test send failed');
+        setErr(j.detail || t('integrations.accounting.testSendFailed'));
       } else {
-        onToast?.(`Email sent to ${emailTo}`);
+        onToast?.(t('integrations.accounting.emailSentTo', { email: emailTo }));
       }
     } catch (e) { setErr(String(e)); }
     setBusy(false);
   };
 
   const remove = async () => {
-    if (!confirm('Delete this accounting integration? Past downloads aren\'t affected.')) return;
+    if (!confirm(t('integrations.accounting.confirmDelete'))) return;
     setBusy(true);
     try {
       await fetch(`${API_BASE}/api/integrations/${sub.id}${pq}`, {
@@ -233,14 +234,14 @@ export default function AccountingExportModal({
 
         <div className="auth-modal-body acc-body">
           <div className="acc-format-banner">
-            <div className="acc-format-label">File format</div>
+            <div className="acc-format-label">{t('integrations.accounting.fileFormat')}</div>
             <div className="acc-format-value">{meta.accountingFormat || 'CSV'}</div>
           </div>
 
           {/* ── Period ── section title is a bare label sitting OUTSIDE any
               card (po-wh-section-label pattern from New warehouse modal).
               Compose stays inline: Combobox + Include-unpaid on one row. */}
-          <div className="po-wh-section-label">Period</div>
+          <div className="po-wh-section-label">{t('integrations.accounting.periodLabel')}</div>
           <div className="acc-period-row">
             <div className="acc-field acc-field--grow">
               <Combobox value={period} options={PERIOD_OPTIONS}
@@ -250,18 +251,18 @@ export default function AccountingExportModal({
               <input type="checkbox" className="cat-prod-checkbox po-include-cb"
                 checked={includeUnpaid}
                 onChange={e => setIncludeUnpaid(e.target.checked)} />
-              <span className="po-set-toggle-text">Include unpaid / pending</span>
+              <span className="po-set-toggle-text">{t('integrations.accounting.includeUnpaid')}</span>
             </label>
           </div>
           {period === 'custom' && (
             <div className="acc-custom-range">
               <div className="cpm-section">
-                <label className="po-field-label">Start</label>
+                <label className="po-field-label">{t('integrations.accounting.start')}</label>
                 <input className="crm-input" type="date" value={customStart}
                   onChange={e => setCustomStart(e.target.value)} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">End</label>
+                <label className="po-field-label">{t('integrations.accounting.end')}</label>
                 <input className="crm-input" type="date" value={customEnd}
                   onChange={e => setCustomEnd(e.target.value)} />
               </div>
@@ -271,34 +272,34 @@ export default function AccountingExportModal({
           {/* ── Preview ── label outside, KPI row + table below.
               Refresh button sits on the right of the section label. */}
           <div className="po-wh-section-label po-wh-section-label--row">
-            <span>Preview</span>
+            <span>{t('integrations.accounting.preview')}</span>
             <button type="button" className="acc-refresh" onClick={loadPreview} disabled={previewBusy}>
-              <ArrowClockwise size={12} /> Refresh
+              <ArrowClockwise size={12} /> {t('integrations.accounting.refresh')}
             </button>
           </div>
           {(preview || previewBusy || previewErr) && (
             <div className="an-margin-totals acc-stats-row">
               <div className="an-kpi">
-                <span className="an-kpi-label">Orders</span>
+                <span className="an-kpi-label">{t('integrations.accounting.orders')}</span>
                 <span className="an-kpi-value">
                   {preview ? preview.orders : '—'}
                 </span>
               </div>
               <div className="an-kpi">
-                <span className="an-kpi-label">Revenue</span>
+                <span className="an-kpi-label">{t('integrations.accounting.revenue')}</span>
                 <span className="an-kpi-value">
                   {preview ? fmtMoney(preview.revenue, preview.currency) : '—'}
                 </span>
               </div>
               <div className="an-kpi">
-                <span className="an-kpi-label">Window</span>
+                <span className="an-kpi-label">{t('integrations.accounting.window')}</span>
                 <span className="an-kpi-value an-kpi-value--small">
-                  {preview ? preview.period : (previewBusy ? 'Loading…' : '—')}
+                  {preview ? preview.period : (previewBusy ? t('integrations.accounting.loading') : '—')}
                 </span>
               </div>
             </div>
           )}
-          {previewBusy && !preview && <p className="acc-preview-loading">Loading preview…</p>}
+          {previewBusy && !preview && <p className="acc-preview-loading">{t('integrations.accounting.loadingPreview')}</p>}
           {previewErr && (
             <div className="acc-preview-err">
               <Warning size={14} /> {previewErr}
@@ -308,11 +309,11 @@ export default function AccountingExportModal({
             <>
               <div className="po-set-table acc-preview-pst">
                 <div className="po-set-row po-set-row--head acc-preview-pst-row">
-                  <span>Order</span>
-                  <span>Date</span>
-                  <span>Customer</span>
-                  <span style={{ textAlign: 'right' }}>Items</span>
-                  <span style={{ textAlign: 'right' }}>Amount</span>
+                  <span>{t('integrations.accounting.colOrder')}</span>
+                  <span>{t('integrations.accounting.colDate')}</span>
+                  <span>{t('integrations.accounting.colCustomer')}</span>
+                  <span style={{ textAlign: 'right' }}>{t('integrations.accounting.colItems')}</span>
+                  <span style={{ textAlign: 'right' }}>{t('integrations.accounting.colAmount')}</span>
                 </div>
                 {preview.preview.map(r => (
                   <PoListRow key={r.id} className="acc-preview-pst-row">
@@ -330,43 +331,42 @@ export default function AccountingExportModal({
               </div>
               {preview.orders > preview.preview.length && (
                 <p className="acc-preview-foot">
-                  Showing {preview.preview.length} of {preview.orders} orders. Download for the full file.
+                  {t('integrations.accounting.showingOf', { shown: preview.preview.length, total: preview.orders })}
                 </p>
               )}
             </>
           )}
           {preview && preview.preview?.length === 0 && (
-            <p className="acc-preview-empty">No matching orders in this period.</p>
+            <p className="acc-preview-empty">{t('integrations.accounting.noMatchingOrders')}</p>
           )}
 
           {/* ── Email schedule ── 4 cpm-section blocks under a bare label. */}
-          <div className="po-wh-section-label">Email schedule</div>
+          <div className="po-wh-section-label">{t('integrations.accounting.emailSchedule')}</div>
 
           <div className="cpm-section">
-            <label className="po-field-label">Cadence</label>
+            <label className="po-field-label">{t('integrations.accounting.cadence')}</label>
             <Combobox value={schedule} options={SCHEDULE_OPTIONS}
               onChange={v => setSchedule(v)} />
             <span className="cpm-section-hint">
-              When set, we email a signed download link on your cadence —
-              file bytes themselves stay on the CRM and the link is valid for 30 days.
+              {t('integrations.accounting.cadenceHint')}
             </span>
           </div>
 
           {schedule !== 'off' && (
             <div className="cpm-section">
-              <label className="po-field-label">Hour (UTC)</label>
+              <label className="po-field-label">{t('integrations.accounting.hourUtc')}</label>
               <Combobox value={scheduleHr} options={HOUR_OPTIONS}
                 onChange={v => setScheduleHr(v)} />
             </div>
           )}
 
           <div className="cpm-section">
-            <label className="po-field-label">Recipient email</label>
+            <label className="po-field-label">{t('integrations.accounting.recipientEmail')}</label>
             <input className="crm-input" type="email" value={emailTo}
-              placeholder="accountant@example.com"
+              placeholder={t('integrations.accounting.recipientPlaceholder')}
               onChange={e => setEmailTo(e.target.value)} maxLength={200} />
             <span className="cpm-section-hint">
-              Required only when the schedule is on. Leave blank for download-only.
+              {t('integrations.accounting.recipientHint')}
             </span>
           </div>
 
@@ -375,17 +375,17 @@ export default function AccountingExportModal({
               <input type="checkbox" className="cat-prod-checkbox po-include-cb"
                 checked={isActive}
                 onChange={e => setIsActive(e.target.checked)} />
-              <span className="po-set-toggle-text">Active</span>
+              <span className="po-set-toggle-text">{t('integrations.accounting.active')}</span>
             </label>
             <span className="cpm-section-hint">
-              Disabled integrations stop receiving scheduled exports until re-enabled.
+              {t('integrations.accounting.activeHint')}
             </span>
           </div>
 
           {/* ── How to import ── steps directly under the label. */}
           {meta.setupSteps?.length > 0 && (
             <>
-              <div className="po-wh-section-label">How to import in {meta.name}</div>
+              <div className="po-wh-section-label">{t('integrations.accounting.howToImport', { name: meta.name })}</div>
               <ol className="acc-steps">
                 {meta.setupSteps.map((s, i) => <li key={i}>{s}</li>)}
               </ol>
@@ -398,24 +398,24 @@ export default function AccountingExportModal({
             <button type="button" className="crm-submit-btn acc-btn-action"
               onClick={triggerDownload} disabled={busy || previewBusy || !preview || preview.orders === 0}>
               <DownloadSimple size={14} weight="bold" />
-              <span>{preview ? `Download · ${preview.orders} order${preview.orders === 1 ? '' : 's'}` : 'Download'}</span>
+              <span>{preview ? t('integrations.accounting.downloadOrders', { count: preview.orders }) : t('integrations.accounting.download')}</span>
             </button>
             <button type="button" className="auth-btn-check acc-btn-action"
               onClick={save} disabled={busy}>
               <FloppyDisk size={14} weight="bold" />
-              <span>{busy ? 'Saving…' : 'Save schedule'}</span>
+              <span>{busy ? t('integrations.accounting.saving') : t('integrations.accounting.saveSchedule')}</span>
             </button>
             {emailTo && (
               <button type="button" className="auth-btn-check acc-btn-action"
                 onClick={testSend} disabled={busy}>
                 <PaperPlaneTilt size={14} weight="bold" />
-                <span>Test send</span>
+                <span>{t('integrations.accounting.testSend')}</span>
               </button>
             )}
             <button type="button" className="auth-btn-danger acc-btn-delete acc-btn-action"
               onClick={remove} disabled={busy}>
               <Trash size={14} weight="bold" />
-              <span>Delete</span>
+              <span>{t('integrations.accounting.delete')}</span>
             </button>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import {
   MagnifyingGlass, X, CaretRight, CaretDown, ArrowsDownUp, Package,
@@ -14,13 +15,7 @@ import '../../Style/Products.css';
 import '../../Style/Organization.css';
 import '../../Style/Customers.css';
 
-const SORT_OPTIONS = [
-  { value: 'recent', label: 'Recent activity' },
-  { value: 'spent',  label: 'Top spenders'    },
-  { value: 'orders', label: 'Most orders'     },
-  { value: 'name',   label: 'Name A–Z'        },
-  { value: 'joined', label: 'Newest'          },
-];
+const SORT_VALUES = ['recent', 'spent', 'orders', 'name', 'joined'];
 
 // Order status badge (mirrors the Orders page palette).
 const ORDER_STATUS = {
@@ -69,6 +64,7 @@ function Avatar({ url, name, email }) {
 // Mirrors the Products "All Categories" filter (cat-filter-* classes +
 // DynamicBlock sliding indicator) for a consistent toolbar control.
 function SortDropdown({ value, options, onChange }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const [open, setOpen]       = useState(false);
   const [pos, setPos]         = useState(null);
@@ -92,7 +88,7 @@ function SortDropdown({ value, options, onChange }) {
     };
   }, [open]);
 
-  const label = options.find(o => o.value === value)?.label || 'Sort';
+  const label = options.find(o => o.value === value)?.label || t('orders.customers.sort.label');
 
   return (
     <>
@@ -125,6 +121,7 @@ function SortDropdown({ value, options, onChange }) {
 
 // ── Detail modal ─────────────────────────────────────────────
 function CustomerModal({ custId, pq, currency, onClose }) {
+  const { t } = useTranslation();
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -148,7 +145,7 @@ function CustomerModal({ custId, pq, currency, onClose }) {
       onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="auth-modal cpm-modal cust-modal" onClick={e => e.stopPropagation()}>
         {loading || !p ? (
-          <div className="cust-modal-loading">{loading ? 'Loading…' : 'Customer not found'}</div>
+          <div className="cust-modal-loading">{loading ? t('orders.customers.loading') : t('orders.customers.notFound')}</div>
         ) : (
           <>
             <div className="auth-modal-head cust-modal-head">
@@ -156,8 +153,8 @@ function CustomerModal({ custId, pq, currency, onClose }) {
                 <Avatar url={p.avatar_url} name={p.name} email={p.email} />
                 <div className="cust-profile-text">
                   <div className="cust-profile-name">
-                    {p.name || 'Guest customer'}
-                    {p.is_guest && <span className="cust-guest">Guest</span>}
+                    {p.name || t('orders.customers.guestCustomer')}
+                    {p.is_guest && <span className="cust-guest">{t('orders.customers.guest')}</span>}
                   </div>
                   <div className="cust-profile-contacts">
                     {p.email && <span><EnvelopeSimple weight="regular" /> {p.email}</span>}
@@ -165,8 +162,8 @@ function CustomerModal({ custId, pq, currency, onClose }) {
                       {p.phone_verified && <CheckCircle weight="fill" className="cust-verified" />}</span>}
                   </div>
                   <div className="cust-profile-meta">
-                    Joined {fmtDate(p.created_at)}
-                    {p.oauth_provider && ` · via ${p.oauth_provider}`}
+                    {t('orders.customers.joined', { date: fmtDate(p.created_at) })}
+                    {p.oauth_provider && t('orders.customers.via', { provider: p.oauth_provider })}
                   </div>
                 </div>
               </div>
@@ -180,35 +177,35 @@ function CustomerModal({ custId, pq, currency, onClose }) {
               <div className="cust-stats">
                 <div className="cust-stat">
                   <span className="cust-stat-val">{st.orders}</span>
-                  <span className="cust-stat-label">Orders</span>
+                  <span className="cust-stat-label">{t('orders.customers.statOrders')}</span>
                 </div>
                 <div className="cust-stat">
                   <span className="cust-stat-val">{formatMoney(st.total_spent, cur, { decimals: 0 })}</span>
-                  <span className="cust-stat-label">Lifetime spend</span>
+                  <span className="cust-stat-label">{t('orders.customers.statLifetimeSpend')}</span>
                 </div>
                 <div className="cust-stat">
                   <span className="cust-stat-val">{formatMoney(st.avg_order, cur, { decimals: 0 })}</span>
-                  <span className="cust-stat-label">Avg order</span>
+                  <span className="cust-stat-label">{t('orders.customers.statAvgOrder')}</span>
                 </div>
                 <div className="cust-stat">
                   <span className="cust-stat-val">{st.returns}</span>
-                  <span className="cust-stat-label">Returns</span>
+                  <span className="cust-stat-label">{t('orders.customers.statReturns')}</span>
                 </div>
               </div>
 
               {/* Order history */}
-              <div className="cust-section-label">Order history</div>
+              <div className="cust-section-label">{t('orders.customers.orderHistory')}</div>
               {data.orders.length === 0 ? (
-                <div className="crm-placeholder">No orders yet.</div>
+                <div className="crm-placeholder">{t('orders.customers.noOrders')}</div>
               ) : (
                 <div className="cust-orders">
                   {data.orders.map(o => (
                     <div className="cust-order" key={o.id}>
                       <span className="cust-order-icon"><Package weight="regular" /></span>
                       <span className="cust-order-main">
-                        <span className="cust-order-id">Order #{o.id}</span>
+                        <span className="cust-order-id">{t('orders.customers.orderId', { id: o.id })}</span>
                         <span className="cust-order-sub">
-                          {fmtShort(o.created_at)} · {o.items_count} item{o.items_count === 1 ? '' : 's'}
+                          {fmtShort(o.created_at)} · {t('orders.customers.orderItems', { count: o.items_count })}
                           {o.payment_provider && ` · ${o.payment_provider}`}
                           {o.payment_method && ` (${o.payment_method})`}
                         </span>
@@ -235,8 +232,10 @@ function CustomerModal({ custId, pq, currency, onClose }) {
 
 // ── Customers list page ──────────────────────────────────────
 export default function Customers() {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   const pq = `?project_id=${projectId}`;
+  const sortOptions = SORT_VALUES.map(v => ({ value: v, label: t(`orders.customers.sort.${v}`) }));
   const [items, setItems]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState('');
@@ -263,31 +262,30 @@ export default function Customers() {
 
   return (
     <>
-      <h1 className="crm-page-title">Customers</h1>
+      <h1 className="crm-page-title">{t('orders.customers.title')}</h1>
       <p className="po-block-hint">
-        Everyone who signed up or placed an order. Click a customer to see their full
-        order history and how they paid.
+        {t('orders.customers.intro')}
       </p>
 
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search name, email, phone…"
+          <input className="org-search-input" placeholder={t('orders.customers.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="org-toolbar-right">
-          <SortDropdown value={sort} options={SORT_OPTIONS} onChange={setSort} />
+          <SortDropdown value={sort} options={sortOptions} onChange={setSort} />
         </div>
       </div>
 
       {loading ? (
-        <div className="crm-placeholder">Loading…</div>
+        <div className="crm-placeholder">{t('orders.customers.loading')}</div>
       ) : items.length === 0 ? (
-        <div className="crm-placeholder">{search ? 'No customers match your search.' : 'No customers yet.'}</div>
+        <div className="crm-placeholder">{search ? t('orders.customers.emptySearch') : t('orders.customers.empty')}</div>
       ) : (
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head cust-row">
-            <span>Customer</span><span>Orders</span><span>Spent</span><span>Last order</span><span></span>
+            <span>{t('orders.customers.colCustomer')}</span><span>{t('orders.customers.colOrders')}</span><span>{t('orders.customers.colSpent')}</span><span>{t('orders.customers.colLastOrder')}</span><span></span>
           </div>
           {items.map(c => (
             <PoListRow key={c.id} className="cust-row cust-row--clickable"
@@ -296,8 +294,8 @@ export default function Customers() {
                 <Avatar url={c.avatar_url} name={c.name} email={c.email} />
                 <span className="cust-id">
                   <span className="cust-name">
-                    {c.name || 'Guest'}
-                    {c.is_guest && <span className="cust-guest">Guest</span>}
+                    {c.name || t('orders.customers.guest')}
+                    {c.is_guest && <span className="cust-guest">{t('orders.customers.guest')}</span>}
                   </span>
                   <span className="cust-sub">{c.email || c.phone || '—'}</span>
                 </span>

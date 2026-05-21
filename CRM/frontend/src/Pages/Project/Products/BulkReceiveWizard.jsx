@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import {
   X, CaretRight, CaretDown, Folder, Cube,
   Stack, ArrowRight, Trash,
@@ -18,25 +19,27 @@ const USER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 // Must match RECEIVE_REASONS in backend main.py.
 const REASON_OPTIONS = [
-  { value: 'supplier_delivery', label: 'Supplier delivery' },
-  { value: 'initial_inventory', label: 'Initial inventory' },
-  { value: 'customer_return',   label: 'Customer return' },
-  { value: 'production',        label: 'Production' },
-  { value: 'recount_adjust',    label: 'Recount adjustment' },
-  { value: 'transfer_in',       label: 'External transfer in' },
-  { value: 'other',             label: 'Other' },
+  { value: 'supplier_delivery', labelKey: 'products.bulkReceive.reason.supplierDelivery' },
+  { value: 'initial_inventory', labelKey: 'products.bulkReceive.reason.initialInventory' },
+  { value: 'customer_return',   labelKey: 'products.bulkReceive.reason.customerReturn' },
+  { value: 'production',        labelKey: 'products.bulkReceive.reason.production' },
+  { value: 'recount_adjust',    labelKey: 'products.bulkReceive.reason.recountAdjust' },
+  { value: 'transfer_in',       labelKey: 'products.bulkReceive.reason.transferIn' },
+  { value: 'other',             labelKey: 'products.bulkReceive.reason.other' },
 ];
 
 export function BulkReceiveButton({ onClick, disabled }) {
+  const { t } = useTranslation();
   return (
     <button type="button" className="org-new-btn"
       onClick={onClick} disabled={disabled}>
-      <Stack weight="bold" className="org-new-icon" /> Add stock
+      <Stack weight="bold" className="org-new-icon" /> {t('products.bulkReceive.addStock')}
     </button>
   );
 }
 
 export default function BulkReceiveWizard({ projectId, onClose, onApplied, showToast }) {
+  const { t } = useTranslation();
   const pq = `?project_id=${projectId}`;
   const [step, setStep] = useState(1);
   const [warehouses, setWarehouses] = useState([]);
@@ -159,7 +162,7 @@ export default function BulkReceiveWizard({ projectId, onClose, onApplied, showT
   const variationAggState = (v)  => aggState(skuIdsOfVariation(v));
 
   const goToStep2 = () => {
-    if (selected.size === 0) { showToast('Pick at least one SKU'); return; }
+    if (selected.size === 0) { showToast(t('products.bulkReceive.pickAtLeastOne')); return; }
     const defaultWh = warehouses.find(w => w.is_default)?.id ?? warehouses[0]?.id ?? '';
     const next = {};
     for (const sid of selected) {
@@ -268,11 +271,11 @@ export default function BulkReceiveWizard({ projectId, onClose, onApplied, showT
       });
       if (r.ok) {
         const j = await r.json();
-        showToast(`Received ${j.total_units} units · ${j.batches_created} new batch${j.batches_created === 1 ? '' : 'es'}, ${j.batches_updated} updated`);
+        showToast(t('products.bulkReceive.toastReceived', { units: j.total_units, created: j.batches_created, updated: j.batches_updated }));
         onApplied?.();
       } else {
         const j = await r.json().catch(() => ({}));
-        showToast(j.detail || 'Receive failed');
+        showToast(j.detail || t('products.bulkReceive.receiveFailed'));
       }
     } finally { setBusy(false); }
   };
@@ -288,11 +291,11 @@ export default function BulkReceiveWizard({ projectId, onClose, onApplied, showT
           <div className="auth-modal-title-row">
             <div>
               <div className="auth-modal-title">
-                {step === 1 ? 'Pick SKUs to receive stock for' : 'Plan stock receipt'}
+                {step === 1 ? t('products.bulkReceive.pickStepTitle') : t('products.bulkReceive.planStepTitle')}
               </div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Step {step} of 2 · {selected.size} SKU{selected.size === 1 ? '' : 's'} selected
+                  {t('products.bulkReceive.stepProgress', { step, count: selected.size })}
                 </span>
               </div>
             </div>
@@ -337,21 +340,21 @@ export default function BulkReceiveWizard({ projectId, onClose, onApplied, showT
               <>
                 <button type="button" className="crm-submit-btn"
                   disabled={selected.size === 0} onClick={goToStep2}>
-                  Next <ArrowRight weight="bold" />
+                  {t('products.bulkReceive.next')} <ArrowRight weight="bold" />
                 </button>
                 <button type="button" className="crm-submit-btn auth-btn-secondary po-disc-cancel-btn"
-                  onClick={onClose}>Cancel</button>
+                  onClick={onClose}>{t('products.bulkReceive.cancel')}</button>
               </>
             ) : (
               <>
                 <button type="button" className="crm-submit-btn auth-btn-secondary"
-                  onClick={() => setStep(1)} disabled={busy}>← Back</button>
+                  onClick={() => setStep(1)} disabled={busy}>{t('products.bulkReceive.back')}</button>
                 <button type="button" className="crm-submit-btn"
                   disabled={!allValid || busy} onClick={apply}>
-                  {busy ? 'Receiving…' : `Receive ${validRows.length} row${validRows.length === 1 ? '' : 's'}`}
+                  {busy ? t('products.bulkReceive.receiving') : t('products.bulkReceive.receiveRows', { count: validRows.length })}
                 </button>
                 <button type="button" className="crm-submit-btn auth-btn-secondary po-disc-cancel-btn"
-                  onClick={onClose} disabled={busy}>Cancel</button>
+                  onClick={onClose} disabled={busy}>{t('products.bulkReceive.cancel')}</button>
               </>
             )}
           </div>
@@ -367,6 +370,7 @@ export default function BulkReceiveWizard({ projectId, onClose, onApplied, showT
 function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMany,
                       productAggState, variationAggState,
                       skuIdsOfProduct, skuIdsOfVariation }) {
+  const { t } = useTranslation();
   const [openProducts, setOpenProducts] = useState(new Set());
   const [openVars, setOpenVars] = useState(new Set());
   const [busyPid, setBusyPid] = useState(new Set());
@@ -395,7 +399,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
   };
 
   if (productList.length === 0) {
-    return <p className="crm-placeholder">No products to receive stock for.</p>;
+    return <p className="crm-placeholder">{t('products.bulkReceive.noProducts')}</p>;
   }
 
   return (
@@ -418,12 +422,12 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
               <Folder weight="duotone" className="po-disc-cell--strong" />
               <span className="po-set-strong">{p.title}</span>
               <span className="po-set-note po-tree-meta">
-                · {p.variations_count || 0} variation{p.variations_count === 1 ? '' : 's'}
-                {isBusy && <span className="po-bulk-tree-loading-inline"> · loading…</span>}
+                · {p.variations_count === 1 ? t('products.bulkReceive.variationOne', { count: p.variations_count }) : t('products.bulkReceive.variationMany', { count: p.variations_count || 0 })}
+                {isBusy && <span className="po-bulk-tree-loading-inline"> · {t('products.bulkReceive.loadingInline')}</span>}
               </span>
             </div>
             {isOpen && !pdState?.hydrated && (
-              <div className="po-bulk-tree-loading">Loading…</div>
+              <div className="po-bulk-tree-loading">{t('products.bulkReceive.loading')}</div>
             )}
             {isOpen && pd && (pd.variations || []).map(v => {
               const vKey = `${p.id}-${v.id}`;
@@ -440,7 +444,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
                       onChange={(checked) => setMany(skuIdsOfVariation(v), checked)} />
                     <span className="po-set-strong">{v.variation_name || v.name || '—'}</span>
                     <span className="po-set-note po-tree-meta">
-                      · {(v.configurations || []).length} SKU{(v.configurations || []).length === 1 ? '' : 's'}
+                      · {(v.configurations || []).length === 1 ? t('products.bulkReceive.skuOne', { count: (v.configurations || []).length }) : t('products.bulkReceive.skuMany', { count: (v.configurations || []).length })}
                     </span>
                   </div>
                   {vOpen && (v.configurations || []).map(c => (
@@ -451,7 +455,7 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
                       <Cube className="po-disc-cell--muted" />
                       <span>{c.configuration_name || c.name || '—'}</span>
                       <span className="po-set-note po-tree-meta">
-                        · stock {c.stock_quantity ?? 0}
+                        · {t('products.bulkReceive.stock', { count: c.stock_quantity ?? 0 })}
                       </span>
                     </div>
                   ))}
@@ -470,36 +474,36 @@ function Step1Tree({ productList, expanded, hydrate, selected, toggleSku, setMan
 function Step2Plan({ warehouses, skuMeta, plan, validRows,
                      updateRow, removeRow, batchNaming, groupingMode, propagateDate,
                      batchOptionsBySkuWh, loadBatchesFor }) {
+  const { t } = useTranslation();
   const planEntries = Object.entries(plan);
   if (planEntries.length === 0) {
-    return <p className="crm-placeholder">Nothing selected — go back and pick SKUs.</p>;
+    return <p className="crm-placeholder">{t('products.bulkReceive.nothingSelected')}</p>;
   }
 
   const groupingLabel = {
-    config:  'Per configuration — each SKU is its own batch.',
-    product: 'Per product — variations of the same product share one batch + dates.',
-    global:  'Global — the whole receipt is one batch; dates propagate to every row.',
+    config:  t('products.bulkReceive.groupConfig'),
+    product: t('products.bulkReceive.groupProduct'),
+    global:  t('products.bulkReceive.groupGlobal'),
   }[groupingMode] || '';
 
   return (
     <>
       <p className="po-bulk-plan-hint">
-        This wizard only <b>adds</b> stock. To remove or write off stock, open a
-        SKU's <b>Edit stock</b> dialog and use a negative change.
+        <span dangerouslySetInnerHTML={{ __html: t('products.bulkReceive.planHint') }} />
         <br />
-        <span className="po-bulk-plan-hint-grouping">Grouping: <b>{groupingLabel}</b></span>
+        <span className="po-bulk-plan-hint-grouping">{t('products.bulkReceive.grouping')} <b>{groupingLabel}</b></span>
       </p>
 
       <div className="po-bulk-plan-table po-bulk-plan-table--receive">
         <div className="po-bulk-plan-row po-bulk-plan-row--head po-bulk-plan-row--receive">
-          <span>SKU</span>
-          <span>Warehouse</span>
-          <span>Batch</span>
-          <span>Units added</span>
-          <span>Production</span>
-          <span>Expiry</span>
-          <span>Reason</span>
-          <span>Note</span>
+          <span>{t('products.bulkReceive.colSku')}</span>
+          <span>{t('products.bulkReceive.colWarehouse')}</span>
+          <span>{t('products.bulkReceive.colBatch')}</span>
+          <span>{t('products.bulkReceive.colUnitsAdded')}</span>
+          <span>{t('products.bulkReceive.colProduction')}</span>
+          <span>{t('products.bulkReceive.colExpiry')}</span>
+          <span>{t('products.bulkReceive.colReason')}</span>
+          <span>{t('products.bulkReceive.colNote')}</span>
           <span></span>
         </div>
         {planEntries.map(([sidStr, p]) => {
@@ -510,12 +514,12 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows,
           const batchOpts = whNum != null ? (batchOptionsBySkuWh[`${sid}:${whNum}`] || []) : [];
           const batchSelectOptions = [
             { value: 'auto',   label: batchNaming.mode === 'auto'
-                ? `New batch (auto: ${batchNaming.format})`
-                : 'New batch (auto)' },
-            { value: 'manual', label: 'New batch · custom name…' },
+                ? t('products.bulkReceive.batchAutoFormat', { format: batchNaming.format })
+                : t('products.bulkReceive.batchAuto') },
+            { value: 'manual', label: t('products.bulkReceive.batchManual') },
             ...batchOpts.map(b => ({
               value: `existing:${b.id}`,
-              label: `Add to: ${b.batch_name} (${b.quantity_remaining} left)`,
+              label: t('products.bulkReceive.batchAddTo', { name: b.batch_name, count: b.quantity_remaining }),
             })),
           ];
 
@@ -528,7 +532,7 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows,
               </span>
               <span className="po-cb-wrap">
                 <Combobox value={p.warehouse === '' ? '' : Number(p.warehouse)}
-                  placeholder="Warehouse"
+                  placeholder={t('products.bulkReceive.warehouse')}
                   options={warehouses.map(w => ({ value: w.id, label: w.name }))}
                   onChange={(v) => {
                     const next = v === '' ? '' : Number(v);
@@ -539,11 +543,11 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows,
               <span className="po-bulk-plan-batch-cell">
                 <Combobox value={p.batch_choice}
                   options={batchSelectOptions}
-                  placeholder="Batch"
+                  placeholder={t('products.bulkReceive.batch')}
                   onChange={(v) => updateRow(sid, { batch_choice: v })} />
                 {p.batch_choice === 'manual' && (
                   <input className="crm-input crm-input--sm po-bulk-plan-batch-input"
-                    placeholder="Batch name"
+                    placeholder={t('products.bulkReceive.batchNamePlaceholder')}
                     value={p.batch_custom || ''}
                     onChange={(e) => updateRow(sid, { batch_custom: e.target.value })}
                     maxLength={80} />
@@ -577,17 +581,17 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows,
                   }} />
               </div>
               <span className="po-cb-wrap">
-                <Combobox value={p.reason} placeholder="Reason"
-                  options={REASON_OPTIONS}
+                <Combobox value={p.reason} placeholder={t('products.bulkReceive.reasonLabel')}
+                  options={REASON_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
                   onChange={(v) => updateRow(sid, { reason: v })} />
               </span>
               <input type="text" className="crm-input po-bulk-plan-note"
-                placeholder="optional"
+                placeholder={t('products.bulkReceive.notePlaceholder')}
                 value={p.note || ''}
                 onChange={(e) => updateRow(sid, { note: e.target.value })}
                 maxLength={500} />
               <button type="button" className="po-tier-row-del"
-                aria-label="Remove" onClick={() => removeRow(sid)}>
+                aria-label={t('products.bulkReceive.remove')} onClick={() => removeRow(sid)}>
                 <Trash weight="bold" />
               </button>
             </div>
@@ -597,7 +601,7 @@ function Step2Plan({ warehouses, skuMeta, plan, validRows,
 
       {validRows.some(r => !r.isValid) && (
         <p className="po-bulk-plan-warning">
-          Some rows are invalid: pick a warehouse, a batch, qty &gt; 0, and a reason.
+          {t('products.bulkReceive.invalidRows')}
         </p>
       )}
     </>

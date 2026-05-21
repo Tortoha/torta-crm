@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Plus, Trash, Image as ImageIcon, DotsThreeOutline, PencilSimple, X, DotsSixVertical, CheckCircle, Barcode,
 } from '@phosphor-icons/react';
@@ -81,6 +82,7 @@ export default function LayerBlock(props) {
 function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect, registerUndo,
                        bulk, setBulk, clearBulk, productType, onPrintBarcode,
                        hidePrice = false, marginPct = 50 }) {
+  const { t } = useTranslation();
   const [editVar, setEditVar] = useState(null);
   // Press-and-hold (300ms) drag activation lets users grab from anywhere including over inputs.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
@@ -104,7 +106,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
     await reloadProduct?.();
     if (snapshots.length && registerUndo) {
       registerUndo({
-        description: `${deleteIds.length} variation${deleteIds.length === 1 ? '' : 's'} deleted`,
+        description: t('productDetail.layer.variationsDeleted', { count: deleteIds.length }),
         undo: async () => {
           for (const snap of snapshots) {
             await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
@@ -117,7 +119,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
         },
       });
     }
-  }, [items, productId, pq, selectedId, onSelect, clearBulk, reloadProduct, registerUndo]);
+  }, [items, productId, pq, selectedId, onSelect, clearBulk, reloadProduct, registerUndo, t]);
 
   // Toggle a card in/out of bulk scope (used by ctx-menu Select + modifier-click).
   const toggleInBulk = useCallback((id) => {
@@ -164,7 +166,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
 
   const deleteItem = async (id) => {
     const target = items.find(v => v.id === id);
-    if (!confirm('Delete this variation and all its nested layers?')) return;
+    if (!confirm(t('productDetail.layer.deleteVariationConfirm'))) return;
     const snapshot = target ? snapshotVariation(target) : null;
     const res = await fetch(`${API_BASE}/api/products/${productId}/layers/1/${id}${pq}`, {
       method: 'DELETE', credentials: 'include',
@@ -174,7 +176,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
     await reloadProduct();
     if (snapshot && registerUndo) {
       registerUndo({
-        description: `Variation "${snapshot.name || 'Untitled'}" deleted`,
+        description: t('productDetail.layer.variationDeleted', { name: snapshot.name || t('productDetail.layer.untitled') }),
         undo: async () => {
           const r = await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
             method: 'POST', credentials: 'include',
@@ -209,7 +211,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
     await persistOrder(newOrder);
     await reloadProduct();
     registerUndo?.({
-      description: 'Variations reordered',
+      description: t('productDetail.layer.variationsReordered'),
       undo: async () => { await persistOrder(oldOrder); await reloadProduct(); },
     });
   };
@@ -219,9 +221,9 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
   return (
     <section className="po-block">
       <div className="po-block-head">
-        <h2 className="po-block-title">Configuration Layer 1</h2>
+        <h2 className="po-block-title">{t('productDetail.layer.configurationLayer', { n: 1 })}</h2>
         <button className="po-add-pill" onClick={addItem} type="button">
-          <Plus weight="bold" /> Add variation
+          <Plus weight="bold" /> {t('productDetail.layer.addVariation')}
         </button>
       </div>
 
@@ -229,7 +231,7 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
         <SortableContext items={itemIds} strategy={rectSortingStrategy}>
           <div className="prod-grid prod-grid--3">
             {items.length === 0 && (
-              <div className="po-empty">No variations yet. Click <b>Add variation</b>.</div>
+              <div className="po-empty">{t('productDetail.layer.noVariations')} <b>{t('productDetail.layer.addVariationBold')}</b>.</div>
             )}
             {items.map(v => (
               <SortableLayer1Card key={v.id} v={v}
@@ -263,13 +265,13 @@ function Layer1Grid({ items, productId, pq, reloadProduct, selectedId, onSelect,
       {ctxMenu && (() => {
         const target = items.find(v => v.id === ctxMenu.id);
         const menuItems = [
-          { label: 'Edit',          icon: <PencilSimple className="org-card-dropdown-icon" />,
+          { label: t('productDetail.layer.card.edit'),         icon: <PencilSimple className="org-card-dropdown-icon" />,
             onClick: () => setEditVar(target) },
-          { label: 'Print barcode', icon: <Barcode      className="org-card-dropdown-icon" />,
+          { label: t('productDetail.layer.card.printBarcode'), icon: <Barcode      className="org-card-dropdown-icon" />,
             onClick: () => onPrintBarcode?.({ variationId: ctxMenu.id }) },
-          { label: 'Select',        icon: <CheckCircle  className="org-card-dropdown-icon" />,
+          { label: t('productDetail.layer.card.select'),       icon: <CheckCircle  className="org-card-dropdown-icon" />,
             onClick: () => toggleInBulk(ctxMenu.id) },
-          { label: 'Delete',        icon: <Trash        className="org-card-dropdown-icon" />,
+          { label: t('productDetail.layer.card.delete'),       icon: <Trash        className="org-card-dropdown-icon" />,
             onClick: () => deleteItem(ctxMenu.id), danger: true },
         ];
         return (
@@ -306,6 +308,7 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
                        onEdit, onDelete, onContextMenu, dragRef, dragStyle, dragHandleProps, isDragging,
                        bulkSelected, bulkActive, onBulkToggle,
                        hidePrice = false, marginPct = 50 }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const imgWrapRef = useRef(null);
   const [menuOpen,    setMenuOpen]    = useState(false);
@@ -348,14 +351,14 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
     value: name, setValue: setName,
     serverValue: v.variation_name || '',
     save: (val) => save({ name: (val || '').trim() }),
-    registerUndo, label: `"${v.variation_name || 'Variation'}" name`,
+    registerUndo, label: t('productDetail.layer.undo.variationName', { name: v.variation_name || t('productDetail.layer.undo.fallbackVariation') }),
     shouldSave: (val) => !!(val || '').trim(),
   });
   useUndoableSave({
     value: price, setValue: setPrice,
     serverValue: v.price != null ? String(v.price) : '',
     save: (val) => save({ price: val === '' ? null : parseFloat(val) }),
-    registerUndo, label: `"${v.variation_name || 'Variation'}" price`,
+    registerUndo, label: t('productDetail.layer.undo.variationPrice', { name: v.variation_name || t('productDetail.layer.undo.fallbackVariation') }),
   });
   // Cost — same auto-derive behaviour as L2 rows. When hidePrice is on, setting cost auto-fills price.
   useUndoableSave({
@@ -371,14 +374,14 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
       }
       return save(body);
     },
-    registerUndo, label: `"${v.variation_name || 'Variation'}" cost`,
+    registerUndo, label: t('productDetail.layer.undo.variationCost', { name: v.variation_name || t('productDetail.layer.undo.fallbackVariation') }),
   });
   // Weight (g) — only meaningful on a leaf variation (no nested configurations).
   useUndoableSave({
     value: weight, setValue: setWeight,
     serverValue: v.weight_g != null ? String(v.weight_g) : '',
     save: (val) => save({ weight_g: val === '' ? null : parseFloat(val) }),
-    registerUndo, label: `"${v.variation_name || 'Variation'}" weight`,
+    registerUndo, label: t('productDetail.layer.undo.variationWeight', { name: v.variation_name || t('productDetail.layer.undo.fallbackVariation') }),
   });
 
   // Multi-photo gallery is managed in <VariationGalleryPopover/> — drop targets,
@@ -392,7 +395,7 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
       className={`org-card org-card--tilt prod-card layer1-card${selected ? ' prod-card--selected' : ''}${isDragging ? ' layer1-card--dragging' : ''}${bulkSelected ? ' layer1-card--bulk' : ''}${bulkActive ? ' layer1-card--bulk-mode' : ''}`}
       onClick={onCardClick || onSelect}
       onContextMenu={onContextMenu}
-      title="Click to select · Right-click for actions · hold 0.3s to drag"
+      title={t('productDetail.layer.card.clickToSelect')}
       {...handlers}>
       {bulkActive && (
         <input type="checkbox" className="cat-prod-checkbox layer1-bulk-check"
@@ -400,7 +403,7 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
           onChange={() => onBulkToggle?.()}
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          aria-label="Toggle selection" />
+          aria-label={t('productDetail.layer.card.toggleSelection')} />
       )}
       <div ref={glossRef} className="org-card-gloss prod-card-gloss" />
       <div className="layer1-inner">
@@ -437,12 +440,12 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
             value={name}
             onChange={e => setName(e.target.value)}
             onClick={e => e.stopPropagation()}
-            placeholder="Variation name *"
-            title={!name.trim() ? 'Variation name is required' : undefined}
+            placeholder={t('productDetail.layer.card.variationNamePlaceholder')}
+            title={!name.trim() ? t('productDetail.layer.card.variationNameRequired') : undefined}
             maxLength={100} />
           {!hidePrice && (
             <div className="layer1-meta-row">
-              <span className="layer1-meta-label">Price</span>
+              <span className="layer1-meta-label">{t('productDetail.layer.card.price')}</span>
               <input className="layer1-meta-input"
                 type="number" min="0" step="0.01"
                 value={price}
@@ -452,31 +455,31 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
             </div>
           )}
           <div className="layer1-meta-row">
-            <span className="layer1-meta-label">Cost</span>
+            <span className="layer1-meta-label">{t('productDetail.layer.card.cost')}</span>
             <input className="layer1-meta-input"
               type="number" min="0" step="0.01"
               value={cost}
               onChange={e => setCost(e.target.value)}
               onClick={e => e.stopPropagation()}
               placeholder="0.00"
-              title={hidePrice ? `Price will be auto-set to cost × ${(1 + marginPct/100).toFixed(2)}` : 'Cost — used for margin reporting'} />
+              title={hidePrice ? t('productDetail.layer.priceAutoTitle', { factor: (1 + marginPct/100).toFixed(2) }) : t('productDetail.layer.card.costTitleHint')} />
           </div>
           {/* Weight: input on a leaf variation; min–max range when it has nested configs (the SKU lives deeper). */}
           {hasChildren ? (
             <div className="layer1-meta-row">
-              <span className="layer1-meta-label">Weight</span>
+              <span className="layer1-meta-label">{t('productDetail.layer.card.weight')}</span>
               <span className="layer1-meta-range">{weightRangeLabel(v)}</span>
             </div>
           ) : (
             <div className="layer1-meta-row">
-              <span className="layer1-meta-label">Weight (g)</span>
+              <span className="layer1-meta-label">{t('productDetail.layer.card.weightG')}</span>
               <input className="layer1-meta-input"
                 type="number" min="0" step="0.01"
                 value={weight}
                 onChange={e => setWeight(e.target.value)}
                 onClick={e => e.stopPropagation()}
                 placeholder="0"
-                title="Shipping weight per unit (g) — shown on the shipping label" />
+                title={t('productDetail.layer.weightTitle')} />
             </div>
           )}
         </div>
@@ -497,6 +500,7 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
 }
 
 function CardMenu({ btnRef, onEdit, onDelete, onClose }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
   const [hovered, setHovered] = useState(null);
   const indRef  = useRef(null);
@@ -527,8 +531,8 @@ function CardMenu({ btnRef, onEdit, onDelete, onClose }) {
 
   if (!pos) return null;
   const items = [
-    { key: 'edit',   label: 'Edit',   icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: onEdit },
-    { key: 'delete', label: 'Delete', icon: <Trash       className="org-card-dropdown-icon" />, onClick: onDelete, danger: true },
+    { key: 'edit',   label: t('productDetail.layer.card.edit'),   icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: onEdit },
+    { key: 'delete', label: t('productDetail.layer.card.delete'), icon: <Trash       className="org-card-dropdown-icon" />, onClick: onDelete, danger: true },
   ];
   return createPortal(
     <div className="org-card-dropdown" style={{ top: pos.top, left: pos.left }}
@@ -555,6 +559,7 @@ function Layer1EditModal({ productId, variation, pq, onClose, onSaved }) {
   // Photo management lives in <VariationGalleryPopover/> now (click on the card
   // image). This modal stays as a quick "rename variation" — image upload removed
   // to avoid two ways of editing the same field.
+  const { t } = useTranslation();
   const [name, setName] = useState(variation.variation_name || '');
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState('');
@@ -575,7 +580,7 @@ function Layer1EditModal({ productId, variation, pq, onClose, onSaved }) {
       body: JSON.stringify({ name: trimmed }),
     });
     setBusy(false);
-    if (!res.ok) { setErr('Save failed'); return; }
+    if (!res.ok) { setErr(t('productDetail.layer.renameModal.saveFailed')); return; }
     onSaved?.();
   };
 
@@ -585,9 +590,9 @@ function Layer1EditModal({ productId, variation, pq, onClose, onSaved }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Rename variation</div>
+              <div className="auth-modal-title">{t('productDetail.layer.renameModal.title')}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">Photos are managed in the gallery — click the card image.</span>
+                <span className="auth-modal-subtitle">{t('productDetail.layer.renameModal.subtitle')}</span>
               </div>
             </div>
           </div>
@@ -598,17 +603,17 @@ function Layer1EditModal({ productId, variation, pq, onClose, onSaved }) {
 
         <div className="auth-modal-body cfg-modal-body">
           <form onSubmit={submit}>
-            <label className="po-field-label">Variation name</label>
+            <label className="po-field-label">{t('productDetail.layer.renameModal.nameLabel')}</label>
             <input className="crm-input" autoFocus value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="Black, Spicy, 1L…" maxLength={100} />
+              placeholder={t('productDetail.layer.renameModal.namePlaceholder')} maxLength={100} />
             {err && <span className="crm-form-error">{err}</span>}
             <div className="auth-actions var-edit-actions">
               <button className="crm-submit-btn" type="submit" disabled={busy}>
-                {busy ? 'Saving…' : 'Save'}
+                {busy ? t('productDetail.layer.renameModal.saving') : t('productDetail.layer.renameModal.save')}
               </button>
               <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-                Cancel
+                {t('productDetail.layer.renameModal.cancel')}
               </button>
             </div>
           </form>
@@ -625,6 +630,7 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
                       selectedId, onSelect, isLeaf, inheritedPrice, onDeleteLayer, registerUndo,
                       bulk, setBulk, clearBulk, onPrintBarcode,
                       hidePrice = false, marginPct = 50 }) {
+  const { t } = useTranslation();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 300, tolerance: 5 } }));
 
   const SCOPE = `layer-${layer}`;
@@ -646,7 +652,7 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
     await reloadProduct?.();
     if (snapshots.length && registerUndo) {
       registerUndo({
-        description: `${deleteIds.length} row${deleteIds.length === 1 ? '' : 's'} deleted (Layer ${layer})`,
+        description: t('productDetail.layer.rowsDeleted', { count: deleteIds.length, layer }),
         undo: async () => {
           for (const snap of snapshots) {
             await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
@@ -690,7 +696,7 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
   }, []);
 
   const copyToSiblings = async () => {
-    if (!confirm('Replace this list under all sibling parents at the previous layer?')) return;
+    if (!confirm(t('productDetail.layer.copyToSiblingsConfirm'))) return;
     const res = await fetch(
       `${API_BASE}/api/products/${productId}/layers/${layer - 1}/${parentId}/copy-to-siblings${pq}`,
       { method: 'POST', credentials: 'include' }
@@ -717,7 +723,7 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
     await persistOrder(newOrder);
     await reloadProduct?.();
     registerUndo?.({
-      description: `Layer ${layer} reordered`,
+      description: t('productDetail.layer.layerReordered', { layer }),
       undo: async () => { await persistOrder(oldOrder); await reloadProduct?.(); },
     });
   };
@@ -728,12 +734,12 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
     <section className="po-block">
       <div className="po-block-head">
         <h2 className="po-block-title">
-          Configuration Layer {layer}
+          {t('productDetail.layer.configurationLayer', { n: layer })}
           {parentName && <span className="po-block-title-context"> | {parentName}</span>}
         </h2>
         {onDeleteLayer && (
-          <button className="po-layer-delete-btn" onClick={onDeleteLayer} type="button" title="Delete this layer">
-            <Trash weight="bold" /> Delete layer
+          <button className="po-layer-delete-btn" onClick={onDeleteLayer} type="button" title={t('productDetail.layer.deleteThisLayer')}>
+            <Trash weight="bold" /> {t('productDetail.layer.deleteLayer')}
           </button>
         )}
       </div>
@@ -741,10 +747,10 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
         <div className="cfg-list">
           <div className={`cfg-list-head cfg-list-head--wt${inScope ? ' cfg-list-head--bulk-mode' : ''}${hidePrice ? ' cfg-list-head--hide-price' : ''}`}>
             {inScope && <span className="cfg-col cfg-col-bulk" />}
-            <span className="cfg-col cfg-col-name">Configuration Name</span>
-            {!hidePrice && <span className="cfg-col cfg-col-price">Price</span>}
-            <span className="cfg-col cfg-col-cost">Cost</span>
-            <span className="cfg-col cfg-col-weight">Weight (g)</span>
+            <span className="cfg-col cfg-col-name">{t('productDetail.layer.colName')}</span>
+            {!hidePrice && <span className="cfg-col cfg-col-price">{t('productDetail.layer.colPrice')}</span>}
+            <span className="cfg-col cfg-col-cost">{t('productDetail.layer.colCost')}</span>
+            <span className="cfg-col cfg-col-weight">{t('productDetail.layer.colWeight')}</span>
             <span className="cfg-col cfg-col-actions" />
           </div>
 
@@ -777,7 +783,7 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
                     await reloadProduct?.();
                     if (registerUndo) {
                       registerUndo({
-                        description: `"${snapshot.name || 'Untitled'}" deleted`,
+                        description: t('productDetail.layer.rowDeleted', { name: snapshot.name || t('productDetail.layer.untitled') }),
                         undo: async () => {
                           const rr = await fetch(`${API_BASE}/api/products/${productId}/restore${pq}`, {
                             method: 'POST', credentials: 'include',
@@ -805,10 +811,10 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
         {items.length > 0 && parentId != null && (
           <div className="spec-copy-row">
             <button type="button" className="spec-copy-btn" onClick={copyToSiblings}>
-              Copy to siblings
+              {t('productDetail.layer.copyToSiblings')}
             </button>
             <span className="spec-copy-hint">
-              Replaces this list under every other parent at Layer {layer - 1}.
+              {t('productDetail.layer.copyToSiblingsHint', { n: layer - 1 })}
             </span>
           </div>
         )}
@@ -818,9 +824,9 @@ function LayerTable({ layer, items, parentId, parentName, productId, pq, reloadP
         // Only Layer 2 ids map directly to product_configurations_l2 (the SKU table). Deeper layers reuse the L2 leaf they roll up into — frontend currently exposes Print barcode on layer 2.
         const canPrint = layer === 2;
         const menuItems = [
-          { label: 'Select',        icon: <CheckCircle  className="org-card-dropdown-icon" />,
+          { label: t('productDetail.layer.card.select'),       icon: <CheckCircle  className="org-card-dropdown-icon" />,
             onClick: () => toggleInBulk(ctxMenu.id) },
-          ...(canPrint ? [{ label: 'Print barcode',
+          ...(canPrint ? [{ label: t('productDetail.layer.card.printBarcode'),
             icon: <Barcode className="org-card-dropdown-icon" />,
             onClick: () => onPrintBarcode?.({ skuId: ctxMenu.id }) }] : []),
         ];
@@ -859,6 +865,7 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
                           dragRef, dragStyle, dragHandleProps, onRowClick, onContextMenu,
                           bulkSelected, bulkActive, onBulkToggle,
                           hidePrice = false, marginPct = 50 }) {
+  const { t } = useTranslation();
   const [name,  setName]  = useState(item.name || '');
   const [price, setPrice] = useState(item.price != null ? String(item.price) : '');
   const [cost,  setCost]  = useState(item.cost_price != null ? String(item.cost_price) : '');
@@ -881,14 +888,14 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
     value: name, setValue: setName,
     serverValue: item.name || '',
     save: (val) => save({ name: (val || '').trim() }),
-    registerUndo, label: `"${item.name || 'Row'}" name`,
+    registerUndo, label: t('productDetail.layer.undo.rowName', { name: item.name || t('productDetail.layer.undo.fallbackRow') }),
     debounceMs: 400,
   });
   useUndoableSave({
     value: price, setValue: setPrice,
     serverValue: item.price != null ? String(item.price) : '',
     save: (val) => save({ price: val === '' ? null : parseFloat(val) }),
-    registerUndo, label: `"${item.name || 'Row'}" price`,
+    registerUndo, label: t('productDetail.layer.undo.rowPrice', { name: item.name || t('productDetail.layer.undo.fallbackRow') }),
     debounceMs: 400,
   });
   // Cost — when hidePrice is on, saving also auto-derives the public price = cost × (1 + margin/100).
@@ -905,14 +912,14 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
       }
       return save(body);
     },
-    registerUndo, label: `"${item.name || 'Row'}" cost`,
+    registerUndo, label: t('productDetail.layer.undo.rowCost', { name: item.name || t('productDetail.layer.undo.fallbackRow') }),
     debounceMs: 400,
   });
   useUndoableSave({
     value: stock, setValue: setStock,
     serverValue: String(item.stock_quantity || 0),
     save: (val) => save({ stock_quantity: parseInt(val, 10) || 0 }),
-    registerUndo, label: `"${item.name || 'Row'}" stock`,
+    registerUndo, label: t('productDetail.layer.undo.rowStock', { name: item.name || t('productDetail.layer.undo.fallbackRow') }),
     shouldSave: () => !hasChildren,
     debounceMs: 400,
   });
@@ -921,7 +928,7 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
     value: weight, setValue: setWeight,
     serverValue: item.weight_g != null ? String(item.weight_g) : '',
     save: (val) => save({ weight_g: val === '' ? null : parseFloat(val) }),
-    registerUndo, label: `"${item.name || 'Row'}" weight`,
+    registerUndo, label: t('productDetail.layer.undo.rowWeight', { name: item.name || t('productDetail.layer.undo.fallbackRow') }),
     debounceMs: 400,
   });
 
@@ -947,10 +954,10 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
           onChange={() => onBulkToggle?.()}
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          aria-label="Toggle selection" />
+          aria-label={t('productDetail.layer.card.toggleSelection')} />
       )}
       <input className="crm-input cfg-cell" value={name}
-        onChange={e => setName(e.target.value)} placeholder="S / 30 cm / 1 L" />
+        onChange={e => setName(e.target.value)} placeholder={t('productDetail.layer.rowNamePlaceholder')} />
       {!hidePrice && (
         <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
           value={price}
@@ -961,7 +968,7 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
         value={cost}
         onChange={e => setCost(e.target.value)}
         placeholder="0.00"
-        title={hidePrice ? `Price will be auto-set to cost × ${(1 + marginPct/100).toFixed(2)}` : 'Cost (for margin reporting)'} />
+        title={hidePrice ? t('productDetail.layer.priceAutoTitle', { factor: (1 + marginPct/100).toFixed(2) }) : t('productDetail.layer.costTitleHint')} />
       {/* Weight: input on a leaf row; min–max range when the SKU lives deeper. */}
       {hasChildren ? (
         <span className="cfg-cell cfg-weight-range">{weightRangeLabel(item)}</span>
@@ -970,11 +977,11 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
           value={weight}
           onChange={e => setWeight(e.target.value)}
           placeholder="0"
-          title="Shipping weight per unit (g) — shown on the shipping label" />
+          title={t('productDetail.layer.weightTitle')} />
       )}
       <button type="button" className="cfg-col-actions cfg-delete-btn"
         onClick={e => { e.stopPropagation(); onDelete?.(); }}
-        title="Delete">
+        title={t('productDetail.layer.delete')}>
         <Trash />
       </button>
     </div>
@@ -982,6 +989,7 @@ function LayerTableRow({ layer, item, productId, pq, reloadProduct, registerUndo
 }
 
 function LayerTableNewRow({ layer, parentId, productId, pq, onAdded }) {
+  const { t } = useTranslation();
   const [name,  setName]  = useState('');
   const [price, setPrice] = useState('');
   const busyRef = useRef(false);
@@ -1012,7 +1020,7 @@ function LayerTableNewRow({ layer, parentId, productId, pq, onAdded }) {
   return (
     <div className="cfg-row cfg-row--new cfg-row--wt">
       <input className="crm-input cfg-cell" value={name}
-        onChange={e => setName(e.target.value)} placeholder="New configuration" />
+        onChange={e => setName(e.target.value)} placeholder={t('productDetail.layer.newConfiguration')} />
       <input className="crm-input cfg-cell" type="number" min="0" step="0.01"
         value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" />
       {/* Cost + weight are set after the row is created (on the data row). */}

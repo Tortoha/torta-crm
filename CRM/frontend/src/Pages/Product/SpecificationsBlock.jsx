@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Trash, CaretDown, Plus } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
@@ -19,6 +20,7 @@ function findNodeAt(product, chain, layer) {
 }
 
 export default function SpecificationsBlock({ product, productId, pq, chain, shownLayers, reloadProduct, registerUndo }) {
+  const { t } = useTranslation();
   const [layer, setLayer] = useState(1);
 
   // Clamp `layer` if shownLayers shrinks (user deleted last layer).
@@ -49,7 +51,7 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
   }, [productId, pq, layer, parentId, reloadProduct]);
 
   const removeSpec = useCallback(async (id) => {
-    if (!confirm('Delete this specification?')) return;
+    if (!confirm(t('productDetail.specs.deleteSpecConfirm'))) return;
     const target = allSpecs.find(s => s.id === id);
     const snapshot = target ? {
       layer, parent_id: parentId, group_id: target.group_id || null,
@@ -62,7 +64,7 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
     reloadProduct?.();
     if (snapshot && registerUndo) {
       registerUndo({
-        description: `Specification "${snapshot.spec_key}" deleted`,
+        description: t('productDetail.specs.specDeleted', { key: snapshot.spec_key }),
         undo: async () => {
           const r = await fetch(`${API_BASE}/api/products/${productId}/specifications${pq}`, {
             method: 'POST', credentials: 'include',
@@ -98,8 +100,8 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
     const g = groups.find(x => x.id === gid);
     const count = g?.specs?.length || 0;
     const msg = count
-      ? `Delete this section and its ${count} specification${count === 1 ? '' : 's'}?`
-      : 'Delete this section?';
+      ? t('productDetail.specs.deleteSectionConfirm', { count })
+      : t('productDetail.specs.deleteSectionConfirmEmpty');
     if (!confirm(msg)) return;
     await fetch(`${API_BASE}/api/products/${productId}/spec-groups/${gid}${pq}`, {
       method: 'DELETE', credentials: 'include',
@@ -109,19 +111,18 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
 
   return (
     <section className="po-block">
-      <h2 className="po-block-title">Specifications</h2>
+      <h2 className="po-block-title">{t('productDetail.specs.title')}</h2>
       <p className="po-block-hint">
-        Organise specs into named sections (e.g. “Display”, “Processor &amp; memory”). Each
-        section holds Name / Value rows. Rows left outside any section show at the top.
+        {t('productDetail.specs.hint')}
       </p>
       <div className="cfg-block-body">
         <div className="spec-attach-field">
-          <label className="po-field-label1">Linking specifications to a layer</label>
+          <label className="po-field-label1">{t('productDetail.specs.linkLabel')}</label>
           <LayerSelect layer={layer} setLayer={setLayer} shownLayers={shownLayers} />
         </div>
 
         {!selectedNode ? (
-          <div className="cfg-empty">Select a row in Layer {layer} above to add specifications.</div>
+          <div className="cfg-empty">{t('productDetail.specs.selectRow', { n: layer })}</div>
         ) : (
           <>
             {/* Ungrouped specs — legacy rows + a quick-add row (borderless, like Modifier items). */}
@@ -150,7 +151,7 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
             </div>
 
             <button type="button" className="po-mod-add-group" onClick={createGroup}>
-              <Plus weight="bold" /> Add section
+              <Plus weight="bold" /> {t('productDetail.specs.addSection')}
             </button>
           </>
         )}
@@ -161,6 +162,7 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
 
 // ── One section card: name header + Name/Value rows + quick-add ──────
 function SpecGroupCard({ group, productId, pq, reloadProduct, registerUndo, onRename, onDelete, onCreateSpec, onRemoveSpec }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(group.name || '');
   const skip = useRef(true);
 
@@ -180,10 +182,10 @@ function SpecGroupCard({ group, productId, pq, reloadProduct, registerUndo, onRe
       <div className="po-mod-group-head spec-group-head">
         <div className="po-mod-name-wrap">
           <input className="po-mod-name-input" value={name}
-            placeholder="Section name (e.g. Display)"
+            placeholder={t('productDetail.specs.sectionNamePlaceholder')}
             onChange={e => setName(e.target.value)} />
         </div>
-        <button type="button" className="po-mod-group-del" onClick={onDelete} title="Delete section">
+        <button type="button" className="po-mod-group-del" onClick={onDelete} title={t('productDetail.specs.deleteSection')}>
           <Trash />
         </button>
       </div>
@@ -203,6 +205,7 @@ function SpecGroupCard({ group, productId, pq, reloadProduct, registerUndo, onRe
 
 // ── Editable Name/Value row (inline autosave, undoable) ──────────────
 function SpecRow({ spec, productId, pq, reloadProduct, registerUndo, onDelete }) {
+  const { t } = useTranslation();
   const [key,   setKey]   = useState(spec.spec_key   || '');
   const [value, setValue] = useState(spec.spec_value || '');
 
@@ -220,23 +223,23 @@ function SpecRow({ spec, productId, pq, reloadProduct, registerUndo, onDelete })
     value: key, setValue: setKey,
     serverValue: spec.spec_key || '',
     save: (val) => save({ spec_key: (val || '').trim(), spec_value: value.trim() }),
-    registerUndo, label: 'Specification key', debounceMs: 400,
+    registerUndo, label: t('productDetail.specs.undoKey'), debounceMs: 400,
   });
   useUndoableSave({
     value: value, setValue: setValue,
     serverValue: spec.spec_value || '',
     save: (val) => save({ spec_key: key.trim(), spec_value: (val || '').trim() }),
-    registerUndo, label: 'Specification value', debounceMs: 400,
+    registerUndo, label: t('productDetail.specs.undoValue'), debounceMs: 400,
   });
 
   return (
     <div className="cfg-row spec-row">
       <input className="crm-input cfg-cell" value={key}
-        onChange={e => setKey(e.target.value)} placeholder="Screen size" />
+        onChange={e => setKey(e.target.value)} placeholder={t('productDetail.specs.keyPlaceholder')} />
       <input className="crm-input cfg-cell" value={value}
-        onChange={e => setValue(e.target.value)} placeholder="6.1 inch" />
+        onChange={e => setValue(e.target.value)} placeholder={t('productDetail.specs.valuePlaceholder')} />
       <button type="button" className="cfg-col-actions cfg-delete-btn"
-        onClick={onDelete} title="Delete">
+        onClick={onDelete} title={t('productDetail.specs.delete')}>
         <Trash />
       </button>
     </div>
@@ -245,6 +248,7 @@ function SpecRow({ spec, productId, pq, reloadProduct, registerUndo, onDelete })
 
 // ── Quick-add row: auto-creates when a name is typed ─────────────────
 function SpecNewRow({ onCreate, resetKey }) {
+  const { t } = useTranslation();
   const [key,   setKey]   = useState('');
   const [value, setValue] = useState('');
   const busyRef = useRef(false);
@@ -266,9 +270,9 @@ function SpecNewRow({ onCreate, resetKey }) {
   return (
     <div className="cfg-row cfg-row--new spec-row">
       <input className="crm-input cfg-cell" value={key}
-        onChange={e => setKey(e.target.value)} placeholder="New specification" />
+        onChange={e => setKey(e.target.value)} placeholder={t('productDetail.specs.newSpecPlaceholder')} />
       <input className="crm-input cfg-cell" value={value}
-        onChange={e => setValue(e.target.value)} placeholder="Value" />
+        onChange={e => setValue(e.target.value)} placeholder={t('productDetail.specs.newValuePlaceholder')} />
       <span className="cfg-col-actions" />
     </div>
   );
@@ -276,6 +280,7 @@ function SpecNewRow({ onCreate, resetKey }) {
 
 // Layer dropdown (Category-style: pill trigger + portal panel + sliding indicator).
 function LayerSelect({ layer, setLayer, shownLayers }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
@@ -312,7 +317,7 @@ function LayerSelect({ layer, setLayer, shownLayers }) {
       <button ref={btnRef} type="button"
         className={`cpm-cat-btn${open ? ' cpm-cat-btn--open' : ''}`}
         onClick={() => setOpen(v => !v)}>
-        <span>Layer {layer}</span>
+        <span>{t('productDetail.specs.layer', { n: layer })}</span>
         <CaretDown weight="bold" className={`cpm-cat-caret${open ? ' cpm-cat-caret--up' : ''}`} />
       </button>
       {open && pos && createPortal(
@@ -329,7 +334,7 @@ function LayerSelect({ layer, setLayer, shownLayers }) {
                 className={`cat-filter-item${current === k ? ' cat-filter-item--current' : ''}`}
                 onMouseEnter={() => setHovered(k)}
                 onClick={() => { setLayer(n); setOpen(false); }}>
-                <span>Layer {n}</span>
+                <span>{t('productDetail.specs.layer', { n })}</span>
               </button>
             );
           })}

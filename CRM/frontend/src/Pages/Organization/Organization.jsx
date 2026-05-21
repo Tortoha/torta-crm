@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Plus, MagnifyingGlass, SquaresFour, List,
   DotsThreeOutline, PencilSimple, Copy, Gear, Trash,
@@ -40,11 +41,12 @@ const ROW_TILT = {
 // ─── SortToggle ──────────────────────────────────────────────────────────────
 
 const SORT_OPTIONS = [
-  { field: 'name', label: 'Sort by name' },
-  { field: 'date', label: 'Sort by date' },
+  { field: 'name', labelKey: 'org.projects.sortByName' },
+  { field: 'date', labelKey: 'org.projects.sortByDate' },
 ];
 
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef       = useRef(null);
   const btnRefs      = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -77,7 +79,7 @@ function SortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         const isCur  = curField === field;
         return (
@@ -90,7 +92,7 @@ function SortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -101,14 +103,15 @@ function SortToggle({ sort, onSort }) {
 // ─── Menu items ───────────────────────────────────────────────────────────────
 
 const MENU_ITEMS = [
-  { key: 'rename',   Icon: PencilSimple, label: 'Rename' },
-  { key: 'copy',     Icon: Copy,         label: 'Copy Public Key' },
-  { key: 'settings', Icon: Gear,         label: 'Settings' },
+  { key: 'rename',   Icon: PencilSimple, labelKey: 'org.projects.menu.rename' },
+  { key: 'copy',     Icon: Copy,         labelKey: 'org.projects.menu.copyKey' },
+  { key: 'settings', Icon: Gear,         labelKey: 'org.projects.menu.settings' },
 ];
 
 // ─── CardMenu ─────────────────────────────────────────────────────────────────
 
 function CardMenu({ project, btnRef, onClose, onRename, onDelete }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [pos, setPos]         = useState(null);
   const [hovered, setHovered] = useState(null);
@@ -138,18 +141,18 @@ function CardMenu({ project, btnRef, onClose, onRename, onDelete }) {
 
       <div className="org-menu-block" onMouseLeave={() => setHovered(null)}>
         <div ref={indRef} className="org-menu-indicator" />
-        {MENU_ITEMS.map(({ key, Icon, label }) => (
+        {MENU_ITEMS.map(({ key, Icon, labelKey }) => (
           <button key={key} ref={setItemRef(key)}
             className={`org-card-dropdown-item org-menu-item${hovered === key ? ' org-menu-item--current' : ''}`}
             onMouseEnter={() => setHovered(key)} onClick={actions[key]}>
-            <Icon className="org-card-dropdown-icon" /> {label}
+            <Icon className="org-card-dropdown-icon" /> {t(labelKey)}
           </button>
         ))}
       </div>
 
       <div className="org-card-dropdown-sep" />
       <button className="org-card-dropdown-item org-card-dropdown-item--danger" onClick={onDelete}>
-        <Trash className="org-card-dropdown-icon" /> Delete
+        <Trash className="org-card-dropdown-icon" /> {t('org.projects.menu.delete')}
       </button>
     </div>,
     document.body
@@ -159,6 +162,7 @@ function CardMenu({ project, btnRef, onClose, onRename, onDelete }) {
 // ─── ProjectCard ──────────────────────────────────────────────────────────────
 
 function ProjectCard({ p, onRename, onDelete, canManage }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const navigate   = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -180,7 +184,7 @@ function ProjectCard({ p, onRename, onDelete, canManage }) {
       <div ref={glossRef} className="org-card-gloss" />
       <div className="org-card-inner">
         {canManage && (
-          <button ref={menuBtnRef} className="org-card-menu-btn" type="button" aria-label="Options"
+          <button ref={menuBtnRef} className="org-card-menu-btn" type="button" aria-label={t('org.projects.options')}
             onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
             <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
           </button>
@@ -188,7 +192,7 @@ function ProjectCard({ p, onRename, onDelete, canManage }) {
         <div className="org-card-name">{p.name}</div>
         <div className="org-card-meta">{p.api_key.slice(0, 16)}…</div>
         <span className={`org-card-badge${p.is_active ? '' : ' org-card-badge--inactive'}`}>
-          {p.is_active ? 'Active' : 'Inactive'}
+          {p.is_active ? t('org.projects.active') : t('org.projects.inactive')}
         </span>
       </div>
       {canManage && menuOpen && (
@@ -203,6 +207,7 @@ function ProjectCard({ p, onRename, onDelete, canManage }) {
 // ─── ListRow ──────────────────────────────────────────────────────────────────
 
 function ListRow({ p, onRename, onDelete, canManage }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const navigate   = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -226,12 +231,12 @@ function ListRow({ p, onRename, onDelete, canManage }) {
       <span className="org-list-key">{p.api_key.slice(0, 16)}…</span>
       <span className="org-list-status-cell">
         <span className={`org-card-badge${p.is_active ? '' : ' org-card-badge--inactive'}`}>
-          {p.is_active ? 'Active' : 'Inactive'}
+          {p.is_active ? t('org.projects.active') : t('org.projects.inactive')}
         </span>
       </span>
       <span className="org-list-created">{fmtDate(p.created_at)}</span>
       {canManage && (
-        <button ref={menuBtnRef} className="org-list-menu-btn" type="button" aria-label="Options"
+        <button ref={menuBtnRef} className="org-list-menu-btn" type="button" aria-label={t('org.projects.options')}
           onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
           <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
         </button>
@@ -248,6 +253,7 @@ function ListRow({ p, onRename, onDelete, canManage }) {
 // ─── RenameModal ──────────────────────────────────────────────────────────────
 
 function RenameModal({ project, onClose, onSaved }) {
+  const { t } = useTranslation();
   const [name,   setName]   = useState(project.name);
   const [saving, setSaving] = useState(false);
   const [err,    setErr]    = useState('');
@@ -255,7 +261,7 @@ function RenameModal({ project, onClose, onSaved }) {
   const handleSubmit = async e => {
     e.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) return setErr('Name is required');
+    if (!trimmed) return setErr(t('org.projects.nameRequired'));
     setSaving(true); setErr('');
     try {
       const res  = await fetch(`${API_BASE}/api/projects/${project.id}`, {
@@ -264,23 +270,23 @@ function RenameModal({ project, onClose, onSaved }) {
         body: JSON.stringify({ name: trimmed }),
       });
       const data = await res.json();
-      if (!res.ok) return setErr(data.detail || 'Error');
+      if (!res.ok) return setErr(data.detail || t('org.projects.error'));
       onSaved({ ...project, name: trimmed }); onClose();
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally   { setSaving(false); }
   };
 
   return (
-    <Modal title="Rename project" onClose={onClose} maxWidth={400}>
+    <Modal title={t('org.projects.rename.title')} onClose={onClose} maxWidth={400}>
       <form onSubmit={handleSubmit}>
         <div className="hdr-modal-field">
-          <h4 className="hdr-modal-label">Name</h4>
+          <h4 className="hdr-modal-label">{t('org.projects.rename.nameLabel')}</h4>
           <input className="hdr-modal-input" value={name} autoFocus maxLength={100}
             onChange={e => { setName(e.target.value); setErr(''); }} />
         </div>
         {err && <span className="hdr-modal-err">{err}</span>}
         <button className="hdr-modal-submit" type="submit" disabled={saving || !name.trim()}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('org.projects.rename.saving') : t('common.save')}
         </button>
       </form>
     </Modal>
@@ -290,6 +296,7 @@ function RenameModal({ project, onClose, onSaved }) {
 // ─── CreateProjectModal ───────────────────────────────────────────────────────
 
 function CreateProjectModal({ orgId, onClose, onCreated }) {
+  const { t } = useTranslation();
   const [name,   setName]   = useState('');
   const [url,    setUrl]    = useState('');
   const [saving, setSaving] = useState(false);
@@ -298,8 +305,8 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
   const handleSubmit = async e => {
     e.preventDefault();
     const trimName = name.trim(), trimUrl = url.trim();
-    if (!trimName)            return setErr('Name is required');
-    if (!isValidUrl(trimUrl)) return setErr('Enter a valid URL: http://... or https://...');
+    if (!trimName)            return setErr(t('org.projects.nameRequired'));
+    if (!isValidUrl(trimUrl)) return setErr(t('org.projects.create.invalidUrl'));
     setSaving(true); setErr('');
     try {
       // Send merchant's browser TZ so booking_settings.timezone seeds correctly
@@ -310,29 +317,29 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
         body: JSON.stringify({ name: trimName, frontend_url: trimUrl, timezone: browserTz }),
       });
       const data = await res.json();
-      if (!res.ok) return setErr(data.detail || 'Error');
+      if (!res.ok) return setErr(data.detail || t('org.projects.error'));
       onCreated(data); onClose();
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally   { setSaving(false); }
   };
 
   return (
-    <Modal title="New project" onClose={onClose} maxWidth={400}>
+    <Modal title={t('org.projects.create.title')} onClose={onClose} maxWidth={400}>
       <form onSubmit={handleSubmit}>
         <div className="hdr-modal-field">
-          <h4 className="hdr-modal-label">Name</h4>
-          <input className="hdr-modal-input" placeholder="Project name" autoFocus maxLength={100}
+          <h4 className="hdr-modal-label">{t('org.projects.create.nameLabel')}</h4>
+          <input className="hdr-modal-input" placeholder={t('org.projects.create.namePlaceholder')} autoFocus maxLength={100}
             value={name} onChange={e => { setName(e.target.value); setErr(''); }} />
         </div>
         <div className="hdr-modal-field">
-          <h4 className="hdr-modal-label">Frontend URL</h4>
-          <input className="hdr-modal-input" placeholder="https://your-store.com" autoComplete="off"
+          <h4 className="hdr-modal-label">{t('org.projects.create.urlLabel')}</h4>
+          <input className="hdr-modal-input" placeholder={t('org.projects.create.urlPlaceholder')} autoComplete="off"
             value={url} onChange={e => { setUrl(e.target.value); setErr(''); }} />
         </div>
         {err && <span className="hdr-modal-err">{err}</span>}
         <button className="hdr-modal-submit" type="submit"
           disabled={saving || !name.trim() || !isValidUrl(url.trim())}>
-          {saving ? 'Creating…' : 'Create'}
+          {saving ? t('org.projects.create.creating') : t('org.projects.create.create')}
         </button>
       </form>
     </Modal>
@@ -342,6 +349,7 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
 // ─── Organization ─────────────────────────────────────────────────────────────
 
 function Organization() {
+  const { t } = useTranslation();
   const { org } = useOutletContext();
   const isOwner = !!org?.is_owner;   // members see a read-only project list (no create/rename/delete)
   const navigate = useNavigate();
@@ -403,7 +411,7 @@ function Organization() {
   }, [org]);
 
   const handleDelete = async id => {
-    if (!window.confirm('Delete this project? This cannot be undone.')) return;
+    if (!window.confirm(t('org.projects.deleteConfirm'))) return;
     try {
       await fetch(`${API_BASE}/api/projects/${id}`, { method: 'DELETE', credentials: 'include' });
       setProjects(prev => prev.filter(p => p.id !== id));
@@ -431,12 +439,12 @@ function Organization() {
 
   return (
     <>
-      <h1 className="crm-page-title org-page-title">Projects</h1>
+      <h1 className="crm-page-title org-page-title">{t('org.projects.title')}</h1>
 
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search projects…"
+          <input className="org-search-input" placeholder={t('org.projects.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
@@ -447,19 +455,19 @@ function Organization() {
             style={{ transform: `translateX(${curView === 'list' ? 30 : 0}px)` }} />
           <button className={`org-view-btn${curView === 'grid' ? ' org-view-btn--current' : ''}`}
             onClick={() => handleSetView('grid')} onMouseEnter={() => setViewHover('grid')}
-            title="Grid view" type="button">
+            title={t('org.projects.gridView')} type="button">
             <SquaresFour className="org-view-icon" />
           </button>
           <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
             onClick={() => handleSetView('list')} onMouseEnter={() => setViewHover('list')}
-            title="List view" type="button">
+            title={t('org.projects.listView')} type="button">
             <List className="org-view-icon" />
           </button>
         </div>
 
         {isOwner && (
           <button className="org-new-btn" onClick={() => setModal(true)} type="button">
-            <Plus className="org-new-icon" /> New project
+            <Plus className="org-new-icon" /> {t('org.projects.newProject')}
           </button>
         )}
       </div>
@@ -467,8 +475,8 @@ function Organization() {
       {sorted.length === 0 ? (
         <div className="crm-placeholder">
           {projects.length === 0
-            ? 'No projects yet. Create one to get started.'
-            : 'No projects match your search.'}
+            ? t('org.projects.empty')
+            : t('org.projects.noResults')}
         </div>
       ) : view === 'grid' ? (
         <div className="org-grid">
@@ -479,10 +487,10 @@ function Organization() {
       ) : (
         <div className="org-list">
           <div className="org-list-head">
-            <span className="org-list-th">Project</span>
-            <span className="org-list-th">Public Key</span>
-            <span className="org-list-th">Status</span>
-            <span className="org-list-th">Created</span>
+            <span className="org-list-th">{t('org.projects.table.project')}</span>
+            <span className="org-list-th">{t('org.projects.table.publicKey')}</span>
+            <span className="org-list-th">{t('org.projects.table.status')}</span>
+            <span className="org-list-th">{t('org.projects.table.created')}</span>
             <span />
           </div>
           <div className="org-list-block">

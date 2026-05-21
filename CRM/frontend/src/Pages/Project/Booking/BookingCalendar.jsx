@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { CaretLeft, CaretRight, CaretDown, User, UserGear, Phone, ChatText, Users } from '@phosphor-icons/react';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import { formatMoney } from '../../../Utils/currency.js';
@@ -13,7 +14,8 @@ const CELL_TILT = {
   gloss: { opacity: 0.14, spread: 50 },
 };
 
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const DOW_KEYS = ['mo', 'tu', 'we', 'th', 'fr', 'sa', 'su'];
 // Fixed slot-row height (Google Calendar style). Each slot row is the same
 // height; a booking's pixel-height is derived from its duration so a 60-min
 // booking visually spans two 30-min slots, a 90-min one spans three, etc.
@@ -60,14 +62,7 @@ function computeHourRange(workingHours) {
   return [Math.max(0, first), Math.min(24, last)];
 }
 
-// Status → human label for the card badge
-const STATUS_LABEL = {
-  pending:   'Pending',
-  confirmed: 'Confirmed',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  no_show:   'No-show',
-};
+const statusLabel = (t, s) => t(`booking.status.${s}`, { defaultValue: s });
 
 // Status order for the dropdown menu (controls visual flow: progressing
 // upward statuses first, then negative outcomes at the bottom).
@@ -79,6 +74,7 @@ const STATUS_MENU_ORDER = ['pending', 'confirmed', 'completed', 'cancelled', 'no
 // edge above the badge when there isn't room below, so it never floats off-
 // screen. Closes on outside-click / Escape.
 function StatusMenu({ anchorEl, current, onPick, onClose }) {
+  const { t } = useTranslation();
   const [pos, setPos]   = useState(null);
   const [hovId, setHov] = useState(null);
   const itemsEl = useRef(null);
@@ -145,7 +141,7 @@ function StatusMenu({ anchorEl, current, onPick, onClose }) {
             className={`hdr-switcher-item${curKey === s ? ' hdr-sw-item--current' : ''}`}
             onMouseEnter={() => setHov(s)}
             onClick={() => { onPick(s); onClose(); }}>
-            {STATUS_LABEL[s] || s}
+            {statusLabel(t, s)}
           </button>
         ))}
       </div>
@@ -180,6 +176,7 @@ const toISOLocal = (d, h, m) => `${toISODate(d)}T${pad(h)}:${pad(m)}`;
 // span the entire week row that the cursor is over. Click any day → set the
 // calendar anchor to the Monday of that week.
 function WeekPicker({ anchorDate, onPickWeek, label }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const indRef = useRef(null);
   const rowRefs = useRef({});       // weekIndex → row element
@@ -303,7 +300,7 @@ function WeekPicker({ anchorDate, onPickWeek, label }) {
             <button type="button" className="bk-date-nav" onClick={goNext}><CaretRight weight="bold" size={14} /></button>
           </div>
           <div className="bk-date-dow">
-            {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => <span key={d}>{d}</span>)}
+            {DOW_KEYS.map(d => <span key={d}>{t(`booking.calendar.dow.${d}`)}</span>)}
           </div>
           <div className="bk-week-grid">
             <div ref={indRef} className="bk-week-indicator" />
@@ -352,6 +349,7 @@ function CalendarCell({ top, busy, height, past }) {
 // Pass `businessTz` (IANA name) so booking blocks render in business clock,
 // not browser clock.
 function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, onStatusChange, workingHours = [], businessTz, slotInterval = 30, staff = [], services = [], currency = 'USD' }) {
+  const { t } = useTranslation();
   const tz = businessTz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const [anchor, setAnchor] = useState(() => startOfWeekInTz(tz));
   const [staffFilter, setStaffFilter] = useState('all');  // 'all' | staff_id
@@ -882,9 +880,9 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
       if (staffClash) {
         const staffName = (staff.find(s => String(s.id) === String(booking.staff_id)) || {}).name
                        || staffClash.staff_name
-                       || 'This staff member';
-        const t = (staffClash._localTime || staffClash.starts_at.slice(11, 16));
-        return { error: `${staffName} is already booked at ${t}` };
+                       || t('booking.calendar.thisStaffMember');
+        const time = (staffClash._localTime || staffClash.starts_at.slice(11, 16));
+        return { error: t('booking.calendar.staffAlreadyBooked', { name: staffName, time }) };
       }
     }
 
@@ -901,8 +899,8 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
     if (sameServiceConcurrent >= capacity) {
       return {
         error: capacity > 1
-          ? `${svc?.name || 'This service'} is at capacity (${capacity}) at this slot`
-          : `Slot conflicts with another ${svc?.name || 'booking'} here`,
+          ? t('booking.calendar.atCapacity', { name: svc?.name || t('booking.calendar.thisService'), capacity })
+          : t('booking.calendar.slotConflict', { name: svc?.name || t('booking.calendar.booking') }),
       };
     }
 
@@ -918,7 +916,7 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
     if (!booking) return;
 
     if (!dayObj.enabled) {
-      setDropError('That day is closed in your working hours');
+      setDropError(t('booking.calendar.dropDayClosed'));
       setTimeout(() => setDropError(''), 3500);
       return;
     }
@@ -934,12 +932,12 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
     // past cell would otherwise let the user "reschedule" into the past,
     // which doesn't make sense and contradicts the visual greying.
     if (isPastSlot(day, slot)) {
-      setDropError('Cannot move a booking to a past time');
+      setDropError(t('booking.calendar.dropPast'));
       setTimeout(() => setDropError(''), 3500);
       return;
     }
     if (isOffHoursSlot(dayObj.dow, slot)) {
-      setDropError('That slot is outside the day’s working hours');
+      setDropError(t('booking.calendar.dropOffHours'));
       setTimeout(() => setDropError(''), 3500);
       return;
     }
@@ -970,16 +968,16 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
   return (
     <div className="bk-cal">
       <div className="bk-cal-toolbar">
-        <button className="crm-icon-btn" onClick={goPrev}    type="button" title="Previous week"><CaretLeft size={16} /></button>
-        <button className="crm-add-btn"  onClick={goToday}   type="button" style={{ padding: '6px 14px' }}>Today</button>
-        <button className="crm-icon-btn" onClick={goNext}    type="button" title="Next week"><CaretRight size={16} /></button>
+        <button className="crm-icon-btn" onClick={goPrev}    type="button" title={t('booking.calendar.prevWeek')}><CaretLeft size={16} /></button>
+        <button className="crm-add-btn"  onClick={goToday}   type="button" style={{ padding: '6px 14px' }}>{t('booking.calendar.today')}</button>
+        <button className="crm-icon-btn" onClick={goNext}    type="button" title={t('booking.calendar.nextWeek')}><CaretRight size={16} /></button>
         <WeekPicker anchorDate={anchor} label={headerRange}
           onPickWeek={(monday) => _switchToAnchor(monday)} />
         {staff.length > 0 && (
           <div className="bk-cal-staff-cb">
             <Users size={14} weight="bold" className="bk-cal-staff-cb-icon" />
             <Combobox value={staffFilter}
-              options={[{ value: 'all', label: 'All staff' },
+              options={[{ value: 'all', label: t('booking.calendar.allStaff') },
                         ...staff.map(s => ({ value: String(s.id), label: s.name }))]}
               onChange={v => setStaffFilter(v)} />
           </div>
@@ -1027,7 +1025,7 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
             return (
               <div key={dayKey} className={colCls}>
                 <div className="bk-cal-col-head">
-                  <div className="bk-cal-col-day">{DAY_NAMES[dow]}</div>
+                  <div className="bk-cal-col-day">{t(`booking.calendar.days.${DAY_KEYS[dow]}`)}</div>
                   <div className="bk-cal-col-date">{day.getUTCDate()}</div>
                 </div>
 
@@ -1063,7 +1061,7 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
                   {dayBookings.map(b => {
                     const startStr = b._localTime || b.starts_at.slice(11, 16);
                     const endStr   = b._localEndTime || (b.ends_at ? b.ends_at.slice(11, 16) : '');
-                    const statusLbl = STATUS_LABEL[b.status] || b.status;
+                    const statusLbl = statusLabel(t, b.status);
                     const dragCls   = draggingId === b.id ? ' bk-cal-card--dragging' : '';
                     // Solo = no concurrent bookings *and* no stacked siblings.
                     // Solo cards get the full-width column to themselves, so they

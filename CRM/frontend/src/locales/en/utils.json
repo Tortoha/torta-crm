@@ -1,0 +1,17 @@
+{
+  "utils": {
+    "country": {
+      "placeholder": "Select country",
+      "searchPlaceholder": "Search countries…",
+      "noMatches": "No matches"
+    },
+    "searchCombo": {
+      "placeholder": "Select…",
+      "searchPlaceholder": "Search…",
+      "noMatches": "No matches"
+    },
+    "rowMenu": {
+      "select": "Select"
+    }
+  }
+}

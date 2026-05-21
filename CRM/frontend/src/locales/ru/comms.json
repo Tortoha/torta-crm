@@ -1,0 +1,247 @@
+{
+  "comms": {
+    "chat": {
+      "pageTitle": "Чат с клиентами",
+      "tabChats": "Чаты",
+      "tabChannels": "Каналы",
+      "channels": "Каналы",
+      "channelsSubtitle": "Подключите каналы обмена сообщениями, чтобы получать сообщения клиентов прямо в CRM.",
+      "searchConversations": "Поиск диалогов…",
+      "active": "Активные",
+      "inactive": "Неактивные",
+      "noActiveChats": "Пока нет активных чатов",
+      "closedChatsAppear": "Закрытые чаты появятся здесь",
+      "selectConversation": "Выберите диалог",
+      "selectConversationDesc": "Выберите чат из списка, чтобы посмотреть сообщения.",
+      "noMessages": "Пока нет сообщений.",
+      "typeMessage": "Введите сообщение…",
+      "send": "Отправить",
+      "chatClosed": "Этот чат закрыт. Откройте его заново, чтобы ответить.",
+      "closeChat": "Закрыть чат",
+      "reopen": "Открыть заново",
+      "via": "через {{channel}}",
+      "copyId": "Скопировать ID",
+      "idCopied": "ID скопирован",
+      "markAsRead": "Отметить прочитанным",
+      "reopenChat": "Открыть чат заново",
+      "copyText": "Скопировать текст",
+      "copied": "Скопировано",
+      "downloadPng": "Скачать как PNG",
+      "openOriginal": "Открыть оригинал",
+      "image": "изображение",
+      "attachment": "вложение",
+      "play": "Воспроизвести",
+      "pause": "Пауза",
+      "zoomIn": "Приблизить",
+      "zoomOut": "Отдалить",
+      "close": "Закрыть",
+      "failedLoad": "Не удалось загрузить сообщения",
+      "failedSend": "Не удалось отправить",
+      "failedDelete": "Не удалось удалить",
+      "downloadFailed": "Не удалось скачать",
+      "deleteMsgConfirm": "Удалить это сообщение? Оно удалится только из CRM, но не из мессенджера.",
+      "chatClosedToast": "Чат закрыт",
+      "chatReopenedToast": "Чат открыт заново",
+      "failed": "Ошибка",
+      "connected": "Подключено",
+      "connectedAs": "Подключено как",
+      "connectedAsName": "Подключено как {{name}}",
+      "realtime": "В реальном времени",
+      "webhook": "Webhook",
+      "webhookUrl": "URL вебхука",
+      "webhookHint": "Вставьте это в настройки вебхука платформы. Требуется публичный HTTPS — работает в продакшене, не на localhost.",
+      "checkingDomain": "Проверка подтверждённого домена…",
+      "noVerifiedDomain": "Нет подтверждённого домена",
+      "noVerifiedDomainBody1": "Канал Email использует домен, который вы уже подтвердили для отправки OTP-кодов. Откройте",
+      "noVerifiedDomainBody2": "и завершите проверку DKIM/SPF/DMARC, затем вернитесь сюда.",
+      "authEmailLink": "Аутентификация → Email",
+      "dnsMxTitle": "DNS — MX-запись",
+      "dnsMxHint1": "Добавьте эту MX-запись к своему домену, чтобы входящая почта попадала на наши серверы. Любой адрес на этом домене",
+      "dnsMxHint2": "будет попадать в этот чат.",
+      "noSetup": "Настройка не требуется",
+      "noSetupDesc": "Web Chat использует существующие API-ключи проекта. Нажмите «Подключить», и виджет поддержки появится на каждой странице вашего магазина.",
+      "lockedToDomain": "Зафиксировано на вашем подтверждённом домене",
+      "lockedHint1": "Зафиксировано на вашем подтверждённом домене. Чтобы изменить, сначала обновите домен в разделе",
+      "lockedHint2": ".",
+      "customerWillSee": "Клиент увидит в своём почтовом ящике",
+      "connectedToast": "Подключено.",
+      "failedSave": "Не удалось сохранить",
+      "update": "Обновить",
+      "connect": "Подключить",
+      "removing": "Удаление…",
+      "disconnect": "Отключить",
+      "channel": {
+        "webchat": { "desc": "Встройте виджет поддержки на свой сайт. Клиенты пишут анонимно." },
+        "telegram": {
+          "desc": "Подключите бота Telegram, чтобы получать прямые сообщения от клиентов.",
+          "field": { "bot_token": { "label": "Токен бота", "hint": "Напишите @BotFather в Telegram, создайте бота и вставьте токен сюда." } }
+        },
+        "discord": {
+          "desc": "Подключите бота Discord, чтобы получать прямые сообщения от пользователей.",
+          "field": { "bot_token": { "label": "Токен бота", "hint": "Discord Developer Portal → Applications → New App → Bot → Reset Token. Включите Privileged Gateway Intent: MESSAGE CONTENT." } }
+        },
+        "whatsapp": {
+          "desc": "Получайте сообщения клиентов через WhatsApp Cloud API.",
+          "field": {
+            "phone_number_id": { "label": "ID номера телефона", "hint": "Из Meta for Developers → WhatsApp → API Setup." },
+            "access_token": { "label": "Постоянный токен доступа", "hint": "Токен System User с областью whatsapp_business_messaging." },
+            "verify_token": { "label": "Токен проверки вебхука", "hint": "Придумайте любую строку. Вставьте ту же строку в Meta при подписке на вебхук." },
+            "app_secret": { "label": "Секрет приложения", "hint": "Из вашего Meta App → Settings → Basic. Используется для проверки X-Hub-Signature-256." }
+          }
+        },
+        "instagram": {
+          "desc": "Получайте сообщения Instagram Direct из вашего бизнес-профиля.",
+          "field": {
+            "page_id": { "label": "ID страницы Instagram", "hint": "ID бизнес-аккаунта IG, связанного со страницей Facebook." },
+            "access_token": { "label": "Токен доступа страницы", "hint": "Долгоживущий токен страницы с областью instagram_manage_messages." },
+            "verify_token": { "label": "Токен проверки вебхука", "hint": "Используется во время подтверждения подписки Meta." },
+            "app_secret": { "label": "Секрет приложения", "hint": "Из вашего Meta App → Settings → Basic." }
+          }
+        },
+        "facebook": {
+          "desc": "Получайте диалоги Facebook Messenger с вашей страницы.",
+          "field": {
+            "page_id": { "label": "ID страницы Facebook", "hint": "Числовой ID вашей страницы." },
+            "access_token": { "label": "Токен доступа страницы", "hint": "Долгоживущий токен страницы с областью pages_messaging." },
+            "verify_token": { "label": "Токен проверки вебхука", "hint": "Используется во время подтверждения подписки Meta." },
+            "app_secret": { "label": "Секрет приложения", "hint": "Из вашего Meta App → Settings → Basic." }
+          }
+        },
+        "viber": {
+          "desc": "Получайте сообщения клиентов от вашего бота Viber.",
+          "field": { "auth_token": { "label": "Токен авторизации", "hint": "Viber Admin Panel → Account info → Authentication token. URL вебхука регистрируется автоматически при наличии HTTPS." } }
+        },
+        "x": {
+          "desc": "Получайте личные сообщения с вашего аккаунта X.",
+          "field": {
+            "bearer_token": { "label": "Bearer-токен OAuth 2.0", "hint": "X Developer Portal → Project → Keys and Tokens → Bearer Token. Требуется доступ Elevated для эндпоинтов DM." },
+            "handle": { "label": "Имя аккаунта", "hint": "Только для отображения — используется для маркировки этой интеграции." },
+            "app_secret": { "label": "Секрет приложения", "hint": "Consumer secret для проверки подписей вебхуков." }
+          }
+        },
+        "email": {
+          "desc": "Получайте письма клиентов, отправленные на любой адрес @вашего-подтверждённого-домена. Ответы группируются в цепочки.",
+          "field": {
+            "domain": { "label": "Подтверждённый домен email", "hint": "Должен быть доменом, который вы уже подтвердили в Аутентификация → Email (DKIM/SPF/DMARC). Любой адрес на этом домене будет направлен в этот чат." },
+            "reply_local": { "label": "Адрес отправителя ответа", "hint": "Только локальная часть. Ответы клиента попадут в тот же чат независимо от этого — это влияет только на то, что они видят в поле «От»." },
+            "reply_name": { "label": "Отображаемое имя отправителя", "hint": "Отображается как имя отправителя в почтовом ящике клиента. Оставьте пустым, чтобы использовать имя из провайдеров входа." }
+          }
+        }
+      }
+    },
+    "emails": {
+      "tab": {
+        "verification": "Подтверждение",
+        "password_reset": "Сброс пароля",
+        "order_confirmation": "Заказ",
+        "booking_reminder": "Бронирование",
+        "abandoned_cart": "Брошенная корзина",
+        "restock": "Поступление",
+        "broadcasts": "Рассылки"
+      },
+      "title": {
+        "verification": "Код подтверждения",
+        "password_reset": "Сброс пароля",
+        "order_confirmation": "Подтверждение заказа",
+        "booking_reminder": "Напоминание о бронировании",
+        "abandoned_cart": "Брошенная корзина",
+        "restock": "Поступление товара",
+        "broadcasts": "Рассылки"
+      },
+      "status": {
+        "draft": "черновик",
+        "scheduled": "запланировано",
+        "recurring": "повторяющаяся",
+        "sending": "отправка",
+        "sent": "отправлено"
+      },
+      "dow": {
+        "mon": "Пн", "tue": "Вт", "wed": "Ср", "thu": "Чт", "fri": "Пт", "sat": "Сб", "sun": "Вс"
+      },
+      "resetConfirm": "Сбросить это письмо к оформлению по умолчанию?",
+      "resetDone": "Сброшено к настройкам по умолчанию",
+      "resetToDefault": "Сбросить к настройкам по умолчанию",
+      "requiredWarn": "Это письмо должно содержать {{vars}} — изменения не сохранятся, пока вы не вернёте это.",
+      "broadcastsHint": "Отправьте рассылку всем своим клиентам — сейчас или по расписанию.",
+      "newCampaign": "Новая рассылка",
+      "noCampaigns": "Пока нет рассылок. Создайте свою первую рассылку.",
+      "untitled": "Без названия",
+      "noSubject": "Без темы",
+      "sentCount": "Отправлено {{sent}}/{{total}}",
+      "campaignName": "Название рассылки",
+      "back": "Назад",
+      "draftSendNow": "Черновик / отправить сейчас",
+      "oneTime": "Разовая",
+      "weekly": "Еженедельно",
+      "excludeGuests": "Исключить гостей",
+      "schedule": "Запланировать",
+      "sendToAll": "Отправить всем",
+      "testPlaceholder": "Отправить тест на you@example.com",
+      "sendTest": "Отправить тест",
+      "scheduled": "Запланировано",
+      "sendingToAll": "Отправка всем клиентам…",
+      "testSent": "Тест отправлен",
+      "deleteConfirm": "Удалить эту рассылку?"
+    },
+    "editor": {
+      "subjectLine": "Тема письма",
+      "layers": "Слои",
+      "background": "Фон",
+      "noBlocks": "Пока нет блоков — добавьте один ниже.",
+      "uploading": "Загрузка…",
+      "canvasHint": "Вставьте изображение (Ctrl+V) или перетащите изображение / PDF куда угодно сюда.",
+      "selectBlock": "Выберите блок для редактирования.",
+      "show": "Показать",
+      "hide": "Скрыть",
+      "addBlock": "Добавить «{{block}}»",
+      "bgNote": "Оформите панель письма и страницу за ней — у каждой может быть свой цвет и изображение.",
+      "emailPanel": "Панель письма",
+      "pageBackground": "Фон страницы",
+      "colour": "Цвет",
+      "corners": "Скругление — {{px}}px",
+      "shadowLabel": "Тень",
+      "image": "Изображение",
+      "uploadImage": "Загрузить изображение",
+      "removePanelImage": "Удалить изображение панели",
+      "removePageImage": "Удалить изображение страницы",
+      "resetBackground": "Сбросить фон",
+      "block": {
+        "heading": "Заголовок",
+        "text": "Текст",
+        "button": "Кнопка",
+        "image": "Изображение",
+        "divider": "Разделитель",
+        "spacer": "Отступ",
+        "code": "Код (OTP)",
+        "order_summary": "Сводка заказа",
+        "downloads": "Загрузки"
+      },
+      "dynamicNote": {
+        "code": "Отображает реальный код подтверждения при отправке.",
+        "order_summary": "Отображает позиции и сумму заказа при отправке.",
+        "downloads": "Отображает ссылки на цифровые загрузки при отправке (только цифровые заказы)."
+      },
+      "align": { "left": "слева", "center": "по центру", "right": "справа" },
+      "shadow": { "none": "Нет", "soft": "Лёгкая", "medium": "Средняя", "strong": "Сильная" },
+      "f": {
+        "text": "Текст",
+        "alignment": "Выравнивание",
+        "textColor": "Цвет текста",
+        "fontSize": "Размер шрифта (px)",
+        "label": "Подпись",
+        "linkUrl": "URL ссылки",
+        "background": "Фон",
+        "labelColor": "Цвет подписи",
+        "cornerRadius": "Скругление углов",
+        "border": "Граница",
+        "shadow": "Тень",
+        "imageUrl": "URL изображения",
+        "altText": "Альт-текст",
+        "width": "Ширина (px)",
+        "codeColor": "Цвет кода",
+        "color": "Цвет",
+        "height": "Высота (px)"
+      }
+    }
+  }
+}

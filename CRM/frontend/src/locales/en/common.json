@@ -1,0 +1,14 @@
+{
+  "common": {
+    "save": "Save",
+    "saved": "Saved",
+    "saveFailed": "Save failed",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "loading": "Loading…",
+    "search": "Search…",
+    "networkError": "Network error",
+    "collapse": "Collapse"
+  }
+}

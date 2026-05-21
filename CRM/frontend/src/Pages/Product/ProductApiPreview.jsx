@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { API_BASE } from '../../api.js';
 import { decodeHash } from '../../Utils/hashids.js';
 import '../../Style/Products.css';
 
 export default function ProductApiPreview() {
+  const { t } = useTranslation();
   const { projectId, setProductContext } = useOutletContext();
   const { productHash } = useParams();
   const productId = decodeHash(productHash);
@@ -217,17 +219,17 @@ export default function ProductApiPreview() {
   return (
     <div className="prod-page po-page">
       <h1 className="crm-page-title">
-        API Preview{product ? ` · ${product.title}` : ''}
+        {t('productDetail.apiPreview.title')}{product ? ` · ${product.title}` : ''}
       </h1>
 
       <section className="po-block">
-        <h2 className="po-block-title">Single product</h2>
+        <h2 className="po-block-title">{t('productDetail.apiPreview.single')}</h2>
         <p className="po-block-hint">
-          What your storefront receives when it calls{' '}
+          {t('productDetail.apiPreview.singleHint')}{' '}
           <code className="po-api-code">GET /{'{api_key}'}/product/{productHash}</code>.
         </p>
         <div className="po-block-card">
-          {loading && <p className="crm-placeholder">Loading…</p>}
+          {loading && <p className="crm-placeholder">{t('common.loading')}</p>}
           {!loading && preview && (
             <pre className="po-api-json">{JSON.stringify(preview, null, 2)}</pre>
           )}
@@ -235,16 +237,14 @@ export default function ProductApiPreview() {
       </section>
 
       <section className="po-block">
-        <h2 className="po-block-title">Product list</h2>
+        <h2 className="po-block-title">{t('productDetail.apiPreview.list')}</h2>
         <p className="po-block-hint">
-          What your storefront receives when it calls{' '}
-          <code className="po-api-code">GET /{'{api_key}'}/products</code>.
-          Each item carries the exact same payload as the single-product endpoint.
-          The example below wraps <i>this</i> product in a 1-element array — the real
-          response contains every product in the catalog.
+          {t('productDetail.apiPreview.listHintPre')}{' '}
+          <code className="po-api-code">GET /{'{api_key}'}/products</code>
+          {t('productDetail.apiPreview.listHintPost')}
         </p>
         <div className="po-block-card">
-          {loading && <p className="crm-placeholder">Loading…</p>}
+          {loading && <p className="crm-placeholder">{t('common.loading')}</p>}
           {!loading && listPreview && (
             <pre className="po-api-json">{JSON.stringify(listPreview, null, 2)}</pre>
           )}

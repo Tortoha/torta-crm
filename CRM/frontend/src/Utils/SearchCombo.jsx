@@ -10,9 +10,12 @@
 // dropdown list.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { CaretDown, MagnifyingGlass, Check } from '@phosphor-icons/react';
 
-export function SearchCombo({ value, options, onChange, placeholder = 'Select…' }) {
+export function SearchCombo({ value, options, onChange, placeholder }) {
+  const { t } = useTranslation();
+  const ph = placeholder ?? t('utils.searchCombo.placeholder');
   const [open, setOpen]   = useState(false);
   const [query, setQuery] = useState('');
   const [pos, setPos]     = useState(null);
@@ -82,7 +85,7 @@ export function SearchCombo({ value, options, onChange, placeholder = 'Select…
             <span className="po-combo-name">{selected.label}</span>
           </span>
         ) : (
-          <span className="po-combo-value po-combo-value--empty">{placeholder}</span>
+          <span className="po-combo-value po-combo-value--empty">{ph}</span>
         )}
         <CaretDown weight="bold" className="po-combo-caret" />
       </button>
@@ -94,7 +97,7 @@ export function SearchCombo({ value, options, onChange, placeholder = 'Select…
             <MagnifyingGlass className="po-combo-search-icon" weight="bold" />
             <input ref={searchRef} className="po-combo-search-input"
               value={query} onChange={e => setQuery(e.target.value)}
-              placeholder="Search…"
+              placeholder={t('utils.searchCombo.searchPlaceholder')}
               onKeyDown={(e) => {
                 // Enter picks the first filtered result — same UX
                 // convention as Stripe / Shopify dashboards.
@@ -107,7 +110,7 @@ export function SearchCombo({ value, options, onChange, placeholder = 'Select…
           </div>
           <div className="po-combo-list">
             {filtered.length === 0 ? (
-              <div className="po-combo-empty">No matches</div>
+              <div className="po-combo-empty">{t('utils.searchCombo.noMatches')}</div>
             ) : (
               filtered.map(o => {
                 const on = selected && String(selected.value) === String(o.value);

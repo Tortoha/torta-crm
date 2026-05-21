@@ -1,0 +1,30 @@
+{
+  "nav": {
+    "sections": {
+      "overview": "Обзор",
+      "business": "Бизнес",
+      "account": "Аккаунт"
+    },
+    "projectOverview": "Обзор проекта",
+    "analytics": "Аналитика",
+    "alerts": "Оповещения",
+    "targets": "Цели",
+    "products": "Товары",
+    "orders": "Заказы",
+    "bookings": "Бронирования",
+    "customers": "Клиенты",
+    "emails": "Письма",
+    "chat": "Чат с клиентами",
+    "authentication": "Аутентификация",
+    "integrations": "Интеграции",
+    "documents": "Документы",
+    "settings": "Настройки",
+    "productOverview": "Обзор товара",
+    "editHistory": "История изменений",
+    "reviews": "Отзывы",
+    "apiPreview": "Предпросмотр API",
+    "projects": "Проекты",
+    "team": "Команда",
+    "payments": "Платежи"
+  }
+}

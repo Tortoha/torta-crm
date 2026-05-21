@@ -185,8 +185,8 @@ textarea {
 }
 
 .crm-badge--light {
-    background: var(--bg);
-    color: var(--muted);
+    background: var(--accent-tint);
+    color: var(--accent);
 }
 
 .crm-badge--gray {

@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { TrendUp, Percent, Warning, Buildings } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { formatMoney } from '../../Utils/currency.js';
@@ -94,6 +95,7 @@ function useOrgAnalytics(orgId, period) {
 
 // ── Section 1: Overview KPIs ──────────────────────────────────────────
 function OverviewSection({ orgId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useOrgAnalytics(orgId, period);
   const ccy = data?.currency || 'USD';
@@ -101,23 +103,23 @@ function OverviewSection({ orgId }) {
   const cur   = data?.totals?.current || {};
   const delta = data?.totals?.delta || {};
   return (
-    <SectionShell title="Overview · all projects" periodValue={period} onPeriodChange={setPeriod}>
+    <SectionShell title={t('org.analytics.overview.title')} periodValue={period} onPeriodChange={setPeriod}>
       {data?.mixed_currencies && (
         <span className="oa-mixed-badge" style={{ marginBottom: 12 }}
-          title="Projects use different currencies — revenue is FX-converted to the org currency.">
-          <Warning weight="fill" /> Mixed currencies → converted to {ccy}
+          title={t('org.analytics.overview.mixedCurrenciesTitle')}>
+          <Warning weight="fill" /> {t('org.analytics.overview.mixedCurrencies', { ccy })}
         </span>
       )}
       {loading || !data ? (
-        <div className="crm-placeholder">Loading…</div>
+        <div className="crm-placeholder">{t('org.analytics.loading')}</div>
       ) : (
         <div className="an-kpi-grid">
-          <Kpi label="Revenue"    value={money(cur.revenue)}                     delta={delta.revenue} />
-          <Kpi label="Orders"     value={fmtInt(cur.orders)}                     delta={delta.orders} />
-          <Kpi label="Avg order"  value={money(cur.aov)}                         delta={delta.aov} />
-          <Kpi label="Conversion" value={`${(cur.conversion || 0).toFixed(1)}%`} delta={delta.conversion} />
-          <Kpi label="Visitors"   value={fmtInt(cur.visitors)}                   delta={delta.visitors} />
-          <Kpi label="Customers"  value={fmtInt(cur.customers)}                  delta={delta.customers} />
+          <Kpi label={t('org.analytics.overview.revenue')}    value={money(cur.revenue)}                     delta={delta.revenue} />
+          <Kpi label={t('org.analytics.overview.orders')}     value={fmtInt(cur.orders)}                     delta={delta.orders} />
+          <Kpi label={t('org.analytics.overview.avgOrder')}   value={money(cur.aov)}                         delta={delta.aov} />
+          <Kpi label={t('org.analytics.overview.conversion')} value={`${(cur.conversion || 0).toFixed(1)}%`} delta={delta.conversion} />
+          <Kpi label={t('org.analytics.overview.visitors')}   value={fmtInt(cur.visitors)}                   delta={delta.visitors} />
+          <Kpi label={t('org.analytics.overview.customers')}  value={fmtInt(cur.customers)}                  delta={delta.customers} />
         </div>
       )}
     </SectionShell>
@@ -131,6 +133,7 @@ function OverviewSection({ orgId }) {
 // prepends older chunks as the user pans left, and an auto-fill effect widens
 // the data to cover a wide zoom. This is what makes the chart scrollable.
 function RevenueSection({ orgId }) {
+  const { t } = useTranslation();
   const [period, setPeriod]           = useState('1mo');
   const [gran, setGran]               = useState('day');
   const [data, setData]               = useState([]);
@@ -222,12 +225,12 @@ function RevenueSection({ orgId }) {
   setAnalyticsCurrency(ccy);
 
   return (
-    <SectionShell title="Revenue over time" periodValue={period} onPeriodChange={setPeriod}
+    <SectionShell title={t('org.analytics.revenue.title')} periodValue={period} onPeriodChange={setPeriod}
       headerControls={<GranularitySegmented value={gran} onChange={setGran} />}>
       <div className="an-tile">
-        {loading ? <div className="crm-placeholder">Loading…</div>
+        {loading ? <div className="crm-placeholder">{t('org.analytics.loading')}</div>
           : data.length === 0
-            ? <p className="an-empty">No revenue in this period yet.</p>
+            ? <p className="an-empty">{t('org.analytics.revenue.empty')}</p>
             : <LineChart data={data} viewportBuckets={viewportBuckets} valueKey="revenue"
                 onZoom={stepPeriod} onLoadMore={handleLoadMore} loadingMore={loadingMore} />}
       </div>
@@ -237,6 +240,7 @@ function RevenueSection({ orgId }) {
 
 // ── Section 3: Project comparison ─────────────────────────────────────
 function ComparisonSection({ orgId }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('1mo');
   const { data, loading } = useOrgAnalytics(orgId, period);
   const ccy = data?.currency || 'USD';
@@ -251,11 +255,11 @@ function ComparisonSection({ orgId }) {
     : null;
 
   return (
-    <SectionShell title="Project comparison" periodValue={period} onPeriodChange={setPeriod}>
+    <SectionShell title={t('org.analytics.comparison.title')} periodValue={period} onPeriodChange={setPeriod}>
       {loading || !data ? (
-        <div className="crm-placeholder">Loading…</div>
+        <div className="crm-placeholder">{t('org.analytics.loading')}</div>
       ) : projects.length === 0 ? (
-        <div className="crm-placeholder">No projects in this organization yet.</div>
+        <div className="crm-placeholder">{t('org.analytics.comparison.noProjects')}</div>
       ) : (
         <>
           {/* Highlight cards */}
@@ -263,7 +267,7 @@ function ComparisonSection({ orgId }) {
             <div className="oa-highlight">
               <span className="oa-highlight-icon oa-highlight-icon--earn"><TrendUp weight="regular" /></span>
               <span className="oa-highlight-text">
-                <span className="oa-highlight-label">Top earner</span>
+                <span className="oa-highlight-label">{t('org.analytics.comparison.topEarner')}</span>
                 <span className="oa-highlight-name">{topEarner ? topEarner.name : '—'}</span>
                 <span className="oa-highlight-val">{topEarner ? moneyExact(topEarner.revenue) : '—'}</span>
               </span>
@@ -271,7 +275,7 @@ function ComparisonSection({ orgId }) {
             <div className="oa-highlight">
               <span className="oa-highlight-icon oa-highlight-icon--margin"><Percent weight="regular" /></span>
               <span className="oa-highlight-text">
-                <span className="oa-highlight-label">Highest margin</span>
+                <span className="oa-highlight-label">{t('org.analytics.comparison.highestMargin')}</span>
                 <span className="oa-highlight-name">{topMargin ? topMargin.name : '—'}</span>
                 <span className="oa-highlight-val">{topMargin ? `${topMargin.margin_pct}%` : '—'}</span>
               </span>
@@ -279,9 +283,9 @@ function ComparisonSection({ orgId }) {
             <div className="oa-highlight">
               <span className="oa-highlight-icon oa-highlight-icon--count"><Buildings weight="regular" /></span>
               <span className="oa-highlight-text">
-                <span className="oa-highlight-label">Active projects</span>
-                <span className="oa-highlight-name">{projects.length} total</span>
-                <span className="oa-highlight-val">{projects.filter(p => p.revenue > 0).length} with sales</span>
+                <span className="oa-highlight-label">{t('org.analytics.comparison.activeProjects')}</span>
+                <span className="oa-highlight-name">{t('org.analytics.comparison.total', { count: projects.length })}</span>
+                <span className="oa-highlight-val">{t('org.analytics.comparison.withSales', { count: projects.filter(p => p.revenue > 0).length })}</span>
               </span>
             </div>
           </div>
@@ -289,11 +293,11 @@ function ComparisonSection({ orgId }) {
           {/* Leaderboard */}
           <div className="oa-table">
             <div className="oa-row oa-row--head">
-              <span>Project</span>
-              <span className="oa-num">Revenue</span>
-              <span className="oa-num">Orders</span>
-              <span className="oa-num">Avg order</span>
-              <span className="oa-num">Margin</span>
+              <span>{t('org.analytics.comparison.table.project')}</span>
+              <span className="oa-num">{t('org.analytics.comparison.table.revenue')}</span>
+              <span className="oa-num">{t('org.analytics.comparison.table.orders')}</span>
+              <span className="oa-num">{t('org.analytics.comparison.table.avgOrder')}</span>
+              <span className="oa-num">{t('org.analytics.comparison.table.margin')}</span>
             </div>
             {projects.map(p => (
               <div className="oa-row" key={p.id}>
@@ -309,12 +313,12 @@ function ComparisonSection({ orgId }) {
           {/* Revenue & margin bars — project Analytics `an-bars` look */}
           <div className="oa-cols">
             <div className="an-tile">
-              <h3 className="an-mini-title">Revenue by project</h3>
+              <h3 className="an-mini-title">{t('org.analytics.comparison.revenueByProject')}</h3>
               <BarList max={maxRev}
                 rows={projects.map(p => ({ label: p.name, value: p.revenue, text: moneyExact(p.revenue) }))} />
             </div>
             <div className="an-tile">
-              <h3 className="an-mini-title">Margin by project</h3>
+              <h3 className="an-mini-title">{t('org.analytics.comparison.marginByProject')}</h3>
               <BarList max={100} tone="margin"
                 rows={projects.map(p => ({ label: p.name, value: p.margin_pct || 0,
                   text: p.margin_pct == null ? '—' : `${p.margin_pct}%` }))} />
@@ -327,11 +331,12 @@ function ComparisonSection({ orgId }) {
 }
 
 export default function OrgAnalytics() {
+  const { t } = useTranslation();
   const { org } = useOutletContext();
   const orgId = org?.id;
   return (
     <>
-      <h1 className="crm-page-title">Analytics</h1>
+      <h1 className="crm-page-title">{t('org.analytics.title')}</h1>
       <div className="an-page">
         <OverviewSection orgId={orgId} />
         <RevenueSection orgId={orgId} />

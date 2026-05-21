@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import {
   MagnifyingGlass, DotsThreeOutline, PencilSimple, Snowflake, Sun, Trash,
@@ -19,16 +20,16 @@ import '../../../Style/Products.css';
 import '../../../Style/Organization.css';
 
 const STATUS_OPTIONS = [
-  { value: 'all',     label: 'All statuses' },
-  { value: 'active',  label: 'Active'  },
-  { value: 'frozen',  label: 'Frozen'  },
-  { value: 'depleted',label: 'Depleted'},
+  { value: 'all',     labelKey: 'products.batches.statusAll' },
+  { value: 'active',  labelKey: 'products.batches.statusActive'  },
+  { value: 'frozen',  labelKey: 'products.batches.statusFrozen'  },
+  { value: 'depleted',labelKey: 'products.batches.statusDepleted'},
 ];
 
 const SORT_OPTIONS = [
-  { field: 'date',     label: 'Sort by date'     },
-  { field: 'name',     label: 'Sort by name'     },
-  { field: 'remaining',label: 'Sort by remaining'},
+  { field: 'date',     labelKey: 'products.batches.sortByDate'     },
+  { field: 'name',     labelKey: 'products.batches.sortByName'     },
+  { field: 'remaining',labelKey: 'products.batches.sortByRemaining'},
 ];
 const SORT_DEFAULT_DIR = { date: 'desc', name: 'asc', remaining: 'desc' };
 
@@ -103,12 +104,13 @@ function buildBatchTree(rows) {
 }
 
 const STATUS_LABEL = {
-  active:   { label: 'Active',   cls: 'promo-status--active'   },
-  frozen:   { label: 'Frozen',   cls: 'promo-status--inactive' },
-  depleted: { label: 'Depleted', cls: 'promo-status--expired'  },
+  active:   { labelKey: 'products.batches.labelActive',   cls: 'promo-status--active'   },
+  frozen:   { labelKey: 'products.batches.labelFrozen',   cls: 'promo-status--inactive' },
+  depleted: { labelKey: 'products.batches.labelDepleted', cls: 'promo-status--expired'  },
 };
 
 export default function Batches() {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
 
@@ -200,20 +202,20 @@ export default function Batches() {
         body: JSON.stringify({ is_frozen: nextFrozen }),
       })
     ));
-    showToast(nextFrozen ? 'Batch frozen' : 'Batch unfrozen'); load();
+    showToast(nextFrozen ? t('products.batches.toast.frozen') : t('products.batches.toast.unfrozen')); load();
   };
 
   const removeGroup = async (group) => {
     const leaves = group.products.flatMap(p => p.leaves);
-    if (!confirm(`Delete batch "${group.batch_name}"? Affects ${leaves.length} row${leaves.length === 1 ? '' : 's'}. Only allowed when nothing has been consumed yet.`)) return;
+    if (!confirm(t('products.batches.confirmDelete', { name: group.batch_name, count: leaves.length }))) return;
     const results = await Promise.all(leaves.map(l =>
       fetch(`${API_BASE}/api/projects/${projectId}/batches/${l.id}`, {
         method: 'DELETE', credentials: 'include',
       })
     ));
     const failed = results.filter(r => !r.ok).length;
-    if (failed === 0) { showToast('Batch deleted'); load(); }
-    else { showToast(`Couldn't delete ${failed} row${failed === 1 ? '' : 's'} (already consumed)`); load(); }
+    if (failed === 0) { showToast(t('products.batches.toast.deleted')); load(); }
+    else { showToast(t('products.batches.toast.deleteFailed', { count: failed })); load(); }
   };
 
   // Edit dialog operates on the first leaf as the form source, but on save
@@ -227,23 +229,20 @@ export default function Batches() {
   return (
     <>
       <p className="po-block-hint">
-        Every stock receipt creates a batch. Click a row to expand the hierarchy —
-        batches contain products, and products contain SKUs at each warehouse.
-        The Inventory aggregates show active (non-frozen) batches only — freeze a batch
-        to instantly remove its quantity from sale.
+        {t('products.batches.hint')}
       </p>
 
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search batches…"
+          <input className="org-search-input" placeholder={t('products.batches.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
         <SortToggle sort={sort} onSort={handleSetSort} />
 
         <div className="po-cb-wrap po-cb-wrap--toolbar" style={{ width: 180, minWidth: 180 }}>
-          <Combobox value={statusF} options={STATUS_OPTIONS}
+          <Combobox value={statusF} options={STATUS_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
             onChange={(v) => setStatusF(v)} />
         </div>
 
@@ -252,18 +251,18 @@ export default function Batches() {
       {filtered.length === 0 ? (
         <div className="crm-placeholder">
           {search || statusF !== 'all'
-            ? 'No batches match your filters.'
-            : 'No batches yet. Go to Inventory → Plan stock receipt to receive your first stock — pick a destination warehouse and the wizard will create a batch for you.'}
+            ? t('products.batches.noMatch')
+            : t('products.batches.empty')}
         </div>
       ) : (
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head po-set-row--batch-tree">
-            <span>Batch / Product / SKU</span>
-            <span>Remaining</span>
-            <span>Received</span>
-            <span>Production</span>
-            <span>Expiry</span>
-            <span>Status</span>
+            <span>{t('products.batches.colBatchProductSku')}</span>
+            <span>{t('products.batches.colRemaining')}</span>
+            <span>{t('products.batches.colReceived')}</span>
+            <span>{t('products.batches.colProduction')}</span>
+            <span>{t('products.batches.colExpiry')}</span>
+            <span>{t('products.batches.colStatus')}</span>
             <span />
           </div>
           {buildBatchTree(filtered).map(group => (
@@ -272,7 +271,7 @@ export default function Batches() {
               onToggleFreeze={() => toggleFreezeGroup(group)}
               onDelete={() => removeGroup(group)} />
           ))}
-          {hasMore && <div ref={sentinelRef} className="inf-sentinel">Loading more…</div>}
+          {hasMore && <div ref={sentinelRef} className="inf-sentinel">{t('products.batches.loadingMore')}</div>}
         </div>
       )}
 
@@ -280,7 +279,7 @@ export default function Batches() {
       {editing && (
         <EditBatchModal projectId={projectId} batch={editing}
           onClose={() => setEditing(null)}
-          onDone={() => { setEditing(null); load(); showToast('Batch updated'); }} />
+          onDone={() => { setEditing(null); load(); showToast(t('products.batches.toast.updated')); }} />
       )}
 
       {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
@@ -291,6 +290,7 @@ export default function Batches() {
 // ── Sort toggle (mirrors PromoCodes) ────────────────────
 
 function SortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -311,7 +311,7 @@ function SortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         return (
           <button key={field} ref={el => { btnRefs.current[field] = el; }}
@@ -323,7 +323,7 @@ function SortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -338,6 +338,7 @@ function SortToggle({ sort, onSort }) {
 // unambiguously target a single DB row for Edit / Freeze / Delete.
 
 function BatchTreeGroup({ group, onEdit, onToggleFreeze, onDelete }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const menuBtnRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -376,7 +377,7 @@ function BatchTreeGroup({ group, onEdit, onToggleFreeze, onDelete }) {
           <Folder weight="duotone" className="batch-tree-icon" />
           <span className="po-set-strong">{group.batch_name}</span>
           <span className="po-set-note batch-tree-sub">
-            · {group.products.length} product{group.products.length === 1 ? '' : 's'}
+            · {group.products.length === 1 ? t('products.batches.productOne', { count: group.products.length }) : t('products.batches.productMany', { count: group.products.length })}
           </span>
         </span>
         <span className="batch-remaining">
@@ -390,7 +391,7 @@ function BatchTreeGroup({ group, onEdit, onToggleFreeze, onDelete }) {
         <span className="po-set-note">{group.production_date || '—'}</span>
         <span className="po-set-note">{group.expiry_date     || '—'}</span>
         <span>
-          <span className={`promo-status ${meta.cls}`}>{meta.label}</span>
+          <span className={`promo-status ${meta.cls}`}>{t(meta.labelKey)}</span>
         </span>
         <button ref={menuBtnRef} className="org-list-menu-btn" type="button"
           onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
@@ -414,6 +415,7 @@ function BatchTreeGroup({ group, onEdit, onToggleFreeze, onDelete }) {
 }
 
 function ProductSubtree({ product }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(true);  // products auto-open since they're cheap
   const pct = product.quantity_received > 0
     ? Math.round(product.quantity_remaining / product.quantity_received * 100)
@@ -427,7 +429,7 @@ function ProductSubtree({ product }) {
           <CaretChevron open={open} />
           <span className="po-set-strong">{product.product_title}</span>
           <span className="po-set-note batch-tree-sub">
-            · {product.leaves.length} SKU{product.leaves.length === 1 ? '' : 's'}
+            · {product.leaves.length === 1 ? t('products.batches.skuOne', { count: product.leaves.length }) : t('products.batches.skuMany', { count: product.leaves.length })}
           </span>
         </span>
         <span className="batch-remaining">
@@ -448,6 +450,7 @@ function ProductSubtree({ product }) {
 }
 
 function LeafRow({ leaf }) {
+  const { t } = useTranslation();
   // Read-only leaf — all actions live on the batch (L0) row now. Click on the
   // leaf has no effect; mutations propagate from the batch-level menu.
   const status = statusOf(leaf);
@@ -474,7 +477,7 @@ function LeafRow({ leaf }) {
       <span className="po-set-note">{leaf.production_date || '—'}</span>
       <span className="po-set-note">{leaf.expiry_date     || '—'}</span>
       <span>
-        <span className={`promo-status ${meta.cls}`}>{meta.label}</span>
+        <span className={`promo-status ${meta.cls}`}>{t(meta.labelKey)}</span>
       </span>
       <span />
     </PoListRow>
@@ -488,6 +491,7 @@ function CaretChevron({ open }) {
 }
 
 function BatchMenu({ btnRef, batch, onEdit, onToggleFreeze, onDelete, onClose }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
   const [hovered, setHovered] = useState(null);
   const indRef = useRef(null);
@@ -515,15 +519,15 @@ function BatchMenu({ btnRef, batch, onEdit, onToggleFreeze, onDelete, onClose })
   if (!pos) return null;
   const canDelete = batch.quantity_remaining === batch.quantity_received;
   const items = [
-    { key: 'edit',   label: 'Edit',                                icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: onEdit },
-    { key: 'freeze', label: batch.is_frozen ? 'Unfreeze' : 'Freeze sales',
+    { key: 'edit',   label: t('products.batches.menu.edit'),                                icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: onEdit },
+    { key: 'freeze', label: batch.is_frozen ? t('products.batches.menu.unfreeze') : t('products.batches.menu.freeze'),
       icon: batch.is_frozen
         ? <Sun       className="org-card-dropdown-icon" />
         : <Snowflake className="org-card-dropdown-icon" />,
       onClick: onToggleFreeze },
   ];
   if (canDelete) {
-    items.push({ key: 'delete', label: 'Delete batch',
+    items.push({ key: 'delete', label: t('products.batches.menu.delete'),
       icon: <Trash className="org-card-dropdown-icon" />, onClick: onDelete, danger: true });
   }
 
@@ -551,6 +555,7 @@ function BatchMenu({ btnRef, batch, onEdit, onToggleFreeze, onDelete, onClose })
 
 export function ReceiveBatchModal({ projectId, pq, skus, warehouses, presetSkuId,
                                      onClose, onDone }) {
+  const { t } = useTranslation();
   const [skuId,     setSkuId]     = useState(presetSkuId || (skus[0]?.sku_id ?? ''));
   const [whId,      setWhId]      = useState(warehouses.find(w => w.is_default)?.id ?? warehouses[0]?.id ?? '');
   const [batchName, setBatchName] = useState('');
@@ -580,9 +585,9 @@ export function ReceiveBatchModal({ projectId, pq, skus, warehouses, presetSkuId
   const submit = async (e) => {
     e?.preventDefault();
     const q = parseInt(qty, 10);
-    if (!skuId)         { setErr('Select a SKU'); return; }
-    if (!whId)          { setErr('Select a warehouse'); return; }
-    if (!isFinite(q) || q <= 0) { setErr('Quantity must be > 0'); return; }
+    if (!skuId)         { setErr(t('products.batches.receiveModal.errSelectSku')); return; }
+    if (!whId)          { setErr(t('products.batches.receiveModal.errSelectWarehouse')); return; }
+    if (!isFinite(q) || q <= 0) { setErr(t('products.batches.receiveModal.errQty')); return; }
     setErr(''); setBusy(true);
     const r = await fetch(`${API_BASE}/api/projects/${projectId}/inventory/receive`, {
       method: 'POST', credentials: 'include',
@@ -599,15 +604,15 @@ export function ReceiveBatchModal({ projectId, pq, skus, warehouses, presetSkuId
       }),
     });
     setBusy(false);
-    if (!r.ok) { const j = await r.json().catch(() => ({})); setErr(j.detail || 'Failed'); return; }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); setErr(j.detail || t('products.batches.receiveModal.failed')); return; }
     onDone();
   };
 
   const skuOptions = useMemo(() => skus.map(s => ({ id: s.sku_id, name: s.label })), [skus]);
   const whOptions  = useMemo(() => warehouses.map(w => ({ id: w.id, name: `${w.name}${w.code ? ` (${w.code})` : ''}` })), [warehouses]);
   const namePlaceholder = orgFormat?.mode === 'auto' && orgFormat?.format
-    ? `Auto-generated · ${orgFormat.format}`
-    : 'Type a batch name (e.g. B-2026-05-001)';
+    ? t('products.batches.receiveModal.namePlaceholderAuto', { format: orgFormat.format })
+    : t('products.batches.receiveModal.namePlaceholderManual');
 
   return createPortal(
     <div className="auth-modal-overlay"
@@ -616,10 +621,10 @@ export function ReceiveBatchModal({ projectId, pq, skus, warehouses, presetSkuId
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Receive batch</div>
+              <div className="auth-modal-title">{t('products.batches.receiveModal.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  Record a stock arrival. Quantity is added to the chosen warehouse + sale-available.
+                  {t('products.batches.receiveModal.subtitle')}
                 </span>
               </div>
             </div>
@@ -632,63 +637,63 @@ export function ReceiveBatchModal({ projectId, pq, skus, warehouses, presetSkuId
         <div className="auth-modal-body">
           <form className="cpm-form" onSubmit={submit} autoComplete="off">
             <div className="cpm-section">
-              <label className="po-field-label">SKU</label>
-              <Combobox value={skuId} options={skuOptions} onChange={setSkuId} placeholder="Pick a SKU" />
+              <label className="po-field-label">{t('products.batches.receiveModal.sku')}</label>
+              <Combobox value={skuId} options={skuOptions} onChange={setSkuId} placeholder={t('products.batches.receiveModal.pickSku')} />
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Warehouse</label>
-              <Combobox value={whId} options={whOptions} onChange={setWhId} placeholder="Pick a warehouse" />
+              <label className="po-field-label">{t('products.batches.receiveModal.warehouse')}</label>
+              <Combobox value={whId} options={whOptions} onChange={setWhId} placeholder={t('products.batches.receiveModal.pickWarehouse')} />
             </div>
 
             <div className="cpm-datetime-row">
               <div className="cpm-section">
-                <label className="po-field-label">Quantity received</label>
+                <label className="po-field-label">{t('products.batches.receiveModal.quantityReceived')}</label>
                 <input className="crm-input" type="number" min="1" step="1"
                   value={qty} onChange={e => setQty(e.target.value)} placeholder="100" />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Cost per unit</label>
+                <label className="po-field-label">{t('products.batches.receiveModal.costPerUnit')}</label>
                 <input className="crm-input" type="number" min="0" step="0.01"
                   value={cost} onChange={e => setCost(e.target.value)} placeholder="0.00" />
-                <span className="cpm-section-hint">For margin reporting</span>
+                <span className="cpm-section-hint">{t('products.batches.receiveModal.costHint')}</span>
               </div>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Batch name</label>
+              <label className="po-field-label">{t('products.batches.receiveModal.batchName')}</label>
               <input className="crm-input" value={batchName}
                 onChange={e => setBatchName(e.target.value)}
                 placeholder={namePlaceholder} maxLength={80} />
               <span className="cpm-section-hint">
-                Leave blank to use your org's auto-naming format ({orgFormat?.format || 'B-{YYYY}{MM}-{seq:03}'})
+                {t('products.batches.receiveModal.nameHint', { format: orgFormat?.format || 'B-{YYYY}{MM}-{seq:03}' })}
               </span>
             </div>
 
             <div className="cpm-datetime-row">
               <div className="cpm-section">
-                <label className="po-field-label">Production date</label>
+                <label className="po-field-label">{t('products.batches.receiveModal.productionDate')}</label>
                 <DatePicker value={prodDate} onChange={setProdDate} tz={USER_TZ} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Expiry date</label>
+                <label className="po-field-label">{t('products.batches.receiveModal.expiryDate')}</label>
                 <DatePicker value={expDate} onChange={setExpDate} tz={USER_TZ} />
               </div>
             </div>
 
             <div className="cpm-section">
-              <label className="po-field-label">Notes</label>
+              <label className="po-field-label">{t('products.batches.receiveModal.notes')}</label>
               <textarea className="crm-input" rows={2}
                 value={notes} onChange={e => setNotes(e.target.value)}
-                placeholder="Optional — supplier, PO number, anything you'll want to remember later" />
+                placeholder={t('products.batches.receiveModal.notesPlaceholder')} />
             </div>
 
             <div className="auth-actions">
               <button className="crm-submit-btn" type="submit" disabled={busy}>
-                {busy ? 'Receiving…' : 'Receive batch'}
+                {busy ? t('products.batches.receiveModal.receiving') : t('products.batches.receiveModal.receive')}
               </button>
               <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
             {err && <p className="auth-msg auth-msg--err">{err}</p>}
@@ -703,6 +708,7 @@ export function ReceiveBatchModal({ projectId, pq, skus, warehouses, presetSkuId
 // ── Edit batch modal ────────────────────────────────────
 
 function EditBatchModal({ projectId, batch, onClose, onDone }) {
+  const { t } = useTranslation();
   const [batchName, setBatchName] = useState(batch.batch_name);
   const [prodDate,  setProdDate]  = useState(batch.production_date || '');
   const [expDate,   setExpDate]   = useState(batch.expiry_date || '');
@@ -742,7 +748,7 @@ function EditBatchModal({ projectId, batch, onClose, onDone }) {
     const failed = results.find(r => !r.ok);
     if (failed) {
       const j = await failed.json().catch(() => ({}));
-      setErr(j.detail || 'Failed');
+      setErr(j.detail || t('products.batches.editModal.failed'));
       return;
     }
     onDone();
@@ -755,11 +761,11 @@ function EditBatchModal({ projectId, batch, onClose, onDone }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Edit batch</div>
+              <div className="auth-modal-title">{t('products.batches.editModal.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
                   {batch._siblings && batch._siblings.length > 1
-                    ? <>Applies to <b>{batch._siblings.length} rows</b> sharing this batch name</>
+                    ? <>{t('products.batches.editModal.appliesPrefix')} <b>{t('products.batches.editModal.appliesRows', { count: batch._siblings.length })}</b> {t('products.batches.editModal.appliesSuffix')}</>
                     : <>{batch.product_title} — {batch.variation_name} / {batch.sku_name} · {batch.warehouse_name}</>}
                 </span>
               </div>
@@ -772,31 +778,31 @@ function EditBatchModal({ projectId, batch, onClose, onDone }) {
         <div className="auth-modal-body">
           <form className="cpm-form" onSubmit={submit}>
             <div className="cpm-section">
-              <label className="po-field-label">Batch name</label>
+              <label className="po-field-label">{t('products.batches.editModal.batchName')}</label>
               <input className="crm-input" value={batchName}
                 onChange={e => setBatchName(e.target.value)} maxLength={80} />
             </div>
             <div className="cpm-datetime-row">
               <div className="cpm-section">
-                <label className="po-field-label">Production date</label>
+                <label className="po-field-label">{t('products.batches.editModal.productionDate')}</label>
                 <DatePicker value={prodDate} onChange={setProdDate} tz={USER_TZ} />
               </div>
               <div className="cpm-section">
-                <label className="po-field-label">Expiry date</label>
+                <label className="po-field-label">{t('products.batches.editModal.expiryDate')}</label>
                 <DatePicker value={expDate} onChange={setExpDate} tz={USER_TZ} />
               </div>
             </div>
             <div className="cpm-section">
-              <label className="po-field-label">Notes</label>
+              <label className="po-field-label">{t('products.batches.editModal.notes')}</label>
               <textarea className="crm-input" rows={2}
                 value={notes} onChange={e => setNotes(e.target.value)} />
             </div>
             <div className="auth-actions">
               <button className="crm-submit-btn" type="submit" disabled={busy}>
-                {busy ? 'Saving…' : 'Save changes'}
+                {busy ? t('products.batches.editModal.saving') : t('products.batches.editModal.saveChanges')}
               </button>
               <button className="crm-submit-btn auth-btn-secondary" type="button" onClick={onClose}>
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
             {err && <p className="auth-msg auth-msg--err">{err}</p>}

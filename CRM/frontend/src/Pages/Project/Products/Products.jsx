@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { Tag, FolderSimple, Archive, Ticket, Percent, ChartBar, Warehouse, ListBullets, GearSix, Stack } from '@phosphor-icons/react';
 import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 
 export default function Products() {
+  const { t }      = useTranslation();
   const ctx        = useOutletContext();
   const location   = useLocation();
   const navigate   = useNavigate();
@@ -12,16 +14,16 @@ export default function Products() {
   const base       = `/project/${apiKey}/products`;
 
   const TABS = [
-    { key: 'list',          to: base,                     label: 'Products',     Icon: Tag,          page: 'products' },
-    { key: 'categories',    to: `${base}/categories`,     label: 'Categories',   Icon: FolderSimple, page: 'products' },
-    { key: 'inventory',     to: `${base}/inventory`,      label: 'Inventory',    Icon: ListBullets,  page: 'inventory' },
-    { key: 'batches',       to: `${base}/batches`,        label: 'Batches',      Icon: Stack,        page: 'batches' },
-    { key: 'promo-codes',   to: `${base}/promo-codes`,    label: 'Promo codes',  Icon: Ticket,       page: 'promo_codes' },
-    { key: 'discounts',     to: `${base}/discounts`,      label: 'Discount',     Icon: Percent,      page: 'discounts' },
-    { key: 'tier-pricing',  to: `${base}/tier-pricing`,   label: 'Tier pricing', Icon: ChartBar,     page: 'tier_pricing' },
-    { key: 'warehouses',    to: `${base}/warehouses`,     label: 'Warehouses',   Icon: Warehouse,    page: 'warehouses' },
-    { key: 'archive',       to: `${base}/archive`,        label: 'Archive',      Icon: Archive,      page: 'archive' },
-    { key: 'settings',      to: `${base}/settings`,       label: 'Settings',     Icon: GearSix,      page: 'product_settings' },
+    { key: 'list',          to: base,                     label: t('products.tabs.products'),     Icon: Tag,          page: 'products' },
+    { key: 'categories',    to: `${base}/categories`,     label: t('products.tabs.categories'),   Icon: FolderSimple, page: 'products' },
+    { key: 'inventory',     to: `${base}/inventory`,      label: t('products.tabs.inventory'),    Icon: ListBullets,  page: 'inventory' },
+    { key: 'batches',       to: `${base}/batches`,        label: t('products.tabs.batches'),      Icon: Stack,        page: 'batches' },
+    { key: 'promo-codes',   to: `${base}/promo-codes`,    label: t('products.tabs.promoCodes'),   Icon: Ticket,       page: 'promo_codes' },
+    { key: 'discounts',     to: `${base}/discounts`,      label: t('products.tabs.discount'),     Icon: Percent,      page: 'discounts' },
+    { key: 'tier-pricing',  to: `${base}/tier-pricing`,   label: t('products.tabs.tierPricing'),  Icon: ChartBar,     page: 'tier_pricing' },
+    { key: 'warehouses',    to: `${base}/warehouses`,     label: t('products.tabs.warehouses'),   Icon: Warehouse,    page: 'warehouses' },
+    { key: 'archive',       to: `${base}/archive`,        label: t('products.tabs.archive'),      Icon: Archive,      page: 'archive' },
+    { key: 'settings',      to: `${base}/settings`,       label: t('products.tabs.settings'),     Icon: GearSix,      page: 'product_settings' },
   ];
   // Hide sub-tabs the member's role can't view; redirect off a hidden one.
   const access = ctx?.access;
@@ -40,11 +42,11 @@ export default function Products() {
     path.endsWith('/settings')     ? 'settings'     :
     path.endsWith('/archive')      ? 'archive'      : 'list';
   const titleByKey = {
-    list: 'Products', categories: 'Categories', archive: 'Archive',
-    inventory: 'Inventory', settings: 'Product settings',
-    batches: 'Batches',
-    'promo-codes': 'Promo codes', discounts: 'Discount',
-    'tier-pricing': 'Tier pricing', warehouses: 'Warehouses',
+    list: t('products.titles.products'), categories: t('products.titles.categories'), archive: t('products.titles.archive'),
+    inventory: t('products.titles.inventory'), settings: t('products.titles.productSettings'),
+    batches: t('products.titles.batches'),
+    'promo-codes': t('products.titles.promoCodes'), discounts: t('products.titles.discount'),
+    'tier-pricing': t('products.titles.tierPricing'), warehouses: t('products.titles.warehouses'),
   };
 
   useEffect(() => {

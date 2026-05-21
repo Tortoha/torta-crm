@@ -1,0 +1,31 @@
+{
+  "settings": {
+    "title": "Settings",
+    "profile": {
+      "title": "Profile",
+      "subtitle": "Your photo, display name and login email.",
+      "photo": "Photo",
+      "photoHint": "Upload a square image — it's cropped to a circle.",
+      "changePhoto": "Change photo",
+      "uploading": "Uploading…",
+      "photoUpdated": "Photo updated",
+      "uploadFailed": "Upload failed",
+      "displayName": "Display name",
+      "displayNameHint": "Shown across the dashboard and to your team.",
+      "namePlaceholder": "Your name",
+      "email": "Email address",
+      "emailHint": "Used to sign in — can't be changed."
+    },
+    "preferences": {
+      "title": "Preferences",
+      "subtitle": "Personal interface options for your account.",
+      "language": "Language",
+      "languageHint": "Interface language for your account.",
+      "theme": "Theme",
+      "themeHint": "Choose your preferred appearance.",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    }
+  }
+}

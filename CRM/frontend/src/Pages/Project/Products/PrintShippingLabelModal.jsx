@@ -15,6 +15,7 @@
 // storefront even if the merchant never opens this modal again.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { X, DownloadSimple } from '@phosphor-icons/react';
@@ -25,10 +26,10 @@ import '../../../Style/Authentication.css';
 import '../../../Style/Products.css';
 
 const FORMAT_OPTIONS = [
-  { value: 'thermal_100x150', label: 'Thermal · 100 × 150 mm' },
-  { value: 'a4_1',            label: 'A4 · 1 label per page' },
-  { value: 'a4_2',            label: 'A4 · 2 labels per page' },
-  { value: 'a4_4',            label: 'A4 · 4 labels per page' },
+  { value: 'thermal_100x150', labelKey: 'products.printShipping.formatThermal' },
+  { value: 'a4_1',            labelKey: 'products.printShipping.formatA4_1' },
+  { value: 'a4_2',            labelKey: 'products.printShipping.formatA4_2' },
+  { value: 'a4_4',            labelKey: 'products.printShipping.formatA4_4' },
 ];
 
 // Default to the most-used real-world format for courier integrations
@@ -37,6 +38,7 @@ const FORMAT_OPTIONS = [
 const DEFAULT_FORMAT = 'thermal_100x150';
 
 export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
+  const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
   const [carriers, setCarriers] = useState([]);
@@ -133,9 +135,9 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
-      if (!res.ok) setErr('Failed to save tracking — preview may be stale');
+      if (!res.ok) setErr(t('products.printShipping.errSaveTracking'));
     } catch {
-      setErr('Network error while saving — try again');
+      setErr(t('products.printShipping.errNetworkSave'));
     }
   };
 
@@ -157,7 +159,7 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
         })
       ));
     } catch {
-      setErr('Failed to save changes — preview may be stale');
+      setErr(t('products.printShipping.errSaveChanges'));
     }
   };
 
@@ -169,12 +171,12 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order_ids: rows.map(r => r.id), format }),
       });
-      if (!res.ok) { setErr('Server error generating PDF'); return; }
+      if (!res.ok) { setErr(t('products.printShipping.errServerPdf')); return; }
       const blob = await res.blob();
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setPreviewUrl(URL.createObjectURL(blob));
     } catch {
-      setErr('Network error generating PDF');
+      setErr(t('products.printShipping.errNetworkPdf'));
     } finally {
       setBusy(false);
     }
@@ -186,7 +188,7 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
     const f = iframeRef.current;
     if (!f) return;
     try { f.contentWindow.focus(); f.contentWindow.print(); }
-    catch { setErr('Print failed — try downloading instead'); }
+    catch { setErr(t('products.printShipping.errPrint')); }
   };
 
   const downloadPdf = () => {
@@ -231,12 +233,12 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
           <div className="auth-modal-head">
             <div className="auth-modal-title-row">
               <div>
-                <div className="auth-modal-title">Print shipping labels</div>
+                <div className="auth-modal-title">{t('products.printShipping.title')}</div>
                 <div className="auth-modal-subtitle-row">
                   <span className="auth-modal-subtitle">
-                    <b>{rows.length}</b> order{rows.length === 1 ? '' : 's'}
+                    {t('products.printShipping.ordersCount', { count: rows.length })}
                     {' · '}
-                    <b>{totalLabels}</b> label{totalLabels === 1 ? '' : 's'} total
+                    {t('products.printShipping.labelsTotal', { count: totalLabels })}
                   </span>
                 </div>
               </div>
@@ -247,24 +249,23 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
             <form className="cpm-form" onSubmit={(e) => e.preventDefault()}>
 
               <div className="cpm-section">
-                <label className="po-field-label">Format</label>
-                <Combobox value={format} options={FORMAT_OPTIONS} onChange={setFormat} />
+                <label className="po-field-label">{t('products.printShipping.format')}</label>
+                <Combobox value={format} options={FORMAT_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))} onChange={setFormat} />
                 <span className="cpm-section-hint">
-                  Thermal 100×150 mm is the standard CDEK / Kazpost / Pochta roll. Use A4
-                  variants if you only have an office laser/inkjet printer.
+                  {t('products.printShipping.formatHint')}
                 </span>
               </div>
 
               <div className="cpm-section">
-                <label className="po-field-label">Orders</label>
+                <label className="po-field-label">{t('products.printShipping.orders')}</label>
                 {loading ? (
-                  <div className="crm-placeholder">Loading orders…</div>
+                  <div className="crm-placeholder">{t('products.printShipping.loadingOrders')}</div>
                 ) : (
                   <div className="psl-rows">
                     {rows.map(r => (
                       <div key={r.id} className="psl-row">
                         <div className="psl-row-head">
-                          <span className="po-set-strong">Order #{r.id}</span>
+                          <span className="po-set-strong">{t('products.printShipping.order', { id: r.id })}</span>
                           <span className="po-set-note">{r.recipient_name || '—'}</span>
                         </div>
                         <div className="psl-row-addr">{r.address || ''}</div>
@@ -276,13 +277,13 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
                             stacking is predictable + plays nicely with
                             the responsive modal width. */}
                         <div className="psl-field">
-                          <label className="po-field-label">Carrier</label>
+                          <label className="po-field-label">{t('products.printShipping.carrier')}</label>
                           {/* Same searchable combobox style as New
                               Warehouse → Country picker. Keeps the
                               UI consistent across the CRM. */}
                           <SearchCombo
                             value={r.carrier_id ? String(r.carrier_id) : ''}
-                            placeholder="Select carrier"
+                            placeholder={t('products.printShipping.selectCarrier')}
                             options={carriers.map(c => ({
                               value: String(c.id),
                               label: c.country_code
@@ -296,16 +297,16 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
                             }} />
                         </div>
                         <div className="psl-field">
-                          <label className="po-field-label">Tracking number</label>
+                          <label className="po-field-label">{t('products.printShipping.trackingNumber')}</label>
                           <input type="text" className="crm-input"
                             value={r.tracking_number}
                             onChange={(e) => updateRow(r.id, { tracking_number: e.target.value })}
                             onBlur={(e) => persistRow(r.id, { tracking_number: e.target.value })}
-                            placeholder="Tracking ID from carrier"
+                            placeholder={t('products.printShipping.trackingPlaceholder')}
                             maxLength={100} />
                         </div>
                         <div className="psl-field psl-field--packages">
-                          <label className="po-field-label">Packages</label>
+                          <label className="po-field-label">{t('products.printShipping.packages')}</label>
                           <input type="number" className="crm-input"
                             min="1" max="999"
                             value={r.package_count}
@@ -322,7 +323,7 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
                             per-SKU weights (the merchant sees that figure in the
                             preview); type a value to override (e.g. + packaging). */}
                         <div className="psl-field psl-field--packages">
-                          <label className="po-field-label">Weight (kg)</label>
+                          <label className="po-field-label">{t('products.printShipping.weight')}</label>
                           <input type="number" className="crm-input"
                             min="0" step="0.01"
                             value={r.ship_weight_grams != null ? (r.ship_weight_grams / 1000) : ''}
@@ -338,7 +339,7 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
                               const g = (v === '' || isNaN(kg)) ? null : Math.max(0, Math.round(kg * 1000));
                               persistRow(r.id, { ship_weight_grams: g });
                             }}
-                            placeholder="Auto from product weights" />
+                            placeholder={t('products.printShipping.weightPlaceholder')} />
                         </div>
                       </div>
                     ))}
@@ -346,7 +347,7 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
                 )}
                 {missingFields.length > 0 && (
                   <span className="cpm-section-hint" style={{ color: 'var(--accent)' }}>
-                    Fill carrier + tracking for every order to enable Print.
+                    {t('products.printShipping.missingHint')}
                   </span>
                 )}
               </div>
@@ -363,11 +364,11 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
               <button type="button" className="crm-submit-btn"
                 disabled={busy || !previewUrl || missingFields.length > 0}
                 onClick={triggerPrint}>
-                Print {totalLabels} label{totalLabels === 1 ? '' : 's'}
+                {t('products.printShipping.printLabels', { count: totalLabels })}
               </button>
               <button type="button" className="auth-btn-check print-bc-download-btn"
                 disabled={!previewUrl}
-                onClick={downloadPdf} title="Download PDF">
+                onClick={downloadPdf} title={t('products.printShipping.downloadPdf')}>
                 <DownloadSimple weight="bold" />
               </button>
             </div>
@@ -379,10 +380,10 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
           <div className="auth-modal-head">
             <div className="auth-modal-title-row">
               <div>
-                <div className="auth-modal-title">Preview</div>
+                <div className="auth-modal-title">{t('products.printShipping.preview')}</div>
                 <div className="auth-modal-subtitle-row">
                   <span className="auth-modal-subtitle">
-                    Exactly what comes off the printer
+                    {t('products.printShipping.previewSub')}
                   </span>
                 </div>
               </div>
@@ -393,16 +394,16 @@ export default function PrintShippingLabelModal({ open, orderIds, onClose }) {
           </div>
           <div className="auth-modal-body print-bc-preview-body">
             <div className="print-bc-preview">
-              {busy && <div className="print-bc-busy">Generating preview…</div>}
+              {busy && <div className="print-bc-busy">{t('products.printShipping.generating')}</div>}
               {!busy && !previewUrl && (
                 <div className="print-bc-empty">
                   {missingFields.length > 0
-                    ? 'Fill in carrier + tracking number above to see the label'
-                    : 'Adjust settings to see a live preview'}
+                    ? t('products.printShipping.emptyMissing')
+                    : t('products.printShipping.emptyAdjust')}
                 </div>
               )}
               {previewUrl && (
-                <iframe ref={iframeRef} title="Shipping label preview"
+                <iframe ref={iframeRef} title={t('products.printShipping.preview')}
                   src={previewUrl} className="print-bc-iframe" />
               )}
             </div>

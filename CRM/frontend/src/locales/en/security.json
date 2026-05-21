@@ -1,0 +1,27 @@
+{
+  "security": {
+    "title": "Security",
+    "sessions": {
+      "title": "Active sessions",
+      "subtitle": "Every device where you're signed in. Revoking ends that session immediately.",
+      "logoutEverywhere": "Log out everywhere",
+      "loading": "Loading sessions…",
+      "empty": "No active sessions found.",
+      "thisDevice": "This device",
+      "revoke": "Revoke session",
+      "lastUsed": "last used {{time}}",
+      "signedIn": "signed in {{time}}"
+    },
+    "about": {
+      "title": "About sessions",
+      "subtitle": "How staying logged in works.",
+      "text": "A session is created every time you sign in (email code, Google, etc). Each one is a short-lived access token (15 min) plus a long-lived refresh token (30 days) — your browser silently swaps an expired access token for a new one, so you stay logged in transparently. If you suspect someone has access to your account, log out from all devices and change your password."
+    },
+    "time": {
+      "justNow": "just now",
+      "minAgo": "{{n}} min ago",
+      "hAgo": "{{n}} h ago",
+      "dAgo": "{{n}} d ago"
+    }
+  }
+}

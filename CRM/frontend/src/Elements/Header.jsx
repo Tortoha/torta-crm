@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
@@ -40,6 +41,7 @@ function UserAvatar({ user, size = 28 }) {
 /* ── Org switcher ── */
 function OrgSwitcher({ project, org: orgProp }) {
   const navigate  = useNavigate();
+  const { t }     = useTranslation();
   const [open,    setOpen]    = useState(false);
   const [orgs,    setOrgs]    = useState([]);
   const [loaded,  setLoaded]  = useState(false);
@@ -105,7 +107,7 @@ function OrgSwitcher({ project, org: orgProp }) {
   const createOrg = async e => {
     e.preventDefault();
     const name = newName.trim();
-    if (!name) return setErr('Name is required');
+    if (!name) return setErr(t('header.form.nameRequired'));
     setSaving(true); setErr('');
     try {
       const res  = await fetch(`${API_BASE}/api/orgs`, {
@@ -114,11 +116,11 @@ function OrgSwitcher({ project, org: orgProp }) {
         body: JSON.stringify({ name }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.detail || 'Error'); return; }
+      if (!res.ok) { setErr(data.detail || t('header.form.error')); return; }
       setOrgs(prev => [data, ...prev]);
       closeModal();
       navigate(`/org/${data.slug}`);
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
@@ -129,7 +131,7 @@ function OrgSwitcher({ project, org: orgProp }) {
           <button className="hdr-switcher-name" onClick={() => navigate(`/org/${orgSlug}`)} type="button">
             {orgName}
           </button>
-          <button className="hdr-switcher-arrow" onClick={handleOpen} type="button" aria-label="Show organizations">
+          <button className="hdr-switcher-arrow" onClick={handleOpen} type="button" aria-label={t('header.org.showOrganizations')}>
             <CaretDown className={`hdr-switcher-chevron${open ? ' hdr-switcher-chevron--open' : ''}`} />
           </button>
         </div>
@@ -142,7 +144,7 @@ function OrgSwitcher({ project, org: orgProp }) {
               <input
                 ref={searchRef}
                 className="hdr-search-input"
-                placeholder="Search organizations…"
+                placeholder={t('header.org.searchPlaceholder')}
                 value={query}
                 onChange={e => setQuery(e.target.value)}
               />
@@ -154,7 +156,7 @@ function OrgSwitcher({ project, org: orgProp }) {
                 style={{ opacity: ind.opacity, height: `${ind.h}px`, transform: `translateY(${ind.y}px)` }}
               />
               {filtered.length === 0
-                ? <span className="hdr-switcher-empty">No results</span>
+                ? <span className="hdr-switcher-empty">{t('header.switcher.noResults')}</span>
                 : filtered.map(org => (
                   <button
                     key={org.id}
@@ -172,27 +174,27 @@ function OrgSwitcher({ project, org: orgProp }) {
             <div className="hdr-switcher-sep" />
 
             <button className="hdr-switcher-new" onClick={() => { setOpen(false); navigate('/dashboard'); }} type="button">
-              All Organizations
+              {t('header.org.allOrganizations')}
             </button>
 
             <div className="hdr-switcher-sep" />
 
             <button className="hdr-switcher-new" onClick={openModal} type="button">
               <Plus className="hdr-switcher-new-icon" />
-              New organization
+              {t('header.org.newOrganization')}
             </button>
           </div>
         </div>
       </div>
 
       {modal && (
-        <Modal title="New organization" onClose={closeModal} maxWidth={400}>
+        <Modal title={t('header.org.modalTitle')} onClose={closeModal} maxWidth={400}>
           <form onSubmit={createOrg}>
             <div className="hdr-modal-field">
-              <h4 className="hdr-modal-label">Name</h4>
+              <h4 className="hdr-modal-label">{t('header.org.nameLabel')}</h4>
               <input
                 className="hdr-modal-input"
-                placeholder="Organization name"
+                placeholder={t('header.org.namePlaceholder')}
                 value={newName}
                 onChange={e => { setNewName(e.target.value); setErr(''); }}
                 autoFocus
@@ -201,7 +203,7 @@ function OrgSwitcher({ project, org: orgProp }) {
             </div>
             {err && <span className="hdr-modal-err">{err}</span>}
             <button className="hdr-modal-submit" type="submit" disabled={saving || !newName.trim()}>
-              {saving ? 'Creating…' : 'Create'}
+              {saving ? t('header.form.creating') : t('header.form.create')}
             </button>
           </form>
         </Modal>
@@ -213,6 +215,7 @@ function OrgSwitcher({ project, org: orgProp }) {
 /* ── Project switcher ── */
 function ProjectSwitcher({ project }) {
   const navigate   = useNavigate();
+  const { t }      = useTranslation();
   const [open,     setOpen]    = useState(false);
   const [projects, setProjects] = useState([]);
   const [loaded,   setLoaded]  = useState(false);
@@ -280,9 +283,9 @@ function ProjectSwitcher({ project }) {
     e.preventDefault();
     const name = newName.trim();
     const url  = newUrl.trim();
-    if (!name) return setErr('Name is required');
-    if (!url)  return setErr('Frontend URL is required');
-    if (!isValidUrl(url)) return setErr('Enter a valid URL: http://... or https://...');
+    if (!name) return setErr(t('header.form.nameRequired'));
+    if (!url)  return setErr(t('header.form.frontendUrlRequired'));
+    if (!isValidUrl(url)) return setErr(t('header.form.invalidUrl'));
     setSaving(true); setErr('');
     try {
       // Send the merchant's browser TZ so booking slot times default to their
@@ -294,11 +297,11 @@ function ProjectSwitcher({ project }) {
         body: JSON.stringify({ name, frontend_url: url, timezone: browserTz }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.detail || 'Error'); return; }
+      if (!res.ok) { setErr(data.detail || t('header.form.error')); return; }
       setProjects(prev => [data, ...prev]);
       closeModal();
       navigate(`/project/${data.api_key}`);
-    } catch { setErr('Network error'); }
+    } catch { setErr(t('common.networkError')); }
     finally { setSaving(false); }
   };
 
@@ -309,7 +312,7 @@ function ProjectSwitcher({ project }) {
           <button className="hdr-switcher-name" onClick={() => navigate(`/project/${project?.api_key}`)} type="button">
             {project?.name || '…'}
           </button>
-          <button className="hdr-switcher-arrow" onClick={handleOpen} type="button" aria-label="Show projects">
+          <button className="hdr-switcher-arrow" onClick={handleOpen} type="button" aria-label={t('header.project.showProjects')}>
             <CaretDown className={`hdr-switcher-chevron${open ? ' hdr-switcher-chevron--open' : ''}`} />
           </button>
         </div>
@@ -322,7 +325,7 @@ function ProjectSwitcher({ project }) {
               <input
                 ref={searchRef}
                 className="hdr-search-input"
-                placeholder="Search projects…"
+                placeholder={t('header.project.searchPlaceholder')}
                 value={query}
                 onChange={e => setQuery(e.target.value)}
               />
@@ -334,7 +337,7 @@ function ProjectSwitcher({ project }) {
                 style={{ opacity: ind.opacity, height: `${ind.h}px`, transform: `translateY(${ind.y}px)` }}
               />
               {filtered.length === 0
-                ? <span className="hdr-switcher-empty">No results</span>
+                ? <span className="hdr-switcher-empty">{t('header.switcher.noResults')}</span>
                 : filtered.map(p => (
                   <button
                     key={p.id}
@@ -353,20 +356,20 @@ function ProjectSwitcher({ project }) {
 
             <button className="hdr-switcher-new" onClick={openModal} type="button">
               <Plus className="hdr-switcher-new-icon" />
-              New project
+              {t('header.project.newProject')}
             </button>
           </div>
         </div>
       </div>
 
       {modal && (
-        <Modal title="New project" onClose={closeModal} maxWidth={400}>
+        <Modal title={t('header.project.modalTitle')} onClose={closeModal} maxWidth={400}>
           <form onSubmit={createProject}>
             <div className="hdr-modal-field">
-              <h4 className="hdr-modal-label">Name</h4>
+              <h4 className="hdr-modal-label">{t('header.project.nameLabel')}</h4>
               <input
                 className="hdr-modal-input"
-                placeholder="Project name"
+                placeholder={t('header.project.namePlaceholder')}
                 value={newName}
                 onChange={e => { setNewName(e.target.value); setErr(''); }}
                 autoFocus
@@ -374,10 +377,10 @@ function ProjectSwitcher({ project }) {
               />
             </div>
             <div className="hdr-modal-field">
-              <h4 className="hdr-modal-label">URL</h4>
+              <h4 className="hdr-modal-label">{t('header.project.urlLabel')}</h4>
               <input
                 className="hdr-modal-input"
-                placeholder="The URL of your website, e.g. https://shop.com"
+                placeholder={t('header.project.urlPlaceholder')}
                 value={newUrl}
                 onChange={e => { setNewUrl(e.target.value); setErr(''); }}
                 autoComplete="off"
@@ -385,7 +388,7 @@ function ProjectSwitcher({ project }) {
             </div>
             {err && <span className="hdr-modal-err">{err}</span>}
             <button className="hdr-modal-submit" type="submit" disabled={saving || !newName.trim() || !isValidUrl(newUrl.trim())}>
-              {saving ? 'Creating…' : 'Create'}
+              {saving ? t('header.form.creating') : t('header.form.create')}
             </button>
           </form>
         </Modal>
@@ -397,6 +400,7 @@ function ProjectSwitcher({ project }) {
 /* ── User menu ── */
 function UserMenu({ user, project }) {
   const navigate = useNavigate();
+  const { t }    = useTranslation();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -413,7 +417,7 @@ function UserMenu({ user, project }) {
 
   return (
     <div className="hdr-user" ref={wrapRef}>
-      <button className="hdr-avatar-btn" onClick={() => setOpen(v => !v)} type="button" aria-label="User menu">
+      <button className="hdr-avatar-btn" onClick={() => setOpen(v => !v)} type="button" aria-label={t('header.userMenu.ariaLabel')}>
         <UserAvatar user={user} size={28} />
       </button>
       <div className={`hdr-user-drop${open ? ' hdr-user-drop--open' : ''}`}>
@@ -427,10 +431,10 @@ function UserMenu({ user, project }) {
           </div>
           <div className="hdr-user-sep" />
           <button className="hdr-drop-item" onClick={() => { setOpen(false); navigate('/settings/account'); }} type="button">
-            <GearSix className="hdr-drop-icon" /> Settings
+            <GearSix className="hdr-drop-icon" /> {t('header.userMenu.settings')}
           </button>
           <button className="hdr-drop-item hdr-drop-item--danger" onClick={logout} type="button">
-            <SignOut className="hdr-drop-icon" /> Log out
+            <SignOut className="hdr-drop-icon" /> {t('header.userMenu.logout')}
           </button>
         </div>
       </div>
@@ -441,6 +445,7 @@ function UserMenu({ user, project }) {
 /* ── Product breadcrumb with dropdown ── */
 function ProductSwitcherCrumb({ project, productContext }) {
   const navigate  = useNavigate();
+  const { t }     = useTranslation();
   const [open,     setOpen]    = useState(false);
   const [products, setProducts] = useState([]);
   const [loaded,   setLoaded]  = useState(false);
@@ -510,9 +515,9 @@ function ProductSwitcherCrumb({ project, productContext }) {
         <div className="hdr-switcher-btn">
           <button className="hdr-switcher-name hdr-product-crumb" type="button"
             onClick={() => navigate(`/product/${productContext.hash}`)}>
-            {productContext.name || 'Product'}
+            {productContext.name || t('header.product.fallbackName')}
           </button>
-          <button className="hdr-switcher-arrow" type="button" aria-label="Show products"
+          <button className="hdr-switcher-arrow" type="button" aria-label={t('header.product.showProducts')}
             onClick={handleOpen}>
             <CaretDown className={`hdr-switcher-chevron${open ? ' hdr-switcher-chevron--open' : ''}`} />
           </button>
@@ -526,7 +531,7 @@ function ProductSwitcherCrumb({ project, productContext }) {
               <input
                 ref={searchRef}
                 className="hdr-search-input"
-                placeholder="Search products…"
+                placeholder={t('header.product.searchPlaceholder')}
                 value={query}
                 onChange={e => setQuery(e.target.value)}
               />
@@ -536,7 +541,7 @@ function ProductSwitcherCrumb({ project, productContext }) {
               <div className="hdr-sw-indicator"
                 style={{ opacity: ind.opacity, height: `${ind.h}px`, transform: `translateY(${ind.y}px)` }} />
               {filtered.length === 0
-                ? <span className="hdr-switcher-empty">No results</span>
+                ? <span className="hdr-switcher-empty">{t('header.switcher.noResults')}</span>
                 : filtered.map(p => (
                     <button
                       key={p.id}
@@ -559,14 +564,14 @@ function ProductSwitcherCrumb({ project, productContext }) {
 
             <button className="hdr-switcher-new" type="button"
               onClick={() => { setOpen(false); navigate(`/project/${project.api_key}/products`); }}>
-              All Products
+              {t('header.product.allProducts')}
             </button>
 
             <div className="hdr-switcher-sep" />
 
             <button className="hdr-switcher-new" type="button" onClick={openModal}>
               <Plus className="hdr-switcher-new-icon" />
-              New product
+              {t('header.product.newProduct')}
             </button>
           </div>
         </div>
@@ -584,6 +589,7 @@ function ProductSwitcherCrumb({ project, productContext }) {
 /* ── Header ── */
 function Header({ user, project, org, productContext, settingsMode }) {
   const navigate = useNavigate();
+  const { t }    = useTranslation();
   return (
     <header className="crm-header">
       <div className="hdr-left">
@@ -596,7 +602,7 @@ function Header({ user, project, org, productContext, settingsMode }) {
         {settingsMode && (
           <>
             <span className="hdr-sep">/</span>
-            <span className="hdr-settings-crumb">Settings</span>
+            <span className="hdr-settings-crumb">{t('nav.settings')}</span>
           </>
         )}
         {/* Org-level pages: show org switcher */}

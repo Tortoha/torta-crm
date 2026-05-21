@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Plus, Trash, PencilSimple, DotsThreeOutline, MagnifyingGlass, X, Image,
@@ -38,9 +39,9 @@ const ROW_TILT = {
 // ── Sort options ───────────────────────────────────────────────
 
 const SORT_OPTIONS = [
-  { field: 'name',  label: 'Sort by name'  },
-  { field: 'price', label: 'Sort by price' },
-  { field: 'date',  label: 'Sort by date'  },
+  { field: 'name',  labelKey: 'products.list.sortByName'  },
+  { field: 'price', labelKey: 'products.list.sortByPrice' },
+  { field: 'date',  labelKey: 'products.list.sortByDate'  },
 ];
 
 const DEFAULT_DIR = { name: 'asc', price: 'desc', date: 'desc' };
@@ -48,6 +49,7 @@ const DEFAULT_DIR = { name: 'asc', price: 'desc', date: 'desc' };
 // ── ProdSortToggle ─────────────────────────────────────────────
 
 function ProdSortToggle({ sort, onSort }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -75,7 +77,7 @@ function ProdSortToggle({ sort, onSort }) {
   return (
     <div className="org-sort-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="org-sort-indicator" />
-      {SORT_OPTIONS.map(({ field, label }) => {
+      {SORT_OPTIONS.map(({ field, labelKey }) => {
         const active = sort.field === field;
         const isCur  = curField === field;
         return (
@@ -88,7 +90,7 @@ function ProdSortToggle({ sort, onSort }) {
               <ArrowDown className="org-sort-icon"
                 style={{ transform: sort.dir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)' }} />
             )}
-            {label}
+            {t(labelKey)}
           </button>
         );
       })}
@@ -101,6 +103,7 @@ function ProdSortToggle({ sort, onSort }) {
 function ProdMenu({ btnRef, onEdit, onDelete, onClose, isArchived, isPaused, productType = 'physical',
                     onArchive, onUnarchive, onPause, onResume, onDuplicate,
                     onPrintBarcode }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
   const [hovered, setHovered] = useState(null);
   const indRef  = useRef(null);
@@ -138,7 +141,7 @@ function ProdMenu({ btnRef, onEdit, onDelete, onClose, isArchived, isPaused, pro
   //   service/digital → no print entry
   const printEntries = (() => {
     if (productType === 'physical' && onPrintBarcode) {
-      return [{ key: 'print', label: 'Print barcode',
+      return [{ key: 'print', label: t('products.list.menu.printBarcode'),
         icon: <Barcode className="org-card-dropdown-icon" />, onClick: onPrintBarcode }];
     }
     return [];
@@ -146,16 +149,16 @@ function ProdMenu({ btnRef, onEdit, onDelete, onClose, isArchived, isPaused, pro
 
   // Build the list once so refs + map stay in sync.
   const items = [
-    { key: 'edit',      label: 'Edit',          icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: onEdit },
-    onDuplicate && { key: 'duplicate', label: 'Duplicate',  icon: <CopySimple className="org-card-dropdown-icon" />, onClick: onDuplicate },
+    { key: 'edit',      label: t('products.list.menu.edit'),          icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: onEdit },
+    onDuplicate && { key: 'duplicate', label: t('products.list.menu.duplicate'),  icon: <CopySimple className="org-card-dropdown-icon" />, onClick: onDuplicate },
     ...printEntries,
     !isArchived && (isPaused
-      ? { key: 'resume', label: 'Resume', icon: <Play  className="org-card-dropdown-icon" />, onClick: onResume }
-      : { key: 'pause',  label: 'Pause',  icon: <Pause className="org-card-dropdown-icon" />, onClick: onPause }),
+      ? { key: 'resume', label: t('products.list.menu.resume'), icon: <Play  className="org-card-dropdown-icon" />, onClick: onResume }
+      : { key: 'pause',  label: t('products.list.menu.pause'),  icon: <Pause className="org-card-dropdown-icon" />, onClick: onPause }),
     isArchived
-      ? { key: 'restore', label: 'Restore', icon: <ArrowCounterClockwise className="org-card-dropdown-icon" />, onClick: onUnarchive }
-      : { key: 'archive', label: 'Archive', icon: <Archive className="org-card-dropdown-icon" />, onClick: onArchive },
-    { key: 'delete', label: 'Delete', icon: <Trash className="org-card-dropdown-icon" />, onClick: onDelete, danger: true },
+      ? { key: 'restore', label: t('products.list.menu.restore'), icon: <ArrowCounterClockwise className="org-card-dropdown-icon" />, onClick: onUnarchive }
+      : { key: 'archive', label: t('products.list.menu.archive'), icon: <Archive className="org-card-dropdown-icon" />, onClick: onArchive },
+    { key: 'delete', label: t('products.list.menu.delete'), icon: <Trash className="org-card-dropdown-icon" />, onClick: onDelete, danger: true },
   ].filter(Boolean);
 
   return createPortal(
@@ -184,6 +187,7 @@ function ProdMenu({ btnRef, onEdit, onDelete, onClose, isArchived, isPaused, pro
 // Selected value: null=all, 'uncategorized'=NULL filter, number=category id.
 
 function CategoryFilter({ value, categories, onChange, onCreate }) {
+  const { t } = useTranslation();
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos,  setPos]  = useState(null);
@@ -211,9 +215,9 @@ function CategoryFilter({ value, categories, onChange, onCreate }) {
     };
   }, [open]);
 
-  const label = value === null ? 'All Categories'
-    : value === 'uncategorized' ? 'Uncategorized'
-    : (categories.find(c => c.id === value)?.name || 'Category');
+  const label = value === null ? t('products.list.allCategories')
+    : value === 'uncategorized' ? t('products.list.uncategorized')
+    : (categories.find(c => c.id === value)?.name || t('products.list.category'));
 
   const submitNew = async e => {
     e.preventDefault();
@@ -244,13 +248,13 @@ function CategoryFilter({ value, categories, onChange, onCreate }) {
             className={`cat-filter-item${current === 'all' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('all')}
             onClick={() => { onChange(null); setOpen(false); }}>
-            All Categories
+            {t('products.list.allCategories')}
           </button>
           <button ref={setItemRef('uncat')}
             className={`cat-filter-item${current === 'uncat' ? ' cat-filter-item--current' : ''}`}
             onMouseEnter={() => setHovered('uncat')}
             onClick={() => { onChange('uncategorized'); setOpen(false); }}>
-            Uncategorized
+            {t('products.list.uncategorized')}
           </button>
           {categories.map(c => {
             const k = `c:${c.id}`;
@@ -269,9 +273,9 @@ function CategoryFilter({ value, categories, onChange, onCreate }) {
             <form onSubmit={submitNew} className="cat-filter-create-form">
               <input className="cat-filter-create-input" autoFocus value={newName}
                 onChange={e => setNewName(e.target.value)}
-                placeholder="Category name…" maxLength={100}
+                placeholder={t('products.list.categoryNamePlaceholder')} maxLength={100}
                 onKeyDown={e => { if (e.key === 'Escape') { setCreating(false); setNewName(''); } }} />
-              <button type="submit" className="cat-filter-create-go">Add</button>
+              <button type="submit" className="cat-filter-create-go">{t('products.list.add')}</button>
             </form>
           ) : (
             <button ref={setItemRef('new')}
@@ -279,7 +283,7 @@ function CategoryFilter({ value, categories, onChange, onCreate }) {
               onMouseEnter={() => setHovered('new')}
               onClick={() => setCreating(true)}>
               <Plus weight="bold" className="cat-filter-new-icon" />
-              <span>New Category</span>
+              <span>{t('products.list.newCategory')}</span>
             </button>
           )}
         </div>,
@@ -448,6 +452,7 @@ function ProductImage({ p, size = 'card', onPopChange }) {
 function ProductCard({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onResume, onDuplicate,
                       onContextMenu, bulkMode, selected, onToggleSelect,
                       onPrintBarcode }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const [menuOpen,   setMenuOpen]   = useState(false);
   const [imgPopOpen, setImgPopOpen] = useState(false);
@@ -486,7 +491,7 @@ function ProductCard({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onR
           onChange={() => onToggleSelect?.()}
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          aria-label="Toggle selection" />
+          aria-label={t('products.list.toggleSelection')} />
       )}
       <div className="pcard-inner">
         <ProductImage p={p} size="card" onPopChange={setImgPopOpen} />
@@ -494,7 +499,7 @@ function ProductCard({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onR
           <div className="pcard-title">{p.title}</div>
           <div className="pcard-row1">
             <span className="pcard-price">{priceLabel(p)}</span>
-            {p.total_stock > 0 && <><span className="pcard-pipe">|</span><span className="pcard-stock">Stock {p.total_stock}</span></>}
+            {p.total_stock > 0 && <><span className="pcard-pipe">|</span><span className="pcard-stock">{t('products.list.stock', { count: p.total_stock })}</span></>}
           </div>
           {p.reviews_count > 0 && <StarRating value={p.avg_rating} />}
         </div>
@@ -531,6 +536,7 @@ function ProductCard({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onR
 function ProdListRow({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onResume, onDuplicate,
                        onContextMenu, bulkMode, selected, onToggleSelect,
                        onPrintBarcode }) {
+  const { t } = useTranslation();
   const menuBtnRef = useRef(null);
   const [menuOpen,   setMenuOpen]   = useState(false);
   const [imgPopOpen, setImgPopOpen] = useState(false);
@@ -568,13 +574,13 @@ function ProdListRow({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onR
           onChange={() => onToggleSelect?.()}
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          aria-label="Toggle selection" />
+          aria-label={t('products.list.toggleSelection')} />
       )}
       <ProductImage p={p} size="row" onPopChange={setImgPopOpen} />
       <span className="prow-name">{p.title}</span>
       <span className="prow-cell">{p.category_name || <span className="prow-empty">—</span>}</span>
       <span className="prow-cell">{priceLabel(p)}</span>
-      <span className="prow-cell">{p.total_stock > 0 ? `Stock ${p.total_stock}` : '—'}</span>
+      <span className="prow-cell">{p.total_stock > 0 ? t('products.list.stock', { count: p.total_stock }) : '—'}</span>
       <span className="prow-cell">
         {p.reviews_count > 0
           ? <StarRating value={p.avg_rating} />
@@ -606,6 +612,7 @@ function ProdListRow({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onR
 // ── Products (main page) ───────────────────────────────────────
 
 export default function Products({ archived = false }) {
+  const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
   // Sync the currency global so priceLabel() renders product price
   // ranges in the merchant's currency (₸/€/₽ etc.) instead of USD.
@@ -678,17 +685,17 @@ export default function Products({ archived = false }) {
       method: 'POST', credentials: 'include',
     });
     if (res.ok) {
-      showToast('Product duplicated');
+      showToast(t('products.list.toast.duplicated'));
       load();
     } else {
-      showToast('Duplicate failed');
+      showToast(t('products.list.toast.duplicateFailed'));
     }
   };
 
   const bulkAction = async (action, extra = {}) => {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    if (action === 'delete' && !confirm(`Delete ${ids.length} product(s)? This cannot be undone.`)) return;
+    if (action === 'delete' && !confirm(t('products.list.confirmDeleteBulk', { count: ids.length }))) return;
     const res = await fetch(`${API_BASE}/api/projects/${projectId}/products/bulk`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -696,12 +703,12 @@ export default function Products({ archived = false }) {
     });
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
-      showToast(`${data.affected ?? ids.length} product(s) updated`);
+      showToast(t('products.list.toast.updated', { count: data.affected ?? ids.length }));
       setSelectedIds(new Set());
       setBulkMode(false);
       load();
     } else {
-      showToast('Bulk action failed');
+      showToast(t('products.list.toast.bulkFailed'));
     }
   };
 
@@ -725,7 +732,7 @@ export default function Products({ archived = false }) {
   };
 
   const deleteProduct = async id => {
-    if (!confirm('Delete this product? All variations, sizes and reviews will also be deleted.')) return;
+    if (!confirm(t('products.list.confirmDelete'))) return;
     await fetch(`${API_BASE}/api/products/${id}${pq}`, { method: 'DELETE', credentials: 'include' });
     load();
   };
@@ -781,9 +788,9 @@ export default function Products({ archived = false }) {
   // (Physical → Digital → Services) so the page reads consistently
   // regardless of how many items are in each. Empty groups are hidden.
   const TYPE_GROUPS = [
-    { key: 'physical', label: 'Physical' },
-    { key: 'digital',  label: 'Digital'  },
-    { key: 'service',  label: 'Services' },
+    { key: 'physical', label: t('products.list.groupPhysical') },
+    { key: 'digital',  label: t('products.list.groupDigital')  },
+    { key: 'service',  label: t('products.list.groupServices') },
   ];
   const grouped = TYPE_GROUPS.map(g => ({
     ...g,
@@ -799,27 +806,27 @@ export default function Products({ archived = false }) {
     //   service/digital → nothing (no physical sticker)
     const printItems = [];
     if (ptype === 'physical') {
-      printItems.push({ label: 'Print barcode',
+      printItems.push({ label: t('products.list.menu.printBarcode'),
         icon: <Barcode className="org-card-dropdown-icon" />,
         onClick: () => setPrintTarget({ mode: 'product', qrMode: false, productIds: [p.id] }) });
     }
     const items = [
-      { label: 'Edit',      icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: () => goToProduct(p.id) },
-      { label: 'Duplicate', icon: <CopySimple   className="org-card-dropdown-icon" />, onClick: () => duplicate(p.id) },
+      { label: t('products.list.menu.edit'),      icon: <PencilSimple className="org-card-dropdown-icon" />, onClick: () => goToProduct(p.id) },
+      { label: t('products.list.menu.duplicate'), icon: <CopySimple   className="org-card-dropdown-icon" />, onClick: () => duplicate(p.id) },
       ...printItems,
-      { label: 'Select',    icon: <CheckCircle  className="org-card-dropdown-icon" />, onClick: () => enterBulkMode(p.id) },
+      { label: t('products.list.menu.select'),    icon: <CheckCircle  className="org-card-dropdown-icon" />, onClick: () => enterBulkMode(p.id) },
     ];
     if (!p.is_archived) {
       items.push(p.is_paused
-        ? { label: 'Resume', icon: <Play  className="org-card-dropdown-icon" />, onClick: () => resume(p.id) }
-        : { label: 'Pause',  icon: <Pause className="org-card-dropdown-icon" />, onClick: () => pause(p.id) }
+        ? { label: t('products.list.menu.resume'), icon: <Play  className="org-card-dropdown-icon" />, onClick: () => resume(p.id) }
+        : { label: t('products.list.menu.pause'),  icon: <Pause className="org-card-dropdown-icon" />, onClick: () => pause(p.id) }
       );
     }
     items.push(p.is_archived
-      ? { label: 'Restore', icon: <ArrowCounterClockwise className="org-card-dropdown-icon" />, onClick: () => unarchive(p.id) }
-      : { label: 'Archive', icon: <Archive className="org-card-dropdown-icon" />, onClick: () => archive(p.id) }
+      ? { label: t('products.list.menu.restore'), icon: <ArrowCounterClockwise className="org-card-dropdown-icon" />, onClick: () => unarchive(p.id) }
+      : { label: t('products.list.menu.archive'), icon: <Archive className="org-card-dropdown-icon" />, onClick: () => archive(p.id) }
     );
-    items.push({ label: 'Delete', icon: <Trash className="org-card-dropdown-icon" />, onClick: () => deleteProduct(p.id), danger: true });
+    items.push({ label: t('products.list.menu.delete'), icon: <Trash className="org-card-dropdown-icon" />, onClick: () => deleteProduct(p.id), danger: true });
     return items;
   };
 
@@ -829,7 +836,7 @@ export default function Products({ archived = false }) {
       <div className="org-toolbar">
         <div className="org-search-wrap">
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search products…"
+          <input className="org-search-input" placeholder={t('products.list.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
@@ -846,12 +853,12 @@ export default function Products({ archived = false }) {
               style={{ transform: `translateX(${curView === 'list' ? 30 : 0}px)` }} />
             <button className={`org-view-btn${curView === 'grid' ? ' org-view-btn--current' : ''}`}
               onClick={() => setView('grid')} onMouseEnter={() => setViewHover('grid')}
-              title="Grid view" type="button">
+              title={t('products.list.gridView')} type="button">
               <SquaresFour className="org-view-icon" />
             </button>
             <button className={`org-view-btn${curView === 'list' ? ' org-view-btn--current' : ''}`}
               onClick={() => setView('list')} onMouseEnter={() => setViewHover('list')}
-              title="List view" type="button">
+              title={t('products.list.listView')} type="button">
               <List className="org-view-icon" />
             </button>
           </div>
@@ -861,18 +868,18 @@ export default function Products({ archived = false }) {
             onExport={exportCsv}
           />
           <button className="org-new-btn" onClick={() => setShowCreate(true)} type="button">
-            <Plus className="org-new-icon" /> New Product
+            <Plus className="org-new-icon" /> {t('products.list.newProduct')}
           </button>
         </div>
       </div>
 
       {/* Product list — split into per-type groups (Physical / Digital / Services / Events). */}
       <div className="prod-content">
-        {loading && <p className="crm-placeholder">Loading…</p>}
+        {loading && <p className="crm-placeholder">{t('common.loading')}</p>}
 
         {!loading && sorted.length === 0 && (
           <p className="crm-placeholder">
-            {search ? 'No products match your search.' : 'No products yet. Click "New Product" to add one.'}
+            {search ? t('products.list.noMatch') : t('products.list.empty')}
           </p>
         )}
 
@@ -911,10 +918,10 @@ export default function Products({ archived = false }) {
               <div className="prod-list">
                 <div className={`prod-list-head${bulkMode ? ' prod-list-head--bulk-mode' : ''}`}>
                   {bulkMode && <span />}
-                  <span /><span className="org-list-th">Title</span>
-                  <span className="org-list-th">Category</span>
-                  <span className="org-list-th">Price</span><span className="org-list-th">Stock</span>
-                  <span className="org-list-th">Rating</span>
+                  <span /><span className="org-list-th">{t('products.list.thTitle')}</span>
+                  <span className="org-list-th">{t('products.list.thCategory')}</span>
+                  <span className="org-list-th">{t('products.list.thPrice')}</span><span className="org-list-th">{t('products.list.thStock')}</span>
+                  <span className="org-list-th">{t('products.list.thRating')}</span>
                   <span />
                 </div>
                 <div className="prod-list-block">
@@ -945,10 +952,10 @@ export default function Products({ archived = false }) {
 
         {/* Infinite-scroll sentinel — IntersectionObserver triggers loadMore() ~200px before user reaches it. */}
         {hasMore && !loading && (
-          <div ref={sentinelRef} className="inf-sentinel">Loading more…</div>
+          <div ref={sentinelRef} className="inf-sentinel">{t('products.list.loadingMore')}</div>
         )}
         {loading && products.length > 0 && (
-          <div className="inf-sentinel">Loading more…</div>
+          <div className="inf-sentinel">{t('products.list.loadingMore')}</div>
         )}
       </div>
 
@@ -1022,6 +1029,7 @@ export default function Products({ archived = false }) {
 // Two-button pill (Import / Export) on one plate with Dynamic Block hover indicator. Same shape as view-toggle (Grid/List).
 
 function ImportExportToggle({ onImport, onExport }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -1052,8 +1060,8 @@ function ImportExportToggle({ onImport, onExport }) {
   return (
     <div className="prod-ie-toggle" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="prod-ie-indicator" />
-      <Btn k="import" icon={<UploadSimple   className="prod-ie-icon" />} label="Import" onClick={onImport} />
-      <Btn k="export" icon={<DownloadSimple className="prod-ie-icon" />} label="Export" onClick={onExport} />
+      <Btn k="import" icon={<UploadSimple   className="prod-ie-icon" />} label={t('products.list.import')} onClick={onImport} />
+      <Btn k="export" icon={<DownloadSimple className="prod-ie-icon" />} label={t('products.list.export')} onClick={onExport} />
     </div>
   );
 }
@@ -1062,15 +1070,16 @@ function ImportExportToggle({ onImport, onExport }) {
 // Inline filter chips reusing the org-sort-toggle look (Dynamic Block indicator).
 
 function StatusChips({ value, onChange }) {
+  const { t } = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
   const curKey = hovered ?? value;
 
   const OPTIONS = [
-    { key: 'all',    label: 'All'    },
-    { key: 'active', label: 'Active' },
-    { key: 'paused', label: 'Paused' },
+    { key: 'all',    label: t('products.list.statusAll')    },
+    { key: 'active', label: t('products.list.statusActive') },
+    { key: 'paused', label: t('products.list.statusPaused') },
   ];
 
   useEffect(() => {
@@ -1105,6 +1114,7 @@ function StatusChips({ value, onChange }) {
 
 function BulkToolbar({ count, categories, onCreateCategory, onCancel, onDelete, onArchive, onPause, onResume,
                       onCategory, onPriceDelta, onPrintBarcodes }) {
+  const { t } = useTranslation();
   // One activeAction state — opening any popover closes the previous one. null = none open.
   const [activeAction, setActiveAction] = useState(null);
   const [pricePct, setPricePct] = useState('');
@@ -1172,10 +1182,10 @@ function BulkToolbar({ count, categories, onCreateCategory, onCancel, onDelete, 
         <div ref={indRef}
           className={`bulk-pill-indicator${isDangerHover ? ' bulk-pill-indicator--danger' : ''}`} />
 
-        <span className="bulk-pill-count">{count} selected</span>
+        <span className="bulk-pill-count">{t('products.list.bulk.selected', { count })}</span>
 
         <div className="bulk-pill-action-wrap">
-          <Btn k="cat" icon={<FolderSimple weight="bold" />} label="Set category"
+          <Btn k="cat" icon={<FolderSimple weight="bold" />} label={t('products.list.bulk.setCategory')}
             onClick={() => togglePopover('cat')} />
           {activeAction === 'cat' && (
             <CategoryPopover
@@ -1186,7 +1196,7 @@ function BulkToolbar({ count, categories, onCreateCategory, onCancel, onDelete, 
         </div>
 
         <div className="bulk-pill-action-wrap">
-          <Btn k="price" icon={<ArrowDown weight="bold" />} label="Price ±%"
+          <Btn k="price" icon={<ArrowDown weight="bold" />} label={t('products.list.bulk.priceDelta')}
             onClick={() => togglePopover('price')} />
           {activeAction === 'price' && (
             <form className="bulk-pill-popover bulk-pill-popover--input"
@@ -1195,21 +1205,21 @@ function BulkToolbar({ count, categories, onCreateCategory, onCancel, onDelete, 
                 if (!isFinite(n) || n <= -100 || n >= 1000) return;
                 onPriceDelta(n); setActiveAction(null);
               }}>
-              <input type="number" step="0.1" placeholder="e.g. -10 = 10% off"
+              <input type="number" step="0.1" placeholder={t('products.list.bulk.priceDeltaPlaceholder')}
                 value={pricePct} onChange={e => setPricePct(e.target.value)} autoFocus />
-              <button type="submit" className="bulk-pill-pop-go">Apply</button>
+              <button type="submit" className="bulk-pill-pop-go">{t('products.list.bulk.apply')}</button>
             </form>
           )}
         </div>
 
-        <Btn k="pause"   icon={<Pause   weight="bold" />} label="Pause"   onClick={() => { setActiveAction(null); onPause(); }} />
-        <Btn k="resume"  icon={<Play    weight="bold" />} label="Resume"  onClick={() => { setActiveAction(null); onResume(); }} />
-        <Btn k="archive" icon={<Archive weight="bold" />} label="Archive" onClick={() => { setActiveAction(null); onArchive(); }} />
-        <Btn k="print"   icon={<Barcode weight="bold" />} label="Print barcodes" onClick={() => { setActiveAction(null); onPrintBarcodes(); }} />
-        <Btn k="delete"  icon={<Trash   weight="bold" />} label="Delete"  onClick={() => { setActiveAction(null); onDelete(); }} danger />
+        <Btn k="pause"   icon={<Pause   weight="bold" />} label={t('products.list.bulk.pause')}   onClick={() => { setActiveAction(null); onPause(); }} />
+        <Btn k="resume"  icon={<Play    weight="bold" />} label={t('products.list.bulk.resume')}  onClick={() => { setActiveAction(null); onResume(); }} />
+        <Btn k="archive" icon={<Archive weight="bold" />} label={t('products.list.bulk.archive')} onClick={() => { setActiveAction(null); onArchive(); }} />
+        <Btn k="print"   icon={<Barcode weight="bold" />} label={t('products.list.bulk.printBarcodes')} onClick={() => { setActiveAction(null); onPrintBarcodes(); }} />
+        <Btn k="delete"  icon={<Trash   weight="bold" />} label={t('products.list.bulk.delete')}  onClick={() => { setActiveAction(null); onDelete(); }} danger />
 
         <span className="bulk-pill-sep" />
-        <Btn k="cancel"  icon={<X weight="bold" />} label="Cancel" onClick={onCancel} />
+        <Btn k="cancel"  icon={<X weight="bold" />} label={t('products.list.bulk.cancel')} onClick={onCancel} />
       </div>
     </div>,
     document.body
@@ -1220,6 +1230,7 @@ function BulkToolbar({ count, categories, onCreateCategory, onCancel, onDelete, 
 // Combobox-style: list of categories with Dynamic Block, inline + New category form at the bottom (no separate drawer). Picking auto-applies to the bulk selection — no extra "Save".
 
 function CategoryPopover({ categories, onPick, onCreate }) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -1267,7 +1278,7 @@ function CategoryPopover({ categories, onPick, onCreate }) {
           className={`bulk-cat-item${hovered === 'clear' ? ' bulk-cat-item--current' : ''}`}
           onMouseEnter={() => setHovered('clear')}
           onClick={() => onPick(null)}>
-          Clear category
+          {t('products.list.bulk.clearCategory')}
         </button>
         {categories.map(c => {
           const k = `c:${c.id}`;
@@ -1289,17 +1300,17 @@ function CategoryPopover({ categories, onPick, onCreate }) {
         <form className="bulk-cat-create-form" onSubmit={submitNew}>
           <input className="bulk-cat-create-input" autoFocus value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="Category name…" maxLength={100}
+            placeholder={t('products.list.categoryNamePlaceholder')} maxLength={100}
             onKeyDown={(e) => { if (e.key === 'Escape') { setCreating(false); setNewName(''); } }} />
           <button type="submit" className="bulk-pill-pop-go" disabled={busy || !newName.trim()}>
-            {busy ? '…' : 'Create'}
+            {busy ? t('products.list.bulk.creating') : t('products.list.bulk.create')}
           </button>
         </form>
       ) : (
         <button type="button"
           className="bulk-cat-item bulk-cat-item--new"
           onClick={() => setCreating(true)}>
-          <Plus weight="bold" className="bulk-cat-new-icon" /> New category
+          <Plus weight="bold" className="bulk-cat-new-icon" /> {t('products.list.bulk.newCategory')}
         </button>
       )}
     </div>
