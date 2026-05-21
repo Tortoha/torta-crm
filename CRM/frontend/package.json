@@ -18,6 +18,7 @@
     "@uiw/react-codemirror": "^4.25.9",
     "hashids": "^2.3.0",
     "react": "^19.2.0",
+    "react-colorful": "^5.7.0",
     "react-dom": "^19.2.0",
     "react-easy-crop": "^5.5.7",
     "react-router-dom": "^7.13.0"

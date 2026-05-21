@@ -50,6 +50,12 @@ try:
 except ImportError:
     S3_AVAILABLE = False
 
+import email_engine
+from email_engine import (
+    EMAIL_TYPES, SAMPLE_VARS, DEFAULT_EMAIL_TEMPLATES, DEFAULT_BRANDING,
+    render_email, template_has_required,
+)
+
 
 
 # ── КОНФИГ ───────────────────────────────────────────────
@@ -1899,6 +1905,73 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] crm_document_settings failed: {e}")
 
+    # Email branding (per-project tokens) + templates (global default via NULL project_id + per-project override) + broadcast campaigns.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_email_branding (
+                    project_id    INTEGER PRIMARY KEY REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    logo_url      VARCHAR(2000),
+                    accent_color  VARCHAR(20)  NOT NULL DEFAULT '#0071E3',
+                    page_bg       VARCHAR(20)  NOT NULL DEFAULT '#f4f4f5',
+                    card_bg       VARCHAR(20)  NOT NULL DEFAULT '#ffffff',
+                    text_color    VARCHAR(20)  NOT NULL DEFAULT '#1d1d1f',
+                    font_family   VARCHAR(120) NOT NULL DEFAULT 'Arial, Helvetica, sans-serif',
+                    header_text   VARCHAR(200) NOT NULL DEFAULT '',
+                    footer_text   TEXT         NOT NULL DEFAULT '',
+                    social_links  JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_email_templates (
+                    id          BIGSERIAL PRIMARY KEY,
+                    project_id  INTEGER REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    type        VARCHAR(40)  NOT NULL,
+                    subject     VARCHAR(300) NOT NULL DEFAULT '',
+                    blocks      JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_email_tpl_global  ON crm_email_templates(type) WHERE project_id IS NULL")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_email_tpl_project ON crm_email_templates(project_id, type) WHERE project_id IS NOT NULL")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_email_campaigns (
+                    id             BIGSERIAL PRIMARY KEY,
+                    project_id     INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    name           VARCHAR(200) NOT NULL DEFAULT '',
+                    subject        VARCHAR(300) NOT NULL DEFAULT '',
+                    blocks         JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    status         VARCHAR(20)  NOT NULL DEFAULT 'draft',
+                    schedule_type  VARCHAR(20)  NOT NULL DEFAULT 'now',
+                    scheduled_at   TIMESTAMPTZ,
+                    recur_dow      SMALLINT,
+                    recur_time     VARCHAR(5),
+                    exclude_guests BOOLEAN      NOT NULL DEFAULT TRUE,
+                    next_run_at    TIMESTAMPTZ,
+                    sent_count     INTEGER      NOT NULL DEFAULT 0,
+                    total_count    INTEGER      NOT NULL DEFAULT 0,
+                    last_sent_at   TIMESTAMPTZ,
+                    last_error     TEXT         NOT NULL DEFAULT '',
+                    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_email_campaigns_project ON crm_email_campaigns(project_id, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_email_campaigns_due ON crm_email_campaigns(next_run_at) WHERE status='scheduled'")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_email_* failed: {e}")
+
+    # Broadcast opt-out on storefront customers (transactional emails ignore this).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_opt_out BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS unsubscribe_token VARCHAR(64)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] users.email_opt_out failed: {e}")
+
     # Stock audit trigger: catches manual SQL writes to l2.stock_quantity. App-level writes set torta.skip_audit='on' to avoid double-logging.
     try:
         with db_cursor() as (conn, cur):
@@ -2430,6 +2503,21 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] crm_projects.currency failed: {e}")
+
+    # Org-level display currency. The org Analytics page converts every
+    # project's revenue (each project has its own currency) into THIS code via
+    # static FX rates and sums them, so cross-project comparison is apples-to-
+    # apples. Default USD; a future Org Settings page will let the owner pick.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "ALTER TABLE crm_organizations "
+                "ADD COLUMN IF NOT EXISTS currency VARCHAR(3) "
+                "NOT NULL DEFAULT 'USD'"
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_organizations.currency failed: {e}")
 
     # Per-batch sequence counter for auto-naming (`{seq:03}` placeholder).
     try:
@@ -4186,6 +4274,44 @@ def require_org_owner(user: dict, org_id: int):
                   (org_id, user["id"])):
         raise HTTPException(403, "Only organization owner can do this")
 
+
+# ── Static FX rates (units per 1 USD) ────────────────────────────────
+# Used by the org Analytics page to convert each project's revenue (each
+# project has its own currency) into the org's display currency so totals
+# and cross-project comparison are apples-to-apples. These are approximate,
+# manually-maintained reference rates — a diploma-grade stand-in for a live
+# FX feed. Swapping in a real rates provider later only touches _fx_convert.
+# Mirrors the currency list in CRM/frontend/src/Utils/currency.js.
+_FX_PER_USD = {
+    "USD": 1.0,     "EUR": 0.92,    "GBP": 0.79,    "JPY": 157.0,   "CNY": 7.25,
+    "CHF": 0.89,    "CAD": 1.37,    "AUD": 1.52,    "NZD": 1.66,    "SGD": 1.35,
+    "HKD": 7.82,    "INR": 83.4,    "KRW": 1370.0,  "IDR": 16200.0, "THB": 36.5,
+    "MYR": 4.7,     "PHP": 58.5,    "VND": 25400.0, "AED": 3.67,    "SAR": 3.75,
+    "ILS": 3.7,     "TRY": 32.5,    "BRL": 5.4,     "MXN": 17.1,    "ARS": 900.0,
+    "CLP": 950.0,   "COP": 3950.0,  "ZAR": 18.4,    "EGP": 48.0,    "NGN": 1500.0,
+    "PLN": 3.95,    "CZK": 23.2,    "HUF": 360.0,   "RON": 4.57,    "BGN": 1.8,
+    "SEK": 10.6,    "NOK": 10.7,    "DKK": 6.85,    "ISK": 138.0,   "KZT": 470.0,
+    "RUB": 90.0,    "UAH": 40.5,    "BYN": 3.27,    "KGS": 87.5,    "UZS": 12700.0,
+    "TJS": 10.9,    "TMT": 3.5,     "AZN": 1.7,     "GEL": 2.7,     "AMD": 387.0,
+}
+
+def _fx_convert(amount: float, from_ccy: str, to_ccy: str) -> float:
+    """Convert `amount` from one ISO-4217 code to another via USD pivot.
+    Unknown codes fall back to a 1:1 rate (no conversion) so a missing entry
+    never zeroes out a project's revenue."""
+    if amount is None:
+        return 0.0
+    f = (from_ccy or "USD").upper()
+    t = (to_ccy or "USD").upper()
+    if f == t:
+        return float(amount)
+    fr = _FX_PER_USD.get(f)
+    tr = _FX_PER_USD.get(t)
+    if not fr or not tr:
+        return float(amount)
+    # amount(from) → USD → to
+    return float(amount) / fr * tr
+
 def require_team_member_or_owner(user: dict, project_id: int):
     key_row = db_one("SELECT crm_user_id FROM crm_projects WHERE id=%s AND is_active=TRUE", (project_id,))
     if not key_row:
@@ -4270,32 +4396,32 @@ def get_csrf_token(request: Request, response: Response):
 
 @app.post("/api/send-code")
 @limiter.limit("10/minute")
-def send_code(request: SendCodeRequest, req: Request):
-    email = request.email.lower().strip()
-    ip    = get_ip(req)
+def send_code(body: SendCodeRequest, request: Request):
+    email = body.email.lower().strip()
+    ip    = get_ip(request)
     now   = datetime.utcnow()
     keys  = [f"ip:{ip}", f"email:{email}"]
     check_rate_limit(keys, now)
 
     existing = db_one("SELECT * FROM crm_users WHERE email = %s", (email,))
 
-    if request.type == "register":
+    if body.type == "register":
         if existing:
             record_fail(keys, now); raise HTTPException(400, "Email already exists")
-        if not request.name or not request.password:
+        if not body.name or not body.password:
             raise HTTPException(400, "Name and password required")
-        validate_password(request.password)
-    elif request.type == "login":
+        validate_password(body.password)
+    elif body.type == "login":
         if not existing or not existing.get("is_active"):
             record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
-        if not verify_pw(request.password or "", existing["password"]):
+        if not verify_pw(body.password or "", existing["password"]):
             record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
         # Lazy migration of legacy SHA-256 hashes
         if is_legacy_hash(existing["password"]):
             try:
                 with db_cursor() as (conn2, cur2):
                     cur2.execute("UPDATE crm_users SET password=%s WHERE id=%s",
-                                 (hash_pw(request.password), existing["id"]))
+                                 (hash_pw(body.password), existing["id"]))
                     conn2.commit()
             except Exception:
                 pass
@@ -4305,8 +4431,8 @@ def send_code(request: SendCodeRequest, req: Request):
     code = gen_otp(6)
     now_ts = _time.time()
     _pv_set(email, {
-        "code_hash":         hash_otp(code), "type": request.type,
-        "name":              request.name, "password": request.password,
+        "code_hash":         hash_otp(code), "type": body.type,
+        "name":              body.name, "password": body.password,
         "expires_ts":        now_ts + CODE_TTL_MINUTES * 60,
         "next_resend_at_ts": now_ts + RESEND_COOLDOWN_SECONDS,
         "attempts":          0,
@@ -4321,10 +4447,10 @@ def send_code(request: SendCodeRequest, req: Request):
 
 @app.post("/api/verify-code")
 @limiter.limit("20/minute")
-def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
-    email = request.email.lower().strip()
-    code  = (request.code or "").replace(" ", "").strip()
-    ip    = get_ip(req)
+def verify_code(body: VerifyCodeRequest, response: Response, request: Request):
+    email = body.email.lower().strip()
+    code  = (body.code or "").replace(" ", "").strip()
+    ip    = get_ip(request)
     now   = datetime.utcnow()
     keys  = [f"ip:{ip}", f"email:{email}"]
     check_rate_limit(keys, now)
@@ -4365,7 +4491,7 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request):
             conn.commit()
 
     set_cookie(response, make_token(user_id))
-    set_refresh_cookie(response, issue_refresh_token(user_id, req, label="Email login"))
+    set_refresh_cookie(response, issue_refresh_token(user_id, request, label="Email login"))
     _pv_del(email)
     for k in keys: _fail_clear("login", k)
     return {"success": True}
@@ -10878,14 +11004,22 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
     # merchant's "adjust stock" click returns immediately — a 50-name
     # wishlist used to make the request hang for ~15s while each email
     # sent sync. FastAPI runs these after the response is delivered.
-    for _, email in notify_emails:
-        background_tasks.add_task(
-            send_email,
-            to=email,
-            subject="Back in stock — your wishlist item is available",
-            html=("<p>Good news — the item you were watching is back in stock.</p>"
-                  "<p>Visit the store to grab it before it sells out.</p>"),
-        )
+    if notify_emails:
+        prow = db_one(
+            "SELECT p.title FROM product_configurations_l1 v"
+            "  JOIN product_configurations_l2 c ON c.variation_id=v.id"
+            "  JOIN products p ON p.id=v.product_id WHERE c.id=%s",
+            (req.sku_id,)
+        ) or {}
+        url_row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id=%s", (project_id,)) or {}
+        store_url = (url_row.get("frontend_url") or "").rstrip("/")
+        rvars = {
+            "product_name": prow.get("title") or "your item",
+            "product_url": store_url,
+            "store_name": _project_store_name(project_id),
+        }
+        for _, email in notify_emails:
+            background_tasks.add_task(_send_template_email, project_id, "restock", email, rvars)
     return {"ok": True, "new_quantity": new_qty, "notified": len(notify_emails)}
 
 
@@ -18760,6 +18894,438 @@ def document_settings_save(req: DocumentSettingsRequest,
     return {"ok": True}
 
 
+# ── EMAIL TEMPLATES + BRANDING (storefront customer emails) ──
+
+class EmailTemplateSave(BaseModel):
+    subject: Optional[str] = None
+    blocks:  Optional[List[dict]] = None
+
+class EmailBrandingSave(BaseModel):
+    logo_url:     Optional[str] = None
+    accent_color: Optional[str] = None
+    page_bg:      Optional[str] = None
+    card_bg:      Optional[str] = None
+    text_color:   Optional[str] = None
+    font_family:  Optional[str] = None
+    header_text:  Optional[str] = None
+    footer_text:  Optional[str] = None
+    social_links: Optional[List[dict]] = None
+
+class EmailPreviewRequest(BaseModel):
+    type:    str
+    subject: Optional[str] = ""
+    blocks:  List[dict] = []
+
+
+def _resolve_email_branding(project_id: int) -> dict:
+    row = db_one("SELECT * FROM crm_email_branding WHERE project_id=%s", (project_id,))
+    if not row:
+        return {**DEFAULT_BRANDING}
+    merged = {**DEFAULT_BRANDING}
+    for k in DEFAULT_BRANDING:
+        if row.get(k) is not None:
+            merged[k] = row[k]
+    return merged
+
+
+def _resolve_email_template(project_id: int, etype: str):
+    """Per-project override row if present, else the code default. Returns (subject, blocks, is_customized)."""
+    row = db_one("SELECT subject, blocks FROM crm_email_templates WHERE project_id=%s AND type=%s",
+                 (project_id, etype))
+    if row:
+        return row["subject"], row["blocks"], True
+    d = DEFAULT_EMAIL_TEMPLATES.get(etype, {})
+    return d.get("subject", ""), d.get("blocks", []), False
+
+
+def _project_store_name(project_id) -> str:
+    if not project_id:
+        return "our store"
+    row = db_one("SELECT name FROM crm_projects WHERE id=%s", (project_id,))
+    return (row.get("name") if row else None) or "our store"
+
+
+def _send_template_email(project_id, etype, to, variables, *, from_name=None, from_email=None, unsubscribe_url=None):
+    """Resolve project template + branding, render, send. Falls back to code default if a required var is missing."""
+    if not (from_name and from_email):
+        fn, fe = get_project_email(project_id) if project_id else ("Torta Store", EMAIL_FROM)
+        from_name = from_name or fn
+        from_email = from_email or fe
+    subject_tpl, blocks, _ = _resolve_email_template(project_id, etype)
+    if not template_has_required(etype, blocks, subject_tpl):
+        d = DEFAULT_EMAIL_TEMPLATES.get(etype, {})
+        subject_tpl, blocks = d.get("subject", ""), d.get("blocks", [])
+    branding = _resolve_email_branding(project_id)
+    subject = email_engine.render_subject(subject_tpl, variables) or EMAIL_TYPES.get(etype, {}).get("subject", "")
+    html = render_email(blocks, branding, variables, unsubscribe_url=unsubscribe_url)
+    return send_email(to, subject, html, from_name, from_email)
+
+
+@app.get("/api/email-templates")
+def email_templates_list(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    items = []
+    for etype, meta in EMAIL_TYPES.items():
+        subject, blocks, custom = _resolve_email_template(project_id, etype)
+        items.append({"type": etype, "label": meta["label"], "required_vars": meta["required_vars"],
+                      "subject": subject, "blocks": blocks, "is_customized": custom})
+    return {"items": items}
+
+
+@app.get("/api/email-templates/{etype}")
+def email_template_get(etype: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if etype not in EMAIL_TYPES:
+        raise HTTPException(404, "Unknown email type")
+    subject, blocks, custom = _resolve_email_template(project_id, etype)
+    meta = EMAIL_TYPES[etype]
+    return {"type": etype, "label": meta["label"], "required_vars": meta["required_vars"],
+            "sample_vars": SAMPLE_VARS.get(etype, {}), "subject": subject,
+            "blocks": blocks, "is_customized": custom}
+
+
+@app.put("/api/email-templates/{etype}")
+def email_template_save(etype: str, req: EmailTemplateSave,
+                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if etype not in EMAIL_TYPES:
+        raise HTTPException(404, "Unknown email type")
+    cur_subject, cur_blocks, _ = _resolve_email_template(project_id, etype)
+    subject = req.subject if req.subject is not None else cur_subject
+    blocks  = req.blocks  if req.blocks  is not None else cur_blocks
+    if not template_has_required(etype, blocks, subject):
+        missing = ", ".join("{{" + m + "}}" for m in EMAIL_TYPES[etype]["required_vars"])
+        raise HTTPException(400, f"This email must include: {missing}")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_email_templates (project_id, type, subject, blocks) "
+            "VALUES (%s, %s, %s, %s::jsonb) "
+            "ON CONFLICT (project_id, type) WHERE project_id IS NOT NULL "
+            "DO UPDATE SET subject=EXCLUDED.subject, blocks=EXCLUDED.blocks, updated_at=NOW()",
+            (project_id, etype, sanitize(subject), json.dumps(blocks))
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/email-templates/{etype}/reset")
+def email_template_reset(etype: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    if etype not in EMAIL_TYPES:
+        raise HTTPException(404, "Unknown email type")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_email_templates WHERE project_id=%s AND type=%s", (project_id, etype))
+        conn.commit()
+    subject, blocks, _ = _resolve_email_template(project_id, etype)
+    return {"ok": True, "subject": subject, "blocks": blocks}
+
+
+@app.get("/api/email-branding")
+def email_branding_get(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    return _resolve_email_branding(project_id)
+
+
+@app.put("/api/email-branding")
+def email_branding_save(req: EmailBrandingSave,
+                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    fields = req.model_dump(exclude_unset=True)
+    if not fields:
+        return {"ok": True}
+    clean = {}
+    for k, v in fields.items():
+        if k == "social_links":
+            clean[k] = json.dumps(v or [])
+        elif isinstance(v, str):
+            clean[k] = sanitize(v)
+        else:
+            clean[k] = v
+    cols = ["project_id"] + list(clean.keys())
+    vals = [project_id] + [clean[k] for k in clean]
+    placeholders = ", ".join("%s::jsonb" if c == "social_links" else "%s" for c in cols)
+    update_clause = ", ".join(f"{k}=EXCLUDED.{k}" for k in clean) + ", updated_at=NOW()"
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            f"INSERT INTO crm_email_branding ({', '.join(cols)}) VALUES ({placeholders}) "
+            f"ON CONFLICT (project_id) DO UPDATE SET {update_clause}",
+            vals
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/email-preview")
+def email_preview(req: EmailPreviewRequest,
+                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    br = _resolve_email_branding(project_id)
+    variables = dict(SAMPLE_VARS.get(req.type, {}))
+    html = render_email(req.blocks or [], br, variables, unsubscribe_url="#")
+    return {"html": html}
+
+
+# ── EMAIL CAMPAIGNS (broadcasts) ──
+
+class CampaignSave(BaseModel):
+    name:           Optional[str] = None
+    subject:        Optional[str] = None
+    blocks:         Optional[List[dict]] = None
+    schedule_type:  Optional[str] = None
+    scheduled_at:   Optional[str] = None
+    recur_dow:      Optional[int] = None
+    recur_time:     Optional[str] = None
+    exclude_guests: Optional[bool] = None
+
+
+def _parse_iso(s):
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _campaign_out(r):
+    d = dict(r)
+    for k in ("scheduled_at", "next_run_at", "last_sent_at", "created_at", "updated_at"):
+        if d.get(k):
+            d[k] = d[k].isoformat()
+    return d
+
+
+def _next_weekly_run(dow, hhmm, now_utc, project_id):
+    """Next UTC datetime matching weekday dow (0=Mon..6=Sun) at HH:MM in the project timezone."""
+    row = db_one("SELECT timezone FROM crm_projects WHERE id=%s", (project_id,)) or {}
+    tz = _tz(row.get("timezone") or "UTC")
+    try:
+        hh, mm = [int(x) for x in (hhmm or "09:00").split(":")]
+    except Exception:
+        hh, mm = 9, 0
+    local = now_utc.astimezone(tz)
+    days_ahead = (int(dow) - local.weekday()) % 7
+    cand = local.replace(hour=hh, minute=mm, second=0, microsecond=0) + timedelta(days=days_ahead)
+    if cand <= local:
+        cand += timedelta(days=7)
+    return cand.astimezone(timezone.utc)
+
+
+def _campaign_compute_schedule(project_id, schedule_type, scheduled_at, recur_dow, recur_time, now=None):
+    now = now or _utcnow()
+    if schedule_type == "scheduled":
+        dt = _parse_iso(scheduled_at)
+        if dt:
+            return "scheduled", dt
+    if schedule_type == "recurring" and recur_dow is not None and recur_time:
+        return "scheduled", _next_weekly_run(recur_dow, recur_time, now, project_id)
+    return "draft", None
+
+
+def _campaign_recipients(project_id, exclude_guests=True):
+    sql = ("SELECT id, name, email FROM users"
+           " WHERE project_id=%s AND email IS NOT NULL AND email <> ''"
+           "   AND COALESCE(email_opt_out, FALSE) = FALSE")
+    if exclude_guests:
+        sql += " AND COALESCE(is_guest, FALSE) = FALSE"
+    return db_all(sql, (project_id,))
+
+
+def _ensure_unsub_token(user_id):
+    row = db_one("SELECT unsubscribe_token FROM users WHERE id=%s", (user_id,))
+    tok = row.get("unsubscribe_token") if row else None
+    if not tok:
+        tok = secrets.token_hex(16)
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE users SET unsubscribe_token=%s WHERE id=%s", (tok, user_id))
+            conn.commit()
+    return tok
+
+
+def _send_campaign_to_recipients(campaign):
+    project_id = campaign["project_id"]
+    branding = _resolve_email_branding(project_id)
+    from_name, from_email = get_project_email(project_id)
+    pr = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,)) or {}
+    api_key = pr.get("api_key") or ""
+    blocks = campaign["blocks"]
+    recipients = _campaign_recipients(project_id, bool(campaign.get("exclude_guests", True)))
+    sent = 0
+    for u in recipients:
+        try:
+            tok = _ensure_unsub_token(u["id"])
+            unsub = f"{MAGAZ_BACKEND_URL}/{api_key}/unsubscribe?u={u['id']}&token={tok}" if api_key else None
+            cvars = {"customer_name": u.get("name") or "", "email": u.get("email") or "",
+                     "store_name": _project_store_name(project_id)}
+            subject = email_engine.render_subject(campaign["subject"], cvars)
+            html = render_email(blocks, branding, cvars, unsubscribe_url=unsub)
+            if send_email(u["email"], subject, html, from_name, from_email):
+                sent += 1
+        except Exception as e:
+            print(f"[campaign {campaign['id']}] send to {u.get('email')} failed: {e}")
+    return sent, len(recipients)
+
+
+def _run_campaign(campaign, now):
+    cid = campaign["id"]
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_email_campaigns SET status='sending', updated_at=NOW() WHERE id=%s", (cid,))
+        conn.commit()
+    sent, total = _send_campaign_to_recipients(campaign)
+    if campaign.get("schedule_type") == "recurring" and campaign.get("recur_dow") is not None:
+        nxt = _next_weekly_run(campaign["recur_dow"], campaign.get("recur_time"), now, campaign["project_id"])
+        new_status = "scheduled"
+    else:
+        nxt, new_status = None, "sent"
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_email_campaigns SET status=%s, sent_count=%s, total_count=%s,"
+                    " last_sent_at=NOW(), next_run_at=%s, last_error='', updated_at=NOW() WHERE id=%s",
+                    (new_status, sent, total, nxt, cid))
+        conn.commit()
+    return sent, total
+
+
+_email_campaign_scheduler_started = False
+
+
+def _email_campaign_loop_body():
+    now = _utcnow()
+    try:
+        rows = db_all("SELECT * FROM crm_email_campaigns"
+                      " WHERE status='scheduled' AND next_run_at IS NOT NULL AND next_run_at <= %s", (now,))
+    except Exception as e:
+        print(f"[email campaign scheduler] list failed: {e}")
+        return
+    for c in rows:
+        try:
+            _run_campaign(dict(c), now)
+        except Exception as e:
+            with db_cursor() as (conn, cur):
+                cur.execute("UPDATE crm_email_campaigns SET status='failed', last_error=%s, updated_at=NOW() WHERE id=%s",
+                            (str(e)[:500], c["id"]))
+                conn.commit()
+
+
+def _start_email_campaign_scheduler():
+    global _email_campaign_scheduler_started
+    if _email_campaign_scheduler_started:
+        return
+    _email_campaign_scheduler_started = True
+    import threading
+
+    def loop():
+        time.sleep(30)
+        while True:
+            try:
+                _email_campaign_loop_body()
+            except Exception as e:
+                print(f"[email campaign scheduler] outer loop: {e}")
+            time.sleep(60)
+
+    threading.Thread(target=loop, name="email-campaign-scheduler", daemon=True).start()
+
+
+@app.get("/api/email-campaigns")
+def email_campaigns_list(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    rows = db_all("SELECT * FROM crm_email_campaigns WHERE project_id=%s ORDER BY created_at DESC", (project_id,))
+    return {"items": [_campaign_out(r) for r in rows]}
+
+
+@app.post("/api/email-campaigns")
+def email_campaign_create(req: CampaignSave, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    status, next_run = _campaign_compute_schedule(project_id, req.schedule_type or "now",
+                                                  req.scheduled_at, req.recur_dow, req.recur_time)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_email_campaigns"
+            " (project_id, name, subject, blocks, status, schedule_type, scheduled_at, recur_dow, recur_time, exclude_guests, next_run_at)"
+            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (project_id, sanitize(req.name or "Untitled campaign"), sanitize(req.subject or ""),
+             json.dumps(req.blocks or []), status, req.schedule_type or "now", _parse_iso(req.scheduled_at),
+             req.recur_dow, req.recur_time, req.exclude_guests if req.exclude_guests is not None else True, next_run)
+        )
+        cid = cur.fetchone()["id"]
+        conn.commit()
+    return {"id": cid}
+
+
+@app.get("/api/email-campaigns/{cid}")
+def email_campaign_get(cid: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
+    if not row:
+        raise HTTPException(404, "Campaign not found")
+    return _campaign_out(row)
+
+
+@app.put("/api/email-campaigns/{cid}")
+def email_campaign_update(cid: int, req: CampaignSave, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    existing = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
+    if not existing:
+        raise HTTPException(404, "Campaign not found")
+    f = req.model_dump(exclude_unset=True)
+    name = sanitize(f["name"]) if "name" in f else existing["name"]
+    subject = sanitize(f["subject"]) if "subject" in f else existing["subject"]
+    blocks = f["blocks"] if "blocks" in f else existing["blocks"]
+    schedule_type = f.get("schedule_type", existing["schedule_type"])
+    scheduled_at = f["scheduled_at"] if "scheduled_at" in f else (
+        existing["scheduled_at"].isoformat() if existing["scheduled_at"] else None)
+    recur_dow = f.get("recur_dow", existing["recur_dow"])
+    recur_time = f.get("recur_time", existing["recur_time"])
+    exclude_guests = f.get("exclude_guests", existing["exclude_guests"])
+    status, next_run = _campaign_compute_schedule(project_id, schedule_type, scheduled_at, recur_dow, recur_time)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_email_campaigns SET name=%s, subject=%s, blocks=%s::jsonb, status=%s,"
+            " schedule_type=%s, scheduled_at=%s, recur_dow=%s, recur_time=%s, exclude_guests=%s,"
+            " next_run_at=%s, updated_at=NOW() WHERE id=%s AND project_id=%s",
+            (name, subject, json.dumps(blocks or []), status, schedule_type, _parse_iso(scheduled_at),
+             recur_dow, recur_time, exclude_guests, next_run, cid, project_id)
+        )
+        conn.commit()
+    return {"ok": True, "status": status}
+
+
+@app.delete("/api/email-campaigns/{cid}")
+def email_campaign_delete(cid: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/email-campaigns/{cid}/send-now")
+def email_campaign_send_now(cid: int, background_tasks: BackgroundTasks,
+                            project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
+    if not row:
+        raise HTTPException(404, "Campaign not found")
+    background_tasks.add_task(_run_campaign, dict(row), _utcnow())
+    return {"ok": True}
+
+
+@app.post("/api/email-campaigns/{cid}/test")
+def email_campaign_test(cid: int, project_id: int = Query(...),
+                        email: str = Query(...), user: dict = Depends(get_current_user)):
+    require_team_member_or_owner(user, project_id)
+    row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
+    if not row:
+        raise HTTPException(404, "Campaign not found")
+    branding = _resolve_email_branding(project_id)
+    from_name, from_email = get_project_email(project_id)
+    cvars = {"customer_name": "there", "email": email, "store_name": _project_store_name(project_id)}
+    subject = email_engine.render_subject(row["subject"], cvars) or "Test campaign"
+    html = render_email(row["blocks"], branding, cvars, unsubscribe_url="#")
+    ok = send_email(email, subject, html, from_name, from_email)
+    return {"ok": ok}
+
+
 # ── SHIPPING LABELS ──────────────────────────────────────
 
 from pdf_shipping_label import render_shipping_labels
@@ -21162,6 +21728,171 @@ def analytics_search_insights(project_id: int = Query(...), period: str = Query(
     }
 
 
+# ── ORG-LEVEL ANALYTICS (cross-project rollup, FX-converted) ─────────────
+
+@app.get("/api/orgs/{org_id}/analytics")
+def org_analytics(org_id: int, period: str = Query("30d"),
+                  user: dict = Depends(get_current_user)):
+    """Aggregate analytics across EVERY project in the org. Each project keeps
+    its own currency, so revenue is FX-converted into the org's display
+    currency before summing — that makes org totals and the cross-project
+    leaderboard apples-to-apples. Returns org KPIs (+ %change vs previous
+    period), a per-project breakdown (for the leaderboard / top-earner /
+    top-margin / revenue-by-project / margin-by-project blocks), and a daily
+    revenue series."""
+    require_org_owner(user, org_id)
+    org = db_one("SELECT id, currency FROM crm_organizations WHERE id=%s", (org_id,))
+    if not org:
+        raise HTTPException(404, "Organization not found")
+    org_ccy = (org.get("currency") or "USD").upper()
+    projects = db_all(
+        "SELECT id, name, currency FROM crm_projects WHERE org_id=%s ORDER BY name ASC",
+        (org_id,)
+    )
+    empty_tot = {"revenue": 0.0, "orders": 0, "aov": 0.0, "customers": 0,
+                 "visitors": 0, "conversion": 0.0}
+    if not projects:
+        return {"currency": org_ccy, "mixed_currencies": False, "period": period,
+                "totals": {"current": empty_tot, "delta": {}}, "projects": [], "series": []}
+
+    pids = [p["id"] for p in projects]
+    pccy = {p["id"]: (p.get("currency") or "USD").upper() for p in projects}
+    pname = {p["id"]: p["name"] for p in projects}
+    mixed = len(set(pccy.values()) | {org_ccy}) > 1
+
+    ref_tz = get_project_timezone(pids[0])
+    start, end = _date_range_for_period(period, ref_tz)
+    prev_start = start - (end - start)
+
+    def _orders(s, e):
+        return {r["project_id"]: r for r in db_all(
+            "SELECT project_id, COUNT(*) AS orders,"
+            "       COALESCE(SUM(total_amount),0) AS revenue,"
+            "       COUNT(DISTINCT user_id) AS customers"
+            "  FROM order_history"
+            " WHERE project_id = ANY(%s) AND created_at >= %s AND created_at < %s"
+            "   AND status NOT IN ('cancelled','refunded')"
+            " GROUP BY project_id", (pids, s, e))}
+
+    def _bookings(s, e):
+        return {r["project_id"]: r for r in db_all(
+            "SELECT b.project_id, COUNT(*) AS bcount,"
+            "       COALESCE(SUM(COALESCE(s.price, b.freeform_price, 0)),0) AS brev,"
+            "       COUNT(DISTINCT b.user_id) AS bcust"
+            "  FROM bookings b LEFT JOIN booking_services s ON s.id = b.service_id"
+            " WHERE b.project_id = ANY(%s) AND b.starts_at >= %s AND b.starts_at < %s"
+            "   AND b.status = 'completed'"
+            " GROUP BY b.project_id", (pids, s, e))}
+
+    def _visitors(s, e):
+        return {r["project_id"]: int(r["v"] or 0) for r in db_all(
+            "SELECT project_id, COUNT(DISTINCT COALESCE(user_id::text,'ip:'||ip)) AS v"
+            "  FROM site_visits"
+            " WHERE project_id = ANY(%s) AND created_at >= %s AND created_at < %s"
+            " GROUP BY project_id", (pids, s, e))}
+
+    def _margin(s, e):
+        return {r["project_id"]: r for r in db_all(
+            "SELECT oh.project_id,"
+            "       COALESCE(SUM(s.net_qty * s.unit_price),0) AS prod_rev,"
+            "       COALESCE(SUM(s.net_qty * s.unit_cost),0)  AS cogs,"
+            "       COALESCE(SUM(s.net_qty),0)                AS units"
+            "  FROM ("
+            "    SELECT oi.order_id, oi.price AS unit_price,"
+            "           COALESCE(oi.cost_per_unit, c0.cost_price, 0) AS unit_cost,"
+            "           (oi.quantity - COALESCE((SELECT SUM(ri.quantity)"
+            "             FROM order_return_items ri JOIN order_returns r ON r.id = ri.return_id"
+            "            WHERE ri.order_item_id = oi.id"
+            "              AND r.status IN ('approved','received','inspected','refunded')),0))::numeric AS net_qty"
+            "      FROM order_items oi"
+            "      LEFT JOIN product_configurations_l2 c0 ON c0.id = oi.configuration_id"
+            "  ) s"
+            "  JOIN order_history oh ON oh.id = s.order_id"
+            " WHERE oh.project_id = ANY(%s) AND oh.created_at >= %s AND oh.created_at < %s"
+            "   AND oh.status NOT IN ('cancelled','refunded')"
+            " GROUP BY oh.project_id", (pids, s, e))}
+
+    def _totals_for(s, e, want_projects=False):
+        od, bk, vi = _orders(s, e), _bookings(s, e), _visitors(s, e)
+        mg = _margin(s, e) if want_projects else {}
+        rows = []
+        tot = {"revenue": 0.0, "orders": 0, "customers": 0, "visitors": 0}
+        for pid in pids:
+            o = od.get(pid) or {}; b = bk.get(pid) or {}
+            ords = int(o.get("orders") or 0) + int(b.get("bcount") or 0)
+            rev_native = float(o.get("revenue") or 0) + float(b.get("brev") or 0)
+            rev = _fx_convert(rev_native, pccy[pid], org_ccy)
+            cust = max(int(o.get("customers") or 0), int(b.get("bcust") or 0))
+            vis = vi.get(pid, 0)
+            tot["revenue"] += rev; tot["orders"] += ords
+            tot["customers"] += cust; tot["visitors"] += vis
+            if want_projects:
+                m = mg.get(pid) or {}
+                prev_rev = float(m.get("prod_rev") or 0)
+                cogs = float(m.get("cogs") or 0)
+                margin_pct = round((prev_rev - cogs) / prev_rev * 100, 1) if prev_rev > 0 else None
+                rows.append({
+                    "id": pid, "name": pname[pid], "currency": pccy[pid],
+                    "revenue": round(rev, 2), "orders": ords,
+                    "aov": round(rev / max(1, ords), 2),
+                    "customers": cust, "units": int(m.get("units") or 0),
+                    "margin_pct": margin_pct,
+                })
+        tot["aov"] = tot["revenue"] / max(1, tot["orders"])
+        tot["conversion"] = min(100, tot["customers"] / tot["visitors"] * 100) if tot["visitors"] else 0
+        return tot, rows
+
+    cur_tot, proj_rows = _totals_for(start, end, want_projects=True)
+    prev_tot, _        = _totals_for(prev_start, start)
+
+    def pct(c, p):
+        return round((c - p) / p * 100, 1) if p else None
+    delta = {k: pct(cur_tot[k], prev_tot[k]) for k in
+             ("revenue", "orders", "aov", "customers", "visitors", "conversion")}
+
+    # Daily revenue series — per (project, day) so each project's revenue can be
+    # FX-converted before being summed into the org-wide daily bucket.
+    day_tot = {}
+    # Pre-seed every day in the range with 0 so the chart draws a continuous
+    # time axis (flat at zero on no-sale days) instead of connecting only the
+    # days that had revenue — that sparse series is what made the chart wrong.
+    _d = start.date()
+    while _d < end.date():
+        day_tot[str(_d)] = 0.0
+        _d += timedelta(days=1)
+    for r in db_all(
+        "SELECT project_id, (created_at AT TIME ZONE %s)::date AS day,"
+        "       COALESCE(SUM(total_amount),0) AS revenue"
+        "  FROM order_history"
+        " WHERE project_id = ANY(%s) AND created_at >= %s AND created_at < %s"
+        "   AND status NOT IN ('cancelled','refunded')"
+        " GROUP BY project_id, day", (ref_tz, pids, start, end)):
+        day_tot[str(r["day"])] = day_tot.get(str(r["day"]), 0.0) + _fx_convert(float(r["revenue"] or 0), pccy[r["project_id"]], org_ccy)
+    for r in db_all(
+        "SELECT b.project_id, (b.starts_at AT TIME ZONE %s)::date AS day,"
+        "       COALESCE(SUM(COALESCE(s.price, b.freeform_price, 0)),0) AS revenue"
+        "  FROM bookings b LEFT JOIN booking_services s ON s.id = b.service_id"
+        " WHERE b.project_id = ANY(%s) AND b.starts_at >= %s AND b.starts_at < %s"
+        "   AND b.status = 'completed'"
+        " GROUP BY b.project_id, day", (ref_tz, pids, start, end)):
+        day_tot[str(r["day"])] = day_tot.get(str(r["day"]), 0.0) + _fx_convert(float(r["revenue"] or 0), pccy[r["project_id"]], org_ccy)
+    series = [{"day": d, "revenue": round(day_tot[d], 2)} for d in sorted(day_tot)]
+
+    proj_rows.sort(key=lambda x: x["revenue"], reverse=True)
+    cur_tot["revenue"] = round(cur_tot["revenue"], 2)
+    cur_tot["aov"] = round(cur_tot["aov"], 2)
+    cur_tot["conversion"] = round(cur_tot["conversion"], 1)
+    return {
+        "currency": org_ccy,
+        "mixed_currencies": mixed,
+        "period": period,
+        "timezone": ref_tz,
+        "totals": {"current": cur_tot, "delta": delta},
+        "projects": proj_rows,
+        "series": series,
+    }
+
+
 # ── GOALS / TARGETS ─────────────────────────────────────────────────────
 
 GOAL_TYPES = {
@@ -21683,6 +22414,7 @@ async def _start_listener_on_boot():
     _start_mv_refresher()
     _start_alerts_evaluator()
     _start_accounting_scheduler()
+    _start_email_campaign_scheduler()
 
 
 # ── Healthcheck endpoints ────────────────────────────────────────────────

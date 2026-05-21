@@ -9,6 +9,7 @@ import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import psycopg2
 import psycopg2.errors
+import email_engine
 
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -168,6 +169,48 @@ def get_project_email(project_id: int) -> tuple:
         (project_id,)
     )
     return (row["from_name"], row["from_email"]) if row else ("Torta Store", EMAIL_FROM)
+
+
+def _project_store_name(project_id) -> str:
+    if not project_id:
+        return "our store"
+    row = db_one("SELECT name FROM crm_projects WHERE id=%s", (project_id,))
+    return (row.get("name") if row else None) or "our store"
+
+
+def _resolve_email_branding(project_id) -> dict:
+    row = db_one("SELECT * FROM crm_email_branding WHERE project_id=%s", (project_id,)) if project_id else None
+    merged = {**email_engine.DEFAULT_BRANDING}
+    if row:
+        for k in email_engine.DEFAULT_BRANDING:
+            if row.get(k) is not None:
+                merged[k] = row[k]
+    return merged
+
+
+def _resolve_email_template(project_id, etype):
+    row = db_one("SELECT subject, blocks FROM crm_email_templates WHERE project_id=%s AND type=%s",
+                 (project_id, etype)) if project_id else None
+    if row:
+        return row["subject"], row["blocks"]
+    d = email_engine.DEFAULT_EMAIL_TEMPLATES.get(etype, {})
+    return d.get("subject", ""), d.get("blocks", [])
+
+
+def _send_template_email(project_id, etype, to, variables, *, from_name=None, from_email=None, unsubscribe_url=None):
+    """Resolve project template + branding, render, send. Falls back to code default if a required var is missing."""
+    if not (from_name and from_email):
+        fn, fe = get_project_email(project_id) if project_id else ("Torta Store", EMAIL_FROM)
+        from_name = from_name or fn
+        from_email = from_email or fe
+    subject_tpl, blocks = _resolve_email_template(project_id, etype)
+    if not email_engine.template_has_required(etype, blocks, subject_tpl):
+        d = email_engine.DEFAULT_EMAIL_TEMPLATES.get(etype, {})
+        subject_tpl, blocks = d.get("subject", ""), d.get("blocks", [])
+    branding = _resolve_email_branding(project_id)
+    subject = email_engine.render_subject(subject_tpl, variables) or email_engine.EMAIL_TYPES.get(etype, {}).get("subject", "")
+    html = email_engine.render_email(blocks, branding, variables, unsubscribe_url=unsubscribe_url)
+    return send_email(to, subject, html, from_name, from_email)
 
 
 def _project_team_user_ids(project_id: int) -> list[int]:
@@ -1687,28 +1730,16 @@ def send_email(to: str, subject: str, html: str,
         print(f"Email error: {e}"); return False
 
 def send_code_email(email: str, code: int, project_id: int = None) -> bool:
-    from_name, from_email = get_project_email(project_id) if project_id else ("Torta Store", EMAIL_FROM)
-    html = f"""<div style="font-family:Arial,sans-serif;text-align:center;padding:40px">
-        <h1 style="color:#333">Your verification code</h1>
-        <p style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#000">{str(code)[:3]} {str(code)[3:]}</p>
-        <p style="color:#666">This code expires in 10 minutes.</p></div>"""
-    return send_email(email, "Verification Code", html, from_name, from_email)
+    return _send_template_email(project_id, "verification", email,
+                                {"code": str(code), "store_name": _project_store_name(project_id), "expiry_minutes": "10"})
 
 def send_reset_email(email: str, token: str, project_id: int = None) -> bool:
-    from_name, from_email = get_project_email(project_id) if project_id else ("Torta Store", EMAIL_FROM)
     frontend = get_project_frontend_url(project_id) if project_id else None
     if not frontend:
         print(f"send_reset_email: Site URL not configured for project_id={project_id}"); return False
-    reset_url     = f"{frontend}/reset-password/{token}"
-    reset_url_esc = sanitize(reset_url)   # HTML-escapes " < > & ' — prevents href injection
-    html = f"""<div style="font-family:Arial,sans-serif;text-align:center;padding:40px">
-        <h1 style="color:#333">Reset your password</h1>
-        <p style="font-size:16px;color:#666">Click the button below to set a new password. Link expires in 30 minutes.</p>
-        <a href="{reset_url_esc}" style="display:inline-block;margin-top:24px;padding:14px 32px;
-            background:#0071e3;color:#fff;text-decoration:none;border-radius:16px;font-size:18px;font-weight:600">
-            Reset password</a>
-        <p style="margin-top:24px;color:#999;font-size:12px;word-break:break-all">{reset_url_esc}</p></div>"""
-    return send_email(email, "Password Reset", html, from_name, from_email)
+    reset_url = f"{frontend}/reset-password/{token}"
+    return _send_template_email(project_id, "password_reset", email,
+                                {"reset_url": reset_url, "store_name": _project_store_name(project_id)})
 
 
 # WEBHOOK DISPATCHER — mirrors CRM/backend; fire-and-forget via BackgroundTasks at call sites.
@@ -6886,39 +6917,24 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
     user = db_one("SELECT name, email FROM users WHERE id=%s", (user_id,))
     from_name, from_email = get_project_email(project_id)
     if user and user.get("email"):
-        customer_name = sanitize(user["name"] or "Customer")
-        items_html = "".join(
-            "<tr>"
-            "<td style='padding:6px 0;color:#333'>" + sanitize(it["title"]) + " &mdash; " + sanitize(it["variation_name"]) + "</td>"
-            "<td style='padding:6px 0;text-align:right;color:#333'>" + str(it["quantity"]) + " &times; " + f"{float(it['unit_price']):.2f}" + "</td>"
-            "</tr>"
+        frontend = get_project_frontend_url(project_id) or ""
+        order_items = [
+            {"title": it["title"] + (" — " + it["variation_name"] if it.get("variation_name") else ""),
+             "qty": it["quantity"], "price": f"{float(it['unit_price']):.2f}"}
             for it in items
-        )
-        shipping_row = (
-            "<tr><td style='padding:6px 0;color:#888'>Shipping</td>"
-            "<td style='padding:6px 0;text-align:right;color:#888'>" + f"{float(final_shipping):.2f}" + "</td></tr>"
-        ) if final_shipping else ""
-
-        digital_html = _build_digital_html(project_id, items)
-
-        email_html = (
-            "<div style='font-family:sans-serif;max-width:520px;margin:auto'>"
-            "<h2 style='color:#0071E3'>Order #" + str(order_id) + " confirmed!</h2>"
-            "<p>Hi " + customer_name + ", your order has been placed and is being processed.</p>"
-            "<table style='width:100%;border-collapse:collapse'>" + items_html + shipping_row + "</table>"
-            "<hr style='margin:16px 0'>"
-            "<p><b>Total: $" + f"{float(total):.2f}" + "</b></p>"
-            + digital_html +
-            "<p>We will notify you when the status changes.</p>"
-            "</div>"
-        )
+        ]
+        order_vars = {
+            "order_number": str(order_id),
+            "customer_name": user.get("name") or "Customer",
+            "items": order_items,
+            "order_total": f"{float(total):.2f}",
+            "order_url": (f"{frontend.rstrip('/')}/orders" if frontend else ""),
+            "store_name": _project_store_name(project_id),
+            "downloads": _digital_downloads(project_id, items),
+        }
         background_tasks.add_task(
-            send_email,
-            to=user["email"],
-            subject="Order #" + str(order_id) + " confirmed",
-            html=email_html,
-            from_name=from_name,
-            from_email=from_email,
+            _send_template_email, project_id, "order_confirmation", user["email"], order_vars,
+            from_name=from_name, from_email=from_email,
         )
 
     # Outbound webhooks. `order.created` always fires; `order.paid` ONLY
@@ -6978,31 +6994,20 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
     return {"success": True, "order_id": order_id}
 
 
-def _build_digital_html(project_id: int, items: list) -> str:
+def _digital_downloads(project_id: int, items: list) -> list:
+    """Download links for digital products in an order — [{title, label, url}] (engine escapes at render)."""
     digital_ids = [it["product_id"] for it in items if it.get("product_type") == "digital"]
-    if not digital_ids: return ""
+    if not digital_ids:
+        return []
     fmt = ",".join(["%s"] * len(digital_ids))
     rows = db_all(
         f"SELECT product_id, field_key, field_value FROM product_custom_fields "
         f"WHERE project_id=%s AND product_id IN ({fmt}) AND field_type='file' AND field_value <> ''",
         tuple([project_id] + digital_ids)
     )
-    if not rows: return ""
     titles = {it["product_id"]: it["title"] for it in items}
-    lines = []
-    for r in rows:
-        url = sanitize(r["field_value"])
-        title = sanitize(titles.get(r["product_id"]) or "")
-        key = sanitize(r["field_key"])
-        lines.append(
-            f"<li style='margin:6px 0'><b>{title}</b> &middot; "
-            f"<a href='{url}' style='color:#0071E3'>{key}</a></li>"
-        )
-    return (
-        "<hr style='margin:16px 0'>"
-        "<h3 style='margin:0 0 8px;color:#111'>Your downloads</h3>"
-        "<ul style='padding-left:18px;margin:0'>" + "".join(lines) + "</ul>"
-    )
+    return [{"title": titles.get(r["product_id"]) or "", "label": r["field_key"], "url": r["field_value"]}
+            for r in rows]
 
 
 @app.get("/{api_key}/orders")
@@ -10142,21 +10147,6 @@ def public_cancel_booking(bid: int, request: Request,
 
 # ── BOOKING REMINDER (T-1h) ──────────────────────────────
 
-def _build_booking_reminder_html(service_name: str, staff_name: Optional[str],
-                                 starts_at: datetime, biz_tz, venue: Optional[str] = None) -> str:
-    local = starts_at.astimezone(biz_tz)
-    try:    when = local.strftime("%A, %B %d at %H:%M")
-    except Exception: when = local.isoformat()
-    staff_line = f"<p style='color:#666;margin:4px 0'>With <b>{sanitize(staff_name)}</b></p>" if staff_name else ""
-    venue_line = f"<p style='color:#666;margin:4px 0'>{sanitize(venue)}</p>" if venue else ""
-    return f"""<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px">
-        <h1 style="color:#0071e3;margin:0 0 8px">Reminder: in 1 hour</h1>
-        <p style="font-size:18px;color:#111;margin:0 0 16px"><b>{sanitize(service_name)}</b></p>
-        <p style="font-size:16px;color:#333;margin:0 0 4px">{sanitize(when)}</p>
-        {staff_line}{venue_line}
-        <p style="color:#999;font-size:12px;margin-top:32px">See you soon!</p>
-    </div>"""
-
 @app.post("/internal/booking/process-reminders")
 def internal_process_booking_reminders(request: Request):
     if request.headers.get("X-Internal-Key") != INTERNAL_API_KEY:
@@ -10165,7 +10155,7 @@ def internal_process_booking_reminders(request: Request):
     lo = now_utc + timedelta(minutes=50)
     hi = now_utc + timedelta(minutes=70)
     rows = db_all(
-        """SELECT b.id, b.project_id, b.service_id, b.staff_id, b.customer_email,
+        """SELECT b.id, b.project_id, b.service_id, b.staff_id, b.customer_email, b.customer_name,
                   b.starts_at, b.notes,
                   s.name AS service_name, s.duration_minutes,
                   b.freeform_service_name, b.freeform_duration_minutes,
@@ -10187,11 +10177,16 @@ def internal_process_booking_reminders(request: Request):
         if starts.tzinfo is None: starts = starts.replace(tzinfo=timezone.utc)
         from_name, from_email = get_project_email(r["project_id"])
         svc_name = r["service_name"] or r.get("freeform_service_name") or "Appointment"
-        html = _build_booking_reminder_html(
-            svc_name, r["staff_name"], starts, biz_tz, venue=None
+        local = starts.astimezone(biz_tz)
+        try:    when = local.strftime("%A, %B %d at %H:%M")
+        except Exception: when = local.isoformat()
+        ok = _send_template_email(
+            r["project_id"], "booking_reminder", r["customer_email"],
+            {"customer_name": r.get("customer_name") or "", "service_name": svc_name,
+             "staff_name": r.get("staff_name") or "", "when": when,
+             "store_name": _project_store_name(r["project_id"])},
+            from_name=from_name, from_email=from_email,
         )
-        ok = send_email(r["customer_email"], "Reminder: your appointment is in 1 hour",
-                        html, from_name, from_email)
         if ok:
             with db_cursor() as (conn, cur):
                 cur.execute("UPDATE bookings SET reminder_sent_at=NOW() WHERE id=%s", (r["id"],))
@@ -10203,26 +10198,6 @@ def internal_process_booking_reminders(request: Request):
 
 
 # ── ABANDONED CART REMINDERS ─────────────────────────────
-
-def _build_abandoned_cart_html(customer_name: str, item_titles: list, cart_url: str) -> str:
-    name_html = sanitize(customer_name or "there")
-    titles_html = "".join(
-        f'<li style="padding:6px 0;color:#333">{sanitize(t)[:120]}</li>'
-        for t in item_titles[:5]
-    )
-    more = f'<li style="padding:6px 0;color:#888">+ {len(item_titles) - 5} more…</li>' if len(item_titles) > 5 else ""
-    safe_url = sanitize(cart_url or "")
-    return (
-        '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:24px">'
-        f'<h2 style="color:#111;margin:0 0 12px">Hey {name_html}, you left something behind</h2>'
-        '<p style="color:#444;line-height:1.5">Your cart is still waiting for you. Here\'s what\'s inside:</p>'
-        f'<ul style="list-style:none;padding:0;margin:16px 0;border-top:1px solid #eee">{titles_html}{more}</ul>'
-        f'<a href="{safe_url}" style="display:inline-block;background:#0071E3;color:#fff;text-decoration:none;'
-        'padding:12px 28px;border-radius:999px;font-weight:600">Return to cart</a>'
-        '<p style="color:#888;font-size:12px;margin-top:24px">If you didn\'t want this, ignore this email.</p>'
-        '</div>'
-    )
-
 
 @app.post("/internal/cart/process-abandoned")
 def internal_process_abandoned_carts(request: Request):
@@ -10253,12 +10228,15 @@ def internal_process_abandoned_carts(request: Request):
             (row["cart_id"],)
         )
         if not items: continue
-        titles = [r["title"] for r in items]
         from_name, from_email = get_project_email(row["project_id"])
         frontend_url = get_project_frontend_url(row["project_id"]) or ""
         cart_url = f"{frontend_url.rstrip('/')}/cart" if frontend_url else ""
-        html = _build_abandoned_cart_html(row.get("name") or "", titles, cart_url)
-        ok = send_email(row["email"], "You left items in your cart", html, from_name, from_email)
+        ok = _send_template_email(
+            row["project_id"], "abandoned_cart", row["email"],
+            {"customer_name": row.get("name") or "", "cart_url": cart_url,
+             "store_name": _project_store_name(row["project_id"])},
+            from_name=from_name, from_email=from_email,
+        )
         if ok:
             with db_cursor() as (conn, cur):
                 cur.execute("UPDATE carts SET abandoned_email_sent_at = NOW() WHERE id = %s",
@@ -10268,6 +10246,32 @@ def internal_process_abandoned_carts(request: Request):
         else:
             failed += 1
     return {"sent": sent, "failed": failed, "candidates": len(candidates)}
+
+
+# ── UNSUBSCRIBE (broadcast opt-out) ──────────────────────
+
+@app.get("/{api_key}/unsubscribe")
+def unsubscribe(api_key: str, u: int = Query(...), token: str = Query(...)):
+    """Public opt-out link from broadcast footers — no publishable key (clicked from an email client)."""
+    proj = db_one("SELECT id FROM crm_projects WHERE api_key=%s", (api_key,))
+    done = False
+    if proj:
+        row = db_one("SELECT unsubscribe_token FROM users WHERE id=%s AND project_id=%s", (u, proj["id"]))
+        if row and row.get("unsubscribe_token") and token and row["unsubscribe_token"] == token:
+            with db_cursor() as (conn, cur):
+                cur.execute("UPDATE users SET email_opt_out=TRUE WHERE id=%s AND project_id=%s", (u, proj["id"]))
+                conn.commit()
+            done = True
+    title = "Unsubscribed" if done else "Link error"
+    msg = ("You've been unsubscribed from marketing emails. You'll still receive important account and order emails."
+           if done else "This unsubscribe link is invalid or has expired.")
+    html = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'></head>"
+            "<body style='font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f4f4f5;margin:0'>"
+            "<div style='max-width:480px;margin:80px auto;background:#fff;border-radius:16px;padding:40px;text-align:center'>"
+            f"<h2 style='color:#1d1d1f;margin:0 0 12px'>{title}</h2>"
+            f"<p style='color:#555;line-height:1.5;margin:0'>{msg}</p></div></body></html>")
+    return Response(content=html, media_type="text/html")
 
 
 # ── LOW STOCK ALERTS ─────────────────────────────────────

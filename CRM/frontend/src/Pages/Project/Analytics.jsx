@@ -260,7 +260,9 @@ function LazySection({ children, minHeight = 220, rootMargin = '300px' }) {
 // picks the correct symbol / placement / decimals (KZT no decimals,
 // USD has $, EUR has €, etc.).
 let __ANALYTICS_CURRENCY = 'USD';
-const setAnalyticsCurrency = (code) => { __ANALYTICS_CURRENCY = (code || 'USD').toUpperCase(); };
+// Exported so the Org Analytics page can reuse LineChart with the org's
+// display currency (the chart's Y-axis + tooltip read this module global).
+export const setAnalyticsCurrency = (code) => { __ANALYTICS_CURRENCY = (code || 'USD').toUpperCase(); };
 // Delegate to the shared `formatMoney` from Utils/currency.js — same
 // helper used everywhere else in the app. Critically, it respects the
 // per-currency symbol position rule ($ before, ₸/₽/€ after) instead
@@ -375,7 +377,7 @@ const deltaTone = (n, inverse = false) => {
 // = "zoomed out". The period selector + granularity in the parent compute
 // this. Ctrl/Cmd + wheel still fires `onZoom(±1)` for keyboard-driven
 // zoom in/out without going to the dropdown.
-function LineChart({
+export function LineChart({
   data = [],            // history slice, [{bucket, revenue, ...}, ...]
   compareData = [],     // optional second series rendered as a dashed line
   viewportBuckets = 30, // how many buckets fit in the visible viewport (zoom)
@@ -980,7 +982,7 @@ const GRAN_OPTIONS = [
   { value: 'week',  label: 'Week'  },
   { value: 'month', label: 'Month' },
 ];
-function GranularitySegmented({ value, onChange }) {
+export function GranularitySegmented({ value, onChange }) {
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);

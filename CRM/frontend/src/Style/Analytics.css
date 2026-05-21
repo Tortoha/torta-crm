@@ -1346,3 +1346,103 @@
 .an-goal-fill--at_risk {
   background: #c92a39;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   ORG ANALYTICS — cross-project comparison blocks (oa-*)
+   ══════════════════════════════════════════════════════════════════ */
+
+.oa-mixed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  font-size: 12px;
+  font-weight: 500;
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.1);
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+.oa-mixed-badge svg { width: 14px; height: 14px; }
+
+/* Two-column tiles (Revenue-by-project + Margin-by-project bar lists). */
+.oa-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+/* Margin bars use the cyan accent (matches the order-status "delivered" hue). */
+.oa-fill--margin { background: #0891b2; }
+
+/* ── Highlight cards ── */
+.oa-highlights {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.oa-highlight {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+}
+.oa-highlight-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.oa-highlight-icon svg { width: 22px; height: 22px; }
+.oa-highlight-icon--margin { background: rgba(8, 145, 178, 0.1); color: #0891b2; }
+.oa-highlight-icon--count  { background: rgba(0, 0, 0, 0.05);    color: var(--muted); }
+.oa-highlight-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.oa-highlight-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted);
+}
+.oa-highlight-name {
+  font-size: 15px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.oa-highlight-val { font-size: 13px; color: var(--accent); font-weight: 600; }
+
+/* ── Leaderboard table ── */
+.oa-table { display: flex; flex-direction: column; gap: 4px; }
+.oa-row {
+  display: grid;
+  grid-template-columns: 2.4fr 1fr 0.8fr 1fr 0.8fr;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+.oa-row--head {
+  background: transparent;
+  padding: 0 16px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.oa-num { text-align: right; font-variant-numeric: tabular-nums; }
+.oa-strong { font-weight: 600; color: var(--text); }
+.oa-name-text {
+  font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+@media (max-width: 900px) {
+  .oa-highlights { grid-template-columns: 1fr; }
+  .oa-cols { grid-template-columns: 1fr; }
+}

@@ -34,6 +34,7 @@ const ProjectSettings  = lazy(() => import('./Pages/Project/ProjectSettings.jsx'
 const Documents        = lazy(() => import('./Pages/Project/Documents.jsx'));
 const Orders           = lazy(() => import('./Pages/Project/Orders.jsx'));
 const Customers        = lazy(() => import('./Pages/Project/Customers.jsx'));
+const Emails           = lazy(() => import('./Pages/Project/Emails.jsx'));
 const Chat             = lazy(() => import('./Pages/Project/Chat.jsx'));
 const Booking          = lazy(() => import('./Pages/Project/Booking/Booking.jsx'));
 const Integrations     = lazy(() => import('./Pages/Project/Integrations/Integrations.jsx'));
@@ -113,6 +114,7 @@ function App() {
             <Route path="orders"     element={<Orders />} />
             <Route path="booking"      element={<Booking />} />
             <Route path="customers"  element={<Customers />} />
+            <Route path="emails"     element={<Emails />} />
             {/* Legacy /bookings (plural) — stale notification links used it
                 before the External fix. Redirect so they don't dead-end. */}
             <Route path="bookings"     element={<Navigate to="../booking" relative="path" replace />} />
