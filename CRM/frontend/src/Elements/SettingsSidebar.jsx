@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { UserCircle, Lock, SlidersHorizontal, Bell, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
+import { UserCircle, Lock, ArrowLineLeft, ArrowLineRight } from '@phosphor-icons/react';
 
+// Preferences live on the Profile page; Notifications are handled by the bell —
+// so the account settings only need Profile + Security.
 const items = [
-  { to: '/settings/account',       label: 'Profile',       Icon: UserCircle },
-  { to: '/settings/security',      label: 'Security',       Icon: Lock },
-  { to: '/settings/preferences',   label: 'Preferences',    Icon: SlidersHorizontal },
-  { to: '/settings/notifications',  label: 'Notifications',  Icon: Bell },
+  { to: '/settings/account',  label: 'Profile',  Icon: UserCircle },
+  { to: '/settings/security', label: 'Security', Icon: Lock },
 ];
 
 function SettingsSidebar({ collapsed, onToggle }) {

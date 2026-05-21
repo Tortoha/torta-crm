@@ -12,34 +12,38 @@ import {
 
 function buildSections(apiKey) {
   const base = `/project/${apiKey}`;
+  // `pages` = the permission keys this nav item covers. Section pages (Products,
+  // Orders, Booking, Chat, Authentication) list every sub-tab key — the item is
+  // shown if the member can view ANY of them.
   return [
     {
       id: 'overview', label: 'Overview',
       items: [
-        { to: `${base}`,           label: 'Project Overview', Icon: House,          exact: true },
-        { to: `${base}/analytics`, label: 'Analytics',        Icon: ChartLine      },
-        { to: `${base}/alerts`,    label: 'Alerts',           Icon: Bell           },
-        { to: `${base}/targets`,   label: 'Targets',          Icon: Target         },
+        { to: `${base}`,           label: 'Project Overview', Icon: House,     exact: true, pages: ['overview'] },
+        { to: `${base}/analytics`, label: 'Analytics',        Icon: ChartLine, pages: ['analytics'] },
+        { to: `${base}/alerts`,    label: 'Alerts',           Icon: Bell,      pages: ['alerts'] },
+        { to: `${base}/targets`,   label: 'Targets',          Icon: Target,    pages: ['goals'] },
       ],
     },
     {
       id: 'store', label: 'Business',
       items: [
-        { to: `${base}/products`,  label: 'Products',  Icon: Tag     },
-        { to: `${base}/orders`,    label: 'Orders',    Icon: Package },
-        { to: `${base}/booking`,   label: 'Bookings',  Icon: CalendarBlank },
-        { to: `${base}/customers`, label: 'Customers', Icon: UsersThree },
-        { to: `${base}/emails`,    label: 'Emails', Icon: EnvelopeSimple },
-        { to: `${base}/chat`,      label: 'Chat with Customers', Icon: ChatCircleDots },
+        { to: `${base}/products`,  label: 'Products',  Icon: Tag,
+          pages: ['products', 'inventory', 'batches', 'promo_codes', 'discounts', 'tier_pricing', 'warehouses', 'archive', 'product_settings'] },
+        { to: `${base}/orders`,    label: 'Orders',    Icon: Package,       pages: ['orders', 'returns'] },
+        { to: `${base}/booking`,   label: 'Bookings',  Icon: CalendarBlank, pages: ['booking', 'booking_services', 'booking_staff', 'booking_settings'] },
+        { to: `${base}/customers`, label: 'Customers', Icon: UsersThree,    pages: ['customers'] },
+        { to: `${base}/emails`,    label: 'Emails', Icon: EnvelopeSimple,   pages: ['emails'] },
+        { to: `${base}/chat`,      label: 'Chat with Customers', Icon: ChatCircleDots, pages: ['chat', 'channels'] },
       ],
     },
     {
       id: 'account', label: 'Account',
       items: [
-        { to: `${base}/authentication`, label: 'Authentication', Icon: LockKey   },
-        { to: `${base}/integrations`,   label: 'Integrations',   Icon: Plug      },
-        { to: `${base}/documents`,      label: 'Documents',      Icon: FileText  },
-        { to: `${base}/settings`,       label: 'Settings',       Icon: GearSix   },
+        { to: `${base}/authentication`, label: 'Authentication', Icon: LockKey,  pages: ['auth_providers', 'url_config'] },
+        { to: `${base}/integrations`,   label: 'Integrations',   Icon: Plug,     pages: ['integrations'] },
+        { to: `${base}/documents`,      label: 'Documents',      Icon: FileText, pages: ['documents'] },
+        { to: `${base}/settings`,       label: 'Settings',       Icon: GearSix,  pages: ['settings'] },
       ],
     },
   ];
@@ -199,9 +203,20 @@ function CollapsedNav({ items, pathname }) {
 
 // ── Sidebar ────────────────────────────────────────────────────
 
-export default function Sidebar({ collapsed, onToggle }) {
+export default function Sidebar({ collapsed, onToggle, access }) {
   const location   = useLocation();
   const { apiKey } = useParams();
+
+  // Hide nav items the member's role can't view (shown if ANY of the item's
+  // pages is viewable). Owner / not-yet-loaded → show all (backend still
+  // enforces; this is UX only).
+  const canView = (pages) => {
+    if (!access || access.is_owner) return true;
+    return (pages || []).some(p => {
+      const lvl = access.permissions?.[p];
+      return lvl === 'view' || lvl === 'manage';
+    });
+  };
 
   // Detect product detail page so sidebar swaps project sections → flat product nav.
   const productMatch = useMemo(
@@ -210,7 +225,11 @@ export default function Sidebar({ collapsed, onToggle }) {
   );
   const productHash = productMatch?.[1] ?? null;
 
-  const sections     = useMemo(() => buildSections(apiKey), [apiKey]);
+  const sections     = useMemo(
+    () => buildSections(apiKey)
+            .map(s => ({ ...s, items: s.items.filter(i => canView(i.pages)) }))
+            .filter(s => s.items.length > 0),
+    [apiKey, access]);   // eslint-disable-line react-hooks/exhaustive-deps
   const productItems = useMemo(
     () => productHash ? buildProductItems(productHash) : null,
     [productHash]

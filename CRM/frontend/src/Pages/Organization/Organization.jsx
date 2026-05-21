@@ -158,7 +158,7 @@ function CardMenu({ project, btnRef, onClose, onRename, onDelete }) {
 
 // ─── ProjectCard ──────────────────────────────────────────────────────────────
 
-function ProjectCard({ p, onRename, onDelete }) {
+function ProjectCard({ p, onRename, onDelete, canManage }) {
   const menuBtnRef = useRef(null);
   const navigate   = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -179,17 +179,19 @@ function ProjectCard({ p, onRename, onDelete }) {
       onClick={() => navigate(`/project/${p.api_key}`)} {...handlers}>
       <div ref={glossRef} className="org-card-gloss" />
       <div className="org-card-inner">
-        <button ref={menuBtnRef} className="org-card-menu-btn" type="button" aria-label="Options"
-          onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
-          <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
-        </button>
+        {canManage && (
+          <button ref={menuBtnRef} className="org-card-menu-btn" type="button" aria-label="Options"
+            onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+            <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+          </button>
+        )}
         <div className="org-card-name">{p.name}</div>
         <div className="org-card-meta">{p.api_key.slice(0, 16)}…</div>
         <span className={`org-card-badge${p.is_active ? '' : ' org-card-badge--inactive'}`}>
           {p.is_active ? 'Active' : 'Inactive'}
         </span>
       </div>
-      {menuOpen && (
+      {canManage && menuOpen && (
         <CardMenu project={p} btnRef={menuBtnRef} onClose={() => setMenuOpen(false)}
           onRename={() => { setMenuOpen(false); onRename(p); }}
           onDelete={() => { setMenuOpen(false); onDelete(p.id); }} />
@@ -200,7 +202,7 @@ function ProjectCard({ p, onRename, onDelete }) {
 
 // ─── ListRow ──────────────────────────────────────────────────────────────────
 
-function ListRow({ p, onRename, onDelete }) {
+function ListRow({ p, onRename, onDelete, canManage }) {
   const menuBtnRef = useRef(null);
   const navigate   = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -228,11 +230,13 @@ function ListRow({ p, onRename, onDelete }) {
         </span>
       </span>
       <span className="org-list-created">{fmtDate(p.created_at)}</span>
-      <button ref={menuBtnRef} className="org-list-menu-btn" type="button" aria-label="Options"
-        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
-        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
-      </button>
-      {menuOpen && (
+      {canManage && (
+        <button ref={menuBtnRef} className="org-list-menu-btn" type="button" aria-label="Options"
+          onClick={e => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+          <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+        </button>
+      )}
+      {canManage && menuOpen && (
         <CardMenu project={p} btnRef={menuBtnRef} onClose={() => setMenuOpen(false)}
           onRename={() => { setMenuOpen(false); onRename(p); }}
           onDelete={() => { setMenuOpen(false); onDelete(p.id); }} />
@@ -339,6 +343,7 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
 
 function Organization() {
   const { org } = useOutletContext();
+  const isOwner = !!org?.is_owner;   // members see a read-only project list (no create/rename/delete)
   const navigate = useNavigate();
 
   const [projects,  setProjects]  = useState([]);
@@ -452,9 +457,11 @@ function Organization() {
           </button>
         </div>
 
-        <button className="org-new-btn" onClick={() => setModal(true)} type="button">
-          <Plus className="org-new-icon" /> New project
-        </button>
+        {isOwner && (
+          <button className="org-new-btn" onClick={() => setModal(true)} type="button">
+            <Plus className="org-new-icon" /> New project
+          </button>
+        )}
       </div>
 
       {sorted.length === 0 ? (
@@ -466,7 +473,7 @@ function Organization() {
       ) : view === 'grid' ? (
         <div className="org-grid">
           {sorted.map(p => (
-            <ProjectCard key={p.id} p={p} onRename={setRenaming} onDelete={handleDelete} />
+            <ProjectCard key={p.id} p={p} onRename={setRenaming} onDelete={handleDelete} canManage={isOwner} />
           ))}
         </div>
       ) : (
@@ -480,7 +487,7 @@ function Organization() {
           </div>
           <div className="org-list-block">
             {sorted.map(p => (
-              <ListRow key={p.id} p={p} onRename={setRenaming} onDelete={handleDelete} />
+              <ListRow key={p.id} p={p} onRename={setRenaming} onDelete={handleDelete} canManage={isOwner} />
             ))}
           </div>
         </div>

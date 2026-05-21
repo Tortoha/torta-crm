@@ -1,0 +1,287 @@
+/* Organization Team page — Products-style tabs + Targets-style po-set-table.
+   Accent-blue, no green. Reuses .auth-tab-*, .po-set-*, .org-* from the
+   shared stylesheets; only the column grids + a few cell helpers live here. */
+
+
+.ot-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.ot-count {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Invite-tab badge on the tab button. */
+.ot-tab-badge {
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── po-set-table column grids (doubled class out-specifies the base) ── */
+.po-set-row.po-set-row--otm,
+.po-set-row--head.po-set-row--otm {
+  grid-template-columns: 2.2fr 2fr 2.4fr 32px;
+}
+
+.po-set-row.po-set-row--otr,
+.po-set-row--head.po-set-row--otr {
+  grid-template-columns: 2fr 1.4fr 1fr 32px;
+}
+
+.po-set-row.po-set-row--oti,
+.po-set-row--head.po-set-row--oti {
+  grid-template-columns: 1.8fr 3fr 76px;
+}
+
+/* ── Cell helpers ── */
+.ot-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-muted {
+  color: var(--muted);
+}
+
+.ot-id-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ot-avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ot-avatar--initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ot-access-full {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.ot-access-none {
+  color: var(--muted);
+}
+
+.ot-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.ot-chip {
+  font-size: 12px;
+  color: var(--text);
+  background: var(--accent-tint);
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.ot-chip b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ot-invite-url code {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ot-row-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+/* ── Role editor matrix ── */
+/* cpm-modal sets the 560px width; just cap height + scroll the long matrix. */
+.ot-role-modal { max-height: 90vh; }
+.ot-role-modal .auth-modal-body { overflow-y: auto; }
+
+.ot-matrix-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+}
+
+.ot-matrix-bulk {
+  display: flex;
+  gap: 6px;
+}
+
+.ot-matrix-bulk button {
+  border: none;
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.ot-matrix-bulk button:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.ot-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ot-matrix-group { display: flex; flex-direction: column; gap: 6px; }
+.ot-matrix-group + .ot-matrix-group { margin-top: 8px; }
+.ot-matrix-group-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); padding: 4px 4px 2px;
+}
+
+.ot-matrix-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 12px;
+}
+
+.ot-matrix-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.ot-level {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--card);
+  border-radius: 999px;
+}
+
+.ot-level-btn {
+  border: none;
+  background: none;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.2s var(--ease-smooth), color 0.2s var(--ease-smooth);
+}
+
+.ot-level-btn:hover {
+  color: var(--text);
+}
+
+.ot-level-btn--on {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* "or add by email" divider + inline reset-link button. */
+.ot-or-sep {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--muted); font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin: 10px 0 4px;
+}
+.ot-or-sep::before, .ot-or-sep::after {
+  content: ''; flex: 1; height: 1px; background: rgba(0, 0, 0, 0.08);
+}
+.ot-link-reset {
+  border: none; background: none; padding: 0;
+  color: var(--accent); cursor: pointer;
+  font-family: inherit; font-size: inherit; text-decoration: underline;
+}
+.ot-link-reset:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Invite link block (Add-member modal) ── */
+/* Styled like a crm-input pill so it sits consistently with the Email field. */
+.ot-invite-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  padding: 5px 5px 5px 16px;
+}
+
+.ot-invite-link code {
+  flex: 1;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-invite-link .crm-icon-btn { flex-shrink: 0; }
+
+/* ── Assignment modal ── */
+.ot-assign-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.ot-assign-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 12px;
+}
+
+.ot-assign-project {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.ot-assign-select {
+  max-width: 220px;
+}

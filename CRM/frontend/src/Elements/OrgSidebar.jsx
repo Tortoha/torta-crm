@@ -1,23 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { FolderSimple, ChartLine, ArrowLineLeft, ArrowLineRight,
-         CreditCard } from '@phosphor-icons/react';
+         CreditCard, GearSix, UsersThree } from '@phosphor-icons/react';
 
-function buildItems(orgSlug) {
+function buildItems(orgSlug, isOwner) {
   const base = `/org/${orgSlug}`;
-  return [
-    { to: base,                  label: 'Projects',  Icon: FolderSimple, exact: true },
-    { to: `${base}/analytics`,   label: 'Analytics', Icon: ChartLine },
-    { to: `${base}/payments`,    label: 'Payments',  Icon: CreditCard },
-  ];
+  // Members only see the project list; the org-admin pages (Analytics / Team /
+  // Payments / Settings) are owner-only (backend enforces require_org_owner).
+  const items = [{ to: base, label: 'Projects', Icon: FolderSimple, exact: true }];
+  if (isOwner) items.push(
+    { to: `${base}/analytics`, label: 'Analytics', Icon: ChartLine  },
+    { to: `${base}/team`,      label: 'Team',      Icon: UsersThree },
+    { to: `${base}/payments`,  label: 'Payments',  Icon: CreditCard },
+    { to: `${base}/settings`,  label: 'Settings',  Icon: GearSix    },
+  );
+  return items;
 }
 
 const isActive = (pathname, to, exact) =>
   exact ? pathname === to : (pathname === to || pathname.startsWith(to + '/'));
 
-function OrgSidebar({ collapsed, onToggle, orgSlug }) {
+function OrgSidebar({ collapsed, onToggle, orgSlug, isOwner }) {
   const location = useLocation();
-  const items    = buildItems(orgSlug);
+  const items    = buildItems(orgSlug, isOwner);
 
   const itemsEl  = useRef(null);
   const itemEls  = useRef({});

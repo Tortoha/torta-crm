@@ -188,7 +188,7 @@ const channelMeta = id => CHANNELS.find(c => c.id === id) || CHANNELS[0];
 
 // ─── Tab Switcher (mirrors Authentication) ────────────────────────────────────
 
-function TabSwitcher({ tab, setTab }) {
+function TabSwitcher({ tabs, tab, setTab }) {
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -207,15 +207,10 @@ function TabSwitcher({ tab, setTab }) {
     return () => cancelAnimationFrame(raf);
   }, [curTab, tab]);
 
-  const TABS = [
-    { key: 'chats',    label: 'Chats',    Icon: ChatsCircle },
-    { key: 'channels', label: 'Channels', Icon: Plug },
-  ];
-
   return (
     <div className="auth-tab-switcher" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="auth-tab-indicator" />
-      {TABS.map(({ key, label, Icon }) => (
+      {tabs.map(({ key, label, Icon }) => (
         <button key={key} ref={el => { btnRefs.current[key] = el; }}
           className={`auth-tab-btn${curTab === key ? ' auth-tab-btn--active' : ''}`}
           onMouseEnter={() => setHovered(key)}
@@ -1346,21 +1341,28 @@ function ChannelsPanel({ projectId, onIntegrationsChange }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Chat() {
-  const { projectId } = useOutletContext();
-  const [tab, setTab] = useState('chats');
+  const { projectId, access } = useOutletContext();
+  const canView = (p) => !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[p]);
+  const chatTabs = [
+    canView('chat')     && { key: 'chats',    label: 'Chats',    Icon: ChatsCircle },
+    canView('channels') && { key: 'channels', label: 'Channels', Icon: Plug },
+  ].filter(Boolean);
+  const [tab, setTab] = useState(chatTabs[0]?.key || 'chats');
 
   return (
     <>
-      <div className="auth-tab-wrapper">
-        <TabSwitcher tab={tab} setTab={setTab} />
-      </div>
+      {chatTabs.length > 1 && (
+        <div className="auth-tab-wrapper">
+          <TabSwitcher tabs={chatTabs} tab={tab} setTab={setTab} />
+        </div>
+      )}
 
       <div className="auth-page chat-page">
-        {tab === 'chats' ? (
+        {tab === 'chats' && canView('chat') ? (
           <ChatPanel projectId={projectId} />
-        ) : (
+        ) : tab === 'channels' && canView('channels') ? (
           <ChannelsPanel projectId={projectId} />
-        )}
+        ) : null}
       </div>
     </>
   );

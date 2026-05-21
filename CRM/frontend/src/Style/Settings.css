@@ -52,7 +52,34 @@
   color: #fff;
   letter-spacing: 0.03em;
   user-select: none;
+  flex-shrink: 0;
 }
+
+/* ── Bulk-style account/security additions ── */
+.sett-photo-row { display: flex; align-items: center; gap: 14px; }
+.sett-avatar-img2 { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+
+.sett-sessions { display: flex; flex-direction: column; gap: 8px; }
+.sett-session-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; background: var(--bg); border-radius: 14px;
+}
+.sett-session-icon {
+  width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--card); color: var(--accent);
+}
+.sett-session-info { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.sett-session-name {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600; color: var(--text);
+}
+.sett-session-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.sett-session-meta { font-size: 12px; color: var(--muted); }
+.sett-about-text { color: var(--text); font-size: 13px; line-height: 1.55; margin: 0; }
 
 .sett-avatar-overlay {
   position: absolute;

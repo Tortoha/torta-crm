@@ -2854,6 +2854,105 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] events vertical drop failed: {e}")
 
+    # ── Team / RBAC: org-scoped roles, members, assignments, invites (2026-05) ──
+    # crm_roles / crm_team_members predate idempotent migrations (created
+    # manually). CREATE IF NOT EXISTS makes the schema reproducible; the ALTERs
+    # add org-scoping + the page→level permission map; backfill sets org_id on
+    # legacy per-project rows.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_org_members (
+                    id BIGSERIAL PRIMARY KEY,
+                    org_id INTEGER NOT NULL REFERENCES crm_organizations(id) ON DELETE CASCADE,
+                    crm_user_id INTEGER NOT NULL REFERENCES crm_users(id) ON DELETE CASCADE,
+                    status VARCHAR(20) NOT NULL DEFAULT 'active',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (org_id, crm_user_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_roles (
+                    id BIGSERIAL PRIMARY KEY,
+                    project_id INTEGER,
+                    org_id INTEGER,
+                    name VARCHAR(60) NOT NULL,
+                    permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    is_system BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_preset BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("ALTER TABLE crm_roles ADD COLUMN IF NOT EXISTS org_id INTEGER")
+            cur.execute("ALTER TABLE crm_roles ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb")
+            cur.execute("ALTER TABLE crm_roles ADD COLUMN IF NOT EXISTS is_preset BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE crm_roles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            # Legacy crm_roles had project_id NOT NULL; org-scoped roles (presets +
+            # custom) omit it, so make it nullable (no-op if already nullable).
+            cur.execute("ALTER TABLE crm_roles ALTER COLUMN project_id DROP NOT NULL")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_team_members (
+                    id BIGSERIAL PRIMARY KEY,
+                    org_id INTEGER,
+                    project_id INTEGER NOT NULL,
+                    crm_user_id INTEGER NOT NULL,
+                    crm_role_id BIGINT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("ALTER TABLE crm_team_members ADD COLUMN IF NOT EXISTS org_id INTEGER")
+            cur.execute("ALTER TABLE crm_team_members ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()")
+            # crm_invites predates this schema in some DBs (legacy project-scoped
+            # invite links: uses / max_uses / expires_at, no org_id / email /
+            # status). CREATE IF NOT EXISTS would skip it, leaving the new columns
+            # missing → 500 on the Team page. If the new 'status' column is
+            # absent, it's the legacy table → drop & recreate (that invite feature
+            # was removed, so its rows are dead). Once rebuilt, 'status' exists, so
+            # this never fires again and real invites persist across restarts.
+            cur.execute("SELECT to_regclass('public.crm_invites') IS NOT NULL AS t")
+            if cur.fetchone()["t"]:
+                cur.execute("SELECT 1 FROM information_schema.columns "
+                            "WHERE table_name='crm_invites' AND column_name='status'")
+                if not cur.fetchone():
+                    cur.execute("DROP TABLE crm_invites CASCADE")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_invites (
+                    id BIGSERIAL PRIMARY KEY,
+                    org_id INTEGER NOT NULL REFERENCES crm_organizations(id) ON DELETE CASCADE,
+                    email VARCHAR(255) NOT NULL,
+                    token VARCHAR(64) NOT NULL UNIQUE,
+                    crm_role_id BIGINT,
+                    project_id INTEGER,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    invited_by INTEGER,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    accepted_at TIMESTAMPTZ
+                )
+            """)
+            cur.execute("UPDATE crm_team_members tm SET org_id = p.org_id FROM crm_projects p WHERE tm.project_id = p.id AND tm.org_id IS NULL")
+            cur.execute("UPDATE crm_roles r SET org_id = p.org_id FROM crm_projects p WHERE r.project_id = p.id AND r.org_id IS NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_org_members_org ON crm_org_members(org_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_roles_org ON crm_roles(org_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_team_members_org_user ON crm_team_members(org_id, crm_user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_invites_token ON crm_invites(token)")
+            # Reusable, email-agnostic org invite link (one token per org). A
+            # joiner via this link gets ZERO roles → no project access until the
+            # owner assigns one (safe default — no data exposure).
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS invite_token VARCHAR(64)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] team/RBAC tables failed: {e}")
+
+    # Seed preset roles (Admin / Manager / Staff / Viewer) for every existing org.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("SELECT id FROM crm_organizations")
+            for row in cur.fetchall():
+                _seed_preset_roles(cur, row["id"])
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] preset roles seed failed: {e}")
+
     # ── Performance indexes ──────────────────────────────────────────
     try:
         with db_cursor() as (conn, cur):
@@ -3582,6 +3681,29 @@ app.add_middleware(
 if _RATE_LIMIT_AVAILABLE:
     from slowapi.middleware import SlowAPIMiddleware
     app.add_middleware(SlowAPIMiddleware)
+
+# Per-request (method, path) stash for RBAC auto-resolution (require_page_auto).
+# Pure-ASGI middleware (NOT BaseHTTPMiddleware) so the contextvar propagates
+# into the route handler — incl. sync handlers run in the threadpool and the
+# child task BaseHTTPMiddleware spawns for call_next (verified: anyio copies
+# the context across both). Added last = outermost, set before anything else.
+import contextvars as _cvmod
+_req_ctx = _cvmod.ContextVar("_rbac_req_ctx", default=None)
+
+class _RequestContextMiddleware:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            token = _req_ctx.set((scope.get("method", ""), scope.get("path", "")))
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                _req_ctx.reset(token)
+        else:
+            await self.app(scope, receive, send)
+
+app.add_middleware(_RequestContextMiddleware)
 
 
 # ── HTTP cache headers for safe-to-cache GETs ─────────────────────
@@ -4322,6 +4444,186 @@ def require_team_member_or_owner(user: dict, project_id: int):
                   (project_id, user["id"])):
         raise HTTPException(403, "Not a member of this project")
 
+# ── RBAC: org-scoped roles → per-project assignments → page permissions ──
+# A role carries a {page_key: level} map. Levels are ordered none < view <
+# manage; absence of a page = no access. require_page() is the backend gate;
+# the project owner and org owner always pass with full access.
+# Granular page catalog — matches the sidebar pages AND their sub-tabs so the
+# owner can restrict e.g. Promo codes without restricting the whole Products
+# section. Order here drives the order in the role-editor matrix.
+_PROJECT_PAGES = [
+    "overview",
+    # Products section (URL-tabs under /products)
+    "products", "inventory", "batches", "promo_codes", "discounts",
+    "tier_pricing", "warehouses", "archive", "product_settings",
+    # Orders section
+    "orders", "returns",
+    "customers",
+    # Booking section
+    "booking", "booking_services", "booking_staff", "booking_settings",
+    # Chat section
+    "chat", "channels",
+    "emails", "analytics",
+    # Authentication section (2 tabs)
+    "auth_providers", "url_config",
+    "integrations", "alerts", "goals", "documents", "settings", "api",
+]
+_PERM_ORDER = {"none": 0, "view": 1, "manage": 2}
+
+def _level_ge(have: str, need: str) -> bool:
+    return _PERM_ORDER.get(have or "none", 0) >= _PERM_ORDER.get(need or "none", 0)
+
+# Preset roles seeded per org (UPSERTed on startup so they always reflect this
+# catalog). Owner crafts custom roles on top of these.
+_PRESET_ROLES = {
+    "Admin":   {p: "manage" for p in _PROJECT_PAGES},
+    "Manager": {**{p: "manage" for p in [
+                    "overview", "products", "inventory", "batches", "promo_codes",
+                    "discounts", "tier_pricing", "warehouses", "archive", "product_settings",
+                    "orders", "returns", "customers",
+                    "booking", "booking_services", "booking_staff", "booking_settings",
+                    "chat", "channels", "emails", "analytics", "alerts", "goals", "documents"]},
+                **{p: "view" for p in ["auth_providers", "url_config", "integrations", "api", "settings"]}},
+    "Staff":   {**{p: "manage" for p in [
+                    "orders", "returns", "customers", "booking", "chat"]},
+                **{p: "view" for p in [
+                    "overview", "products", "inventory", "analytics", "goals", "documents",
+                    "booking_services", "booking_staff"]}},
+    "Viewer":  {p: "view" for p in _PROJECT_PAGES},
+}
+
+def _seed_preset_roles(cur, org_id: int):
+    """Upsert the preset roles for an org so they always match the current
+    catalog (a preset row is updated in place; a missing one is inserted)."""
+    for pname, perms in _PRESET_ROLES.items():
+        cur.execute("SELECT id FROM crm_roles WHERE org_id=%s AND name=%s AND is_preset=TRUE",
+                    (org_id, pname))
+        row = cur.fetchone()
+        if row:
+            cur.execute("UPDATE crm_roles SET permissions=%s::jsonb WHERE id=%s",
+                        (json.dumps(perms), row["id"]))
+        else:
+            cur.execute(
+                "INSERT INTO crm_roles (org_id, name, permissions, is_preset) "
+                "VALUES (%s,%s,%s::jsonb,TRUE)",
+                (org_id, pname, json.dumps(perms)))
+
+def _user_project_permissions(user_id: int, project_id: int):
+    """Page→level map for a user's role assignment on a project, or None if the
+    user has no assignment (i.e. not a member of this project)."""
+    row = db_one(
+        "SELECT r.permissions FROM crm_team_members tm "
+        "JOIN crm_roles r ON r.id = tm.crm_role_id "
+        "WHERE tm.project_id=%s AND tm.crm_user_id=%s",
+        (project_id, user_id))
+    if not row:
+        return None
+    perms = row["permissions"]
+    return perms if isinstance(perms, dict) else {}
+
+def _is_full_access(user_id: int, project_id: int):
+    """True if the user is the project creator or the org owner — both bypass
+    role permissions with full access. Returns (is_full, project_row)."""
+    proj = db_one("SELECT crm_user_id, org_id, is_active FROM crm_projects WHERE id=%s", (project_id,))
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    if proj["crm_user_id"] == user_id:
+        return True, proj
+    if proj["org_id"] and db_one("SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+                                 (proj["org_id"], user_id)):
+        return True, proj
+    return False, proj
+
+def require_page(user: dict, project_id: int, page: str, level: str = "view"):
+    """Gate a project route by RBAC. Owner/org-owner pass; otherwise the user's
+    assigned role must grant >= `level` on `page`."""
+    full, _ = _is_full_access(user["id"], project_id)
+    if full:
+        return
+    perms = _user_project_permissions(user["id"], project_id)
+    if perms is None:
+        raise HTTPException(403, "Not a member of this project")
+    if not _level_ge(perms.get(page), level):
+        raise HTTPException(403, f"You don't have access to {page}")
+
+# ── Auto-resolved RBAC gate ──────────────────────────────────────────
+# Most per-project routes call this with a project_id in scope. It derives the
+# permission PAGE from the request path and the LEVEL from the HTTP method
+# (GET/HEAD = view, mutations = manage), then defers to require_page(). For any
+# path it can't map (or if the request context is missing) it falls back to the
+# old membership check — so an unmapped route keeps its previous behaviour and
+# nothing breaks. Page mapping is conservative: only paths that unambiguously
+# belong to a single page are mapped; shared paths like bare /api/projects/{id}
+# stay on the membership fallback.
+_MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_PAGE_PATH_RULES = [
+    # ── Products section — specific sub-resources BEFORE generic /products ──
+    (r"^/api/products/\d+/tier-pricing(/|$)",                "tier_pricing"),
+    (r"^/api/products/\d+/stock(/|$)",                       "inventory"),
+    (r"^/api/projects/\d+/inventory(/|$)",                   "inventory"),
+    (r"^/api/projects/\d+/stock(/|$)",                       "inventory"),
+    (r"^/api/projects/\d+/batches(/|$)",                     "batches"),
+    (r"^/api/projects/\d+/products/bulk-apply-defaults(/|$)", "product_settings"),
+    (r"^/api/tax-categories(/|$)",                           "product_settings"),
+    (r"^/api/promo-codes(/|$)",                              "promo_codes"),
+    (r"^/api/warehouses(/|$)",                               "warehouses"),
+    (r"^/api/projects/\d+/products(/|$)",                    "products"),
+    (r"^/api/categories(/|$)",                               "products"),
+    # base product CRUD — also covers Discounts (sale fields on PUT product)
+    # and Archive (status change), which share this API and can't be split.
+    (r"^/api/products(/|$)",                                 "products"),
+    # ── Orders / Returns ──
+    (r"^/api/projects/\d+/returns(/|$)",                     "returns"),
+    (r"^/api/orders(/|$)",                                   "orders"),
+    # ── Customers ──
+    (r"^/api/customers(/|$)",                                "customers"),
+    # ── Booking section ──
+    (r"^/api/booking/services(/|$)",                         "booking_services"),
+    (r"^/api/booking/staff(/|$)",                            "booking_staff"),
+    (r"^/api/booking/settings(/|$)",                         "booking_settings"),
+    (r"^/api/booking(/|$)",                                  "booking"),
+    # ── Chat section ──
+    (r"^/api/chat/integrations(/|$)",                        "channels"),
+    (r"^/api/chat(/|$)",                                     "chat"),
+    # ── Emails (storefront templates / branding / campaigns) ──
+    (r"^/api/email-(templates|branding|campaigns|preview)(/|$)", "emails"),
+    (r"^/api/analytics(/|$)",                                "analytics"),
+    # ── Authentication (2 tabs) ──
+    (r"^/api/(oauth-settings|sms-settings|auth-providers|email-domain)(/|$)", "auth_providers"),
+    (r"^/api/(url-config|redirect-urls)(/|$)",               "url_config"),
+    # ── Integrations / Documents / Targets / Alerts / Project Settings ──
+    (r"^/api/integrations(/|$)",                             "integrations"),
+    (r"^/api/document-settings(/|$)",                        "documents"),
+    (r"^/api/goals(/|$)",                                    "goals"),
+    (r"^/api/alerts(/|$)",                                   "alerts"),
+    (r"^/api/projects/\d+/alerts(/|$)",                      "alerts"),
+    (r"^/api/projects/\d+/batch-settings(/|$)",              "settings"),
+]
+_PAGE_PATH_RULES = [(re.compile(p), page) for p, page in _PAGE_PATH_RULES]
+
+def _resolve_page(path: str):
+    for rx, page in _PAGE_PATH_RULES:
+        if rx.match(path or ""):
+            return page
+    return None
+
+def require_page_auto(user: dict, project_id: int):
+    ctx = _req_ctx.get()
+    if not ctx:
+        return require_team_member_or_owner(user, project_id=project_id)
+    method, path = ctx
+    # Bare /api/projects/{id}: a GET reads project basics (allowed for any
+    # member of the project), but a mutation (PATCH currency/timezone/name) is
+    # a Settings change → settings:manage.
+    if re.match(r"^/api/projects/\d+/?$", path or ""):
+        if method in _MUTATION_METHODS:
+            return require_page(user, project_id, "settings", "manage")
+        return require_team_member_or_owner(user, project_id=project_id)
+    page = _resolve_page(path)
+    if page is None:
+        return require_team_member_or_owner(user, project_id=project_id)
+    require_page(user, project_id, page, "manage" if method in _MUTATION_METHODS else "view")
+
 def gen_api_key() -> str:
     return secrets.token_hex(10)   # 20 chars, URL-safe
 
@@ -4667,15 +4969,22 @@ def reset_password(request: ResetPasswordRequest):
 
 @app.get("/api/orgs")
 def get_orgs(user: dict = Depends(get_current_user)):
+    # Orgs the user owns OR is a member of. projects_count is scoped: owners see
+    # every project, members see only the projects they're assigned to (so a
+    # member can't infer how many other projects exist in the org).
     rows = db_all("""
         SELECT o.id, o.name, o.slug, o.created_at,
-               COUNT(DISTINCT p.id) AS projects_count,
-               (o.owner_id = %s) AS is_owner
+               (o.owner_id = %s) AS is_owner,
+               CASE WHEN o.owner_id = %s
+                    THEN (SELECT COUNT(*) FROM crm_projects p WHERE p.org_id = o.id)
+                    ELSE (SELECT COUNT(DISTINCT tm.project_id) FROM crm_team_members tm
+                           WHERE tm.org_id = o.id AND tm.crm_user_id = %s)
+               END AS projects_count
         FROM crm_organizations o
-        LEFT JOIN crm_projects p ON p.org_id = o.id
         WHERE o.owner_id = %s
-        GROUP BY o.id ORDER BY o.created_at DESC
-    """, (user["id"], user["id"]))
+           OR o.id IN (SELECT org_id FROM crm_org_members WHERE crm_user_id = %s)
+        ORDER BY o.created_at DESC
+    """, (user["id"], user["id"], user["id"], user["id"], user["id"]))
     for r in rows:
         r["created_at"]     = str(r["created_at"])
         r["is_owner"]       = bool(r["is_owner"])
@@ -4701,6 +5010,7 @@ def create_org(request: CreateOrgRequest, user: dict = Depends(get_current_user)
             (sanitize(name), slug, user["id"])
         )
         new_id = cur.fetchone()["id"]
+        _seed_preset_roles(cur, new_id)
         conn.commit()
         return {"id": new_id, "name": name, "slug": slug, "is_owner": True, "projects_count": 0}
 
@@ -4708,12 +5018,14 @@ def create_org(request: CreateOrgRequest, user: dict = Depends(get_current_user)
 @app.get("/api/orgs/by-slug/{slug}")
 def get_org_by_slug(slug: str, user: dict = Depends(get_current_user)):
     org = db_one("""
-        SELECT o.id, o.name, o.slug, o.created_at, (o.owner_id = %s) AS is_owner
+        SELECT o.id, o.name, o.slug, o.created_at, o.currency, (o.owner_id = %s) AS is_owner
         FROM crm_organizations o
-        WHERE o.slug = %s AND o.owner_id = %s
-    """, (user["id"], slug, user["id"]))
+        WHERE o.slug = %s
+          AND (o.owner_id = %s OR o.id IN (SELECT org_id FROM crm_org_members WHERE crm_user_id = %s))
+    """, (user["id"], slug, user["id"], user["id"]))
     if not org: raise HTTPException(404, "Organization not found")
     org["created_at"] = str(org["created_at"])
+    org["currency"]   = (org.get("currency") or "USD").upper()
     org["is_owner"]   = bool(org["is_owner"])
     return org
 
@@ -4721,12 +5033,14 @@ def get_org_by_slug(slug: str, user: dict = Depends(get_current_user)):
 @app.get("/api/orgs/{org_id}")
 def get_org(org_id: int, user: dict = Depends(get_current_user)):
     org = db_one("""
-        SELECT o.id, o.name, o.slug, o.created_at, (o.owner_id = %s) AS is_owner
+        SELECT o.id, o.name, o.slug, o.created_at, o.currency, (o.owner_id = %s) AS is_owner
         FROM crm_organizations o
-        WHERE o.id = %s AND o.owner_id = %s
-    """, (user["id"], org_id, user["id"]))
+        WHERE o.id = %s
+          AND (o.owner_id = %s OR o.id IN (SELECT org_id FROM crm_org_members WHERE crm_user_id = %s))
+    """, (user["id"], org_id, user["id"], user["id"]))
     if not org: raise HTTPException(404, "Organization not found")
     org["created_at"] = str(org["created_at"])
+    org["currency"]   = (org.get("currency") or "USD").upper()
     org["is_owner"]   = bool(org["is_owner"])
     return org
 
@@ -4749,23 +5063,344 @@ def delete_org(org_id: int, user: dict = Depends(get_current_user)):
     count = db_one("SELECT COUNT(*) AS c FROM crm_projects WHERE org_id=%s", (org_id,))["c"]
     if count > 0: raise HTTPException(400, "Delete all projects in this organization first")
     with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_team_members WHERE org_id=%s", (org_id,))
+        cur.execute("DELETE FROM crm_roles        WHERE org_id=%s", (org_id,))
+        cur.execute("DELETE FROM crm_org_members  WHERE org_id=%s", (org_id,))
+        cur.execute("DELETE FROM crm_invites      WHERE org_id=%s", (org_id,))
         cur.execute("DELETE FROM crm_organizations WHERE id=%s", (org_id,))
         conn.commit()
     return {"ok": True}
+
+
+@app.put("/api/orgs/{org_id}/currency")
+def update_org_currency(org_id: int, body: dict = Body(...),
+                        user: dict = Depends(get_current_user)):
+    """Org display currency for the Analytics page — each project keeps its own
+    currency; org analytics FX-converts every project's revenue into THIS code
+    before summing. Numbers aren't re-priced; only the org-level rollup symbol
+    changes."""
+    require_org_owner(user, org_id)
+    cur_clean = (body.get("currency") or "").strip().upper()
+    if len(cur_clean) != 3 or not cur_clean.isalpha():
+        raise HTTPException(400, "Currency must be a 3-letter ISO code (e.g. USD, EUR, KZT)")
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_organizations SET currency=%s WHERE id=%s", (cur_clean, org_id))
+        conn.commit()
+    return {"ok": True, "currency": cur_clean}
+
+
+# ── TEAM / RBAC (org-scoped) ─────────────────────────────
+# Owner adds employees to the org, then assigns a role per project. A role is
+# a page→level permission map. Backend gate = require_page(); the org/project
+# owner always bypasses with full access.
+
+def _role_out(r):
+    perms = r.get("permissions")
+    return {"id": r["id"], "name": r["name"],
+            "permissions": perms if isinstance(perms, dict) else {},
+            "is_preset": bool(r.get("is_preset")), "is_system": bool(r.get("is_system"))}
+
+def _clean_permissions(perms):
+    """Keep only known pages with a valid level — defends against junk payloads."""
+    out = {}
+    if isinstance(perms, dict):
+        for k, v in perms.items():
+            if k in _PROJECT_PAGES and v in ("view", "manage"):
+                out[k] = v
+    return out
+
+
+@app.get("/api/orgs/{org_id}/roles")
+def list_org_roles(org_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    rows = db_all("SELECT id, name, permissions, is_preset, is_system FROM crm_roles "
+                  "WHERE org_id=%s AND is_system=FALSE ORDER BY is_preset DESC, name ASC", (org_id,))
+    return {"pages": _PROJECT_PAGES, "roles": [_role_out(r) for r in rows]}
+
+
+@app.post("/api/orgs/{org_id}/roles")
+def create_org_role(org_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    name = (body.get("name") or "").strip()
+    if not name:        raise HTTPException(400, "Role name is required")
+    if len(name) > 60:  raise HTTPException(400, "Role name too long (max 60)")
+    perms = _clean_permissions(body.get("permissions"))
+    with db_cursor() as (conn, cur):
+        cur.execute("INSERT INTO crm_roles (org_id, name, permissions, is_preset, is_system) "
+                    "VALUES (%s,%s,%s::jsonb,FALSE,FALSE) RETURNING id",
+                    (org_id, sanitize(name), json.dumps(perms)))
+        rid = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "id": rid}
+
+
+@app.put("/api/orgs/{org_id}/roles/{role_id}")
+def update_org_role(org_id: int, role_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    if not db_one("SELECT id FROM crm_roles WHERE id=%s AND org_id=%s", (role_id, org_id)):
+        raise HTTPException(404, "Role not found")
+    sets, params = [], []
+    if body.get("name") is not None:
+        nm = (body.get("name") or "").strip()
+        if not nm: raise HTTPException(400, "Role name is required")
+        sets.append("name=%s"); params.append(sanitize(nm[:60]))
+    if body.get("permissions") is not None:
+        sets.append("permissions=%s::jsonb")
+        params.append(json.dumps(_clean_permissions(body.get("permissions"))))
+    if not sets: raise HTTPException(400, "Nothing to update")
+    params += [role_id, org_id]
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE crm_roles SET {', '.join(sets)} WHERE id=%s AND org_id=%s", tuple(params))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/orgs/{org_id}/roles/{role_id}")
+def delete_org_role(org_id: int, role_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    if not db_one("SELECT id FROM crm_roles WHERE id=%s AND org_id=%s", (role_id, org_id)):
+        raise HTTPException(404, "Role not found")
+    if db_one("SELECT 1 FROM crm_team_members WHERE crm_role_id=%s LIMIT 1", (role_id,)):
+        raise HTTPException(409, "Role is assigned to members — reassign them first")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_roles WHERE id=%s AND org_id=%s", (role_id, org_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/api/orgs/{org_id}/members")
+def list_org_members(org_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
+    if not org: raise HTTPException(404, "Organization not found")
+    owner = db_one("SELECT id, name, email, avatar_url FROM crm_users WHERE id=%s", (org["owner_id"],))
+    members = db_all(
+        "SELECT u.id, u.name, u.email, u.avatar_url, m.status "
+        "FROM crm_org_members m JOIN crm_users u ON u.id = m.crm_user_id "
+        "WHERE m.org_id=%s ORDER BY u.name ASC NULLS LAST, u.email ASC", (org_id,))
+    assigns = db_all(
+        "SELECT tm.crm_user_id, tm.project_id, p.name AS project_name, "
+        "       tm.crm_role_id, r.name AS role_name "
+        "FROM crm_team_members tm "
+        "JOIN crm_projects p ON p.id = tm.project_id "
+        "LEFT JOIN crm_roles r ON r.id = tm.crm_role_id "
+        "WHERE tm.org_id=%s", (org_id,))
+    by_user = {}
+    for a in assigns:
+        by_user.setdefault(a["crm_user_id"], []).append({
+            "project_id": a["project_id"], "project_name": a["project_name"],
+            "role_id": a["crm_role_id"], "role_name": a["role_name"]})
+
+    def _out(u, is_owner, status):
+        return {"id": u["id"], "name": u["name"], "email": u["email"],
+                "avatar_url": u.get("avatar_url"), "is_owner": is_owner,
+                "is_me": u["id"] == user["id"], "status": status,
+                "assignments": [] if is_owner else by_user.get(u["id"], [])}
+
+    out = []
+    if owner: out.append(_out(owner, True, "active"))
+    for m in members:
+        if owner and m["id"] == owner["id"]: continue
+        out.append(_out(m, False, m["status"]))
+    return out
+
+
+@app.post("/api/orgs/{org_id}/members")
+def add_org_member(org_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    email = (body.get("email") or "").strip().lower()
+    if not email or "@" not in email: raise HTTPException(400, "A valid email is required")
+    org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
+    if not org: raise HTTPException(404, "Organization not found")
+    target = db_one("SELECT id FROM crm_users WHERE LOWER(email)=%s AND is_active=TRUE", (email,))
+    if target:
+        if target["id"] == org["owner_id"]:
+            raise HTTPException(400, "This user already owns the organization")
+        with db_cursor() as (conn, cur):
+            cur.execute("INSERT INTO crm_org_members (org_id, crm_user_id) VALUES (%s,%s) "
+                        "ON CONFLICT (org_id, crm_user_id) DO NOTHING", (org_id, target["id"]))
+            conn.commit()
+        return {"ok": True, "added": True}
+    # No account yet → pending invite the person accepts after signing up.
+    token = secrets.token_hex(24)
+    with db_cursor() as (conn, cur):
+        cur.execute("INSERT INTO crm_invites (org_id, email, token, invited_by) VALUES (%s,%s,%s,%s)",
+                    (org_id, email, token, user["id"]))
+        conn.commit()
+    return {"ok": True, "invited": True, "invite_url": f"{CRM_FRONTEND_URL}/invite/{token}"}
+
+
+@app.delete("/api/orgs/{org_id}/members/{member_user_id}")
+def remove_org_member(org_id: int, member_user_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
+    if org and org["owner_id"] == member_user_id:
+        raise HTTPException(400, "Cannot remove the organization owner")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_team_members WHERE org_id=%s AND crm_user_id=%s", (org_id, member_user_id))
+        cur.execute("DELETE FROM crm_org_members  WHERE org_id=%s AND crm_user_id=%s", (org_id, member_user_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.put("/api/orgs/{org_id}/members/{member_user_id}/assignment")
+def set_member_assignment(org_id: int, member_user_id: int, body: dict = Body(...),
+                          user: dict = Depends(get_current_user)):
+    """Assign a role to a member on one project (role_id null → unassign)."""
+    require_org_owner(user, org_id)
+    project_id = body.get("project_id")
+    role_id    = body.get("role_id")
+    if not project_id: raise HTTPException(400, "project_id is required")
+    if not db_one("SELECT id FROM crm_projects WHERE id=%s AND org_id=%s", (project_id, org_id)):
+        raise HTTPException(404, "Project not found in this organization")
+    if not db_one("SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s", (org_id, member_user_id)):
+        raise HTTPException(404, "This person is not a member of the organization")
+    if role_id and not db_one("SELECT id FROM crm_roles WHERE id=%s AND org_id=%s", (role_id, org_id)):
+        raise HTTPException(404, "Role not found")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_team_members WHERE project_id=%s AND crm_user_id=%s",
+                    (project_id, member_user_id))
+        if role_id:
+            cur.execute("INSERT INTO crm_team_members (org_id, project_id, crm_user_id, crm_role_id) "
+                        "VALUES (%s,%s,%s,%s)", (org_id, project_id, member_user_id, role_id))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/api/orgs/{org_id}/invites")
+def list_org_invites(org_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    rows = db_all("SELECT id, email, token, status, created_at FROM crm_invites "
+                  "WHERE org_id=%s AND status='pending' ORDER BY created_at DESC", (org_id,))
+    for r in rows:
+        r["invite_url"] = f"{CRM_FRONTEND_URL}/invite/{r['token']}"
+        r["created_at"] = str(r["created_at"])
+    return rows
+
+
+@app.delete("/api/orgs/{org_id}/invites/{invite_id}")
+def revoke_org_invite(org_id: int, invite_id: int, user: dict = Depends(get_current_user)):
+    require_org_owner(user, org_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_invites WHERE id=%s AND org_id=%s", (invite_id, org_id))
+        conn.commit()
+    return {"ok": True}
+
+
+def _org_invite_link_url(token: str) -> str:
+    return f"{CRM_FRONTEND_URL}/invite/{token}"
+
+
+@app.get("/api/orgs/{org_id}/invite-link")
+def get_org_invite_link(org_id: int, user: dict = Depends(get_current_user)):
+    """The org's reusable share link. Anyone who opens it + signs in joins the
+    org with NO role (zero access) until the owner assigns one. Lazily minted."""
+    require_org_owner(user, org_id)
+    org = db_one("SELECT invite_token FROM crm_organizations WHERE id=%s", (org_id,))
+    if not org: raise HTTPException(404, "Organization not found")
+    token = org.get("invite_token")
+    if not token:
+        token = secrets.token_hex(24)
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_organizations SET invite_token=%s WHERE id=%s", (token, org_id))
+            conn.commit()
+    return {"token": token, "url": _org_invite_link_url(token)}
+
+
+@app.post("/api/orgs/{org_id}/invite-link/reset")
+def reset_org_invite_link(org_id: int, user: dict = Depends(get_current_user)):
+    """Rotate the share link — the previous link stops working immediately."""
+    require_org_owner(user, org_id)
+    if not db_one("SELECT id FROM crm_organizations WHERE id=%s", (org_id,)):
+        raise HTTPException(404, "Organization not found")
+    token = secrets.token_hex(24)
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_organizations SET invite_token=%s WHERE id=%s", (token, org_id))
+        conn.commit()
+    return {"token": token, "url": _org_invite_link_url(token)}
+
+
+@app.get("/api/invites/{token}")
+def get_invite(token: str, user: dict = Depends(get_current_user)):
+    # Email-bound invite first; otherwise the org's reusable share link.
+    inv = db_one("SELECT i.org_id, i.email, i.status, o.name AS org_name "
+                 "FROM crm_invites i JOIN crm_organizations o ON o.id = i.org_id "
+                 "WHERE i.token=%s", (token,))
+    if inv and inv["status"] == "pending":
+        return {"org_id": inv["org_id"], "org_name": inv["org_name"], "email": inv["email"],
+                "email_matches": (user.get("email") or "").lower() == (inv["email"] or "").lower()}
+    org = db_one("SELECT id, name FROM crm_organizations WHERE invite_token=%s", (token,))
+    if org:
+        return {"org_id": org["id"], "org_name": org["name"], "email": None,
+                "email_matches": True, "is_link": True}
+    raise HTTPException(404, "Invite not found or already used")
+
+
+@app.post("/api/invites/{token}/accept")
+def accept_invite(token: str, user: dict = Depends(get_current_user)):
+    # Joining via either path adds the user to the org with NO role — zero
+    # project access until the owner assigns one (safe default).
+    inv = db_one("SELECT id, org_id, email, status FROM crm_invites WHERE token=%s", (token,))
+    if inv and inv["status"] == "pending":
+        if (user.get("email") or "").lower() != (inv["email"] or "").lower():
+            raise HTTPException(403, "This invite was sent to a different email address")
+        org_id = inv["org_id"]
+        with db_cursor() as (conn, cur):
+            cur.execute("INSERT INTO crm_org_members (org_id, crm_user_id) VALUES (%s,%s) "
+                        "ON CONFLICT (org_id, crm_user_id) DO NOTHING", (org_id, user["id"]))
+            cur.execute("UPDATE crm_invites SET status='accepted', accepted_at=NOW() WHERE id=%s", (inv["id"],))
+            conn.commit()
+        return {"ok": True, "org_id": org_id}
+    org = db_one("SELECT id, owner_id FROM crm_organizations WHERE invite_token=%s", (token,))
+    if org:
+        if org["owner_id"] != user["id"]:   # owner is already in; don't add a member row
+            with db_cursor() as (conn, cur):
+                cur.execute("INSERT INTO crm_org_members (org_id, crm_user_id) VALUES (%s,%s) "
+                            "ON CONFLICT (org_id, crm_user_id) DO NOTHING", (org["id"], user["id"]))
+                conn.commit()
+        return {"ok": True, "org_id": org["id"]}
+    raise HTTPException(404, "Invite not found or already used")
+
+
+@app.get("/api/projects/{project_id}/my-access")
+def my_access(project_id: int, user: dict = Depends(get_current_user)):
+    """Permission map for the current user on a project — drives frontend nav
+    gating + route guards. Owner/org-owner get full manage on every page."""
+    full, _ = _is_full_access(user["id"], project_id)
+    if full:
+        return {"is_owner": True, "pages": _PROJECT_PAGES,
+                "permissions": {p: "manage" for p in _PROJECT_PAGES}}
+    perms = _user_project_permissions(user["id"], project_id)
+    if perms is None:
+        raise HTTPException(403, "No access to this project")
+    return {"is_owner": False, "pages": _PROJECT_PAGES, "permissions": perms}
 
 
 # ── PROJECTS ─────────────────────────────────────────────
 
 @app.get("/api/orgs/{org_id}/projects")
 def get_projects(org_id: int, user: dict = Depends(get_current_user)):
-    if not db_one("SELECT id FROM crm_organizations WHERE id=%s AND owner_id=%s", (org_id, user["id"])):
-        raise HTTPException(404, "Organization not found")
-    rows = db_all("""
-        SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at
-        FROM crm_projects p
-        WHERE p.org_id = %s
-        ORDER BY p.created_at DESC
-    """, (org_id,))
+    org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
+    if not org: raise HTTPException(404, "Organization not found")
+    if org["owner_id"] == user["id"]:
+        rows = db_all("""
+            SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at
+            FROM crm_projects p
+            WHERE p.org_id = %s
+            ORDER BY p.created_at DESC
+        """, (org_id,))
+    else:
+        # Member: only the projects they're assigned to (never the whole org).
+        if not db_one("SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s",
+                      (org_id, user["id"])):
+            raise HTTPException(404, "Organization not found")
+        rows = db_all("""
+            SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at
+            FROM crm_projects p
+            JOIN crm_team_members tm ON tm.project_id = p.id AND tm.crm_user_id = %s
+            WHERE p.org_id = %s
+            ORDER BY p.created_at DESC
+        """, (user["id"], org_id))
     for p in rows:
         p["last_used_at"] = p["last_used_at"].isoformat() if p.get("last_used_at") else None
         p["created_at"]   = str(p["created_at"])
@@ -6227,14 +6862,9 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
         new_id = cur.fetchone()["id"]
         conn.commit()
 
-        cur.execute("INSERT INTO crm_roles (project_id, name, is_system) VALUES (%s,'Owner',TRUE) RETURNING id", (new_id,))
-        owner_role_id = cur.fetchone()["id"]
-        conn.commit()
-
-        cur.execute(
-            "INSERT INTO crm_team_members (project_id, crm_user_id, crm_role_id) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
-            (new_id, user["id"], owner_role_id)
-        )
+        # No per-project role row for the creator — the project creator is the
+        # org owner and gets full access via _is_full_access / require_page.
+        # Employees + their roles are managed at the org level (Team page).
         cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (new_id, frontend_url))
         cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s) ON CONFLICT DO NOTHING", (new_id, frontend_url))
 
@@ -6280,7 +6910,7 @@ def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
 
 @app.get("/api/projects/{project_id}")
 def get_project(project_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     p = db_one("""
         SELECT p.id, p.name, p.api_key, p.publishable_key, p.is_active, p.last_used_at, p.created_at,
                COALESCE(p.timezone, 'UTC') AS timezone,
@@ -6303,7 +6933,7 @@ def get_project_overview(
     days: int = Query(30, ge=1, le=365),
     user: dict = Depends(get_current_user)
 ):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     pid = (project_id,)
 
     # Revenue + orders in period (non-cancelled/returned)
@@ -6483,7 +7113,7 @@ def _category_slug(cur, project_id: int, name: str) -> str:
 
 @app.get("/api/categories")
 def list_categories(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all("""
         SELECT c.id, c.name, c.slug, c.created_at,
                COUNT(p.id) AS products_count
@@ -6501,7 +7131,7 @@ def list_categories(project_id: int = Query(...), user: dict = Depends(get_curre
 
 @app.post("/api/categories")
 def create_category(req: CreateCategoryRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     name = sanitize(req.name.strip())
     if not name:           raise HTTPException(400, "Name is required")
     if len(name) > 100:    raise HTTPException(400, "Name too long (max 100)")
@@ -6524,7 +7154,7 @@ def create_category(req: CreateCategoryRequest, project_id: int = Query(...), us
 @app.patch("/api/categories/{cat_id}")
 def rename_category(cat_id: int, req: UpdateCategoryRequest,
                     project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     name = sanitize(req.name.strip())
     if not name:        raise HTTPException(400, "Name is required")
     if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
@@ -6547,7 +7177,7 @@ def set_category_products(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
                   (cat_id, project_id)):
         raise HTTPException(404, "Category not found")
@@ -6582,7 +7212,7 @@ def delete_category(
     project_id: int          = Query(...),
     user: dict               = Depends(get_current_user),
 ):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if mode not in ("keep_products", "delete_products", "move"):
         raise HTTPException(400, "Invalid mode")
     if not db_one("SELECT id FROM product_categories WHERE id=%s AND project_id=%s",
@@ -6705,7 +7335,7 @@ def list_products(project_id: int = Query(...),
                   cursor: Optional[str] = Query(None),
                   limit: Optional[int]  = Query(None),
                   user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where  = ["p.project_id=%s"]
     params = [project_id]
@@ -6770,7 +7400,7 @@ def list_products(project_id: int = Query(...),
 
 @app.post("/api/products")
 def create_product(request: CreateProductRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     name = request.title.strip()
     if not name: raise HTTPException(400, "Title is required")
     if request.category_id is not None:
@@ -6841,7 +7471,7 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
         row = db_one("SELECT project_id FROM products WHERE id=%s", (product_id,))
         if not row: raise HTTPException(404, "Product not found")
         project_id = row["project_id"]
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     p = db_one("SELECT * FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
     if not p: raise HTTPException(404, "Product not found")
 
@@ -7039,7 +7669,7 @@ def get_product(product_id: int, project_id: Optional[int] = Query(None), user: 
 
 @app.put("/api/products/{product_id}")
 def update_product(product_id: int, request: UpdateProductRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     fields = []; vals = []
@@ -7150,7 +7780,7 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
 
 @app.delete("/api/products/{product_id}")
 def delete_product(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     # Collect S3 image URLs of all variations BEFORE deleting DB rows
@@ -7208,7 +7838,7 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
 
 @app.post("/api/products/{product_id}/duplicate")
 def duplicate_product(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     src = db_one("SELECT * FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
     if not src: raise HTTPException(404, "Product not found")
 
@@ -7381,7 +8011,7 @@ class BulkActionRequest(BaseModel):
 
 @app.post("/api/projects/{project_id}/products/bulk")
 def bulk_action(project_id: int, request: BulkActionRequest, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not request.product_ids:
         return {"ok": True, "affected": 0}
     if len(request.product_ids) > 500:
@@ -7837,7 +8467,7 @@ def _generate_qr_svg(value: str, symbology: str = "qr") -> str:
 @app.get("/api/skus/lookup")
 def lookup_skus(project_id: int = Query(...), ids: str = Query(""),
                 user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     try:
         id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()][:500]
     except ValueError:
@@ -7861,7 +8491,7 @@ def lookup_skus(project_id: int = Query(...), ids: str = Query(""),
 def print_barcodes(project_id: int, request: PrintBarcodesRequest,
                    user: dict = Depends(get_current_user)):
     """Returns a self-contained HTML page (with @media print rules). Frontend embeds it in an iframe — actual printer dispatch happens only when the user clicks Print (which triggers iframe.contentWindow.print())."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     fmt = LABEL_FORMATS.get(request.format)
     if not fmt: raise HTTPException(400, "Unknown label format")
     if not request.items: raise HTTPException(400, "No items to print")
@@ -8099,7 +8729,7 @@ def print_barcodes(project_id: int, request: PrintBarcodesRequest,
 @app.get("/api/projects/{project_id}/products/export.csv")
 def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
                         user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     import csv as _csv
     from io import StringIO
 
@@ -8206,7 +8836,7 @@ class CsvImportRequest(BaseModel):
 @app.post("/api/projects/{project_id}/products/import")
 def import_products_csv(project_id: int, request: CsvImportRequest,
                         user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not request.rows: return {"ok": True, "created": 0, "updated": 0}
     if len(request.rows) > 5000:
         raise HTTPException(400, "Too many rows (max 5000 per import)")
@@ -8371,7 +9001,7 @@ def import_products_csv(project_id: int, request: CsvImportRequest,
 
 @app.post("/api/products/{product_id}/variations")
 def create_variation(product_id: int, request: CreateVariationRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     name = (request.variation_name or '').strip()
@@ -8395,7 +9025,7 @@ def reorder_variations(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     pids = list(req.variation_ids or [])
@@ -8422,7 +9052,7 @@ def reorder_layer_items(
         raise HTTPException(400, "Layer must be 2-5 (use /variations/reorder for layer 1)")
     if req.parent_id is None:
         raise HTTPException(400, "parent_id required")
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     _verify_layer_item_belongs_to_product(layer - 1, req.parent_id, product_id)
@@ -8450,7 +9080,7 @@ def reorder_specifications(
 ):
     if req.layer is None or req.parent_id is None:
         raise HTTPException(400, "layer and parent_id required")
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     owner_pid = _product_id_for(req.layer, req.parent_id)
     if owner_pid != product_id:
         raise HTTPException(404, "Parent not found")
@@ -8477,7 +9107,7 @@ def reorder_custom_fields(
     project_id: int = Query(...),
     user: dict = Depends(get_current_user),
 ):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     keys = list(req.field_keys or [])
@@ -8501,7 +9131,7 @@ def reorder_custom_fields(
 
 @app.put("/api/products/{product_id}/variations/{var_id}")
 def update_variation(product_id: int, var_id: int, request: UpdateVariationRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     cur_row = db_one("SELECT images FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
@@ -8526,7 +9156,7 @@ def update_variation(product_id: int, var_id: int, request: UpdateVariationReque
 
 @app.delete("/api/products/{product_id}/variations/{var_id}")
 def delete_variation(product_id: int, var_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     old = db_one("SELECT images FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id))
@@ -8544,7 +9174,7 @@ def delete_variation(product_id: int, var_id: int, project_id: int = Query(...),
 @app.post("/api/products/{product_id}/variations/{var_id}/configurations")
 def create_configuration(product_id: int, var_id: int, request: CreateConfigurationRequest,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     if not db_one("SELECT id FROM product_configurations_l1 WHERE id=%s AND product_id=%s", (var_id, product_id)):
@@ -8570,7 +9200,7 @@ def create_configuration(product_id: int, var_id: int, request: CreateConfigurat
 @app.put("/api/products/{product_id}/variations/{var_id}/configurations/{cfg_id}")
 def update_configuration(product_id: int, var_id: int, cfg_id: int, request: UpdateConfigurationRequest,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     fields = []; vals = []
@@ -8589,7 +9219,7 @@ def update_configuration(product_id: int, var_id: int, cfg_id: int, request: Upd
 @app.delete("/api/products/{product_id}/variations/{var_id}/configurations/{cfg_id}")
 def delete_configuration(product_id: int, var_id: int, cfg_id: int,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     with db_cursor() as (conn, cur):
@@ -8610,7 +9240,7 @@ def _ensure_var_in_product(product_id: int, var_id: int, project_id: int):
 @app.post("/api/products/{product_id}/variations/{var_id}/specifications")
 def create_specification(product_id: int, var_id: int, request: CreateSpecificationRequest,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _ensure_var_in_product(product_id, var_id, project_id)
     key = sanitize((request.spec_key or '').strip())
     value = sanitize((request.spec_value or '').strip())
@@ -8629,7 +9259,7 @@ def create_specification(product_id: int, var_id: int, request: CreateSpecificat
 @app.put("/api/products/{product_id}/variations/{var_id}/specifications/{spec_id}")
 def update_specification(product_id: int, var_id: int, spec_id: int, request: UpdateSpecificationRequest,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _ensure_var_in_product(product_id, var_id, project_id)
     fields = []; vals = []
     if request.spec_key is not None:
@@ -8647,7 +9277,7 @@ def update_specification(product_id: int, var_id: int, spec_id: int, request: Up
 @app.delete("/api/products/{product_id}/variations/{var_id}/specifications/{spec_id}")
 def delete_specification(product_id: int, var_id: int, spec_id: int,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _ensure_var_in_product(product_id, var_id, project_id)
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_specifications WHERE id=%s AND variation_id=%s", (spec_id, var_id))
@@ -8661,7 +9291,7 @@ def copy_specifications_to_all(product_id: int, var_id: int,
     """Replace specifications on every other variation of this product with the
     current variation's specifications. Atomic per-variation: existing specs
     are deleted before re-inserting copies."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _ensure_var_in_product(product_id, var_id, project_id)
     with db_cursor() as (conn, cur):
         cur.execute("SELECT spec_key, spec_value, position FROM product_specifications "
@@ -8685,7 +9315,7 @@ def copy_specifications_to_all(product_id: int, var_id: int,
 @app.post("/api/products/{product_id}/specifications")
 def create_specification_generic(product_id: int, request: CreateSpecificationRequest,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     layer = request.layer or 1
     parent_id = request.parent_id
     if parent_id is None:
@@ -8728,7 +9358,7 @@ def create_specification_generic(product_id: int, request: CreateSpecificationRe
 @app.put("/api/products/{product_id}/specifications/{spec_id}")
 def update_specification_generic(product_id: int, spec_id: int, request: UpdateSpecificationRequest,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     spec = db_one("SELECT layer, parent_id FROM product_specifications WHERE id=%s", (spec_id,))
     if not spec: raise HTTPException(404, "Spec not found")
     owner_pid = _product_id_for(spec["layer"] or 1, spec["parent_id"])
@@ -8750,7 +9380,7 @@ def update_specification_generic(product_id: int, spec_id: int, request: UpdateS
 @app.delete("/api/products/{product_id}/specifications/{spec_id}")
 def delete_specification_generic(product_id: int, spec_id: int,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     spec = db_one("SELECT layer, parent_id FROM product_specifications WHERE id=%s", (spec_id,))
     if not spec: return {"ok": True}
     owner_pid = _product_id_for(spec["layer"] or 1, spec["parent_id"])
@@ -8770,7 +9400,7 @@ def delete_specification_generic(product_id: int, spec_id: int,
 @app.post("/api/products/{product_id}/spec-groups")
 def create_spec_group(product_id: int, request: SpecGroupRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     layer = request.layer or 1
     parent_id = request.parent_id
     if parent_id is None:
@@ -8799,7 +9429,7 @@ def create_spec_group(product_id: int, request: SpecGroupRequest,
 @app.put("/api/products/{product_id}/spec-groups/reorder")
 def reorder_spec_groups(product_id: int, req: ReorderIdsRequest,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     ids = list(req.ids or [])
     with db_cursor() as (conn, cur):
         cur.execute("SELECT id FROM product_spec_groups WHERE product_id=%s AND id = ANY(%s)",
@@ -8816,7 +9446,7 @@ def reorder_spec_groups(product_id: int, req: ReorderIdsRequest,
 @app.put("/api/products/{product_id}/spec-groups/{group_id}")
 def update_spec_group(product_id: int, group_id: int, request: SpecGroupUpdateRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     g = db_one("SELECT id FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
     if not g: raise HTTPException(404, "Group not found")
     if request.name is None: return {"ok": True}
@@ -8831,7 +9461,7 @@ def update_spec_group(product_id: int, group_id: int, request: SpecGroupUpdateRe
 @app.delete("/api/products/{product_id}/spec-groups/{group_id}")
 def delete_spec_group(product_id: int, group_id: int,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     g = db_one("SELECT id FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
     if not g: return {"ok": True}
     with db_cursor() as (conn, cur):
@@ -9044,7 +9674,7 @@ def _verify_layer_item_belongs_to_product(layer: int, item_id: int, product_id: 
 @app.get("/api/products/{product_id}/layers/{layer}")
 def list_layer_items(product_id: int, layer: int, parent_id: Optional[int] = Query(None),
                      project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     tbl = _layer_table(layer)
@@ -9068,7 +9698,7 @@ def list_layer_items(product_id: int, layer: int, parent_id: Optional[int] = Que
 @app.post("/api/products/{product_id}/layers/{layer}")
 def create_layer_item(product_id: int, layer: int, request: CreateLayerItemRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     tbl = _layer_table(layer)
@@ -9150,7 +9780,7 @@ def create_layer_item(product_id: int, layer: int, request: CreateLayerItemReque
 @app.put("/api/products/{product_id}/layers/{layer}/{item_id}")
 def update_layer_item(product_id: int, layer: int, item_id: int, request: UpdateLayerItemRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
     tbl = _layer_table(layer)
     name_col = _layer_name_col(layer)
@@ -9239,7 +9869,7 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
 @app.delete("/api/products/{product_id}/layers/{layer}/{item_id}")
 def delete_layer_item(product_id: int, layer: int, item_id: int,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
     tbl = _layer_table(layer)
     # Capture L1 image URLs before delete so we can S3-clean them post-commit.
@@ -9258,7 +9888,7 @@ def copy_layer_to_siblings(product_id: int, layer: int, item_id: int,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
     if layer < 1 or layer > 4:
         raise HTTPException(400, "copy-to-siblings requires layer 1-4 (deeper layers have no children)")
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
 
     child_layer = layer + 1
@@ -9308,7 +9938,7 @@ def delete_entire_layer(product_id: int, layer: int,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
     if layer < 2 or layer > 5:
         raise HTTPException(400, "Only layers 2-5 can be deleted (Layer 1 = the product itself)")
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     # Delete this layer's rows for this product by walking down from l1 (L2 parent=variation, L3+ parent=previous layer).
@@ -9348,7 +9978,7 @@ def delete_entire_layer(product_id: int, layer: int,
 @app.post("/api/products/{product_id}/custom-fields")
 def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     # If global, propagate field_key/field_type/is_global across project; field_value stays per-product.
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     key = request.field_key.strip().lower().replace(" ", "_")
@@ -9387,7 +10017,7 @@ def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, proj
 @app.put("/api/products/{product_id}/custom-fields/{field_key}")
 def update_custom_field(product_id: int, field_key: str, request: UpsertCustomFieldRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     # Path param = OLD key (for rename). Global rows propagate key/type/is_global across project.
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     new_key = request.field_key.strip().lower().replace(" ", "_")
@@ -9428,7 +10058,7 @@ def update_custom_field(product_id: int, field_key: str, request: UpsertCustomFi
 @app.delete("/api/products/{product_id}/custom-fields/{field_key}")
 def delete_custom_field(product_id: int, field_key: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     # Global row delete cascades across project; returns removed[] so Undo can /restore.
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     row = db_one("SELECT id, is_global FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
@@ -9461,7 +10091,7 @@ def delete_custom_field(product_id: int, field_key: str, project_id: int = Query
 
 @app.patch("/api/products/{product_id}/custom-fields/{field_key}/global")
 def toggle_custom_field_global(product_id: int, field_key: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT id, is_global FROM product_custom_fields WHERE product_id=%s AND project_id=%s AND field_key=%s",
                  (product_id, project_id, field_key))
     if not row: raise HTTPException(404, "Field not found")
@@ -9476,7 +10106,7 @@ def toggle_custom_field_global(product_id: int, field_key: str, project_id: int 
 
 @app.post("/api/products/{product_id}/restore")
 def restore(product_id: int, request: RestoreRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
 
@@ -9575,7 +10205,7 @@ def _validate_group_payload(req: ModifierGroupRequest, *, control_type: str = No
 
 @app.get("/api/products/{product_id}/modifier-groups")
 def list_modifier_groups(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     groups = db_all(
@@ -9603,7 +10233,7 @@ def list_modifier_groups(product_id: int, project_id: int = Query(...), user: di
 @app.post("/api/products/{product_id}/modifier-groups")
 def create_modifier_group(product_id: int, request: ModifierGroupRequest,
                            project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     ct, mn, mx = _validate_group_payload(request)
@@ -9633,7 +10263,7 @@ def create_modifier_group(product_id: int, request: ModifierGroupRequest,
 @app.put("/api/products/{product_id}/modifier-groups/{gid}")
 def update_modifier_group(product_id: int, gid: int, request: ModifierGroupRequest,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     g = db_one(
         "SELECT id, control_type, min_select, max_select FROM product_modifier_groups"
         " WHERE id=%s AND product_id=%s", (gid, product_id)
@@ -9677,7 +10307,7 @@ def update_modifier_group(product_id: int, gid: int, request: ModifierGroupReque
 @app.delete("/api/products/{product_id}/modifier-groups/{gid}")
 def delete_modifier_group(product_id: int, gid: int,
                            project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM product_modifier_groups WHERE id=%s AND product_id=%s",
                   (gid, product_id)):
         raise HTTPException(404, "Modifier group not found")
@@ -9691,7 +10321,7 @@ def delete_modifier_group(product_id: int, gid: int,
 @app.put("/api/products/{product_id}/modifier-groups/reorder")
 def reorder_modifier_groups(product_id: int, req: ReorderGroupsRequest,
                              project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     ids = list(req.ids or [])
@@ -9709,7 +10339,7 @@ def reorder_modifier_groups(product_id: int, req: ReorderGroupsRequest,
 @app.post("/api/products/{product_id}/modifier-groups/{gid}/items")
 def create_modifier_item(product_id: int, gid: int, request: ModifierItemRequest,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one(
         "SELECT g.id FROM product_modifier_groups g"
         " JOIN products p ON g.product_id=p.id"
@@ -9738,7 +10368,7 @@ def create_modifier_item(product_id: int, gid: int, request: ModifierItemRequest
 @app.put("/api/products/{product_id}/modifier-items/{iid}")
 def update_modifier_item(product_id: int, iid: int, request: ModifierItemRequest,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         "SELECT i.id FROM product_modifier_items i"
         " JOIN product_modifier_groups g ON i.group_id=g.id"
@@ -9764,7 +10394,7 @@ def update_modifier_item(product_id: int, iid: int, request: ModifierItemRequest
 @app.delete("/api/products/{product_id}/modifier-items/{iid}")
 def delete_modifier_item(product_id: int, iid: int,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         "SELECT i.id FROM product_modifier_items i"
         " JOIN product_modifier_groups g ON i.group_id=g.id"
@@ -9783,7 +10413,7 @@ def delete_modifier_item(product_id: int, iid: int,
 @app.put("/api/products/{product_id}/modifier-items/reorder")
 def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     payload = list(req.items or [])
     if not payload: return {"ok": True}
 
@@ -9899,7 +10529,7 @@ def list_promo_codes(project_id: int = Query(...),
                      cursor: Optional[str] = Query(None),
                      limit:  Optional[int] = Query(None),
                      user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _ensure_promo_codes_table()
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
     sql = (
@@ -10044,7 +10674,7 @@ def delete_promo_code(pcid: int, project_id: int = Query(...),
 
 @app.get("/api/tax-categories")
 def list_tax_categories(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT id, name, rate, is_default FROM product_tax_categories"
         " WHERE project_id=%s ORDER BY is_default DESC, name ASC",
@@ -10126,7 +10756,7 @@ def delete_tax_category(tcid: int, project_id: int = Query(...),
 @app.get("/api/products/{product_id}/tier-pricing")
 def list_tier_pricing(product_id: int, project_id: int = Query(...),
                        user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     rows = db_all(
@@ -10144,7 +10774,7 @@ def list_tier_pricing(product_id: int, project_id: int = Query(...),
 @app.post("/api/products/{product_id}/tier-pricing")
 def create_tier_pricing(product_id: int, req: TierPricingRequest,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     # Verify the SKU belongs to this product (IDOR defense).
     if not db_one(
         "SELECT c.id FROM product_configurations_l2 c"
@@ -10172,7 +10802,7 @@ def create_tier_pricing(product_id: int, req: TierPricingRequest,
 @app.delete("/api/products/{product_id}/tier-pricing/{tier_id}")
 def delete_tier_pricing(product_id: int, tier_id: int,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     # Verify ownership through joins to enforce project isolation.
     row = db_one(
         "SELECT tp.id FROM product_tier_pricing tp"
@@ -10299,7 +10929,7 @@ class ReceiveBatchRequest(BaseModel):
 @app.post("/api/projects/{project_id}/inventory/receive")
 def receive_batch(project_id: int, req: ReceiveBatchRequest,
                   user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if req.quantity_received <= 0:
         raise HTTPException(400, "quantity_received must be > 0")
     with db_cursor() as (conn, cur):
@@ -10391,7 +11021,7 @@ def bulk_receive(project_id: int, req: BulkReceiveRequest,
     /stock/bulk-transfer's all-or-nothing pattern: any single invalid row aborts
     the whole transaction so the merchant can fix and retry.
     """
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not req.items:
         raise HTTPException(400, "items must be non-empty")
 
@@ -10572,7 +11202,7 @@ def list_batches(project_id: int, sku_id: Optional[int] = Query(None),
                  cursor: Optional[str] = Query(None),
                  limit:  Optional[int] = Query(None),
                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where = ["b.project_id = %s"]
     params: list = [project_id]
@@ -10608,7 +11238,7 @@ def list_batches(project_id: int, sku_id: Optional[int] = Query(None),
 def lookup_batches_for_target(project_id: int, sku_id: int = Query(...),
                               warehouse_id: int = Query(...),
                               user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT id, batch_name, quantity_remaining, quantity_received, production_date, expiry_date"
         "  FROM inventory_batches"
@@ -10621,7 +11251,7 @@ def lookup_batches_for_target(project_id: int, sku_id: int = Query(...),
 
 @app.get("/api/projects/{project_id}/batches/{batch_id}")
 def get_batch(project_id: int, batch_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         "SELECT b.*, l2.configuration_name AS sku_name, l2.sku_code,"
         "       l1.variation_name, p.title AS product_title,"
@@ -10651,7 +11281,7 @@ class BatchUpdateRequest(BaseModel):
 @app.put("/api/projects/{project_id}/batches/{batch_id}")
 def update_batch(project_id: int, batch_id: int, req: BatchUpdateRequest,
                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     sent = req.model_dump(exclude_unset=True)
     if not sent: return {"ok": True}
 
@@ -10716,7 +11346,7 @@ def update_batch(project_id: int, batch_id: int, req: BatchUpdateRequest,
 
 @app.delete("/api/projects/{project_id}/batches/{batch_id}")
 def delete_batch(project_id: int, batch_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         "SELECT sku_id, warehouse_id, quantity_remaining, quantity_received"
         "  FROM inventory_batches WHERE id=%s AND project_id=%s",
@@ -10783,7 +11413,7 @@ def update_org_batch_settings(org_id: int, req: OrgBatchSettingsRequest,
 
 @app.get("/api/projects/{project_id}/batch-settings")
 def get_project_batch_settings(project_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page(user, project_id, "settings", "view")
     row = db_one(
         "SELECT pr.batch_consumption_mode,"
         "       pr.barcode_include_date, pr.barcode_include_batch,"
@@ -10817,7 +11447,7 @@ class ProjectBatchSettingsRequest(BaseModel):
 @app.put("/api/projects/{project_id}/batch-settings")
 def update_project_batch_settings(project_id: int, req: ProjectBatchSettingsRequest,
                                   user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page(user, project_id, "settings", "manage")
     sent = req.model_dump(exclude_unset=True)
     if 'batch_consumption_mode' in sent and sent['batch_consumption_mode'] not in ('fifo', 'lifo'):
         raise HTTPException(400, "batch_consumption_mode must be 'fifo' or 'lifo'")
@@ -10855,7 +11485,7 @@ def update_project_batch_settings(project_id: int, req: ProjectBatchSettingsRequ
 def adjust_stock(product_id: int, req: StockAdjustRequest,
                  background_tasks: BackgroundTasks,
                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     # Validate SKU belongs to this product + project.
     sku = db_one(
         "SELECT c.id FROM product_configurations_l2 c"
@@ -11035,7 +11665,7 @@ def get_stock_log(product_id: int, project_id: int = Query(...), limit: int = Qu
       events, transfer log id, etc.) silently produce NULL — that's fine since
       the column is presentational.
     """
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT sl.id, sl.sku_id, sl.warehouse_id, sl.delta, sl.reason,"
         "       sl.reference_id, sl.user_id, sl.note, sl.created_at,"
@@ -11061,7 +11691,7 @@ def get_stock_log(product_id: int, project_id: int = Query(...), limit: int = Qu
 @app.get("/api/products/{product_id}/stock/per-warehouse")
 def get_per_warehouse_stock(product_id: int, project_id: int = Query(...),
                               user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     skus = db_all(
@@ -11126,7 +11756,7 @@ def get_project_stock_summary(project_id: int,
     `sell_price` walks the price hierarchy: own SKU price, else the parent
     variation price (matches _annotate_effective_price). `cost_price` is
     per-SKU only — NULL when not configured."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT ps.warehouse_id, ps.sku_id, ps.quantity, ps.sold_quantity,"
         "       c.cost_price::float                          AS cost_price,"
@@ -11161,7 +11791,7 @@ def bulk_transfer_stock(project_id: int, body: dict = Body(...),
       - target_batch_name set → create a NEW inventory_batches row with that name (multi-SKU batches share a name but get one row per (sku, warehouse))
       - neither → auto-generate a name from the project's batch_naming_format (auto mode) or fall back to "B-XXXXXX"
     """
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     raw = body.get("transfers") if isinstance(body, dict) else None
     if not isinstance(raw, list) or not raw:
         raise HTTPException(400, "transfers must be a non-empty array")
@@ -11438,7 +12068,7 @@ _WH_STR_FIELDS = {
 
 @app.get("/api/warehouses")
 def list_warehouses(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _ensure_default_warehouse(project_id)
     rows = db_all(
         "SELECT id, name, code, address, is_active, is_default, created_at,"
@@ -11576,7 +12206,7 @@ def delete_warehouse(wid: int, project_id: int = Query(...),
 @app.get("/api/products/{product_id}/restock-subscriptions")
 def list_restock_subs(product_id: int, project_id: int = Query(...),
                        user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
         raise HTTPException(404, "Product not found")
     rows = db_all(
@@ -11599,7 +12229,7 @@ class ReviewReplyRequest(BaseModel):
 @app.put("/api/products/{product_id}/reviews/{review_id}/reply")
 def reply_to_review(product_id: int, review_id: int, req: ReviewReplyRequest,
                      project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one(
         "SELECT id FROM product_reviews WHERE id=%s AND product_id=%s AND project_id=%s",
         (review_id, product_id, project_id)
@@ -11636,7 +12266,7 @@ async def upload_image(
     # "avatar-like" uploads have no project_id), so we only enforce
     # when it's provided.
     if project_id is not None:
-        require_team_member_or_owner(user, project_id)
+        require_page_auto(user, project_id)
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "Only image files are allowed")
     contents = await file.read()
@@ -11702,7 +12332,7 @@ async def upload_media(
 ):
     # Cross-tenant guard — see upload_image for rationale.
     if project_id is not None:
-        require_team_member_or_owner(user, project_id)
+        require_page_auto(user, project_id)
     fname = (file.filename or '').strip()
     ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
     if ext not in ALLOWED_MEDIA_EXTS:
@@ -11766,7 +12396,7 @@ class AddMediaUrlRequest(BaseModel):
 @app.post("/api/products/{product_id}/layers/1/{var_id}/media-url")
 def add_media_url(product_id: int, var_id: int, req: AddMediaUrlRequest,
                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     _verify_layer_item_belongs_to_product(1, var_id, product_id)
     url = (req.url or '').strip()
     if not _is_safe_media_url(url):
@@ -11817,7 +12447,7 @@ async def upload_file(
 ):
     # Cross-tenant guard — see upload_image for rationale.
     if project_id is not None:
-        require_team_member_or_owner(user, project_id)
+        require_page_auto(user, project_id)
     import re as _re_local
     contents = await file.read()
     if len(contents) > 50 * 1024 * 1024:
@@ -12060,7 +12690,7 @@ class EmailDomainRequest(BaseModel):
 
 @app.get("/api/email-domain")
 def get_email_domain(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT * FROM crm_email_domains WHERE project_id = %s", (project_id,))
     if not row:
         return {"configured": False}
@@ -12134,7 +12764,7 @@ def save_email_domain(req: EmailDomainRequest, project_id: int = Query(...), use
 
 @app.post("/api/email-domain/verify")
 def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT * FROM crm_email_domains WHERE project_id = %s", (project_id,))
     if not row: raise HTTPException(404, "No domain configured")
 
@@ -12185,7 +12815,7 @@ def delete_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
 
 @app.get("/api/oauth-settings")
 def get_oauth_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     key_row      = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
     api_key_str  = key_row["api_key"] if key_row else ""
     redirect_uri = f"{MAGAZ_BACKEND_URL}/{api_key_str}/auth/google/callback"
@@ -12251,7 +12881,7 @@ ALLOWED_AUTH_PROVIDERS = {
 
 @app.get("/api/auth-providers")
 def list_auth_providers(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT provider, is_enabled, (client_id IS NOT NULL AND client_id <> '') AS configured "
         "FROM crm_auth_providers WHERE project_id=%s",
@@ -12262,7 +12892,7 @@ def list_auth_providers(project_id: int = Query(...), user: dict = Depends(get_c
 
 @app.get("/api/auth-providers/{provider}")
 def get_auth_provider(provider: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if provider not in ALLOWED_AUTH_PROVIDERS:
         raise HTTPException(400, f"Unknown provider: {provider}")
     key_row     = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
@@ -12422,7 +13052,7 @@ def _mask_secret(v):
 
 @app.get("/api/sms-settings")
 def get_sms_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT * FROM crm_sms_settings WHERE project_id=%s", (project_id,))
     if not row:
         return {"configured": False, **_SMS_DEFAULTS}
@@ -12535,7 +13165,7 @@ def delete_sms_settings(project_id: int = Query(...), user: dict = Depends(get_c
 
 @app.get("/api/url-config")
 def get_url_config(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id=%s", (project_id,))
     return {"frontend_url": row["frontend_url"] if row else ""}
 
@@ -12560,7 +13190,7 @@ def save_url_config(req: UrlConfigRequest, project_id: int = Query(...), user: d
 
 @app.get("/api/redirect-urls")
 def get_redirect_urls(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all("SELECT id, url FROM crm_redirect_urls WHERE project_id=%s ORDER BY id ASC", (project_id,))
     return {"urls": rows}
 
@@ -12605,7 +13235,7 @@ def get_orders(project_id: int = Query(...),
                cursor: Optional[str] = Query(None),
                limit:  Optional[int] = Query(None),
                user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where = "WHERE oh.project_id=%s"
     params: list = [project_id]
@@ -12678,7 +13308,7 @@ def get_orders(project_id: int = Query(...),
 @app.get("/api/orders/stats")
 def get_orders_stats(project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
 
     # "Today" must be the calendar day in the PROJECT's timezone, matching the
     # Analytics overview (which uses get_project_timezone). The old query used
@@ -12787,7 +13417,7 @@ def get_orders_stats(project_id: int = Query(...),
 #   warn (amber)  — a real anomaly that wants attention; counted in `warnings`
 @app.get("/api/projects/{project_id}/overview-status")
 def project_overview_status(project_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     checks = []
 
     # 1. URL Configuration — gates OAuth redirects + email links.
@@ -12910,7 +13540,7 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
 # so the page does a single round-trip.
 @app.get("/api/projects/{project_id}/overview-extra")
 def project_overview_extra(project_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     proj = db_one("SELECT api_key, org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}
     org_id = proj.get("org_id")
 
@@ -13039,7 +13669,7 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
 @app.get("/api/orders/stream")
 async def stream_orders(project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
 
     async def generator():
         last_count   = -1
@@ -13072,7 +13702,7 @@ async def stream_orders(project_id: int = Query(...),
 @app.get("/api/orders/{order_id}")
 def get_order(order_id: int, project_id: int = Query(...),
               user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     o = db_one(
         """SELECT oh.*, u.name AS customer_name, u.email AS customer_email
            FROM order_history oh
@@ -13304,7 +13934,7 @@ def _apply_stock_transition(cur, order_id: int, project_id: int,
 def update_order_status(order_id: int, body: UpdateOrderStatus,
                         project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if body.status not in ORDER_STATUSES:
         raise HTTPException(400, f"Invalid status. Allowed: {ORDER_STATUSES}")
     o = db_one(
@@ -13484,7 +14114,7 @@ def list_returns(project_id: int,
                  cursor: Optional[str] = Query(None),
                  limit: Optional[int] = Query(None),
                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
 
     where = "WHERE r.project_id=%s"
@@ -13538,7 +14168,7 @@ def list_returns(project_id: int,
 
 @app.get("/api/projects/{project_id}/returns/stats")
 def returns_stats(project_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         """SELECT
              COUNT(*) FILTER (WHERE status = ANY(%s)) AS action_count,
@@ -13562,7 +14192,7 @@ def returns_stats(project_id: int, user: dict = Depends(get_current_user)):
 
 @app.get("/api/projects/{project_id}/returns/{return_id}")
 def get_return(project_id: int, return_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     r = db_one(
         """SELECT r.*, oh.total_amount AS order_total, oh.status AS order_status,
                   oh.recipient_name, oh.phone, oh.address, oh.payment_method,
@@ -13643,7 +14273,7 @@ def get_return(project_id: int, return_id: int, user: dict = Depends(get_current
 
 @app.post("/api/projects/{project_id}/returns/{return_id}/approve")
 def approve_return(project_id: int, return_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
                (return_id, project_id))
     if not r: raise HTTPException(404, "Return not found")
@@ -13681,7 +14311,7 @@ def approve_return(project_id: int, return_id: int, user: dict = Depends(get_cur
 @app.post("/api/projects/{project_id}/returns/{return_id}/reject")
 def reject_return(project_id: int, return_id: int, body: RejectReturnBody,
                   user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
                (return_id, project_id))
     if not r: raise HTTPException(404, "Return not found")
@@ -13716,7 +14346,7 @@ def reject_return(project_id: int, return_id: int, body: RejectReturnBody,
 
 @app.post("/api/projects/{project_id}/returns/{return_id}/receive")
 def receive_return(project_id: int, return_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
                (return_id, project_id))
     if not r: raise HTTPException(404, "Return not found")
@@ -13742,7 +14372,7 @@ def receive_return(project_id: int, return_id: int, user: dict = Depends(get_cur
 @app.post("/api/projects/{project_id}/returns/{return_id}/inspect")
 def inspect_return(project_id: int, return_id: int, body: InspectReturnBody,
                    user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     r = db_one("SELECT id, status FROM order_returns WHERE id=%s AND project_id=%s",
                (return_id, project_id))
     if not r: raise HTTPException(404, "Return not found")
@@ -13927,7 +14557,7 @@ def refund_return(project_id: int, return_id: int, body: RefundReturnBody,
     Idempotency: idempotency_key derived from (return_id, refund_amount, refund_reference)
     so retrying the same logical refund doesn't double-charge the merchant's account.
     """
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     r = db_one(
         "SELECT r.id, r.status, r.order_id, r.refund_amount AS prior_refund_amount,"
         "       oh.payment_intent_id, oh.payment_charge_id, oh.payment_status,"
@@ -14760,7 +15390,7 @@ def _serialize_msg(row: dict, project_id: int | None = None) -> dict:
 
 @app.get("/api/chat/integrations")
 def list_chat_integrations(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT id, channel, is_active, bot_username, created_at FROM crm_chat_integrations WHERE project_id=%s",
         (project_id,)
@@ -14794,7 +15424,7 @@ def get_chat_integration(channel: str,
     """Single-integration detail with non-secret config fields (e.g. Email's
     reply_local + reply_name) so the edit modal can pre-fill them. Secrets
     are stripped via the _CHAT_PUBLIC_CONFIG_KEYS allowlist."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     channel = channel.lower().strip()
     if channel not in CHAT_CHANNELS:
         raise HTTPException(400, "Unsupported channel")
@@ -15002,7 +15632,7 @@ def list_conversations(project_id: int = Query(...),
                        cursor: Optional[str] = Query(None),
                        limit:  Optional[int] = Query(None),
                        user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
     sql = (
         "SELECT id, channel, external_chat_id, contact_uid, is_active,"
@@ -15027,7 +15657,7 @@ def list_conversations(project_id: int = Query(...),
 async def close_conversation(conv_id: int,
                              project_id: int = Query(...),
                              user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_chat_conversations SET is_active=FALSE WHERE id=%s AND project_id=%s",
                     (conv_id, project_id))
@@ -15040,7 +15670,7 @@ async def close_conversation(conv_id: int,
 async def reopen_conversation(conv_id: int,
                               project_id: int = Query(...),
                               user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_chat_conversations SET is_active=TRUE WHERE id=%s AND project_id=%s",
                     (conv_id, project_id))
@@ -15053,7 +15683,7 @@ async def reopen_conversation(conv_id: int,
 def mark_conversation_read(conv_id: int,
                            project_id: int = Query(...),
                            user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_chat_conversations SET unread_count=0 WHERE id=%s AND project_id=%s",
                     (conv_id, project_id))
@@ -15143,7 +15773,7 @@ def get_chat_media(msg_id: int, idx: int,
 def list_messages(conv_id: int,
                   project_id: int = Query(...),
                   user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     conv = db_one("SELECT id FROM crm_chat_conversations WHERE id=%s AND project_id=%s",
                   (conv_id, project_id))
     if not conv:
@@ -15163,7 +15793,7 @@ async def send_message(conv_id: int,
                        body: ChatSendRequest,
                        project_id: int = Query(...),
                        user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     text = (body.text or "").strip()
     if not text:
         raise HTTPException(400, "Empty message")
@@ -15326,7 +15956,7 @@ async def send_message(conv_id: int,
 async def delete_chat_message(msg_id: int,
                               project_id: int = Query(...),
                               user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         """SELECT m.id, m.conversation_id
              FROM crm_chat_messages m
@@ -15890,7 +16520,7 @@ def _service_with_staff(row: dict) -> dict:
 
 @app.get("/api/booking/services")
 def booking_list_services(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT * FROM booking_services WHERE project_id=%s ORDER BY id ASC",
         (project_id,)
@@ -16045,7 +16675,7 @@ def booking_delete_service(sid: int, project_id: int = Query(...),
 
 @app.get("/api/booking/staff")
 def booking_list_staff(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT * FROM booking_staff WHERE project_id=%s ORDER BY id ASC",
         (project_id,)
@@ -16171,7 +16801,7 @@ def booking_staff_analytics(st_id: int,
       • avg_ticket     — cassa_earned / completed_count (0 when no completed jobs).
     The CRM intentionally does NOT compute payroll — staff.commission_pct is shown
     on the frontend as an info-only multiplier the owner can apply manually."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     days = _STAFF_ANALYTICS_PERIODS.get(period, 30)
 
     st = db_one("SELECT id, name, commission_pct FROM booking_staff "
@@ -16227,7 +16857,7 @@ def booking_staff_analytics(st_id: int,
 def booking_get_hours(project_id: int = Query(...),
                       staff_id: Optional[int] = Query(None),
                       user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if staff_id is None:
         rows = db_all(
             "SELECT * FROM booking_hours WHERE project_id=%s AND staff_id IS NULL ORDER BY day_of_week",
@@ -16288,7 +16918,7 @@ _BOOKING_SETTINGS_DEFAULTS = {
 
 @app.get("/api/booking/settings")
 def booking_get_settings(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT * FROM booking_settings WHERE project_id=%s", (project_id,))
     if not row: return {"configured": False, **_BOOKING_SETTINGS_DEFAULTS}
     out = {k: v for k, v in row.items() if k not in ("id", "project_id", "created_at")}
@@ -16377,7 +17007,7 @@ def _enrich_booking(rows):
 def booking_stats(project_id: int = Query(...), user: dict = Depends(get_current_user)):
     """Aggregate snapshot for the Bookings dashboard: counts by status, this week
     vs last week, no-show rate, average ticket, top staff by completed bookings."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     counts = db_all(
         "SELECT status, COUNT(*) AS n FROM bookings WHERE project_id=%s GROUP BY status",
         (project_id,)
@@ -16434,7 +17064,7 @@ def booking_list(project_id: int = Query(...),
                  cursor:    Optional[str] = Query(None),
                  limit:     Optional[int] = Query(None),
                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     want_pagination, offset, page_size = _pagination_params(cursor, limit)
     where = ["project_id=%s"]; params: list = [project_id]
     # Accept date filters as YYYY-MM-DD (business-local midnight→UTC) or full ISO 8601 with TZ offset.
@@ -16482,7 +17112,7 @@ def booking_create_admin(req: CreateBookingRequest,
       • service-based — req.service_id set; duration + price come from the catalog.
       • freeform — req.service_id is None; caller supplies freeform_service_name +
         freeform_duration_minutes + freeform_price. Used for one-off custom jobs."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
 
     # Resolve duration + location requirements from either the catalog service
     # or the caller-supplied freeform fields. Both paths end up with a normalized
@@ -16578,7 +17208,7 @@ def booking_create_admin(req: CreateBookingRequest,
 def booking_update_status(bid: int, req: UpdateBookingStatusRequest,
                           project_id: int = Query(...),
                           user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if req.status not in BOOKING_STATUSES:
         raise HTTPException(400, "Unknown status")
     # Enforce a state machine — terminal statuses cannot be revived
@@ -16609,7 +17239,7 @@ def booking_move(bid: int,
                  user: dict = Depends(get_current_user)):
     """Reschedule a booking — used by calendar drag-and-drop. starts_at is naive ISO
     in business TZ. ends_at is recomputed from the linked service's duration."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         "SELECT b.id, b.service_id, s.duration_minutes FROM bookings b"
         " JOIN booking_services s ON b.service_id=s.id"
@@ -17038,7 +17668,7 @@ def integrations_events(user: dict = Depends(get_current_user)):
 @app.get("/api/integrations")
 def integrations_list(project_id: int = Query(...),
                       user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         """SELECT id, type, name, url, events, config, is_active,
                   last_status, last_error, last_event_at, created_at
@@ -17069,7 +17699,7 @@ def integrations_list(project_id: int = Query(...),
 def integrations_create(req: IntegrationCreateRequest,
                         project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if req.type not in ALLOWED_INTEGRATION_TYPES:
         raise HTTPException(400, f"Unsupported type. Allowed: {sorted(ALLOWED_INTEGRATION_TYPES)}")
     url = (req.url or "").strip()
@@ -17303,7 +17933,7 @@ def integrations_deliveries(project_id: int = Query(...),
                             status: Optional[str] = Query(None),
                             limit: int = Query(100, ge=1, le=500),
                             user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     where  = ["d.project_id=%s"]
     params = [project_id]
     if subscription_id is not None: where.append("d.subscription_id=%s"); params.append(subscription_id)
@@ -17332,7 +17962,7 @@ def integrations_deliveries(project_id: int = Query(...),
 def integrations_delivery_detail(delivery_id: int,
                                  project_id: int = Query(...),
                                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         "SELECT * FROM crm_webhook_deliveries WHERE id=%s AND project_id=%s",
         (delivery_id, project_id)
@@ -17347,7 +17977,7 @@ def integrations_delivery_detail(delivery_id: int,
 def integrations_delivery_retry(delivery_id: int,
                                 project_id: int = Query(...),
                                 user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         "SELECT * FROM crm_webhook_deliveries WHERE id=%s AND project_id=%s",
         (delivery_id, project_id)
@@ -17377,7 +18007,7 @@ def integrations_delivery_retry(delivery_id: int,
 @app.get("/api/integrations/{sub_id}")
 def integrations_get(sub_id: int, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one(
         "SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
         (sub_id, project_id)
@@ -17399,7 +18029,7 @@ def integrations_get(sub_id: int, project_id: int = Query(...),
 def integrations_update(sub_id: int, req: IntegrationUpdateRequest,
                         project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT id, type, config FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                  (sub_id, project_id))
     if not row: raise HTTPException(404, "Integration not found")
@@ -17460,7 +18090,7 @@ def integrations_update(sub_id: int, req: IntegrationUpdateRequest,
 @app.delete("/api/integrations/{sub_id}")
 def integrations_delete(sub_id: int, project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                     (sub_id, project_id))
@@ -17471,7 +18101,7 @@ def integrations_delete(sub_id: int, project_id: int = Query(...),
 @app.post("/api/integrations/{sub_id}/test")
 def integrations_test(sub_id: int, project_id: int = Query(...),
                       user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                  (sub_id, project_id))
     if not sub: raise HTTPException(404, "Integration not found")
@@ -18503,7 +19133,7 @@ def accounting_preview(sub_id: int,
                        user: dict = Depends(get_current_user)):
     """JSON summary + first 10 rows for the modal preview panel.
     Doesn't generate the file blob — that happens on download."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                  (sub_id, project_id))
     if not sub: raise HTTPException(404, "Integration not found")
@@ -18580,7 +19210,7 @@ def accounting_download(sub_id: int,
             user = get_current_user(request)
         except Exception:
             raise HTTPException(401, "Authentication required")
-        require_team_member_or_owner(user, project_id)
+        require_page_auto(user, project_id)
     sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                  (sub_id, project_id))
     if not sub: raise HTTPException(404, "Integration not found")
@@ -18603,7 +19233,7 @@ def accounting_test_send(sub_id: int,
                          user: dict = Depends(get_current_user)):
     """Sends an email RIGHT NOW so the merchant can verify the recipient and
     body. Updates last_status / last_error like a real delivery."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     sub = db_one("SELECT * FROM crm_webhook_subscriptions WHERE id=%s AND project_id=%s",
                  (sub_id, project_id))
     if not sub: raise HTTPException(404, "Integration not found")
@@ -18819,7 +19449,7 @@ class IntegrationRequestBody(BaseModel):
 def request_integration(body: IntegrationRequestBody,
                         project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     conn_name = (body.connector or "").strip()[:60]
     if not conn_name:
         raise HTTPException(400, "Connector name required")
@@ -18855,7 +19485,7 @@ class DocumentSettingsRequest(BaseModel):
 @app.get("/api/document-settings")
 def document_settings_get(project_id: int = Query(...),
                           user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT * FROM crm_document_settings WHERE project_id=%s", (project_id,))
     if not row:
         return {
@@ -18872,7 +19502,7 @@ def document_settings_get(project_id: int = Query(...),
 def document_settings_save(req: DocumentSettingsRequest,
                            project_id: int = Query(...),
                            user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     allowed_styles = {"modern", "classic", "minimal"}
     if req.style is not None and req.style not in allowed_styles:
         raise HTTPException(400, f"Style must be one of {sorted(allowed_styles)}")
@@ -18963,7 +19593,7 @@ def _send_template_email(project_id, etype, to, variables, *, from_name=None, fr
 
 @app.get("/api/email-templates")
 def email_templates_list(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     items = []
     for etype, meta in EMAIL_TYPES.items():
         subject, blocks, custom = _resolve_email_template(project_id, etype)
@@ -18974,7 +19604,7 @@ def email_templates_list(project_id: int = Query(...), user: dict = Depends(get_
 
 @app.get("/api/email-templates/{etype}")
 def email_template_get(etype: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if etype not in EMAIL_TYPES:
         raise HTTPException(404, "Unknown email type")
     subject, blocks, custom = _resolve_email_template(project_id, etype)
@@ -18987,7 +19617,7 @@ def email_template_get(etype: str, project_id: int = Query(...), user: dict = De
 @app.put("/api/email-templates/{etype}")
 def email_template_save(etype: str, req: EmailTemplateSave,
                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if etype not in EMAIL_TYPES:
         raise HTTPException(404, "Unknown email type")
     cur_subject, cur_blocks, _ = _resolve_email_template(project_id, etype)
@@ -19010,7 +19640,7 @@ def email_template_save(etype: str, req: EmailTemplateSave,
 
 @app.post("/api/email-templates/{etype}/reset")
 def email_template_reset(etype: str, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if etype not in EMAIL_TYPES:
         raise HTTPException(404, "Unknown email type")
     with db_cursor() as (conn, cur):
@@ -19022,14 +19652,14 @@ def email_template_reset(etype: str, project_id: int = Query(...), user: dict = 
 
 @app.get("/api/email-branding")
 def email_branding_get(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     return _resolve_email_branding(project_id)
 
 
 @app.put("/api/email-branding")
 def email_branding_save(req: EmailBrandingSave,
                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     fields = req.model_dump(exclude_unset=True)
     if not fields:
         return {"ok": True}
@@ -19058,7 +19688,7 @@ def email_branding_save(req: EmailBrandingSave,
 @app.post("/api/email-preview")
 def email_preview(req: EmailPreviewRequest,
                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     br = _resolve_email_branding(project_id)
     variables = dict(SAMPLE_VARS.get(req.type, {}))
     html = render_email(req.blocks or [], br, variables, unsubscribe_url="#")
@@ -19228,14 +19858,14 @@ def _start_email_campaign_scheduler():
 
 @app.get("/api/email-campaigns")
 def email_campaigns_list(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all("SELECT * FROM crm_email_campaigns WHERE project_id=%s ORDER BY created_at DESC", (project_id,))
     return {"items": [_campaign_out(r) for r in rows]}
 
 
 @app.post("/api/email-campaigns")
 def email_campaign_create(req: CampaignSave, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     status, next_run = _campaign_compute_schedule(project_id, req.schedule_type or "now",
                                                   req.scheduled_at, req.recur_dow, req.recur_time)
     with db_cursor() as (conn, cur):
@@ -19254,7 +19884,7 @@ def email_campaign_create(req: CampaignSave, project_id: int = Query(...), user:
 
 @app.get("/api/email-campaigns/{cid}")
 def email_campaign_get(cid: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
     if not row:
         raise HTTPException(404, "Campaign not found")
@@ -19263,7 +19893,7 @@ def email_campaign_get(cid: int, project_id: int = Query(...), user: dict = Depe
 
 @app.put("/api/email-campaigns/{cid}")
 def email_campaign_update(cid: int, req: CampaignSave, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     existing = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
     if not existing:
         raise HTTPException(404, "Campaign not found")
@@ -19292,7 +19922,7 @@ def email_campaign_update(cid: int, req: CampaignSave, project_id: int = Query(.
 
 @app.delete("/api/email-campaigns/{cid}")
 def email_campaign_delete(cid: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
         conn.commit()
@@ -19302,7 +19932,7 @@ def email_campaign_delete(cid: int, project_id: int = Query(...), user: dict = D
 @app.post("/api/email-campaigns/{cid}/send-now")
 def email_campaign_send_now(cid: int, background_tasks: BackgroundTasks,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
     if not row:
         raise HTTPException(404, "Campaign not found")
@@ -19313,7 +19943,7 @@ def email_campaign_send_now(cid: int, background_tasks: BackgroundTasks,
 @app.post("/api/email-campaigns/{cid}/test")
 def email_campaign_test(cid: int, project_id: int = Query(...),
                         email: str = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
     if not row:
         raise HTTPException(404, "Campaign not found")
@@ -19357,7 +19987,7 @@ def patch_order_shipping(order_id: int, body: ShippingPatchBody,
     separate from PATCH /api/orders/{id} (status update) to avoid
     accidentally triggering stock side-effects when the merchant is
     just typing in a tracking number."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     fields = body.model_dump(exclude_unset=True)
     # Sanitize + clamp numeric ranges.
     if "tracking_number" in fields:
@@ -19577,7 +20207,7 @@ def get_order_shipping_label(order_id: int, project_id: int = Query(...),
                              user: dict = Depends(get_current_user)):
     """Single-order shipping label PDF. `format` ∈
     thermal_100x150 | a4_1 | a4_2 | a4_4."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if format not in ("thermal_100x150", "a4_1", "a4_2", "a4_4"):
         raise HTTPException(400, "Invalid format")
     label = _resolve_label_payload(project_id, order_id)
@@ -19608,7 +20238,7 @@ def post_bulk_shipping_labels(body: BulkLabelBody,
     every selected order's label(s) in sequence. Honours per-order
     package_count (an order with package_count=3 contributes 3 pages
     with 1/3, 2/3, 3/3 indices)."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     fmt = body.format or "thermal_100x150"
     if fmt not in ("thermal_100x150", "a4_1", "a4_2", "a4_4"):
         raise HTTPException(400, "Invalid format")
@@ -19647,7 +20277,7 @@ def list_notifications(project_id: Optional[int] = Query(None), unread_only: boo
     where = ["user_id = %s"]
     params: list = [user["id"]]
     if project_id is not None:
-        require_team_member_or_owner(user, project_id)
+        require_page_auto(user, project_id)
         where.append("(project_id = %s OR project_id IS NULL)")
         params.append(project_id)
     if unread_only:
@@ -19723,7 +20353,7 @@ _CUSTOMER_SORTS = {
 def list_customers(project_id: int = Query(...), search: str = Query(""),
                    sort: str = Query("recent"), limit: int = Query(40),
                    offset: int = Query(0), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page(user, project_id, "customers", "view")
     limit  = min(max(1, int(limit)), 100)
     offset = max(0, int(offset))
     order_by = _CUSTOMER_SORTS.get(sort, _CUSTOMER_SORTS["recent"])
@@ -19778,7 +20408,7 @@ def list_customers(project_id: int = Query(...), search: str = Query(""),
 @app.get("/api/customers/{cust_id}")
 def get_customer(cust_id: int, project_id: int = Query(...),
                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page(user, project_id, "customers", "view")
     u = db_one(
         "SELECT id, name, email, phone, avatar_url, is_guest, phone_verified,"
         "       oauth_provider, created_at, last_login_at"
@@ -19958,7 +20588,7 @@ def get_project_email(project_id: int) -> tuple[str, str]:
 @app.get("/api/analytics/overview")
 def analytics_overview(project_id: int = Query(...), period: str = Query("30d"),
                        user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     prev_start = start - (end - start)
@@ -20096,7 +20726,7 @@ def analytics_funnel(project_id: int = Query(...), period: str = Query("30d"),
     naturally narrows: visitors ≥ viewers ≥ ATC ≥ buyers in normal
     traffic patterns (drop-off shows real conversion gaps, not noise
     from refresh-spam)."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # Identity expression — used at every step so the four numbers are
@@ -20174,7 +20804,7 @@ def analytics_top_products(project_id: int = Query(...), period: str = Query("30
                            by: str = Query("revenue"),  # revenue | margin | units
                            limit: int = Query(10),
                            user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     limit = min(max(1, int(limit)), 50)
@@ -20232,7 +20862,7 @@ def analytics_margin(project_id: int = Query(...), period: str = Query("1mo"),
     Margin % is the single most actionable profitability number — a
     product with 80% margin can absorb shipping, returns and ads; 5% margin
     can't. Revenue alone hides this."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # Inverted layout — start from products / variations / SKUs and
@@ -20375,7 +21005,7 @@ def analytics_margin(project_id: int = Query(...), period: str = Query("1mo"),
 @app.get("/api/analytics/inventory-health")
 def analytics_inventory_health(project_id: int = Query(...),
                                user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     # `products.low_stock_threshold` is DEFAULT 0 (NOT NULL); a value of 0
     # means "not configured" so we fall back to the project-wide default
     # of 10. This must match LOW_STOCK_THRESHOLD in the Inventory page
@@ -20428,7 +21058,7 @@ def analytics_revenue_over_time(
     All datetimes are coerced to UTC-aware before any Python comparison
     to avoid the naive-vs-aware TypeError that bit us when we tried to
     `max(cap_start, oldest)` directly."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if granularity not in ("day", "week", "month"):
         granularity = "day"
 
@@ -20537,7 +21167,7 @@ def analytics_orders_on_day(
     that day's revenue. Cancelled / refunded orders + non-completed
     bookings excluded so totals add back up to the chart bucket.
     """
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not re.match(r'^\d{4}-\d{2}-\d{2}$', day or ''):
         raise HTTPException(400, "day must be YYYY-MM-DD")
     tz = get_project_timezone(project_id)
@@ -20604,7 +21234,7 @@ def analytics_orders_on_day(
 @app.get("/api/analytics/revenue-by-category")
 def analytics_revenue_by_category(project_id: int = Query(...), period: str = Query("1mo"),
                                   user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     rows = db_all(
@@ -20631,7 +21261,7 @@ def analytics_funnel_dynamics(project_id: int = Query(...), period: str = Query(
     """Daily conversion ratios — visit→atc, atc→paid, overall. Lets the
     storefront-owner see if a marketing campaign improves the *rate*, not
     just the absolute number. Series length = (period in days)."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # Per-day buckets — same per-user dedup logic as the headline funnel
@@ -20703,7 +21333,7 @@ def analytics_heatmap(project_id: int = Query(...), period: str = Query("2mo"),
                       user: dict = Depends(get_current_user)):
     """7×24 grid — day_of_week × hour_of_day. Cell value = order count.
     Postgres date parts: dow Sun=0, hour 0–23."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     rows = db_all(
@@ -20749,7 +21379,7 @@ def analytics_customer_types(
     order (status NOT IN cancelled/refunded) lands. Cancelled-then-paid
     sequences correctly count the SECOND order as new (their first
     paid)."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
 
     def _aware(dt):
         if dt is None: return None
@@ -20848,7 +21478,7 @@ def analytics_customer_types(
 def analytics_top_customers(project_id: int = Query(...), period: str = Query("1mo"),
                             limit: int = Query(10),
                             user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     rows = db_all(
@@ -20881,7 +21511,7 @@ def analytics_geographic(project_id: int = Query(...), period: str = Query("1mo"
     as the city (storefront enforces "City, Street, ZIP" pattern).
     Imperfect but good enough for a top-cities widget on the dashboard;
     a structured `shipping_address_components` JSONB column is in backlog."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     rows = db_all(
@@ -20916,7 +21546,7 @@ def analytics_cohort_retention(project_id: int = Query(...), months: int = Query
     30 min by a background task) — pre-aggregated, ~5 ms response on a
     50k-order DB vs ~2.5 s for the live query. The 30-min staleness is
     fine for retention which is fundamentally month-scale data."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     months = max(2, min(24, int(months)))
     cohorts = db_all(
         "SELECT cohort_month AS cohort, month_offset, active_users AS active"
@@ -20953,7 +21583,7 @@ def analytics_returns(project_id: int = Query(...), period: str = Query("1mo"),
                       user: dict = Depends(get_current_user)):
     """Returns dashboard — rate %, reasons distribution, avg processing
     time (requested → refunded), and per-product return rate top-N."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     delivered = db_one(
@@ -21032,7 +21662,7 @@ def analytics_returns(project_id: int = Query(...), period: str = Query("1mo"),
 @app.get("/api/analytics/reviews-quality")
 def analytics_reviews_quality(project_id: int = Query(...), period: str = Query("1mo"),
                               user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # All reviews for the project (not just period) for the avg / distribution
@@ -21093,7 +21723,7 @@ def analytics_bookings(project_id: int = Query(...), period: str = Query("1mo"),
     """Bookings vertical analytics. Always returns the same shape so the
     frontend renders the section unconditionally — empty arrays just mean
     the section displays "No bookings in this period"."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # Total per status (helps no-show + cancellation rate calculations).
@@ -21171,7 +21801,7 @@ def analytics_digital(project_id: int = Query(...), period: str = Query("1mo"),
     digital revenue separately in the Overview KPIs — they're folded in
     — but this section breaks them out for verticals where downloadable
     files are the main product line."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # KPI totals — DISTINCT oh.id to avoid double-counting when an order
@@ -21282,7 +21912,7 @@ def analytics_promo_performance(project_id: int = Query(...), period: str = Quer
     not exact (we don't snapshot the discount at order time) but close
     enough for analytics until a proper `order_history.promo_discount`
     column is added."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # Diagnostic: how many promo_code_uses rows exist for this project,
@@ -21366,7 +21996,7 @@ def analytics_operations(project_id: int = Query(...), period: str = Query("1mo"
                          user: dict = Depends(get_current_user)):
     """Operational SLA metrics — order-to-ship, ship-to-delivered, abandoned
     cart %, and cart-to-paid median for converted buyers."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # `order_history.shipped_at` column doesn't exist in current schema —
@@ -21506,7 +22136,7 @@ def analytics_popular_products(project_id: int = Query(...), period: str = Query
                                user: dict = Depends(get_current_user)):
     """4-in-1 endpoint for the Popular products quadrant section: top by
     revenue, top by units, most-favorited, slow movers (no sales >90 days)."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     by_revenue = db_all(
@@ -21569,7 +22199,7 @@ def analytics_stock_value_trend(project_id: int = Query(...), period: str = Quer
                                 user: dict = Depends(get_current_user)):
     """Daily total stock value (Σ quantity_remaining × cost_per_unit) from
     inventory_batches. If no batches exist, falls back to L2 stock × L2 cost."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # Snapshot at the END of each day. We approximate using batches' current
@@ -21597,7 +22227,7 @@ def analytics_countries(project_id: int = Query(...), period: str = Query("1mo")
                         user: dict = Depends(get_current_user)):
     """Top countries by unique visitors. NULL country_code (old rows or
     requests without CF / MaxMind) is bucketed as 'Unknown'."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     rows = db_all(
@@ -21615,7 +22245,7 @@ def analytics_countries(project_id: int = Query(...), period: str = Query("1mo")
 @app.get("/api/analytics/devices")
 def analytics_devices(project_id: int = Query(...), period: str = Query("1mo"),
                       user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     # Exclude rows where enrichment didn't fire (pre-2026-05 visits had
@@ -21650,7 +22280,7 @@ def analytics_devices(project_id: int = Query(...), period: str = Query("1mo"),
 @app.get("/api/analytics/traffic-sources")
 def analytics_traffic_sources(project_id: int = Query(...), period: str = Query("1mo"),
                               user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     sources = db_all(
@@ -21694,7 +22324,7 @@ def analytics_traffic_sources(project_id: int = Query(...), period: str = Query(
 @app.get("/api/analytics/search-insights")
 def analytics_search_insights(project_id: int = Query(...), period: str = Query("1mo"),
                               user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     tz = get_project_timezone(project_id)
     start, end = _date_range_for_period(period, tz)
     top = db_all(
@@ -21890,6 +22520,119 @@ def org_analytics(org_id: int, period: str = Query("30d"),
         "totals": {"current": cur_tot, "delta": delta},
         "projects": proj_rows,
         "series": series,
+    }
+
+
+@app.get("/api/orgs/{org_id}/revenue-over-time")
+def org_revenue_over_time(
+    org_id: int,
+    granularity: str = Query("day"),
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    """Chunked, FX-aggregated revenue series across EVERY project in the org.
+
+    Same contract as the project `/api/analytics/revenue-over-time` so the org
+    page can reuse the scrollable LineChart with lazy load-more: accepts an ISO
+    `from`/`to` window, returns gap-filled buckets + `oldest_order` (so the
+    frontend stops paging at the first order). Each project keeps its own
+    currency, so per-(project, bucket) revenue is FX-converted into the org's
+    display currency before being summed into the org-wide bucket."""
+    require_org_owner(user, org_id)
+    if granularity not in ("day", "week", "month"):
+        granularity = "day"
+    org = db_one("SELECT id, currency FROM crm_organizations WHERE id=%s", (org_id,))
+    if not org:
+        raise HTTPException(404, "Organization not found")
+    org_ccy = (org.get("currency") or "USD").upper()
+
+    def _aware(dt):
+        if dt is None: return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+    def _parse_iso(s):
+        if not s: return None
+        try:
+            return _aware(datetime.fromisoformat(s.replace('Z', '+00:00')))
+        except Exception:
+            return None
+
+    projects = db_all("SELECT id, currency FROM crm_projects WHERE org_id=%s", (org_id,))
+    if not projects:
+        return {"buckets": [], "granularity": granularity, "oldest_order": None,
+                "currency": org_ccy, "timezone": "UTC"}
+    pids = [p["id"] for p in projects]
+    pccy = {p["id"]: (p.get("currency") or "USD").upper() for p in projects}
+    tz = get_project_timezone(pids[0])
+
+    now = datetime.now(timezone.utc)
+    end_dt   = _parse_iso(to) or now
+    default_span = {"day": timedelta(days=90),
+                    "week": timedelta(days=365),
+                    "month": timedelta(days=365 * 3)}[granularity]
+    start_dt = _parse_iso(from_) or (end_dt - default_span)
+
+    oldest_row = db_one(
+        "SELECT MIN(created_at) AS d FROM order_history WHERE project_id = ANY(%s)",
+        (pids,))
+    oldest = _aware((oldest_row or {}).get("d"))
+    if oldest is not None and start_dt < oldest:
+        start_dt = oldest
+    if start_dt >= end_dt:
+        return {"buckets": [], "granularity": granularity,
+                "oldest_order": oldest.isoformat() if oldest else None,
+                "currency": org_ccy, "timezone": tz}
+
+    interval_lit = {"day": "1 day", "week": "1 week", "month": "1 month"}[granularity]
+    # Bucket grid (gap-fill) — every bucket in [start, end] at this granularity,
+    # so no-sale buckets still render a $0 baseline tick.
+    grid = db_all(
+        f"SELECT g.bucket AS bucket FROM generate_series("
+        f"  date_trunc('{granularity}', (%s::timestamptz) AT TIME ZONE %s),"
+        f"  date_trunc('{granularity}', (%s::timestamptz) AT TIME ZONE %s),"
+        f"  '{interval_lit}'::interval) AS g(bucket)",
+        (start_dt, tz, end_dt, tz))
+    agg = {r["bucket"].isoformat(): {"revenue": 0.0, "orders": 0} for r in grid}
+
+    # Per-(project, bucket) revenue — orders + completed bookings — so each
+    # project's amount is FX-converted to the org currency before summing.
+    rows = db_all(
+        f"WITH revenue_stream AS ("
+        f"  SELECT oh.project_id, oh.created_at AS at,"
+        f"         COALESCE(oh.total_amount,0)::numeric AS amount, oh.id AS id"
+        f"    FROM order_history oh"
+        f"   WHERE oh.project_id = ANY(%s)"
+        f"     AND oh.status NOT IN ('cancelled','refunded')"
+        f"  UNION ALL"
+        f"  SELECT b.project_id, b.starts_at AS at,"
+        f"         COALESCE(s.price, b.freeform_price, 0)::numeric AS amount, b.id AS id"
+        f"    FROM bookings b LEFT JOIN booking_services s ON s.id = b.service_id"
+        f"   WHERE b.project_id = ANY(%s) AND b.status = 'completed'"
+        f")"
+        f"SELECT rs.project_id,"
+        f"       date_trunc('{granularity}', rs.at AT TIME ZONE %s) AS bucket,"
+        f"       COALESCE(SUM(rs.amount),0) AS revenue, COUNT(rs.id) AS orders"
+        f"  FROM revenue_stream rs"
+        f" WHERE rs.at >= %s AND rs.at < %s"
+        f" GROUP BY rs.project_id, bucket",
+        (pids, pids, tz, start_dt, end_dt))
+    for r in rows:
+        key  = r["bucket"].isoformat()
+        slot = agg.setdefault(key, {"revenue": 0.0, "orders": 0})
+        slot["revenue"] += _fx_convert(float(r["revenue"] or 0), pccy[r["project_id"]], org_ccy)
+        slot["orders"]  += int(r["orders"] or 0)
+
+    buckets = [
+        {"bucket": k, "revenue": round(agg[k]["revenue"], 2), "orders": agg[k]["orders"]}
+        for k in sorted(agg)
+    ]
+    return {
+        "buckets":      buckets,
+        "granularity":  granularity,
+        "oldest_order": oldest.isoformat() if oldest else None,
+        "currency":     org_ccy,
+        "timezone":     tz,
     }
 
 
@@ -22127,7 +22870,7 @@ class GoalRequest(BaseModel):
 
 @app.get("/api/goals")
 def goals_list(project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT * FROM crm_goals WHERE project_id=%s ORDER BY is_active DESC, created_at DESC",
         (project_id,)
@@ -22233,7 +22976,7 @@ def goals_progress(goal_id: int, project_id: int = Query(...),
                    user: dict = Depends(get_current_user)):
     """On-demand fresh progress lookup — fires the achievement webhook if
     the goal just crossed the threshold on this call."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     g = db_one("SELECT * FROM crm_goals WHERE id=%s AND project_id=%s",
                (goal_id, project_id))
     if not g: raise HTTPException(404, "Goal not found")
@@ -22318,8 +23061,8 @@ async def project_events_ws(ws: WebSocket, project_id: int):
     try:
         row = db_one(
             "SELECT 1 FROM crm_projects p"
-            " LEFT JOIN crm_team_members tm ON tm.project_id = p.id AND tm.user_id = %s"
-            " WHERE p.id = %s AND (p.crm_user_id = %s OR tm.user_id = %s)"
+            " LEFT JOIN crm_team_members tm ON tm.project_id = p.id AND tm.crm_user_id = %s"
+            " WHERE p.id = %s AND (p.crm_user_id = %s OR tm.crm_user_id = %s)"
             " LIMIT 1",
             (user_id, project_id, user_id, user_id)
         )
@@ -22498,7 +23241,7 @@ class AlertCreateBody(BaseModel):
 
 @app.get("/api/projects/{project_id}/alerts")
 def list_alerts(project_id: int, user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT id, type, threshold, email, is_active, last_fired_at, created_at"
         "  FROM crm_alerts WHERE project_id=%s ORDER BY created_at DESC",
@@ -22519,7 +23262,7 @@ def list_alerts(project_id: int, user: dict = Depends(get_current_user)):
 @app.post("/api/projects/{project_id}/alerts")
 def create_alert(project_id: int, body: AlertCreateBody,
                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     if body.type not in ALERT_TYPES:
         raise HTTPException(400, f"Unknown alert type. Valid: {sorted(ALERT_TYPES.keys())}")
     if not body.email or '@' not in body.email:
@@ -22539,7 +23282,7 @@ def create_alert(project_id: int, body: AlertCreateBody,
 @app.patch("/api/projects/{project_id}/alerts/{alert_id}")
 def update_alert(project_id: int, alert_id: int, body: AlertCreateBody,
                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     with db_cursor() as (conn, cur):
         cur.execute(
             "UPDATE crm_alerts"
@@ -22557,7 +23300,7 @@ def update_alert(project_id: int, alert_id: int, body: AlertCreateBody,
 @app.delete("/api/projects/{project_id}/alerts/{alert_id}")
 def delete_alert(project_id: int, alert_id: int,
                  user: dict = Depends(get_current_user)):
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     with db_cursor() as (conn, cur):
         cur.execute(
             "DELETE FROM crm_alerts WHERE id=%s AND project_id=%s",
@@ -22573,7 +23316,7 @@ def list_alert_fires(project_id: int, limit: int = Query(20),
     """Recent alert firings — what tripped, when. Capped at 20 by
     default so the audit list stays readable. Cascades cleanly when
     the underlying alert is deleted (ON DELETE CASCADE on alert_id)."""
-    require_team_member_or_owner(user, project_id)
+    require_page_auto(user, project_id)
     rows = db_all(
         "SELECT id, alert_id, message, metric_val, fired_at"
         "  FROM crm_alert_fires"

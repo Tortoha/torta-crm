@@ -66,8 +66,8 @@ const PERIOD_ORDER = PERIOD_OPTIONS
 
 // Detect an encoded custom-range period like "2026-04-01_2026-04-15".
 const CUSTOM_PERIOD_RE = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
-const isCustomPeriod = (period) => CUSTOM_PERIOD_RE.test(period || '');
-const parseCustomPeriod = (period) => {
+export const isCustomPeriod = (period) => CUSTOM_PERIOD_RE.test(period || '');
+export const parseCustomPeriod = (period) => {
   const m = (period || '').match(CUSTOM_PERIOD_RE);
   return m ? { from: m[1], to: m[2] } : null;
 };
@@ -79,7 +79,7 @@ const formatCustomPeriod = (fromISO, toISO) => `${fromISO}_${toISO}`;
 // blend into the page background; only the inner cells (KPIs, mini-lists,
 // tables) are white tiles with shadow. The `Icon` prop is accepted but
 // intentionally ignored — design called for plain text headings.
-function SectionShell({ title, periodValue, onPeriodChange, hidePeriod, headerControls, children }) {
+export function SectionShell({ title, periodValue, onPeriodChange, hidePeriod, headerControls, children }) {
   const [customOpen, setCustomOpen] = useState(false);
   const handlePeriodChange = (v) => {
     if (v === 'custom') {
@@ -1021,8 +1021,8 @@ const PERIOD_DAYS = {
   '1d': 1, '3d': 3, '1w': 7, '2w': 14, '1mo': 30, '2mo': 60,
   '3mo': 90, 'season': 90, 'halfyear': 180, '1y': 365, '2y': 730,
 };
-const GRAN_DAYS = { day: 1, week: 7, month: 30 };
-function periodToViewportBuckets(period, gran) {
+export const GRAN_DAYS = { day: 1, week: 7, month: 30 };
+export function periodToViewportBuckets(period, gran) {
   const days = PERIOD_DAYS[period] || 30;
   const granDays = GRAN_DAYS[gran]  || 1;
   return Math.max(1, Math.round(days / granDays));
@@ -1032,7 +1032,7 @@ function periodToViewportBuckets(period, gran) {
 // so each chunk is roughly "one viewport's worth + headroom" — enough
 // that the user gets to scroll a meaningful distance before we fetch
 // the next chunk, but small enough that the first load is fast.
-const CHUNK_DAYS = { day: 60, week: 365, month: 365 * 2 };
+export const CHUNK_DAYS = { day: 60, week: 365, month: 365 * 2 };
 
 function RevenueOverTimeSection({ projectId }) {
   const [period, setPeriod] = useState('1mo');

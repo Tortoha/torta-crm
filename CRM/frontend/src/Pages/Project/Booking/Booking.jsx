@@ -87,7 +87,7 @@ const fmtMoney = n => formatMoney(n, __BOOKING_CURRENCY);
 
 // ─── Tab Switcher (mirror of Authentication) ──────────────────
 
-function TabSwitcher({ tab, setTab }) {
+function TabSwitcher({ tabs, tab, setTab }) {
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -106,17 +106,10 @@ function TabSwitcher({ tab, setTab }) {
     return () => cancelAnimationFrame(raf);
   }, [curTab, tab]);
 
-  const TABS = [
-    { key: 'bookings', label: 'Bookings', Icon: CalendarBlank },
-    { key: 'services', label: 'Services', Icon: Briefcase     },
-    { key: 'staff',    label: 'Staff',    Icon: Users          },
-    { key: 'settings', label: 'Settings', Icon: GearSix       },
-  ];
-
   return (
     <div className="auth-tab-switcher" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="auth-tab-indicator" />
-      {TABS.map(({ key, label, Icon }) => (
+      {tabs.map(({ key, label, Icon }) => (
         <button key={key} ref={el => { btnRefs.current[key] = el; }}
           className={`auth-tab-btn${curTab === key ? ' auth-tab-btn--active' : ''}`}
           onMouseEnter={() => setHovered(key)}
@@ -964,7 +957,14 @@ function RulesEditor({ projectId, showToast, onSaved }) {
 // ═══════════════════════════════════════════════════════════════
 
 function Booking() {
-  const { projectId, project } = useOutletContext();
+  const { projectId, project, access } = useOutletContext();
+  const canView = (p) => !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[p]);
+  const bookingTabs = [
+    canView('booking')          && { key: 'bookings', label: 'Bookings', Icon: CalendarBlank },
+    canView('booking_services') && { key: 'services', label: 'Services', Icon: Briefcase },
+    canView('booking_staff')    && { key: 'staff',    label: 'Staff',    Icon: Users },
+    canView('booking_settings') && { key: 'settings', label: 'Settings', Icon: GearSix },
+  ].filter(Boolean);
   // Sync the module-level currency so fmtMoney() inside Service/Staff
   // sub-components reuses the project's choice without prop drilling.
   // Layout effect → fires before paint so the first render already uses
@@ -978,7 +978,7 @@ function Booking() {
   };
   const pq = `?project_id=${projectId}`;
 
-  const [tab,       setTab]       = useState('bookings');
+  const [tab,       setTab]       = useState(bookingTabs[0]?.key || 'bookings');
   const [bookings,  setBookings]  = useState([]);
   const [services,  setServices]  = useState([]);
   const [staff,     setStaff]     = useState([]);
@@ -1286,7 +1286,7 @@ function Booking() {
     <>
       {/* ── Sticky tab switcher ── */}
       <div className="auth-tab-wrapper">
-        <TabSwitcher tab={tab} setTab={setTab} />
+        {bookingTabs.length > 1 && <TabSwitcher tabs={bookingTabs} tab={tab} setTab={setTab} />}
       </div>
 
       <div className="prod-page bk-page">

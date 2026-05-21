@@ -15,12 +15,15 @@ const Register      = lazy(() => import('./Register.jsx'));
 const Verification  = lazy(() => import('./Verification.jsx'));
 const Forgot        = lazy(() => import('./Forgot.jsx'));
 const Reset         = lazy(() => import('./Reset.jsx'));
+const Invite        = lazy(() => import('./Invite.jsx'));
 // Dashboard
 const Dashboard     = lazy(() => import('./Pages/Dashboard/Dashboard.jsx'));
 // Organization
 const Organization  = lazy(() => import('./Pages/Organization/Organization.jsx'));
 const OrgAnalytics  = lazy(() => import('./Pages/Organization/OrgAnalytics.jsx'));
 const OrgPayments   = lazy(() => import('./Pages/Organization/OrgPayments.jsx'));
+const OrgTeam       = lazy(() => import('./Pages/Organization/OrgTeam.jsx'));
+const OrgSettings   = lazy(() => import('./Pages/Organization/OrgSettings.jsx'));
 // Project
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
 const Analytics     = lazy(() => import('./Pages/Project/Analytics.jsx'));
@@ -55,7 +58,6 @@ const ProductsSettings  = lazy(() => import('./Pages/Project/Products/ProductsSe
 // Settings
 const AccountSettings  = lazy(() => import('./Pages/Settings/Settings.jsx'));
 const SecuritySettings = lazy(() => import('./Pages/Settings/Security.jsx'));
-const SettingsStub     = lazy(() => import('./Pages/Settings/SettingsStub.jsx'));
 
 function PageLoader() {
   return (
@@ -77,12 +79,14 @@ function App() {
           <Route path="/registration/verification" element={<Verification />} />
           <Route path="/forgot-password"           element={<Forgot />} />
           <Route path="/reset-password/:token"     element={<Reset />} />
+          <Route path="/invite/:token"             element={<Invite />} />
           <Route path="/dashboard"                 element={<Dashboard />} />
           <Route path="/org/:orgSlug"              element={<OrgLayout />}>
             <Route index                           element={<Organization />} />
             <Route path="analytics"               element={<OrgAnalytics />} />
             <Route path="payments"                element={<OrgPayments />} />
-            <Route path="settings"                element={<Navigate to=".." relative="path" replace />} />
+            <Route path="team"                    element={<OrgTeam />} />
+            <Route path="settings"                element={<OrgSettings />} />
           </Route>
           <Route path="/project/:apiKey"           element={<Layout />}>
             <Route index            element={<Project />} />
@@ -126,8 +130,8 @@ function App() {
           <Route path="/settings" element={<SettingsLayout />}>
             <Route path="account"       element={<AccountSettings />} />
             <Route path="security"      element={<SecuritySettings />} />
-            <Route path="preferences"   element={<SettingsStub title="Preferences" />} />
-            <Route path="notifications" element={<SettingsStub title="Notifications" />} />
+            <Route path="preferences"   element={<Navigate to="/settings/account" replace />} />
+            <Route path="notifications" element={<Navigate to="/settings/account" replace />} />
           </Route>
           <Route path="/product/:productHash" element={<ProductLayout />}>
             <Route index                element={<ProductOverview />} />

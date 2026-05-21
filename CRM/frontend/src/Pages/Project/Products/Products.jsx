@@ -12,17 +12,22 @@ export default function Products() {
   const base       = `/project/${apiKey}/products`;
 
   const TABS = [
-    { key: 'list',          to: base,                     label: 'Products',     Icon: Tag          },
-    { key: 'categories',    to: `${base}/categories`,     label: 'Categories',   Icon: FolderSimple },
-    { key: 'inventory',     to: `${base}/inventory`,      label: 'Inventory',    Icon: ListBullets  },
-    { key: 'batches',       to: `${base}/batches`,        label: 'Batches',      Icon: Stack        },
-    { key: 'promo-codes',   to: `${base}/promo-codes`,    label: 'Promo codes',  Icon: Ticket       },
-    { key: 'discounts',     to: `${base}/discounts`,      label: 'Discount',     Icon: Percent      },
-    { key: 'tier-pricing',  to: `${base}/tier-pricing`,   label: 'Tier pricing', Icon: ChartBar     },
-    { key: 'warehouses',    to: `${base}/warehouses`,     label: 'Warehouses',   Icon: Warehouse    },
-    { key: 'archive',       to: `${base}/archive`,        label: 'Archive',      Icon: Archive      },
-    { key: 'settings',      to: `${base}/settings`,       label: 'Settings',     Icon: GearSix      },
+    { key: 'list',          to: base,                     label: 'Products',     Icon: Tag,          page: 'products' },
+    { key: 'categories',    to: `${base}/categories`,     label: 'Categories',   Icon: FolderSimple, page: 'products' },
+    { key: 'inventory',     to: `${base}/inventory`,      label: 'Inventory',    Icon: ListBullets,  page: 'inventory' },
+    { key: 'batches',       to: `${base}/batches`,        label: 'Batches',      Icon: Stack,        page: 'batches' },
+    { key: 'promo-codes',   to: `${base}/promo-codes`,    label: 'Promo codes',  Icon: Ticket,       page: 'promo_codes' },
+    { key: 'discounts',     to: `${base}/discounts`,      label: 'Discount',     Icon: Percent,      page: 'discounts' },
+    { key: 'tier-pricing',  to: `${base}/tier-pricing`,   label: 'Tier pricing', Icon: ChartBar,     page: 'tier_pricing' },
+    { key: 'warehouses',    to: `${base}/warehouses`,     label: 'Warehouses',   Icon: Warehouse,    page: 'warehouses' },
+    { key: 'archive',       to: `${base}/archive`,        label: 'Archive',      Icon: Archive,      page: 'archive' },
+    { key: 'settings',      to: `${base}/settings`,       label: 'Settings',     Icon: GearSix,      page: 'product_settings' },
   ];
+  // Hide sub-tabs the member's role can't view; redirect off a hidden one.
+  const access = ctx?.access;
+  const canViewTab = (page) =>
+    !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[page]);
+  const visibleTabs = TABS.filter(t => canViewTab(t.page));
   const path = location.pathname;
   const activeKey =
     path.endsWith('/categories')   ? 'categories'   :
@@ -42,9 +47,17 @@ export default function Products() {
     'tier-pricing': 'Tier pricing', warehouses: 'Warehouses',
   };
 
+  useEffect(() => {
+    if (!access || access.is_owner) return;
+    const active = TABS.find(t => t.key === activeKey);
+    if (active && !canViewTab(active.page) && visibleTabs.length > 0) {
+      navigate(visibleTabs[0].to, { replace: true });
+    }
+  }, [activeKey, access]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="prod-page-wrap">
-      <TabSwitcher tabs={TABS} activeKey={activeKey} onPick={to => navigate(to)} />
+      <TabSwitcher tabs={visibleTabs} activeKey={activeKey} onPick={to => navigate(to)} />
       <h1 className="crm-page-title">{titleByKey[activeKey]}</h1>
       <Outlet context={ctx} />
     </div>

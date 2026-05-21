@@ -57,7 +57,7 @@ const ROW_TILT = {
 
 // ─── Tab Switcher ─────────────────────────────────────────────────────────────
 
-function TabSwitcher({ tab, setTab }) {
+function TabSwitcher({ tabs, tab, setTab }) {
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -76,15 +76,10 @@ function TabSwitcher({ tab, setTab }) {
     return () => cancelAnimationFrame(raf);
   }, [curTab, tab]);
 
-  const TABS = [
-    { key: 'providers', label: 'Auth Providers',    Icon: ShieldCheck },
-    { key: 'urls',      label: 'URL Configuration', Icon: Globe },
-  ];
-
   return (
     <div className="auth-tab-switcher" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="auth-tab-indicator" />
-      {TABS.map(({ key, label, Icon }) => (
+      {tabs.map(({ key, label, Icon }) => (
         <button key={key} ref={el => { btnRefs.current[key] = el; }}
           className={`auth-tab-btn${curTab === key ? ' auth-tab-btn--active' : ''}`}
           onMouseEnter={() => setHovered(key)}
@@ -345,8 +340,13 @@ function UrlConfigPanel({ projectId }) {
 // ─── Authentication ───────────────────────────────────────────────────────────
 
 function Authentication() {
-  const { projectId } = useOutletContext();
-  const [tab,             setTab]             = useState('providers');
+  const { projectId, access } = useOutletContext();
+  const canView = (p) => !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[p]);
+  const authTabs = [
+    canView('auth_providers') && { key: 'providers', label: 'Auth Providers',    Icon: ShieldCheck },
+    canView('url_config')     && { key: 'urls',      label: 'URL Configuration', Icon: Globe },
+  ].filter(Boolean);
+  const [tab,             setTab]             = useState(authTabs[0]?.key || 'providers');
   const [modal,           setModal]           = useState(null); // null | provider.id
   const [googleEnabled,   setGoogleEnabled]   = useState(false);
   const [phoneEnabled,    setPhoneEnabled]    = useState(false);
@@ -408,9 +408,11 @@ function Authentication() {
   return (
     <>
       {/* ── Sticky tab switcher ── */}
-      <div className="auth-tab-wrapper">
-        <TabSwitcher tab={tab} setTab={setTab} />
-      </div>
+      {authTabs.length > 1 && (
+        <div className="auth-tab-wrapper">
+          <TabSwitcher tabs={authTabs} tab={tab} setTab={setTab} />
+        </div>
+      )}
 
       {/* ── Page content ── */}
       <div className="auth-page">

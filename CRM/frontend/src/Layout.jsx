@@ -1,15 +1,43 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Outlet, useNavigate, useParams } from 'react-router-dom';
+import { Outlet, useNavigate, useParams, useLocation } from 'react-router-dom';
 import Sidebar from './Elements/Sidebar.jsx';
 import Header from './Elements/Header.jsx';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
 
+// First URL segment after /project/:apiKey → the permission pages that govern
+// that route ('' = Project Overview index). Section routes list every sub-tab
+// key — the route is allowed if the member can view ANY of them; the page's
+// own TabSwitcher then hides the sub-tabs they can't view.
+const ROUTE_PAGES = {
+  '':               ['overview'],
+  'analytics':      ['analytics'],
+  'alerts':         ['alerts'],
+  'targets':        ['goals'],
+  'products':       ['products', 'inventory', 'batches', 'promo_codes', 'discounts', 'tier_pricing', 'warehouses', 'archive', 'product_settings'],
+  'orders':         ['orders', 'returns'],
+  'customers':      ['customers'],
+  'booking':        ['booking', 'booking_services', 'booking_staff', 'booking_settings'],
+  'chat':           ['chat', 'channels'],
+  'emails':         ['emails'],
+  'authentication': ['auth_providers', 'url_config'],
+  'integrations':   ['integrations'],
+  'documents':      ['documents'],
+  'settings':       ['settings'],
+  'api':            ['api'],
+};
+// Priority order for choosing where to bounce a member with no access here.
+const ROUTE_ORDER = ['', 'products', 'orders', 'customers', 'booking', 'chat',
+  'emails', 'analytics', 'alerts', 'targets', 'authentication', 'integrations',
+  'documents', 'settings', 'api'];
+
 function Layout() {
   const { apiKey } = useParams();
+  const location = useLocation();
   const [user,    setUser]    = useState(null);
   const [project, setProject] = useState(null);
+  const [access,  setAccess]  = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -38,6 +66,13 @@ function Layout() {
     .then(([userData, projectData]) => {
       setUser(userData);
       setProject(projectData);
+      // Resolve the current user's per-project permission map (drives sidebar
+      // gating + the forbidden-page redirect below). Non-fatal: owners get
+      // full access; a 403 here means no access → the redirect sends them out.
+      fetch(`${API_BASE}/api/projects/${projectData.id}/my-access`, { credentials: 'include' })
+        .then(r => (r.ok ? r.json() : null))
+        .then(a => setAccess(a))
+        .catch(() => {});
       // One-shot per-session TZ correction: if this project's booking_settings.timezone
       // is still the default 'UTC' and the merchant is browsing from a different TZ,
       // auto-update so customer-facing slots use the merchant's actual local time.
@@ -100,6 +135,24 @@ function Layout() {
     return () => clearInterval(id);
   }, [project?.id, project?.tz_auto]);
 
+  // Forbidden-page redirect — a member who lands on (or types) a page their
+  // role can't view is bounced to their first allowed page (or the dashboard
+  // if they have none). Owner / not-yet-loaded access is a no-op.
+  useEffect(() => {
+    if (!access || access.is_owner) return;
+    const seg = (location.pathname.match(/^\/project\/[^/]+\/?([^/]*)/)?.[1]) || '';
+    const pages = ROUTE_PAGES[seg];
+    if (!pages) return;                         // unknown route — leave alone
+    const canView = (pgs) => pgs.some(p => {
+      const l = access.permissions?.[p];
+      return l === 'view' || l === 'manage';
+    });
+    if (canView(pages)) return;
+    const target = ROUTE_ORDER.find(rk => ROUTE_PAGES[rk] && canView(ROUTE_PAGES[rk]));
+    if (target != null) navigate(`/project/${apiKey}/${target}`, { replace: true });
+    else                navigate('/dashboard', { replace: true });
+  }, [access, location.pathname, apiKey, navigate]);
+
   if (loading) return (
     <div id="mask" className="mask">
       <svg><circle cx="50" cy="50" r="40" /></svg>
@@ -112,10 +165,10 @@ function Layout() {
     <div className="crm-root" style={{ '--current-sidebar-w': sidebarVar }}>
       <Header user={user} project={project} productContext={productContext} />
       <div className="crm-body">
-        <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} />
+        <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} access={access} />
         <main className="crm-main">
           <div className="crm-content crm-content--wide">
-            <Outlet context={{ projectId: project.id, project, setProductContext: handleSetProductContext }} />
+            <Outlet context={{ projectId: project.id, project, access, setProductContext: handleSetProductContext }} />
           </div>
         </main>
       </div>

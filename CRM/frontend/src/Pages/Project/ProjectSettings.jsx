@@ -42,7 +42,7 @@ const TIMEZONE_PRESETS = [
 
 // ── Shared bulk-style primitives (mirror of ProductsSettings) ───────────
 
-function Section({ icon, title, subtitle, children }) {
+export function Section({ icon, title, subtitle, children }) {
   return (
     <section className="bulk-section">
       <header className="bulk-section-head">
@@ -59,7 +59,7 @@ function Section({ icon, title, subtitle, children }) {
 
 // Save-on-change card — no Apply switch. Modifier `bulk-field--noswitch`
 // shifts the layout to skip the toggle column.
-function FieldCard({ label, hint, children }) {
+export function FieldCard({ label, hint, children }) {
   return (
     <div className="bulk-field bulk-field--noswitch bulk-field--on">
       <div className="bulk-field-head">
@@ -78,7 +78,7 @@ function FieldCard({ label, hint, children }) {
  * + on/off toggles in barcode defaults. Same component as ProductsSettings
  * — kept local here to avoid premature shared-Utils extraction.
  */
-function SegmentSwitch({ value, options, onChange, disabled }) {
+export function SegmentSwitch({ value, options, onChange, disabled }) {
   const indRef = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -128,7 +128,7 @@ function SegmentSwitch({ value, options, onChange, disabled }) {
 //   • Esc → close. Click outside → close.
 //   • Each option supports `subLabel` rendered dim on the right —
 //     used to show currency symbol next to the name.
-function SearchableCombobox({
+export function SearchableCombobox({
   value, options, onChange,
   placeholder = '— Select —',
   searchPlaceholder = 'Search…',

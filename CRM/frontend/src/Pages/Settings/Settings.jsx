@@ -1,119 +1,95 @@
-import { useEffect, useRef, useState } from 'react';
+// Account settings — bulk-style (mirrors Project Settings: Section + FieldCard,
+// save-on-change, toast). Profile (photo / name / email) + Preferences
+// (language / theme). Currency lives on the project & org, not the user account,
+// so it's intentionally not here.
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
-import { Camera, Check } from '@phosphor-icons/react';
+import { Camera, UserCircle, SlidersHorizontal } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import AvatarCropModal from '../../Elements/AvatarCropModal.jsx';
+import { Section, FieldCard, SegmentSwitch, SearchableCombobox } from '../Project/ProjectSettings.jsx';
+import '../../Style/Authentication.css';   // auth-toast / auth-btn-check
+import '../../Style/Products.css';           // bulk-* / cpm-* / crm-input
 import '../../Style/Settings.css';
 
 const LANGUAGES = [
-  { value: 'en', label: 'English' },
-  { value: 'ru', label: 'Русский' },
-  { value: 'kk', label: 'Қазақша' },
+  { value: 'en', label: 'English'  },
+  { value: 'ru', label: 'Русский'  },
+  { value: 'kk', label: 'Қазақша'  },
 ];
 
-const CURRENCIES = [
-  { value: 'USD', label: 'USD — US Dollar' },
-  { value: 'EUR', label: 'EUR — Euro' },
-  { value: 'KZT', label: 'KZT — Tenge' },
-  { value: 'RUB', label: 'RUB — Ruble' },
-];
-
-function InitialsAvatar({ name, size = 80 }) {
-  const initials = (name || '?')
-    .split(' ').filter(Boolean)
-    .map(w => w[0].toUpperCase()).slice(0, 2).join('');
-  const palette = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#f43f5e', '#3b82f6', '#d946ef', '#eab308'];
+function InitialsAvatar({ name, size = 56 }) {
+  const initials = (name || '?').split(' ').filter(Boolean).map(w => w[0].toUpperCase()).slice(0, 2).join('');
+  const palette = ['#0071E3', '#8b5cf6', '#06b6d4', '#10b981', '#f43f5e', '#3b82f6', '#d946ef', '#eab308'];
   const bg = palette[(name?.charCodeAt(0) ?? 0) % palette.length];
   return (
-    <div
-      className="sett-avatar-initials"
-      style={{ width: size, height: size, background: bg, fontSize: size * 0.38 }}
-    >
+    <div className="sett-avatar-initials" style={{ width: size, height: size, background: bg, fontSize: size * 0.38 }}>
       {initials}
     </div>
   );
 }
 
-function Settings() {
+export default function Settings() {
   const { updateUser } = useOutletContext() || {};
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Profile
   const [name, setName]         = useState('');
-  const [nameSaved, setNameSaved] = useState(false);
-  const [nameError, setNameError] = useState('');
-
-  // Preferences
   const [language, setLanguage] = useState('en');
-  const [currency, setCurrency] = useState('USD');
   const [theme, setTheme]       = useState('light');
-  const [prefSaved, setPrefSaved] = useState(false);
-  const [prefError, setPrefError] = useState('');
 
-  // Avatar
   const [avatarUploading, setAvatarUploading] = useState(false);
-  const [avatarError, setAvatarError]         = useState('');
-  // Mirror Header.jsx: if the stored avatar_url returns 404 / dead host,
-  // flip to InitialsAvatar instead of showing browser's broken-image icon.
   const [avatarImgFailed, setAvatarImgFailed] = useState(false);
-  const [cropFile, setCropFile]               = useState(null);
+  const [cropFile, setCropFile] = useState(null);
   const avatarInputRef = useRef();
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const res  = await fetch(`${API_BASE}/api/settings`, { credentials: 'include' });
-      const json = await res.json();
-      setData(json);
-      setName(json.name || '');
-      setLanguage(json.language || 'en');
-      setCurrency(json.currency || 'USD');
-      setTheme(json.theme || 'light');
-    } catch { /* network */ }
-    finally { setLoading(false); }
-  };
+  const [toast, setToast] = useState('');
+  const tref = useRef(null);
+  const showToast = useCallback((m) => {
+    setToast(m);
+    if (tref.current) clearTimeout(tref.current);
+    tref.current = setTimeout(() => setToast(''), 2400);
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/settings`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        if (j) { setData(j); setName(j.name || ''); setLanguage(j.language || 'en'); setTheme(j.theme || 'light'); }
+      })
+      .finally(() => setLoading(false));
+  }, []);
 
-  const saveName = async (e) => {
-    e.preventDefault();
-    if (!name.trim()) return setNameError('Name cannot be empty');
-    setNameError('');
-    const res = await fetch(`${API_BASE}/api/settings`, {
+  const savePrefs = async (patch) => {
+    const r = await fetch(`${API_BASE}/api/settings`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name.trim() }),
+      body: JSON.stringify(patch),
     });
-    if (!res.ok) {
-      const d = await res.json();
-      return setNameError(d.detail || 'Error');
-    }
-    setData(prev => ({ ...prev, name: name.trim() }));
-    setNameSaved(true);
-    setTimeout(() => setNameSaved(false), 2000);
+    showToast(r.ok ? 'Saved' : 'Save failed');
+    return r.ok;
   };
 
-  const savePrefs = async (e) => {
-    e.preventDefault();
-    setPrefError('');
-    const res = await fetch(`${API_BASE}/api/settings`, {
-      method: 'PUT', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ language, currency, theme }),
-    });
-    if (!res.ok) {
-      const d = await res.json();
-      return setPrefError(d.detail || 'Error');
-    }
-    setPrefSaved(true);
-    setTimeout(() => setPrefSaved(false), 2000);
-  };
+  // Debounced name save (skip first run so mounting doesn't re-PUT the loaded value).
+  const firstName = useRef(true);
+  useEffect(() => {
+    if (firstName.current) { firstName.current = false; return; }
+    const v = name.trim();
+    if (!v) return;
+    const t = setTimeout(async () => {
+      if (await savePrefs({ name: v })) { setData(p => ({ ...p, name: v })); updateUser?.({ name: v }); }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pickLanguage = (v) => { setLanguage(v); savePrefs({ language: v }); };
+  const pickTheme    = (v) => { setTheme(v); savePrefs({ theme: v }); };
 
   const handleAvatarChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setAvatarError('');
     setCropFile(file);
     e.target.value = '';
   };
@@ -124,197 +100,74 @@ function Settings() {
     const form = new FormData();
     form.append('file', blob, 'avatar.webp');
     try {
-      const res  = await fetch(`${API_BASE}/api/upload/avatar`, {
-        method: 'POST', credentials: 'include', body: form,
-      });
+      const res  = await fetch(`${API_BASE}/api/upload/avatar`, { method: 'POST', credentials: 'include', body: form });
       const json = await res.json();
-      if (!res.ok) return setAvatarError(json.detail || 'Upload failed');
+      if (!res.ok) { showToast(json.detail || 'Upload failed'); return; }
       const bustedUrl = json.url + '?v=' + Date.now();
       setData(prev => ({ ...prev, avatar_url: bustedUrl }));
-      setAvatarImgFailed(false);   // new upload succeeded → re-enable <img>
+      setAvatarImgFailed(false);
       updateUser?.({ avatar_url: bustedUrl });
-    } catch { setAvatarError('Network error'); }
+      showToast('Photo updated');
+    } catch { showToast('Network error'); }
     finally { setAvatarUploading(false); }
   };
 
-  if (loading) return <div className="crm-placeholder sett-loading">Loading…</div>;
+  if (loading) return <div className="crm-placeholder" style={{ marginTop: 40 }}>Loading…</div>;
 
   return (
     <>
       <h1 className="crm-page-title">Settings</h1>
 
-      <div className="sett-layout">
+      <div className="bulk-settings">
+        <Section icon={<UserCircle weight="duotone" />} title="Profile"
+          subtitle="Your photo, display name and login email.">
 
-        {/* ── Profile ── */}
-        <section className="crm-section">
-          <h2 className="crm-section-title">Profile</h2>
-
-          <div className="crm-card sett-profile-card">
-
-            {/* Avatar block */}
-            <div className="sett-avatar-block">
-              <div className="sett-avatar-wrap">
-                {data?.avatar_url && !avatarImgFailed ? (
-                  <img
-                    src={data.avatar_url}
-                    alt=""
-                    className="sett-avatar-img"
-                    onError={() => setAvatarImgFailed(true)}
-                  />
-                ) : (
-                  <InitialsAvatar name={data?.name} size={80} />
-                )}
-                <button
-                  type="button"
-                  className="sett-avatar-overlay"
-                  onClick={() => avatarInputRef.current?.click()}
-                  disabled={avatarUploading}
-                  title="Change photo"
-                >
-                  <Camera className="sett-avatar-cam-icon" />
-                </button>
-                <input
-                  ref={avatarInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="sett-hidden-input"
-                  onChange={handleAvatarChange}
-                />
-              </div>
-              <div className="sett-avatar-info">
-                <span className="sett-avatar-name">{data?.name}</span>
-                <span className="sett-avatar-email">{data?.email}</span>
-                {data?.role && (
-                  <span className="crm-badge crm-badge--gray sett-avatar-role">{data.role}</span>
-                )}
-              </div>
+          <FieldCard label="Photo" hint="Upload a square image — it's cropped to a circle.">
+            <div className="sett-photo-row">
+              {data?.avatar_url && !avatarImgFailed
+                ? <img src={data.avatar_url} alt="" className="sett-avatar-img2" onError={() => setAvatarImgFailed(true)} />
+                : <InitialsAvatar name={data?.name} size={56} />}
+              <button type="button" className="auth-btn-check" disabled={avatarUploading}
+                onClick={() => avatarInputRef.current?.click()}>
+                <Camera weight="bold" /> {avatarUploading ? 'Uploading…' : 'Change photo'}
+              </button>
+              <input ref={avatarInputRef} type="file" accept="image/*"
+                style={{ display: 'none' }} onChange={handleAvatarChange} />
             </div>
+          </FieldCard>
 
-            {avatarError && <span className="crm-form-error">{avatarError}</span>}
-            {avatarUploading && <span className="sett-uploading">Uploading…</span>}
+          <FieldCard label="Display name" hint="Shown across the dashboard and to your team.">
+            <input className="crm-input" style={{ maxWidth: 360 }} value={name} maxLength={80}
+              placeholder="Your name" onChange={e => setName(e.target.value)} />
+          </FieldCard>
 
-            <div className="sett-divider" />
+          <FieldCard label="Email address" hint="Used to sign in — can't be changed.">
+            <input className="crm-input" style={{ maxWidth: 360, opacity: 0.6 }}
+              value={data?.email || ''} readOnly tabIndex={-1} />
+          </FieldCard>
+        </Section>
 
-            {/* Name form */}
-            <form className="sett-form" onSubmit={saveName}>
-              <label className="sett-label">Display name</label>
-              <div className="sett-field-row">
-                <input
-                  className="crm-input"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  maxLength={80}
-                  placeholder="Your name"
-                />
-                <button
-                  className={`crm-submit-btn sett-save-btn${nameSaved ? ' sett-save-btn--saved' : ''}`}
-                  type="submit"
-                >
-                  {nameSaved ? <><Check className="sett-check-icon" />Saved</> : 'Save'}
-                </button>
-              </div>
-              {nameError && <span className="crm-form-error">{nameError}</span>}
-            </form>
+        <Section icon={<SlidersHorizontal weight="duotone" />} title="Preferences"
+          subtitle="Personal interface options for your account.">
 
-            {/* Email — read only */}
-            <div className="sett-form">
-              <label className="sett-label">Email address</label>
-              <input
-                className="crm-input sett-input-readonly"
-                value={data?.email || ''}
-                readOnly
-                tabIndex={-1}
-              />
-              <span className="sett-hint">Email cannot be changed.</span>
+          <FieldCard label="Language" hint="Interface language for your account.">
+            <div style={{ maxWidth: 240 }}>
+              <SearchableCombobox value={language}
+                options={LANGUAGES.map(l => ({ value: l.value, label: l.label }))}
+                onChange={pickLanguage} searchPlaceholder="Search…" />
             </div>
+          </FieldCard>
 
-          </div>
-        </section>
-
-        {/* ── Preferences ── */}
-        <section className="crm-section2">
-          <h2 className="crm-section-title">Preferences</h2>
-
-          <div className="crm-card sett-prefs-card">
-            <form className="sett-prefs-form" onSubmit={savePrefs}>
-
-              <div className="sett-pref-row">
-                <div className="sett-pref-label-block">
-                  <span className="sett-label">Language</span>
-                  <span className="sett-hint">Interface language for your account.</span>
-                </div>
-                <select
-                  className="crm-input crm-input-select sett-select"
-                  value={language}
-                  onChange={e => setLanguage(e.target.value)}
-                >
-                  {LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
-                </select>
-              </div>
-
-              <div className="sett-pref-divider" />
-
-              <div className="sett-pref-row">
-                <div className="sett-pref-label-block">
-                  <span className="sett-label">Currency</span>
-                  <span className="sett-hint">Used for revenue and analytics display.</span>
-                </div>
-                <select
-                  className="crm-input crm-input-select sett-select"
-                  value={currency}
-                  onChange={e => setCurrency(e.target.value)}
-                >
-                  {CURRENCIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
-              </div>
-
-              <div className="sett-pref-divider" />
-
-              <div className="sett-pref-row">
-                <div className="sett-pref-label-block">
-                  <span className="sett-label">Theme</span>
-                  <span className="sett-hint">Choose your preferred appearance.</span>
-                </div>
-                <div className="sett-theme-row">
-                  {['light', 'dark', 'system'].map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      className={`sett-theme-btn${theme === t ? ' sett-theme-btn--active' : ''}`}
-                      onClick={() => setTheme(t)}
-                    >
-                      {t.charAt(0).toUpperCase() + t.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {prefError && <span className="crm-form-error">{prefError}</span>}
-
-              <div className="sett-prefs-footer">
-                <button
-                  className={`crm-submit-btn sett-save-btn${prefSaved ? ' sett-save-btn--saved' : ''}`}
-                  type="submit"
-                >
-                  {prefSaved ? <><Check className="sett-check-icon" />Saved</> : 'Save preferences'}
-                </button>
-              </div>
-
-            </form>
-          </div>
-        </section>
-
+          <FieldCard label="Theme" hint="Choose your preferred appearance.">
+            <SegmentSwitch value={theme}
+              options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' }]}
+              onChange={pickTheme} />
+          </FieldCard>
+        </Section>
       </div>
 
-      {cropFile && (
-        <AvatarCropModal
-          file={cropFile}
-          onSave={uploadCroppedBlob}
-          onClose={() => setCropFile(null)}
-        />
-      )}
+      {cropFile && <AvatarCropModal file={cropFile} onSave={uploadCroppedBlob} onClose={() => setCropFile(null)} />}
+      {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
     </>
   );
 }
-
-export default Settings;

@@ -521,7 +521,7 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
 // ── Top-level Orders/Returns tab switcher ─────────────────────
 // Same pill switcher pattern as Authentication page. URL state via `?tab=`.
 
-function OrdersTopTabs({ tab, setTab, returnsActionCount }) {
+function OrdersTopTabs({ tabs, tab, setTab, returnsActionCount }) {
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -539,16 +539,11 @@ function OrdersTopTabs({ tab, setTab, returnsActionCount }) {
     return () => cancelAnimationFrame(raf);
   }, [curTab, tab]);
 
-  const TABS = [
-    { key: 'orders',  label: 'Orders',  Icon: Receipt },
-    { key: 'returns', label: 'Returns', Icon: ArrowUUpLeft },
-  ];
-
   return (
     <div className="auth-tab-wrapper">
       <div className="auth-tab-switcher" onMouseLeave={() => setHovered(null)}>
         <div ref={indRef} className="auth-tab-indicator" />
-        {TABS.map(({ key, label, Icon }) => (
+        {tabs.map(({ key, label, Icon }) => (
           <button key={key} ref={el => { btnRefs.current[key] = el; }}
             className={`auth-tab-btn${curTab === key ? ' auth-tab-btn--active' : ''}`}
             onMouseEnter={() => setHovered(key)}
@@ -571,7 +566,12 @@ function OrdersTopTabs({ tab, setTab, returnsActionCount }) {
 // ── Top-level page: Orders ↔ Returns ──────────────────────────
 
 function Orders() {
-  const { projectId, project } = useOutletContext();
+  const { projectId, project, access } = useOutletContext();
+  const canView = (p) => !access || access.is_owner || ['view', 'manage'].includes(access.permissions?.[p]);
+  const orderTabs = [
+    canView('orders')  && { key: 'orders',  label: 'Orders',  Icon: Receipt },
+    canView('returns') && { key: 'returns', label: 'Returns', Icon: ArrowUUpLeft },
+  ].filter(Boolean);
   // Keep date formatting in sync with the project's configured TZ so
   // Orders' "May 17, 2026" stays consistent with what Analytics shows
   // for the same order (both read project.timezone now).
@@ -579,7 +579,9 @@ function Orders() {
     if (project?.timezone) setOrdersTimezone(project.timezone);
   }, [project?.timezone]);
   const [params, setParams] = useSearchParams();
-  const initialTab = params.get('tab') === 'returns' ? 'returns' : 'orders';
+  const initialTab = (params.get('tab') === 'returns' && canView('returns')) ? 'returns'
+    : canView('orders') ? 'orders'
+    : canView('returns') ? 'returns' : 'orders';
   const [topTab, setTopTab] = useState(initialTab);
   const [returnsActionCount, setReturnsActionCount] = useState(0);
 
@@ -609,10 +611,12 @@ function Orders() {
 
   return (
     <div className="auth-page">
-      <OrdersTopTabs tab={topTab} setTab={switchTab}
-                      returnsActionCount={returnsActionCount} />
-      {topTab === 'orders'  && <OrdersTab />}
-      {topTab === 'returns' && <Returns onActionCountChange={setReturnsActionCount} />}
+      {orderTabs.length > 1 && (
+        <OrdersTopTabs tabs={orderTabs} tab={topTab} setTab={switchTab}
+                        returnsActionCount={returnsActionCount} />
+      )}
+      {topTab === 'orders'  && canView('orders')  && <OrdersTab />}
+      {topTab === 'returns' && canView('returns') && <Returns onActionCountChange={setReturnsActionCount} />}
     </div>
   );
 }
