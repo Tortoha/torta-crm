@@ -17,6 +17,7 @@ const Verification  = lazy(() => import('./Verification.jsx'));
 const Forgot        = lazy(() => import('./Forgot.jsx'));
 const Reset         = lazy(() => import('./Reset.jsx'));
 const Invite        = lazy(() => import('./Invite.jsx'));
+const Preferences   = lazy(() => import('./Preferences.jsx'));
 // Dashboard
 const Dashboard     = lazy(() => import('./Pages/Dashboard/Dashboard.jsx'));
 // Organization
@@ -83,6 +84,7 @@ function App() {
           <Route path="/forgot-password"           element={<Forgot />} />
           <Route path="/reset-password/:token"     element={<Reset />} />
           <Route path="/invite/:token"             element={<Invite />} />
+          <Route path="/preferences"               element={<Preferences />} />
           <Route path="/dashboard"                 element={<Dashboard />} />
           <Route path="/org/:orgSlug"              element={<OrgLayout />}>
             <Route index                           element={<Organization />} />

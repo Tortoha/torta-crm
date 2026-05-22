@@ -43,7 +43,7 @@ export default function Settings() {
 
   const [name, setName]         = useState('');
   const [language, setLanguage] = useState('en');
-  const [theme, setTheme]       = useState('light');
+  const [theme, setTheme]       = useState('system');
 
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarImgFailed, setAvatarImgFailed] = useState(false);
@@ -62,7 +62,7 @@ export default function Settings() {
     fetch(`${API_BASE}/api/settings`, { credentials: 'include' })
       .then(r => (r.ok ? r.json() : null))
       .then(j => {
-        if (j) { setData(j); setName(j.name || ''); setLanguage(j.language || 'en'); setTheme(j.theme || 'light'); }
+        if (j) { setData(j); setName(j.name || ''); setLanguage(j.language || 'en'); setTheme(j.theme || 'system'); }
       })
       .finally(() => setLoading(false));
   }, []);

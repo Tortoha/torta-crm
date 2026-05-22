@@ -12,7 +12,7 @@ section {
 }
 
 .regist {
-    background-color: #F2F1F6;
+    background-color: var(--bg);
     min-height: 100vh;
     display: flex;
     justify-content: center;
@@ -25,8 +25,8 @@ section {
 }
 
 .reg {
-    background-color: #ffffff;
-    color: black;
+    background-color: var(--card);
+    color: var(--text);
     border: 0;
     border-radius: 48px;
     align-items: center;
@@ -80,8 +80,8 @@ label {
 input {
     width: 100%;
     height: 56px;
-    background-color: #f0f0f0;
-    color: #000000;
+    background-color: var(--bg);
+    color: var(--text);
     border: 0;
     border-radius: 16px;
     font-size: 24px;
@@ -90,6 +90,16 @@ input {
     font-family: "Wix Madefor Text", sans-serif;
     font-weight: 300;
     outline: none;
+}
+
+/* Keep our own bg on autofill (no box-shadow → no 1px corner seam Chrome leaves in dark mode). */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    -webkit-text-fill-color: var(--text);
+    transition: background-color 600000s 0s, color 600000s 0s;
+    caret-color: var(--text);
 }
 
 .button1 {
@@ -105,7 +115,7 @@ input {
 
 .button2 {
     background-color: #ffffff00;
-    color: #000000;
+    color: var(--text);
     font-size: 24px;
     margin-bottom: 32px;
     margin-top: 18px;
@@ -117,8 +127,8 @@ input {
 }
 
 .button3 {
-    background-color: #ffffff;
-    color: #000000;
+    background-color: var(--card);
+    color: var(--text);
     font-size: 24px;
     margin-top: 18px;
     padding: 0;
@@ -135,12 +145,12 @@ input {
 }
 
 .button2:hover {
-    background-color: #E5E5E5;
+    background-color: var(--card-hover);
     box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
 }
 
 .button3:hover {
-    background-color: #ffffff;
+    background-color: var(--card);
     box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.2);
 }
 
@@ -156,7 +166,7 @@ input {
 }
 
 .not-button {
-    background-color: #E5E5E5;
+    background-color: var(--card-hover);
     color: #ffffff;
     font-size: 32px;
     margin-top: 64px;
@@ -165,7 +175,7 @@ input {
 }
 
 .not-button3 {
-    background-color: #E5E5E5;
+    background-color: var(--card-hover);
     color: #ffffff;
     font-size: 24px;
     margin-top: 18px;
@@ -178,7 +188,7 @@ input {
 }
 
 .verify-p {
-    color: #666;
+    color: var(--muted);
     font-size: 16px;
     margin-top: 8px;
     margin-bottom: 8px;
@@ -206,7 +216,7 @@ input {
 }
 
 .auth-link {
-    color: #666666;
+    color: var(--muted);
     font-size: 16px;
     font-weight: 400;
     text-decoration: none;
@@ -214,7 +224,7 @@ input {
 }
 
 .auth-link:hover {
-    color: #000000;
+    color: var(--text);
     text-decoration: underline;
 }
 
@@ -227,7 +237,7 @@ input {
 }
 
 .loading-text {
-    color: #666;
+    color: var(--muted);
     font-size: 16px;
     margin: 0 0 24px 0;
     text-align: center;
@@ -251,7 +261,7 @@ input {
   background: none;
   border: none;
   cursor: pointer;
-  color: #999;
+  color: var(--muted);
   padding: 0;
   width: auto;
   height: auto;
@@ -265,7 +275,7 @@ input {
 }
 
 .password-eye:hover {
-  color: #333;
+  color: var(--text);
 }
 
 .eye-icon-wrap {
@@ -609,7 +619,7 @@ input {
   align-items: center;
   gap: 12px;
   margin: 14px 0 12px;
-  color: #bbb;
+  color: var(--muted);
   font-size: 14px;
   font-weight: 400;
 }
@@ -619,14 +629,14 @@ input {
   content: '';
   flex: 1;
   height: 1px;
-  background: #e5e5e5;
+  background: var(--border-soft);
 }
 
 .oauth-btn {
   width: 100%;
   height: 56px;
   background: #fff;
-  border: 1.5px solid #e0e0e0;
+  border: 1.5px solid var(--border-soft);
   border-radius: 16px;
   display: flex;
   align-items: center;
@@ -674,7 +684,7 @@ input {
     }
     
     .button2:active {
-        background-color: #E5E5E5;
+        background-color: var(--card-hover);
         box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.20);
     }
     
@@ -683,12 +693,12 @@ input {
     }
 
     .auth-link:hover {
-        color: #666666;
+        color: var(--muted);
         text-decoration: none;
     }
     
     .auth-link:active {
-        color: #000000;
+        color: var(--text);
         text-decoration: underline;
     }
 }

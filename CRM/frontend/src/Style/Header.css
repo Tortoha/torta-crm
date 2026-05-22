@@ -50,9 +50,71 @@
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.hdr-docs-btn:hover { background: var(--accent-tint); color: var(--accent); }
-.hdr-docs-icon { width: 17px; height: 17px; }
-@media (max-width: 640px) { .hdr-docs-label { display: none; } }
+
+.hdr-docs-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.hdr-docs-icon {
+  width: 17px;
+  height: 17px;
+}
+
+@media (max-width: 640px) {
+  .hdr-docs-label {
+    display: none;
+  }
+}
+
+/* ── Landing CTA (logged-out, blue filled) ── */
+.hdr-cta-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: 0.4s ease;
+}
+
+/* Breathing room between the Dashboard CTA and the avatar (landing, logged-in). */
+.hdr-cta-btn + .hdr-user {
+  margin-left: 10px;
+}
+
+.hdr-cta-btn:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 1px 16px rgba(0, 113, 227, 0.4);
+}
+
+/* ── Settings gear (landing → /preferences) ── */
+.hdr-settings-btn {
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  border: none;
+  background: none;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.hdr-settings-btn:hover { background: var(--accent-tint); color: var(--accent); }
+.hdr-settings-icon { width: 19px; height: 19px; }
+
+/* Landing: centre header content within a 1400px column (full-bleed bg). */
+.crm-header--landing {
+  padding-left:  max(24px, calc((100% - 1400px) / 2));
+  padding-right: max(24px, calc((100% - 1400px) / 2));
+}
 
 /* ── Brand link ── */
 .hdr-brand {
@@ -902,6 +964,7 @@
   grid-template-columns: 1fr !important;
   cursor: pointer;
 }
+
 .notif-viewall-inner {
   display: flex;
   align-items: center;
@@ -911,7 +974,11 @@
   font-weight: 600;
   color: var(--accent);
 }
-.notif-viewall-inner svg { width: 13px; height: 13px; }
+
+.notif-viewall-inner svg {
+  width: 13px;
+  height: 13px;
+}
 
 /* ══════════════════════════════
    ALL-NOTIFICATIONS MODAL — window chrome reused from the New-promo-code
@@ -930,8 +997,13 @@
   background: var(--bg);
 }
 
-.notif-group { margin-top: 16px; }
-.notif-group:first-child { margin-top: 2px; }
+.notif-group {
+  margin-top: 16px;
+}
+
+.notif-group:first-child {
+  margin-top: 2px;
+}
 
 /* Infinite-scroll trigger — invisible unless it's actively loading the page. */
 .notif-load-sentinel {
@@ -962,9 +1034,19 @@
 .notif-all-modal .po-set-table {
   margin-top: 0;
 }
-.notif-all-modal .po-set-table > .po-set-row:first-child { border-radius: 16px 16px 0 0; }
-.notif-all-modal .po-set-table > .po-set-row:last-child  { border-radius: 0 0 16px 16px; }
-.notif-all-modal .po-set-table > .po-set-row:only-child   { border-radius: 16px; }
+
+.notif-all-modal .po-set-table>.po-set-row:first-child {
+  border-radius: 16px 16px 0 0;
+}
+
+.notif-all-modal .po-set-table>.po-set-row:last-child {
+  border-radius: 0 0 16px 16px;
+}
+
+.notif-all-modal .po-set-table>.po-set-row:only-child {
+  border-radius: 16px;
+}
+
 .notif-all-modal .notif-row--unread .notif-row-icon::after {
   content: '';
   position: absolute;

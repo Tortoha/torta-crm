@@ -270,6 +270,8 @@ body {
 .sb-section-label {
   overflow: hidden;
   white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .sb-chevron {

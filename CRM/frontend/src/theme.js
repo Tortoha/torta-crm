@@ -18,7 +18,7 @@ function resolve(pref) {
 
 // Set the actual <html data-theme> + remember the raw preference.
 export function applyTheme(pref) {
-  const p = VALID.includes(pref) ? pref : 'light';
+  const p = VALID.includes(pref) ? pref : 'system';
   const el = document.documentElement;
   el.dataset.theme = resolve(p);
   el.dataset.themePref = p;
@@ -38,7 +38,7 @@ export function syncTheme(pref) {
   }
 }
 
-// Boot from the cached preference before first paint (no flash). Default 'light'
-// preserves current behaviour for users who never picked a theme.
+// Boot from the cached preference before first paint (no flash). Default
+// 'system' — follow the OS until the user explicitly picks light/dark.
 const stored = localStorage.getItem(LS_KEY);
-syncTheme(VALID.includes(stored) ? stored : 'light');
+syncTheme(VALID.includes(stored) ? stored : 'system');

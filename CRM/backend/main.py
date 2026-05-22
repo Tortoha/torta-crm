@@ -4984,7 +4984,7 @@ def get_me(user: dict = Depends(get_current_user)):
         raise HTTPException(401, "User not found")
     s = db_one("SELECT language, theme FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
     u["language"] = (s or {}).get("language", "en")
-    u["theme"]    = (s or {}).get("theme", "light")
+    u["theme"]    = (s or {}).get("theme") or "system"
     return u
 
 
@@ -12788,7 +12788,7 @@ def get_settings(user: dict = Depends(get_current_user)):
         "avatar_url": u.get("avatar_url"),
         "language":   (s or {}).get("language", "en"),
         "currency":   (s or {}).get("currency", "USD"),
-        "theme":      (s or {}).get("theme", "light"),
+        "theme":      (s or {}).get("theme") or "system",
         "org_view":   (s or {}).get("org_view", "grid"),
         "org_sort":   (s or {}).get("org_sort", "date_desc"),
     }

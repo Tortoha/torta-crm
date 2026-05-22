@@ -1,6 +1,6 @@
 .home-wrap {
   min-height: 100vh;
-  background: #F2F1F6;
+  background: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -45,4 +45,15 @@
 .home-btn:hover {
   background: #0077ED;
   box-shadow: 4px 4px 18px #0076ed85;
+}
+
+/* ── Public preferences page (reached from the landing gear) ── */
+.pref-page {
+  min-height: 100vh;
+  background: var(--bg);
+}
+.pref-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px 64px;
 }
