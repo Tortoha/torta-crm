@@ -57,8 +57,12 @@ const BTN_TILT = {
   gloss: { opacity: 0.14, spread: 60 },
 };
 
-function CopyKeys({ apiKey, publishableKey }) {
+function CopyKeys({ apiKey, publishableKey, secretKey }) {
   const { t } = useTranslation();
+  // Secret key only shows for owners (backend sends it to owners only).
+  const items = secretKey
+    ? [...COPY_ITEMS, { key: 'sk', labelKey: 'secretKey', hintKey: 'secretKeyHint' }]
+    : COPY_ITEMS;
   const [open,    setOpen]    = useState(false);
   const [copied,  setCopied]  = useState(null);
   const [toast,   setToast]   = useState('');
@@ -105,8 +109,12 @@ function CopyKeys({ apiKey, publishableKey }) {
     setOpen(false);
   };
 
-  const values = { pub: apiKey ?? '', pk: publishableKey ?? '' };
-  const masked = { pub: apiKey ?? '—', pk: '•'.repeat(12) + (publishableKey ?? '').slice(-6) };
+  const values = { pub: apiKey ?? '', pk: publishableKey ?? '', sk: secretKey ?? '' };
+  const masked = {
+    pub: apiKey ?? '—',
+    pk:  '•'.repeat(12) + (publishableKey ?? '').slice(-6),
+    sk:  '•'.repeat(12) + (secretKey ?? '').slice(-6),
+  };
 
   return (
     <div className="pov-copykeys" ref={wrapRef}>
@@ -133,7 +141,7 @@ function CopyKeys({ apiKey, publishableKey }) {
           {/* Dynamic Block indicator */}
           <div className="pov-ck-ind" ref={indRef} />
 
-          {COPY_ITEMS.map(({ key, labelKey, hintKey }) => {
+          {items.map(({ key, labelKey, hintKey }) => {
             const label = t(`project.overview.${labelKey}`);
             return (
             <button
@@ -457,6 +465,7 @@ function Project() {
         <CopyKeys
           apiKey={ctxProject?.api_key}
           publishableKey={ctxProject?.publishable_key}
+          secretKey={ctxProject?.secret_key}
         />
 
         <StatusCard status={health} />

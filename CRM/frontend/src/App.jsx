@@ -7,6 +7,7 @@ import Layout         from './Layout.jsx';
 import OrgLayout      from './OrgLayout.jsx';
 import ProductLayout  from './ProductLayout.jsx';
 import SettingsLayout from './SettingsLayout.jsx';
+import DocsLayout     from './DocsLayout.jsx';
 
 // ── Страницы — lazy (каждая в отдельном chunk) ──
 const Home          = lazy(() => import('./Home.jsx'));
@@ -58,6 +59,8 @@ const ProductsSettings  = lazy(() => import('./Pages/Project/Products/ProductsSe
 // Settings
 const AccountSettings  = lazy(() => import('./Pages/Settings/Settings.jsx'));
 const SecuritySettings = lazy(() => import('./Pages/Settings/Security.jsx'));
+// Docs
+const DocsPage         = lazy(() => import('./Pages/Docs/DocsPage.jsx'));
 
 function PageLoader() {
   return (
@@ -132,6 +135,10 @@ function App() {
             <Route path="security"      element={<SecuritySettings />} />
             <Route path="preferences"   element={<Navigate to="/settings/account" replace />} />
             <Route path="notifications" element={<Navigate to="/settings/account" replace />} />
+          </Route>
+          <Route path="/docs" element={<DocsLayout />}>
+            <Route index            element={<Navigate to="/docs/getting-started" replace />} />
+            <Route path=":section"  element={<DocsPage />} />
           </Route>
           <Route path="/product/:productHash" element={<ProductLayout />}>
             <Route index                element={<ProductOverview />} />

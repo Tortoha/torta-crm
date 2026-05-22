@@ -235,6 +235,8 @@
       "publicKeyHint": "in URL",
       "publishableKey": "Publishable Key",
       "publishableKeyHint": "header",
+      "secretKey": "Secret Key",
+      "secretKeyHint": "server only",
       "keyCopied": "{{label}} copied",
       "projectHealth": "Project Health",
       "warnings": "{{count}} warning",

@@ -94,6 +94,29 @@
         "currencyHintPost": " — analytics FX-converts their revenue into this one before summing, so cross-project totals stay comparable. Per-project pages are unaffected.",
         "currencySearchPlaceholder": "Search 49 currencies (USD, ₸, tenge…)"
       },
+      "customers": {
+        "title": "Customers",
+        "subtitle": "Whether one customer account works across every branch of this organization.",
+        "modeLabel": "Customer accounts",
+        "modeHintShared": "Shared — a customer signs up once and is recognised at every branch (different cities, countries). Auth Providers are shared across branches too. Best for chains and multi-branch brands.",
+        "modeHintPerProject": "Per project — each store keeps its own isolated customer base. A customer of one branch is not a customer of another.",
+        "shared": "Shared across org",
+        "perProject": "Per project",
+        "disconnectModal": {
+          "title": "Switch to per-project customers?",
+          "warning": "After switching, each branch keeps its own customer accounts. If customers later set different passwords in different branches, you won't be able to merge them back into one shared identity.",
+          "typePre": "Type ",
+          "typePost": " to confirm.",
+          "confirm": "Switch to per-project"
+        },
+        "conflictModal": {
+          "title": "Resolve conflicts first",
+          "intro": "These emails are registered in more than one branch with different passwords or sign-in methods. Sharing can't be enabled until they're resolved:",
+          "accounts_one": "{{count}} account",
+          "accounts_other": "{{count}} accounts",
+          "close": "Close"
+        }
+      },
       "danger": {
         "title": "Danger zone",
         "subtitle": "Irreversible actions.",

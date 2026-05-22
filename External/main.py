@@ -298,10 +298,28 @@ def get_google_credentials(project_id: int):
         return row["google_client_id"], row["google_client_secret"]
     return None, None
 
-def get_user_by_email(email: str, project_id: int):
+def _org_shares_customers(org_id) -> bool:
+    """Whether the org shares one customer identity across all its branches.
+    Default TRUE. When TRUE, storefront auth resolves a customer across the
+    whole org; when FALSE it stays scoped to the single project."""
+    if not org_id:
+        return False
+    row = db_one("SELECT customers_shared FROM crm_organizations WHERE id = %s", (org_id,))
+    return bool(row and row.get("customers_shared"))
+
+def get_user_by_email(email: str, project_id: int, org_id=None):
+    """Resolve a customer by email. When the org shares customers, match any
+    branch in the org (lowest id = canonical identity); otherwise within the
+    project only. `org_id=None` preserves the legacy per-project behaviour."""
+    if org_id is not None and _org_shares_customers(org_id):
+        return db_one(
+            "SELECT * FROM users WHERE email = %s AND org_id = %s ORDER BY id LIMIT 1",
+            (email, org_id))
     return db_one("SELECT * FROM users WHERE email = %s AND project_id = %s", (email, project_id))
 
-def get_user_by_id(user_id: int, project_id: int):
+def get_user_by_id(user_id: int, project_id: int, org_id=None):
+    if org_id is not None and _org_shares_customers(org_id):
+        return db_one("SELECT id, name, email FROM users WHERE id = %s AND org_id = %s", (user_id, org_id))
     return db_one("SELECT id, name, email FROM users WHERE id = %s AND project_id = %s", (user_id, project_id))
 
 
@@ -332,6 +350,21 @@ def run_migrations():
             "ALTER TABLE users ALTER COLUMN email DROP NOT NULL",
             "ALTER TABLE favorites ADD COLUMN IF NOT EXISTS project_id int DEFAULT NULL",
             "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS project_id int DEFAULT NULL",
+            # org_id denormalised from the user's project so org-scoped identity
+            # (one account across all branches of an org) is a single indexed
+            # lookup. NULL for legacy rows until backfilled just below.
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id int DEFAULT NULL",
+            # Extended customer profile fields. Optional everywhere — used by the
+            # storefront registration (when a merchant enables them) AND by the
+            # server-side customer push (merchants running their own auth).
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name varchar(200) DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthdate date DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS address varchar(500) DEFAULT NULL",
+            # Free-form bag for any custom fields the merchant wants to attach.
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS metadata jsonb DEFAULT '{}'::jsonb",
+            # TRUE = pushed in by a merchant's own backend (no password / no login
+            # here); FALSE = a normal account that authenticates through us.
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_external boolean DEFAULT FALSE",
         ]:
             try: cur.execute(col_sql); conn.commit()
             except Exception: conn.rollback()
@@ -357,6 +390,20 @@ def run_migrations():
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_phone_project "
                 "ON users(phone, project_id) WHERE phone IS NOT NULL AND phone <> ''"
             )
+            conn.commit()
+        except Exception: conn.rollback()
+        # Backfill org_id from each user's project so org-scoped login works
+        # without a per-request join to crm_projects.
+        try:
+            cur.execute(
+                "UPDATE users u SET org_id = p.org_id FROM crm_projects p "
+                "WHERE u.project_id = p.id AND u.org_id IS DISTINCT FROM p.org_id"
+            )
+            conn.commit()
+        except Exception: conn.rollback()
+        # Fast lookup for org-scoped identity (same account across all branches).
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_org_email ON users(org_id, email)")
             conn.commit()
         except Exception: conn.rollback()
         # Refresh tokens (per-user sessions, rotated on use); project_id scopes sessions per store.
@@ -614,7 +661,6 @@ def get_or_create_guest_user(request: Request, response: Response,
       • email = NULL          (collected only when they reach checkout)
       • password_hash = NULL  (no login possible — the cookie is the
         identity until the email/phone OTP completes registration)
-      • email_verified = FALSE
 
     When the same person later signs up properly via /send-code with
     the email they typed at checkout, /verify-code finds this exact
@@ -628,13 +674,14 @@ def get_or_create_guest_user(request: Request, response: Response,
     uid = try_get_current_user_id(request)
     if uid is not None:
         return uid
+    org_id = (db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("org_id")
     with db_cursor() as (conn, cursor):
         cursor.execute(
-            "INSERT INTO users (project_id, name, email, password,"
-            "                   is_guest, email_verified, phone_verified)"
-            " VALUES (%s, '', NULL, '', TRUE, FALSE, FALSE)"
+            "INSERT INTO users (project_id, org_id, name, email,"
+            "                   is_guest, phone_verified)"
+            " VALUES (%s, %s, '', NULL, TRUE, FALSE)"
             " RETURNING id",
-            (project_id,)
+            (project_id, org_id)
         )
         new_id = cursor.fetchone()["id"]
         conn.commit()
@@ -901,6 +948,19 @@ def resolve_api_key_public(api_key: str) -> dict:
     record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = TRUE", (api_key,))
     if not record:
         raise HTTPException(401, "Invalid or inactive API key")
+    return record
+
+def resolve_api_key_secret(api_key: str, request: Request) -> dict:
+    """Auth for trusted server-to-server calls. Validates the SECRET key
+    (X-Secret-Key header) — never the publishable one — so only the merchant's
+    backend can call these endpoints, not anything running in a browser."""
+    record = db_one("SELECT * FROM crm_projects WHERE api_key = %s AND is_active = TRUE", (api_key,))
+    if not record:
+        raise HTTPException(401, "Invalid or inactive API key")
+    sk_header = request.headers.get("x-secret-key", "")
+    stored    = record.get("secret_key") or ""
+    if not sk_header or not stored or not secrets.compare_digest(sk_header, stored):
+        raise HTTPException(401, "Invalid or missing secret key")
     return record
 
 def _eff_price(own_price, parent_eff):
@@ -1410,7 +1470,10 @@ _CSRF_SAFE_METHODS   = {"GET", "HEAD", "OPTIONS", "TRACE"}
 # way to inject a CSRF token there. The CSRF defence is replaced by Apple's
 # id_token JWT signature verification + cookie-based state validation in
 # the apple_oauth_callback_post handler.
-_CSRF_EXEMPT_SUFFIX  = ("/refresh", "/auth/oauth/apple/callback")
+# `/customers` is a server-to-server ingest endpoint (no browser, no cookies) —
+# it's authenticated by the project SECRET key, so CSRF neither applies nor is
+# possible there.
+_CSRF_EXEMPT_SUFFIX  = ("/refresh", "/auth/oauth/apple/callback", "/customers")
 _CSRF_EXEMPT_SEGMENT = ("/track/",)
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -1460,6 +1523,9 @@ async def add_cache_headers(request, call_next):
 
 class SendCodeRequest(BaseModel):
     email: str; type: str; name: str = None; password: str = None
+    # Optional extended profile fields, used only on register. A merchant asks
+    # for whatever its business needs; all are nullable and ignored on login.
+    surname: str = None; address: str = None; birthdate: str = None
 
 class VerifyCodeRequest(BaseModel):
     email: str; code: str
@@ -2473,6 +2539,7 @@ def get_csrf_token(api_key: str, request: Request, response: Response,
 def send_code(request: SendCodeRequest, req: Request,
               api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
+    org_id     = api_key_record.get("org_id")
     email = request.email.lower().strip()
     ip    = get_client_ip(req)
     now_ts = time.time()
@@ -2492,7 +2559,7 @@ def send_code(request: SendCodeRequest, req: Request,
         raise HTTPException(400, detail)
 
     if request.type == "register":
-        existing = get_user_by_email(email, project_id)
+        existing = get_user_by_email(email, project_id, org_id)
         # A pre-existing GUEST row with this email is fine — that
         # means the same person checked out as a guest earlier and is
         # now properly signing up. /verify-code will UPDATE the
@@ -2503,8 +2570,14 @@ def send_code(request: SendCodeRequest, req: Request,
             fail("Email already exists")
         if not request.name or not request.password: fail("Name and password required")
         validate_password(request.password)
+        if request.birthdate:
+            from datetime import date
+            try:
+                date.fromisoformat(request.birthdate.strip())
+            except ValueError:
+                fail("birthdate must be YYYY-MM-DD")
     elif request.type == "login":
-        db_user = get_user_by_email(email, project_id)
+        db_user = get_user_by_email(email, project_id, org_id)
         # Generic message — don't distinguish unknown email vs wrong password
         if not db_user: fail("Invalid email or password")
         if not verify_password(request.password or "", db_user["password_hash"]):
@@ -2525,6 +2598,7 @@ def send_code(request: SendCodeRequest, req: Request,
     _pv_set(project_id, email, {
         "code_hash": hash_otp(code), "type": request.type, "name": request.name,
         "password": request.password, "project_id": project_id,
+        "surname": request.surname, "address": request.address, "birthdate": request.birthdate,
         "expires_ts":        now_ts + CODE_TTL_MINUTES * 60,
         "next_resend_at_ts": now_ts + RESEND_COOLDOWN_SECONDS,
         "attempts": 0,
@@ -2543,6 +2617,7 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
                 background_tasks: BackgroundTasks,
                 api_key_record: dict = Depends(resolve_api_key)):
     project_id = api_key_record["id"]
+    org_id     = api_key_record.get("org_id")
     email  = request.email.lower().strip()
     code   = (request.code or "").replace(" ", "").strip()
     ip     = get_client_ip(req)
@@ -2578,19 +2653,26 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
     with db_cursor() as (conn, cursor):
         is_new_user = False
         if pending["type"] == "register":
+            # Optional extended profile fields collected at registration
+            # (surname / address / birthdate). All nullable — a merchant only
+            # asks for what they need. birthdate is pre-validated in send_code.
+            reg_surname   = sanitize((pending.get("surname") or "").strip())[:200] or None
+            reg_address   = sanitize((pending.get("address") or "").strip())[:500] or None
+            reg_birthdate = (pending.get("birthdate") or "").strip() or None
             # If a guest row with this email already exists (placed an
             # order earlier without signing up), upgrade it in place
             # rather than creating a parallel account — that's the
             # whole point of the auto-claim feature. We do that BEFORE
             # the INSERT path so the happy guest case is one query.
-            existing = get_user_by_email(email, project_id)
+            existing = get_user_by_email(email, project_id, org_id)
             if existing and existing.get("is_guest"):
                 cursor.execute(
-                    "UPDATE users SET name=%s, password_hash=%s,"
-                    "                 is_guest=FALSE, email_verified=TRUE"
+                    "UPDATE users SET name=%s, last_name=COALESCE(%s,last_name), password_hash=%s,"
+                    "                 address=COALESCE(%s,address), birthdate=COALESCE(%s,birthdate),"
+                    "                 is_guest=FALSE"
                     " WHERE id=%s",
-                    (sanitize(pending["name"]), hash_password(pending["password"]),
-                     existing["id"])
+                    (sanitize(pending["name"]), reg_surname, hash_password(pending["password"]),
+                     reg_address, reg_birthdate, existing["id"])
                 )
                 conn.commit()
                 user_id = existing["id"]
@@ -2600,8 +2682,10 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
             else:
                 try:
                     cursor.execute(
-                        "INSERT INTO users (name, email, password_hash, project_id) VALUES (%s,%s,%s,%s) RETURNING id",
-                        (sanitize(pending["name"]), email, hash_password(pending["password"]), project_id)
+                        "INSERT INTO users (name, last_name, email, password_hash, project_id, org_id, address, birthdate)"
+                        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                        (sanitize(pending["name"]), reg_surname, email, hash_password(pending["password"]),
+                         project_id, org_id, reg_address, reg_birthdate)
                     )
                     user_id = cursor.fetchone()["id"]
                     conn.commit()
@@ -2609,12 +2693,12 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
                 except psycopg2.errors.UniqueViolation:
                     conn.rollback()
                     # Race: another request created the same user concurrently
-                    existing = get_user_by_email(email, project_id)
+                    existing = get_user_by_email(email, project_id, org_id)
                     if not existing:
                         raise HTTPException(500, "Registration failed")
                     user_id = existing["id"]
         else:
-            user_id = get_user_by_email(email, project_id)["id"]
+            user_id = get_user_by_email(email, project_id, org_id)["id"]
 
     # Fire customer.created for Mailchimp / GA4 / Mixpanel / any subscriber that
     # listens on it. Done outside the cursor block so a slow dispatch doesn't
@@ -2664,7 +2748,7 @@ def resend_code(request: ResendCodeRequest, api_key_record: dict = Depends(resol
 
 @app.get("/{api_key}/me")
 def get_me(request: Request, api_key_record: dict = Depends(resolve_api_key)):
-    user = get_user_by_id(get_current_user_id(request), api_key_record["id"])
+    user = get_user_by_id(get_current_user_id(request), api_key_record["id"], api_key_record.get("org_id"))
     if not user: raise HTTPException(401, "User not found")
     return {"id": user["id"], "name": user["name"], "email": user["email"]}
 
@@ -2689,6 +2773,80 @@ def get_auth_methods(api_key_record: dict = Depends(resolve_api_key)):
     except Exception:
         phone_enabled = False
     return {"email": True, "phone": phone_enabled}
+
+
+# ── CUSTOMER INGEST (server-to-server; merchants running their own auth) ──
+# Lets a merchant push customer records into the CRM from THEIR backend using
+# the project's SECRET key. No password / no login here — these are data-only
+# "external" customers. Upserts by email (then phone), respecting org-shared scope.
+
+class CustomerUpsertBody(BaseModel):
+    email:     Optional[str]  = None
+    phone:     Optional[str]  = None
+    name:      Optional[str]  = None
+    last_name: Optional[str]  = None
+    surname:   Optional[str]  = None     # alias for last_name (matches registration field)
+    birthdate: Optional[str]  = None     # ISO date "YYYY-MM-DD"
+    address:   Optional[str]  = None
+    metadata:  Optional[dict] = None     # free-form custom fields
+
+@app.post("/{api_key}/customers")
+def upsert_customer(body: CustomerUpsertBody, api_key: str,
+                    api_key_record: dict = Depends(resolve_api_key_secret)):
+    project_id = api_key_record["id"]
+    org_id     = api_key_record.get("org_id")
+
+    email = (body.email or "").lower().strip() or None
+    phone = (body.phone or "").strip() or None
+    if not email and not phone:
+        raise HTTPException(400, "email or phone is required")
+
+    name      = sanitize((body.name or "").strip())[:200]
+    last_name = sanitize((body.last_name or body.surname or "").strip())[:200] or None
+    address   = sanitize((body.address or "").strip())[:500] or None
+    birthdate = (body.birthdate or "").strip() or None
+    if birthdate:
+        from datetime import date
+        try:
+            date.fromisoformat(birthdate)
+        except ValueError:
+            raise HTTPException(400, "birthdate must be YYYY-MM-DD")
+    metadata = body.metadata if isinstance(body.metadata, dict) else {}
+
+    # Find an existing record — email first, then phone — in org or project scope.
+    existing = get_user_by_email(email, project_id, org_id) if email else None
+    if not existing and phone:
+        if org_id is not None and _org_shares_customers(org_id):
+            existing = db_one("SELECT id FROM users WHERE phone=%s AND org_id=%s ORDER BY id LIMIT 1", (phone, org_id))
+        else:
+            existing = db_one("SELECT id FROM users WHERE phone=%s AND project_id=%s ORDER BY id LIMIT 1", (phone, project_id))
+
+    with db_cursor() as (conn, cur):
+        if existing:
+            cur.execute(
+                "UPDATE users SET "
+                "  name      = COALESCE(NULLIF(%s,''), name), "
+                "  last_name = COALESCE(%s, last_name), "
+                "  phone     = COALESCE(%s, phone), "
+                "  birthdate = COALESCE(%s, birthdate), "
+                "  address   = COALESCE(%s, address), "
+                "  metadata  = COALESCE(metadata,'{}'::jsonb) || %s::jsonb "
+                "WHERE id=%s RETURNING id",
+                (name, last_name, phone, birthdate, address, json.dumps(metadata), existing["id"]))
+            user_id = cur.fetchone()["id"]
+            created = False
+        else:
+            cur.execute(
+                "INSERT INTO users "
+                "  (project_id, org_id, name, last_name, email, phone, birthdate, address, "
+                "   metadata, is_external, is_guest, password_hash) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb, TRUE, FALSE, '') RETURNING id",
+                (project_id, org_id, name, last_name, email, phone, birthdate, address,
+                 json.dumps(metadata)))
+            user_id = cur.fetchone()["id"]
+            created = True
+        conn.commit()
+    return {"ok": True, "id": user_id, "created": created}
 
 
 # ── SAVED ADDRESSES ──────────────────────────────────────
@@ -2847,7 +3005,10 @@ def refresh_session(response: Response, request: Request,
         clear_auth_cookies(response)
         raise HTTPException(401, "Invalid or expired refresh token")
     user_id, new_raw = result
-    if not db_one("SELECT 1 FROM users WHERE id=%s AND project_id=%s", (user_id, project_id)):
+    # Validate the account still exists in scope. Under org-shared customers a
+    # session created at branch B belongs to an account whose home row may be a
+    # different branch, so the check must be org-wide (get_user_by_id handles it).
+    if not get_user_by_id(user_id, project_id, api_key_record.get("org_id")):
         clear_auth_cookies(response)
         raise HTTPException(401, "Account not found")
     set_auth_cookie(response, create_token(user_id))
@@ -2929,7 +3090,7 @@ def forgot_password(request: ForgotPasswordRequest, req: Request,
             raise HTTPException(429, f"Too many requests. Try again in {left} seconds.")
         _fail_record("reset", ident)
 
-    user = get_user_by_email(email, project_id)
+    user = get_user_by_email(email, project_id, api_key_record.get("org_id"))
     if user:
         for k in _kv_keys_matching("pw_reset:*"):
             d = _kv_get(k)
@@ -2970,11 +3131,20 @@ def reset_password(request: ResetPasswordRequest, api_key_record: dict = Depends
 
     token_data["used"] = True
     _reset_set(token_hash, token_data)
+    org_id = api_key_record.get("org_id")
     with db_cursor() as (conn, cursor):
-        cursor.execute(
-            "UPDATE users SET password_hash = %s WHERE email = %s AND project_id = %s",
-            (hash_password(request.password), token_data["email"], project_id)
-        )
+        if _org_shares_customers(org_id):
+            # Org-shared: the account's home row may live under another branch,
+            # so scope the password update to the org, not this single project.
+            cursor.execute(
+                "UPDATE users SET password_hash = %s WHERE email = %s AND org_id = %s",
+                (hash_password(request.password), token_data["email"], org_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE users SET password_hash = %s WHERE email = %s AND project_id = %s",
+                (hash_password(request.password), token_data["email"], project_id)
+            )
         conn.commit()
     _reset_del(token_hash)
     return {"success": True}
@@ -8126,21 +8296,23 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
         print(f"Google verify error: {e}")
         return RedirectResponse(f"{frontend}/login?error=google_verify")
 
+    org_id = (db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("org_id")
+    scope_sql, scope_val = ("org_id=%s", org_id) if _org_shares_customers(org_id) else ("project_id=%s", project_id)
     is_new_user = False
     with db_cursor() as (conn, cursor):
-        cursor.execute("SELECT id FROM users WHERE google_id=%s AND project_id=%s", (g_id, project_id))
+        cursor.execute(f"SELECT id FROM users WHERE google_id=%s AND {scope_sql}", (g_id, scope_val))
         user = cursor.fetchone()
         if not user:
-            cursor.execute("SELECT id FROM users WHERE email=%s AND project_id=%s AND google_id IS NULL",
-                           (email, project_id))
+            cursor.execute(f"SELECT id FROM users WHERE email=%s AND {scope_sql} AND google_id IS NULL",
+                           (email, scope_val))
             user = cursor.fetchone()
             if user:
                 cursor.execute("UPDATE users SET google_id=%s WHERE id=%s", (g_id, user["id"]))
                 conn.commit()
         if not user:
             cursor.execute(
-                "INSERT INTO users (name, email, password_hash, project_id, google_id) VALUES(%s,%s,'',%s,%s) RETURNING id",
-                (sanitize(name), email, project_id, g_id)
+                "INSERT INTO users (name, email, password_hash, project_id, org_id, google_id) VALUES(%s,%s,'',%s,%s,%s) RETURNING id",
+                (sanitize(name), email, project_id, org_id, g_id)
             )
             user_id = cursor.fetchone()["id"]
             conn.commit()
@@ -8772,19 +8944,21 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
             pass
 
     # ── 4. Find or create user ───────────────────────────────────────────
+    org_id = (db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("org_id")
+    scope_sql, scope_val = ("org_id=%s", org_id) if _org_shares_customers(org_id) else ("project_id=%s", project_id)
     with db_cursor() as (conn, cursor):
         # 4a. Try by (provider, oauth_provider_id)
         cursor.execute(
-            "SELECT id FROM users WHERE oauth_provider=%s AND oauth_provider_id=%s AND project_id=%s",
-            (provider, oid, project_id),
+            f"SELECT id FROM users WHERE oauth_provider=%s AND oauth_provider_id=%s AND {scope_sql}",
+            (provider, oid, scope_val),
         )
         user = cursor.fetchone()
         # 4b. Try linking by email if user already registered
         if not user and email:
             cursor.execute(
-                "SELECT id FROM users WHERE email=%s AND project_id=%s "
+                f"SELECT id FROM users WHERE email=%s AND {scope_sql} "
                 "AND oauth_provider IS NULL AND google_id IS NULL",
-                (email, project_id),
+                (email, scope_val),
             )
             user = cursor.fetchone()
             if user:
@@ -8800,10 +8974,10 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
             email_to_use = email or f"{provider}_{oid}@oauth.local"
             try:
                 cursor.execute(
-                    "INSERT INTO users (name, email, password_hash, project_id, "
+                    "INSERT INTO users (name, email, password_hash, project_id, org_id, "
                     "oauth_provider, oauth_provider_id) "
-                    "VALUES (%s,%s,'',%s,%s,%s) RETURNING id",
-                    (sanitize(name), email_to_use, project_id, provider, oid),
+                    "VALUES (%s,%s,'',%s,%s,%s,%s) RETURNING id",
+                    (sanitize(name), email_to_use, project_id, org_id, provider, oid),
                 )
                 user_id = cursor.fetchone()["id"]
                 conn.commit()
@@ -8812,8 +8986,8 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
                 conn.rollback()
                 # Race: user got created between our SELECT and INSERT — re-fetch
                 cursor.execute(
-                    "SELECT id FROM users WHERE oauth_provider=%s AND oauth_provider_id=%s AND project_id=%s",
-                    (provider, oid, project_id),
+                    f"SELECT id FROM users WHERE oauth_provider=%s AND oauth_provider_id=%s AND {scope_sql}",
+                    (provider, oid, scope_val),
                 )
                 row = cursor.fetchone()
                 if not row:
@@ -9519,11 +9693,13 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
 
     # ── Find or create user (race-safe) ───────────────────────────────
     name = pending.get("name") or f"User {phone[-4:]}"
+    org_id = api_key_record.get("org_id")
+    scope_sql, scope_val = ("org_id=%s", org_id) if _org_shares_customers(org_id) else ("project_id=%s", project_id)
     is_new_user = False
     with db_cursor() as (conn, cur):
         cur.execute(
-            "SELECT id FROM users WHERE phone=%s AND project_id=%s",
-            (phone, project_id),
+            f"SELECT id FROM users WHERE phone=%s AND {scope_sql} ORDER BY id LIMIT 1",
+            (phone, scope_val),
         )
         user = cur.fetchone()
         if user:
@@ -9532,9 +9708,9 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
         else:
             try:
                 cur.execute(
-                    "INSERT INTO users (name, email, password_hash, project_id, phone, phone_verified) "
-                    "VALUES (%s, %s, '', %s, %s, TRUE) RETURNING id",
-                    (sanitize(name), f"phone_{phone}@phone.local", project_id, phone),
+                    "INSERT INTO users (name, email, password_hash, project_id, org_id, phone, phone_verified) "
+                    "VALUES (%s, %s, '', %s, %s, %s, TRUE) RETURNING id",
+                    (sanitize(name), f"phone_{phone}@phone.local", project_id, org_id, phone),
                 )
                 user_id = cur.fetchone()["id"]
                 is_new_user = True
@@ -9542,8 +9718,8 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
                 # Concurrent INSERT won the race — find the existing row
                 conn.rollback()
                 cur.execute(
-                    "SELECT id FROM users WHERE phone=%s AND project_id=%s",
-                    (phone, project_id),
+                    f"SELECT id FROM users WHERE phone=%s AND {scope_sql} ORDER BY id LIMIT 1",
+                    (phone, scope_val),
                 )
                 row = cur.fetchone()
                 if not row:

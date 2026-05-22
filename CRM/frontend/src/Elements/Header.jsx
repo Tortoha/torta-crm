@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus } from '@phosphor-icons/react';
+import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
 import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
@@ -587,7 +587,7 @@ function ProductSwitcherCrumb({ project, productContext }) {
 }
 
 /* ── Header ── */
-function Header({ user, project, org, productContext, settingsMode }) {
+function Header({ user, project, org, productContext, settingsMode, docsMode }) {
   const navigate = useNavigate();
   const { t }    = useTranslation();
   return (
@@ -603,6 +603,13 @@ function Header({ user, project, org, productContext, settingsMode }) {
           <>
             <span className="hdr-sep">/</span>
             <span className="hdr-settings-crumb">{t('nav.settings')}</span>
+          </>
+        )}
+        {/* Docs pages: show static "Docs" breadcrumb */}
+        {docsMode && (
+          <>
+            <span className="hdr-sep">/</span>
+            <span className="hdr-settings-crumb">{t('docs.title')}</span>
           </>
         )}
         {/* Org-level pages: show org switcher */}
@@ -630,6 +637,12 @@ function Header({ user, project, org, productContext, settingsMode }) {
         )}
       </div>
       <div className="hdr-right">
+        {user && !docsMode && (
+          <button className="hdr-docs-btn" onClick={() => navigate('/docs')} type="button">
+            <BookOpen className="hdr-docs-icon" weight="bold" />
+            <span className="hdr-docs-label">{t('docs.title')}</span>
+          </button>
+        )}
         {user && <NotificationsBell />}
         {user && <UserMenu user={user} project={project} />}
       </div>

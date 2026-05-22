@@ -1,0 +1,18 @@
+{
+  "docs": {
+    "title": "Docs",
+    "groups": {
+      "crm": "CRM Guide",
+      "api": "API · torta-js"
+    },
+    "pages": {
+      "gettingStarted": "Getting Started",
+      "organizationsProjects": "Organizations & Projects",
+      "quickstart": "torta-js Quickstart",
+      "customers": "Pushing Customers"
+    },
+    "notFound": "This documentation page isn't available yet.",
+    "copy": "Copy",
+    "copied": "Copied"
+  }
+}

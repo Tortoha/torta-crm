@@ -1,0 +1,18 @@
+{
+  "docs": {
+    "title": "Документация",
+    "groups": {
+      "crm": "Гайд по CRM",
+      "api": "API · torta-js"
+    },
+    "pages": {
+      "gettingStarted": "С чего начать",
+      "organizationsProjects": "Организации и проекты",
+      "quickstart": "Быстрый старт torta-js",
+      "customers": "Приём клиентов"
+    },
+    "notFound": "Эта страница документации пока недоступна.",
+    "copy": "Копировать",
+    "copied": "Скопировано"
+  }
+}

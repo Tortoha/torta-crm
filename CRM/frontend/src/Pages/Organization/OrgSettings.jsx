@@ -14,10 +14,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Buildings, Warning } from '@phosphor-icons/react';
+import { Buildings, Warning, UsersThree } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { CURRENCIES, formatMoney, getCurrencyMeta } from '../../Utils/currency.js';
-import { Section, FieldCard, SearchableCombobox } from '../Project/ProjectSettings.jsx';
+import { Section, FieldCard, SearchableCombobox, SegmentSwitch } from '../Project/ProjectSettings.jsx';
 import '../../Style/Authentication.css';
 import '../../Style/Products.css';
 
@@ -139,6 +139,79 @@ function DeleteOrgModal({ orgName, projectCount, busy, error, onCancel, onConfir
   );
 }
 
+// ── Disconnect (per-project) confirmation ─────────────────────────────
+// Turning sharing OFF can become irreversible if accounts later diverge, so
+// (mirroring the delete flow) we require the org name typed back to arm it.
+function DisconnectCustomersModal({ orgName, busy, onCancel, onConfirm }) {
+  const { t } = useTranslation();
+  const [text, setText] = useState('');
+  const armed = text.trim() === orgName.trim() && !busy;
+  return (
+    <div className="auth-modal-overlay" onClick={onCancel}>
+      <div className="auth-modal" onClick={e => e.stopPropagation()} style={{ width: 480 }}>
+        <div className="auth-modal-body">
+          <div className="auth-modal-title-row">
+            <h2 className="auth-modal-title">{t('org.settings.customers.disconnectModal.title')}</h2>
+          </div>
+          <p className="cpm-section-hint" style={{ marginTop: 0 }}>
+            {t('org.settings.customers.disconnectModal.warning')}
+          </p>
+          <p className="cpm-section-hint" style={{ marginTop: 8 }}>
+            {t('org.settings.customers.disconnectModal.typePre')}<b>{orgName}</b>{t('org.settings.customers.disconnectModal.typePost')}
+          </p>
+          <input className="crm-input" placeholder={orgName} value={text}
+            onChange={e => setText(e.target.value)} style={{ marginTop: 4 }} autoFocus />
+          <div className="auth-actions" style={{ marginTop: 16 }}>
+            <button type="button" className="crm-submit-btn" disabled={!armed}
+              onClick={() => onConfirm(text.trim())}>
+              {t('org.settings.customers.disconnectModal.confirm')}
+            </button>
+            <button type="button" className="crm-submit-btn auth-btn-secondary"
+              onClick={onCancel} style={{ marginLeft: 'auto' }}>{t('common.cancel')}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Merge-conflict blocker (shown when turning sharing ON) ─────────────
+function CustomerConflictModal({ conflicts, onClose }) {
+  const { t } = useTranslation();
+  return (
+    <div className="auth-modal-overlay" onClick={onClose}>
+      <div className="auth-modal" onClick={e => e.stopPropagation()} style={{ width: 480 }}>
+        <div className="auth-modal-body">
+          <div className="auth-modal-title-row">
+            <h2 className="auth-modal-title">{t('org.settings.customers.conflictModal.title')}</h2>
+          </div>
+          <p className="cpm-section-hint" style={{ marginTop: 0 }}>
+            {t('org.settings.customers.conflictModal.intro')}
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '8px 0' }}>
+            {conflicts.map(c => (
+              <div key={c.email} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '8px 12px', borderRadius: 12, background: 'var(--accent-tint)', fontSize: 13,
+              }}>
+                <span>{c.email}</span>
+                <span style={{ color: 'var(--muted)' }}>
+                  {t('org.settings.customers.conflictModal.accounts', { count: c.accounts })}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="auth-actions" style={{ marginTop: 16 }}>
+            <button type="button" className="crm-submit-btn" onClick={onClose}>
+              {t('org.settings.customers.conflictModal.close')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────
 export default function OrgSettings() {
   const { t } = useTranslation();
@@ -184,6 +257,53 @@ export default function OrgSettings() {
     });
     if (r.ok) { setCurrency(next); showToast(t('common.saved')); }
     else showToast(t('common.saveFailed'));
+  };
+
+  // ── Customers: org-shared identity toggle ──
+  const [shared, setShared]               = useState(org?.customers_shared !== false);
+  const [sharingBusy, setSharingBusy]     = useState(false);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [conflicts, setConflicts]         = useState(null);   // null = closed; [...] = blocking list
+
+  const applySharing = async (next, confirmText) => {
+    setSharingBusy(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/orgs/${org.id}/customers-sharing`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shared: next, confirm: confirmText ?? null }),
+      });
+      if (r.ok) {
+        setShared(next);
+        setDisconnectOpen(false);
+        showToast(t('common.saved'));
+      } else if (r.status === 409) {
+        const j = await r.json().catch(() => ({}));
+        setConflicts(j?.detail?.conflicts || []);
+      } else {
+        showToast(t('common.saveFailed'));
+      }
+    } catch {
+      showToast(t('common.saveFailed'));
+    } finally {
+      setSharingBusy(false);
+    }
+  };
+
+  const onToggleSharing = async (next) => {
+    if (next === shared || sharingBusy) return;
+    if (next) {
+      // Turning ON — surface blocking conflicts before committing.
+      try {
+        const r = await fetch(`${API_BASE}/api/orgs/${org.id}/customers-sharing/conflicts`,
+                              { credentials: 'include' });
+        const j = await r.json().catch(() => ({}));
+        if ((j?.conflicts || []).length) { setConflicts(j.conflicts); return; }
+      } catch { /* fall through — backend re-checks on PATCH anyway */ }
+      applySharing(true);
+    } else {
+      setDisconnectOpen(true);   // turning OFF needs typed confirmation
+    }
   };
 
   // ── Danger zone: project count gate + delete ──
@@ -271,6 +391,24 @@ export default function OrgSettings() {
           </FieldCard>
         </Section>
 
+        {/* ── Customers ── */}
+        <Section icon={<UsersThree weight="duotone" />} title={t('org.settings.customers.title')}
+          subtitle={t('org.settings.customers.subtitle')}>
+          <FieldCard label={t('org.settings.customers.modeLabel')}
+            hint={shared
+              ? t('org.settings.customers.modeHintShared')
+              : t('org.settings.customers.modeHintPerProject')}>
+            <SegmentSwitch
+              value={shared ? 'shared' : 'per_project'}
+              disabled={sharingBusy}
+              onChange={(v) => onToggleSharing(v === 'shared')}
+              options={[
+                { value: 'shared',      label: t('org.settings.customers.shared') },
+                { value: 'per_project', label: t('org.settings.customers.perProject') },
+              ]} />
+          </FieldCard>
+        </Section>
+
         {/* ── Danger zone ── */}
         <Section icon={<Warning weight="duotone" />} title={t('org.settings.danger.title')}
           subtitle={t('org.settings.danger.subtitle')}>
@@ -312,6 +450,22 @@ export default function OrgSettings() {
           error={deleteErr}
           onCancel={() => { if (!deleting) setShowDelete(false); }}
           onConfirm={doDelete} />,
+        document.body,
+      )}
+
+      {/* Switch-to-per-project confirmation. */}
+      {disconnectOpen && createPortal(
+        <DisconnectCustomersModal
+          orgName={org?.name || ''}
+          busy={sharingBusy}
+          onCancel={() => { if (!sharingBusy) setDisconnectOpen(false); }}
+          onConfirm={(text) => applySharing(false, text)} />,
+        document.body,
+      )}
+
+      {/* Merge-conflict blocker (turning sharing ON). */}
+      {conflicts && createPortal(
+        <CustomerConflictModal conflicts={conflicts} onClose={() => setConflicts(null)} />,
         document.body,
       )}
 

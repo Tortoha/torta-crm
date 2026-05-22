@@ -32,6 +32,28 @@
   flex-shrink: 0;
 }
 
+/* ── Docs button (before the notifications bell) ── */
+.hdr-docs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  margin-right: 8px;
+  border: none;
+  background: none;
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.hdr-docs-btn:hover { background: var(--accent-tint); color: var(--accent); }
+.hdr-docs-icon { width: 17px; height: 17px; }
+@media (max-width: 640px) { .hdr-docs-label { display: none; } }
+
 /* ── Brand link ── */
 .hdr-brand {
   height: 32px;

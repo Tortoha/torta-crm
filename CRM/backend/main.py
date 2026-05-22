@@ -2707,6 +2707,11 @@ def run_migrations():
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS payment_provider VARCHAR(30) NOT NULL DEFAULT 'manual'")
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS payment_account_label VARCHAR(160) NOT NULL DEFAULT ''")
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS payment_dashboard_url VARCHAR(600) NOT NULL DEFAULT ''")
+            # Org-level customer identity. TRUE (default) = one customer account
+            # works across every project (branch) of the org, and Auth Providers
+            # config is shared across branches via fan-out write. FALSE = legacy
+            # per-project customers (each store its own isolated customer base).
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS customers_shared BOOLEAN NOT NULL DEFAULT TRUE")
             # Drop old constraint if it exists with old provider set, then recreate
             # with the expanded list. Safe to run repeatedly.
             cur.execute("ALTER TABLE crm_organizations DROP CONSTRAINT IF EXISTS crm_organizations_payment_provider_check")
@@ -2721,6 +2726,21 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] crm_organizations.payment_provider failed: {e}")
+
+    # Per-project SERVER secret key (sk_…) — for trusted server-to-server calls
+    # (e.g. a merchant pushing customers from their own backend). Unlike the
+    # publishable key it must NEVER reach the browser. Backfill existing rows.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_projects ADD COLUMN IF NOT EXISTS secret_key VARCHAR(60)")
+            conn.commit()
+            cur.execute("SELECT id FROM crm_projects WHERE secret_key IS NULL OR secret_key=''")
+            for r in cur.fetchall():
+                cur.execute("UPDATE crm_projects SET secret_key=%s WHERE id=%s",
+                            ("sk_" + secrets.token_hex(24), r["id"]))
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_projects.secret_key failed: {e}")
 
     # Encrypted payment-provider credentials (Stripe/Tinkoff/etc. API keys).
     # One row per org. credentials_encrypted is a Fernet-encrypted JSON dict — see payment_crypto.py.
@@ -3762,6 +3782,10 @@ class CreateOrgRequest(BaseModel):
 class RenameOrgRequest(BaseModel):
     name: str
 
+class CustomersSharingRequest(BaseModel):
+    shared: bool
+    confirm: Optional[str] = None   # org name, required to turn sharing OFF
+
 class CreateProjectRequest(BaseModel):
     name: str
     frontend_url: str
@@ -4407,6 +4431,81 @@ def require_org_owner(user: dict, org_id: int):
                   (org_id, user["id"])):
         raise HTTPException(403, "Only organization owner can do this")
 
+def _org_customers_shared(org_id) -> bool:
+    """Whether this org shares customer identity + Auth Providers across its
+    projects (branches). Default TRUE. Drives auth-config fan-out and the
+    org-scoped customer views."""
+    if not org_id:
+        return False
+    row = db_one("SELECT customers_shared FROM crm_organizations WHERE id = %s", (org_id,))
+    return bool(row and row.get("customers_shared"))
+
+def _org_project_ids(org_id) -> list[int]:
+    """All project IDs in an org — used for Auth Providers fan-out writes and
+    org-scoped customer queries."""
+    if not org_id:
+        return []
+    return [int(r["id"]) for r in db_all("SELECT id FROM crm_projects WHERE org_id=%s", (org_id,))]
+
+# ── Auth Providers fan-out ───────────────────────────────────────────
+# When an org shares customers, the Auth Providers config (Google / email
+# domain / SMS / provider flags) behaves as ONE page for the whole org: a save
+# in any branch propagates to every branch. We keep the per-project tables
+# unchanged (no schema migration) and replicate on write — so when sharing is
+# turned OFF the branches simply keep their last copy and diverge independently.
+
+_FANOUT_SKIP_COLS = {"id", "project_id", "created_at"}
+
+def _fanout_auth_config(table: str, project_id: int, conflict_cols=("project_id",)) -> None:
+    """Copy this project's just-saved row(s) in `table` to every OTHER project
+    in the org (all non-identity columns). No-op when the org doesn't share
+    customers or has a single project."""
+    row = db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,))
+    org_id = row.get("org_id") if row else None
+    if not _org_customers_shared(org_id):
+        return
+    cols = [r["column_name"] for r in db_all(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+        (table,))]
+    copy = [c for c in cols if c not in _FANOUT_SKIP_COLS]
+    if not copy:
+        return
+    col_list = ", ".join(copy)
+    sel_list = ", ".join(f"s.{c}" for c in copy)
+    set_list = ", ".join(f"{c}=EXCLUDED.{c}" for c in copy)
+    conflict = ", ".join(conflict_cols)
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                f"INSERT INTO {table} (project_id, {col_list}) "
+                f"SELECT tgt.id, {sel_list} FROM {table} s "
+                f"CROSS JOIN crm_projects tgt "
+                f"WHERE s.project_id=%s AND tgt.org_id=%s AND tgt.id<>%s "
+                f"ON CONFLICT ({conflict}) DO UPDATE SET {set_list}",
+                (project_id, org_id, project_id))
+            conn.commit()
+    except Exception as e:
+        print(f"[fanout] {table} copy failed: {e}")
+
+def _fanout_auth_delete(table: str, project_id: int,
+                        where_extra: str = "", params_extra: tuple = ()) -> None:
+    """Mirror a config delete to every sibling project in the org when sharing
+    is on. No-op otherwise."""
+    row = db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,))
+    org_id = row.get("org_id") if row else None
+    if not _org_customers_shared(org_id):
+        return
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                f"DELETE FROM {table} WHERE project_id IN "
+                f"(SELECT id FROM crm_projects WHERE org_id=%s){where_extra}",
+                (org_id,) + params_extra)
+            conn.commit()
+    except Exception as e:
+        print(f"[fanout] {table} delete failed: {e}")
+
 
 # ── Static FX rates (units per 1 USD) ────────────────────────────────
 # Used by the org Analytics page to convert each project's revenue (each
@@ -4681,6 +4780,9 @@ def gen_api_key() -> str:
 
 def gen_publishable_key() -> str:
     return "pk_" + secrets.token_hex(24)  # pk_ + 48 chars
+
+def gen_secret_key() -> str:
+    return "sk_" + secrets.token_hex(24)  # sk_ + 48 chars — server-only, never sent to the browser
 
 def make_slug(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")
@@ -5076,30 +5178,34 @@ def create_org(request: CreateOrgRequest, user: dict = Depends(get_current_user)
 @app.get("/api/orgs/by-slug/{slug}")
 def get_org_by_slug(slug: str, user: dict = Depends(get_current_user)):
     org = db_one("""
-        SELECT o.id, o.name, o.slug, o.created_at, o.currency, (o.owner_id = %s) AS is_owner
+        SELECT o.id, o.name, o.slug, o.created_at, o.currency, o.customers_shared,
+               (o.owner_id = %s) AS is_owner
         FROM crm_organizations o
         WHERE o.slug = %s
           AND (o.owner_id = %s OR o.id IN (SELECT org_id FROM crm_org_members WHERE crm_user_id = %s))
     """, (user["id"], slug, user["id"], user["id"]))
     if not org: raise HTTPException(404, "Organization not found")
-    org["created_at"] = str(org["created_at"])
-    org["currency"]   = (org.get("currency") or "USD").upper()
-    org["is_owner"]   = bool(org["is_owner"])
+    org["created_at"]       = str(org["created_at"])
+    org["currency"]         = (org.get("currency") or "USD").upper()
+    org["is_owner"]         = bool(org["is_owner"])
+    org["customers_shared"] = bool(org["customers_shared"])
     return org
 
 
 @app.get("/api/orgs/{org_id}")
 def get_org(org_id: int, user: dict = Depends(get_current_user)):
     org = db_one("""
-        SELECT o.id, o.name, o.slug, o.created_at, o.currency, (o.owner_id = %s) AS is_owner
+        SELECT o.id, o.name, o.slug, o.created_at, o.currency, o.customers_shared,
+               (o.owner_id = %s) AS is_owner
         FROM crm_organizations o
         WHERE o.id = %s
           AND (o.owner_id = %s OR o.id IN (SELECT org_id FROM crm_org_members WHERE crm_user_id = %s))
     """, (user["id"], org_id, user["id"], user["id"]))
     if not org: raise HTTPException(404, "Organization not found")
-    org["created_at"] = str(org["created_at"])
-    org["currency"]   = (org.get("currency") or "USD").upper()
-    org["is_owner"]   = bool(org["is_owner"])
+    org["created_at"]       = str(org["created_at"])
+    org["currency"]         = (org.get("currency") or "USD").upper()
+    org["is_owner"]         = bool(org["is_owner"])
+    org["customers_shared"] = bool(org["customers_shared"])
     return org
 
 
@@ -5113,6 +5219,68 @@ def rename_org(org_id: int, request: RenameOrgRequest, user: dict = Depends(get_
         cur.execute("UPDATE crm_organizations SET name=%s WHERE id=%s", (sanitize(name), org_id))
         conn.commit()
     return {"ok": True, "name": name}
+
+
+def _customer_merge_conflicts(org_id: int) -> list[dict]:
+    """Emails registered in 2+ of the org's projects with DIFFERENT credentials
+    — distinct password hashes, or a password account in one branch and an OAuth
+    account in another. These can't be auto-merged into one identity, so they
+    block turning sharing ON until the owner resolves them. (Same email + same
+    password across branches is NOT a conflict — it's the same person.)"""
+    rows = db_all(
+        """SELECT email,
+                  COUNT(*) AS accounts,
+                  COUNT(DISTINCT NULLIF(password_hash, '')) AS pw_variants,
+                  BOOL_OR(password_hash IS NOT NULL AND password_hash <> '') AS has_pw,
+                  BOOL_OR(google_id IS NOT NULL OR oauth_provider IS NOT NULL) AS has_oauth
+             FROM users
+            WHERE org_id = %s AND NOT is_guest
+              AND email IS NOT NULL AND email <> ''
+            GROUP BY email
+           HAVING COUNT(*) > 1""",
+        (org_id,))
+    out = []
+    for r in rows:
+        if int(r["pw_variants"] or 0) > 1 or (r["has_pw"] and r["has_oauth"]):
+            out.append({"email": r["email"], "accounts": int(r["accounts"])})
+    return out
+
+
+@app.get("/api/orgs/{org_id}/customers-sharing/conflicts")
+def get_customers_sharing_conflicts(org_id: int, user: dict = Depends(get_current_user)):
+    """Lets the UI preview blocking conflicts before the owner tries to turn
+    sharing ON (so it can show 'resolve these first' instead of a hard error)."""
+    require_org_owner(user, org_id)
+    return {"conflicts": _customer_merge_conflicts(org_id)}
+
+
+@app.patch("/api/orgs/{org_id}/customers-sharing")
+def set_customers_sharing(org_id: int, request: CustomersSharingRequest,
+                          user: dict = Depends(get_current_user)):
+    """Toggle org-level customer identity. ON requires no credential conflicts;
+    OFF (the irreversible-if-accounts-diverge direction) requires the org name
+    typed back, mirroring the UI's two-step confirmation."""
+    require_org_owner(user, org_id)
+    org = db_one("SELECT name, customers_shared FROM crm_organizations WHERE id=%s", (org_id,))
+    if not org:
+        raise HTTPException(404, "Organization not found")
+    current = bool(org["customers_shared"])
+    if request.shared == current:
+        return {"ok": True, "customers_shared": current}
+
+    if request.shared:
+        conflicts = _customer_merge_conflicts(org_id)
+        if conflicts:
+            raise HTTPException(409, detail={"error": "merge_conflicts", "conflicts": conflicts})
+    else:
+        if (request.confirm or "").strip() != (org["name"] or "").strip():
+            raise HTTPException(400, "Type the organization name to confirm")
+
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_organizations SET customers_shared=%s WHERE id=%s",
+                    (request.shared, org_id))
+        conn.commit()
+    return {"ok": True, "customers_shared": request.shared}
 
 
 @app.delete("/api/orgs/{org_id}")
@@ -6911,11 +7079,12 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
     )
     if not new_key: raise HTTPException(500, "Failed to generate unique key")
     new_pk = gen_publishable_key()
+    new_sk = gen_secret_key()
 
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO crm_projects (org_id, crm_user_id, name, api_key, publishable_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,%s,%s,TRUE) RETURNING id",
-            (org_id, user["id"], sanitize(name), new_key, new_pk, get_ip(req))
+            "INSERT INTO crm_projects (org_id, crm_user_id, name, api_key, publishable_key, secret_key, last_used_ip, is_active) VALUES (%s,%s,%s,%s,%s,%s,%s,TRUE) RETURNING id",
+            (org_id, user["id"], sanitize(name), new_key, new_pk, new_sk, get_ip(req))
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
@@ -6944,13 +7113,25 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
                 pass   # ignore — merchant can set it later in Booking → Settings
         conn.commit()
 
+    # New branch inherits the org's shared Auth Providers config when sharing is
+    # on, so cross-branch login works immediately. Copying from any existing
+    # sibling fans the config out to every project (the new one included).
+    if _org_customers_shared(org_id):
+        src = db_one("SELECT id FROM crm_projects WHERE org_id=%s AND id<>%s ORDER BY id LIMIT 1",
+                     (org_id, new_id))
+        if src:
+            _fanout_auth_config("crm_oauth_settings", src["id"])
+            _fanout_auth_config("crm_email_domains",  src["id"])
+            _fanout_auth_config("crm_sms_settings",   src["id"])
+            _fanout_auth_config("crm_auth_providers", src["id"], ("project_id", "provider"))
+
     return {"id": new_id, "name": name, "api_key": new_key, "publishable_key": new_pk, "is_active": True}
 
 
 @app.get("/api/projects/by-key/{api_key}")
 def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
     p = db_one("""
-        SELECT p.id, p.name, p.api_key, p.publishable_key, p.is_active, p.last_used_at, p.created_at,
+        SELECT p.id, p.name, p.api_key, p.publishable_key, p.secret_key, p.is_active, p.last_used_at, p.created_at,
                COALESCE(p.timezone, 'UTC') AS timezone,
                COALESCE(p.currency, 'USD') AS currency,
                COALESCE(p.tz_auto,  TRUE)  AS tz_auto,
@@ -6961,6 +7142,9 @@ def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
     """, (api_key,))
     if not p: raise HTTPException(404, "Project not found")
     require_team_member_or_owner(user, p["id"])
+    # Secret key is owner-only — strip it for non-owner team members.
+    full, _ = _is_full_access(user["id"], p["id"])
+    if not full: p.pop("secret_key", None)
     p["last_used_at"] = p["last_used_at"].isoformat() if p.get("last_used_at") else None
     p["created_at"]   = str(p["created_at"])
     return p
@@ -6970,7 +7154,7 @@ def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
 def get_project(project_id: int, user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
     p = db_one("""
-        SELECT p.id, p.name, p.api_key, p.publishable_key, p.is_active, p.last_used_at, p.created_at,
+        SELECT p.id, p.name, p.api_key, p.publishable_key, p.secret_key, p.is_active, p.last_used_at, p.created_at,
                COALESCE(p.timezone, 'UTC') AS timezone,
                COALESCE(p.currency, 'USD') AS currency,
                COALESCE(p.tz_auto,  TRUE)  AS tz_auto,
@@ -6980,6 +7164,8 @@ def get_project(project_id: int, user: dict = Depends(get_current_user)):
         WHERE p.id = %s
     """, (project_id,))
     if not p: raise HTTPException(404, "Project not found")
+    full, _ = _is_full_access(user["id"], p["id"])
+    if not full: p.pop("secret_key", None)
     p["last_used_at"] = p["last_used_at"].isoformat() if p.get("last_used_at") else None
     p["created_at"]   = str(p["created_at"])
     return p
@@ -12822,6 +13008,7 @@ def save_email_domain(req: EmailDomainRequest, project_id: int = Query(...), use
             """, (project_id, domain, from_name, from_email, json.dumps(dns_records), ''))
         conn.commit()
 
+    _fanout_auth_config("crm_email_domains", project_id)
     return get_email_domain(project_id=project_id, user=user)
 
 
@@ -12856,6 +13043,7 @@ def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
         ))
         conn.commit()
 
+    _fanout_auth_config("crm_email_domains", project_id)
     return {"dkim_ok": dkim_ok, "spf_ok": spf_ok, "dmarc_ok": dmarc_ok, "all_ok": all_ok}
 
 
@@ -12871,6 +13059,7 @@ def delete_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_email_domains WHERE project_id=%s", (project_id,))
         conn.commit()
+    _fanout_auth_delete("crm_email_domains", project_id)
     return {"success": True}
 
 
@@ -12921,6 +13110,7 @@ def save_oauth_settings(req: OAuthSettingsRequest, project_id: int = Query(...),
                 (project_id, req.google_client_id or None, secret_in or None, req.google_enabled)
             )
         conn.commit()
+    _fanout_auth_config("crm_oauth_settings", project_id)
     return {"ok": True}
 
 
@@ -12930,6 +13120,7 @@ def delete_oauth_settings(project_id: int = Query(...), user: dict = Depends(get
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
         conn.commit()
+    _fanout_auth_delete("crm_oauth_settings", project_id)
     return {"ok": True}
 
 
@@ -13003,6 +13194,7 @@ def save_auth_provider(provider: str, req: AuthProviderRequest,
                 (project_id, provider, req.client_id or None, req.client_secret or None, req.is_enabled),
             )
         conn.commit()
+    _fanout_auth_config("crm_auth_providers", project_id, ("project_id", "provider"))
     return {"ok": True}
 
 
@@ -13015,6 +13207,7 @@ def delete_auth_provider(provider: str, project_id: int = Query(...), user: dict
             (project_id, provider),
         )
         conn.commit()
+    _fanout_auth_delete("crm_auth_providers", project_id, " AND provider=%s", (provider,))
     return {"ok": True}
 
 
@@ -13212,6 +13405,7 @@ def save_sms_settings(req: SmsSettingsRequest,
                 fields + (project_id,),
             )
         conn.commit()
+    _fanout_auth_config("crm_sms_settings", project_id)
     return {"ok": True}
 
 
@@ -13221,6 +13415,7 @@ def delete_sms_settings(project_id: int = Query(...), user: dict = Depends(get_c
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_sms_settings WHERE project_id=%s", (project_id,))
         conn.commit()
+    _fanout_auth_delete("crm_sms_settings", project_id)
     return {"ok": True}
 
 

@@ -235,6 +235,8 @@
       "publicKeyHint": "в URL",
       "publishableKey": "Публикуемый ключ",
       "publishableKeyHint": "заголовок",
+      "secretKey": "Секретный ключ",
+      "secretKeyHint": "только сервер",
       "keyCopied": "{{label}} скопирован",
       "projectHealth": "Состояние проекта",
       "warnings": "{{count}} предупреждение",

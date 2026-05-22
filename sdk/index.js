@@ -60,10 +60,16 @@ function _autoEnrich() {
   return out;
 }
 
-export function createClient(baseUrl, publishableKey) {
+export function createClient(baseUrl, publishableKey, options = {}) {
   // baseUrl already contains the short public key in the path,
   // e.g. "http://localhost:8000/0c39355b5b6b5ac05bbc"
   const base = baseUrl.replace(/\/$/, '');
+
+  // SERVER-ONLY secret key (sk_…). Pass it as the 3rd arg:
+  //   createClient(url, pk, { secretKey: 'sk_…' })
+  // Only used by client.customers.* (server-to-server). NEVER configure this in
+  // browser code — the secret would leak. Leave it unset on the storefront.
+  const secretKey = options.secretKey || null;
 
   // ─── User cache ───────────────────────────────────────────────────────────
   let _user = undefined;    // undefined = never fetched, null = not logged in
@@ -80,6 +86,7 @@ export function createClient(baseUrl, publishableKey) {
     "/forgot-password", "/reset-password",
     "/auth/google", "/auth/oauth", "/auth/phone",
     "/logout",
+    "/customers",   // secret-key endpoint — no browser session to refresh
   ];
   function _isAuthPath(path) {
     return NO_REFRESH_PATHS.some(p => path.includes(p));
@@ -207,6 +214,24 @@ export function createClient(baseUrl, publishableKey) {
 
   // ─── Client ───────────────────────────────────────────────────────────────
   return {
+
+    // ── Customers (SERVER-SIDE ONLY) ─────────────────────────────────────────
+    // For merchants who run their OWN auth and just want to push customer
+    // records into the CRM. Requires the project SECRET key:
+    //   const client = createClient(url, pk, { secretKey: 'sk_…' });
+    //   await client.customers.save({ email, name, last_name, phone, birthdate, address, metadata });
+    // Upserts by email (then phone). No password, no login — data only.
+    customers: {
+      save(payload = {}) {
+        if (!secretKey) {
+          return Promise.resolve({
+            ok: false, status: 0, data: null,
+            error: "client.customers.save requires a secretKey — createClient(url, pk, { secretKey }). Server-side only.",
+          });
+        }
+        return req("POST", "/customers", payload, { "X-Secret-Key": secretKey });
+      },
+    },
 
     // ── Auth ─────────────────────────────────────────────────────────────────
     auth: {
