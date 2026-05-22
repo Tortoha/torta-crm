@@ -333,7 +333,7 @@
 
 .cust-badge--new       { background: var(--accent-tint);    color: var(--accent); }
 .cust-badge--confirmed { background: rgba(0, 0, 0, 0.06);   color: var(--text);   }
-.cust-badge--shipped   { background: rgba(107, 114, 128, 0.1); color: #6b7280;    }
+.cust-badge--shipped   { background: rgba(107, 114, 128, 0.1); color: rgba(var(--fg-rgb), 0.55);    }
 .cust-badge--delivered { background: rgba(8, 145, 178, 0.1); color: #0891b2;      }
 .cust-badge--cancelled { background: rgba(239, 68, 68, 0.1); color: #ef4444;      }
 .cust-badge--refunded  { background: rgba(217, 119, 6, 0.1); color: #d97706;      }

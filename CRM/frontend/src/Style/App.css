@@ -23,7 +23,7 @@
 
 .home-sub {
   font-size: 20px;
-  color: #666;
+  color: rgba(var(--fg-rgb), 0.6);
   margin: 0;
   font-family: "Wix Madefor Text", sans-serif;
   font-weight: 300;

@@ -218,7 +218,7 @@
 .pov-ck-value {
   font-size: 11px;
   font-family: 'SF Mono', 'Fira Code', monospace;
-  color: rgba(0, 0, 0, 0.35);
+  color: rgba(var(--fg-rgb), 0.35);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -325,7 +325,7 @@
 
 .pov-widget-icon--neutral {
   background: rgba(0, 0, 0, 0.05);
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(var(--fg-rgb), 0.4);
 }
 
 /* Subscription plan tile — accent-tinted crown (no green per design rules) */
@@ -361,7 +361,7 @@
 .pov-widget-arrow {
   width: 14px;
   height: 14px;
-  color: rgba(0, 0, 0, 0.25);
+  color: rgba(var(--fg-rgb), 0.25);
   flex-shrink: 0;
   transition: color 0.4s ease, transform 0.4s ease;
 }
@@ -473,7 +473,7 @@
 
 .pov-health-dot--ok   { color: var(--accent); }
 .pov-health-dot--warn { color: #d97706; }
-.pov-health-dot--info { color: rgba(0, 0, 0, 0.22); }
+.pov-health-dot--info { color: rgba(var(--fg-rgb), 0.22); }
 
 .pov-health-label {
   font-size: 13px;
@@ -694,7 +694,7 @@
 
 .pov-order-badge--new       { background: var(--accent-tint);    color: var(--accent); }
 .pov-order-badge--confirmed { background: rgba(0,0,0,0.06);      color: var(--text);   }
-.pov-order-badge--shipped   { background: rgba(107,114,128,0.1); color: #6b7280;       }
+.pov-order-badge--shipped   { background: rgba(107,114,128,0.1); color: rgba(var(--fg-rgb), 0.55);       }
 .pov-order-badge--delivered { background: rgba(8,145,178,0.1);   color: #0891b2;       }
 .pov-order-badge--cancelled { background: rgba(239,68,68,0.1);   color: #ef4444;       }
 .pov-order-badge--refunded  { background: rgba(217,119,6,0.1);   color: #d97706;       }
@@ -787,7 +787,7 @@
   justify-content: center;
   flex-shrink: 0;
   background: rgba(0, 0, 0, 0.05);
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(var(--fg-rgb), 0.4);
 }
 .pov-action-icon svg { width: 16px; height: 16px; }
 
@@ -795,7 +795,7 @@
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.01em;
-  color: rgba(0, 0, 0, 0.35);
+  color: rgba(var(--fg-rgb), 0.35);
   line-height: 1;
 }
 .pov-action-label { font-size: 12px; color: var(--muted); }
@@ -870,7 +870,7 @@
 .pov-adv-arrow {
   width: 14px;
   height: 14px;
-  color: rgba(0, 0, 0, 0.25);
+  color: rgba(var(--fg-rgb), 0.25);
   flex-shrink: 0;
   transition: color 0.4s ease, transform 0.4s ease;
 }

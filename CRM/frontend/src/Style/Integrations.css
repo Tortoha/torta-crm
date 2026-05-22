@@ -230,7 +230,7 @@
   align-items: center;
   font-size: 11px;
   font-weight: 600;
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   gap: 8px;

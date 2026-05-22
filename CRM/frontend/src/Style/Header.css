@@ -72,7 +72,7 @@
 /* ── Separator ── */
 .hdr-sep {
   font-size: 16px;
-  color: #d0d0d0;
+  color: rgba(var(--fg-rgb), 0.2);
   padding: 0 2px;
   flex-shrink: 0;
   user-select: none;
@@ -460,7 +460,7 @@
 }
 
 .hdr-modal-input::placeholder {
-  color: #bbb;
+  color: rgba(var(--fg-rgb), 0.3);
 }
 
 .hdr-modal-err {
@@ -489,7 +489,7 @@
 
 .hdr-modal-submit:disabled {
   background: #e5e5e5;
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   cursor: not-allowed;
 }
 

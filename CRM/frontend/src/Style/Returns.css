@@ -80,7 +80,7 @@
 .ret-badge--inspected  { background: rgba(88, 86, 214, 0.14);   color: #4341a3; }
 .ret-badge--refunded   { background: var(--accent-tint);        color: var(--accent); }
 .ret-badge--rejected   { background: rgba(255, 59, 48, 0.14);   color: #b32417; }
-.ret-badge--cancelled  { background: rgba(142, 142, 147, 0.18); color: #555; }
+.ret-badge--cancelled  { background: rgba(142, 142, 147, 0.18); color: rgba(var(--fg-rgb), 0.68); }
 
 /* ── Modal layout (cpm-modal patterns) ──────────────────────
    The modal body has `background: var(--bg)` (light grey) inherited

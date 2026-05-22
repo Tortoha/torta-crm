@@ -763,7 +763,7 @@ export function LineChart({
       {ticks.map((t, i) => (
         <g key={`tick-${i}`}>
           <line x1={padL} x2={wrapperW - padR} y1={t.y} y2={t.y}
-                stroke="#eef0f3" strokeWidth="1" />
+                stroke="var(--chart-grid)" strokeWidth="1" />
           <text x={wrapperW - padR + 8} y={t.y + 4} textAnchor="start"
                 fontSize="11" fill="#9a9aa0" fontFamily="inherit">
             {fmtY(t.v)}
@@ -812,7 +812,7 @@ export function LineChart({
             <g>
               <line x1={hoverPt.x} x2={hoverPt.x}
                     y1={padT} y2={padT + innerH}
-                    stroke="#c7c7cc" strokeWidth="1" strokeDasharray="3 3" />
+                    stroke="var(--chart-grid-strong)" strokeWidth="1" strokeDasharray="3 3" />
               <circle cx={hoverPt.x} cy={hoverPt.y} r="6"
                       fill="var(--accent)" stroke="#fff" strokeWidth="2" />
             </g>
@@ -2073,7 +2073,7 @@ function NewReturningChart({
           {/* Fixed baseline — does NOT scroll, runs the full viewport. */}
           <line x1={padL} x2={wrapperW - padR}
                 y1={padT + innerH + 0.5} y2={padT + innerH + 0.5}
-                stroke="#e5e7eb" strokeWidth="1" />
+                stroke="var(--chart-grid)" strokeWidth="1" />
           {/* Scrollable group: bars + x-labels + hover crosshair. */}
           <g clipPath={`url(#${clipId})`}>
             <g ref={scrollGroupRef}
@@ -2136,7 +2136,7 @@ function NewReturningChart({
               {hoverPt && !dragRef.current.active && (
                 <line x1={hoverPt.cx} x2={hoverPt.cx}
                       y1={padT} y2={padT + innerH}
-                      stroke="#c7c7cc" strokeWidth="1" strokeDasharray="3 3" />
+                      stroke="var(--chart-grid-strong)" strokeWidth="1" strokeDasharray="3 3" />
               )}
             </g>
           </g>

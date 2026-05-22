@@ -1,5 +1,5 @@
 .mask {
-    background-color: rgb(255, 255, 255);
+    background-color: var(--bg);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -23,7 +23,7 @@
     height: 100%;
     fill: none;
     stroke-width: 6;
-    stroke: rgb(0, 0, 0);
+    stroke: var(--accent);
     stroke-dasharray: 360;
     stroke-dashoffset: 340;
     animation: n 2s linear infinite;

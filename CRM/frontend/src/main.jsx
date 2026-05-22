@@ -5,6 +5,7 @@ import './Style/index.css'
 // component code runs, so even the very first /api/me call benefits.
 import './api.js'
 import './i18n'
+import './theme'
 import App from './App.jsx'
 
 const rootElement = document.getElementById('root');

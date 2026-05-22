@@ -721,7 +721,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ccc;
+  color: rgba(var(--fg-rgb), 0.24);
   background: var(--bg);
   /* visible gray placeholder area (container itself is transparent) */
   border-radius: 12px;
@@ -796,7 +796,7 @@
 .pcard-star-icon {
   width: 10px;
   height: 10px;
-  color: #D9D9D9;
+  color: rgba(var(--fg-rgb), 0.16);
   flex-shrink: 0;
 }
 
@@ -955,7 +955,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ccc;
+  color: rgba(var(--fg-rgb), 0.24);
   background: var(--bg);
   border-radius: 12px;
 }
@@ -1077,7 +1077,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ccc;
+  color: rgba(var(--fg-rgb), 0.24);
   background: var(--bg);
   border-radius: 6px;
 }
@@ -1098,7 +1098,7 @@
   position: relative;
   z-index: 2;
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(var(--fg-rgb), 0.4);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   display: flex;
@@ -1314,7 +1314,7 @@
   font-weight: 400;
   text-transform: none;
   letter-spacing: 0;
-  color: #bbb;
+  color: rgba(var(--fg-rgb), 0.3);
 }
 
 .prod-field-input {
@@ -1461,7 +1461,7 @@
 .prod-var-img-placeholder {
   width: 36px;
   height: 36px;
-  color: #ccc;
+  color: rgba(var(--fg-rgb), 0.24);
 }
 
 .prod-var-title {
@@ -1791,7 +1791,7 @@
 .prod-star {
   width: 14px;
   height: 14px;
-  color: #d1d5db;
+  color: rgba(var(--fg-rgb), 0.2);
 }
 
 .prod-star--on {
@@ -1857,7 +1857,7 @@
 .prod-dropzone-upload-icon {
   width: 28px;
   height: 28px;
-  color: #bbb;
+  color: rgba(var(--fg-rgb), 0.3);
 }
 
 .prod-dropzone-title {
@@ -1961,7 +1961,7 @@
 
 .prod-api-json {
   background: #1a1a1a;
-  color: #e8e8e8;
+  color: rgba(var(--fg-rgb), 0.12);
   border-radius: 14px;
   padding: 14px 16px;
   font-family: 'Menlo', 'Consolas', monospace;
@@ -2487,8 +2487,10 @@
 /* Dynamic Block sliding indicator — same pattern as Sidebar */
 .cat-filter-indicator {
   position: absolute;
-  left: 6px;
-  right: 6px;
+  /* Flush with the full-width item rows; the dropdown's own 6px padding is the
+     only gap to the menu edge, so left/right match the bottom inset. */
+  left: 0;
+  right: 0;
   top: 0;
   height: 0;
   background: var(--accent-tint);
@@ -2977,7 +2979,7 @@ select.prod-field-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ccc;
+  color: rgba(var(--fg-rgb), 0.24);
 }
 
 .po-var-thumb-empty svg {
@@ -3398,7 +3400,7 @@ select.prod-field-input {
   padding: 0 16px;
   font-size: 11px;
   font-weight: 600;
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
@@ -3409,7 +3411,7 @@ select.prod-field-input {
 }
 
 .cfg-sold-num {
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   font-variant-numeric: tabular-nums;
   cursor: default;
 }
@@ -3419,7 +3421,7 @@ select.prod-field-input {
 }
 
 .cfg-col-sold {
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3640,7 +3642,7 @@ select.prod-field-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ccc;
+  color: rgba(var(--fg-rgb), 0.24);
   background: var(--bg);
   /* visible gray placeholder area */
   border-radius: 12px;
@@ -4411,7 +4413,7 @@ select.prod-field-input {
      default in some browsers — force the body weight so combos read at the
      same visual weight as adjacent inputs / labels. */
   font-weight: 400;
-  color: #111827;
+  color: var(--text);
   cursor: pointer;
   text-align: left;
   transition: 0.4s ease
@@ -4428,7 +4430,7 @@ select.prod-field-input {
 }
 
 .cpm-cat-btn:hover {
-  box-shadow: var(--box-shadow);
+  box-shadow: 3px 6px 16px rgba(0, 0, 0, 0.4);
 }
 
 .cpm-cat-btn--open,
@@ -4438,7 +4440,7 @@ select.prod-field-input {
 }
 
 .cpm-cat-placeholder {
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
 }
 
 .cpm-cat-caret {
@@ -4505,7 +4507,7 @@ select.prod-field-input {
 }
 
 .po-mod-name-input::placeholder {
-  color: #bbb;
+  color: rgba(var(--fg-rgb), 0.3);
 }
 
 /* Control type segmented toggle (mirrors .ord-sort-toggle). */
@@ -4595,7 +4597,7 @@ select.prod-field-input {
 }
 
 .po-mod-num-input::placeholder {
-  color: #c8c8c8;
+  color: rgba(var(--fg-rgb), 0.24);
 }
 
 .po-mod-num-divider {
@@ -4725,7 +4727,7 @@ select.prod-field-input {
 
 .po-mod-item-name::placeholder,
 .po-mod-item-price::placeholder {
-  color: #bbb;
+  color: rgba(var(--fg-rgb), 0.3);
 }
 
 .po-mod-item-price::-webkit-inner-spin-button,
@@ -4884,7 +4886,7 @@ textarea.po-set-input,
   margin-bottom: 8px;
   font-size: 11px;
   font-weight: 600;
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   flex-shrink: 0;
@@ -5803,7 +5805,7 @@ textarea.po-set-input,
   padding: 0 14px;
   font-size: 11px;
   font-weight: 600;
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -6011,7 +6013,7 @@ textarea.po-set-input,
   border-radius: 18px;
   font-size: 11px;
   font-weight: 600;
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -6267,7 +6269,7 @@ textarea.po-set-input,
 }
 
 .po-cb-wrap .cpm-cat-placeholder {
-  color: #bbb;
+  color: rgba(var(--fg-rgb), 0.3);
 }
 
 /* Adjust-stock toolbar variants — flex-shrink so SKU/Reason pills don't squeeze delta/note inputs. */
@@ -6581,7 +6583,7 @@ textarea.po-set-input,
 
 .promo-status--inactive {
   background: rgba(0, 0, 0, 0.06);
-  color: #888;
+  color: rgba(var(--fg-rgb), 0.48);
 }
 
 .promo-status--expired {

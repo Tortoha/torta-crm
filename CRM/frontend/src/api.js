@@ -1,4 +1,5 @@
 import { syncLang } from "./i18n";
+import { syncTheme } from "./theme";
 
 export const API_BASE   = "http://localhost:8001";
 export const MAGAZ_BASE = "http://localhost:8000";
@@ -160,7 +161,7 @@ if (typeof window !== "undefined" && !window.fetch.__torta_patched) {
       try {
         const path = new URL(url, window.location.origin).pathname;
         if (path.endsWith("/api/me")) {
-          res.clone().json().then(j => syncLang(j?.language)).catch(() => {});
+          res.clone().json().then(j => { syncLang(j?.language); syncTheme(j?.theme); }).catch(() => {});
         }
       } catch { /* ignore */ }
     }

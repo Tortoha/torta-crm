@@ -923,7 +923,7 @@
 }
 
 .bk-week-cell--out {
-  color: rgba(0, 0, 0, 0.25);
+  color: rgba(var(--fg-rgb), 0.25);
 }
 
 .bk-cal-grid {
@@ -1624,7 +1624,7 @@
   text-align: center;
   font-size: 10px;
   font-weight: 600;
-  color: #aaa;
+  color: rgba(var(--fg-rgb), 0.36);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 4px;
@@ -1676,7 +1676,7 @@
 }
 
 .bk-date-cell--out {
-  color: rgba(0, 0, 0, 0.25);
+  color: rgba(var(--fg-rgb), 0.25);
 }
 
 .bk-date-cell--today {

@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next';
 import { Camera, UserCircle, SlidersHorizontal } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { syncLang } from '../../i18n.js';
+import { syncTheme } from '../../theme.js';
 import AvatarCropModal from '../../Elements/AvatarCropModal.jsx';
 import { Section, FieldCard, SegmentSwitch, SearchableCombobox } from '../Project/ProjectSettings.jsx';
 import '../../Style/Authentication.css';   // auth-toast / auth-btn-check
@@ -89,7 +90,7 @@ export default function Settings() {
   }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickLanguage = (v) => { setLanguage(v); syncLang(v); savePrefs({ language: v }); };
-  const pickTheme    = (v) => { setTheme(v); savePrefs({ theme: v }); };
+  const pickTheme    = (v) => { setTheme(v); syncTheme(v); savePrefs({ theme: v }); };
 
   const handleAvatarChange = (e) => {
     const file = e.target.files?.[0];

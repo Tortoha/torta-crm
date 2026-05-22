@@ -26,12 +26,8 @@ export function InteractiveSection(config, frozen = false) {
     el.style.transform =
       `perspective(${cfg.perspective}px) rotateX(${c.rx}deg) rotateY(${c.ry}deg) scale(${c.scale})`;
 
-    if (glossRef.current) {
-      glossRef.current.style.opacity = t.hovered ? '1' : '0';
-      glossRef.current.style.backgroundImage =
-        `radial-gradient(circle at ${50 + c.x * cfg.gloss.spread}% ${50 + c.y * cfg.gloss.spread}%,` +
-        ` rgba(255,255,255,${cfg.gloss.opacity}) 0%, transparent 70%)`;
-    }
+    // Gloss halo intentionally removed — invisible in light, distracting in dark.
+    // glossRef is still returned so existing components keep working (no-op).
 
     // Stop the loop when close enough to neutral
     if (!t.hovered && Math.abs(c.rx) + Math.abs(c.ry) + Math.abs(c.scale - 1) * 20 < 0.05) {

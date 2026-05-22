@@ -2943,6 +2943,17 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] team/RBAC tables failed: {e}")
 
+    # Allow the 'system' theme (follow OS/browser) — the legacy CHECK only
+    # permitted light/dark, so saving 'system' would 500. Recreate it.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_settings DROP CONSTRAINT IF EXISTS crm_settings_theme_check")
+            cur.execute("ALTER TABLE crm_settings ADD CONSTRAINT crm_settings_theme_check "
+                        "CHECK (theme IN ('light','dark','system'))")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_settings theme check failed: {e}")
+
     # Seed preset roles (Admin / Manager / Staff / Viewer) for every existing org.
     try:
         with db_cursor() as (conn, cur):
@@ -4546,6 +4557,47 @@ def require_page(user: dict, project_id: int, page: str, level: str = "view"):
     if not _level_ge(perms.get(page), level):
         raise HTTPException(403, f"You don't have access to {page}")
 
+# Notification type → the RBAC page that owns it. The bell is gated by the same
+# permission as that page: you only see a notification if your role grants
+# >= view on its page (project creator / org owner always do). Add new types
+# here when adding new push_notification(type=...) call sites; unmapped types
+# fall back to plain project membership.
+_NOTIF_TYPE_PAGE = {
+    "chat":   "chat",
+    "return": "returns",
+    "goal":   "goals",
+    "alert":  "alerts",
+}
+
+def _notif_visible_to(user_id: int, project_id: Optional[int], ntype: str, cache: dict) -> bool:
+    """Whether `user_id` may CURRENTLY see a notification of `ntype` for
+    `project_id`. Account-level rows (project_id IS NULL) are always visible.
+    Project rows require >= view on the type's page — the same gate as
+    require_page — so this also hides pings created before access was revoked.
+    `cache` memoises the per-(project, page) decision within one request."""
+    if project_id is None:
+        return True
+    page = _NOTIF_TYPE_PAGE.get(ntype)
+    key = (project_id, page)
+    if key in cache:
+        return cache[key]
+    try:
+        full, _ = _is_full_access(user_id, project_id)
+    except HTTPException:
+        full = False
+    if full:
+        ok = True
+    else:
+        perms = _user_project_permissions(user_id, project_id)
+        if perms is None:
+            ok = False                    # not a member of this project
+        elif page is None:
+            ok = True                     # member; unmapped type → any member sees it
+        else:
+            ok = _level_ge(perms.get(page), "view")
+    cache[key] = ok
+    return ok
+
 # ── Auto-resolved RBAC gate ──────────────────────────────────────────
 # Most per-project routes call this with a project_id in scope. It derives the
 # permission PAGE from the request path and the LEVEL from the HTTP method
@@ -4828,8 +4880,9 @@ def get_me(user: dict = Depends(get_current_user)):
     )
     if not u:
         raise HTTPException(401, "User not found")
-    s = db_one("SELECT language FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
+    s = db_one("SELECT language, theme FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
     u["language"] = (s or {}).get("language", "en")
+    u["theme"]    = (s or {}).get("theme", "light")
     return u
 
 
@@ -12566,7 +12619,7 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
         upd = {}
         if request.language is not None: upd["language"] = request.language
         if request.currency is not None: upd["currency"] = request.currency
-        if request.theme    is not None: upd["theme"]    = request.theme
+        if request.theme    is not None and request.theme in ("light", "dark", "system"): upd["theme"] = request.theme
         if request.org_view is not None and request.org_view in ("grid", "list"): upd["org_view"] = request.org_view
         VALID_SORTS = ("name_asc", "name_desc", "date_asc", "date_desc")
         if request.org_sort is not None and request.org_sort in VALID_SORTS: upd["org_sort"] = request.org_sort
@@ -14038,17 +14091,10 @@ def _serialize_return(r: dict) -> dict:
 
 
 def _notify_return_event(project_id: int, return_id: int, title: str, message: str):
-    rows = db_all(
-        "SELECT crm_user_id FROM crm_projects WHERE id=%s"
-        " UNION"
-        " SELECT crm_user_id FROM crm_team_members WHERE project_id=%s",
-        (project_id, project_id)
-    )
     proj = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
     link = f"/project/{proj['api_key']}/orders?tab=returns&open={return_id}" if proj else None
-    for r in rows:
-        if r.get("crm_user_id"):
-            push_notification(r["crm_user_id"], project_id, "return", title, message, link)
+    for uid in _notify_recipients(project_id, "returns"):
+        push_notification(uid, project_id, "return", title, message, link)
 
 
 def _email_customer_about_return(project_id: int, return_id: int,
@@ -14899,7 +14945,7 @@ async def _handle_inbound_message(project_id: int, channel: str,
         title = f"New {channel} message · {conv['contact_uid']}"
         # Use the preview text so attachments still surface ("📷 Photo")
         notif_msg = preview or text[:200]
-        for uid in _project_team_user_ids(project_id):
+        for uid in _notify_recipients(project_id, "chat"):
             push_notification(uid, project_id, "chat", title, notif_msg, link)
     except Exception as e:
         print(f"[notif] chat push failed: {e}")
@@ -20290,11 +20336,21 @@ def list_notifications(project_id: Optional[int] = Query(None), unread_only: boo
     )
     has_more = len(rows) > limit
     rows = rows[:limit]
-    unread = db_one(
-        "SELECT COUNT(*) AS c FROM crm_notifications WHERE user_id=%s AND is_read=FALSE",
+
+    # Defense-in-depth: only surface rows the user may CURRENTLY see (same RBAC
+    # as the pages). Hides notifications created before access was revoked, and
+    # any legacy rows from before per-module gating existed.
+    acc_cache: dict = {}
+    rows = [r for r in rows if _notif_visible_to(user["id"], r["project_id"], r["type"], acc_cache)]
+
+    # Unread badge counts only visible unread rows, so it matches the list.
+    unread_rows = db_all(
+        "SELECT project_id, type FROM crm_notifications WHERE user_id=%s AND is_read=FALSE",
         (user["id"],)
     )
-    return {"items": rows, "unread": unread["c"] if unread else 0, "has_more": has_more}
+    unread = sum(1 for r in unread_rows
+                 if _notif_visible_to(user["id"], r["project_id"], r["type"], acc_cache))
+    return {"items": rows, "unread": unread, "has_more": has_more}
 
 
 @app.post("/api/notifications/{notif_id}/read")
@@ -20478,33 +20534,7 @@ def get_customer(cust_id: int, project_id: int = Query(...),
 # ── ANALYTICS ────────────────────────────────────────────
 
 def _date_range_for_period(period: str, tz: str = "UTC"):
-    """period code → (start, end) UTC, anchored at the END of "today" in
-    the project's local timezone. Codes are kept in sync with
-    STAFF_PERIOD_OPTIONS on the frontend so one combobox primitive can drive
-    every section across the page. Backward-compat: old `7d` / `30d` / `90d`
-    / `year` still resolve so existing /revenue page keeps working.
-
-    Custom range encoding: `period` may be `"YYYY-MM-DD_YYYY-MM-DD"`,
-    in which case both dates are parsed as LOCAL-tz days and the result
-    spans from start-of-first-day to end-of-last-day (in tz, then
-    converted to UTC for the SQL filter). This lets the user pick an
-    arbitrary range from the frontend's Custom modal without every
-    endpoint needing its own from/to parameter — they all already
-    pass `period` through here.
-
-    Timezone matters here because "last 30 days" should mean 30 LOCAL
-    days for the merchant, not 30 UTC days. A store in Almaty closing
-    the books at midnight Almaty time wants their "today" bucket to
-    include orders up through 23:59 Almaty, not 18:00 Almaty (which is
-    when UTC midnight rolls over). Returned values are UTC-aware
-    timestamps suitable for direct PostgreSQL `timestamptz` comparison.
-    """
     tz_obj = _tz(tz)
-    # Custom range — `YYYY-MM-DD_YYYY-MM-DD`. Underscore is the
-    # delimiter because it can't appear in a valid period code or ISO
-    # date. We anchor START at 00:00 of the first day in tz, and END
-    # at 00:00 of the day AFTER the last day in tz, so the range is
-    # half-open [start, end) and includes the entire last day.
     m = re.match(r'^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$', period or '')
     if m:
         from_str, to_str = m.group(1), m.group(2)
@@ -22990,7 +23020,7 @@ def goals_progress(goal_id: int, project_id: int = Query(...),
                 link = f"/project/{proj['api_key']}/targets" if proj else None
             except Exception:
                 link = None
-            for uid in _project_team_user_ids(project_id):
+            for uid in _notify_recipients(project_id, "goals"):
                 push_notification(
                     user_id=uid, project_id=project_id, ntype="goal",
                     title=f"🎯 Target achieved: {g['name']}",
@@ -23472,7 +23502,7 @@ def _evaluator_loop_body():
                 proj = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (a["project_id"],))
                 link = f"/project/{proj['api_key']}/alerts" if proj else None
                 title = ALERT_TYPES.get(a["type"], a["type"])
-                for uid in _project_team_user_ids(a["project_id"]):
+                for uid in _notify_recipients(a["project_id"], "alerts"):
                     push_notification(uid, a["project_id"], "alert",
                                        title, message, link)
             except Exception as e:
@@ -23560,17 +23590,41 @@ async def notifications_ws(ws: WebSocket):
         await notif_hub.unsubscribe(user_id, ws)
 
 
-def _project_team_user_ids(project_id: int) -> list[int]:
+def _notify_recipients(project_id: int, page: str) -> list[int]:
+    """User IDs that should receive a notification for `page` on this project.
+
+    Gated by the SAME RBAC as the pages themselves (require_page): the project
+    creator and the org owner always qualify (full access); a team member
+    qualifies only if their assigned role grants >= view on `page`. This makes
+    the bell exactly as modular as the sidebar — e.g. a member whose role has no
+    chat access never receives "chat" notifications, and a user only ever hears
+    about projects they actually belong to."""
+    ids: set[int] = set()
     try:
+        proj = db_one("SELECT crm_user_id, org_id FROM crm_projects WHERE id=%s", (project_id,))
+        if not proj:
+            return []
+        if proj.get("crm_user_id"):
+            ids.add(int(proj["crm_user_id"]))            # project creator — full access
+        if proj.get("org_id"):
+            org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (proj["org_id"],))
+            if org and org.get("owner_id"):
+                ids.add(int(org["owner_id"]))            # org owner — full access
+        # Team members: include only those whose role grants >= view on `page`.
         rows = db_all(
-            "SELECT u.id FROM crm_users u JOIN crm_projects pr ON pr.crm_user_id = u.id"
-            "  WHERE pr.id = %s"
-            " UNION SELECT tm.crm_user_id FROM crm_team_members tm WHERE tm.project_id = %s",
-            (project_id, project_id)
+            "SELECT tm.crm_user_id, r.permissions FROM crm_team_members tm"
+            "  JOIN crm_roles r ON r.id = tm.crm_role_id"
+            " WHERE tm.project_id = %s",
+            (project_id,)
         )
-        return [int(r["id"]) for r in rows if r.get("id")]
-    except Exception:
-        return []
+        for row in rows:
+            uid = row.get("crm_user_id")
+            perms = row.get("permissions")
+            if uid and isinstance(perms, dict) and _level_ge(perms.get(page), "view"):
+                ids.add(int(uid))
+    except Exception as e:
+        print(f"[notifications] recipient resolve failed: {e}")
+    return list(ids)
 
 
 def push_notification(user_id: int, project_id: Optional[int], ntype: str,

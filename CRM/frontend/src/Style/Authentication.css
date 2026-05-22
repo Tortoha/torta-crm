@@ -237,12 +237,20 @@
   align-items: center;
   font-size: 11px;
   font-weight: 500;
-  color: #6b7280;
+  color: rgba(var(--fg-rgb), 0.55);
   background: #e5e7eb;
   padding: 4px 10px;
   border-radius: 999px;
   white-space: nowrap;
   width: fit-content;
+}
+
+/* Dark mode: the light #e5e7eb pill turns washed-out and its text goes
+   white-on-light. Swap to a dark-grey chip (matches .crm-badge--gray)
+   with muted-grey text. Shared by Auth Providers, Integrations, Payments. */
+[data-theme="dark"] .auth-badge-disabled {
+  background: #2C2C2F;
+  color: var(--muted);
 }
 
 /* ══════════════════════════════════════════════════════
@@ -307,7 +315,7 @@
 .auth-modal-title {
   font-size: 17px;
   font-weight: 600;
-  color: #111827;
+  color: var(--text);
   letter-spacing: -0.01em;
 }
 
@@ -321,7 +329,7 @@
 
 .auth-modal-subtitle {
   font-size: 13px;
-  color: #6B7280;
+  color: rgba(var(--fg-rgb), 0.55);
 }
 
 .auth-modal-verified-badge {
@@ -382,7 +390,7 @@
      no tabular-numerals heaviness on numeric values. */
   font-weight: 400 !important;
   font-variant-numeric: normal !important;
-  color: #111827;
+  color: var(--text);
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -393,7 +401,7 @@
 }
 
 .auth-modal .crm-input::placeholder {
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
 }
 
 .auth-modal .crm-submit-btn {
@@ -412,7 +420,7 @@
 
 .auth-modal .crm-submit-btn:disabled {
   background: var(--muted);
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
 
@@ -557,7 +565,7 @@
 
 .auth-btn-check:disabled {
   background-color: #E5E7EB;
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
 
@@ -585,7 +593,7 @@
 
 .auth-btn-link:disabled {
   background-color: #E5E7EB;
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
 
@@ -710,13 +718,13 @@
 .auth-dns-card-title {
   font-size: 14px;
   font-weight: 600;
-  color: #111827;
+  color: var(--text);
   margin: 0 0 3px;
 }
 
 .auth-dns-card-desc {
   font-size: 12px;
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   margin: 0;
   line-height: 1.5;
 }
@@ -742,7 +750,7 @@
   border: none;
   border-top: 1px solid #ECEEF2;
   background: transparent;
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   font-size: 13px;
   cursor: pointer;
   font-family: inherit;
@@ -772,7 +780,7 @@
   background-color: var(--card);
   font-size: 10px;
   font-weight: 600;
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -844,7 +852,7 @@
   font-size: 10px;
   font-weight: 600;
   background: #F3F4F6;
-  color: #6B7280;
+  color: rgba(var(--fg-rgb), 0.55);
   border-radius: 5px;
   padding: 2px 7px;
   text-align: center;
@@ -974,7 +982,7 @@
   padding: 0 14px 0 2px;
   font-size: 14px;
   font-family: inherit;
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(var(--fg-rgb), 0.4);
   white-space: nowrap;
   user-select: none;
 }
@@ -988,7 +996,7 @@
 .auth-preview-label {
   font-size: 11px;
   font-weight: 600;
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin: 0 0 10px;
@@ -1134,12 +1142,12 @@
 .auth-preview-name {
   font-size: 13px;
   font-weight: 600;
-  color: #111;
+  color: rgba(var(--fg-rgb), 0.9);
 }
 
 .auth-preview-addr {
   font-size: 11px;
-  color: rgba(0, 0, 0, 0.38);
+  color: rgba(var(--fg-rgb), 0.38);
   font-family: monospace;
   white-space: nowrap;
   overflow: hidden;
@@ -1148,12 +1156,12 @@
 
 .auth-preview-to {
   font-size: 11px;
-  color: rgba(0, 0, 0, 0.32);
+  color: rgba(var(--fg-rgb), 0.32);
 }
 
 .auth-preview-time {
   font-size: 11px;
-  color: rgba(0, 0, 0, 0.28);
+  color: rgba(var(--fg-rgb), 0.28);
   flex-shrink: 0;
   margin-top: 3px;
 }
@@ -1167,7 +1175,7 @@
 .auth-preview-subject-line {
   font-size: 13px;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.55);
+  color: rgba(var(--fg-rgb), 0.55);
   padding-left: 48px;
   margin-bottom: 10px;
 }
@@ -1347,7 +1355,7 @@
 .urlcfg-card-desc {
   font-size: 13px;
   line-height: 1.5;
-  color: rgba(0, 0, 0, 0.48);
+  color: rgba(var(--fg-rgb), 0.48);
   margin: 0;
 }
 
@@ -1401,7 +1409,7 @@
 
 .urlcfg-save-btn:disabled {
   background: #E5E7EB;
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
 
@@ -1436,7 +1444,7 @@
 
 .auth-add-btn:disabled {
   background-color: #E5E7EB;
-  color: #9CA3AF;
+  color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
 
@@ -1485,7 +1493,7 @@
   border: none;
   background: transparent;
   border-radius: 6px;
-  color: rgba(0, 0, 0, 1);
+  color: rgba(var(--fg-rgb), 1);
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
@@ -1505,7 +1513,7 @@
 /* ── Empty state ── */
 .urlcfg-empty {
   font-size: 13px;
-  color: rgba(0, 0, 0, 0.38);
+  color: rgba(var(--fg-rgb), 0.38);
   text-align: center;
   margin: 2px 0 0;
 }
@@ -1594,7 +1602,7 @@
 .phone-dd-chev {
   transition: transform 0.25s ease;
   flex-shrink: 0;
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(var(--fg-rgb), 0.4);
 }
 
 .phone-dd-chev--open {
@@ -1685,7 +1693,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(var(--fg-rgb), 0.4);
   padding: 6px 12px 4px;
   user-select: none;
 }

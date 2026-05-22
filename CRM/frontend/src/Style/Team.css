@@ -386,7 +386,7 @@
 .chat-msg-empty {
   margin: auto;
   font-size: 13px;
-  color: #aeaeb2;
+  color: rgba(var(--fg-rgb), 0.34);
   text-align: center;
   padding: 20px;
 }
@@ -412,7 +412,7 @@
 .chat-msg-author {
   font-size: 12px;
   font-weight: 600;
-  color: #8e8e93;
+  color: rgba(var(--fg-rgb), 0.44);
 }
 
 .chat-msg-row {
@@ -425,7 +425,7 @@
 
 .chat-ts {
   font-size: 10px;
-  color: #aeaeb2;
+  color: rgba(var(--fg-rgb), 0.34);
   white-space: nowrap;
   margin-bottom: 3px;
   flex-shrink: 0;
@@ -447,7 +447,7 @@
 
 .chat-bubble--them {
   background: #fff;
-  color: #000;
+  color: var(--text);
   border-radius: 18px 18px 18px 4px;
   box-shadow: 0 1px 2px rgba(0,0,0,0.08);
 }
@@ -479,7 +479,7 @@
 }
 
 .chat-input:focus { border-color: #c7c7cc; }
-.chat-input::placeholder { color: #aeaeb2; }
+.chat-input::placeholder { color: rgba(var(--fg-rgb), 0.34); }
 
 .chat-send-btn {
   width: 34px;
