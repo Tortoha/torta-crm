@@ -119,3 +119,9 @@
   color: var(--muted);
   text-align: center;
 }
+
+/* Framework picker on the interactive Connect page. */
+.doc-fw-picker {
+  max-width: 320px;
+  margin: 0 0 28px;
+}

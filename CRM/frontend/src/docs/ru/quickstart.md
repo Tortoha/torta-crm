@@ -1,6 +1,6 @@
-# Быстрый старт torta-js
+# Быстрый старт
 
-`torta-js` — официальный JavaScript-SDK для API витрины. Все запросы витрины идут через него — никаких «голых» `fetch()`.
+`torta-js` — это официальный JavaScript SDK для API магазина. Все запросы вашего магазина идут через него — никаких сырых `fetch()` не нужно.
 
 ## Установка
 
@@ -8,28 +8,47 @@
 npm install torta-js
 ```
 
-Или с CDN (чистый HTML, без сборщика):
+Нет сборщика? Подключите прямо с CDN:
 
 ```js
 import { createClient } from 'https://cdn.jsdelivr.net/npm/torta-js/+esm';
 ```
 
+> Используете React, Next.js, Vue, SvelteKit, Astro…? Точная настройка под каждый фреймворк — в разделе [Фреймворки](/docs/frameworks).
+
 ## Создание клиента
 
-Используйте **публичный ключ** (в URL) и **публикуемый ключ** (заголовок). Оба безопасно отдавать в браузер. Найти их можно в *Copy Keys* на обзоре проекта.
+Нужны два ключа, оба безопасно отдавать в браузер — скопируйте их в разделе **Copy Keys** на странице проекта:
+
+- **Публичный ключ** — указывается в пути URL. Идентифицирует магазин.
+- **Publishable-ключ** (`pk_…`) — отправляется заголовком в каждом запросе.
 
 ```js
 import { createClient } from 'torta-js';
 
 const API_URL = "https://api.example.com/PUBLIC_KEY"; // публичный ключ в пути
-const API_PK  = "pk_PUBLISHABLE_KEY";                 // публикуемый ключ
+const API_PK  = "pk_PUBLISHABLE_KEY";                 // publishable-ключ
 
 export const client = createClient(API_URL, API_PK);
 ```
 
-## Аутентификация
+Есть ещё третий, **секретный ключ** (`sk_…`) — только для server-to-server. См. [Приём клиентов](/docs/customers). Никогда не размещайте его в браузерном коде.
 
-Регистрация и вход — в два шага: отправить код, затем подтвердить.
+## Формат ответа
+
+Каждый метод возвращает один и тот же объект, поэтому ошибки обрабатываются без `try/catch`:
+
+```js
+const r = await client.products.list();
+if (!r.ok) showToast(r.error); // r.error — всегда готовая строка
+else       render(r.data);
+```
+
+`{ ok, status, data, error }` — `ok` это флаг успеха, `status` HTTP-код, `data` полезная нагрузка (или `null`), `error` готовая к показу строка (или `null` при успехе). Подробнее в разделе [Концепции](/docs/concepts).
+
+## Авторизация
+
+Вход и регистрация по email — двухшаговый процесс: отправить код, затем подтвердить его.
 
 ```js
 // 1. Отправить 6-значный код на email
@@ -38,36 +57,31 @@ await client.auth.sendCode({ name, email, password, type: "register" }); // ил
 // 2. Подтвердить код — при успехе ставит cookie сессии
 const res = await client.auth.verifyCode(email, code);
 
-// Кто вошёл?
-const { data } = await client.auth.getUser();
+// Кто вошёл? (кешируется после первого вызова)
+const user = await client.auth.getUser();
 ```
 
-При регистрации можно собрать дополнительные поля — все необязательные:
-
-```js
-await client.auth.sendCode({
-  name, email, password,
-  surname, address, birthdate,   // доп. поля
-  type: "register",
-});
-```
+Полный набор авторизации — телефон, OAuth, сессии, сброс пароля — в разделе [Авторизация](/docs/auth).
 
 ## Товары и корзина
 
 ```js
-const products = await client.products.list();
-const one      = await client.products.get(id);
+const products = await client.products.list();        // можно { category: 'shoes' }
+const one      = await client.products.get(productId);
 
-await client.cart.add({ /* ... */ });
+// add(product_id, variation_id, configuration_id, quantity?, modifierItemIds?)
+await client.cart.add(productId, variationId, configurationId, 1);
 const cart = await client.cart.get();
 ```
 
-Каждый метод возвращает `{ ok, status, data, error }` — ошибки можно обрабатывать без try/catch:
+## Конфигурация магазина
+
+Считайте валюту, название и часовой пояс магазина один раз при старте, чтобы цены сразу отрисовались правильно:
 
 ```js
-const r = await client.products.list();
-if (!r.ok) showToast(r.error);
-else render(r.data);
+const { data } = await client.config.get(); // { currency, name, timezone, … }
 ```
 
-Дальше: [Приём клиентов](/docs/customers) — для магазинов со своей аутентификацией.
+---
+
+Дальше: выберите свой [Фреймворк](/docs/frameworks), затем переходите к [Справочнику](/docs/auth).

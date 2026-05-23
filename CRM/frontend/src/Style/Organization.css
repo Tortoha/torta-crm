@@ -409,6 +409,15 @@
   background: rgba(227, 52, 47, 0.08);
 }
 
+/* Dark theme: the light-tuned 5–8% tints vanish on the dark card (var(--card) = #1A1A1C),
+   so the hover indicator — and Delete's red tint in particular — become invisible. Strengthen them. */
+[data-theme="dark"] .org-menu-indicator {
+  background: var(--accent-tint);
+}
+[data-theme="dark"] .org-menu-indicator--danger {
+  background: var(--delete-tint);
+}
+
 .org-menu-item {
   position: relative;
   z-index: 2;
@@ -416,21 +425,30 @@
 }
 
 .org-menu-item--current:not(.org-card-dropdown-item--danger) {
-  color: #0071E3 !important;
+  color: var(--accent) !important;
 }
 
 .org-menu-item--current:not(.org-card-dropdown-item--danger) .org-card-dropdown-icon {
-  color: #0071E3 !important;
+  color: var(--accent) !important;
 }
 
 /* Danger item stays red whether hovered or not — never flipped to blue. */
 .org-card-dropdown-item--danger.org-menu-item,
 .org-card-dropdown-item--danger.org-menu-item .org-card-dropdown-icon {
-  color: #e3342f !important;
+  color: var(--delete) !important;
 }
 
 .org-card-dropdown-item--danger {
-  color: #e3342f;
+  color: var(--delete) !important;
+}
+
+/* Plain dropdowns (no sliding indicator — e.g. OrgTeam RowMenu) had no danger
+   hover at all. Give the Delete row a visible red wash in both themes. */
+.org-card-dropdown-item--danger:not(.org-menu-item):hover {
+  background: var(--delete-tint);
+}
+[data-theme="dark"] .org-card-dropdown-item--danger:not(.org-menu-item):hover {
+  background: var(--delete-tint);
 }
 
 .org-card-dropdown-icon {
@@ -442,15 +460,15 @@
 }
 
 .org-card-dropdown-item:not(.org-card-dropdown-item--danger):not(.org-menu-item):hover .org-card-dropdown-icon {
-  color: #0071E3;
+  color: var(--accent) !important;
 }
 
 .org-card-dropdown-item--danger .org-card-dropdown-icon {
-  color: #e3342f;
+  color: var(--delete) !important;
 }
 
 .org-card-dropdown-item--danger .org-card-dropdown-icon {
-  color: #e3342f;
+  color: var(--delete) !important;
 }
 
 .org-card-dropdown-sep {

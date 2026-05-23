@@ -12,15 +12,6 @@ function DocsLayout() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  const [sidebarOpen, setSidebarOpen] = useState(() => {
-    try { return localStorage.getItem('crm_sidebar') !== 'closed'; } catch { return true; }
-  });
-  const toggleSidebar = () => setSidebarOpen(v => {
-    const next = !v;
-    try { localStorage.setItem('crm_sidebar', next ? 'open' : 'closed'); } catch {}
-    return next;
-  });
-
   useEffect(() => {
     fetch(`${API_BASE}/api/me`, { credentials: 'include' })
       .then(r => { if (!r.ok) throw new Error('auth'); return r.json(); })
@@ -33,13 +24,11 @@ function DocsLayout() {
     <div id="mask" className="mask"><svg><circle cx="50" cy="50" r="40" /></svg></div>
   );
 
-  const sidebarVar = sidebarOpen ? 'var(--sidebar-w)' : 'var(--sidebar-w-collapsed)';
-
   return (
-    <div className="crm-root" style={{ '--current-sidebar-w': sidebarVar }}>
+    <div className="crm-root" style={{ '--current-sidebar-w': 'var(--sidebar-w)' }}>
       <Header user={user} docsMode />
       <div className="crm-body">
-        <DocsSidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} />
+        <DocsSidebar />
         <main className="crm-main">
           <div className="crm-content">
             <Outlet />

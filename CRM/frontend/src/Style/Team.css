@@ -365,7 +365,8 @@
 
 .chat-ctx-item:hover { background: var(--bg); }
 .chat-ctx-item--danger { color: #e3342f; }
-.chat-ctx-item--danger:hover { background: #fff0f0; }
+.chat-ctx-item--danger:hover { background: rgba(227, 52, 47, 0.12); }
+[data-theme="dark"] .chat-ctx-item--danger:hover { background: rgba(227, 52, 47, 0.24); }
 
 /* ── Messages area ── */
 .chat-messages {
@@ -809,7 +810,8 @@
 
 .api-drop-item:hover { background: var(--bg); }
 .api-drop-item--danger { color: #e3342f; }
-.api-drop-item--danger:hover { background: #fff0f0; }
+.api-drop-item--danger:hover { background: rgba(227, 52, 47, 0.12); }
+[data-theme="dark"] .api-drop-item--danger:hover { background: rgba(227, 52, 47, 0.24); }
 .api-drop-icon { width: 15px; height: 15px; flex-shrink: 0; }
 
 /* ══════════════════════════════════════

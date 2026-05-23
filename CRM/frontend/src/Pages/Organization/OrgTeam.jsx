@@ -9,7 +9,7 @@ import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  UsersThree, ShieldCheck, EnvelopeSimple, Plus, X, Trash, Copy,
+  UsersThree, ShieldCheck, Plus, X, Trash, Copy,
   PencilSimple, CaretRight, DotsThreeOutline,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
@@ -203,20 +203,6 @@ function RoleRow({ r, pagesCount, onEdit, onDelete }) {
           ...(r.is_preset ? [] : [{ sep: true }, { Icon: Trash, label: t('org.team.roles.delete'), danger: true, onClick: onDelete }]),
         ]} />
       )}
-    </PoListRow>
-  );
-}
-
-function InviteRow({ inv, onCopy, onRevoke }) {
-  const { t } = useTranslation();
-  return (
-    <PoListRow className="po-set-row--oti">
-      <span className="po-set-strong ot-ellipsis">{inv.email}</span>
-      <span className="ot-invite-url ot-ellipsis"><code>{inv.invite_url}</code></span>
-      <span className="ot-row-actions">
-        <button className="crm-icon-btn" title={t('org.team.invites.copyLink')} onClick={onCopy}><Copy className="crm-icon" /></button>
-        <button className="crm-icon-btn crm-icon-btn--danger" title={t('org.team.invites.revoke')} onClick={onRevoke}><Trash className="crm-icon" /></button>
-      </span>
     </PoListRow>
   );
 }
@@ -506,7 +492,6 @@ export default function OrgTeam() {
   const [roles, setRoles]     = useState([]);
   const [pages, setPages]     = useState([]);
   const [projects, setProjects] = useState([]);
-  const [invites, setInvites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
@@ -534,18 +519,16 @@ export default function OrgTeam() {
       } catch { return fallback; }
     };
     try {
-      const [m, r, p, i] = await Promise.all([
+      const [m, r, p] = await Promise.all([
         getJSON(`${API_BASE}/api/orgs/${orgId}/members`,  []),
         getJSON(`${API_BASE}/api/orgs/${orgId}/roles`,    {}),
         getJSON(`${API_BASE}/api/orgs/${orgId}/projects`, []),
-        getJSON(`${API_BASE}/api/orgs/${orgId}/invites`,  []),
       ]);
       if (m && m._forbidden) { setError(t('org.team.forbidden')); return; }
       setMembers(Array.isArray(m) ? m : []);
       setRoles(Array.isArray(r?.roles) ? r.roles : []);
       setPages(Array.isArray(r?.pages) ? r.pages : []);
       setProjects(Array.isArray(p) ? p : []);
-      setInvites(Array.isArray(i) ? i : []);
     } finally { setLoading(false); }
   }, [orgId, t]);
 
@@ -562,15 +545,9 @@ export default function OrgTeam() {
     if (r.ok) { showToast(t('org.team.roles.deleted')); load(); }
     else { const j = await r.json().catch(() => ({})); showToast(j.detail || t('org.team.roles.failed')); }
   };
-  const revokeInvite = async (inv) => {
-    const r = await fetch(`${API_BASE}/api/orgs/${orgId}/invites/${inv.id}`, { method: 'DELETE', credentials: 'include' });
-    if (r.ok) { showToast(t('org.team.invites.revoked')); load(); }
-  };
-
   const TABS = [
     { key: 'members', label: t('org.team.tabs.members'), Icon: UsersThree },
     { key: 'roles',   label: t('org.team.tabs.roles'),   Icon: ShieldCheck },
-    { key: 'invites', label: t('org.team.tabs.invites'), Icon: EnvelopeSimple, badge: invites.length },
   ];
 
   return (
@@ -632,34 +609,6 @@ export default function OrgTeam() {
             </>
           )}
 
-          {/* ── Invites ── */}
-          {tab === 'invites' && (
-            <>
-              <p className="po-block-hint">
-                {t('org.team.invites.hint')}
-              </p>
-              <div className="ot-toolbar">
-                <span className="ot-count">{t('org.team.invites.count', { count: invites.length })}</span>
-                <button className="org-new-btn" type="button" onClick={() => setAddOpen(true)}>
-                  <Plus className="org-new-icon" /> {t('org.team.invites.inviteByEmail')}
-                </button>
-              </div>
-              {invites.length === 0 ? (
-                <div className="ot-empty">{t('org.team.invites.empty')}</div>
-              ) : (
-                <div className="po-set-table">
-                  <div className="po-set-row po-set-row--head po-set-row--oti">
-                    <span>{t('org.team.invites.colEmail')}</span><span>{t('org.team.invites.colInviteLink')}</span><span />
-                  </div>
-                  {invites.map(inv => (
-                    <InviteRow key={inv.id} inv={inv}
-                      onCopy={() => { navigator.clipboard?.writeText(inv.invite_url); showToast(t('org.team.invites.copied')); }}
-                      onRevoke={() => revokeInvite(inv)} />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
         </>
       )}
 

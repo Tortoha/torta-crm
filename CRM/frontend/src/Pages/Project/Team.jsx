@@ -1,21 +1,9 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { Trash, Link, Copy, CheckCircle, Plus, X, Hash, PaperPlaneTilt, DotsThreeVertical, ShieldCheck, CaretLeft, NotePencil } from '@phosphor-icons/react';
+import { Trash, Plus, X, Hash, PaperPlaneTilt, DotsThreeVertical, ShieldCheck, CaretLeft, NotePencil } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import '../../Style/Team.css';
 
 // ── Helpers ────────────────────────────────────────────────────
-
-function CopyBtn({ text }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button className="crm-icon-btn" title="Copy"
-      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); }}>
-      {copied
-        ? <Copy className="crm-icon crm-icon--success" />
-        : <Copy className="crm-icon" />}
-    </button>
-  );
-}
 
 function InitialsAvatar({ name, size = 36 }) {
   const initials = (name || '?').split(' ').filter(Boolean).map(w => w[0].toUpperCase()).slice(0, 2).join('');
@@ -386,7 +374,6 @@ function ChatPanel({ isOwner }) {
 function Team() {
   const [members, setMembers]       = useState([]);
   const [roles, setRoles]           = useState([]);
-  const [invites, setInvites]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [isOwner, setIsOwner]       = useState(false);
   const [currentUserId, setCurrentUserId] = useState(null);
@@ -395,12 +382,6 @@ function Team() {
   const [showRoleForm, setShowRoleForm] = useState(false);
   const [roleName, setRoleName]     = useState('');
   const [roleError, setRoleError]   = useState('');
-
-  const [showInvForm, setShowInvForm] = useState(false);
-  const [invRoleId, setInvRoleId]   = useState('');
-  const [invExpires, setInvExpires] = useState('');
-  const [invMaxUses, setInvMaxUses] = useState('');
-  const [invError, setInvError]     = useState('');
 
   const [memberMenuId, setMemberMenuId] = useState(null);
   const memberMenuRef = useRef();
@@ -421,9 +402,6 @@ function Team() {
       setIsOwner(!!me?.is_owner);
       setCurrentUserId(me?.id ?? null);
       setError('');
-      const iRes  = await fetch(`${API_BASE}/api/invites`, { credentials: 'include' });
-      const iData = await iRes.json();
-      setInvites(iRes.ok && Array.isArray(iData) ? iData : []);
     } catch { setError('Network error'); }
     finally { setLoading(false); }
   };
@@ -473,27 +451,6 @@ function Team() {
     if (!confirm('Remove this member?')) return;
     await fetch(`${API_BASE}/api/team/${userId}`, { method: 'DELETE', credentials: 'include' });
     setMemberMenuId(null); load();
-  };
-
-  const createInvite = async (e) => {
-    e.preventDefault();
-    if (!invRoleId) return setInvError('Select a role');
-    const body = { crm_role_id: parseInt(invRoleId) };
-    if (invExpires) body.expires_hours = parseInt(invExpires);
-    if (invMaxUses) body.max_uses = parseInt(invMaxUses);
-    const res = await fetch(`${API_BASE}/api/invites`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (!res.ok) return setInvError(data.detail || 'Error');
-    setInvRoleId(''); setInvExpires(''); setInvMaxUses(''); setShowInvForm(false); setInvError(''); load();
-  };
-
-  const revokeInvite = async (id) => {
-    await fetch(`${API_BASE}/api/invites/${id}`, { method: 'DELETE', credentials: 'include' });
-    load();
   };
 
   if (error)   return <div className="crm-placeholder" style={{ marginTop: 40, color: '#e3342f' }}>{error}</div>;
@@ -602,50 +559,6 @@ function Team() {
               </div>
             </div>
 
-            {/* Invites */}
-            <div className="team-section">
-              <div className="team-section-header">
-                <h2 className="team-section-title">Invite Links</h2>
-                <button className="crm-add-btn" onClick={() => { setShowInvForm(v => !v); setInvError(''); }}>
-                  {showInvForm ? <><X className="crm-add-btn-icon" />Cancel</> : <><Link className="crm-add-btn-icon" />New Invite</>}
-                </button>
-              </div>
-              <div className={`crm-form-wrap${showInvForm ? ' crm-form-wrap--open' : ''}`}>
-                <form className="crm-card crm-form" onSubmit={createInvite}>
-                  <select className="crm-input crm-input-select" value={invRoleId} onChange={e => setInvRoleId(e.target.value)}>
-                    <option value="">Select role…</option>
-                    {roles.filter(r => !r.is_system).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select>
-                  <input className="crm-input crm-input--sm" placeholder="Expires in hours (optional)"
-                    type="number" min="1" value={invExpires} onChange={e => setInvExpires(e.target.value)} />
-                  <input className="crm-input crm-input--sm" placeholder="Max uses (optional)"
-                    type="number" min="1" value={invMaxUses} onChange={e => setInvMaxUses(e.target.value)} />
-                  {invError && <span className="crm-form-error">{invError}</span>}
-                  <button className="crm-submit-btn" type="submit">Generate</button>
-                </form>
-              </div>
-              {invites.length > 0 && (
-                <div className="team-invites-card">
-                  {invites.map(inv => (
-                    <div className="team-invite-row" key={inv.id}>
-                      <Link className="crm-icon" style={{ flexShrink: 0 }} />
-                      <div className="team-invite-info">
-                        <span className="team-invite-role">{inv.role_name}</span>
-                        <code className="team-invite-url">{inv.invite_url}</code>
-                        <span className="team-invite-meta">
-                          Used {inv.uses}{inv.max_uses ? `/${inv.max_uses}` : ''} times
-                          {inv.expires_at && ` · Expires ${new Date(inv.expires_at).toLocaleDateString()}`}
-                        </span>
-                      </div>
-                      <CopyBtn text={inv.invite_url} />
-                      <button className="crm-icon-btn crm-icon-btn--danger" onClick={() => revokeInvite(inv.id)}>
-                        <Trash className="crm-icon" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </>
         )}
       </div>

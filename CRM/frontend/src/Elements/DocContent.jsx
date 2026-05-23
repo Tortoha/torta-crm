@@ -3,10 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import FrameworkConnect from '../Pages/Docs/FrameworkConnect.jsx';
 
 // Every doc page is bundled at build time as a raw string. Keys look like
 // '../docs/en/quickstart.md'. No runtime fetch — content ships with the app.
 const FILES = import.meta.glob('../docs/**/*.md', { query: '?raw', import: 'default', eager: true });
+
+// Slugs that render an interactive React component instead of a markdown file.
+const CUSTOM_PAGES = { frameworks: FrameworkConnect };
 
 function pickDoc(section, lang) {
   return FILES[`../docs/${lang}/${section}.md`]
@@ -47,6 +51,8 @@ function Anchor({ href, children }) {
 
 export default function DocContent({ section }) {
   const { t, i18n } = useTranslation();
+  const Custom = CUSTOM_PAGES[section];
+  if (Custom) return <Custom />;
   const lang = (i18n.language || 'en').slice(0, 2);
   const md = pickDoc(section, lang);
   if (!md) return <div className="doc-empty">{t('docs.notFound')}</div>;
