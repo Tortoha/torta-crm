@@ -2487,10 +2487,12 @@
 /* Dynamic Block sliding indicator — same pattern as Sidebar */
 .cat-filter-indicator {
   position: absolute;
-  /* Flush with the full-width item rows; the dropdown's own 6px padding is the
-     only gap to the menu edge, so left/right match the bottom inset. */
-  left: 0;
-  right: 0;
+  /* Match the dropdown's 6px padding on left/right so the indicator visually
+     aligns with the items (the indicator would otherwise overlap the padding
+     and touch the card edge, since absolute children resolve against the
+     parent's padding-box, not its content-box). */
+  left: 6px;
+  right: 6px;
   top: 0;
   height: 0;
   background: var(--accent-tint);

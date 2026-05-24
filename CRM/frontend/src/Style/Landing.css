@@ -1,0 +1,1762 @@
+/* ── Landing page ─────────────────────────────────────────────────────
+   Public marketing surface. Header stays as-is (.crm-header--landing).
+   Page is a stack of self-contained sections, each centred in a 1400px
+   column (.ln-wrap). All section-specific machinery (sticky tour, code
+   showcase, etc.) is scoped under its own `.ln-*` prefix.
+
+   Round-1 design overhaul (per merchant feedback):
+   - No 1px borders anywhere. Visual separation via background + spacing.
+   - No blue glow blobs, no pulsing dots, no breathing radial gradients.
+   - No magnetic-cursor buttons. Only colour/opacity hover changes.
+   - Outline (bold-weight) Phosphor icons only — never duotone/fill.
+   - Bigger air. Section paddings up to 160px; grid gaps widened. ──── */
+
+
+/* ── Page shell + 1400px column ─────────────────────────────────── */
+.ln-page {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  overflow-x: clip;
+}
+
+.ln-wrap {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* 48px top + 48px bottom = uniform 96px visible gap between any two
+   consecutive .ln-section blocks. Other sections (hero / marquee / cta /
+   footer) match the 48px on the sides that face another section so the
+   page reads as a single, even rhythm. */
+.ln-section {
+  padding: 96px 0 96px;
+  position: relative;
+}
+
+.ln-section--tight {
+  padding: 32px 0;
+}
+
+.ln-section--compact {
+  padding: 24px 0;
+}
+
+.ln-eyebrow {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-tint);
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+.ln-section-title {
+  margin: 18px 0 14px;
+  font-size: clamp(24px, 4.2vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.06;
+  color: var(--text);
+}
+
+.ln-section-sub {
+  margin: 0;
+  max-width: 640px;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.ln-section-head {
+  margin-bottom: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.ln-section-head--center {
+  align-items: center;
+  text-align: center;
+}
+
+.ln-section-head--center .ln-section-sub {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── Reveal-on-scroll primitives ─────────────────────────────────── */
+.ln-reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 720ms var(--ease-smooth), transform 720ms var(--ease-smooth);
+}
+
+.ln-reveal.ln-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ln-reveal.ln-d1.ln-in {
+  transition-delay: 80ms;
+}
+
+.ln-reveal.ln-d2.ln-in {
+  transition-delay: 160ms;
+}
+
+.ln-reveal.ln-d3.ln-in {
+  transition-delay: 240ms;
+}
+
+.ln-reveal.ln-d4.ln-in {
+  transition-delay: 320ms;
+}
+
+.ln-reveal.ln-d5.ln-in {
+  transition-delay: 400ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ln-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+.ln-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 22px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.4s ease;
+}
+
+.ln-btn--primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ln-btn--primary:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 8px 24px -4px rgba(0, 113, 227, 0.35);
+}
+
+.ln-btn--ghost {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.ln-btn--ghost:hover {
+  background: var(--accent-tint-hover);
+  color: var(--accent);
+}
+
+.ln-btn--lg {
+  height: 56px;
+  padding: 0 32px;
+  font-size: 15px;
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ HERO — centred. Title and CTAs stacked top, mockup below.       │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-hero {
+  position: relative;
+  padding: 180px 0 48px;
+  overflow: hidden;
+  text-align: center;
+}
+
+/* `align-items: stretch` is the default — but I'm spelling it out because
+   `align-items: center` here was collapsing every block child to its
+   min-content width (e.g. <p> paragraphs wrapping one word per line).
+   Children are centred horizontally via the parent's `text-align: center`
+   (inherited from .ln-hero) and `margin: 0 auto` on the constrained blocks. */
+.ln-hero-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* The pill eyebrow is the only naturally inline-block child — needs an
+   explicit center because stretch doesn't reflow inline boxes. */
+.ln-hero-inner>.ln-eyebrow {
+  align-self: center;
+}
+
+.ln-hero-inner>.ln-hero-sub {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.ln-hero-title {
+  margin: 24px auto 28px;
+  font-size: clamp(42px, 6.4vw, 72px);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  color: var(--text);
+  max-width: 1100px;
+}
+
+.ln-word {
+  display: inline-block;
+  margin-right: 0.26em;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: ln-word-rise 700ms var(--ease-smooth) forwards;
+}
+
+/* Strip the trailing margin from the word that ends a line, otherwise that
+   margin participates in text-align centring and visually shifts the line
+   off-centre. `:has(+ br)` catches the word before an explicit <br>;
+   `:last-child` catches the final word of the title. */
+.ln-word:last-child,
+.ln-word:has(+ br) {
+  margin-right: 0;
+}
+
+@keyframes ln-word-rise {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ln-word {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
+.ln-word--accent {
+  color: var(--accent);
+}
+
+.ln-hero-sub {
+  margin: 0 auto 32px;
+  max-width: 620px;
+  font-size: 18px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.ln-hero-cta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* Quieter than before — values used to be 24px bold black, which made them
+   read as section headings competing with the hero title. Now they're small
+   caps in the accent colour, like mini-eyebrows; the description carries
+   the actual weight. Three columns, each capped at 200px so the row stays
+   tight and readable. */
+.ln-hero-stats {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 48px;
+}
+
+.ln-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: center;
+  max-width: 220px;
+}
+
+.ln-stat b {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.ln-stat span {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+/* ── Mockup primitives — the chrome/window wrapper was removed (it didn't
+   match the real CRM and added no value). The KPI / chart / block / bar
+   classes below stay because the Product Tour scenes (SceneAnalytics and
+   SceneProducts) reuse them inside their step cards. */
+.ln-mockup-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ln-mockup-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.ln-mockup-kpi {
+  background: rgba(var(--fg-rgb), 0.035);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ln-mockup-kpi b {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-feature-settings: "tnum";
+}
+
+.ln-mockup-kpi span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ln-mockup-kpi em {
+  font-size: 10px;
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.ln-mockup-block {
+  background: rgba(var(--fg-rgb), 0.035);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 200px;
+}
+
+.ln-mockup-block h6 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ln-mockup-block small {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ln-mockup-chart {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.ln-mockup-bar {
+  flex: 1;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, var(--accent) 0%, rgba(0, 113, 227, 0.3) 100%);
+  opacity: 0.85;
+}
+
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ FEATURE MARQUEE                                                 │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-marquee {
+  padding: 48px 0;
+}
+
+
+/* Narrow window (~720px) — pills fade out at both edges so the marquee
+   feels like a glimpse, not a firehose. The mask-image clips opacity on
+   the edges of this container only; the track underneath keeps rolling. */
+.ln-marquee-band {
+  max-width: 720px;
+  margin: 0 auto;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent 0%, #000 14%, #000 86%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 14%, #000 86%, transparent 100%);
+}
+
+.ln-marquee-track {
+  display: flex;
+  gap: 28px;
+  width: max-content;
+  animation: ln-marquee 60s linear infinite;
+  /* No `:hover { animation-play-state: paused }` — the merchant felt the
+     hover-pause made the strip "lag". Track runs uninterrupted. */
+}
+
+.ln-marquee-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.ln-marquee-pill svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+@keyframes ln-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* Label sits BELOW the track (per merchant feedback). */
+.ln-marquee-label {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  margin-top: 32px;
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ PRODUCT TOUR — sticky scrollytelling                            │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-tour {
+  position: relative;
+}
+
+/* Tall outer container that provides the scroll runway for the sticky
+   pin. Height = stepCount × 100vh, set inline from JSX so it scales with
+   how many scenes we have. */
+.ln-tour-stack {
+  position: relative;
+}
+
+/* The pinned content — both text + image columns are inside this and
+   share the same sticky frame. The pin sticks for the entire scroll
+   runway above, swapping the active scene as the user goes. */
+/* Content is vertically centred inside the pin — works cleanly now that
+   the section-head was removed from the Tour. Pin sticks at top: 96 and
+   fills the remaining viewport, with the text + image floating in the
+   middle for visual balance. */
+.ln-tour-pin {
+  position: sticky;
+  top: 96px;
+  height: calc(100vh - 144px);
+  display: flex;
+  align-items: center;
+}
+
+/* Wider than the 1400px page wrap — gives the screenshot ~300px more
+   horizontal room so it's easier to read while it's in front of you.
+   Other sections of the landing stay at 1400px. */
+.ln-tour-pin-inner {
+  width: 100%;
+  max-width: 1700px;
+  margin: 0 auto;
+  padding: 0 32px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.4fr);
+  gap: 72px;
+  align-items: center;
+}
+
+/* Mobile / narrow desktop — drop the sticky pin entirely and fall back to
+   a regular scrolling stack of (text + image) pairs. */
+@media (max-width: 1080px) {
+  .ln-tour-stack { height: auto !important; }
+  .ln-tour-pin {
+    position: static;
+    height: auto;
+  }
+  .ln-tour-pin-inner {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 0 24px;
+  }
+}
+
+/* ── LEFT: stacked step text. The active step is fully opaque; the
+   others fade to 30% so the eye stays on the current chapter. ── */
+.ln-tour-text {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.ln-tour-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0.32;
+  transition: opacity 0.5s var(--ease-smooth);
+}
+.ln-tour-step--active { opacity: 1; }
+
+.ln-tour-step-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.ln-tour-step-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.ln-tour-step-desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* On mobile the dimming doesn't make sense (all steps are visible at
+   once anyway as the page scrolls). Show everything at full opacity. */
+@media (max-width: 1080px) {
+  .ln-tour-step { opacity: 1; }
+}
+
+/* ── RIGHT: image stage. Every screenshot is absolute-positioned in the
+   same spot, only the active one has opacity:1. A subtle scale-up on
+   enter softens the swap. ── */
+.ln-tour-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+}
+
+@media (max-width: 1080px) {
+  .ln-tour-stage {
+    position: static;
+    height: auto;
+    min-height: 0;
+  }
+}
+
+.ln-tour-shot-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.98);
+  transition:
+    opacity 0.6s var(--ease-smooth),
+    transform 0.6s var(--ease-smooth);
+  pointer-events: none;
+}
+.ln-tour-shot-wrap.is-active {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+@media (max-width: 1080px) {
+  .ln-tour-shot-wrap {
+    position: static;
+    opacity: 1;
+    transform: none;
+    margin-bottom: 48px;
+  }
+  .ln-tour-shot-wrap:last-child { margin-bottom: 0; }
+}
+
+/* Theme-swap: render both light + dark <img>; CSS hides whichever doesn't
+   match the current [data-theme]. Both files are <200kB PNGs, so loading
+   both keeps the theme toggle instant without a flicker. */
+.ln-tour-shot {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 16px;
+  box-shadow: 0 28px 60px -24px rgba(0, 0, 0, 0.35);
+}
+[data-theme="dark"] .ln-tour-shot {
+  box-shadow: 0 28px 60px -24px rgba(0, 0, 0, 0.6);
+}
+.ln-tour-shot--dark { display: none; }
+[data-theme="dark"] .ln-tour-shot--light { display: none; }
+[data-theme="dark"] .ln-tour-shot--dark  { display: block; }
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ FEATURE GRID                                                    │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 980px) {
+  .ln-features-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .ln-features-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Static cards — no IS tilt, no hover. The cards exist to inform, not to
+   compete for the cursor. (Reveal-on-scroll still runs via .ln-reveal.) */
+.ln-feature {
+  position: relative;
+  background: var(--card);
+  border-radius: 24px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ln-feature-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ln-feature-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.ln-feature h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.ln-feature p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ ALL-IN-ONE — 4×2 grid of small "what's included" feature chips. │
+   │ Lighter than .ln-feature cards because it's a list of items,    │
+   │ not standalone value props. The .ln-features-grid below still   │
+   │ powers Team-ready + Customer-first which DO need the bigger     │
+   │ value-prop card layout.                                         │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-aio-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 880px) {
+  .ln-aio-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .ln-aio-grid { grid-template-columns: 1fr; }
+}
+
+.ln-aio-chip {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ln-aio-chip-icon {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.ln-aio-chip-icon svg { width: 18px; height: 18px; }
+
+.ln-aio-chip-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ BENTO — asymmetric 2-column layouts. One large anchor card + 2  │
+   │ stacked smaller cards. The large card is on the LEFT for one    │
+   │ section and on the RIGHT for the next, so consecutive sections  │
+   │ don't read as a repeat. Padding/gap intentionally mirror the    │
+   │ CRM's own card system (16px gaps, 16px card radius).            │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-bento {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 12px;
+}
+
+.ln-bento--right {
+  grid-template-columns: 1fr 1.7fr;
+}
+
+@media (max-width: 880px) {
+  .ln-bento,
+  .ln-bento--right {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ln-bento-card {
+  background: var(--card);
+  border-radius: 24px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Icon sits on the same baseline as the title — easier to scan than the
+   stacked icon-above-title pattern that came before. */
+.ln-bento-card-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.ln-bento-card-head h3 { margin: 0; }
+
+/* Large anchor — spans both rows. Position depends on the direction
+   modifier: left-modifier pins it to column 1, right-modifier to column 2. */
+.ln-bento--left .ln-bento-card--lg {
+  grid-column: 1;
+  grid-row: 1 / 3;
+}
+.ln-bento--right .ln-bento-card--lg {
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+@media (max-width: 880px) {
+  .ln-bento--left .ln-bento-card--lg,
+  .ln-bento--right .ln-bento-card--lg {
+    grid-column: auto;
+    grid-row: auto;
+  }
+}
+
+/* Large card content scales up slightly — bigger heading, more weight. */
+.ln-bento-card--lg h3 {
+  font-size: 20px;
+}
+.ln-bento-card--lg p {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.ln-bento-card h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.ln-bento-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ── Mini mockups inside the large card ──
+   These are visual chrome — they make the section feel like product, not
+   prose. Each variant uses CSS only (no images, no SVG icons inside). */
+.ln-bento-mock {
+  margin-top: auto;
+  padding: 14px;
+  background: rgba(var(--fg-rgb), 0.04);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Role matrix: three rows like a tiny RBAC list. */
+.ln-bento-mock--roles .ln-bento-mock-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--card);
+}
+.ln-bento-mock--roles .ln-bento-mock-row span {
+  font-weight: 600;
+  color: var(--text);
+}
+.ln-bento-mock--roles .ln-bento-mock-row em {
+  font-style: normal;
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 11px;
+}
+
+/* Email mock: header-style lines (from / to / subject). */
+.ln-bento-mock--email {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.ln-bento-mock--email .ln-bento-mock-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  padding: 6px 0;
+}
+.ln-bento-mock--email .ln-bento-mock-line + .ln-bento-mock-line {
+  border-top: 1px dashed rgba(var(--fg-rgb), 0.08);
+}
+.ln-bento-mock--email .ln-bento-mock-line span {
+  width: 56px;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ln-bento-mock--email .ln-bento-mock-line em {
+  font-style: normal;
+  color: var(--text);
+  font-weight: 500;
+  flex: 1;
+}
+.ln-bento-mock--email .ln-bento-mock-line--subj em {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ SDK SHOWCASE                                                    │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-sdk-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 40px;
+  align-items: stretch;
+}
+
+@media (max-width: 980px) {
+  .ln-sdk-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ln-code-card {
+  background: #0a0a0c;
+  border-radius: 24px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 480px;
+}
+
+.ln-code-tabs {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  padding: 16px 16px 0;
+}
+
+.ln-code-tab {
+  position: relative;
+  z-index: 2;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 12px 16px;
+  border-radius: 12px 12px 0 0;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.ln-code-tab:hover {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.ln-code-tab--active {
+  color: #fff;
+}
+
+.ln-code-tabs-ind {
+  position: absolute;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: transform 0.45s var(--ease-smooth), width 0.45s var(--ease-smooth);
+  opacity: 1;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ln-code-body {
+  flex: 1;
+  padding: 16px 16px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.75;
+  color: #e3e3e6;
+  overflow: auto;
+  white-space: pre;
+}
+
+.ln-cd-kw {
+  color: #ff7eb6;
+}
+
+.ln-cd-fn {
+  color: #82aaff;
+}
+
+.ln-cd-str {
+  color: #c3e88d;
+}
+
+.ln-cd-com {
+  color: rgba(255, 255, 255, 0.35);
+  font-style: italic;
+}
+
+.ln-cd-num {
+  color: #f78c6c;
+}
+
+.ln-preview-card {
+  background: var(--card);
+  border-radius: 24px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 480px;
+  position: relative;
+  overflow: hidden;
+}
+
+.ln-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.ln-preview-head i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ln-preview-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: ln-preview-in 0.4s var(--ease-smooth);
+}
+
+@keyframes ln-preview-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ln-pv-product {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 4px 4px;
+  padding-right: 20px;
+  border-radius: 16px;
+  background: rgba(var(--fg-rgb), 0.03);
+}
+
+.ln-pv-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent-tint), rgba(0, 113, 227, 0.18));
+}
+
+.ln-pv-product-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ln-pv-product-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ln-pv-product-price {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ln-pv-cart-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: auto;
+  padding-top: 16px;
+}
+
+.ln-pv-cart-total span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ln-pv-cart-total b {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ln-pv-auth {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ln-pv-input {
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.04);
+  padding: 12px 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ln-pv-btn {
+  height: 38px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ln-pv-review {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(var(--fg-rgb), 0.03);
+}
+
+.ln-pv-stars {
+  display: inline-flex;
+  gap: 2px;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+
+.ln-steps {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.ln-step {
+  background: var(--card);
+  border-radius: 24px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ln-step h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.ln-step p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.ln-step-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.ln-step-arrow svg {
+  width: 22px;
+  height: 22px;
+}
+
+@media (max-width: 880px) {
+  /* Stack vertically: arrows rotate 90° so they keep pointing toward the
+     next card in the flow. */
+  .ln-steps {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .ln-step-arrow {
+    transform: rotate(90deg);
+    padding: 4px 0;
+  }
+}
+
+/* Old .ln-arch-* classes left below are dead — kept for now in case the
+   user wants to fall back. Safe to delete in a follow-up cleanup pass. */
+.ln-arch {
+  background: var(--card);
+  border-radius: 28px;
+  padding: 16px 16px;
+}
+
+.ln-arch-flow {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 880px) {
+  .ln-arch-flow {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.ln-arch-node {
+  position: relative;
+  z-index: 2;
+  background: var(--bg);
+  border-radius: 18px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: 140px;
+}
+
+.ln-arch-node-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ln-arch-node-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ln-arch-node h5 {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ln-arch-node p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ln-arch-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+
+.ln-arch-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  padding-top: 24px;
+}
+
+.ln-arch-foot-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.ln-arch-foot-item svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ USE CASES                                                       │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+/* Exact 1:1 mirror of the CRM's .auth-tab-* pattern. Container is 34px
+   tall with 2px inner padding; buttons are 30px tall; indicator slides
+   via direct DOM mutation in 0.55s var(--ease-smooth) — matching the
+   look + feel of the Authentication page tab. */
+.ln-usecases-tabs {
+  pointer-events: all;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.07), 0 1px 4px rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+  margin-bottom: 40px;
+}
+
+.ln-usecases-ind {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.ln-usecases-tab {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0 16px 0 6px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  transition: color 0.4s ease;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ln-usecases-tab-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.ln-usecases-tab--active {
+  color: var(--accent);
+}
+
+.ln-usecase-card {
+  background: var(--card);
+  border-radius: 28px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+  gap: 16px;
+  align-items: center;
+  animation: ln-uc-fade 0.45s var(--ease-smooth);
+}
+
+@keyframes ln-uc-fade {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 880px) {
+  .ln-usecase-card {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+}
+
+.ln-usecase-title {
+  margin: 0 0 14px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.ln-usecase-body {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--muted);
+  margin: 0 0 24px;
+}
+
+.ln-usecase-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ln-usecase-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.ln-usecase-list li svg {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ln-usecase-art {
+  position: relative;
+  height: 300px;
+  border-radius: 22px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.ln-usecase-art-tile {
+  position: absolute;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: 0 14px 28px -10px rgba(0, 0, 0, 0.16);
+}
+
+[data-theme="dark"] .ln-usecase-art-tile {
+  box-shadow: 0 14px 28px -10px rgba(0, 0, 0, 0.5);
+}
+
+.ln-usecase-art-tile b {
+  display: block;
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.ln-usecase-art-tile--1 {
+  top: 18%;
+  left: 12%;
+}
+
+.ln-usecase-art-tile--2 {
+  top: 50%;
+  left: 44%;
+}
+
+.ln-usecase-art-tile--3 {
+  top: 22%;
+  right: 14%;
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ SECURITY                                                        │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-sec-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .ln-sec-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ln-sec-row {
+  display: flex;
+  gap: 18px;
+  background: var(--card);
+  border-radius: 24px;
+  padding: 16px;
+}
+
+.ln-sec-icon {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ln-sec-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ln-sec-row h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ln-sec-row p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ FAQ                                                             │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-faq {
+  position: relative;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.ln-faq-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ln-faq-ind {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--accent-tint);
+  border-radius: 18px;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.45s var(--ease-smooth), height 0.45s var(--ease-smooth), opacity 0.25s ease;
+}
+
+.ln-faq-item {
+  position: relative;
+  z-index: 1;
+}
+
+.ln-faq-q {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 22px;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ln-faq-q-text {
+  flex: 1;
+  transition: color 0.2s ease;
+}
+
+.ln-faq-item--open .ln-faq-q-text {
+  color: var(--accent);
+}
+
+.ln-faq-q-caret {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  transition: transform 0.3s var(--ease-smooth), color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.ln-faq-item--open .ln-faq-q-caret {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+
+.ln-faq-a-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.4s var(--ease-smooth);
+}
+
+.ln-faq-item--open .ln-faq-a-wrap {
+  grid-template-rows: 1fr;
+}
+
+.ln-faq-a {
+  overflow: hidden;
+}
+
+.ln-faq-a p {
+  margin: 0 22px 24px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--muted);
+  max-width: 720px;
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ FINAL CTA                                                       │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-cta {
+  position: relative;
+  text-align: center;
+  padding: 48px 0 96px;
+}
+
+.ln-cta-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+.ln-cta-title {
+  margin: 0;
+  font-size: clamp(40px, 5vw, 60px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--text);
+  max-width: 760px;
+}
+
+.ln-cta-sub {
+  margin: 0;
+  font-size: 17px;
+  color: var(--muted);
+  max-width: 560px;
+}
+
+.ln-cta-foot {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+
+/* ╭─────────────────────────────────────────────────────────────────╮
+   │ FOOTER                                                          │
+   ╰─────────────────────────────────────────────────────────────────╯ */
+.ln-footer {
+  padding: 48px 0;
+  /* Matches the Header's background so the page is visually bookended
+     between two identical bands. Header is `var(--card)` (see Header.css). */
+  background: var(--card);
+}
+
+.ln-footer-grid {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(3, 1fr);
+  gap: 48px;
+}
+
+@media (max-width: 720px) {
+  .ln-footer-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.ln-footer-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 280px;
+}
+
+.ln-footer-brand-mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ln-footer-brand-mark svg {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+.ln-footer-brand p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.ln-footer-col h5 {
+  margin: 0 0 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.ln-footer-col ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ln-footer-col a {
+  font-size: 13px;
+  color: var(--text);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.ln-footer-col a:hover {
+  color: var(--accent);
+}
+
+.ln-footer-bottom {
+  margin-top: 56px;
+  padding-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .ln-footer-bottom {
+    flex-direction: column;
+    gap: 8px;
+  }
+}

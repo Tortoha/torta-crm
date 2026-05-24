@@ -31,7 +31,7 @@ const pageLabel = (t, pg) => t(`org.pages.${pg}`, { defaultValue: pg });
 const PAGE_GROUPS = [
   { key: 'general',       keys: ['overview'] },
   { key: 'products',      keys: ['products', 'inventory', 'batches', 'promo_codes', 'discounts', 'tier_pricing', 'warehouses', 'archive', 'product_settings'] },
-  { key: 'sales',         keys: ['orders', 'returns', 'customers'] },
+  { key: 'sales',         keys: ['orders', 'returns', 'customers', 'org_customers'] },
   { key: 'booking',       keys: ['booking', 'booking_services', 'booking_staff', 'booking_settings'] },
   { key: 'engagement',    keys: ['chat', 'channels', 'emails', 'analytics', 'alerts', 'goals'] },
   { key: 'configuration', keys: ['auth_providers', 'url_config', 'integrations', 'documents', 'settings', 'api'] },

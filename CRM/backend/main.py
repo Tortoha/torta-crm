@@ -1114,6 +1114,19 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] per-layer weight_g failed: {e}")
 
+    # cost_price likewise belongs on the leaf at ANY depth. Single-layer
+    # products use L1 as the leaf; multi-layer use L2 (already had the column
+    # from older migration). Mirror that on L1/L3/L4/L5 so the merchant can
+    # set COGS on whatever layer is sellable.
+    try:
+        with db_cursor() as (conn, cur):
+            for _cp in ("product_configurations_l1", "product_configurations_l3",
+                        "product_configurations_l4", "product_configurations_l5"):
+                cur.execute(f"ALTER TABLE {_cp} ADD COLUMN IF NOT EXISTS cost_price NUMERIC(10, 2)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] per-layer cost_price failed: {e}")
+
     # Tax categories per project — referenced from products.tax_category_id.
     # Default category seeded at first lookup if list is empty.
     try:
@@ -3351,6 +3364,136 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] shipping_carriers failed: {e}")
 
+    # ── Phase 1 SaaS billing scaffold (Paddle as MoR planned for Phase 2). ──
+    # Three tables + two columns on crm_organizations. All idempotent.
+    #   crm_subscription_plans — 4 plans (Free/Standard/Plus/Pro) with limits JSONB.
+    #     Seeded once; updates re-apply with ON CONFLICT … DO UPDATE so changing a
+    #     plan's limits in this code automatically rolls out on next start.
+    #   crm_subscriptions      — one row per org with paddle_* IDs (empty in Phase 1).
+    #   crm_organizations.plan_slug         — denormalised "current plan" pointer
+    #                                          (fast lookup, single source for limits).
+    #   crm_organizations.storage_used_bytes — running counter, incremented on
+    #                                          S3 upload, decremented on delete
+    #                                          (best-effort; periodic reconcile later).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_subscription_plans (
+                    slug              VARCHAR(32) PRIMARY KEY,
+                    name              VARCHAR(64) NOT NULL,
+                    price_usd         NUMERIC(10,2) NOT NULL,
+                    limits            JSONB NOT NULL,
+                    paddle_product_id VARCHAR(64),
+                    paddle_price_id   VARCHAR(64),
+                    is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+                    display_order     INTEGER NOT NULL DEFAULT 0,
+                    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_subscriptions (
+                    id                       BIGSERIAL PRIMARY KEY,
+                    org_id                   BIGINT NOT NULL UNIQUE
+                                              REFERENCES crm_organizations(id) ON DELETE CASCADE,
+                    plan_slug                VARCHAR(32) NOT NULL
+                                              REFERENCES crm_subscription_plans(slug),
+                    status                   VARCHAR(32) NOT NULL DEFAULT 'active',
+                    current_period_start     TIMESTAMP,
+                    current_period_end       TIMESTAMP,
+                    cancelled_at             TIMESTAMP,
+                    trial_ends_at            TIMESTAMP,
+                    paddle_customer_id       VARCHAR(64),
+                    paddle_subscription_id   VARCHAR(64),
+                    metadata                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_subs_paddle_sub ON crm_subscriptions(paddle_subscription_id) WHERE paddle_subscription_id IS NOT NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_subs_paddle_cust ON crm_subscriptions(paddle_customer_id) WHERE paddle_customer_id IS NOT NULL")
+
+            # ── Seed / refresh the 4 canonical plans BEFORE the FK so the 'free'
+            # default on existing org rows resolves against a populated plans table. ──
+            # null = unlimited, 0 on broadcasts_per_day_max = broadcasts blocked
+            # (Free transactional emails are unrestricted via _email_is_transactional). ──
+            import json as _json
+            PLANS = [
+                ("free", "Free", 0, 0, {
+                    "projects_max": 1, "team_members_max": 1,
+                    "storefront_users_max": 100,
+                    "storage_bytes_max": 268435456,           # 0.25 GB
+                    "db_size_bytes_max": 104857600,           # 100 MB
+                    "broadcasts_per_day_max": 0,              # blocks campaign sends
+                    "api_requests_per_minute_max": 60,
+                    "features": [],
+                    "support_level": "none",
+                }),
+                ("standard", "Standard", 1, 10, {
+                    "projects_max": 3, "team_members_max": 3,
+                    "storefront_users_max": 5000,
+                    "storage_bytes_max": 26843545600,         # 25 GB
+                    "db_size_bytes_max": 5368709120,          # 5 GB
+                    "broadcasts_per_day_max": 1500,
+                    "api_requests_per_minute_max": 600,
+                    "features": ["webhooks"],
+                    "support_level": "email",
+                }),
+                ("plus", "Plus", 2, 25, {
+                    "projects_max": 10, "team_members_max": 25,
+                    "storefront_users_max": 25000,
+                    "storage_bytes_max": 107374182400,        # 100 GB
+                    "db_size_bytes_max": 26843545600,         # 25 GB
+                    "broadcasts_per_day_max": 5000,
+                    "api_requests_per_minute_max": 3000,
+                    "features": ["webhooks", "cross_org_analytics"],
+                    "support_level": "email",
+                }),
+                ("pro", "Pro", 3, 100, {
+                    "projects_max": None, "team_members_max": None,
+                    "storefront_users_max": None,
+                    "storage_bytes_max": 1099511627776,       # 1 TB
+                    "db_size_bytes_max": 268435456000,        # 250 GB
+                    "broadcasts_per_day_max": 50000,
+                    "api_requests_per_minute_max": 10000,
+                    "features": ["webhooks", "cross_org_analytics", "priority_compute"],
+                    "support_level": "priority",
+                }),
+            ]
+            for slug, name, ord_, price, limits in PLANS:
+                cur.execute("""
+                    INSERT INTO crm_subscription_plans (slug, name, price_usd, limits, display_order)
+                    VALUES (%s, %s, %s, %s::jsonb, %s)
+                    ON CONFLICT (slug) DO UPDATE
+                      SET name          = EXCLUDED.name,
+                          price_usd     = EXCLUDED.price_usd,
+                          limits        = EXCLUDED.limits,
+                          display_order = EXCLUDED.display_order
+                """, (slug, name, price, _json.dumps(limits), ord_))
+
+            # ── Now that 'free' is guaranteed to exist as a plan, we can safely
+            # add the plan_slug column with that default + the FK constraint. ──
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS plan_slug VARCHAR(32) NOT NULL DEFAULT 'free'")
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS storage_used_bytes BIGINT NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE crm_organizations DROP CONSTRAINT IF EXISTS crm_organizations_plan_slug_fkey")
+            cur.execute("""
+                ALTER TABLE crm_organizations
+                  ADD CONSTRAINT crm_organizations_plan_slug_fkey
+                  FOREIGN KEY (plan_slug) REFERENCES crm_subscription_plans(slug)
+            """)
+
+            # Every existing org gets a subscription row at the Free tier (idempotent).
+            cur.execute("""
+                INSERT INTO crm_subscriptions (org_id, plan_slug, status)
+                SELECT o.id, 'free', 'active'
+                  FROM crm_organizations o
+                  LEFT JOIN crm_subscriptions s ON s.org_id = o.id
+                 WHERE s.id IS NULL
+            """)
+            conn.commit()
+            print("[migration] subscription plans (4) + subscriptions + org.plan_slug/storage_used_bytes ready")
+    except Exception as e:
+        print(f"[migration] subscription plans failed: {e}")
+
 # ── DB POOL ──────────────────────────────────────────────
 
 # Pool size 20: the Analytics page alone fires ~22 parallel fetches; with
@@ -4431,6 +4574,30 @@ def require_org_owner(user: dict, org_id: int):
                   (org_id, user["id"])):
         raise HTTPException(403, "Only organization owner can do this")
 
+def require_org_page(user: dict, org_id: int, page: str, level: str = "view"):
+    """Org-level page access: owner always passes; members pass when ANY of their
+    assigned roles in this org grants `page` at the required level (or higher).
+    Used for pages that aren't scoped to a single project — e.g. cross-project
+    Customers (`org_customers`)."""
+    if not org_id:
+        raise HTTPException(404, "Organization not found")
+    # Owner shortcut
+    if db_one("SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+              (org_id, user["id"])):
+        return
+    # Member: scan their roles in this org for the permission.
+    rows = db_all("""
+        SELECT r.permissions
+          FROM crm_team_members tm
+          JOIN crm_roles r ON r.id = tm.crm_role_id
+         WHERE tm.org_id = %s AND tm.crm_user_id = %s
+    """, (org_id, user["id"]))
+    for r in rows:
+        have = ((r.get("permissions") or {}).get(page) or "none")
+        if _level_ge(have, level):
+            return
+    raise HTTPException(403, "You don't have access to this page")
+
 def _org_customers_shared(org_id) -> bool:
     """Whether this org shares customer identity + Auth Providers across its
     projects (branches). Default TRUE. Drives auth-config fan-out and the
@@ -4446,6 +4613,135 @@ def _org_project_ids(org_id) -> list[int]:
     if not org_id:
         return []
     return [int(r["id"]) for r in db_all("SELECT id FROM crm_projects WHERE org_id=%s", (org_id,))]
+
+# ── SaaS billing — plan / usage / enforce_limit ──────────────────────
+# Phase 1 scaffold for the subscription system (Roadmap "Монетизация").
+# Every org has a `plan_slug` column defaulting to 'free' at creation; plan
+# definitions and their limits live in `crm_subscription_plans.limits` (JSONB).
+# enforce_limit() raises 402 with a structured body the frontend reads to
+# render the upgrade prompt. Paddle wiring (Phase 2) only updates plan_slug +
+# the crm_subscriptions row — none of this enforcement logic changes.
+
+# Fallback used when an org has no row / plans table not yet seeded. Mirrors
+# the Free plan limits in run_migrations() so behaviour is identical.
+_PLAN_FREE_FALLBACK = {
+    "slug": "free", "name": "Free", "price_usd": 0.0,
+    "limits": {
+        "projects_max": 1, "team_members_max": 1,
+        "storefront_users_max": 100,
+        "storage_bytes_max": 268435456,
+        "db_size_bytes_max": 104857600,
+        "broadcasts_per_day_max": 0,
+        "api_requests_per_minute_max": 60,
+        "features": [],
+        "support_level": "none",
+    },
+}
+
+def _org_plan(org_id) -> dict:
+    """Resolve the org's current plan → {slug, name, price_usd, limits: {...}}.
+    Defensive fallback to Free if anything is off."""
+    if not org_id:
+        return _PLAN_FREE_FALLBACK
+    row = db_one("""
+        SELECT p.slug, p.name, p.price_usd, p.limits
+          FROM crm_organizations o
+          JOIN crm_subscription_plans p ON p.slug = o.plan_slug
+         WHERE o.id = %s
+    """, (org_id,))
+    if not row:
+        return _PLAN_FREE_FALLBACK
+    return {"slug": row["slug"], "name": row["name"],
+            "price_usd": float(row["price_usd"]),
+            "limits": row["limits"] or {}}
+
+def _org_usage(org_id: int, resource: str) -> int:
+    """Current usage count for one resource. Names match the *_max keys in
+    plan limits (minus the _max suffix). Returns 0 on any error — caller treats
+    "can't count" as "no current usage" (safer than blocking by mistake)."""
+    if not org_id:
+        return 0
+    try:
+        if resource == "projects":
+            r = db_one("SELECT COUNT(*) AS n FROM crm_projects WHERE org_id=%s", (org_id,))
+        elif resource == "team_members":
+            # +1 for the owner (owners aren't stored in crm_org_members; tracked
+            # via crm_organizations.owner_id). UI shows the owner in the team
+            # list too, so the limit reads as "total people in the team".
+            r = db_one("SELECT COUNT(*)+1 AS n FROM crm_org_members WHERE org_id=%s", (org_id,))
+        elif resource == "storefront_users":
+            # Org-shared customers carry org_id directly; per-project ones don't.
+            r = db_one("""
+                SELECT COUNT(*) AS n FROM users
+                 WHERE org_id = %s
+                    OR project_id IN (SELECT id FROM crm_projects WHERE org_id=%s)
+            """, (org_id, org_id))
+        elif resource == "storage_bytes":
+            r = db_one("SELECT storage_used_bytes AS n FROM crm_organizations WHERE id=%s", (org_id,))
+        elif resource == "broadcasts_today":
+            # Sum across all projects of the org, only campaigns that actually went out today.
+            r = db_one("""
+                SELECT COUNT(*) AS n FROM crm_email_campaigns
+                 WHERE project_id IN (SELECT id FROM crm_projects WHERE org_id=%s)
+                   AND status IN ('sending','sent')
+                   AND DATE(COALESCE(updated_at, created_at)) = CURRENT_DATE
+            """, (org_id,))
+        else:
+            return 0
+        return int((r or {}).get("n") or 0)
+    except Exception:
+        return 0
+
+def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
+    """Raise HTTPException(402) if adding `amount` to the org's usage of
+    `resource` would exceed the plan limit. No-op when the limit is null
+    (unlimited) or the resource isn't gated in the plan."""
+    if not org_id:
+        return
+    plan = _org_plan(org_id)
+    limits = plan.get("limits") or {}
+    limit = limits.get(f"{resource}_max")
+    if limit is None:
+        return
+    current = _org_usage(org_id, resource)
+    if current + amount > int(limit):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error":     "plan_limit_exceeded",
+                "plan":      plan["slug"],
+                "resource":  resource,
+                "limit":     int(limit),
+                "current":   int(current),
+                "requested": int(amount),
+            },
+        )
+
+def _org_storage_inc(org_id: int, delta: int) -> None:
+    """Best-effort: bump the storage counter on the org by `delta` bytes (can
+    be negative on deletes). Never raises — counter drift is acceptable; a
+    periodic reconcile job will sync from real S3 sizes in a later phase."""
+    if not org_id or not delta:
+        return
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "UPDATE crm_organizations "
+                "   SET storage_used_bytes = GREATEST(0, storage_used_bytes + %s) "
+                " WHERE id = %s",
+                (int(delta), int(org_id)),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+def _project_org_id(project_id) -> int | None:
+    """Helper for endpoints that have a project_id but not the org_id —
+    e.g. file-upload routes that key by project but bill at the org level."""
+    if not project_id:
+        return None
+    r = db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,))
+    return int(r["org_id"]) if r and r.get("org_id") else None
 
 # ── Auth Providers fan-out ───────────────────────────────────────────
 # When an org shares customers, the Auth Providers config (Google / email
@@ -4569,6 +4865,9 @@ _PROJECT_PAGES = [
     # Orders section
     "orders", "returns",
     "customers",
+    # Org-level cross-project customers view (key kept in _PROJECT_PAGES so it
+    # shows up in the role permission matrix; checked via require_org_page).
+    "org_customers",
     # Booking section
     "booking", "booking_services", "booking_staff", "booking_settings",
     # Chat section
@@ -5442,6 +5741,10 @@ def add_org_member(org_id: int, body: dict = Body(...), user: dict = Depends(get
     if target:
         if target["id"] == org["owner_id"]:
             raise HTTPException(400, "This user already owns the organization")
+        # Only enforce the team-size limit when the row would actually be new.
+        if not db_one("SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s",
+                      (org_id, target["id"])):
+            enforce_limit(org_id, "team_members")
         with db_cursor() as (conn, cur):
             cur.execute("INSERT INTO crm_org_members (org_id, crm_user_id) VALUES (%s,%s) "
                         "ON CONFLICT (org_id, crm_user_id) DO NOTHING", (org_id, target["id"]))
@@ -5491,6 +5794,123 @@ def set_member_assignment(org_id: int, member_user_id: int, body: dict = Body(..
                         "VALUES (%s,%s,%s,%s)", (org_id, project_id, member_user_id, role_id))
         conn.commit()
     return {"ok": True}
+
+
+@app.get("/api/orgs/{org_id}/usage")
+def get_org_usage(org_id: int, user: dict = Depends(get_current_user)):
+    """Current plan + usage stats for the billing UI. Owner or any org member
+    can read it. Returns four parallel maps so the frontend can render bars
+    directly: `usage` (current), `limits` (max from plan), `percent` (0–100,
+    null when unlimited), and the full `plan` object."""
+    is_owner = bool(db_one(
+        "SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+        (org_id, user["id"])))
+    is_member = bool(db_one(
+        "SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s",
+        (org_id, user["id"])))
+    if not (is_owner or is_member):
+        raise HTTPException(404, "Organization not found")
+
+    plan      = _org_plan(org_id)
+    limits    = plan.get("limits") or {}
+    resources = ["projects", "team_members", "storefront_users",
+                 "storage_bytes", "broadcasts_today"]
+    usage     = {r: _org_usage(org_id, r) for r in resources}
+    pct: dict = {}
+    for r in resources:
+        lim = limits.get(f"{r}_max")
+        if lim is None:
+            pct[r] = None                    # unlimited
+        elif lim == 0:
+            pct[r] = 100 if usage[r] > 0 else 0
+        else:
+            pct[r] = min(100, round(usage[r] / lim * 100))
+    return {
+        "plan": plan,
+        "usage": usage,
+        "limits": {r: limits.get(f"{r}_max") for r in resources},
+        "percent": pct,
+    }
+
+
+@app.get("/api/orgs/{org_id}/customers")
+def list_org_customers(org_id: int,
+                       search: str = Query(""),
+                       sort: str = Query("recent"),
+                       project_id: Optional[int] = Query(None),
+                       limit: int = Query(40, ge=1, le=200),
+                       offset: int = Query(0, ge=0),
+                       user: dict = Depends(get_current_user)):
+    """Cross-project customers list for an org. Mirrors the project-level
+    /api/customers shape exactly so the frontend can reuse the same row + modal
+    components; just adds per-row project info (project_id, project_name,
+    project_api_key, project_currency).
+
+    One row per (user_id, project_id) pair. In org-shared customers mode that's
+    effectively one row per customer; in per-project mode it's one row per
+    (customer, store) pair.
+
+    Access: org owner OR member with `org_customers:view` in any role."""
+    require_org_page(user, org_id, "org_customers", "view")
+
+    order_by = _CUSTOMER_SORTS.get(sort, _CUSTOMER_SORTS["recent"])
+
+    where  = ["p.org_id = %s"]
+    params = [org_id]
+    if project_id:
+        if not db_one("SELECT 1 FROM crm_projects WHERE id=%s AND org_id=%s",
+                      (project_id, org_id)):
+            raise HTTPException(404, "Project not found in this organization")
+        where.append("u.project_id = %s")
+        params.append(project_id)
+    s = search.strip()
+    if s:
+        like = f"%{s}%"
+        where.append("(u.name ILIKE %s OR u.email ILIKE %s OR u.phone ILIKE %s)")
+        params += [like, like, like]
+
+    rows = db_all(
+        f"""SELECT u.id, u.name, u.email, u.phone, u.avatar_url, u.is_guest, u.created_at,
+                   u.project_id,
+                   p.name     AS project_name,
+                   p.api_key  AS project_api_key,
+                   p.currency AS project_currency,
+                   COUNT(oh.id) AS order_count,
+                   COALESCE(SUM(oh.total_amount) FILTER (
+                     WHERE oh.status NOT IN ('cancelled', 'refunded')), 0) AS total_spent,
+                   MAX(oh.created_at) AS last_order_at
+              FROM users u
+              JOIN crm_projects p ON p.id = u.project_id
+              LEFT JOIN order_history oh
+                     ON oh.user_id = u.id AND oh.project_id = u.project_id
+             WHERE {' AND '.join(where)}
+             GROUP BY u.id, p.id
+             HAVING (NOT u.is_guest) OR COUNT(oh.id) > 0
+             ORDER BY {order_by}
+             LIMIT %s OFFSET %s""",
+        tuple(params + [limit + 1, offset])
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "has_more": has_more,
+        "items": [{
+            "id":               r["id"],
+            "name":             r["name"] or "",
+            "email":            r["email"] or "",
+            "phone":            r["phone"] or "",
+            "avatar_url":       r.get("avatar_url"),
+            "is_guest":         bool(r["is_guest"]),
+            "order_count":      int(r["order_count"] or 0),
+            "total_spent":      float(r["total_spent"] or 0),
+            "created_at":       r["created_at"].isoformat() if r["created_at"] else None,
+            "last_order_at":    r["last_order_at"].isoformat() if r["last_order_at"] else None,
+            "project_id":       r["project_id"],
+            "project_name":     r["project_name"],
+            "project_api_key":  r["project_api_key"],
+            "project_currency": (r.get("project_currency") or "USD"),
+        } for r in rows],
+    }
 
 
 @app.get("/api/orgs/{org_id}/invites")
@@ -5571,6 +5991,9 @@ def accept_invite(token: str, user: dict = Depends(get_current_user)):
         if (user.get("email") or "").lower() != (inv["email"] or "").lower():
             raise HTTPException(403, "This invite was sent to a different email address")
         org_id = inv["org_id"]
+        if not db_one("SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s",
+                      (org_id, user["id"])):
+            enforce_limit(org_id, "team_members")
         with db_cursor() as (conn, cur):
             cur.execute("INSERT INTO crm_org_members (org_id, crm_user_id) VALUES (%s,%s) "
                         "ON CONFLICT (org_id, crm_user_id) DO NOTHING", (org_id, user["id"]))
@@ -5580,6 +6003,9 @@ def accept_invite(token: str, user: dict = Depends(get_current_user)):
     org = db_one("SELECT id, owner_id FROM crm_organizations WHERE invite_token=%s", (token,))
     if org:
         if org["owner_id"] != user["id"]:   # owner is already in; don't add a member row
+            if not db_one("SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s",
+                          (org["id"], user["id"])):
+                enforce_limit(org["id"], "team_members")
             with db_cursor() as (conn, cur):
                 cur.execute("INSERT INTO crm_org_members (org_id, crm_user_id) VALUES (%s,%s) "
                             "ON CONFLICT (org_id, crm_user_id) DO NOTHING", (org["id"], user["id"]))
@@ -7061,6 +7487,7 @@ def stripe_connect_oauth_callback(request: Request,
 @app.post("/api/orgs/{org_id}/projects")
 def create_project(org_id: int, request: CreateProjectRequest, req: Request, user: dict = Depends(get_current_user)):
     require_org_owner(user, org_id)
+    enforce_limit(org_id, "projects")
 
     name = request.name.strip()
     if not name:          raise HTTPException(400, "Name is required")
@@ -7598,14 +8025,20 @@ def list_products(project_id: int = Query(...),
         params.append(product_type)
     where.append("p.is_archived = %s")
     params.append(bool(archived))
+    # `ps` is joined on the variation id (not the product id) so each row
+    # represents ONE (variation, L2-leaf) pair. That fixes two things at once:
+    #  - SUM(stock) no longer inflates from the cartesian join with v
+    #  - For single-layer products (no L2 rows), the LEFT JOIN gives ps=NULL,
+    #    and COALESCE(ps.X, v.X) falls back to the value stored on L1 itself
+    #    (where price/stock live for single-layer products).
     sql = (
         "SELECT p.id, p.title, p.sku, p.category_id, p.product_type, p.is_archived, p.is_paused,"
         " p.sale_type, p.sale_value, p.sale_starts_at, p.sale_ends_at,"
         " c.name AS category_name, c.slug AS category_slug,"
         " COUNT(DISTINCT v.id) AS variations_count,"
-        " COALESCE(SUM(ps.stock_quantity),0) AS total_stock,"
-        " COALESCE(MIN(ps.price),0) AS min_price,"
-        " COALESCE(MAX(ps.price),0) AS max_price,"
+        " COALESCE(SUM(COALESCE(ps.stock_quantity, v.stock_quantity)),0) AS total_stock,"
+        " COALESCE(MIN(COALESCE(ps.price, v.price)),0) AS min_price,"
+        " COALESCE(MAX(COALESCE(ps.price, v.price)),0) AS max_price,"
         " COALESCE(AVG(pr.rating),0) AS avg_rating,"
         " COUNT(DISTINCT pr.id) AS reviews_count,"
         " (SELECT (images)[1] FROM product_configurations_l1 WHERE product_id=p.id ORDER BY id ASC LIMIT 1) AS first_image,"
@@ -7617,7 +8050,7 @@ def list_products(project_id: int = Query(...),
         " FROM products p"
         " LEFT JOIN product_categories c ON c.id=p.category_id"
         " LEFT JOIN product_configurations_l1 v ON v.product_id=p.id"
-        " LEFT JOIN product_configurations_l2 ps ON ps.product_id=p.id"
+        " LEFT JOIN product_configurations_l2 ps ON ps.variation_id=v.id"
         " LEFT JOIN product_reviews pr ON pr.product_id=p.id"
         f" WHERE {' AND '.join(where)} GROUP BY p.id, c.name, c.slug ORDER BY p.id DESC"
     )
@@ -9815,9 +10248,13 @@ def _annotate_effective_price(items: list, parent_eff: Optional[float]):
 
 
 def _load_product_tree(product_id: int) -> tuple[list, int]:
+    # `cost_price` is included on L1 because single-layer products use L1 as
+    # their SKU (the variation IS the leaf). Without selecting it here the
+    # frontend's `v.cost_price` is undefined → editor renders 0.00 even
+    # after a successful PUT — looks exactly like a save bug.
     variations = db_all(
         "SELECT id, variation_name, images, position, price, stock_quantity, sold_quantity,"
-        " weight_g,"
+        " weight_g, cost_price,"
         " sale_type, sale_value, sale_starts_at, sale_ends_at"
         " FROM product_configurations_l1 WHERE product_id=%s ORDER BY position ASC, id ASC",
         (product_id,)
@@ -9829,6 +10266,8 @@ def _load_product_tree(product_id: int) -> tuple[list, int]:
             v["sale_value"] = float(v["sale_value"])
         if v.get("weight_g") is not None:
             v["weight_g"] = float(v["weight_g"])
+        if v.get("cost_price") is not None:
+            v["cost_price"] = float(v["cost_price"])
         for tk in ("sale_starts_at", "sale_ends_at"):
             if v.get(tk) is not None:
                 v[tk] = v[tk].isoformat()
@@ -9841,15 +10280,17 @@ def _load_product_tree(product_id: int) -> tuple[list, int]:
         fmt = ",".join(["%s"] * len(parent_ids))
         name_col = _layer_name_col(n)
         parent_col = _layer_parent_col(n)
+        # cost_price lives on every layer table (added by per-layer migration)
+        # because the SKU can sit at any depth. L2-only fields stay in `extra`.
         extra = ""
         if n == 2:
-            extra = (", sku_code, barcode, compare_at_price, cost_price,"
+            extra = (", sku_code, barcode, compare_at_price,"
                      " length_cm, width_cm, height_cm,"
                      " sale_price, sale_starts_at, sale_ends_at,"
                      " sale_type, sale_value")
         rows = db_all(
             f"SELECT id, {parent_col} AS parent_id, {name_col} AS name,"
-            f" price, stock_quantity, sold_quantity, position, weight_g{extra}"
+            f" price, stock_quantity, sold_quantity, position, weight_g, cost_price{extra}"
             f" FROM {_layer_table(n)} WHERE {parent_col} IN ({fmt}) ORDER BY position ASC, id ASC",
             tuple(parent_ids)
         )
@@ -10077,15 +10518,24 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
                 fields.append("sale_starts_at=%s"); vals.append(sent['sale_starts_at'])
             if 'sale_ends_at' in sent:
                 fields.append("sale_ends_at=%s"); vals.append(sent['sale_ends_at'])
-    # ── Phase 1: per-SKU (L2) physical fields ──
+    # ── Per-leaf physical fields — accepted on any layer.
+    # cost_price specifically needs L1 too because single-layer products
+    # use L1 as their SKU (the variation IS the leaf). The migration
+    # adds cost_price to L1/L3/L4/L5 so this write doesn't 500.
+    if 'cost_price' in sent:
+        v = sent['cost_price']
+        if v is not None and float(v) < 0:
+            raise HTTPException(400, "cost_price must be ≥ 0")
+        fields.append("cost_price=%s"); vals.append(v)
+    # ── L2-only per-SKU fields (columns live on L2 alone). ──
     if layer == 2:
         if 'sku_code' in sent and sent['sku_code'] is not None:
             fields.append("sku_code=%s"); vals.append(sanitize(sent['sku_code'].strip())[:80])
         if 'barcode' in sent and sent['barcode'] is not None:
             fields.append("barcode=%s"); vals.append(sanitize(sent['barcode'].strip())[:80])
         # NUMERIC nullable fields — explicit null clears, number sets, omit leaves alone.
-        # (weight_g handled layer-agnostically above.)
-        for nf in ('compare_at_price', 'cost_price',
+        # (weight_g + cost_price handled layer-agnostically above.)
+        for nf in ('compare_at_price',
                     'length_cm', 'width_cm', 'height_cm', 'sale_price'):
             if nf in sent:
                 v = sent[nf]
@@ -12531,8 +12981,16 @@ async def upload_image(
     if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
         folder = f"projects/{project_id}/products" if project_id else "products"
         key = f"{folder}/{filename}"
+        # Plan-gate: org storage budget. Legacy avatar-style uploads without a
+        # project_id bypass billing (they go to a global folder).
+        file_size = out.getbuffer().nbytes
+        org_id = _project_org_id(project_id) if project_id else None
+        if org_id:
+            enforce_limit(org_id, "storage_bytes", amount=file_size)
         try:
             url = s3_upload(out, key)
+            if org_id:
+                _org_storage_inc(org_id, file_size)
             return {"url": url}
         except (BotoCoreError, ClientError) as e:
             raise HTTPException(500, f"S3 upload failed: {e}")
@@ -12601,9 +13059,14 @@ async def upload_media(
     if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
         folder = f"projects/{project_id}/products" if project_id else "products"
         key = f"{folder}/{filename}"
+        org_id = _project_org_id(project_id) if project_id else None
+        if org_id:
+            enforce_limit(org_id, "storage_bytes", amount=len(contents))
         try:
             buf = io.BytesIO(contents); buf.seek(0)
             url = s3_upload(buf, key, content_type=expected)
+            if org_id:
+                _org_storage_inc(org_id, len(contents))
             return {"url": url, "type": kind, "size": len(contents)}
         except (BotoCoreError, ClientError) as e:
             raise HTTPException(500, f"S3 upload failed: {e}")
@@ -12714,6 +13177,9 @@ async def upload_file(
     if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
         folder = f"projects/{project_id}/files" if project_id else "files"
         key = f"{folder}/{filename}"
+        org_id = _project_org_id(project_id) if project_id else None
+        if org_id:
+            enforce_limit(org_id, "storage_bytes", amount=len(contents))
         try:
             # `attachment` Content-Disposition forces download instead of inline
             # render — even if a smuggled HTML/SVG slips past the allowlist it
@@ -12723,6 +13189,8 @@ async def upload_file(
                 content_type=mime,
                 content_disposition=f'attachment; filename="{safe_name}"',
             )
+            if org_id:
+                _org_storage_inc(org_id, len(contents))
             return {"url": url, "name": file.filename, "size": len(contents)}
         except (BotoCoreError, ClientError) as e:
             raise HTTPException(500, f"S3 upload failed: {e}")
@@ -20031,6 +20499,26 @@ def _send_campaign_to_recipients(campaign):
 
 def _run_campaign(campaign, now):
     cid = campaign["id"]
+    # Plan-gate: broadcasts on Free are disabled entirely (broadcasts_per_day_max=0).
+    # The scheduler reaches here for any campaign whose run-time arrived; if the
+    # org isn't allowed to broadcast we flip the campaign to 'blocked' rather
+    # than spam its "sending" state forever. Send-now endpoint pre-checks too
+    # so the user gets a 402 immediately when clicking the button.
+    org_id = _project_org_id(campaign.get("project_id"))
+    plan = _org_plan(org_id) if org_id else _PLAN_FREE_FALLBACK
+    bcast_limit = (plan.get("limits") or {}).get("broadcasts_per_day_max")
+    if bcast_limit is not None:
+        current = _org_usage(org_id, "broadcasts_today") if org_id else 0
+        if current + 1 > int(bcast_limit):
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    "UPDATE crm_email_campaigns "
+                    "   SET status='blocked', last_error=%s, updated_at=NOW() "
+                    " WHERE id=%s",
+                    (f"Broadcasts blocked on the {plan['name']} plan — upgrade to send campaigns.", cid),
+                )
+                conn.commit()
+            return 0, 0
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_email_campaigns SET status='sending', updated_at=NOW() WHERE id=%s", (cid,))
         conn.commit()
@@ -20168,6 +20656,10 @@ def email_campaign_send_now(cid: int, background_tasks: BackgroundTasks,
     row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
     if not row:
         raise HTTPException(404, "Campaign not found")
+    # Pre-check the plan gate so the user gets 402 immediately instead of a
+    # silent 'blocked' campaign status discovered later. _run_campaign also
+    # checks (for scheduler-triggered runs).
+    enforce_limit(_project_org_id(project_id), "broadcasts_today")
     background_tasks.add_task(_run_campaign, dict(row), _utcnow())
     return {"ok": True}
 

@@ -1,0 +1,220 @@
+{
+  "landing": {
+    "hero": {
+      "eyebrow": "Torta CRM",
+      "title": "One CRM for|every|<br>|online store",
+      "titleAccentIndex": "1",
+      "subtitle": "Run your store from one place. Take orders and bookings, talk to customers live, send email campaigns, and track every metric — without juggling a dozen apps.",
+      "ctaPrimary": "Get started free",
+      "ctaSecondary": "See it in action",
+      "stat1Value": "All-in-one",
+      "stat1Label": "Products, orders, bookings and customers in one console",
+      "stat2Value": "Team-ready",
+      "stat2Label": "Invite teammates with the exact access they need",
+      "stat3Value": "Customer-first",
+      "stat3Label": "Email, live chat, and one-tap login built in"
+    },
+
+    "marquee": {
+      "label": "Everything your storefront needs in one place",
+      "items": {
+        "multiStore":  "Multi-store",
+        "allInOne":    "All-in-one workspace",
+        "analytics":   "Deep analytics",
+        "chat":        "Live web chat",
+        "orders":      "Order pipeline",
+        "booking":     "Booking calendar",
+        "broadcasts":  "Email broadcasts",
+        "multiCcy":    "Multi-currency",
+        "rbac":        "Roles & permissions",
+        "team":        "Team workspace",
+        "alerts":      "Smart alerts",
+        "fulfil":      "Fulfilment & returns"
+      }
+    },
+
+    "tour": {
+      "eyebrow": "Product tour",
+      "title": "Everything you run a store with — already built in",
+      "subtitle": "Four parts of the platform that take up most of a merchant's day. All of them are shipped and ready the moment you create your first store.",
+      "stepWord": "Step",
+      "steps": {
+        "products":  { "label": "Catalog",   "title": "Add products in minutes — variants and all",        "desc": "Colours, sizes, materials, bundles — define them once and every variant stays in sync. Bulk-edit prices, manage stock per warehouse, archive seasonal items in two clicks." },
+        "orders":    { "label": "Sales",     "title": "Take every order from cart to delivery",           "desc": "Confirm, pack, ship, deliver — without switching tabs. Refunds and returns live in the same pipeline. Customers get status updates from your domain, not ours." },
+        "bookings":  { "label": "Bookings",  "title": "A calendar for service businesses",                "desc": "Set up services, assign staff, manage opening hours. Customers pick a slot online, you see it on your calendar. Cancellations and reschedules update everyone automatically." },
+        "analytics": { "label": "Insights",  "title": "Know what's working — no spreadsheets",            "desc": "Revenue, conversion, repeat-buyer cohorts, average order value by channel. Live numbers that update on every sale, with the comparisons your accountant needs." }
+      },
+      "scenes": {
+        "products":  { "title": "Catalog", "meta": "3 of 124", "layers": "Variants: 4 colours × 5 sizes", "add": "New product" },
+        "orders":    { "title": "Order pipeline", "meta": "Last 24 hours",
+          "status": { "new": "New", "confirmed": "Confirmed", "shipped": "Shipped", "delivered": "Delivered" } },
+        "bookings":  { "title": "This week", "meta": "5 bookings today",
+          "service1": "Hair styling",  "service2": "Beard trim", "service3": "Hair colouring", "service4": "Manicure",
+          "staff": "with" },
+        "analytics": { "title": "Storefront analytics", "meta": "Live",
+          "aov": "AOV", "ltv": "LTV", "retention": "Retention", "funnel": "Conversion funnel" }
+      }
+    },
+
+    "features": {
+      "eyebrow": "What you also get",
+      "title": "Tools your team will actually use every day.",
+      "subtitle": "The four big areas above are the spine. Everything below is on by default and ready to ship the moment you create a store.",
+      "items": {
+        "customers":  { "title": "Customer profiles",   "desc": "Every shopper, every purchase, every interaction — on one page. A repeat buyer in store A shows the same profile in store B." },
+        "broadcasts": { "title": "Email campaigns",     "desc": "Send beautiful emails to your customer list, from your own domain. Built-in templates, opens and clicks tracked automatically." },
+        "auth":       { "title": "One-tap customer login", "desc": "Shoppers sign in with a 6-digit code sent to their email. No passwords to forget, no signup friction — more checkouts." },
+        "chat":       { "title": "Live web chat",       "desc": "A chat widget your customers see on the storefront, and an inbox for your team. Every message pings everyone with access." },
+        "team":       { "title": "Team workspace",      "desc": "Invite teammates to your organization. Give each one the pages they need — Products, Orders, Marketing — and nothing else." },
+        "integrations": { "title": "Connects with what you already use", "desc": "Payment providers, shipping carriers, accounting tools, marketing platforms — connect them once and they stay in sync." }
+      }
+    },
+
+    "allInOne": {
+      "eyebrow": "All-in-one",
+      "title": "One console instead of a dozen apps",
+      "subtitle": "Inventory, marketing, support, scheduling, analytics — every part of running an online store, in one workspace.",
+      "items": {
+        "products":   "Products & inventory",
+        "orders":     "Orders & returns",
+        "bookings":   "Bookings calendar",
+        "customers":  "Customer database",
+        "marketing":  "Email marketing",
+        "chat":       "Live web chat",
+        "team":       "Team workspace",
+        "analytics":  "Deep analytics"
+      }
+    },
+
+    "teamReady": {
+      "eyebrow": "Team-ready",
+      "title": "Built for teams, not just solo founders",
+      "subtitle": "Invite designers, accountants, ops, marketers. Each one sees only the pages they need.",
+      "items": {
+        "roles":     { "title": "Custom roles per page", "desc": "Build a role that lets your designer change Products but not Orders. An accountant can read Revenue without touching settings." },
+        "workspace": { "title": "One workspace, every store", "desc": "Invite teammates to your organization once. They get access to the stores you choose, with the permissions you grant." },
+        "audit":     { "title": "Audit log", "desc": "Every change in your console is tracked — who, what, when. Roll back wrong edits or hand the log to your auditor." }
+      }
+    },
+
+    "customerFirst": {
+      "eyebrow": "Customer-first",
+      "title": "Tools your customers will actually feel",
+      "subtitle": "Sign-in without passwords, real-time conversations, emails from your domain — every touch your customer has is yours.",
+      "items": {
+        "auth":       { "title": "One-tap login", "desc": "Shoppers sign in with a 6-digit code sent to their email. No passwords to forget, no signup friction — more checkouts." },
+        "chat":       { "title": "Live web chat", "desc": "A chat widget your shoppers see on the storefront, plus an inbox for your team. Real-time conversations from your console." },
+        "broadcasts": { "title": "Email campaigns", "desc": "Send beautiful emails from your own domain. Built-in templates, opens and clicks tracked automatically." }
+      }
+    },
+
+    "howItWorks": {
+      "eyebrow": "How to start",
+      "title": "Three steps to your first store",
+      "subtitle": "No demo call required, no credit card to start. Go at your own pace — every step is guided.",
+      "steps": {
+        "setup":   { "title": "Create your store",      "desc": "Sign up, name your organization, add your first products. We walk you through DNS, email and payments with one-click checks." },
+        "connect": { "title": "Connect your storefront", "desc": "Use our ready-made template, or wire up the website you already have. Same checkout, same console." },
+        "run":     { "title": "Run everything from one tab", "desc": "Take orders, answer chats, send campaigns, see analytics — without leaving the console." }
+      }
+    },
+
+    "useCases": {
+      "eyebrow": "Built for the way you work",
+      "title": "Pick the shape that fits",
+      "subtitle": "One platform serves three very different operators — without forcing any of them to compromise.",
+      "items": {
+        "solo": {
+          "tab":      "Solo founder",
+          "headline": "Run your shop from one tab",
+          "body":     "You don't need an agency. Spin up a store, add products, point your site at the system, and start taking orders today.",
+          "bullets":  [
+            "Set up your catalog in minutes, not days",
+            "Built-in email and chat — no extra services to subscribe to",
+            "Customer support, analytics and bookings all in one console"
+          ],
+          "tiles": [
+            { "label": "Revenue MTD" },
+            { "label": "Active SKU" },
+            { "label": "Avg. rating" }
+          ]
+        },
+        "agency": {
+          "tab":      "Small agency",
+          "headline": "Manage every client without losing context",
+          "body":     "Each client gets their own organization. Invite your team with the exact permissions they need — and only the pages they should see.",
+          "bullets":  [
+            "Custom roles per project — designer, ops, analyst",
+            "Cross-client analytics without exposing private data",
+            "Audit log shows who changed what, when"
+          ],
+          "tiles": [
+            { "label": "Clients" },
+            { "label": "Growth QoQ" },
+            { "label": "SLA met" }
+          ]
+        },
+        "market": {
+          "tab":      "Multi-brand operator",
+          "headline": "See every store as one business",
+          "body":     "When you operate five storefronts, treating them as five spreadsheets is what kills you. Roll them up under one organization and read them as one number.",
+          "bullets":  [
+            "Cross-store customer view — one shopper, every store",
+            "Organization-level revenue, retention and inventory",
+            "Per-store roles + global org admin"
+          ],
+          "tiles": [
+            { "label": "Storefronts" },
+            { "label": "Orders MTD" },
+            { "label": "Org GMV" }
+          ]
+        }
+      }
+    },
+
+    "security": {
+      "eyebrow": "Built for trust",
+      "title": "Boring, predictable, well-isolated",
+      "subtitle": "Security defaults nobody should have to think about — wired in from the first store you create.",
+      "items": {
+        "isolated": { "title": "Your data, isolated",     "desc": "Every store sits in its own scope. Customers, orders, products — never visible to other merchants on the platform." },
+        "dkim":     { "title": "DKIM-signed email",      "desc": "Every email you send is signed with your domain's key. SPF and DMARC records are guided through a built-in checker." },
+        "rbac":     { "title": "Page-level RBAC",        "desc": "Permissions live on pages, not on tables. A custom role can grant view-only on Revenue and full edit on Products at the same time." },
+        "audit":    { "title": "Full audit log",         "desc": "Every change in your console — who, what, when, from where. Roll back wrong edits or hand the log to your auditor." }
+      }
+    },
+
+    "faq": {
+      "eyebrow": "Questions answered",
+      "title": "FAQ",
+      "subtitle": "If something here isn't answered, the docs probably have the long version.",
+      "items": {
+        "stores":       { "q": "How many stores can I run?", "a": "There's no cap on stores inside an organization. Each store is fully isolated — products, orders, customers and team access don't leak across boundaries." },
+        "customDomain": { "q": "Can I send email from my own domain?", "a": "Yes. Add the domain in the Email page, paste the DKIM/SPF/DMARC records into your DNS, click Check, and you're live. No waiting for a sales call." },
+        "noTech":       { "q": "I'm not technical. Will I be able to set this up?", "a": "If you can fill in a form, you can set up Torta. The hardest step is adding your DNS records — and we walk you through it with one-click verification." },
+        "permissions":  { "q": "How granular are team permissions?", "a": "Per-page and per-action. You can build a role that lets a designer change Products but never touch Orders, or an analyst who can read Revenue but can't see customer emails." },
+        "bookings":     { "q": "Does this work for service businesses too?", "a": "Yes. The Bookings calendar handles services, staff schedules and recurring slots. Customers pick times online; cancellations and reschedules sync automatically." },
+        "migrate":      { "q": "Can I migrate from another setup?", "a": "Most teams import their existing catalog via CSV in the Products page, then point their site at the system. Customers and orders flow in the moment you go live." },
+        "platform":     { "q": "What if I don't have a website yet?", "a": "We ship a ready-made storefront template you can launch in minutes. You get your products online without writing a line of code." }
+      }
+    },
+
+    "cta": {
+      "title":     "Start managing your store today",
+      "subtitle":  "Everything you've seen on this page is already wired in. Lay the foundations now — and grow from there.",
+      "button":    "Get started for free",
+      "fineprint": "No credit card required to start."
+    },
+
+    "footer": {
+      "tagline": "A single CRM platform for online stores — built for solo founders, small agencies and multi-brand operators alike.",
+      "cols": {
+        "product": { "title": "Product",  "links": { "features": "Features", "tour": "Product tour", "howItWorks": "How it works", "docs": "Docs" } },
+        "company": { "title": "Company",  "links": { "about": "About", "blog": "Blog", "careers": "Careers", "contact": "Contact" } },
+        "legal":   { "title": "Legal",    "links": { "terms": "Terms", "privacy": "Privacy", "security": "Security", "status": "Status" } }
+      },
+      "rights": "All rights reserved.",
+      "built":  "Built for online stores."
+    }
+  }
+}

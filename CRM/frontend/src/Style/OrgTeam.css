@@ -48,6 +48,7 @@
   grid-template-columns: 1.8fr 3fr 76px;
 }
 
+
 /* ── Cell helpers ── */
 .ot-ellipsis {
   overflow: hidden;

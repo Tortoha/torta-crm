@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { FolderSimple, ChartLine, ArrowLineLeft, ArrowLineRight,
-         CreditCard, GearSix, UsersThree } from '@phosphor-icons/react';
+         CreditCard, GearSix, UsersThree, Users } from '@phosphor-icons/react';
 
 function buildItems(orgSlug, isOwner, t) {
   const base = `/org/${orgSlug}`;
   // Members only see the project list; the org-admin pages (Analytics / Team /
-  // Payments / Settings) are owner-only (backend enforces require_org_owner).
+  // Payments / Settings / Customers) are owner-only in the nav. Members who
+  // have the org_customers:view permission via a role can still reach the
+  // page through a direct URL (backend gates via require_org_page).
   const items = [{ to: base, label: t('nav.projects'), Icon: FolderSimple, exact: true }];
   if (isOwner) items.push(
     { to: `${base}/analytics`, label: t('nav.analytics'), Icon: ChartLine  },
+    { to: `${base}/customers`, label: t('nav.customers'), Icon: Users      },
     { to: `${base}/team`,      label: t('nav.team'),      Icon: UsersThree },
     { to: `${base}/payments`,  label: t('nav.payments'),  Icon: CreditCard },
     { to: `${base}/settings`,  label: t('nav.settings'),  Icon: GearSix    },

@@ -34,10 +34,11 @@ export default function SpecificationsBlock({ product, productId, pq, chain, sho
   const groups     = selectedNode?.spec_groups || [];
   const ungrouped  = useMemo(() => allSpecs.filter(s => !s.group_id), [allSpecs]);
 
-  // Brand-new node with nothing yet → still offer a loose row so the merchant
-  // can quick-add without first creating a group. Once groups exist and there
-  // are no loose specs, the ungrouped area disappears (everything is grouped).
-  const showUngrouped = ungrouped.length > 0 || groups.length === 0;
+  // Loose / ungrouped rows are LEGACY: kept visible if old data still has them,
+  // but the empty state shows only the "+ Add section" button to match the
+  // Modifiers block. New specs always live inside a section (like modifier items
+  // always live inside a group).
+  const showUngrouped = ungrouped.length > 0;
 
   // ─── Spec CRUD ────────────────────────────────────────────────────
   const createSpec = useCallback(async (body) => {

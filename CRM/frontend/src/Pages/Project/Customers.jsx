@@ -36,23 +36,23 @@ const PAY_STATUS = {
   partial_refunded: 'cust-pay--warn',
 };
 
-function initials(name, email) {
+export function initials(name, email) {
   const src = (name || email || '?').trim();
   const parts = src.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return src.slice(0, 2).toUpperCase();
 }
 
-function fmtDate(iso) {
+export function fmtDate(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
-function fmtShort(iso) {
+export function fmtShort(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function Avatar({ url, name, email }) {
+export function Avatar({ url, name, email }) {
   const [failed, setFailed] = useState(false);
   if (url && !failed) {
     return <img className="cust-avatar" src={url} alt="" onError={() => setFailed(true)} />;
@@ -63,7 +63,7 @@ function Avatar({ url, name, email }) {
 // ── Sort dropdown ────────────────────────────────────────────
 // Mirrors the Products "All Categories" filter (cat-filter-* classes +
 // DynamicBlock sliding indicator) for a consistent toolbar control.
-function SortDropdown({ value, options, onChange }) {
+export function SortDropdown({ value, options, onChange }) {
   const { t } = useTranslation();
   const btnRef = useRef(null);
   const [open, setOpen]       = useState(false);
@@ -120,7 +120,7 @@ function SortDropdown({ value, options, onChange }) {
 }
 
 // ── Detail modal ─────────────────────────────────────────────
-function CustomerModal({ custId, pq, currency, onClose }) {
+export function CustomerModal({ custId, pq, currency, onClose }) {
   const { t } = useTranslation();
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);

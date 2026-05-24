@@ -271,6 +271,27 @@
         "done": "Done"
       }
     },
+    "customersPage": {
+      "title": "Customers",
+      "hint": "All customers across every project in this organization. Click a project pill to jump to that store's customer list.",
+      "searchPlaceholder": "Search by name, email or phone",
+      "allProjects": "All projects",
+      "count_one": "{{count}} customer",
+      "count_few": "{{count}} customers",
+      "count_many": "{{count}} customers",
+      "count_other": "{{count}} customers",
+      "loading": "Loading customers…",
+      "empty": "No customers in this organization yet.",
+      "forbidden": "You don't have permission to view customers across the organization. Ask the owner to grant the «Customers (cross-project)» permission in your role.",
+      "openProjectCustomers": "Open the customer list for «{{name}}»",
+      "colCustomer": "Customer",
+      "colEmail": "Email",
+      "colPhone": "Phone",
+      "colProject": "Project",
+      "colOrders": "Orders",
+      "colSpent": "Spent",
+      "colJoined": "Joined"
+    },
     "payments": {
       "title": "Payments",
       "subtitle": "Connect your payment provider so customers can pay directly during checkout. CRM never touches the money — payments flow straight to your provider account, and refunds are processed through the provider's API when you handle returns.",
@@ -363,6 +384,7 @@
       "orders": "Orders",
       "returns": "Returns",
       "customers": "Customers",
+      "org_customers": "Customers (cross-project)",
       "booking": "Bookings",
       "booking_services": "Services",
       "booking_staff": "Staff",

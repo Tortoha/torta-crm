@@ -10,6 +10,33 @@
   grid-template-columns: 2.6fr 0.7fr 1fr 1fr 28px;
 }
 
+/* Org Customers variant — same row, extra Project column second. The doubled
+   class out-specifies the base above so the wider grid wins on org pages. */
+.po-set-row--head.cust-row.cust-row--org,
+.po-set-row.cust-row.cust-row--org:not(.po-set-row--head) {
+  grid-template-columns: 2.2fr 1.4fr 0.6fr 0.9fr 0.9fr 28px;
+}
+
+/* Pill linking to a specific project's customer list (used in the Project
+   column of the Org Customers table). Same accent-tint style as other tag-style
+   links across the app. */
+.ot-project-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 100%;
+  transition: background 0.2s ease;
+}
+.ot-project-link:hover { background: var(--accent-tint-hover, rgba(0, 113, 227, 0.13)); }
+.ot-project-link svg   { width: 14px; height: 14px; flex-shrink: 0; }
+
 .po-set-row.cust-row--clickable {
   cursor: pointer;
 }
