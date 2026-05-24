@@ -21,21 +21,33 @@ function InitialsAvatar({ name, size = 28 }) {
   );
 }
 
-/* ── Avatar with photo fallback ── */
+/* ── Avatar with photo fallback ──
+   Renders the initials OR the photo — never both stacked. Stacking
+   caused a 1-pixel orange halo to peek around the photo's circular
+   edge. Now: if there's no URL or the photo failed to load, show
+   initials. Otherwise show the photo alone. `onError` switches back
+   to initials when the URL 404s / is blocked / times out. The `key`
+   on the img forces a remount whenever the URL changes (e.g. after
+   logout → re-login with a different account). */
 function UserAvatar({ user, size = 28 }) {
+  const url = user?.avatar_url || null;
   const [imgFailed, setImgFailed] = useState(false);
-  if (user?.avatar_url && !imgFailed) {
-    return (
-      <img
-        src={user.avatar_url}
-        alt=""
-        className="hdr-avatar-photo"
-        style={{ width: size, height: size }}
-        onError={() => setImgFailed(true)}
-      />
-    );
+  // Reset failure state when the URL changes (new login, avatar update).
+  useEffect(() => { setImgFailed(false); }, [url]);
+
+  if (!url || imgFailed) {
+    return <InitialsAvatar name={user?.name} size={size} />;
   }
-  return <InitialsAvatar name={user?.name} size={size} />;
+  return (
+    <img
+      key={url}
+      src={url}
+      alt=""
+      className="hdr-avatar-photo"
+      style={{ width: size, height: size }}
+      onError={() => setImgFailed(true)}
+    />
+  );
 }
 
 /* ── Org switcher ── */
@@ -411,8 +423,25 @@ function UserMenu({ user, project }) {
   }, []);
 
   const logout = async () => {
-    await fetch(`${API_BASE}/api/logout`, { method: 'POST', credentials: 'include' });
-    navigate('/');
+    // Wrap the fetch — if the server is down or the request is blocked,
+    // we STILL want to navigate away (the user clicked Log out, they
+    // expect SOMETHING to happen). Without the catch, an exception here
+    // bubbles up and the navigation below never runs.
+    try {
+      await fetch(`${API_BASE}/api/logout`, { method: 'POST', credentials: 'include' });
+    } catch (e) {
+      console.warn('Logout request failed; navigating anyway', e);
+    }
+    // Force a hard reload of /. The two-case dance is because assigning
+    // `location.href = '/'` while already on / doesn't always trigger a
+    // navigation in every browser — it can be treated as same-URL and
+    // skipped. `reload()` guarantees the page re-mounts so /api/me runs
+    // fresh and the header redraws with no user.
+    if (window.location.pathname === '/') {
+      window.location.reload();
+    } else {
+      window.location.href = '/';
+    }
   };
 
   return (

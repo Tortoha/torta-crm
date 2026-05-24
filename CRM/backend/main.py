@@ -5092,8 +5092,16 @@ def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
     if user:
         user_id = user["id"]
         with db_cursor() as (conn, cur):
+            # COALESCE(NULLIF(avatar_url, ''), %s) — keep whatever avatar
+            # the user already has (custom upload OR a previous Google
+            # picture) and only fill it in if the column is currently NULL
+            # or empty. Without this, every re-login through Google would
+            # wipe the user's custom S3 avatar with Google's URL, which
+            # is then often blocked by ad-blockers → empty initials.
             cur.execute(
-                "UPDATE crm_users SET google_id=%s, avatar_url=%s, last_login_at=NOW() WHERE id=%s",
+                "UPDATE crm_users SET google_id=%s, "
+                "avatar_url=COALESCE(NULLIF(avatar_url, ''), %s), "
+                "last_login_at=NOW() WHERE id=%s",
                 (g_id, picture, user_id)
             )
             conn.commit()

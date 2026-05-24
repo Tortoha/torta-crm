@@ -668,6 +668,9 @@
   opacity: 0.8;
 }
 
+/* Avatar = a circle. Either the initials div OR the photo is rendered
+   (not stacked) so there's no ring of background colour peeking around
+   the photo's edge. */
 .hdr-avatar {
   border-radius: 50%;
   display: flex;
@@ -781,19 +784,19 @@
 
 .hdr-drop-item:not(.hdr-drop-item--danger):hover {
   background: var(--accent-tint);
-  color: #0071E3;
+  color: var(--accent);
 }
 
 .hdr-drop-item--danger {
-  color: #ef4444;
+  color: var(--delete);
 }
 
 .hdr-drop-item--danger:hover {
-  background: rgba(227, 52, 47, 0.07);
-  color: #ef4444;
+  background: var(--delete-tint);
+  color: var(--delete);
 }
 [data-theme="dark"] .hdr-drop-item--danger:hover {
-  background: rgba(227, 52, 47, 0.22);
+  background: var(--delete-tint);
 }
 
 .hdr-drop-icon {
