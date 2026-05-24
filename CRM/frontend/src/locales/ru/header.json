@@ -1,5 +1,9 @@
 {
   "header": {
+    "nav": {
+      "pricing": "Цены",
+      "docs":    "Документация"
+    },
     "userMenu": {
       "ariaLabel": "Меню пользователя",
       "settings": "Настройки",

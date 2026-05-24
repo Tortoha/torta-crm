@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen } from '@phosphor-icons/react';
+import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen, Tag } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
 import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
@@ -586,6 +586,71 @@ function ProductSwitcherCrumb({ project, productContext }) {
   );
 }
 
+/* ── Landing nav tabs (Pricing + Docs) ──
+   Hover-tracking Dynamic Block — same pattern as .auth-tab-* in the CRM.
+   Indicator slides between tabs as the cursor moves; falls back to the
+   active tab when the cursor leaves. The Docs tab carries `?from=landing`
+   so the DocsLayout knows to render the landing-style Header (instead of
+   the in-app one) when the user arrives from this nav. */
+function HeaderLandingNav() {
+  const { t }      = useTranslation();
+  const navigate   = useNavigate();
+  const location   = useLocation();
+  const indRef     = useRef(null);
+  const btnRefs    = useRef({});
+  const [hovered, setHovered] = useState(null);
+
+  const tabs = useMemo(() => [
+    { key: 'pricing', label: t('header.nav.pricing'), to: '/pricing', Icon: Tag },
+    // Query param routes Docs through DocsLayout's landing-header branch.
+    { key: 'docs',    label: t('header.nav.docs'),    to: '/docs/getting-started?from=landing', Icon: BookOpen },
+  ], [t]);
+
+  // Which tab is "active" — match by pathname prefix.
+  const activeKey = (() => {
+    if (location.pathname.startsWith('/pricing')) return 'pricing';
+    if (location.pathname.startsWith('/docs'))    return 'docs';
+    return null;
+  })();
+  const curTab = hovered ?? activeKey;
+
+  // Slide the indicator. Direct DOM mutation inside rAF — keeps the
+  // sliding cheap and the indicator opacity at 0 until the first measure
+  // so there's no flicker on first paint.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = curTab ? btnRefs.current[curTab] : null;
+      if (!ind) return;
+      if (!el) { ind.style.opacity = '0'; return; }
+      ind.style.opacity   = '1';
+      ind.style.transform = `translateX(${el.offsetLeft}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [curTab, activeKey]);
+
+  return (
+    <nav className="hdr-landing-nav" onMouseLeave={() => setHovered(null)}>
+      <div ref={indRef} className="hdr-landing-nav-ind" />
+      {tabs.map(({ key, label, to, Icon }) => (
+        <button key={key}
+          ref={el => { btnRefs.current[key] = el; }}
+          /* `curTab === key` (not `activeKey`) so hovering also flips the
+             text colour to accent — matches how .auth-tab in the CRM
+             tracks the indicator AND the text simultaneously. */
+          className={`hdr-landing-nav-tab${curTab === key ? ' hdr-landing-nav-tab--active' : ''}`}
+          onMouseEnter={() => setHovered(key)}
+          onClick={() => navigate(to)}
+          type="button">
+          <Icon className="hdr-landing-nav-icon" weight="bold" />
+          {label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 /* ── Settings gear → navigates to the /preferences page ── */
 function HeaderSettingsButton() {
   const navigate = useNavigate();
@@ -601,15 +666,26 @@ function HeaderSettingsButton() {
 /* ── Header ── */
 function Header({ user, project, org, productContext, settingsMode, docsMode, landing }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t }    = useTranslation();
+  // The .crm-header--landing modifier centres the header inside a 1400px
+  // column. That's right for the actual Landing page (the page content
+  // sits in the same column underneath), but WRONG on /docs where the
+  // page below uses the full-width Sidebar+Main layout — the centred
+  // logo ends up misaligned with the sidebar's left edge. So on docs we
+  // skip the modifier even when the landing prop is on.
+  const landingWide = landing && !location.pathname.startsWith('/docs');
   return (
-    <header className={`crm-header${landing ? ' crm-header--landing' : ''}`}>
+    <header className={`crm-header${landingWide ? ' crm-header--landing' : ''}`}>
       <div className="hdr-left">
         <button className="hdr-brand" onClick={() => navigate(landing ? '/' : (user ? '/dashboard' : '/'))} type="button">
           <svg className="hdr-brand-logo" viewBox="0 0 3070 3070" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M3061.91 1516.01C3065.95 1523.01 3067.97 1526.51 3068.76 1530.22C3069.46 1533.51 3069.46 1536.91 3068.76 1540.2C3067.97 1543.92 3065.95 1547.42 3061.91 1554.41L2316.09 2846.23C2312.05 2853.22 2310.03 2856.72 2307.2 2859.27C2304.7 2861.52 2301.76 2863.22 2298.56 2864.26C2294.94 2865.43 2290.91 2865.43 2282.83 2865.43H769.002C769.001 2865.43 768.999 2865.43 768.999 2865.43C768.998 2865.43 768.997 2865.42 768.998 2865.42L1503.75 1592.81C1514.66 1573.91 1520.12 1564.46 1519.3 1556.7C1518.59 1549.94 1515.04 1543.79 1509.54 1539.8C1503.23 1535.21 1492.32 1535.21 1470.49 1535.21H1.00289C1.00227 1535.21 1.00179 1535.21 1.00179 1535.21V1535.21C1.00179 1535.22 1.00064 1535.22 1.00015 1535.22C0.999961 1535.22 0.99995 1535.21 1.00012 1535.21L757.915 224.2C761.953 217.205 763.972 213.708 766.797 211.165C769.297 208.914 772.241 207.214 775.44 206.175C779.055 205 783.093 205 791.17 205H2282.83C2290.91 205 2294.94 205 2298.56 206.175C2301.76 207.214 2304.7 208.914 2307.2 211.165C2310.03 213.708 2312.05 217.205 2316.08 224.2L3061.91 1516.01Z" fill="currentColor"/>
           </svg>
         </button>
+        {/* Landing nav sits right next to the brand on the left — easier
+            to scan than a centered nav floating mid-header. */}
+        {landing && <HeaderLandingNav />}
         {/* Settings pages: show static "Settings" breadcrumb */}
         {settingsMode && (
           <>

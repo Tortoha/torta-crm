@@ -66,7 +66,9 @@ function buildGroups(t) {
 const isActivePath = (p, to) => p === to || p.startsWith(to + '/');
 
 // Collapsible section — mirrors NavSection in Elements/Sidebar.jsx.
-function DocSection({ section, open, onToggle, pathname }) {
+// `searchParams` is the raw `location.search` string (e.g. "?from=landing")
+// piped through so every NavLink keeps it on click.
+function DocSection({ section, open, onToggle, pathname, searchParams }) {
   const itemsEl = useRef(null);
   const itemEls = useRef({});
   const [hov, setHov] = useState(null);
@@ -100,7 +102,11 @@ function DocSection({ section, open, onToggle, pathname }) {
               className={`sb-item-wrap${cur === to ? ' sb-item-wrap--current' : ''}`}
               onMouseEnter={() => setHov(to)}
             >
-              <NavLink to={to} className="sb-item">
+              {/* Preserve the `?from=landing` flag (and any other search
+                  params) as the user clicks through Docs sidebar items —
+                  otherwise the landing-style header would switch back to
+                  the app header on the first internal navigation. */}
+              <NavLink to={{ pathname: to, search: searchParams }} className="sb-item">
                 <Icon className="sb-icon" />
                 <span className="sb-item-label">{label}</span>
               </NavLink>
@@ -126,7 +132,8 @@ export default function DocsSidebar() {
         <div className="sb-nav-area">
           {groups.map(g => (
             <DocSection key={g.id} section={g} open={open[g.id]}
-              onToggle={() => toggle(g.id)} pathname={location.pathname} />
+              onToggle={() => toggle(g.id)} pathname={location.pathname}
+              searchParams={location.search} />
           ))}
         </div>
       </div>
