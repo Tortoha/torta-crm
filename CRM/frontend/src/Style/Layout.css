@@ -63,9 +63,39 @@
 [data-theme="dark"] .cfg-block-body .crm-input,
 [data-theme="dark"] .bk-cb-search-input,
 [data-theme="dark"] .bk-cb-search-input:focus,
-[data-theme="dark"] .oauth-btn {
+[data-theme="dark"] .oauth-btn,
+/* EmailPanel — From-email split input matches other inputs */
+[data-theme="dark"] .auth-email-split {
   background: var(--input-bg);
   color: var(--text);
+}
+
+/* EmailPanel — elevated cards inside the modal (preview + DNS blocks). */
+[data-theme="dark"] .auth-preview-card,
+[data-theme="dark"] .auth-dns-header-block,
+[data-theme="dark"] .auth-dns-rows-block,
+[data-theme="dark"] .auth-dns-row {
+  background: var(--card);
+}
+
+/* EmailPanel — row separators + show-all divider use the soft theme border. */
+[data-theme="dark"] .auth-dns-row + .auth-dns-row::before,
+[data-theme="dark"] .auth-dns-show-all {
+  background: transparent;
+}
+[data-theme="dark"] .auth-dns-row + .auth-dns-row::before {
+  background: var(--border-soft);
+}
+[data-theme="dark"] .auth-dns-show-all {
+  border-top: 1px solid var(--border-soft);
+}
+
+/* EmailPanel — TYPE pill ("TXT") + unknown-status dot. */
+[data-theme="dark"] .auth-dns-type {
+  background: rgba(255, 255, 255, 0.06);
+}
+[data-theme="dark"] .auth-dns-dot--unknown {
+  background: rgba(255, 255, 255, 0.22);
 }
 
 /* Inputs sit on cards — give the focus ring an accent edge instead of #000. */

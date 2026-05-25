@@ -48,7 +48,7 @@
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: 0.4s ease;
 }
 
 .hdr-docs-btn:hover {
@@ -824,7 +824,7 @@
   cursor: pointer;
   color: var(--text);
   margin-right: 6px;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: 0.4s ease;
 }
 
 .hdr-bell-btn:hover {
