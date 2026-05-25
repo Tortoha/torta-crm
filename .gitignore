@@ -10,6 +10,10 @@ build/
 .env.*
 *.local
 !*.local.example
+# Keep templates committed — they document the required keys without
+# leaking real values.
+!.env.example
+!.env.*.example
 
 # ── Python ────────────────────────────────────────────────
 __pycache__/

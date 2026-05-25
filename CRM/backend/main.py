@@ -254,6 +254,38 @@ def run_migrations():
     import re as _re
     hex20 = _re.compile(r'^[0-9a-f]{20}$')
 
+    # ─── BOOTSTRAP: full schema from scratch on empty DB ────────────────
+    # On fresh installs (Docker volume wipe, Fly Postgres create) the database
+    # has no tables. We detect this by checking for `crm_users`, and if missing,
+    # execute the entire `schema.sql` in one go — it's a verbatim
+    # `pg_dump --schema-only` of the current production schema, regenerated
+    # periodically. After bootstrap, the per-feature ALTER patches below are
+    # no-ops on a fresh DB (column already exists) — they only matter for
+    # upgrading existing installations that pre-date a given column.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema='public' AND table_name='crm_users'"
+            )
+            crm_users_exists = cur.fetchone() is not None
+        if not crm_users_exists:
+            schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
+            if os.path.exists(schema_path):
+                # utf-8-sig drops a leading BOM if the file was saved with one
+                # (PowerShell `Out-File -Encoding utf8` writes UTF-8 + BOM on Win5.1,
+                # Postgres trips on the BOM with a syntax error).
+                with open(schema_path, "r", encoding="utf-8-sig") as f:
+                    schema_sql = f.read()
+                with db_cursor() as (conn, cur):
+                    cur.execute(schema_sql)
+                    conn.commit()
+                print(f"[migrations] bootstrap: applied schema.sql ({len(schema_sql)//1024} KB) — fresh DB initialized")
+            else:
+                print(f"[migrations] WARNING: schema.sql not found at {schema_path} — fresh DB will be empty!")
+    except Exception as e:
+        print(f"[migrations] bootstrap failed: {type(e).__name__}: {e}")
+
     # ─── KV store for pending OTPs, rate-limit counters, reset tokens ──
     # Persistent K/V table that mirrors Redis SETEX/INCR semantics. Lets
     # us run multi-instance backend (Fly.io machines, Docker replicas)
@@ -16068,13 +16100,20 @@ class TelegramPoller:
 
     async def start_all(self):
         loop = asyncio.get_event_loop()
-        rows = await loop.run_in_executor(
-            None,
-            lambda: db_all(
-                "SELECT project_id, config FROM crm_chat_integrations WHERE channel='telegram' AND is_active=TRUE",
-                ()
+        # Wrapped in try/except — first-boot environments (fresh Docker volume,
+        # CI test DB) may not have crm_chat_integrations yet. The backend must
+        # still come up so migrations can run; Telegram polling is non-fatal.
+        try:
+            rows = await loop.run_in_executor(
+                None,
+                lambda: db_all(
+                    "SELECT project_id, config FROM crm_chat_integrations WHERE channel='telegram' AND is_active=TRUE",
+                    ()
+                )
             )
-        )
+        except Exception as e:
+            print(f"[telegram poller] skipped startup (table missing or DB issue): {e}")
+            return
         for row in rows:
             token = (row["config"] or {}).get("bot_token")
             if token:

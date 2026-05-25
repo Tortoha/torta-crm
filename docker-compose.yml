@@ -1,0 +1,123 @@
+# Top-level compose for the full stack — replaces the four separate
+# `python -m uvicorn` / `npm run dev` commands you'd otherwise juggle.
+#
+#   docker compose up -d         start everything in the background
+#   docker compose logs -f       tail logs from all services
+#   docker compose logs -f crm-backend   tail just one service
+#   docker compose down          stop everything, keep the DB volume
+#   docker compose down -v       stop AND wipe the DB volume (destructive)
+#
+# Services:
+#   postgres        Postgres 17, persistent volume.
+#   crm-backend     FastAPI on :8001
+#   external-api    FastAPI on :8000
+#   crm-frontend    Vite-built SPA served by nginx on :5174
+#
+# All four are on the same Docker network — backends reach `postgres`
+# by hostname, not by IP. `localhost` from your host machine still works
+# because each service publishes its port.
+#
+# Secrets live in `.env` (gitignored). Copy `.env.example` → `.env` and
+# fill in the values before first `docker compose up`.
+
+services:
+
+  # ── Postgres 17 ────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    container_name: torta-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-crmdb}
+      POSTGRES_USER:     ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required — set it in .env}
+    ports:
+      - "5432:5432"   # publish to host so you can connect from pgAdmin
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready returns 0 once Postgres is accepting connections; backends
+      # wait for this via `depends_on.condition: service_healthy`.
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-crmdb}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [torta]
+
+  # ── CRM backend (FastAPI :8001) ────────────────────────────────────────
+  crm-backend:
+    build:
+      context: ./CRM/backend
+      dockerfile: Dockerfile
+    container_name: torta-crm-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override DB_HOST to point at the Postgres service inside Docker.
+      # The .env file may have DB_HOST=localhost for native dev — we
+      # don't want backends inside the network reaching out to host.
+      DB_HOST: postgres
+      DB_PORT: 5432
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [torta]
+
+  # ── External (Magaz) API (FastAPI :8000) ───────────────────────────────
+  external-api:
+    build:
+      context: ./External
+      dockerfile: Dockerfile
+    container_name: torta-external-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+    ports:
+      - "8000:8000"
+    # Wait for CRM backend's healthcheck, not just Postgres. CRM owns the
+    # schema bootstrap (`schema.sql` runs inside its run_migrations()), so
+    # External must not start querying tables until CRM has created them.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      crm-backend:
+        condition: service_healthy
+    networks: [torta]
+
+  # ── CRM frontend (Vite SPA, served via nginx :80 → host :5174) ────────
+  crm-frontend:
+    build:
+      context: ./CRM/frontend
+      dockerfile: Dockerfile
+      args:
+        # Local dev points the SPA at the backends on host — when the user
+        # opens http://localhost:5174 in a browser, the bundle JS runs in
+        # the browser and hits the backends via localhost:8001/8000 (NOT
+        # via the docker network). For production, set these to your real
+        # domain via `docker compose build --build-arg VITE_API_BASE=...`
+        # or by editing this file before deploy.
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8001}
+        VITE_EXTERNAL_API_BASE: ${VITE_EXTERNAL_API_BASE:-http://localhost:8000}
+    container_name: torta-crm-frontend
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+    depends_on:
+      - crm-backend
+    networks: [torta]
+
+# Named volume keeps the Postgres data folder across `docker compose down`
+# cycles — only `docker compose down -v` wipes it.
+volumes:
+  pgdata:
+    driver: local
+
+# Single private network — services find each other by service name
+# (e.g. `crm-backend` resolves to the right container IP).
+networks:
+  torta:
+    driver: bridge

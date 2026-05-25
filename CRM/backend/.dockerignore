@@ -1,0 +1,50 @@
+# Speeds up `docker build` by keeping the build context tiny — anything
+# listed here is NOT sent to the Docker daemon. Critical for security
+# (don't ship .env), build speed (skip __pycache__, .venv), and image
+# size (don't copy node_modules into a Python image by accident).
+
+# Python cruft
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Local dev / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs / databases / dumps
+*.log
+*.db
+*.sqlite
+*.sqlite3
+dumps/
+
+# Secrets — never ship these to the image
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Docker artefacts (avoid recursive inclusion)
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# Generated artefacts
+requirements_current.txt

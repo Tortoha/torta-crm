@@ -1,0 +1,39 @@
+# Node / Vite cruft — anything that doesn't need to ship in the build
+# context. node_modules especially is huge (~300 MB), and Docker would
+# re-install via `npm ci` anyway.
+
+node_modules/
+.npm/
+.cache/
+
+# Build output (regenerated inside the image)
+dist/
+dist-ssr/
+.vite/
+
+# Local dev
+.env
+.env.local
+.env.*.local
+*.log
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Docker artefacts
+Dockerfile*
+.dockerignore
+
+# Git
+.git/
+.gitignore
+
+# Test artefacts
+coverage/
+.nyc_output/
+
+# OS / editor temp files
+Thumbs.db

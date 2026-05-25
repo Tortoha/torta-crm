@@ -1,19 +1,10 @@
 import { syncLang } from "./i18n";
 import { syncTheme } from "./theme";
 
-export const API_BASE   = "http://localhost:8001";
-export const MAGAZ_BASE = "http://localhost:8000";
+export const API_BASE   = import.meta.env.VITE_API_BASE          || "http://localhost:8001";
+export const MAGAZ_BASE = import.meta.env.VITE_EXTERNAL_API_BASE || "http://localhost:8000";
 
 
-/**
- * Safely extract a renderable string from a backend error response.
- *
- * Backstop for the case where `data.detail` is an array of Pydantic validation
- * error objects ({type, loc, msg, input}) — rendering that directly into JSX
- * crashes React with "Objects are not valid as a React child". The CRM backend
- * overrides this globally (see _crm_format_validation_error in main.py),
- * but defence-in-depth: route all error rendering through this helper.
- */
 export function pickError(data, fallback = "Something went wrong") {
   if (!data) return fallback;
   const d = data.detail ?? data.error ?? data.message;
@@ -30,30 +21,6 @@ export function pickError(data, fallback = "Something went wrong") {
   try { return JSON.stringify(d); } catch { return fallback; }
 }
 
-/**
- * AUTO-REFRESH MIDDLEWARE
- *
- * We monkey-patch window.fetch ONCE at module load. Every existing
- * `fetch(...)` call across the codebase automatically gets:
- *
- *   1. On 401 from CRM backend → silently call /api/refresh
- *   2. If refresh succeeds → retry the original request once
- *   3. If refresh fails → bubble the original 401 (caller redirects to /login)
- *
- * Concurrency: if 5 tabs all hit 401 at once, only ONE /api/refresh fires;
- * the others await the same in-flight promise. Prevents rotation races
- * where the second request would consume an already-rotated refresh token
- * and get the entire chain revoked.
- *
- * Skip refresh for the auth endpoints themselves (otherwise infinite loop
- * if refresh itself returns 401, etc).
- *
- * CSRF:
- *   GET /api/csrf is called once on load. The server sets a readable cookie
- *   `csrf_token`. The wrapper injects X-CSRF-Token on every state-changing
- *   (non-GET) request to the CRM backend. An attacker on evil.com cannot
- *   read our cookie (same-origin policy) and cannot forge the header.
- */
 const NO_REFRESH_PATHS = [
   "/api/refresh",
   "/api/login",
