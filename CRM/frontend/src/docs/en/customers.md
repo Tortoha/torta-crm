@@ -26,7 +26,7 @@ await client.customers.save({
 Or call the endpoint directly:
 
 ```bash
-curl -X POST "https://api.example.com/PUBLIC_KEY/customers" \
+curl -X POST "https://api.tortacrm.com/PUBLIC_KEY/customers" \
   -H "Content-Type: application/json" \
   -H "X-Secret-Key: sk_YOUR_SECRET_KEY" \
   -d '{"email":"ann@example.com","name":"Ann","surname":"Lee","metadata":{"tier":"gold"}}'

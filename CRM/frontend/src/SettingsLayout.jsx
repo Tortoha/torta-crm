@@ -44,7 +44,11 @@ function SettingsLayout() {
   useEffect(() => {
     fetch(`${API_BASE}/api/me`, { credentials: 'include' })
       .then(r => { if (!r.ok) throw new Error('auth'); return r.json(); })
-      .then(setUser)
+      .then(u => {
+        // Hard ToS gate — Google-OAuth users bounce to /accept-terms.
+        if (!u?.terms_accepted_at) { navigate('/accept-terms', { replace: true }); return; }
+        setUser(u);
+      })
       .catch(() => navigate('/login'))
       .finally(() => setLoading(false));
   }, [navigate]);

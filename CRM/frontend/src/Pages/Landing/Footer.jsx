@@ -8,10 +8,28 @@ export default function Footer() {
   const { t } = useTranslation();
   const year = new Date().getFullYear();
 
+  // `to` = real SPA route (rendered via <Link>). Anything else is a
+  // placeholder for the diploma scope and renders as `#`. Pricing + Docs
+  // + Terms/Privacy/Refund are the live public pages.
   const cols = [
-    { key: 'product', links: ['features', 'tour', 'sdk', 'docs'] },
-    { key: 'company', links: ['about', 'blog', 'careers', 'contact'] },
-    { key: 'legal',   links: ['terms', 'privacy', 'security', 'status'] },
+    { key: 'product', links: [
+      { id: 'features' },
+      { id: 'tour' },
+      { id: 'pricing', to: '/pricing' },
+      { id: 'docs',    to: '/docs/getting-started?from=landing' },
+    ]},
+    { key: 'company', links: [
+      { id: 'about' },
+      { id: 'blog' },
+      { id: 'careers' },
+      { id: 'contact' },
+    ]},
+    { key: 'legal',   links: [
+      { id: 'terms',    to: '/terms' },
+      { id: 'privacy',  to: '/privacy' },
+      { id: 'refund',   to: '/refund' },
+      { id: 'security', to: '/security' },
+    ]},
   ];
 
   return (
@@ -32,25 +50,16 @@ export default function Footer() {
             <div key={c.key} className="ln-footer-col">
               <h5>{t(`landing.footer.cols.${c.key}.title`)}</h5>
               <ul>
-                {c.links.map(l => (
-                  <li key={l}>
-                    {/* Most links are placeholders for the diploma scope — the only
-                        live links are /docs and /login (handled via Link). Other
-                        routes resolve to # so we don't ship dead URLs. */}
-                    {l === 'docs' ? (
-                      /* `?from=landing` routes Docs through DocsLayout's
-                         landing-header branch (Pricing+Docs tabs, public
-                         access without login) — same as the Header's
-                         Docs tab. Without the flag, DocsLayout would
-                         redirect anonymous visitors to /login. */
-                      <Link to="/docs/getting-started?from=landing">
-                        {t(`landing.footer.cols.${c.key}.links.${l}`)}
-                      </Link>
-                    ) : (
-                      <a href="#">{t(`landing.footer.cols.${c.key}.links.${l}`)}</a>
-                    )}
-                  </li>
-                ))}
+                {c.links.map(l => {
+                  const label = t(`landing.footer.cols.${c.key}.links.${l.id}`);
+                  return (
+                    <li key={l.id}>
+                      {l.to
+                        ? <Link to={l.to}>{label}</Link>
+                        : <a href="#">{label}</a>}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}

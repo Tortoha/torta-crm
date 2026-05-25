@@ -26,7 +26,7 @@ You need two keys, both safe to ship to the browser — copy them from **Copy Ke
 ```js
 import { createClient } from 'torta-js';
 
-const API_URL = "https://api.example.com/PUBLIC_KEY"; // public key in the path
+const API_URL = "https://api.tortacrm.com/PUBLIC_KEY"; // public key in the path
 const API_PK  = "pk_PUBLISHABLE_KEY";                 // publishable key
 
 export const client = createClient(API_URL, API_PK);

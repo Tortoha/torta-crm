@@ -254,6 +254,39 @@ def run_migrations():
     import re as _re
     hex20 = _re.compile(r'^[0-9a-f]{20}$')
 
+    # ─── KV store for pending OTPs, rate-limit counters, reset tokens ──
+    # Persistent K/V table that mirrors Redis SETEX/INCR semantics. Lets
+    # us run multi-instance backend (Fly.io machines, Docker replicas)
+    # without sticky sessions — every container reads the same OTP state
+    # from Postgres. Falls through to in-memory only if this table is
+    # unavailable or the operator explicitly sets USE_PG_KV=0.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_kv_store (
+                    key         VARCHAR(255) PRIMARY KEY,
+                    value       JSONB        NOT NULL,
+                    expires_at  TIMESTAMPTZ  NULL,
+                    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_crm_kv_expires
+                  ON crm_kv_store (expires_at)
+                  WHERE expires_at IS NOT NULL
+            """)
+            conn.commit()
+        # Flip the public _kv_* dispatch to the Postgres backend, but only
+        # when Redis isn't configured (Redis still wins if REDIS_URL is set).
+        # USE_PG_KV=0 forces the legacy in-memory fallback.
+        global _pg_kv_active, _backend_name
+        if not _redis and os.getenv("USE_PG_KV", "1") == "1":
+            _pg_kv_active = True
+            _backend_name = "postgres"
+            print("[kvstore] Using Postgres KV backend (crm_kv_store)")
+    except Exception as e:
+        print(f"[migration] crm_kv_store migration failed: {e}")
+
     # Idempotent table renames (run FIRST so later migrations see consistent l1..l5 names).
     try:
         with db_cursor() as (conn, cur):
@@ -292,6 +325,46 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] sender_avatar column migration failed: {e}")
+
+    # ─── Theme default = 'system' (was 'light') ───────────────────────
+    # Original schema had crm_settings.theme DEFAULT 'light' so every
+    # new account started forced into light mode regardless of the
+    # user's OS preference. Industry standard is `system` — follow OS
+    # until the user explicitly picks light/dark in Preferences. We
+    # only touch the COLUMN DEFAULT (not existing rows) so users who
+    # already chose 'light' keep their choice.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_settings ALTER COLUMN theme SET DEFAULT 'system'")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] theme default migration failed: {e}")
+
+    # ─── Terms-of-service acceptance (GDPR/audit trail) ──────────────
+    # Every paid SaaS in our jurisdiction needs explicit recorded consent
+    # to Terms + Privacy. Storing the timestamp + the version of the
+    # documents the user agreed to lets us prove consent later (lawsuit,
+    # Paddle audit, EU data-protection inquiry). Google-OAuth users go
+    # through a separate consent gate on the login screen — we record
+    # the same fields there.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ DEFAULT NULL")
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS terms_version     VARCHAR(20)  DEFAULT NULL")
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS terms_ip          VARCHAR(45)  DEFAULT NULL")
+            # Backfill existing users with the legacy implicit consent date
+            # so the column stays not-NULL for legacy records — they accepted
+            # the rules in effect when they signed up under the old flow.
+            cur.execute("""
+                UPDATE crm_users
+                   SET terms_accepted_at = created_at,
+                       terms_version     = 'legacy'
+                 WHERE terms_accepted_at IS NULL
+                   AND created_at IS NOT NULL
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] terms_accepted columns migration failed: {e}")
 
     # ─── Refresh tokens (long-lived sessions, rotated on use) ─────────
     try:
@@ -3669,6 +3742,10 @@ REDIS_URL = os.getenv("REDIS_URL", "").strip()
 
 _redis = None
 _backend_name = "memory"
+# Toggled in run_migrations() once the crm_kv_store table is verified.
+# When True, all _kv_* calls go to Postgres instead of the in-process dict
+# below — enabling stateless backend containers (Fly.io, Docker replicas).
+_pg_kv_active = False
 
 if REDIS_URL:
     try:
@@ -3704,6 +3781,124 @@ def _mem_purge_expired():
         _mem.pop(k, None)
         _mem_expires.pop(k, None)
 
+
+# ─── Postgres backend (used when Redis is not configured) ──────────────────
+# Mirrors Redis SETEX/INCR semantics on top of the `crm_kv_store` table.
+# Every container reads/writes the same rows → multi-instance safe.
+# Glob-style pattern in _pg_kv_keys_matching is converted to SQL LIKE
+# with `\` as the escape character so user-supplied `%`/`_` stay literal.
+# All functions are no-ops/return defaults if the table is missing; the
+# enclosing public _kv_* functions decide which backend to dispatch to.
+
+def _glob_to_like(pattern: str) -> str:
+    # Escape SQL wildcards first (so a literal `%` in a key stays literal),
+    # then translate shell globs (`*` `?`) to SQL wildcards (`%` `_`).
+    p = pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    p = p.replace("*", "%").replace("?", "_")
+    return p
+
+def _pg_kv_get(key: str):
+    row = db_one(
+        "SELECT value FROM crm_kv_store "
+        " WHERE key = %s AND (expires_at IS NULL OR expires_at > NOW())",
+        (key,)
+    )
+    return row["value"] if row else None
+
+def _pg_kv_set(key: str, value, ttl=None) -> None:
+    payload = json.dumps(value)
+    with db_cursor() as (conn, cur):
+        if ttl:
+            cur.execute(
+                "INSERT INTO crm_kv_store (key, value, expires_at) "
+                "VALUES (%s, %s::jsonb, NOW() + (%s || ' seconds')::interval) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value      = EXCLUDED.value, "
+                "  expires_at = EXCLUDED.expires_at, "
+                "  updated_at = NOW()",
+                (key, payload, str(int(ttl)))
+            )
+        else:
+            # No TTL = persistent. Clear any prior expiry on overwrite to
+            # match Redis SET (without EX) and the in-memory fallback.
+            cur.execute(
+                "INSERT INTO crm_kv_store (key, value) VALUES (%s, %s::jsonb) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value      = EXCLUDED.value, "
+                "  expires_at = NULL, "
+                "  updated_at = NOW()",
+                (key, payload)
+            )
+        conn.commit()
+
+def _pg_kv_delete(key: str) -> None:
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_kv_store WHERE key = %s", (key,))
+        conn.commit()
+
+def _pg_kv_exists(key: str) -> bool:
+    row = db_one(
+        "SELECT 1 FROM crm_kv_store "
+        " WHERE key = %s AND (expires_at IS NULL OR expires_at > NOW())",
+        (key,)
+    )
+    return bool(row)
+
+def _pg_kv_incr(key: str, ttl=None) -> int:
+    # Atomic INSERT-on-conflict-UPDATE returning the new value.
+    # On UPDATE we deliberately don't touch expires_at — that mirrors
+    # the Redis `EXPIRE NX` behaviour (TTL only set on first increment),
+    # so a rate-limit window can't be extended indefinitely by repeated
+    # failed attempts.
+    with db_cursor() as (conn, cur):
+        if ttl:
+            cur.execute(
+                "INSERT INTO crm_kv_store (key, value, expires_at) "
+                "VALUES (%s, '1'::jsonb, NOW() + (%s || ' seconds')::interval) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value      = ((crm_kv_store.value)::text::int + 1)::text::jsonb, "
+                "  updated_at = NOW() "
+                "RETURNING (crm_kv_store.value)::text::int AS n",
+                (key, str(int(ttl)))
+            )
+        else:
+            cur.execute(
+                "INSERT INTO crm_kv_store (key, value) VALUES (%s, '1'::jsonb) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value      = ((crm_kv_store.value)::text::int + 1)::text::jsonb, "
+                "  updated_at = NOW() "
+                "RETURNING (crm_kv_store.value)::text::int AS n",
+                (key,)
+            )
+        n = cur.fetchone()["n"]
+        conn.commit()
+        return int(n)
+
+def _pg_kv_ttl(key: str) -> int:
+    # Returns -2 if the key is missing (matches Redis convention), -1 if
+    # it exists without an expiry, else the integer seconds remaining
+    # (clamped to >= 0).
+    row = db_one(
+        "SELECT EXTRACT(EPOCH FROM (expires_at - NOW()))::int AS s, "
+        "       (expires_at IS NULL) AS no_expiry "
+        "  FROM crm_kv_store WHERE key = %s",
+        (key,)
+    )
+    if not row: return -2
+    if row["no_expiry"]: return -1
+    return max(int(row["s"] or 0), 0)
+
+def _pg_kv_keys_matching(pattern: str) -> list[str]:
+    like = _glob_to_like(pattern)
+    rows = db_all(
+        "SELECT key FROM crm_kv_store "
+        " WHERE key LIKE %s ESCAPE E'\\\\' "
+        "   AND (expires_at IS NULL OR expires_at > NOW())",
+        (like,)
+    )
+    return [r["key"] for r in rows]
+
+
 # ─── Public API ─────────────────────────────────────────────────────────────
 
 def _kv_get(key: str) -> Any | None:
@@ -3712,6 +3907,9 @@ def _kv_get(key: str) -> Any | None:
         if v is None: return None
         try:    return json.loads(v)
         except Exception: return None
+    if _pg_kv_active:
+        try:    return _pg_kv_get(key)
+        except Exception: pass  # fall through to memory on transient PG errors
     with _mem_lock:
         _mem_purge_expired()
         return _mem.get(key)
@@ -3722,6 +3920,9 @@ def _kv_set(key: str, value: Any, ttl: int | None = None) -> None:
         if ttl: _redis.setex(key, int(ttl), payload)
         else:   _redis.set(key, payload)
         return
+    if _pg_kv_active:
+        try:    _pg_kv_set(key, value, ttl); return
+        except Exception: pass
     with _mem_lock:
         _mem[key] = value
         if ttl is not None:
@@ -3733,6 +3934,9 @@ def _kv_delete(key: str) -> None:
     if _redis:
         _redis.delete(key)
         return
+    if _pg_kv_active:
+        try:    _pg_kv_delete(key); return
+        except Exception: pass
     with _mem_lock:
         _mem.pop(key, None)
         _mem_expires.pop(key, None)
@@ -3740,6 +3944,9 @@ def _kv_delete(key: str) -> None:
 def exists(key: str) -> bool:
     if _redis:
         return bool(_redis.exists(key))
+    if _pg_kv_active:
+        try:    return _pg_kv_exists(key)
+        except Exception: pass
     with _mem_lock:
         _mem_purge_expired()
         return key in _mem
@@ -3765,6 +3972,9 @@ def _kv_incr(key: str, ttl: int | None = None) -> int:
             except Exception:
                 pass
         return new_val
+    if _pg_kv_active:
+        try:    return _pg_kv_incr(key, ttl)
+        except Exception: pass
     with _mem_lock:
         _mem_purge_expired()
         cur = int(_mem.get(key, 0)) + 1
@@ -3776,6 +3986,9 @@ def _kv_incr(key: str, ttl: int | None = None) -> int:
 def _kv_ttl(key: str) -> int:
     if _redis:
         return int(_redis.ttl(key))
+    if _pg_kv_active:
+        try:    return _pg_kv_ttl(key)
+        except Exception: pass
     with _mem_lock:
         if key not in _mem: return -2
         if key not in _mem_expires: return -1
@@ -3790,6 +4003,9 @@ def _kv_keys_matching(pattern: str) -> list[str]:
     """
     if _redis:
         return list(_redis.scan_iter(match=pattern))
+    if _pg_kv_active:
+        try:    return _pg_kv_keys_matching(pattern)
+        except Exception: pass
     with _mem_lock:
         _mem_purge_expired()
         return [k for k in list(_mem.keys()) if fnmatch.fnmatch(k, pattern)]
@@ -3906,6 +4122,10 @@ async def add_cache_headers(request, call_next):
 
 class SendCodeRequest(BaseModel):
     email: str; type: str; name: str = None; password: str = None
+    # Frontend sets `terms_accepted=True` after the user ticks the checkbox.
+    # Required on `type="register"` only — we never re-prompt existing users.
+    terms_accepted: bool = False
+    terms_version:  str  = "1.0"
 
 class VerifyCodeRequest(BaseModel):
     email: str; code: str
@@ -4695,7 +4915,22 @@ def _org_usage(org_id: int, resource: str) -> int:
 def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
     """Raise HTTPException(402) if adding `amount` to the org's usage of
     `resource` would exceed the plan limit. No-op when the limit is null
-    (unlimited) or the resource isn't gated in the plan."""
+    (unlimited) or the resource isn't gated in the plan.
+
+    ── Currently SOFT-DISABLED ──
+    Plan-based gating is intentionally turned off until payment via Paddle
+    is fully wired up + tested. Without payments live, blocking Free users
+    at "1 project" or "1 team member" only hurts the diploma demo — nobody
+    can upgrade yet. Re-enable by deleting this early-return. The body
+    below is intact + correct, so flipping back on is a one-line change.
+
+    When you flip it back on, also:
+    1. Make sure POST /api/subscriptions/checkout works end-to-end
+    2. Run the existing usage backfill (so existing orgs have realistic
+       starting counts and don't get blocked retroactively on real usage)
+    3. Watch /api/orgs/{id}/usage in the frontend to surface meters."""
+    return  # ← remove this line to re-enable plan-based limits
+
     if not org_id:
         return
     plan = _org_plan(org_id)
@@ -5106,6 +5341,14 @@ def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
             )
             conn.commit()
     else:
+        # NEW Google user — we deliberately leave terms_accepted_at = NULL.
+        # The frontend gates every page on this column: if it's NULL, the
+        # user is bounced to /accept-terms before they can do anything.
+        # This makes the consent explicit (click + checkbox) rather than
+        # implicit (clicked "Continue with Google"), which holds up in a
+        # GDPR / consumer-protection audit. Once the user clicks Accept
+        # on /accept-terms → POST /api/me/accept-terms records the same
+        # three columns (timestamp + version + ip) as the email flow.
         with db_cursor() as (conn, cur):
             cur.execute(
                 "INSERT INTO crm_users (name,email,password,role,google_id,avatar_url) VALUES(%s,%s,'','owner',%s,%s) RETURNING id",
@@ -5113,7 +5356,7 @@ def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
             )
             user_id = cur.fetchone()["id"]
             conn.commit()
-            cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES(%s)", (user_id,))
+            cur.execute("INSERT INTO crm_settings (crm_user_id, theme) VALUES(%s, 'system')", (user_id,))
             conn.commit()
     return user_id
 
@@ -5173,6 +5416,11 @@ def send_code(body: SendCodeRequest, request: Request):
             record_fail(keys, now); raise HTTPException(400, "Email already exists")
         if not body.name or not body.password:
             raise HTTPException(400, "Name and password required")
+        # Hard-block registration without explicit ToS+Privacy consent. The
+        # actual timestamp is written in verify_code() once the OTP succeeds
+        # (so we only persist consent for users who completed sign-up).
+        if not body.terms_accepted:
+            raise HTTPException(400, "You must accept the Terms of Service and Privacy Policy to register")
         validate_password(body.password)
     elif body.type == "login":
         if not existing or not existing.get("is_active"):
@@ -5199,6 +5447,12 @@ def send_code(body: SendCodeRequest, request: Request):
         "expires_ts":        now_ts + CODE_TTL_MINUTES * 60,
         "next_resend_at_ts": now_ts + RESEND_COOLDOWN_SECONDS,
         "attempts":          0,
+        # Carry the consent fields through OTP — verify_code() persists them
+        # to crm_users on successful registration. ip is recorded from the
+        # original request that opened the registration form (forensic value
+        # higher than the verify-time IP, which can be a different network).
+        "terms_version":     body.terms_version,
+        "terms_ip":          ip,
     })
     if not send_code_email(email, code):
         _pv_del(email)
@@ -5239,13 +5493,22 @@ def verify_code(body: VerifyCodeRequest, response: Response, request: Request):
 
     with db_cursor() as (conn, cur):
         if pending["type"] == "register":
+            # Record the ToS+Privacy consent (timestamp + version + IP) at
+            # the same moment we create the user. Single transaction so we
+            # never end up with a user row without consent data.
             cur.execute(
-                "INSERT INTO crm_users (name, email, password, role) VALUES (%s,%s,%s,'owner') RETURNING id",
-                (sanitize(pending["name"]), email, hash_pw(pending["password"]))
+                """INSERT INTO crm_users
+                   (name, email, password, role,
+                    terms_accepted_at, terms_version, terms_ip)
+                   VALUES (%s, %s, %s, 'owner', NOW(), %s, %s)
+                   RETURNING id""",
+                (sanitize(pending["name"]), email, hash_pw(pending["password"]),
+                 pending.get("terms_version") or "1.0",
+                 pending.get("terms_ip"))
             )
             user_id = cur.fetchone()["id"]
             conn.commit()
-            cur.execute("INSERT INTO crm_settings (crm_user_id) VALUES (%s)", (user_id,))
+            cur.execute("INSERT INTO crm_settings (crm_user_id, theme) VALUES (%s, 'system')", (user_id,))
             conn.commit()
         else:
             row = db_one("SELECT id FROM crm_users WHERE email = %s", (email,))
@@ -5284,7 +5547,14 @@ def resend_code_endpoint(request: ResendCodeRequest):
 @app.get("/api/me")
 def get_me(user: dict = Depends(get_current_user)):
     u = db_one(
-        "SELECT id, name, email, role, avatar_url FROM crm_users WHERE id = %s AND is_active = TRUE",
+        # terms_accepted_at + terms_version drive the /accept-terms gate
+        # in the frontend. When _at is NULL the user is bounced to the
+        # consent page before they can use any other route. Email-flow
+        # users always have it set (verify_code writes it). Google-flow
+        # users start with NULL and clear it by clicking Accept.
+        "SELECT id, name, email, role, avatar_url, "
+        "       terms_accepted_at, terms_version "
+        "FROM crm_users WHERE id = %s AND is_active = TRUE",
         (user["id"],)
     )
     if not u:
@@ -5293,6 +5563,32 @@ def get_me(user: dict = Depends(get_current_user)):
     u["language"] = (s or {}).get("language", "en")
     u["theme"]    = (s or {}).get("theme") or "system"
     return u
+
+
+@app.post("/api/me/accept-terms")
+def accept_terms(request: Request, user: dict = Depends(get_current_user)):
+    """One-shot consent recorder for Google-OAuth users (or any user with
+    a NULL terms_accepted_at). Writes the same three audit columns the
+    email-registration flow writes in verify_code(). Idempotent — calling
+    it on an already-accepted account just refreshes the timestamp."""
+    ip = get_ip(request)
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            """UPDATE crm_users
+                  SET terms_accepted_at = NOW(),
+                      terms_version     = COALESCE(NULLIF(%s, ''), '1.0'),
+                      terms_ip          = %s
+                WHERE id = %s
+            RETURNING terms_accepted_at, terms_version""",
+            ("1.0", ip, user["id"])
+        )
+        row = cur.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(401, "User not found")
+    return {"ok": True,
+            "terms_accepted_at": row["terms_accepted_at"],
+            "terms_version":     row["terms_version"]}
 
 
 @app.post("/api/logout")

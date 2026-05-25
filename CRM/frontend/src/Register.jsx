@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useTranslation } from 'react-i18next';
+import { useTranslation, Trans } from 'react-i18next';
 import "./Style/Login.css";
 import { API_BASE } from "./api.js";
 import PasswordInput from "./Elements/PasswordInput.jsx";
 import GoogleAuthButton from "./Elements/GoogleAuthButton.jsx";
+
+// Bumped each time the legal text materially changes. Persisted alongside
+// the user's consent timestamp so we can prove which version they agreed to.
+const TERMS_VERSION = "1.0";
 
 function Register() {
   const { t } = useTranslation();
@@ -12,6 +16,10 @@ function Register() {
   const [email, setEmail]                   = useState("");
   const [password, setPassword]             = useState("");
   const [repeatPassword, setRepeatPassword] = useState("");
+  // Required consent — user must explicitly tick the checkbox before
+  // we'll let the form submit. Backend hard-rejects requests with
+  // terms_accepted=false on type="register", so this isn't just UX.
+  const [termsAccepted, setTermsAccepted]   = useState(false);
   const [nameError, setNameError]           = useState("");
   const [emailError, setEmailError]         = useState("");
   const [passwordErrors, setPasswordErrors] = useState([]);
@@ -54,22 +62,33 @@ function Register() {
     setRepeatError(value !== password ? t('auth.validation.passwordsMismatch') : "");
   };
 
+  // Submit button is gated on every form field AND the consent checkbox.
+  // Mirrors the backend rejection so the button is only clickable when
+  // the request will actually succeed.
   const isValid =
     !nameError && !emailError && passwordErrors.length === 0 && !repeatError &&
     name.length >= 1 && email.length >= 1 &&
-    password.length >= 1 && password === repeatPassword;
+    password.length >= 1 && password === repeatPassword &&
+    termsAccepted;
 
   const handleRegister = async (e) => {
     e.preventDefault();
     setGeneralError("");
-    if (!isValid) return;
+    if (!isValid) {
+      if (!termsAccepted) setGeneralError(t('auth.register.termsRequired'));
+      return;
+    }
     setLoading(true);
     try {
       const res  = await fetch(`${API_BASE}/api/send-code`, {
         method:      "POST",
         headers:     { "Content-Type": "application/json" },
         credentials: "include",
-        body:        JSON.stringify({ name, email, password, type: "register" }),
+        body:        JSON.stringify({
+          name, email, password, type: "register",
+          terms_accepted: true,
+          terms_version:  TERMS_VERSION,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -121,6 +140,41 @@ function Register() {
               />
               {repeatError && <p className="error">{repeatError}</p>}
             </div>
+
+            {/* ── Terms acceptance ─────────────────────────────────
+                Wrapped in `.reg-terms-wrap` to land on the same 312px
+                column the secsh* rows use. Required by both UI (submit
+                disabled) AND backend (/api/send-code rejects 400 when
+                terms_accepted=false). Links open in new tab so the
+                user doesn't lose their form state. */}
+            <div className="reg-terms-wrap">
+              <label className="reg-terms">
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  className="reg-terms-cb"
+                />
+                <span className="reg-terms-text">
+                  <Trans
+                    i18nKey="auth.register.termsAgree"
+                    components={{
+                      terms:   <a href="/terms"   target="_blank" rel="noopener noreferrer" />,
+                      privacy: <a href="/privacy" target="_blank" rel="noopener noreferrer" />,
+                    }}
+                  />
+                </span>
+              </label>
+              <p className="reg-terms-hint">
+                <Trans
+                  i18nKey="auth.register.termsHint"
+                  components={{
+                    aup: <a href="/terms#use" target="_blank" rel="noopener noreferrer" />,
+                  }}
+                />
+              </p>
+            </div>
+
             {generalError && <p className="error">{generalError}</p>}
             <div className="secsh1">
               <input

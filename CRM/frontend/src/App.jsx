@@ -18,6 +18,7 @@ const Forgot        = lazy(() => import('./Forgot.jsx'));
 const Reset         = lazy(() => import('./Reset.jsx'));
 const Invite        = lazy(() => import('./Invite.jsx'));
 const Preferences   = lazy(() => import('./Preferences.jsx'));
+const AcceptTerms   = lazy(() => import('./AcceptTerms.jsx'));
 // Dashboard
 const Dashboard     = lazy(() => import('./Pages/Dashboard/Dashboard.jsx'));
 // Organization
@@ -63,6 +64,14 @@ const AccountSettings  = lazy(() => import('./Pages/Settings/Settings.jsx'));
 const SecuritySettings = lazy(() => import('./Pages/Settings/Security.jsx'));
 // Docs
 const DocsPage         = lazy(() => import('./Pages/Docs/DocsPage.jsx'));
+// Landing satellites — public marketing/legal pages reachable via Header
+// (Pricing tab) and Footer (Terms/Privacy/Refund). Lazy-loaded since most
+// visitors land on `/` first.
+const Pricing          = lazy(() => import('./Pages/Landing/Pricing.jsx'));
+const Terms            = lazy(() => import('./Pages/Landing/Terms.jsx'));
+const Privacy          = lazy(() => import('./Pages/Landing/Privacy.jsx'));
+const Refund           = lazy(() => import('./Pages/Landing/Refund.jsx'));
+const SecurityPage     = lazy(() => import('./Pages/Landing/SecurityPage.jsx'));
 
 function PageLoader() {
   return (
@@ -78,6 +87,11 @@ function App() {
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/"                          element={<Home />} />
+          <Route path="/pricing"                   element={<Pricing />} />
+          <Route path="/terms"                     element={<Terms />} />
+          <Route path="/privacy"                   element={<Privacy />} />
+          <Route path="/refund"                    element={<Refund />} />
+          <Route path="/security"                  element={<SecurityPage />} />
           <Route path="/login"                     element={<Login />} />
           <Route path="/login/verification"        element={<Verification />} />
           <Route path="/registration"              element={<Register />} />
@@ -86,6 +100,7 @@ function App() {
           <Route path="/reset-password/:token"     element={<Reset />} />
           <Route path="/invite/:token"             element={<Invite />} />
           <Route path="/preferences"               element={<Preferences />} />
+          <Route path="/accept-terms"              element={<AcceptTerms />} />
           <Route path="/dashboard"                 element={<Dashboard />} />
           <Route path="/org/:orgSlug"              element={<OrgLayout />}>
             <Route index                           element={<Organization />} />

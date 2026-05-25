@@ -55,7 +55,11 @@ function OrgLayout() {
       fetch(`${API_BASE}/api/orgs/by-slug/${orgSlug}`, { credentials: 'include' })
         .then(r => { if (!r.ok) throw new Error('org'); return r.json(); }),
     ])
-    .then(([userData, orgData]) => { setUser(userData); setOrg(orgData); })
+    .then(([userData, orgData]) => {
+      // Hard ToS gate — Google-OAuth users bounce to /accept-terms.
+      if (!userData?.terms_accepted_at) { navigate('/accept-terms', { replace: true }); return; }
+      setUser(userData); setOrg(orgData);
+    })
     .catch(() => navigate('/dashboard'))
     .finally(() => setLoading(false));
   }, [orgSlug, navigate]);

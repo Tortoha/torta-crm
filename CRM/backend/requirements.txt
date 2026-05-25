@@ -1,17 +1,55 @@
+# Production deps only. Pinned versions for reproducible Docker builds.
+# Dev/test packages (pytest, coverage), legacy ones (mysql-connector,
+# alembic, Mako, cloudinary, resend, SQLAlchemy) are intentionally absent.
+
+# ── Web framework ──
 fastapi==0.121.2
-uvicorn==0.38.0
-mysql-connector-python==9.5.0
-PyJWT==2.10.1
+uvicorn[standard]==0.38.0
+starlette==0.49.3
 python-multipart==0.0.20
-Pillow==12.1.1
-google-auth==2.49.1
-python-barcode==0.15.1
-qrcode==7.4.2
+websockets==16.0
+
+# ── Validation / models ──
+pydantic==2.12.4
+pydantic-settings==2.12.0
+
+# ── Database (Postgres only) ──
 psycopg2-binary==2.9.10
+
+# ── Auth / crypto ──
+PyJWT==2.10.1
+python-jose==3.5.0
+passlib==1.7.4
+cryptography==46.0.3
+google-auth==2.49.1
+
+# ── Rate limiting (slowapi + limits) ──
+slowapi==0.1.9
+limits==5.8.0
+
+# ── Images / S3 ──
+pillow==12.1.1
 boto3==1.35.96
-hashids==1.3.1
+
+# ── HTTP / DNS ──
+requests==2.32.5
+httpx==0.28.1
+dnspython==2.8.0
+
+# ── HTML sanitization (XSS protection) ──
+nh3==0.3.3
+
+# ── PDF / barcodes (invoices, tickets, labels) ──
+reportlab==4.5.0
+PyMuPDF==1.27.2.3
+pypdf==6.11.0
+qrcode==7.4.2
+python-barcode==0.15.1
+pypng==0.20220715.0
+
+# ── Misc ──
 python-dotenv==1.0.1
-cryptography==44.0.0
-pytest==8.3.4
-pytest-mock==3.14.0
-tzdata==2024.2
+python-dateutil==2.9.0.post0
+pytz==2025.2
+tzdata==2026.2
+hashids==1.3.1

@@ -26,7 +26,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/torta-js/+esm';
 ```js
 import { createClient } from 'torta-js';
 
-const API_URL = "https://api.example.com/PUBLIC_KEY"; // публичный ключ в пути
+const API_URL = "https://api.tortacrm.com/PUBLIC_KEY"; // публичный ключ в пути
 const API_PK  = "pk_PUBLISHABLE_KEY";                 // publishable-ключ
 
 export const client = createClient(API_URL, API_PK);

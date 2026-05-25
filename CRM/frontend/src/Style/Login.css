@@ -300,6 +300,116 @@ input:-webkit-autofill:active {
 }
 
 /* ============================================
+   TERMS-OF-SERVICE CONSENT (Register only)
+
+   Why so much CSS for one checkbox: the form-wide `input { height: 56px;
+   width: 100%; background: var(--bg); border-radius: 16px }` rules eat any
+   native checkbox and turn it into a 56-tall opaque block. So we
+   `appearance: none` the input and rebuild it as a 20×20 rounded square
+   that participates correctly in light AND dark themes, with the same
+   accent fill when checked. The wrapper sits at the same 312px column
+   width as the other secsh* form rows so it lands on the same baseline.
+   ============================================ */
+
+.reg-terms-wrap {
+    width: 312px;
+    margin: 24px auto 0;
+}
+
+.reg-terms {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* Strip every form-input default (size, bg, radius, border) and rebuild a
+   compact pill-square check. !important not needed — selector
+   specificity (0,1,1 for input.reg-terms-cb) already wins. */
+input.reg-terms-cb {
+    appearance: none;
+    -webkit-appearance: none;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    margin: 1px 0 0;
+    padding: 0;
+    background: transparent;
+    border: 1.5px solid rgba(var(--fg-rgb), 0.35);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    position: relative;
+}
+
+input.reg-terms-cb:hover {
+    border-color: var(--accent);
+}
+
+input.reg-terms-cb:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+/* SVG checkmark inside the checked state. Drawn as a CSS-only mask via
+   ::after so we don't have to inject markup into the input. */
+input.reg-terms-cb:checked::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3.5,8.5 6.5,11.5 12.5,5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 14px 14px;
+}
+
+.reg-terms-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    text-align: left;
+}
+
+.reg-terms-text a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.reg-terms-text a:hover {
+    text-decoration: underline;
+}
+
+.reg-terms-hint {
+    margin: 10px 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: rgba(var(--fg-rgb), 0.45);
+    text-align: left;
+}
+
+.reg-terms-hint a {
+    color: rgba(var(--fg-rgb), 0.6);
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(var(--fg-rgb), 0.3);
+}
+
+.reg-terms-hint a:hover {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+/* Tighten the Next button gap when terms is present — 64px from .button1
+   leaves an awkward dead zone after the hint text. Higher specificity
+   (0,2,1 vs 0,1,0) wins over the bare .button1 rule. */
+.reg-terms-wrap + .secsh1 .button1 {
+    margin-top: 32px;
+}
+
+/* ============================================
    АДАПТИВНОСТЬ
    ============================================ */
 

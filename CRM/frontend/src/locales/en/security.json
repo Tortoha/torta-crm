@@ -1,6 +1,94 @@
 {
   "security": {
     "title": "Security",
+
+    "meta": {
+      "title": "Security — Torta CRM",
+      "description": "How we keep your data, your customers and your team safe."
+    },
+    "hero": {
+      "eyebrow": "Security",
+      "title": "Built to keep your data yours",
+      "subtitle": "We take data protection as seriously as our customers do. Here's exactly what's in place — for every account, starting from Free."
+    },
+    "pillars": {
+      "title": "The basics, done right",
+      "subtitle": "Defaults you don't have to think about — they're on for every account.",
+      "items": {
+        "encryption": {
+          "title": "Encryption everywhere",
+          "desc": "All traffic to Torta uses TLS 1.2 or newer. Data at rest in our database and file storage is encrypted with AES-256. Backups are encrypted before they leave the server."
+        },
+        "isolation": {
+          "title": "Multi-tenant isolation",
+          "desc": "Every project sits in its own scope. A query scoped to project A cannot read or write data from project B — enforced at the database layer, not just in application code."
+        },
+        "passwords": {
+          "title": "Hashed passwords",
+          "desc": "Passwords are hashed with bcrypt using a per-user salt. We can never see your password or your customers' passwords, and a leaked database dump would not expose them."
+        },
+        "rbac": {
+          "title": "Roles & permissions",
+          "desc": "Page-level RBAC means you decide exactly what each teammate can see and change. A staff role can manage Orders without ever seeing Revenue or Customer Profiles."
+        }
+      }
+    },
+    "infra": {
+      "title": "Infrastructure",
+      "subtitle": "Where your data lives and who has access to it.",
+      "items": {
+        "hosting": {
+          "title": "EU data centres",
+          "desc": "Servers are hosted with IONOS SE in Germany — a GDPR-compliant infrastructure provider. Data does not leave the EU except where you explicitly use a third-party integration that does."
+        },
+        "email": {
+          "title": "Self-hosted email",
+          "desc": "Outbound email goes through our own DKIM-signed mail server. We don't relay through a third party for transactional or campaign email — your customer addresses don't end up in a marketing partner's database."
+        },
+        "access": {
+          "title": "Strict admin access",
+          "desc": "Only a small number of named operators have shell access to production infrastructure. All access is logged and reviewed."
+        },
+        "backups": {
+          "title": "Daily encrypted backups",
+          "desc": "The database is backed up daily with rolling 30-day retention. Backups are encrypted at rest and tested for restorability on a regular schedule."
+        }
+      }
+    },
+    "compliance": {
+      "title": "Compliance & privacy",
+      "subtitle": "What we promise and where to read the legal version.",
+      "items": {
+        "gdpr": {
+          "title": "GDPR-aligned",
+          "desc": "We follow GDPR principles for any user in the EU/EEA: lawful basis, data minimisation, the right to access, correction, deletion and portability."
+        },
+        "kzPdpa": {
+          "title": "Kazakhstan ЗоПД",
+          "desc": "Compliant with the Republic of Kazakhstan's Personal Data Protection Act. Storage and processing follow the local rules for cross-border data transfer."
+        },
+        "audit": {
+          "title": "Audit log",
+          "desc": "Every administrative action on your data is logged with who, what and when. Useful for your own internal compliance, and available if an auditor or regulator asks."
+        },
+        "subprocessors": {
+          "title": "Limited sub-processors",
+          "desc": "We use a small, named list of sub-processors (Paddle for payments, Google for optional OAuth, IONOS for infrastructure). Each is bound by contract — no surprise data sharing."
+        }
+      }
+    },
+    "incident": {
+      "title": "If something goes wrong",
+      "body": "No system is unbreakable. Our commitment is transparency: if we discover a security incident that affects your data, we will notify you within 72 hours of confirmation, explain what happened, what data was involved, and what we are doing about it.",
+      "report": "Found a vulnerability? Please report it responsibly to {{email}}. We acknowledge every report within 5 business days."
+    },
+    "cta": {
+      "title": "Ready to run your store on safer ground?",
+      "subtitle": "Start free and check it out for yourself. Upgrade only when you need more.",
+      "button": "Get started",
+      "linkPrivacy": "Read the full Privacy Policy"
+    },
+
     "sessions": {
       "title": "Active sessions",
       "subtitle": "Every device where you're signed in. Revoking ends that session immediately.",

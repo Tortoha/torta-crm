@@ -1,0 +1,165 @@
+{
+  "pricing": {
+    "meta": {
+      "title": "Pricing — Torta CRM",
+      "description": "Simple, transparent pricing. Start free, scale when you need to."
+    },
+    "hero": {
+      "eyebrow": "Pricing",
+      "title": "Pricing that grows with your store",
+      "subtitle": "Start free, upgrade only when you outgrow it. No setup fees, no card on file. Cancel any time."
+    },
+
+    "billing": {
+      "monthly": "Monthly",
+      "yearly": "Yearly",
+      "saveBadge": "Save 17%",
+      "perMonth": "per month",
+      "perYear": "per year",
+      "forever": "forever",
+      "billedAs": "billed as ${{amount}}/year",
+      "twoMonthsFree": "2 months free"
+    },
+
+    "plans": {
+      "free": {
+        "name": "Free",
+        "tagline": "For trying Torta on a single store.",
+        "priceMonthly": "$0",
+        "priceYearly": "$0",
+        "cta": "Start free",
+        "features": [
+          "1 project (storefront)",
+          "1 team member",
+          "Up to 100 storefront users",
+          "0.25 GB file storage",
+          "100 MB database",
+          "100 transactional emails / day",
+          "No email broadcasts",
+          "60 API requests / min",
+          "Full SDK access"
+        ]
+      },
+      "standard": {
+        "name": "Standard",
+        "tagline": "For growing shops with a real customer base.",
+        "priceMonthly": "$10",
+        "priceYearly": "$100",
+        "cta": "Subscribe",
+        "badge": "Most popular",
+        "features": [
+          "Up to 3 projects",
+          "Up to 3 team members",
+          "Up to 5,000 storefront users",
+          "25 GB file storage",
+          "5 GB database",
+          "1,500 emails / day",
+          "Email broadcasts included",
+          "600 API requests / min",
+          "Webhooks & integrations",
+          "All Free features"
+        ]
+      },
+      "plus": {
+        "name": "Plus",
+        "tagline": "For multi-store operators and agencies.",
+        "priceMonthly": "$25",
+        "priceYearly": "$250",
+        "cta": "Subscribe",
+        "features": [
+          "Up to 10 projects",
+          "Up to 25 team members",
+          "Up to 25,000 storefront users",
+          "100 GB file storage",
+          "25 GB database",
+          "5,000 emails / day",
+          "3,000 API requests / min",
+          "Cross-organization analytics",
+          "Audit log",
+          "All Standard features"
+        ]
+      },
+      "pro": {
+        "name": "Pro",
+        "tagline": "For high-volume merchants and enterprises.",
+        "priceMonthly": "$100",
+        "priceYearly": "$1,000",
+        "cta": "Subscribe",
+        "features": [
+          "Unlimited projects",
+          "Unlimited team members",
+          "Unlimited storefront users",
+          "1 TB file storage",
+          "250 GB database",
+          "50,000 emails / day",
+          "10,000 API requests / min",
+          "Custom integrations",
+          "All Plus features"
+        ]
+      }
+    },
+
+    "compare": {
+      "title": "Compare plans",
+      "subtitle": "Every limit you'd care about, side by side.",
+      "headers": {
+        "feature": "Feature",
+        "free": "Free",
+        "standard": "Standard",
+        "plus": "Plus",
+        "pro": "Pro"
+      },
+      "groups": {
+        "limits": {
+          "title": "Limits",
+          "rows": {
+            "projects":   { "label": "Projects (storefronts)", "values": ["1", "3", "10", "Unlimited"] },
+            "team":       { "label": "Team members", "values": ["1", "3", "25", "Unlimited"] },
+            "shoppers":   { "label": "Storefront users", "values": ["100", "5,000", "25,000", "Unlimited"] },
+            "storage":    { "label": "File storage", "values": ["0.25 GB", "25 GB", "100 GB", "1 TB"] },
+            "database":   { "label": "Database size", "values": ["100 MB", "5 GB", "25 GB", "250 GB"] },
+            "emails":     { "label": "Emails per day", "values": ["100", "1,500", "5,000", "50,000"] },
+            "api":        { "label": "API rate limit (req/min)", "values": ["60", "600", "3,000", "10,000"] }
+          }
+        },
+        "features": {
+          "title": "Features",
+          "rows": {
+            "sdk":         { "label": "Torta JS SDK", "values": [true, true, true, true] },
+            "auth":        { "label": "Customer authentication (OTP + Google)", "values": [true, true, true, true] },
+            "catalog":     { "label": "Product catalog & variants", "values": [true, true, true, true] },
+            "orders":      { "label": "Orders, returns & refunds", "values": [true, true, true, true] },
+            "booking":     { "label": "Bookings calendar", "values": [true, true, true, true] },
+            "broadcasts":  { "label": "Email broadcasts", "values": [false, true, true, true] },
+            "chat":        { "label": "Live web chat", "values": [true, true, true, true] },
+            "webhooks":    { "label": "Webhooks & integrations", "values": ["Basic", true, true, true] },
+            "rbac":        { "label": "Roles & permissions", "values": [true, true, true, true] },
+            "orgAnalytics": { "label": "Cross-organization analytics", "values": [false, false, true, true] },
+            "audit":       { "label": "Audit log", "values": [false, true, true, true] }
+          }
+        }
+      }
+    },
+
+    "faq": {
+      "title": "Questions about pricing",
+      "items": {
+        "free":    { "q": "Is Free really free?", "a": "Yes — Free is a permanent plan, not a trial. You can run a real storefront on it as long as you stay within the limits. No card, no expiry." },
+        "noTrial": { "q": "Is there a free trial on paid plans?", "a": "No — paid plans charge immediately when you subscribe. If you want to try Torta first, use the Free plan (it's not a trial — it never expires). If a paid plan turns out not to fit, you can get a full refund within 14 days, no questions asked." },
+        "billing": { "q": "How does billing work?", "a": "Billing is at the organization level — one subscription covers every project inside that organization. The org owner is the only person who can change the plan." },
+        "currency":{ "q": "What currency are charges in?", "a": "All charges are in USD, processed by Paddle (our payment processor). Paddle automatically converts to your local currency on the invoice." },
+        "vat":     { "q": "Are taxes included?", "a": "VAT, GST and US sales tax are calculated at checkout based on your billing country. Paddle handles all tax remittance — you don't deal with it." },
+        "upgrade": { "q": "Can I change plans?", "a": "Anytime. Upgrades take effect immediately and are pro-rated. Downgrades take effect at your next billing cycle." },
+        "cancel":  { "q": "What happens if I cancel?", "a": "Your subscription stays active until the end of the paid period. After that, your organization drops to Free tier — your data isn't deleted, but features above the Free limit pause until you reactivate." },
+        "refund":  { "q": "What about refunds?", "a": "We offer a 14-day money-back guarantee on first-time subscriptions. See the full Refund Policy for details." }
+      }
+    },
+
+    "cta": {
+      "title": "Ready to run your store from one place?",
+      "subtitle": "Spin up an organization in under a minute. Add your first store, invite your team, ship.",
+      "button": "Start free",
+      "fineprint": "No credit card required."
+    }
+  }
+}

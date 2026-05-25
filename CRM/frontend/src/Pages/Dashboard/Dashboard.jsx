@@ -89,7 +89,13 @@ function Dashboard() {
       fetch(`${API_BASE}/api/me`,   { credentials: 'include' }).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
       fetch(`${API_BASE}/api/orgs`, { credentials: 'include' }).then(r => r.json()),
     ])
-    .then(([u, o]) => { setUser(u); setOrgs(Array.isArray(o) ? o : []); })
+    .then(([u, o]) => {
+      // Hard ToS gate — users who signed up via Google start with
+      // terms_accepted_at = NULL and are bounced to /accept-terms
+      // until they click through the consent screen.
+      if (!u?.terms_accepted_at) { navigate('/accept-terms', { replace: true }); return; }
+      setUser(u); setOrgs(Array.isArray(o) ? o : []);
+    })
     .catch(() => navigate('/login'))
     .finally(() => setLoading(false));
   }, [navigate]);

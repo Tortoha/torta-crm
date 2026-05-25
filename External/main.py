@@ -1955,6 +1955,10 @@ REDIS_URL = os.getenv("REDIS_URL", "").strip()
 
 _redis = None
 _backend_name = "memory"
+# Toggled at the bottom of this kvstore block — flipped to True after the
+# crm_kv_store table is confirmed to exist. When True, all _kv_* calls go
+# to Postgres → multi-instance safe (Fly.io machines, Docker replicas).
+_pg_kv_active = False
 
 if REDIS_URL:
     try:
@@ -2392,6 +2396,105 @@ def _mem_purge_expired():
         _mem.pop(k, None)
         _mem_expires.pop(k, None)
 
+
+# ─── Postgres backend (used when Redis is not configured) ──────────────────
+# Mirrors Redis SETEX/INCR semantics on top of the shared `crm_kv_store`
+# table. Multi-instance safe — every container reads/writes the same rows.
+# Falls through to the in-memory backend if Postgres has a transient error.
+
+def _glob_to_like(pattern: str) -> str:
+    p = pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    p = p.replace("*", "%").replace("?", "_")
+    return p
+
+def _pg_kv_get(key: str):
+    row = db_one(
+        "SELECT value FROM crm_kv_store "
+        " WHERE key = %s AND (expires_at IS NULL OR expires_at > NOW())",
+        (key,)
+    )
+    return row["value"] if row else None
+
+def _pg_kv_set(key: str, value, ttl=None) -> None:
+    payload = json.dumps(value)
+    with db_cursor() as (conn, cur):
+        if ttl:
+            cur.execute(
+                "INSERT INTO crm_kv_store (key, value, expires_at) "
+                "VALUES (%s, %s::jsonb, NOW() + (%s || ' seconds')::interval) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value=EXCLUDED.value, expires_at=EXCLUDED.expires_at, updated_at=NOW()",
+                (key, payload, str(int(ttl)))
+            )
+        else:
+            cur.execute(
+                "INSERT INTO crm_kv_store (key, value) VALUES (%s, %s::jsonb) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value=EXCLUDED.value, expires_at=NULL, updated_at=NOW()",
+                (key, payload)
+            )
+        conn.commit()
+
+def _pg_kv_delete(key: str) -> None:
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_kv_store WHERE key = %s", (key,))
+        conn.commit()
+
+def _pg_kv_exists(key: str) -> bool:
+    row = db_one(
+        "SELECT 1 FROM crm_kv_store "
+        " WHERE key = %s AND (expires_at IS NULL OR expires_at > NOW())",
+        (key,)
+    )
+    return bool(row)
+
+def _pg_kv_incr(key: str, ttl=None) -> int:
+    with db_cursor() as (conn, cur):
+        if ttl:
+            cur.execute(
+                "INSERT INTO crm_kv_store (key, value, expires_at) "
+                "VALUES (%s, '1'::jsonb, NOW() + (%s || ' seconds')::interval) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value = ((crm_kv_store.value)::text::int + 1)::text::jsonb, "
+                "  updated_at = NOW() "
+                "RETURNING (crm_kv_store.value)::text::int AS n",
+                (key, str(int(ttl)))
+            )
+        else:
+            cur.execute(
+                "INSERT INTO crm_kv_store (key, value) VALUES (%s, '1'::jsonb) "
+                "ON CONFLICT (key) DO UPDATE SET "
+                "  value = ((crm_kv_store.value)::text::int + 1)::text::jsonb, "
+                "  updated_at = NOW() "
+                "RETURNING (crm_kv_store.value)::text::int AS n",
+                (key,)
+            )
+        n = cur.fetchone()["n"]
+        conn.commit()
+        return int(n)
+
+def _pg_kv_ttl(key: str) -> int:
+    row = db_one(
+        "SELECT EXTRACT(EPOCH FROM (expires_at - NOW()))::int AS s, "
+        "       (expires_at IS NULL) AS no_expiry "
+        "  FROM crm_kv_store WHERE key = %s",
+        (key,)
+    )
+    if not row: return -2
+    if row["no_expiry"]: return -1
+    return max(int(row["s"] or 0), 0)
+
+def _pg_kv_keys_matching(pattern: str) -> list[str]:
+    like = _glob_to_like(pattern)
+    rows = db_all(
+        "SELECT key FROM crm_kv_store "
+        " WHERE key LIKE %s ESCAPE E'\\\\' "
+        "   AND (expires_at IS NULL OR expires_at > NOW())",
+        (like,)
+    )
+    return [r["key"] for r in rows]
+
+
 # ─── Public API ─────────────────────────────────────────────────────────────
 
 def _kv_get(key: str) -> Any | None:
@@ -2400,6 +2503,9 @@ def _kv_get(key: str) -> Any | None:
         if v is None: return None
         try:    return json.loads(v)
         except Exception: return None
+    if _pg_kv_active:
+        try:    return _pg_kv_get(key)
+        except Exception: pass
     with _mem_lock:
         _mem_purge_expired()
         return _mem.get(key)
@@ -2410,6 +2516,9 @@ def _kv_set(key: str, value: Any, ttl: int | None = None) -> None:
         if ttl: _redis.setex(key, int(ttl), payload)
         else:   _redis.set(key, payload)
         return
+    if _pg_kv_active:
+        try:    _pg_kv_set(key, value, ttl); return
+        except Exception: pass
     with _mem_lock:
         _mem[key] = value
         if ttl is not None:
@@ -2421,6 +2530,9 @@ def _kv_delete(key: str) -> None:
     if _redis:
         _redis.delete(key)
         return
+    if _pg_kv_active:
+        try:    _pg_kv_delete(key); return
+        except Exception: pass
     with _mem_lock:
         _mem.pop(key, None)
         _mem_expires.pop(key, None)
@@ -2428,6 +2540,9 @@ def _kv_delete(key: str) -> None:
 def _kv_exists(key: str) -> bool:
     if _redis:
         return bool(_redis.exists(key))
+    if _pg_kv_active:
+        try:    return _pg_kv_exists(key)
+        except Exception: pass
     with _mem_lock:
         _mem_purge_expired()
         return key in _mem
@@ -2441,8 +2556,6 @@ def _kv_incr(key: str, ttl: int | None = None) -> int:
     """
     if _redis:
         # Pipeline: INCR + (EXPIRE NX) — only set TTL on first increment.
-        # The NX flag (Redis 7+) is the cleanest way; for older versions we
-        # check ttl<0 and conditionally EXPIRE.
         with _redis.pipeline() as p:
             p.incr(key)
             results = p.execute()
@@ -2453,6 +2566,9 @@ def _kv_incr(key: str, ttl: int | None = None) -> int:
             except Exception:
                 pass
         return new_val
+    if _pg_kv_active:
+        try:    return _pg_kv_incr(key, ttl)
+        except Exception: pass
     with _mem_lock:
         _mem_purge_expired()
         cur = int(_mem.get(key, 0)) + 1
@@ -2464,6 +2580,9 @@ def _kv_incr(key: str, ttl: int | None = None) -> int:
 def _kv_ttl(key: str) -> int:
     if _redis:
         return int(_redis.ttl(key))
+    if _pg_kv_active:
+        try:    return _pg_kv_ttl(key)
+        except Exception: pass
     with _mem_lock:
         if key not in _mem: return -2
         if key not in _mem_expires: return -1
@@ -2478,9 +2597,39 @@ def _kv_keys_matching(pattern: str) -> list[str]:
     """
     if _redis:
         return list(_redis.scan_iter(match=pattern))
+    if _pg_kv_active:
+        try:    return _pg_kv_keys_matching(pattern)
+        except Exception: pass
     with _mem_lock:
         _mem_purge_expired()
         return [k for k in list(_mem.keys()) if fnmatch.fnmatch(k, pattern)]
+
+
+# ─── Activate Postgres backend (idempotent table init) ─────────────────────
+# CRM backend creates this same table in its own run_migrations(); doing it
+# here too is harmless thanks to CREATE TABLE IF NOT EXISTS, and lets External
+# start standalone (e.g. in tests, or when CRM container hasn't booted yet).
+if not _redis and os.getenv("USE_PG_KV", "1") == "1":
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_kv_store (
+                    key         VARCHAR(255) PRIMARY KEY,
+                    value       JSONB        NOT NULL,
+                    expires_at  TIMESTAMPTZ  NULL,
+                    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_crm_kv_expires
+                  ON crm_kv_store (expires_at) WHERE expires_at IS NOT NULL
+            """)
+            conn.commit()
+        _pg_kv_active = True
+        _backend_name = "postgres"
+        print("[kvstore] Using Postgres KV backend (crm_kv_store)")
+    except Exception as e:
+        print(f"[kvstore] Postgres init failed ({e}) — falling back to in-memory")
 
 
 # ── Email OTP (pending verifications) ──────────────────────────────────────

@@ -86,6 +86,9 @@ function Layout() {
         .then(r => { if (!r.ok) throw new Error('project'); return r.json(); }),
     ])
     .then(([userData, projectData]) => {
+      // Hard ToS gate — Google-OAuth users start with terms_accepted_at NULL
+      // and get bounced to /accept-terms before any app page renders.
+      if (!userData?.terms_accepted_at) { navigate('/accept-terms', { replace: true }); return; }
       setUser(userData);
       setProject(projectData);
       // Resolve the current user's per-project permission map (drives sidebar

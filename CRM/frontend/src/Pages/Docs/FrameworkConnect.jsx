@@ -13,7 +13,7 @@ const FRAMEWORKS = [
 import { createClient } from 'torta-js';
 
 export const client = createClient(
-  process.env.NEXT_PUBLIC_TORTA_URL,  // https://api.example.com/PUBLIC_KEY
+  process.env.NEXT_PUBLIC_TORTA_URL,  // https://api.tortacrm.com/PUBLIC_KEY
   process.env.NEXT_PUBLIC_TORTA_PK,   // pk_…
 );`,
     note: {
@@ -27,7 +27,7 @@ export const client = createClient(
 import { createClient } from 'torta-js';
 
 export const client = createClient(
-  'https://api.example.com/PUBLIC_KEY',
+  'https://api.tortacrm.com/PUBLIC_KEY',
   'pk_…',
 );`,
     note: {
@@ -41,7 +41,7 @@ export const client = createClient(
 import { createClient } from 'torta-js';
 
 export const client = createClient(
-  import.meta.env.VITE_TORTA_URL,   // https://api.example.com/PUBLIC_KEY
+  import.meta.env.VITE_TORTA_URL,   // https://api.tortacrm.com/PUBLIC_KEY
   import.meta.env.VITE_TORTA_PK,    // pk_…
 );`,
     note: {
@@ -112,7 +112,7 @@ export const client = createClient(
 <script>
   import { createClient } from 'https://cdn.jsdelivr.net/npm/torta-js/+esm';
 
-  const client = createClient('https://api.example.com/PUBLIC_KEY', 'pk_…');
+  const client = createClient('https://api.tortacrm.com/PUBLIC_KEY', 'pk_…');
   // …use client inside client-side scripts or framework islands
 </script>`,
     note: {

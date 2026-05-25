@@ -1,0 +1,246 @@
+/* AcceptTerms — gating page shown to users with terms_accepted_at IS NULL
+   (Google-OAuth sign-ups, mostly). Centred card on the page bg. Aesthetic
+   matches Login.css minus the giant form — short header + summary list +
+   two compact checkboxes + button row. No 1px borders, only theme tokens. */
+
+.at-page {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  box-sizing: border-box;
+  font-family: "Wix Madefor Text", sans-serif;
+}
+
+.at-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--card);
+  border-radius: 24px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.at-loading {
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+  padding: 24px 0;
+}
+
+/* ── Header (icon + title + sub) ─────────────────────────────────── */
+.at-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.at-icon {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: rgba(217, 119, 6, 0.12);
+  color: #d97706;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.at-head-text { flex: 1; min-width: 0; }
+
+.at-title {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+.at-sub {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* ── Summary block ──────────────────────────────────────────────── */
+.at-summary {
+  background: rgba(var(--fg-rgb), 0.035);
+  border-radius: 16px;
+  padding: 18px 20px;
+}
+
+.at-summary-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.at-summary-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.at-summary-list li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--text);
+}
+
+.at-summary-list svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+/* ── Checkbox rows (re-uses the visual style from Register) ─────── */
+.at-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.at-check-box {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  padding: 0;
+  background: transparent;
+  border: 1.5px solid rgba(var(--fg-rgb), 0.35);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  position: relative;
+}
+
+.at-check-box:hover {
+  border-color: var(--accent);
+}
+
+.at-check-box:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.at-check-box:checked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3.5,8.5 6.5,11.5 12.5,5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+}
+
+.at-check-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.at-check-text a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.at-check-text a:hover { text-decoration: underline; }
+
+.at-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--delete);
+  background: var(--delete-tint);
+  padding: 10px 14px;
+  border-radius: 10px;
+}
+
+/* ── Actions row ────────────────────────────────────────────────── */
+.at-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.at-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.18s ease;
+}
+
+.at-btn--primary {
+  flex: 1;
+  background: var(--accent);
+  color: #fff;
+}
+
+.at-btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.at-btn--primary:disabled {
+  background: var(--accent);
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.at-btn--ghost {
+  background: transparent;
+  color: var(--muted);
+}
+
+.at-btn--ghost:hover {
+  color: var(--text);
+  background: rgba(var(--fg-rgb), 0.05);
+}
+
+.at-foot {
+  margin: 4px 0 0;
+  font-size: 11px;
+  text-align: center;
+  color: rgba(var(--fg-rgb), 0.45);
+}
+
+.at-foot a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(var(--fg-rgb), 0.3);
+}
+
+.at-foot a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
