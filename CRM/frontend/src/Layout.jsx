@@ -2,6 +2,9 @@ import { useEffect, useState, useCallback } from 'react';
 import { Outlet, useNavigate, useParams, useLocation } from 'react-router-dom';
 import Sidebar from './Elements/Sidebar.jsx';
 import Header from './Elements/Header.jsx';
+import MobileTabBar from './Elements/MobileTabBar.jsx';
+import { House, Tag, Package, ChatCircleDots } from '@phosphor-icons/react';
+import { useTranslation } from 'react-i18next';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
@@ -35,6 +38,7 @@ const ROUTE_ORDER = ['', 'products', 'orders', 'customers', 'booking', 'chat',
 function Layout() {
   const { apiKey } = useParams();
   const location = useLocation();
+  const { t }    = useTranslation();
   const [user,    setUser]    = useState(null);
   const [project, setProject] = useState(null);
   const [access,  setAccess]  = useState(null);
@@ -46,7 +50,7 @@ function Layout() {
   const handleSetProductContext = useCallback((ctx) => setProductContext(ctx), []);
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) return false;
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) return false;
     try { return localStorage.getItem('crm_sidebar') !== 'closed'; } catch { return true; }
   });
 
@@ -55,6 +59,24 @@ function Layout() {
     try { localStorage.setItem('crm_sidebar', next ? 'open' : 'closed'); } catch {}
     return next;
   });
+
+  // Mobile: auto-close drawer on route change so tapping a nav item dismisses it.
+  // Desktop (≥1024px) is unaffected — that respects the user's saved preference.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setSidebarOpen(false);
+    }
+  }, [location.pathname]);
+
+  // Mobile: lock background scroll while drawer is open (covers iOS Safari rubber-band).
+  // The `rsp-drawer-locked` class is defined in Layout.css → mobile media query.
+  useEffect(() => {
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024;
+    if (sidebarOpen && isMobile) {
+      document.body.classList.add('rsp-drawer-locked');
+      return () => document.body.classList.remove('rsp-drawer-locked');
+    }
+  }, [sidebarOpen]);
 
   useEffect(() => {
     Promise.all([
@@ -161,17 +183,40 @@ function Layout() {
 
   const sidebarVar = sidebarOpen ? 'var(--sidebar-w)' : 'var(--sidebar-w-collapsed)';
 
+  // Mobile bottom tab bar — 4 most-used project pages + "More" (opens drawer).
+  // Hidden via CSS above 640px. The match regex covers each section's nested
+  // routes so the tab stays highlighted across sub-pages (e.g. /products/inventory).
+  const apiBase = `/project/${apiKey}`;
+  const tabItems = [
+    { to: apiBase, label: t('nav.projectOverview'), Icon: House, exact: true },
+    { to: `${apiBase}/products`, label: t('nav.products'), Icon: Tag,
+      match: /^\/project\/[^/]+\/products(\/|$)/ },
+    { to: `${apiBase}/orders`, label: t('nav.orders'), Icon: Package,
+      match: /^\/project\/[^/]+\/orders(\/|$)/ },
+    { to: `${apiBase}/chat`, label: t('nav.chat'), Icon: ChatCircleDots,
+      match: /^\/project\/[^/]+\/chat(\/|$)/ },
+  ];
+
   return (
     <div className="crm-root" style={{ '--current-sidebar-w': sidebarVar }}>
-      <Header user={user} project={project} productContext={productContext} />
+      <Header user={user} project={project} productContext={productContext}
+              onMobileNavToggle={toggleSidebar} />
       <div className="crm-body">
         <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} access={access} />
+        {/* Backdrop appears on tablet/mobile when drawer is open. Tap to close. */}
+        <div
+          className={`rsp-drawer-backdrop${sidebarOpen ? ' rsp-drawer-backdrop--open' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
         <main className="crm-main">
           <div className="crm-content crm-content--wide">
             <Outlet context={{ projectId: project.id, project, access, setProductContext: handleSetProductContext }} />
           </div>
         </main>
       </div>
+      {/* Bottom tab bar — visible only on <640px via CSS */}
+      <MobileTabBar items={tabItems} onMore={() => setSidebarOpen(true)} />
     </div>
   );
 }

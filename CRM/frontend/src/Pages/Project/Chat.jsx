@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  Plug, X, XCircle, CaretRight, CaretDown, CheckCircle, ChatCircleDots,
+  Plug, X, XCircle, CaretRight, CaretLeft, CaretDown, CheckCircle, ChatCircleDots,
   PaperPlaneRight, ChatsCircle, ArrowCounterClockwise,
   Copy, Trash, CircleNotch, MagnifyingGlass, FileText, Microphone, Play,
   Pause, DownloadSimple, MagnifyingGlassPlus, MagnifyingGlassMinus, Eye,
@@ -600,7 +600,7 @@ function MessageBubble({ msg, onImageClick, onDelete, onDownloadPng, showToast }
 
 // ─── Message Thread ───────────────────────────────────────────────────────────
 
-function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, showToast }) {
+function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, showToast, onBack }) {
   const { t } = useTranslation();
   const [messages, setMessages] = useState([]);
   const [loading,  setLoading]  = useState(true);
@@ -734,6 +734,14 @@ function MessageThread({ projectId, conversation, onClosed, onReopened, onSent, 
   return (
     <div className="chat-thread">
       <div className="chat-thread-header">
+        {/* Mobile-only back arrow — returns to the conversation list (master).
+            CSS hides this on desktop (≥768px) since both panels are visible. */}
+        {onBack && (
+          <button type="button" className="chat-thread-back"
+                  onClick={onBack} aria-label={t('common.back', 'Back')}>
+            <CaretLeft size={20} weight="bold" />
+          </button>
+        )}
         <div className="chat-thread-avatar">
           <ChannelIcon size={20} />
         </div>
@@ -805,6 +813,11 @@ function ChatPanel({ projectId }) {
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
+  // Mobile master-detail: when true, the .chat-shell flips to show only the
+  // thread (list hidden). Set when a conversation is tapped, cleared by the
+  // back arrow in the thread header. Desktop ignores this — CSS at ≥768px
+  // always shows both panels regardless of the modifier class.
+  const [mobileShowingThread, setMobileShowingThread] = useState(false);
   const [openFolders, setOpenFolders] = useState({ active: true, inactive: false });
   const [filter, setFilter] = useState('');
   const [toast, setToast] = useState('');
@@ -880,10 +893,16 @@ function ChatPanel({ projectId }) {
 
   const handleSelect = id => {
     setSelectedId(id);
+    setMobileShowingThread(true);   // mobile: flip to thread view
     fetch(`${API_BASE}/api/chat/conversations/${id}/read${pq}`,
           { method: 'POST', credentials: 'include' }).catch(() => {});
     setConversations(prev => prev.map(c => c.id === id ? { ...c, unread_count: 0 } : c));
   };
+
+  // Mobile back arrow in the thread header → return to the conversation list.
+  // Keeps selectedId so when desktop user resizes back to wide, the previously
+  // selected conversation is still highlighted in the list.
+  const handleBackToList = () => setMobileShowingThread(false);
 
   const handleClosed = id => {
     setConversations(prev => prev.map(c => c.id === id ? { ...c, is_active: false } : c));
@@ -932,7 +951,7 @@ function ChatPanel({ projectId }) {
   return (
     <>
       <h1 className="crm-page-title">{t('comms.chat.pageTitle')}</h1>
-      <div className="chat-shell">
+      <div className={`chat-shell${mobileShowingThread ? ' chat-shell--show-thread' : ''}`}>
         <aside className="chat-aside">
           <div className="chat-aside-search">
             <MagnifyingGlass className="chat-search-icon" weight="bold" />
@@ -964,6 +983,7 @@ function ChatPanel({ projectId }) {
         </aside>
         <MessageThread projectId={projectId} conversation={selected}
           onClosed={handleClosed} onReopened={handleReopened} onSent={handleSent}
+          onBack={handleBackToList}
           showToast={showToast} />
       </div>
       {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}

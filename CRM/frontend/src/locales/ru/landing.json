@@ -209,7 +209,7 @@
     "footer": {
       "tagline": "Единая CRM-платформа для онлайн-магазинов — для соло-фаундеров, небольших агентств и сетей магазинов.",
       "cols": {
-        "product": { "title": "Продукт",  "links": { "features": "Возможности", "tour": "Тур", "howItWorks": "Как начать", "docs": "Docs" } },
+        "product": { "title": "Продукт",  "links": { "features": "Возможности", "tour": "Тур", "sdk": "SDK", "howItWorks": "Как начать", "docs": "Docs" } },
         "company": { "title": "Компания", "links": { "about": "О нас", "blog": "Блог", "careers": "Вакансии", "contact": "Контакты" } },
         "legal":   { "title": "Юридическое", "links": { "terms": "Условия", "privacy": "Приватность", "security": "Безопасность", "status": "Статус" } }
       },

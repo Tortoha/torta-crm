@@ -8552,3 +8552,113 @@ textarea.po-set-input,
     min-height: 0;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   PRODUCTS — RESPONSIVE (desktop ≥1920 untouched)
+
+   Catalog grid, list view, categories grid, warehouse-grouped trees, and
+   per-page toolbars. po-set-table tables already handled in Responsive.css.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── md (1024-1365) — narrower grids ────────────────────────────────────── */
+@media (max-width: 1365px) {
+  .prod-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .cat-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ── sm (768-1023) — toolbars wrap, grids shrink ────────────────────────── */
+@media (max-width: 1023px) {
+  .prod-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .cat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Toolbar: search + filters + buttons wrap to multiple rows */
+  .po-toolbar {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .po-toolbar-right {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+}
+
+/* ── xs (640-767) — single-col grids, simplified toolbars ───────────────── */
+@media (max-width: 767px) {
+  .prod-grid,
+  .prod-grid.prod-grid--3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .cat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Product list view: hide header row, transform body rows to stacked cards.
+     Same pattern as po-set-table — applies to .prod-list which has its own
+     grid system separate from po-set-table. */
+  .prod-list-head {
+    display: none;
+  }
+
+  .prod-list-block,
+  .prod-list-block.prod-list-block--variation,
+  .prod-list-block.prod-list-block--sku,
+  .prod-list-block.prod-list-block--l3,
+  .prod-list-block.prod-list-block--l4,
+  .prod-list-block.prod-list-block--l5 {
+    grid-template-columns: 1fr !important;
+    grid-auto-flow: row;
+    height: auto !important;
+    min-height: 60px;
+    padding: 12px 14px !important;
+    gap: 6px;
+    border-radius: 16px;
+  }
+
+  /* Hide the toolbar's static "po-page-title" wrap text overflow */
+  .po-page-title {
+    font-size: 18px;
+  }
+
+  /* Tree-view chevron rows: ensure they wrap content rather than truncate */
+  .po-tree-loading-row {
+    height: auto;
+  }
+}
+
+/* ── xxs (<640) — phone — tightest ──────────────────────────────────────── */
+@media (max-width: 639px) {
+  .prod-grid,
+  .prod-grid.prod-grid--3 {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  /* Tabs inside Products pages — TabSwitcher (auth-tab pattern) already
+     handled in Authentication.css responsive section. */
+
+  /* Per-SKU detail block grids — already had max-width: 1240 query, but
+     re-assert single-column on phones */
+  .ps-sku-fields {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 479px) {
+  /* On true small phones, even Product cards squeeze too much in 1-col
+     with the existing padding; bring it tighter. */
+  .prod-card {
+    padding: 12px !important;
+  }
+}

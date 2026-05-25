@@ -841,6 +841,166 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
   const onBlockDragEnd = () => setDraggingId(null);
   const onColDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
 
+  // ── Touch-drag (long-press → drag) ────────────────────────────────
+  // HTML5 dragstart/dragend doesn't fire on touch devices. To let mobile users
+  // reschedule bookings by hold+drag, we implement a Pointer Events fallback:
+  //   1. pointerdown on card starts a 400ms long-press timer.
+  //   2. If finger moves > 8px before 400ms → cancel timer (user is scrolling).
+  //   3. Timer fires → enter drag mode, lock pointer to card, vibrate (haptic).
+  //   4. pointermove → card follows finger (transform: translate).
+  //   5. pointerup → document.elementFromPoint locates target column body,
+  //      compute slot from Y, validate, call onMoveBooking.
+  // Two-finger scroll works as normal because only the primary pointer is tracked.
+  const touchDragRef = useRef({
+    pointerId: null, bookingId: null, startX: 0, startY: 0,
+    timer: null, isDragging: false,
+    suppressNextClick: false,  // set true after a successful drag-drop so the
+                               // synthetic click that browsers fire after a
+                               // touch sequence doesn't re-open the booking modal
+  });
+
+  const _cancelTouchDrag = () => {
+    const s = touchDragRef.current;
+    if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+    if (s.bookingId != null && s.isDragging) {
+      const el = cardRefs.current[s.bookingId];
+      if (el) {
+        el.style.transform = '';
+        el.style.zIndex = '';
+        el.style.pointerEvents = '';
+        el.style.touchAction = '';
+      }
+    }
+    s.pointerId = null;
+    s.bookingId = null;
+    s.isDragging = false;
+    setDraggingId(null);
+  };
+
+  const onCardPointerDown = (e, b) => {
+    // Mouse uses the existing HTML5 drag flow — only touch/pen needs the fallback.
+    if (e.pointerType === 'mouse')   return;
+    if (!e.isPrimary)                return;   // ignore secondary touch (two-finger gestures)
+    if (!onMoveBooking)              return;
+
+    const s = touchDragRef.current;
+    s.pointerId = e.pointerId;
+    s.bookingId = b.id;
+    s.startX    = e.clientX;
+    s.startY    = e.clientY;
+    s.isDragging = false;
+
+    s.timer = setTimeout(() => {
+      if (s.pointerId !== e.pointerId) return;   // pointer released before timer fired
+      s.isDragging = true;
+      setDraggingId(b.id);
+      // Haptic confirmation that drag mode is now active
+      try { navigator.vibrate?.(15); } catch {}
+      const el = cardRefs.current[b.id];
+      if (el) {
+        // Lock pointer to the card so we keep receiving moves even if finger leaves it
+        try { el.setPointerCapture?.(e.pointerId); } catch {}
+        // Block native scroll while dragging
+        el.style.touchAction = 'none';
+        el.style.zIndex = '9999';
+        // Slight scale + opacity so the card "lifts" visually (matches iOS app jiggle pickup)
+        el.style.transform = 'scale(1.04)';
+        el.style.transition = 'transform 0.15s ease';
+      }
+    }, 400);
+  };
+
+  const onCardPointerMove = (e) => {
+    const s = touchDragRef.current;
+    if (s.pointerId !== e.pointerId) return;
+
+    const dx = e.clientX - s.startX;
+    const dy = e.clientY - s.startY;
+
+    // If finger moved before long-press fired → user is scrolling, abort drag intent
+    if (!s.isDragging) {
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        clearTimeout(s.timer); s.timer = null;
+        s.pointerId = null;
+      }
+      return;
+    }
+
+    // In drag mode — move the card with the finger
+    e.preventDefault?.();
+    const el = cardRefs.current[s.bookingId];
+    if (el) {
+      el.style.transition = 'none';   // direct follow (no easing during active drag)
+      el.style.transform  = `translate(${dx}px, ${dy}px) scale(1.04)`;
+      // Disable pointer-events so elementFromPoint below sees what's UNDER the card
+      el.style.pointerEvents = 'none';
+    }
+  };
+
+  const onCardPointerUp = (e) => {
+    const s = touchDragRef.current;
+    if (s.pointerId !== e.pointerId) return;
+    clearTimeout(s.timer); s.timer = null;
+
+    // Short release without entering drag mode → let the browser fire the
+    // synthetic click (which calls onOpenBooking via the normal onClick path).
+    if (!s.isDragging) {
+      s.pointerId = null;
+      s.bookingId = null;
+      return;
+    }
+
+    // Find drop target — column body under the finger at release
+    const colBody = document.elementFromPoint(e.clientX, e.clientY)?.closest('.bk-cal-col-body');
+    const bookingId = s.bookingId;
+    // After a drag we DON'T want the browser's synthetic click (it would
+    // immediately open the booking modal on top of the rescheduled card).
+    s.suppressNextClick = true;
+    _cancelTouchDrag();
+
+    if (!colBody) return;
+    if (colBody.dataset.dayEnabled !== '1') {
+      setDropError(t('booking.calendar.dropDayClosed'));
+      setTimeout(() => setDropError(''), 3500);
+      return;
+    }
+
+    const dayISO = colBody.dataset.dayIso;
+    const dow    = parseInt(colBody.dataset.dayDow, 10);
+    const day    = new Date(`${dayISO}T12:00:00Z`);   // UTC noon — same as weekDays anchor
+    const rect   = colBody.getBoundingClientRect();
+    const y      = e.clientY - rect.top;
+    const slot   = snapToSlot(pxToTime(y));
+
+    if (isPastSlot(day, slot)) {
+      setDropError(t('booking.calendar.dropPast'));
+      setTimeout(() => setDropError(''), 3500);
+      return;
+    }
+    if (isOffHoursSlot(dow, slot)) {
+      setDropError(t('booking.calendar.dropOffHours'));
+      setTimeout(() => setDropError(''), 3500);
+      return;
+    }
+    const booking = visibleBookings.find(x => x.id === bookingId);
+    if (!booking) return;
+    const v = validateDrop(booking, dayISO, slot);
+    if (v.error) {
+      setDropError(v.error);
+      setTimeout(() => setDropError(''), 3500);
+      return;
+    }
+    const h = Math.max(0, Math.min(23, Math.floor(slot / 60)));
+    const m = Math.max(0, Math.min(59, slot % 60));
+    onMoveBooking?.(bookingId, toISOLocal(day, h, m));
+  };
+
+  const onCardPointerCancel = (e) => {
+    const s = touchDragRef.current;
+    if (s.pointerId !== e.pointerId) return;
+    _cancelTouchDrag();
+  };
+
   // Returns the moved booking + computed target time, OR an error message.
   //
   // Conflict rules (in order):
@@ -1030,6 +1190,9 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
                 </div>
 
                 <div className="bk-cal-col-body"
+                  data-day-iso={dayKey}
+                  data-day-dow={dow}
+                  data-day-enabled={enabled ? '1' : '0'}
                   style={{ height: `${totalH}px` }}
                   onClick={(e) => handleColClick(dayObj, e)}
                   onDragOver={onColDragOver}
@@ -1079,7 +1242,25 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
                         draggable={!!onMoveBooking}
                         onDragStart={(e) => onBlockDragStart(e, b)}
                         onDragEnd={onBlockDragEnd}
-                        onClick={(e) => { e.stopPropagation(); onOpenBooking(b); }}>
+                        /* Touch-drag fallback (HTML5 drag doesn't fire on touch).
+                           pointerdown starts a 400ms long-press timer; if it
+                           fires with the finger still down, drag mode activates
+                           and the card follows the finger. For a short release
+                           (no drag), we let the browser fire the synthetic
+                           click which still calls onOpenBooking via onClick. */
+                        onPointerDown={(e) => onCardPointerDown(e, b)}
+                        onPointerMove={onCardPointerMove}
+                        onPointerUp={onCardPointerUp}
+                        onPointerCancel={onCardPointerCancel}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Skip the click that browsers synthesise right after a touch-drag
+                          if (touchDragRef.current.suppressNextClick) {
+                            touchDragRef.current.suppressNextClick = false;
+                            return;
+                          }
+                          onOpenBooking(b);
+                        }}>
                         <div className="bk-cal-card-stripe" />
                         <div className="bk-cal-card-inner"
                           ref={(el) => {

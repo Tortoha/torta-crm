@@ -277,3 +277,54 @@
 .ot-assign-select .cpm-cat-btn {
   width: 100%;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ORG TEAM — RESPONSIVE (desktop ≥1920 untouched)
+
+   The Members / Roles / Invites tables use po-set-table → already handled by
+   global rules in Responsive.css. The custom row grids (po-set-row--otm/r/i)
+   collapse to 1-col automatically.
+
+   Page-specific: AssignmentModal (per-project role picker per row) +
+   RoleEditorModal (permission matrix page × level).
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  /* Per-row grid overrides — let global po-set-row stack rules win */
+  .po-set-row--otm,
+  .po-set-row--otr,
+  .po-set-row--oti {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* AssignmentModal: per-project rows become stacked, role select goes
+     full-width below project label */
+  .ot-assign-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .ot-assign-select {
+    width: 100%;
+  }
+
+  /* RoleEditorModal: permission matrix rows wrap differently on mobile —
+     each page becomes a card with the level picker beneath the label */
+  .ot-perm-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 6px;
+    padding: 10px 12px;
+  }
+
+  .ot-level-picker {
+    width: 100%;
+  }
+
+  /* Bulk-action row (Clear / All-view / All-manage) stays horizontal */
+  .ot-bulk-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}

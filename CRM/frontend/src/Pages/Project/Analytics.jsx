@@ -777,13 +777,21 @@ export function LineChart({
         <g ref={scrollGroupRef}
            transform={`translate(${scrollXRef.current}, 0)`}
            data-version={version}>
-          {/* X-axis labels — auto-thinned so they don't overlap. */}
+          {/* X-axis labels — auto-thinned so they don't overlap.
+             First/last labels anchor to start/end respectively so they
+             don't spill off the chart on narrow viewports (was getting
+             cut to "r 25" / "Ma" on mobile when textAnchor was middle). */}
           {data.map((d, i) => {
             if (i % labelStep !== 0 && i !== data.length - 1) return null;
+            const anchor = i === 0
+              ? 'start'
+              : i === data.length - 1
+                ? 'end'
+                : 'middle';
             return (
               <text key={`xlabel-${i}`}
                     x={xScale(i)} y={h - 14}
-                    textAnchor="middle" fontSize="11"
+                    textAnchor={anchor} fontSize="11"
                     fill="#9a9aa0" fontFamily="inherit">
                 {fmtX(d[dateKey])}
               </text>
@@ -2078,12 +2086,18 @@ function NewReturningChart({
           <g clipPath={`url(#${clipId})`}>
             <g ref={scrollGroupRef}
                transform={`translate(${scrollXRef.current}, 0)`}>
-              {/* X-axis labels — auto-thinned. */}
+              {/* X-axis labels — auto-thinned. First/last anchored to
+                 start/end so they don't spill off the chart on mobile. */}
               {data.map((d, i) => {
                 if (i % labelStep !== 0 && i !== data.length - 1) return null;
+                const anchor = i === 0
+                  ? 'start'
+                  : i === data.length - 1
+                    ? 'end'
+                    : 'middle';
                 return (
                   <text key={`x-${i}`} x={xCenter(i)} y={h - 12}
-                        textAnchor="middle" fontSize="11"
+                        textAnchor={anchor} fontSize="11"
                         fill="var(--muted)" fontFamily="inherit">
                     {fmtDay(d.day)}
                   </text>

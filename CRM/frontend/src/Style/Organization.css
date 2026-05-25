@@ -647,3 +647,74 @@
   min-height: 32px;
 }
 .inf-sentinel--empty { color: transparent; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ORGANIZATION — RESPONSIVE (desktop ≥1920 untouched)
+
+   The existing .org-grid breakpoints (1100/780/480) already handle the
+   grid view. Here we add page-title, toolbar, and list-view stacking.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  .org-page-title {
+    padding-top: 96px;
+  }
+}
+
+@media (max-width: 767px) {
+  .org-page-title {
+    padding-top: 24px;
+    font-size: 22px;
+  }
+
+  /* Toolbar wraps: search full-width on top row, sort+view+new on second */
+  .org-toolbar {
+    flex-wrap: wrap;
+    padding-top: 16px;
+    padding-bottom: 12px;
+    gap: 8px;
+    row-gap: 10px;
+  }
+
+  .org-search-wrap {
+    max-width: 100%;
+    flex: 1 1 100%;
+    order: 1;
+  }
+
+  .org-sort-toggle {
+    order: 2;
+    margin-left: 0;
+    flex-shrink: 1;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .org-sort-toggle::-webkit-scrollbar { display: none; }
+
+  /* View toggle + new button push to right */
+  .org-view-toggle,
+  .org-new-btn {
+    order: 3;
+  }
+  .org-new-btn {
+    margin-left: auto;
+  }
+
+  /* List view rows → stack horizontally tighter; the row's grid columns are
+     defined per-page, hide column headers and let rows breathe */
+  .org-list-head {
+    display: none;
+  }
+}
+
+@media (max-width: 479px) {
+  .org-page-title {
+    font-size: 20px;
+    padding-top: 20px;
+  }
+
+  /* Cards tighten — let inner content squeeze nicely */
+  .org-card-inner {
+    padding: 14px;
+  }
+}

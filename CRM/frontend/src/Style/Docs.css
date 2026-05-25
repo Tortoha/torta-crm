@@ -125,3 +125,44 @@
   max-width: 320px;
   margin: 0 0 28px;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   DOCS — RESPONSIVE (desktop ≥1920 untouched)
+
+   Docs sidebar becomes a drawer on tablet/mobile (handled in Layout.css).
+   Main content tightens padding, code blocks scroll horizontally cleanly.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  /* Tighter content padding */
+  .doc-content {
+    padding: 16px 0 48px;
+  }
+
+  /* Reduce H1/H2 size on phones */
+  .doc-content h1 { font-size: 24px; }
+  .doc-content h2 { font-size: 19px; margin-top: 32px; }
+  .doc-content h3 { font-size: 16px; }
+
+  /* Code blocks: keep horizontal scroll (already there) but tighter padding */
+  .doc-code pre {
+    padding: 14px 14px;
+    font-size: 12px;
+  }
+
+  .doc-code-copy {
+    /* Always visible on touch (hover doesn't trigger reliably) */
+    opacity: 1;
+  }
+
+  /* Framework picker — full width on phones */
+  .doc-fw-picker {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 479px) {
+  .doc-content h1 { font-size: 22px; }
+  .doc-content h2 { font-size: 17px; }
+  .doc-code pre  { font-size: 11px; padding: 12px; }
+}

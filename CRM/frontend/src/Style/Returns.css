@@ -441,3 +441,55 @@ textarea.ret-inspect-notes {
 .ret-reject-row .crm-input {
   flex: 1;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   RETURNS — RESPONSIVE (desktop ≥1920 untouched)
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  /* Return-card row grid (7-col) tightens proportionally */
+  .ret-card-row,
+  .ret-card-grid {
+    grid-template-columns: 60px 1.2fr 1fr 0.8fr 1fr 90px 0.8fr;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Return cards stack to vertical layout */
+  .ret-card-row,
+  .ret-card-grid {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    padding: 14px !important;
+    gap: 6px !important;
+  }
+
+  /* Group section headers (Action needed / In progress / etc.) tighter */
+  .ret-group-head {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  /* 2-col inspection / refund grids stack */
+  .ret-inspect-grid,
+  .ret-refund-fields {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Stepper — horizontal on desktop, vertical on phones */
+  .ret-stepper {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .ret-step {
+    flex-direction: row;
+    text-align: left;
+  }
+
+  .ret-step-connector {
+    display: none;
+  }
+}

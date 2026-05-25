@@ -118,7 +118,7 @@ function DocSection({ section, open, onToggle, pathname, searchParams }) {
   );
 }
 
-export default function DocsSidebar() {
+export default function DocsSidebar({ collapsed = false } = {}) {
   const location = useLocation();
   const { t }    = useTranslation();
   const groups   = buildGroups(t);
@@ -126,8 +126,11 @@ export default function DocsSidebar() {
   const [open, setOpen] = useState({ crm: true, console: true, apiGuides: true, apiRef: true });
   const toggle = (id) => setOpen(prev => ({ ...prev, [id]: !prev[id] }));
 
+  // `collapsed` only matters in the mobile drawer flow — desktop docs sidebar
+  // is always expanded. The CSS in Layout.css uses `.sidebar--collapsed` to
+  // hide the drawer (translateX(-100%)) below 1024px.
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}>
       <div className="sidebar-scroll">
         <div className="sb-nav-area">
           {groups.map(g => (

@@ -1889,3 +1889,232 @@
   color: var(--accent);
   font-weight: 500;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   BOOKING — RESPONSIVE (desktop ≥1920 untouched)
+
+   IMPORTANT: The week-grid calendar (.bk-cal-*) DELIBERATELY keeps its
+   desktop layout + horizontal scroll on mobile — drag-to-reschedule needs
+   simultaneous vertical (page scroll) + horizontal (slot drag) gestures.
+   Stacking calendar cells would break that interaction.
+
+   Other sections (Bookings list, Services, Staff, Settings) follow the
+   standard mobile pattern (stacked cards / 1-col grids).
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  /* Bookings list — tighten columns */
+  .bk-list-head,
+  .prow.bk-prow {
+    grid-template-columns: 1.2fr 1.2fr 0.8fr 0.8fr 100px;
+    gap: 8px;
+  }
+
+  .prod-list-head.bk-svc-list-head,
+  .prow.bk-svc-prow {
+    grid-template-columns: 36px 1.8fr 0.8fr 0.8fr 0.8fr 1.1fr 28px;
+    font-size: 12px;
+  }
+  .prod-list-head.bk-stf-list-head,
+  .prow.bk-stf-prow {
+    grid-template-columns: 36px 1fr 1.2fr 1fr 0.7fr 0.5fr 0.5fr 28px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Hide column-header rows on mobile */
+  .bk-list-head,
+  .prod-list-head.bk-svc-list-head,
+  .prod-list-head.bk-stf-list-head {
+    display: none;
+  }
+
+  /* Bookings list — stacked card */
+  .prow.bk-prow {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    min-height: 68px;
+    padding: 12px 14px !important;
+    border-radius: 16px !important;
+    gap: 6px !important;
+  }
+
+  /* Service rows: image | title+meta | menu */
+  .prow.bk-svc-prow {
+    grid-template-columns: 56px 1fr 32px !important;
+    height: auto !important;
+    min-height: 76px;
+    padding: 12px 14px !important;
+    border-radius: 16px !important;
+    gap: 6px 12px !important;
+    align-items: center;
+  }
+
+  /* Staff rows — compact */
+  .prow.bk-stf-prow {
+    grid-template-columns: 40px 1fr 32px !important;
+    height: auto !important;
+    min-height: 76px;
+    padding: 12px 14px !important;
+    border-radius: 16px !important;
+    gap: 6px 12px !important;
+    align-items: center;
+  }
+
+  /* Working hours rows — tighter */
+  .bk-hours-row {
+    grid-template-columns: 24px 48px 1fr 6px 1fr;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+
+  /* Stats grid: 2-col on tablets/phones */
+  .bk-stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  /* ────────────────────────────────────────────────────────────────
+     CALENDAR — horizontal scroll on mobile. Two-finger interaction:
+       vertical drag = page scroll, horizontal drag = slot reschedule.
+
+     Real DOM structure (BookingCalendar.jsx):
+       .bk-cal                           ← root: make THIS the scroll container
+         .bk-cal-toolbar
+         .bk-cal-grid                    ← desktop: grid 60px+1fr
+           .bk-cal-gutter                ← 60px hour labels
+           .bk-cal-cols-wrap             ← desktop: overflow:hidden (kill clip on mobile)
+             .bk-cal-cols                ← desktop: grid repeat(7,1fr)
+               .bk-cal-col × 7
+
+     Strategy: pin .bk-cal-grid to a min-width that fits 7 fixed-width
+     day columns (130px each = 1.5× the squeezed ~85px default), then
+     make .bk-cal itself the horizontal scroll container.
+     ──────────────────────────────────────────────────────────────── */
+
+  /* Root calendar element scrolls horizontally on touch */
+  .bk-cal {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    /* Two-axis pan — JS drag handlers stop propagation when dragging cards */
+    touch-action: pan-x pan-y;
+    max-width: 100%;
+    /* Hide the scrollbar on mobile (gesture-driven scroll feels cleaner) */
+    scrollbar-width: thin;
+  }
+
+  /* Toolbar stays at full viewport width — it shouldn't scroll horizontally
+     along with the grid. Stick it to the left edge of the scroll viewport. */
+  .bk-cal-toolbar {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    background: var(--bg);
+  }
+
+  /* Pin the calendar grid to a min-width fitting 7 wide day-cols.
+     60px gutter + 7 × 130px day-cols + 8 × 6px gaps = 1018px. */
+  .bk-cal-grid {
+    min-width: 1018px;
+    width: max-content;
+  }
+
+  /* Kill the desktop horizontal clip on the cols wrapper — with the grid
+     stretched wider than the viewport, this wrap must let its child render
+     at full width for both layout and slide-in animations. */
+  .bk-cal-cols-wrap {
+    overflow: visible;
+  }
+
+  /* Force fixed-width columns (no 1fr stretch) so each day stays 130px */
+  .bk-cal-cols {
+    grid-template-columns: repeat(7, 130px);
+  }
+
+  /* ────────────────────────────────────────────────────────────────
+     TOOLBAR — desktop is a single-row 44px pill. On mobile it must
+     wrap (or it pushes the WeekPicker label into a 30px-wide column
+     and the "May 31, 2026" text breaks across 3 lines). Drop the
+     fixed pill, allow wrap, give each control room.
+     ──────────────────────────────────────────────────────────────── */
+  .bk-cal-toolbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 16px;       /* pill → rounded card so wrapped rows look intentional */
+    row-gap: 8px;
+    /* Stick the toolbar to the LEFT edge of the horizontally-scrolling
+       calendar — it shouldn't drift away when the grid is panned right. */
+    position: sticky;
+    left: 0;
+    /* Toolbar width = viewport, NOT the full grid min-width */
+    max-width: calc(100vw - 32px);
+    width: calc(100vw - 32px);
+    box-sizing: border-box;
+  }
+
+  /* WeekPicker date-range button — let it take remaining horizontal space */
+  .bk-cal-range-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: normal;       /* allow wrap if needed but with room */
+    text-align: left;
+    padding: 8px 12px;
+    height: auto;
+  }
+
+  /* Staff filter — drop to new row, full width on phones */
+  .bk-cal-staff-cb {
+    margin-left: 0;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  /* ────────────────────────────────────────────────────────────────
+     WEEKPICKER POPUP — desktop fixed-positioned via JS coords.
+     On mobile, anchor it as a centered popup that doesn't overflow
+     the viewport. Also raise z-index so it sits above tab bar (250).
+     ──────────────────────────────────────────────────────────────── */
+  .bk-week-pop {
+    /* Override JS inline left/top with viewport-centered placement */
+    left: 50% !important;
+    top: auto !important;
+    bottom: calc(var(--mobile-tabbar-h, 56px) + var(--safe-bottom, 0px) + 16px) !important;
+    transform: translateX(-50%);
+    width: min(360px, calc(100vw - 24px));
+    max-height: 70vh;
+    overflow-y: auto;
+    z-index: 4500;
+  }
+
+  /* Same for the date / time pickers used in BookingCreateModal */
+  .bk-date-pop,
+  .bk-time-pop {
+    left: 50% !important;
+    top: auto !important;
+    bottom: calc(var(--mobile-tabbar-h, 56px) + var(--safe-bottom, 0px) + 16px) !important;
+    transform: translateX(-50%);
+    width: min(360px, calc(100vw - 24px));
+    max-height: 70vh;
+    overflow-y: auto;
+    z-index: 4500;
+  }
+}
+
+@media (max-width: 479px) {
+  .bk-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bk-stf-analytics-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .bk-stf-analytics-cb {
+    width: 100%;
+  }
+}

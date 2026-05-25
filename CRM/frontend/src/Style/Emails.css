@@ -686,3 +686,56 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   EMAILS — RESPONSIVE EXTENSION (desktop ≥1920 untouched)
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  /* Editor: 3-col → still 3-col but tighter on tablet landscape */
+  .em-editor {
+    grid-template-columns: 240px 1fr 240px;
+    gap: 10px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Editor stacks into single column */
+  .em-editor {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  /* Layers + Inspector get capped height so they don't dominate the screen.
+     Canvas (middle) shows the live preview at usable height. */
+  .em-layers,
+  .em-inspector {
+    min-height: 200px;
+    max-height: 280px;
+  }
+
+  .em-canvas {
+    min-height: 320px;
+  }
+
+  /* Bottom block palette: horizontal scroll */
+  .em-palette {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .em-palette::-webkit-scrollbar { display: none; }
+}
+
+@media (max-width: 479px) {
+  .em-editor {
+    gap: 10px;
+  }
+
+  .em-layers,
+  .em-inspector {
+    min-height: 160px;
+    max-height: 220px;
+  }
+}

@@ -823,3 +823,64 @@
   font-size: 13px;
   color: var(--muted);
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   INTEGRATIONS — RESPONSIVE EXTENSION (desktop ≥1920 untouched)
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  /* Active integrations row — tighter columns on tablet */
+  .int-active-row {
+    grid-template-columns: 40px 1.2fr auto 110px 110px 32px;
+    gap: 10px;
+    padding: 10px 14px;
+  }
+
+  /* Browse-tab connector rows */
+  .int-connector-row {
+    grid-template-columns: 90px 1.4fr 1fr 100px 60px 90px 28px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Active integration row: stacks to 2-line card */
+  .int-active-row {
+    grid-template-columns: 40px 1fr auto !important;
+    grid-template-areas:
+      "icon name menu"
+      "icon meta menu"
+      "stats stats stats";
+    gap: 4px 12px;
+    padding: 12px 14px;
+    align-items: center;
+  }
+
+  .int-active-row > :nth-child(1) { grid-area: icon; align-self: start; }
+  .int-active-row > :nth-child(2) { grid-area: name; font-weight: 600; }
+  .int-active-row > :nth-child(3) { grid-area: meta; font-size: 12px; color: var(--muted); }
+  .int-active-row > :nth-child(4),
+  .int-active-row > :nth-child(5) { grid-area: stats; font-size: 11px; color: var(--muted); display: inline-block; margin-right: 12px; }
+  .int-active-row > :last-child { grid-area: menu; justify-self: end; }
+
+  /* Browse-tab connector list — stacked card */
+  .int-connector-row {
+    grid-template-columns: 1fr !important;
+    grid-template-areas:
+      "main"
+      "meta"
+      "action";
+    gap: 6px;
+    padding: 14px;
+    height: auto;
+  }
+
+  /* Country filter chips — wrap, scroll horizontally on overflow */
+  .int-country-chips {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .int-country-chips::-webkit-scrollbar { display: none; }
+}

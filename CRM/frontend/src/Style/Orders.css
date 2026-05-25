@@ -532,3 +532,66 @@
   color: var(--text);
   flex-shrink: 0;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ORDERS — RESPONSIVE (desktop ≥1920 untouched)
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  /* Tighten column proportions on tablets */
+  .ord-list-head {
+    grid-template-columns: 1fr 60px 90px 110px 130px;
+  }
+  .ord-list-head--bulk {
+    grid-template-columns: 32px 1fr 60px 90px 110px 130px 36px;
+  }
+  .prow.ord-prow {
+    grid-template-columns: 32px 1fr 60px 90px 110px 130px 36px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Hide desktop column-header row */
+  .ord-list-head {
+    display: none;
+  }
+
+  /* Each row becomes a stacked card. Layout:
+       row1: [check?] customer name + status badge
+       row2: items count · amount · date
+       row3: print-btn (when present, right-aligned) */
+  .prow.ord-prow {
+    grid-template-columns: 1fr auto !important;
+    grid-template-areas:
+      "customer status"
+      "meta meta"
+      "actions actions";
+    height: auto !important;
+    min-height: 72px;
+    padding: 12px 14px !important;
+    border-radius: 16px !important;
+    gap: 6px 8px;
+    align-items: center;
+  }
+
+  .ord-prow-check {
+    grid-area: customer;
+    justify-self: start;
+    margin-right: 8px;
+  }
+
+  /* Status-filter chip grid (4-col desktop) → 2-col mobile */
+  .ord-status-filter {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+  }
+
+  /* Bulk action bar: stays sticky at bottom; move above tab bar */
+  .ord-bulk-bar {
+    bottom: calc(var(--mobile-tabbar-h, 56px) + 12px + var(--safe-bottom, 0px)) !important;
+    left: 12px !important;
+    right: 12px !important;
+    transform: none !important;
+    width: auto !important;
+  }
+}

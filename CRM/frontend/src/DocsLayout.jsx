@@ -20,6 +20,39 @@ function DocsLayout() {
   // app-style header with "Docs" breadcrumb, login required.
   const fromLanding = new URLSearchParams(location.search).get('from') === 'landing';
 
+  // Drawer state — desktop sidebar is always expanded (Docs never collapses),
+  // but on tablet/mobile the same .sidebar element becomes a slide-in drawer.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const toggleDrawer = () => setDrawerOpen(v => !v);
+
+  // Live-tracked viewport flag so we know when to add the `.sidebar--collapsed`
+  // class. On desktop (≥1024) we never collapse — the Docs nav should always
+  // be visible. Only on tablet/mobile do we apply collapse to drive the drawer
+  // (translateX) behaviour from Layout.css.
+  const [isMobileVp, setIsMobileVp] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < 1024
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1023px)');
+    const update = () => setIsMobileVp(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+
+  // Mobile: auto-close drawer on route change.
+  useEffect(() => {
+    if (isMobileVp) setDrawerOpen(false);
+  }, [location.pathname, isMobileVp]);
+
+  // Mobile: lock background scroll when drawer is open.
+  useEffect(() => {
+    if (drawerOpen && isMobileVp) {
+      document.body.classList.add('rsp-drawer-locked');
+      return () => document.body.classList.remove('rsp-drawer-locked');
+    }
+  }, [drawerOpen, isMobileVp]);
+
   useEffect(() => {
     fetch(`${API_BASE}/api/me`, { credentials: 'include' })
       .then(r => (r.ok ? r.json() : null))
@@ -41,11 +74,17 @@ function DocsLayout() {
   return (
     <div className="crm-root" style={{ '--current-sidebar-w': 'var(--sidebar-w)' }}>
       {fromLanding
-        ? <Header user={user} landing />
-        : <Header user={user} docsMode />
+        ? <Header user={user} landing onMobileNavToggle={toggleDrawer} />
+        : <Header user={user} docsMode onMobileNavToggle={toggleDrawer} />
       }
       <div className="crm-body">
-        <DocsSidebar />
+        {/* Desktop: always expanded. Mobile: drawer state controls collapsed class. */}
+        <DocsSidebar collapsed={isMobileVp && !drawerOpen} />
+        <div
+          className={`rsp-drawer-backdrop${drawerOpen ? ' rsp-drawer-backdrop--open' : ''}`}
+          onClick={() => setDrawerOpen(false)}
+          aria-hidden="true"
+        />
         <main className="crm-main">
           <div className="crm-content">
             <Outlet />

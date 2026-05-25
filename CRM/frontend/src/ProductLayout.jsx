@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Outlet, useNavigate, useParams } from 'react-router-dom';
+import { Outlet, useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { Cube, ListBullets, ChatCircleText, Code, GearSix } from '@phosphor-icons/react';
 import Sidebar from './Elements/Sidebar.jsx';
 import Header from './Elements/Header.jsx';
+import MobileTabBar from './Elements/MobileTabBar.jsx';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
@@ -22,6 +25,8 @@ import { decodeHash } from './Utils/hashids.js';
  */
 function ProductLayout() {
   const { productHash } = useParams();
+  const location = useLocation();
+  const { t }    = useTranslation();
   const [user,    setUser]    = useState(null);
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -32,7 +37,7 @@ function ProductLayout() {
   const handleSetProductContext = useCallback((ctx) => setProductContext(ctx), []);
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) return false;
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) return false;
     try { return localStorage.getItem('crm_sidebar') !== 'closed'; } catch { return true; }
   });
 
@@ -41,6 +46,20 @@ function ProductLayout() {
     try { localStorage.setItem('crm_sidebar', next ? 'open' : 'closed'); } catch {}
     return next;
   });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setSidebarOpen(false);
+    }
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024;
+    if (sidebarOpen && isMobile) {
+      document.body.classList.add('rsp-drawer-locked');
+      return () => document.body.classList.remove('rsp-drawer-locked');
+    }
+  }, [sidebarOpen]);
 
   const productId = decodeHash(productHash);
 
@@ -77,11 +96,28 @@ function ProductLayout() {
 
   const sidebarVar = sidebarOpen ? 'var(--sidebar-w)' : 'var(--sidebar-w-collapsed)';
 
+  // Mobile tab bar — exactly mirrors the product sidebar flat nav.
+  // No "More" button since 5 tabs == all sidebar items.
+  const productBase = `/product/${productHash}`;
+  const tabItems = [
+    { to: productBase, label: t('nav.productOverview'), Icon: Cube, exact: true },
+    { to: `${productBase}/edit-history`, label: t('nav.editHistory'), Icon: ListBullets },
+    { to: `${productBase}/reviews`, label: t('nav.reviews'), Icon: ChatCircleText },
+    { to: `${productBase}/api-preview`, label: t('nav.apiPreview'), Icon: Code },
+    { to: `${productBase}/settings`, label: t('nav.settings'), Icon: GearSix },
+  ];
+
   return (
     <div className="crm-root" style={{ '--current-sidebar-w': sidebarVar }}>
-      <Header user={user} project={project} productContext={productContext} />
+      <Header user={user} project={project} productContext={productContext}
+              onMobileNavToggle={toggleSidebar} />
       <div className="crm-body">
         <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} />
+        <div
+          className={`rsp-drawer-backdrop${sidebarOpen ? ' rsp-drawer-backdrop--open' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
         <main className="crm-main">
           <div className="crm-content crm-content--wide">
             <Outlet context={{
@@ -92,6 +128,8 @@ function ProductLayout() {
           </div>
         </main>
       </div>
+      {/* No "More" — the 5 tabs ARE the entire sidebar */}
+      <MobileTabBar items={tabItems} />
     </div>
   );
 }

@@ -209,7 +209,7 @@
     "footer": {
       "tagline": "A single CRM platform for online stores — built for solo founders, small agencies and multi-brand operators alike.",
       "cols": {
-        "product": { "title": "Product",  "links": { "features": "Features", "tour": "Product tour", "howItWorks": "How it works", "docs": "Docs" } },
+        "product": { "title": "Product",  "links": { "features": "Features", "tour": "Product tour", "sdk": "SDK", "howItWorks": "How it works", "docs": "Docs" } },
         "company": { "title": "Company",  "links": { "about": "About", "blog": "Blog", "careers": "Careers", "contact": "Contact" } },
         "legal":   { "title": "Legal",    "links": { "terms": "Terms", "privacy": "Privacy", "security": "Security", "status": "Status" } }
       },

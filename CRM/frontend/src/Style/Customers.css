@@ -364,3 +364,55 @@
 .cust-badge--delivered { background: rgba(8, 145, 178, 0.1); color: #0891b2;      }
 .cust-badge--cancelled { background: rgba(239, 68, 68, 0.1); color: #ef4444;      }
 .cust-badge--refunded  { background: rgba(217, 119, 6, 0.1); color: #d97706;      }
+
+/* ════════════════════════════════════════════════════════════════════════
+   CUSTOMERS — RESPONSIVE (desktop ≥1920 untouched)
+
+   Customers list uses po-set-table (handled in Responsive.css). CustomerModal
+   has its own internal layout (profile + 4 stat tiles + order history). On
+   mobile the stat-tiles collapse 4-col → 2-col, modal goes full-screen via
+   the .auth-modal pattern (already adapted).
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  /* Tighten the 4-stat tile grid to 2-col on tablet */
+  .cust-stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Customer profile header — avatar + name + verified pill */
+  .cust-modal-header {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  /* Stat tiles stay 2-col (or 1-col if very small) */
+  .cust-stats-grid {
+    gap: 8px !important;
+  }
+
+  /* Order history rows in modal use simpler stacked layout (po-style) — uses
+     the po-set-table rules from Responsive.css already */
+
+  /* Page-title smaller */
+  .cust-page-title {
+    font-size: 22px;
+  }
+}
+
+@media (max-width: 479px) {
+  .cust-stats-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  /* Tighter tile padding to fit text */
+  .cust-stat-tile {
+    padding: 12px !important;
+  }
+
+  .cust-stat-value {
+    font-size: 17px !important;
+  }
+}

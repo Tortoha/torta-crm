@@ -553,26 +553,122 @@ body {
   }
 }
 
-/* ── MOBILE ── */
-@media (max-width: 768px) {
+/* ════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — all desktop rules above are FROZEN (≥1920px stays identical)
+
+   Breakpoints below adapt the project layout for shrinking viewports.
+   See Style/Responsive.css for the full breakpoint scale + utilities.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── lg: 1366-1919 ── tiny squeeze, nothing dramatic ─────────────────────── */
+@media (max-width: 1919px) {
+  .crm-content--wide { max-width: 1440px; }
+}
+
+@media (max-width: 1439px) {
+  .crm-content--wide { max-width: 1280px; }
+  .crm-main { padding: 0 20px; }
+}
+
+/* ── md: 1024-1365 ── tablet landscape / small laptop ────────────────────── */
+@media (max-width: 1365px) {
+  .crm-content--wide { max-width: 100%; }
+  .crm-main { padding: 0 16px; }
+  .crm-page-title { padding-top: 96px; }
+}
+
+/* ── sm: 768-1023 ── tablet portrait — sidebar becomes drawer overlay ────── */
+@media (max-width: 1023px) {
+  /* Pull sidebar out of layout flow → overlay drawer */
   .sidebar {
     position: fixed;
     top: var(--header-h);
     left: 0;
+    width: var(--mobile-drawer-w);
     height: calc(100vh - var(--header-h));
-    z-index: 200;
-    background: var(--bg);
-    transform: translateX(0);
-    transition: transform 0.32s var(--ease-smooth), width 0.32s var(--ease-smooth);
-    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.12);
-  }
-
-  .sidebar--collapsed {
+    height: calc(100dvh - var(--header-h));
+    z-index: var(--z-mobile-drawer);
+    background: var(--card);
     transform: translateX(-100%);
-    width: var(--sidebar-w);
+    transition: transform 0.32s var(--ease-smooth);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.18);
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
-  .crm-content {
-    padding: 0 16px 48px;
+  /* "Open" on mobile = drawer slid in. The desktop "collapsed" class means
+     hidden here — we ignore the icon-strip mode on tablet/mobile since it
+     would just be a useless skinny 56px overlay. */
+  .sidebar:not(.sidebar--collapsed) {
+    transform: translateX(0);
   }
+
+  /* Inner scroll container — let the .sidebar element own the scroll */
+  .sidebar-scroll {
+    width: var(--mobile-drawer-w);
+    padding: 12px;
+  }
+
+  /* Collapse-toggle button at the bottom is meaningless on mobile drawer
+     (the close action is "tap backdrop"). Hide to free space. */
+  .sb-bottom {
+    display: none;
+  }
+
+  /* Main content fills full width — no sidebar gutter */
+  .crm-main {
+    border-radius: 0;
+    padding: 0 var(--mobile-content-pad);
+  }
+
+  .crm-content,
+  .crm-content--wide {
+    max-width: 100%;
+    padding-bottom: 32px;
+  }
+
+  /* Body class set by Layout.jsx when drawer is open — lock background scroll */
+  body.rsp-drawer-locked {
+    overflow: hidden;
+    touch-action: none;
+  }
+}
+
+/* ── xs: 640-767 ── large mobile / small tablet — same as sm ─────────────── */
+@media (max-width: 767px) {
+  /* Smaller page padding */
+  .crm-main { padding: 0 var(--mobile-content-pad); }
+}
+
+/* ── xxs: <640 ── true mobile — bottom tab bar appears, leave room ───────── */
+@media (max-width: 639px) {
+  /* The bottom tab bar (.mtb-root) is `position: fixed; bottom: 0` — it
+     overlays the bottom of .crm-main's scrolled content. Padding on
+     .crm-main alone is unreliable (the scroll container's padding-bottom
+     doesn't always extend the scrollable range in all browsers, especially
+     iOS Safari). Put the safety margin on .crm-content (the in-flow
+     content wrapper) so the last item naturally scrolls into view above
+     the tab bar. */
+  .crm-content,
+  .crm-content--wide {
+    padding-bottom: calc(var(--mobile-tabbar-h, 56px) + var(--safe-bottom, 0px) + 24px);
+  }
+
+  /* Cards lose their oversized padding — every pixel counts on phones */
+  .crm-card {
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  /* Section title smaller */
+  .crm-section-title {
+    font-size: 16px;
+  }
+}
+
+/* ── xxxs: <360 ── tightest, single-column anything left ─────────────────── */
+@media (max-width: 359px) {
+  .crm-main { padding: 0 var(--mobile-content-pad-xxs); }
+  .crm-card { padding: 14px; }
+  .crm-page-title { font-size: 19px; padding-top: 16px; }
 }

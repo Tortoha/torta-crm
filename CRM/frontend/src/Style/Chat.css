@@ -933,3 +933,106 @@
 
 /* Context menu uses .org-card-dropdown styles — just a class hook for outside-click detection. */
 .chat-ctx-menu { z-index: 1100; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   CHAT — RESPONSIVE (desktop ≥1920 untouched)
+
+   Desktop is a WhatsApp-style 2-col layout (320px conversation list + flex thread).
+   On tablet/mobile we switch to a master-detail pattern: list takes full width,
+   tap a conversation → thread overlays it. A "back" button returns to the list.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  /* Tighten the conversation list column on tablet */
+  .chat-shell {
+    grid-template-columns: 260px 1fr;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Master-detail (WhatsApp/Telegram pattern).
+     Chat.jsx tracks `mobileShowingThread`. When false → list takes full screen,
+     thread is hidden. When true (after tapping a conversation) → list hides,
+     thread takes full screen. Back arrow in thread header clears the flag.
+
+     The .chat-shell--show-thread modifier is the JS-controlled class:
+       no modifier  → list visible, thread hidden
+       --show-thread → list hidden, thread visible
+  */
+  .chat-shell {
+    grid-template-columns: 1fr;
+    height: calc(100dvh - var(--header-h, 56px) - 120px);
+    min-height: 480px;
+    padding-top: 12px;
+    gap: 0;          /* no double-gap between hidden and shown panel */
+  }
+
+  /* DEFAULT (no modifier) = list view: thread hidden completely */
+  .chat-shell .chat-thread {
+    display: none;
+  }
+
+  /* SHOW THREAD: list hidden, thread takes full width/height */
+  .chat-shell--show-thread .chat-aside {
+    display: none;
+  }
+
+  .chat-shell--show-thread .chat-thread {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    border-radius: 16px;
+  }
+
+  /* Mobile back button — visible only on mobile (default rule above hides it) */
+  .chat-thread-back {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin-right: 4px;
+    border: none;
+    background: transparent;
+    border-radius: 999px;
+    cursor: pointer;
+    color: var(--text);
+    transition: background 0.18s ease;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .chat-thread-back:active {
+    background: var(--accent-tint);
+    color: var(--accent);
+  }
+
+  /* Input area: tighter padding + safe-area-aware bottom */
+  .chat-composer {
+    padding: 10px 12px;
+    padding-bottom: calc(10px + var(--safe-bottom, 0px));
+  }
+
+  /* The list takes full available height when alone */
+  .chat-shell:not(.chat-shell--show-thread) .chat-aside {
+    width: 100%;
+    height: 100%;
+  }
+}
+
+@media (min-width: 768px) {
+  /* Desktop / tablet landscape: hide the mobile back button */
+  .chat-thread-back {
+    display: none;
+  }
+}
+
+@media (max-width: 479px) {
+  /* Tiny phones: ensure no padding leaks */
+  .chat-shell {
+    margin: 0 -8px 16px;
+    width: calc(100% + 16px);
+  }
+}

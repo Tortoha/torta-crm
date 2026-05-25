@@ -697,6 +697,47 @@
   background: rgba(0, 113, 227, 0.90);
 }
 
+/* ── Heatmap responsive — horizontal scroll on mobile ─────────────────────
+   25 columns (1 day-label + 24 hours) at 1fr each squeeze to ~14px on a
+   phone, losing the right half of the day. Pin a min-width so the cells
+   stay readable (~22px each) and let the wrap scroll horizontally.
+   Day-label column sticks to the left so the dow context never leaves the
+   viewport while the user pans through hours.
+   ──────────────────────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .an-heatmap-wrap {
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    /* Allow native pan in both axes — page scroll still works vertically */
+    touch-action: pan-x pan-y;
+    /* Hide scrollbar (gesture-driven scroll feels cleaner on touch) */
+    scrollbar-width: thin;
+  }
+
+  .an-heatmap {
+    /* 36px day-label + 24 × 24px hours + 24 × 4px gaps ≈ 696px */
+    min-width: 696px;
+    width: max-content;
+  }
+
+  /* Day labels stay anchored to the left edge as user pans hours.
+     Background matches the wrap so cells don't peek through. */
+  .an-heatmap-d-label,
+  .an-heatmap-corner {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--bg);
+  }
+
+  /* Slight right-pad on day labels so the first hour cell doesn't kiss
+     the sticky edge — visual breathing room while scrolling. */
+  .an-heatmap-d-label {
+    padding-right: 2px;
+  }
+}
+
 /* Accent-coloured inline link inside section-hint paragraphs. */
 .an-link {
   color: var(--accent);
@@ -1445,4 +1486,61 @@
 @media (max-width: 900px) {
   .oa-highlights { grid-template-columns: 1fr; }
   .oa-cols { grid-template-columns: 1fr; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ANALYTICS — RESPONSIVE EXTENSION (desktop ≥1920 untouched)
+
+   Many @media queries already exist (KPI grid 6→3→2, sections collapse,
+   etc.). This block adds phone-specific tightening for sections and
+   period pickers.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  /* Section header (title + period picker) → wrap on phones so title isn't
+     squeezed into a sliver */
+  .an-section-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .an-section-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .an-section-period {
+    flex: 1 1 auto;
+  }
+
+  /* Section padding tighter on phones */
+  .an-section {
+    padding: 14px !important;
+    border-radius: 16px;
+  }
+
+  .an-section-title {
+    font-size: 15px;
+  }
+
+  /* KPI grid already steps down to 2-col below 600 via existing rules. */
+
+  /* Chart-area minimum heights — make sure SVG charts have room */
+  .an-chart-wrap svg,
+  .an-revenue-chart svg {
+    min-height: 220px;
+  }
+}
+
+@media (max-width: 479px) {
+  /* On tiny phones, KPI tiles collapse to 1-col for legibility */
+  .an-kpi-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Period picker dropdown width caps to viewport */
+  .an-section-period .cpm-cat-btn {
+    width: 100%;
+    justify-content: space-between;
+  }
 }

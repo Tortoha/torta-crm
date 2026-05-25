@@ -38,7 +38,14 @@ export default function Footer() {
                         live links are /docs and /login (handled via Link). Other
                         routes resolve to # so we don't ship dead URLs. */}
                     {l === 'docs' ? (
-                      <Link to="/docs">{t(`landing.footer.cols.${c.key}.links.${l}`)}</Link>
+                      /* `?from=landing` routes Docs through DocsLayout's
+                         landing-header branch (Pricing+Docs tabs, public
+                         access without login) — same as the Header's
+                         Docs tab. Without the flag, DocsLayout would
+                         redirect anonymous visitors to /login. */
+                      <Link to="/docs/getting-started?from=landing">
+                        {t(`landing.footer.cols.${c.key}.links.${l}`)}
+                      </Link>
                     ) : (
                       <a href="#">{t(`landing.footer.cols.${c.key}.links.${l}`)}</a>
                     )}

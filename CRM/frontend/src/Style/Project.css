@@ -911,3 +911,83 @@
 }
 .kpi-delta--up   { background: var(--accent-tint); color: var(--accent); }
 .kpi-delta--down { background: rgba(217, 48, 37, 0.08); color: #d93025; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   PROJECT OVERVIEW — RESPONSIVE (desktop ≥1920 untouched)
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  .pov-body {
+    padding-top: 96px;
+  }
+
+  /* Two-column body → stack on tablet portrait. Left column (project info)
+     on top, right column (recent activity) below. */
+  .pov-body {
+    grid-template-columns: 1fr;
+  }
+
+  /* Widget grid stays 2-col on tablet (4 widgets feel right as 2×2) */
+}
+
+@media (max-width: 767px) {
+  .pov-body {
+    padding-top: 24px;
+    gap: 16px;
+  }
+
+  /* Widget grid — KEEP 2-col even on phones; the 4 widgets (Email,
+     Subscription, Orders, Revenue) work as a tight 2×2 on small screens
+     and feel more dashboard-y than a 4-row vertical list. */
+  .pov-widget-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+}
+
+@media (max-width: 479px) {
+  /* Below 480 we DO collapse widgets to a single column — at this size
+     2-cols squeezes labels to two lines and looks cramped. */
+  .pov-widget-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Tighter inner padding for all overview widgets */
+  .pov-widget {
+    padding: 14px !important;
+  }
+}
+
+/* ── Action Center "Needs attention" 5-tile grid → fewer cols on mobile.
+   Desktop is `repeat(5, 1fr)`. 5 tiles in a phone width = each tile ~70px,
+   "Items to restock" / "Unread messages" labels truncate and the $59 badge
+   overlaps the last tile. Drop to 3-col on tablet/large mobile and 2-col
+   on phones for breathing room. */
+@media (max-width: 1023px) {
+  .pov-action-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 639px) {
+  .pov-action-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  /* Tile padding tightens so 2-col labels still fit */
+  .pov-action-tile {
+    padding: 12px 14px;
+  }
+
+  .pov-action-count {
+    font-size: 22px;
+  }
+}
+
+@media (max-width: 359px) {
+  /* Very narrow phones: single column to guarantee no label truncation */
+  .pov-action-grid {
+    grid-template-columns: 1fr;
+  }
+}

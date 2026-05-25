@@ -359,3 +359,118 @@
   margin: 0 auto 12px;
   display: block;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   DASHBOARD — RESPONSIVE (desktop ≥1920 untouched)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* The .db-grid steps at 1100 / 780 / 480 are already defined above. We just
+   add the page-title and table+toolbar adaptations below. */
+
+@media (max-width: 1023px) {
+  .db-page-title {
+    padding-top: 96px;
+  }
+
+  /* List view table needs more breathing room on tablets */
+  .db-table-head,
+  .db-table-row {
+    grid-template-columns: 1fr 90px 120px 36px;
+  }
+}
+
+@media (max-width: 767px) {
+  .db-page-title {
+    padding-top: 24px;
+    font-size: 22px;
+  }
+
+  /* Toolbar wraps when needed — keep search full width, push others to next line */
+  .db-toolbar {
+    flex-wrap: wrap;
+    padding-top: 16px;
+    padding-bottom: 12px;
+    gap: 8px;
+  }
+
+  .db-search-wrap {
+    max-width: 100%;
+    flex: 1 1 100%;
+    order: 1;
+  }
+
+  .db-view-toggle {
+    order: 2;
+  }
+
+  .db-new-btn {
+    order: 3;
+    margin-left: auto;
+  }
+
+  /* List view table → stacked cards: hide column headers, collapse rows */
+  .db-table {
+    background: transparent;
+    border-radius: 0;
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .db-table-head {
+    display: none;
+  }
+
+  .db-table-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "name arrow"
+      "meta arrow";
+    height: auto;
+    min-height: 60px;
+    padding: 12px 14px;
+    background: var(--card);
+    border-radius: 16px;
+    border-bottom: none;
+    align-items: center;
+  }
+
+  .db-table-name-cell {
+    grid-area: name;
+  }
+
+  .db-table-count {
+    grid-area: meta;
+    font-size: 12px;
+  }
+
+  .db-table-date {
+    /* tuck date next to count on mobile */
+    grid-area: meta;
+    justify-self: end;
+    align-self: center;
+    margin-right: 28px;
+  }
+
+  .db-table-arrow {
+    grid-area: arrow;
+    grid-row: 1 / -1;
+  }
+}
+
+@media (max-width: 479px) {
+  .db-page-title {
+    font-size: 20px;
+    padding-top: 20px;
+  }
+
+  /* Card padding tighter */
+  .db-card-inner {
+    padding: 14px;
+  }
+
+  .db-card-name {
+    font-size: 15px;
+  }
+}
