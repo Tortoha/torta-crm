@@ -1,0 +1,674 @@
+@import './shared.css';
+
+:root {
+  --bg: #F2F1F7;
+  --card: #ffffff;
+  --card-hover: #f0f0f0;
+  --text: #000000;
+  --muted: #000000;
+  --icon: #000000;
+  --indicator: #000000;
+  --sidebar-w: 200px;
+  --sidebar-w-collapsed: 56px;
+  --header-h: 48px;
+  --radius-card: 24px;
+  --radius-item: 10px;
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.25, 0.9, 0.3, 1);
+  --shadow-card: none;
+  --shadow-sidebar: none;
+  --accent: #0071E3;
+  --accent-hover: #0071FF;
+  --accent-tint: rgba(0, 113, 227, 0.07);
+  --accent-tint-hover: rgba(0, 113, 227, 0.13);
+  --delete: #E30000;
+  --delete-tint: rgba(227, 0, 0, 0.07);
+  --delete-tint-hover: rgba(227, 0, 0, 0.13);
+  --box-shadow: 4px 8px 32px rgba(1, 3, 32, 0.08);
+  --accent-shadow: 2px 4px 12px rgba(1, 3, 32, 0.1);
+  --input-bg: #ffffff;
+  --border-soft: rgba(0, 0, 0, 0.08);
+  /* Foreground RGB channels — used as rgba(var(--fg-rgb), α) so semi-transparent
+     text (faint labels, arrows, dots) flips black→white between themes. */
+  --fg-rgb: 0, 0, 0;
+  --chart-grid: #eef0f3;
+  --chart-grid-strong: #c7c7cc;
+}
+
+:root[data-theme="dark"] {
+  --bg: #131314;
+  --card: #1A1A1C;
+  --card-hover: #242426;
+  --text: #e3e3e6;
+  --muted: #9A9AA3;
+  --icon: #C6C6CC;
+  --indicator: #e3e3e6;
+  --shadow-card: none;
+  --shadow-sidebar: none;
+  --box-shadow: 4px 8px 32px rgba(0, 0, 0, 0.5);
+  --accent-shadow: 2px 4px 12px rgba(0, 0, 0, 0.5);
+  --input-bg: #202022;
+  --border-soft: rgba(255, 255, 255, 0.10);
+  --fg-rgb: 255, 255, 255;
+  --chart-grid: rgba(255, 255, 255, 0.09);
+  --chart-grid-strong: rgba(255, 255, 255, 0.22);
+}
+
+/* Elevated controls that hardcoded a white background → dark surface. */
+[data-theme="dark"] .cpm-cat-btn,
+[data-theme="dark"] .po-combo-pop,
+[data-theme="dark"] .auth-modal .crm-input,
+[data-theme="dark"] .po-form .crm-input,
+[data-theme="dark"] .po-form .po-textarea,
+[data-theme="dark"] .cfg-block-body .crm-input,
+[data-theme="dark"] .bk-cb-search-input,
+[data-theme="dark"] .bk-cb-search-input:focus,
+[data-theme="dark"] .oauth-btn,
+/* EmailPanel — From-email split input matches other inputs */
+[data-theme="dark"] .auth-email-split {
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+/* EmailPanel — elevated cards inside the modal (preview + DNS blocks). */
+[data-theme="dark"] .auth-preview-card,
+[data-theme="dark"] .auth-dns-header-block,
+[data-theme="dark"] .auth-dns-rows-block,
+[data-theme="dark"] .auth-dns-row {
+  background: var(--card);
+}
+
+/* EmailPanel — row separators + show-all divider use the soft theme border. */
+[data-theme="dark"] .auth-dns-row + .auth-dns-row::before,
+[data-theme="dark"] .auth-dns-show-all {
+  background: transparent;
+}
+[data-theme="dark"] .auth-dns-row + .auth-dns-row::before {
+  background: var(--border-soft);
+}
+[data-theme="dark"] .auth-dns-show-all {
+  border-top: 1px solid var(--border-soft);
+}
+
+/* EmailPanel — TYPE pill ("TXT") + unknown-status dot. */
+[data-theme="dark"] .auth-dns-type {
+  background: rgba(255, 255, 255, 0.06);
+}
+[data-theme="dark"] .auth-dns-dot--unknown {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* Inputs sit on cards — give the focus ring an accent edge instead of #000. */
+[data-theme="dark"] .crm-input:focus,
+[data-theme="dark"] .crm-input:focus-visible {
+  border-color: var(--accent);
+}
+
+/* Segmented switch track is var(--card); on a card that blends — drop it to --bg. */
+[data-theme="dark"] .seg-switch {
+  background: var(--bg);
+  box-shadow: none;
+}
+
+/* Neutral chips that hardcoded light greys. */
+[data-theme="dark"] .crm-badge--gray {
+  background: #2C2C2F;
+  color: var(--muted);
+}
+[data-theme="dark"] .crm-badge--dark {
+  background: #2C2C2F;
+  color: var(--text);
+}
+
+/* Custom scrollbars read the dark surface. */
+[data-theme="dark"] * {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Wix Madefor Text", sans-serif;
+}
+
+/* ── ROOT ── */
+.crm-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ── BODY (sidebar + main) ── */
+.crm-body {
+  display: flex;
+  position: fixed;
+  top: var(--header-h);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--card);
+}
+
+/* ── SIDEBAR ── */
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  height: 100%;
+  background: var(--card);
+  border-right: none;
+  overflow: hidden;
+  transition: width 0.32s var(--ease-smooth);
+  box-sizing: border-box;
+}
+
+.sidebar--collapsed {
+  width: var(--sidebar-w-collapsed);
+}
+
+.sidebar-scroll {
+  width: var(--sidebar-w);
+  transition: width 0.32s var(--ease-smooth);
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* ── Sidebar nav area (fills remaining space) ── */
+.sb-nav-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* ── Sidebar bottom toggle ── */
+.sb-bottom {
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+
+.sb-toggle-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: 8px;
+  background: none;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: .875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  transition: 0.4s ease, color 0.15s ease;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sb-toggle-btn:hover {
+  background: var(--bg);
+}
+
+.sb-toggle-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.sb-toggle-label {
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+/* In collapsed mode — center the icon, hide label */
+.sidebar--collapsed .sb-toggle-btn {
+  justify-content: center;
+  padding: 8px;
+}
+
+.sidebar--collapsed .sb-toggle-label {
+  display: none;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── SIDEBAR BLOCKS ── */
+.sb-block {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sb-section-block {
+  padding: 0;
+}
+
+.sb-section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 999px;
+  user-select: none;
+  transition: 0.4s ease, height 0.28s var(--ease-smooth), padding 0.28s var(--ease-smooth);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.sb-section-header:hover {
+  background-color: var(--bg);
+}
+
+/* Hide section headers when collapsed */
+.sidebar--collapsed .sb-section-header {
+  height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sb-section-label {
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sb-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.5s var(--ease-smooth);
+}
+
+.sb-chevron--open {
+  transform: rotate(180deg);
+}
+
+/* ── ITEMS WRAPPER (animated open/close) ── */
+.sb-items-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.5s var(--ease-soft), opacity 0.25s ease;
+}
+
+.sb-items-wrapper--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+/* Force open when sidebar is collapsed */
+.sidebar--collapsed .sb-items-wrapper {
+  grid-template-rows: 1fr !important;
+  opacity: 1 !important;
+}
+
+.sb-items {
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-bottom: 4px;
+}
+
+/* ── ANIMATED INDICATOR ── */
+.sb-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  pointer-events: none;
+  z-index: 1;
+  will-change: transform, height, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    height 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.sb-item-wrap {
+  position: relative;
+  z-index: 2;
+}
+
+/* ── NAV ITEM ── */
+.sb-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  box-sizing: border-box;
+  padding: 8px 8px;
+  border-radius: var(--radius-item);
+  text-decoration: none;
+  color: var(--text);
+  font-size: .875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  letter-spacing: 0;
+  transition: color 0.15s ease;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sb-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: color 0.15s ease;
+}
+
+.sb-item-label {
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+  flex: 1;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+/* Collapse: hide labels, center icons */
+.sidebar--collapsed .sb-item {
+  justify-content: center;
+  padding: 8px 0;
+  gap: 0;
+}
+
+.sidebar--collapsed .sb-item-label {
+  opacity: 0;
+  max-width: 0;
+  overflow: hidden;
+}
+
+.sidebar--collapsed .sb-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar--collapsed .sb-items {
+  width: 36px;
+  margin: 0 auto;
+}
+
+.sidebar--collapsed .sb-item {
+  padding: 8px;
+  justify-content: center;
+}
+
+/* Scroll container shrinks with sidebar */
+.sidebar--collapsed .sidebar-scroll {
+  width: var(--sidebar-w-collapsed);
+  padding: 8px 4px;
+}
+
+/* Collapsed single block */
+.sb-collapsed-block {
+  padding: 4px;
+}
+
+/* Active item colors */
+.sb-item-wrap--current .sb-item {
+  color: #0071E3;
+}
+
+.sb-item-wrap--current .sb-icon {
+  color: #0071E3;
+}
+
+/* ── MAIN ── */
+.crm-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg);
+  border-radius: 48px 0 0 0;
+  padding: 0 24px;
+}
+
+/* No sidebar — no rounded corner */
+.crm-main--flat {
+  border-radius: 0;
+}
+
+.crm-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-bottom: 48px;
+}
+
+/* Project layout — wider canvas */
+.crm-content--wide {
+  max-width: 1520px;
+}
+
+/* ── PAGE TYPOGRAPHY ── */
+.crm-page-title {
+  margin: 0;
+  padding-top: 128px;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.crm-section {
+  margin-top: 16px;
+}
+
+.crm-section2 {
+  margin-top: 36px;
+}
+
+.crm-section-title {
+  margin: 0 0 12px 0;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* ── CARDS ── */
+.crm-card,
+.crm-placeholder {
+  background: var(--card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.crm-card {
+  padding: 24px 28px;
+}
+
+.crm-placeholder {
+  width: 100%;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(var(--fg-rgb), 0.36);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+/* ── LOADING ── */
+.crm-page-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.crm-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #e0e0e0;
+  border-top-color: #0071e3;
+  border-radius: 50%;
+  animation: crm-spin 0.8s linear infinite;
+}
+
+@keyframes crm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — all desktop rules above are FROZEN (≥1920px stays identical)
+
+   Breakpoints below adapt the project layout for shrinking viewports.
+   See Style/Responsive.css for the full breakpoint scale + utilities.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── lg: 1366-1919 ── tiny squeeze, nothing dramatic ─────────────────────── */
+@media (max-width: 1919px) {
+  .crm-content--wide { max-width: 1440px; }
+}
+
+@media (max-width: 1439px) {
+  .crm-content--wide { max-width: 1280px; }
+  .crm-main { padding: 0 20px; }
+}
+
+/* ── md: 1024-1365 ── tablet landscape / small laptop ────────────────────── */
+@media (max-width: 1365px) {
+  .crm-content--wide { max-width: 100%; }
+  .crm-main { padding: 0 16px; }
+  .crm-page-title { padding-top: 96px; }
+}
+
+/* ── sm: 768-1023 ── tablet portrait — sidebar becomes drawer overlay ────── */
+@media (max-width: 1023px) {
+  /* Pull sidebar out of layout flow → overlay drawer */
+  .sidebar {
+    position: fixed;
+    top: var(--header-h);
+    left: 0;
+    width: var(--mobile-drawer-w);
+    height: calc(100vh - var(--header-h));
+    height: calc(100dvh - var(--header-h));
+    z-index: var(--z-mobile-drawer);
+    background: var(--card);
+    transform: translateX(-100%);
+    transition: transform 0.32s var(--ease-smooth);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.18);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* "Open" on mobile = drawer slid in. The desktop "collapsed" class means
+     hidden here — we ignore the icon-strip mode on tablet/mobile since it
+     would just be a useless skinny 56px overlay. */
+  .sidebar:not(.sidebar--collapsed) {
+    transform: translateX(0);
+  }
+
+  /* Inner scroll container — let the .sidebar element own the scroll */
+  .sidebar-scroll {
+    width: var(--mobile-drawer-w);
+    padding: 12px;
+  }
+
+  /* Collapse-toggle button at the bottom is meaningless on mobile drawer
+     (the close action is "tap backdrop"). Hide to free space. */
+  .sb-bottom {
+    display: none;
+  }
+
+  /* Main content fills full width — no sidebar gutter */
+  .crm-main {
+    border-radius: 0;
+    padding: 0 var(--mobile-content-pad);
+  }
+
+  .crm-content,
+  .crm-content--wide {
+    max-width: 100%;
+    padding-bottom: 32px;
+  }
+
+  /* Body class set by Layout.jsx when drawer is open — lock background scroll */
+  body.rsp-drawer-locked {
+    overflow: hidden;
+    touch-action: none;
+  }
+}
+
+/* ── xs: 640-767 ── large mobile / small tablet — same as sm ─────────────── */
+@media (max-width: 767px) {
+  /* Smaller page padding */
+  .crm-main { padding: 0 var(--mobile-content-pad); }
+}
+
+/* ── xxs: <640 ── true mobile — bottom tab bar appears, leave room ───────── */
+@media (max-width: 639px) {
+  /* The bottom tab bar (.mtb-root) is `position: fixed; bottom: 0` — it
+     overlays the bottom of .crm-main's scrolled content. Padding on
+     .crm-main alone is unreliable (the scroll container's padding-bottom
+     doesn't always extend the scrollable range in all browsers, especially
+     iOS Safari). Put the safety margin on .crm-content (the in-flow
+     content wrapper) so the last item naturally scrolls into view above
+     the tab bar. */
+  .crm-content,
+  .crm-content--wide {
+    padding-bottom: calc(var(--mobile-tabbar-h, 56px) + var(--safe-bottom, 0px) + 24px);
+  }
+
+  /* Cards lose their oversized padding — every pixel counts on phones */
+  .crm-card {
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  /* Section title smaller */
+  .crm-section-title {
+    font-size: 16px;
+  }
+}
+
+/* ── xxxs: <360 ── tightest, single-column anything left ─────────────────── */
+@media (max-width: 359px) {
+  .crm-main { padding: 0 var(--mobile-content-pad-xxs); }
+  .crm-card { padding: 14px; }
+  .crm-page-title { font-size: 19px; padding-top: 16px; }
+}

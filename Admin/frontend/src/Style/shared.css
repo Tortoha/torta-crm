@@ -1,0 +1,221 @@
+@import './Responsive.css';
+
+*,
+input,
+textarea {
+  caret-color: #0071E3;
+}
+
+::selection {
+  background: #0071E3;
+  color: #fff;
+}
+
+.crm-add-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius-item);
+    background: #0071E3;
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.crm-add-btn:hover {
+    background-color: #007FFF;
+}
+
+.crm-add-btn-icon {
+    width: 16px;
+    height: 16px;
+}
+
+/* Заголовок секции + кнопка в ряд */
+.crm-section-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+/* Форма с анимацией раскрытия */
+.crm-form-wrap {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    margin-bottom: 10px;
+    transition:
+        grid-template-rows 0.52s var(--ease-smooth),
+        opacity 0.3s ease;
+}
+
+.crm-form-wrap--open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+}
+
+.crm-form-wrap>.crm-form {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.crm-form {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+/* Инпут */
+.crm-input {
+    flex: 1;
+    min-width: 160px;
+    padding: 10px 16px;
+    border: 2px solid transparent;
+    border-radius: var(--radius-item);
+    font-family: inherit;
+    font-size: 14px;
+    /* Explicit regular weight — without this, some browser/font combos
+       (and notably `input[type=number]` in Chrome) render values with a
+       heavier inherited weight than adjacent labels / placeholders. */
+    font-weight: 400;
+    font-variant-numeric: normal;
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.crm-input:focus {
+    border-color: #000;
+}
+
+.crm-input--sm {
+    flex: 0 1 180px;
+    min-width: 130px;
+}
+
+.crm-input-select {
+    cursor: pointer;
+}
+
+/* Ошибка в форме */
+.crm-form-error {
+    font-size: 13px;
+    color: #e3342f;
+    flex-basis: 100%;
+}
+
+/* Кнопка submit в форме */
+.crm-submit-btn {
+    padding: 10px 24px;
+    border: none;
+    border-radius: var(--radius-item);
+    background: #0071E3;
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 0.15s ease;
+}
+
+.crm-submit-btn:hover:not(:disabled) {
+    background-color: #007FFF;
+}
+
+.crm-submit-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Иконка-кнопка */
+.crm-icon-btn {
+    border: none;
+    background: none;
+    padding: 6px;
+    border-radius: 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    /* Buttons don't inherit body's color, so bare icons (no .crm-icon child)
+       fall back to the UA default black → invisible in dark mode. Anchor the
+       icon colour to the theme here. */
+    color: var(--text);
+    transition: background 0.18s ease;
+}
+
+.crm-icon-btn:hover {
+    background: var(--bg);
+}
+
+.crm-icon-btn--danger:hover .crm-icon {
+    color: #e3342f;
+}
+
+.crm-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--text);
+    transition: color 0.18s ease;
+}
+
+.crm-icon--sm {
+    width: 18px;
+    height: 18px;
+}
+
+.crm-icon--success {
+    color: #16a34a;
+}
+
+/* Бейдж */
+.crm-badge {
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.crm-badge--dark {
+    background: #000;
+    color: #fff;
+}
+
+.crm-badge--light {
+    background: var(--accent-tint);
+    color: var(--accent);
+}
+
+.crm-badge--gray {
+    background: #e8e8e8;
+    color: rgba(var(--fg-rgb), 0.68);
+}
+
+/* Список карточек */
+.crm-cards-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.crm-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.crm-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}

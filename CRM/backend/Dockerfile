@@ -1,14 +1,4 @@
 # syntax=docker/dockerfile:1.7
-# CRM backend — FastAPI on Postgres.
-#
-# Multi-stage build keeps the final image small (~250 MB) by only carrying
-# runtime artefacts: the system libs needed by Pillow / psycopg2 / etc.,
-# the installed Python packages, and the source. No build chain (gcc,
-# Python headers) ships to production.
-#
-# Image runs as a non-root user `app` for hardening.
-# Default CMD binds uvicorn to 0.0.0.0:8001 — same port as local dev so
-# nothing else in the codebase has to change.
 
 # ─── Stage 1: install Python deps ────────────────────────────────────────────
 FROM python:3.12-slim AS builder
@@ -75,8 +65,4 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://localhost:8001/docs > /dev/null || exit 1
 
-# Run via uvicorn — single worker per container, scale horizontally by
-# spinning up more containers (Fly.io machines) instead of multi-worker.
-# That keeps each container's footprint predictable and matches the
-# stateless-after-PG-kv-migration architecture.
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers", "--forwarded-allow-ips=*"]

@@ -1,0 +1,1293 @@
+/* ══════════════════════════════
+   HEADER — fixed top bar
+   ══════════════════════════════ */
+
+.crm-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  height: var(--header-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  background: var(--card);
+  border-bottom: none;
+  box-sizing: border-box;
+}
+
+.hdr-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.hdr-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Docs button (before the notifications bell) ── */
+.hdr-docs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  margin-right: 8px;
+  border: none;
+  background: none;
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: 0.4s ease;
+}
+
+.hdr-docs-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.hdr-docs-icon {
+  width: 17px;
+  height: 17px;
+}
+
+@media (max-width: 640px) {
+  .hdr-docs-label {
+    display: none;
+  }
+}
+
+/* ── Landing CTA (logged-out, blue filled) ── */
+.hdr-cta-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: 0.4s ease;
+}
+
+/* Breathing room between the Dashboard CTA and the avatar (landing, logged-in). */
+.hdr-cta-btn + .hdr-user {
+  margin-left: 12px;
+}
+
+.hdr-cta-btn:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 1px 16px rgba(0, 113, 227, 0.4);
+}
+
+/* ── Settings gear (landing → /preferences) ── */
+.hdr-settings-btn {
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  border: none;
+  background: none;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.hdr-settings-btn:hover { background: var(--accent-tint); color: var(--accent); }
+.hdr-settings-icon { width: 19px; height: 19px; }
+
+/* Landing: centre header content within a 1400px column (full-bleed bg). */
+.crm-header--landing {
+  padding-left:  max(24px, calc((100% - 1400px) / 2));
+  padding-right: max(24px, calc((100% - 1400px) / 2));
+}
+
+/* ── Landing nav tabs (Pricing + Docs) — sits inline next to the brand
+   logo in .hdr-left. Same Dynamic-Block pattern as .auth-tab-* in the
+   CRM: container 32px tall, padding 2px, indicator slides on hover,
+   text colour flips to accent for whichever tab is hovered or active. ── */
+.hdr-landing-nav {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg);
+  border-radius: 999px;
+  height: 32px;
+  padding: 2px;
+  margin-left: 12px;
+  box-sizing: border-box;
+}
+/* Hide on narrow screens — keeps the small CTA in view on phones. */
+@media (max-width: 640px) {
+  .hdr-landing-nav { display: none; }
+}
+
+.hdr-landing-nav-ind {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 28px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.hdr-landing-nav-tab {
+  position: relative;
+  z-index: 2;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0 14px 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.4s ease;
+}
+.hdr-landing-nav-tab--active { color: var(--accent); }
+
+.hdr-landing-nav-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* ── Brand link ── */
+.hdr-brand {
+  height: 32px;
+  width: 32px;
+  padding: 6px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  flex-shrink: 0;
+  transition: background 0.4s ease, color 0.4s ease;
+  box-sizing: border-box;
+  /* Defensive: pin the accent color and forbid descendant filters from washing it out.
+     Without this, lingering `backdrop-filter: blur` from a just-closed modal can leave the SVG looking grey/black for one paint frame. */
+  -webkit-text-fill-color: var(--accent);
+  filter: none !important;
+  isolation: isolate;
+}
+
+.hdr-brand-logo path {
+  fill: var(--accent) !important;
+}
+
+.hdr-brand:hover {
+  background: var(--accent-tint);
+}
+
+.hdr-brand-logo {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── Separator ── */
+.hdr-sep {
+  font-size: 16px;
+  color: rgba(var(--fg-rgb), 0.2);
+  padding: 0 2px;
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1;
+}
+
+/* ── Settings breadcrumb ── */
+.hdr-settings-crumb {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  padding: 0 6px;
+  user-select: none;
+}
+
+/* ══════════════════════════════
+   SWITCHER (Org + Project)
+   ══════════════════════════════ */
+
+.hdr-switcher {
+  position: relative;
+}
+
+.hdr-switcher-btn {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 200px;
+}
+
+.hdr-switcher-name {
+  height: 100%;
+  padding: 0 6px 0 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  transition: 0.4s ease;
+  border-radius: 8px;
+}
+
+.hdr-switcher-name:hover {
+  background: var(--accent-tint);
+  color: #0071E3;
+}
+
+.hdr-product-crumb {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hdr-switcher-arrow {
+  height: 100%;
+  padding: 0 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: 0.4s ease;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.hdr-switcher-arrow:hover {
+  background: var(--accent-tint);
+}
+
+.hdr-switcher-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.15s var(--ease-smooth), color 0.15s ease;
+}
+
+.hdr-switcher-arrow:hover .hdr-switcher-chevron {
+  color: #0071E3;
+}
+
+.hdr-switcher-chevron--open {
+  transform: rotate(180deg);
+}
+
+/* ── Dropdown ── */
+.hdr-switcher-drop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  background: var(--card);
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 500;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.97);
+  transform-origin: top left;
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s var(--ease-smooth);
+}
+
+.hdr-switcher-drop--open {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateY(0) scale(1);
+}
+
+.hdr-switcher-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── Search ── */
+.hdr-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  margin-bottom: 2px;
+  border-radius: 12px;
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.hdr-search-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.hdr-search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  min-width: 0;
+  line-height: 32px;
+  padding: 0px;
+}
+
+.hdr-search-input::placeholder {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* ── Items list with indicator ── */
+.hdr-sw-items {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.hdr-sw-items::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Dynamic indicator ── */
+.hdr-sw-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  background: var(--accent-tint);
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 1;
+  will-change: transform, height, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    height 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.hdr-switcher-item {
+  position: relative;
+  z-index: 2;
+}
+
+/* Active / hovered item — blue text over blue indicator */
+.hdr-sw-item--current {
+  color: #0071E3 !important;
+}
+
+.hdr-switcher-empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 6px 12px;
+  position: relative;
+  z-index: 2;
+}
+
+.hdr-switcher-item {
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.4s ease, color 0.4s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+
+
+/* ── Separator ── */
+.hdr-switcher-sep {
+  height: 1px;
+  background: var(--bg);
+  margin: 4px 4px;
+  flex-shrink: 0;
+}
+
+/* ── New org / project button ── */
+.hdr-switcher-new {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.4s ease, color 0.4s ease;
+  box-sizing: border-box;
+}
+
+.hdr-switcher-new:hover {
+  background: var(--accent-tint);
+  color: #0071E3;
+}
+
+.hdr-switcher-new-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: color 0.4s ease;
+}
+
+.hdr-switcher-new:hover .hdr-switcher-new-icon {
+  color: #0071E3;
+}
+
+/* ══════════════════════════════
+   MODAL
+   ══════════════════════════════ */
+
+.hdr-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.hdr-modal {
+  background: var(--card);
+  border-radius: 36px;
+  padding: 16px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hdr-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hdr-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  padding-left: 8px;
+}
+
+.hdr-modal-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  transition: 0.15s ease, color 0.15s ease;
+}
+
+.hdr-modal-close:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.hdr-modal-close-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.hdr-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hdr-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hdr-modal-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0 8px;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.hdr-modal-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 14px;
+  background: var(--bg);
+  border: none;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.hdr-modal-input:focus {
+  box-shadow: 0 0 0 2px var(--accent-tint);
+}
+
+.hdr-modal-input::placeholder {
+  color: rgba(var(--fg-rgb), 0.3);
+}
+
+.hdr-modal-err {
+  font-size: 12px;
+  color: #ef4444;
+  padding: 0 4px;
+}
+
+.hdr-modal-submit {
+  height: 42px;
+  background: #0071E3;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.15s ease;
+  margin-top: 16px;
+}
+
+.hdr-modal-submit:hover:not(:disabled) {
+  background: #007FFF;
+}
+
+.hdr-modal-submit:disabled {
+  /* Theme-aware disabled state — tints with the foreground so it stays
+     readable on both light and dark modal surfaces. The previous
+     #e5e5e5 hard-coded light grey + 36% white text on dark mode was
+     "Create" basically invisible. */
+  background: rgba(var(--fg-rgb), 0.08);
+  color: rgba(var(--fg-rgb), 0.36);
+  cursor: not-allowed;
+}
+
+/* ══════════════════════════════
+   USER MENU
+   ══════════════════════════════ */
+
+.hdr-user {
+  position: relative;
+}
+
+.hdr-avatar-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease;
+}
+
+.hdr-avatar-btn:hover {
+  opacity: 0.8;
+}
+
+/* Avatar = a circle. Either the initials div OR the photo is rendered
+   (not stacked) so there's no ring of background colour peeking around
+   the photo's edge. */
+.hdr-avatar {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.hdr-avatar-photo {
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Dropdown */
+.hdr-user-drop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: var(--card);
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 500;
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    grid-template-rows 0.38s var(--ease-soft),
+    opacity 0.2s ease;
+}
+
+.hdr-user-drop--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: all;
+}
+
+.hdr-user-menu {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+}
+
+.hdr-user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 6px;
+}
+
+.hdr-user-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hdr-user-fullname {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hdr-user-email {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hdr-user-sep {
+  height: 1px;
+  background: var(--bg);
+  margin: 4px 8px;
+  flex-shrink: 0;
+}
+
+.hdr-drop-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.4s ease, color 0.4s ease;
+  box-sizing: border-box;
+}
+
+.hdr-drop-item:not(.hdr-drop-item--danger):hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.hdr-drop-item--danger {
+  color: var(--delete);
+}
+
+.hdr-drop-item--danger:hover {
+  background: var(--delete-tint);
+  color: var(--delete);
+}
+[data-theme="dark"] .hdr-drop-item--danger:hover {
+  background: var(--delete-tint);
+}
+
+.hdr-drop-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  transition: color 0.4s ease;
+}
+
+.hdr-drop-item:not(.hdr-drop-item--danger):hover .hdr-drop-icon {
+  color: #0071E3;
+}
+
+/* ── NotificationsBell ─────────────────────────────────── */
+.hdr-bell-btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--text);
+  margin-right: 6px;
+  transition: 0.4s ease;
+}
+
+.hdr-bell-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.hdr-bell-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.hdr-bell-badge {
+  position: absolute;
+  top: 2px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.notif-popover {
+  position: fixed;
+  width: 400px;
+  /* Fits the capped 10 rows + "View all" footer without scrolling on a normal
+     screen; only a very short viewport triggers the (quiet) list scroll. */
+  max-height: min(680px, calc(100vh - 80px));
+  /* background: var(--bg); */
+  /* border-radius: 20px; */
+  /* box-shadow: 0 8px 24px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.06); */
+  /* padding: 12px; */
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  animation: drop-in 0.18s var(--ease-smooth);
+}
+
+/* Head row holds only the "Mark all read" CTA (when there's anything to
+   mark). Title removed per UX feedback — the bell icon + dropdown context
+   already make it self-evident this is the Notifications popover. */
+.notif-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px 8px;
+}
+
+.notif-mark-all {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.4s ease;
+}
+
+.notif-mark-all:hover {
+  color: var(--accent);
+}
+
+
+.notif-list {
+  flex: 1;
+  min-height: 0;
+  /* No overflow here — the 10-cap + the bumped popover max-height keep the
+     11-card stack contained on a normal screen, and leaving overflow off
+     preserves the original full-width cards + un-clipped drop-shadows. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+
+.notif-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.notif-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 999px;
+}
+
+.notif-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* po-set-table inside the popover — drop the top margin (we already have
+   padding on .notif-popover) and use a 2-column grid: body | time.
+
+   `filter: drop-shadow` (not `box-shadow`) — traces the actual rendered
+   contour of children rather than the table's bounding rect. Because the
+   head pill and the body row stack are visually separate (head has
+   margin-bottom + own rounded corners, body has its own), each gets its
+   OWN shadow automatically. A single box-shadow on the table would paint
+   one big rectangle behind both, defeating the visual separation. Two
+   stacked drop-shadows mimic the soft+sharp shadow pattern used by the
+   header switcher dropdowns elsewhere in the CRM. */
+.notif-popover .po-set-table {
+  margin-top: 0;
+  filter:
+    drop-shadow(0 6px 16px rgba(0, 0, 0, 0.10)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.06));
+}
+
+.notif-row {
+  grid-template-columns: 1fr 70px !important;
+}
+
+/* Clickable body rows — pointer cursor via class instead of inline style. */
+.notif-row--clickable {
+  cursor: pointer;
+}
+
+/* Header pill was removed → the cascading "po-set-row--head + po-set-row"
+   selector no longer rounds the first body row's top corners. Apply it
+   manually as :first-child here so the body stack stays a clean rounded card. */
+.notif-popover .po-set-table>.po-set-row:first-child:not(.po-set-row--head) {
+  border-radius: 24px 24px 0 0;
+}
+
+.notif-popover .po-set-row--head.notif-row {
+  margin-bottom: 6px;
+}
+
+
+.notif-popover .po-set-row.notif-row--unread .notif-row-icon::after {
+  content: '';
+  position: absolute;
+  top: 0px;
+  right: 0px;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+/* Body cell holds an icon tile + 2-line text (title + message). */
+.notif-row-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.notif-row-icon {
+  /* position:relative so the unread-state ::after dot can absolutely-position
+     relative to the icon tile, not the page. */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 10px;
+}
+
+.notif-row-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.notif-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notif-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notif-row-message {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notif-row-time {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── 11th card = "View all notifications" CTA (inside the same po-set-table
+      stack, NOT a separate footer block). Single centered cell. ── */
+.notif-viewall-row {
+  grid-template-columns: 1fr !important;
+  cursor: pointer;
+}
+
+.notif-viewall-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.notif-viewall-inner svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ══════════════════════════════
+   ALL-NOTIFICATIONS MODAL — window chrome reused from the New-promo-code
+   modal (.auth-modal / .cpm-modal). Only the body + date groups are custom.
+   ══════════════════════════════ */
+/* Kill the overlay blur for this modal — backdrop-filter forces a full
+   re-composite every frame while the tilt-cards animate, which throttles the
+   InteractiveSection lerp to a crawl. The dim (rgba bg) alone keeps focus. */
+.notif-all-overlay {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Grey body so the white po-set-table cards float — the Products-list look. */
+.notif-all-body {
+  background: var(--bg);
+}
+
+.notif-group {
+  margin-top: 16px;
+}
+
+.notif-group:first-child {
+  margin-top: 2px;
+}
+
+/* Infinite-scroll trigger — invisible unless it's actively loading the page. */
+.notif-load-sentinel {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notif-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 6px 6px;
+}
+
+/* The modal isn't inside .notif-popover, so re-declare the card-stack chrome
+   (the popover-scoped rules don't reach here).
+   NO `filter: drop-shadow` here — a filter on the table forces the browser to
+   re-trace the whole shadow every frame the hovered card tilts (the same class
+   of cost as backdrop-filter), which is exactly why the tilt felt sluggish.
+   Inventory / Promo codes have no table filter → 60fps. The grey body + the
+   po-set-row dividers give the cards their definition instead. */
+.notif-all-modal .po-set-table {
+  margin-top: 0;
+}
+
+.notif-all-modal .po-set-table>.po-set-row:first-child {
+  border-radius: 16px 16px 0 0;
+}
+
+.notif-all-modal .po-set-table>.po-set-row:last-child {
+  border-radius: 0 0 16px 16px;
+}
+
+.notif-all-modal .po-set-table>.po-set-row:only-child {
+  border-radius: 16px;
+}
+
+.notif-all-modal .notif-row--unread .notif-row-icon::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   HEADER — RESPONSIVE
+   Desktop (≥1920px) untouched. Adaptations only below.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Hamburger button — desktop hidden, tablet/mobile visible ───────────── */
+.hdr-hamburger {
+  display: none;       /* default: hidden on desktop */
+  width: 36px;
+  height: 36px;
+  margin-right: 4px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--text);
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s ease, color 0.18s ease;
+  flex-shrink: 0;
+}
+
+.hdr-hamburger:hover,
+.hdr-hamburger:active {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.hdr-hamburger-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Show hamburger when sidebar becomes a drawer (matches Layout.css sm bp) */
+@media (max-width: 1023px) {
+  .hdr-hamburger {
+    display: inline-flex;
+  }
+}
+
+/* ── md: 1024-1365 ── tighter switcher max-width, smaller landing nav ──── */
+@media (max-width: 1365px) {
+  .hdr-switcher-btn {
+    max-width: 160px;
+  }
+}
+
+/* ── sm: 768-1023 ── tablet portrait — switchers more compact, docs label
+       can be hidden if it would push content offscreen ──────────────────── */
+@media (max-width: 1023px) {
+  .hdr-switcher-btn {
+    max-width: 140px;
+  }
+
+  /* Reduce gap between brand + breadcrumbs */
+  .hdr-sep {
+    padding: 0 1px;
+  }
+}
+
+/* ── xs: 640-767 ── large mobile — hide org switcher (project context),
+       truncate names, hide docs label completely ────────────────────────── */
+@media (max-width: 767px) {
+  /* Header height bumps up slightly to fit larger touch targets */
+  :root {
+    --header-h: 56px;
+  }
+
+  .crm-header {
+    padding: 0 6px;
+  }
+
+  /* When the user is inside a project, the org breadcrumb takes too much
+     space — drop it and keep just the project switcher. The hamburger
+     gives access to org-level nav. The first .hdr-sep (between brand and
+     org switcher) is also hidden when org switcher hides. */
+  .hdr-left .hdr-switcher:has(+ .hdr-sep + .hdr-switcher) {
+    display: none;
+  }
+  .hdr-left .hdr-switcher:has(+ .hdr-sep + .hdr-switcher) + .hdr-sep {
+    display: none;
+  }
+
+  .hdr-switcher-btn {
+    max-width: 180px;
+  }
+
+  /* Docs button: icon only on phones */
+  .hdr-docs-btn {
+    padding: 0 10px;
+  }
+}
+
+/* ── xxs: <640 ── true mobile — tightest spacing, minimal chrome ───────── */
+@media (max-width: 639px) {
+  .crm-header {
+    padding: 0 4px;
+  }
+
+  .hdr-switcher-btn {
+    max-width: 140px;
+  }
+
+  .hdr-switcher-name {
+    font-size: 13px;
+    padding: 0 4px;
+  }
+
+  .hdr-cta-btn {
+    height: 32px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+
+  /* Bell button shrinks slightly */
+  .hdr-bell-btn {
+    width: 36px;
+    height: 36px;
+    margin-right: 2px;
+  }
+
+  /* Settings gear on landing — smaller margin */
+  .hdr-settings-btn {
+    margin-right: 4px;
+  }
+
+  /* Notifications popover: full-width on phones */
+  .notif-popover {
+    width: calc(100vw - 16px);
+    max-width: 100vw;
+    right: 8px !important;
+    left: 8px !important;
+  }
+
+  /* User dropdown — flip to centered full-width sheet on phones for
+     comfortable thumb reach. */
+  .hdr-user-drop {
+    right: 0;
+    min-width: 240px;
+  }
+}
+
+/* ── xxxs: <360 ── tightest. Hide brand text/use icon-only. ────────────── */
+@media (max-width: 359px) {
+  .hdr-switcher-btn {
+    max-width: 110px;
+  }
+
+  .hdr-switcher-name {
+    font-size: 12px;
+  }
+
+  /* Brand shrinks slightly */
+  .hdr-brand {
+    width: 28px;
+    height: 28px;
+  }
+}

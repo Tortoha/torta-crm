@@ -1,0 +1,103 @@
+/* Alerts page — rule list + fires history. */
+
+.al-row {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+}
+
+.al-row-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.al-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.al-icon--on {
+  color: var(--accent);
+}
+
+.al-icon--off {
+  color: var(--muted);
+}
+
+.al-row-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.al-row-meta {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.al-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.al-toggle {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border: none;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.al-toggle:hover {
+  background: rgba(0, 113, 227, 0.12);
+}
+
+/* Fires history — compact stacked rows. */
+.al-fires {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.al-fire {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 16px;
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.al-fire-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.al-fire-msg {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.al-fire-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}

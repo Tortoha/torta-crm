@@ -1,0 +1,475 @@
+/* ════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — global breakpoint system + cross-cutting mobile utilities
+
+   CRITICAL RULE:
+     Desktop (≥1920px) is FROZEN. Every responsive rule lives inside a
+     `@media (max-width: 1919px)` or narrower query. Never edit rules that
+     apply at all widths — that would change the desktop layout.
+
+   BREAKPOINTS — written as numeric @media queries (CSS custom-media isn't
+   stable). These mirror the --bp-* token comments below — keep them in sync.
+
+       xl   ≥1920px     untouched (current desktop)
+       lg   1366-1919   tiny tweaks (padding shrink, narrower max-width)
+       md   1024-1365   tablet landscape / small laptop — sidebar collapses
+       sm    768-1023   tablet portrait — 2-col → 1-col, sidebar = drawer
+       xs    640-767    large mobile / small tablet — mobile chrome
+       xxs   480-639    mobile — bottom tab bar, full-screen modals
+       xxxs  <480       tightest — single-column, min padding
+
+   USAGE:
+     @media (max-width: 1919px)  → everything below desktop
+     @media (max-width: 1365px)  → md and below (tablets + mobile)
+     @media (max-width: 1023px)  → sm and below
+     @media (max-width: 767px)   → xs and below (mobile region)
+     @media (max-width: 639px)   → xxs and below (true mobile)
+     @media (max-width: 479px)   → xxxs (small phones)
+   ════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Numeric tokens — read by JS via getComputedStyle if a component needs
+     to match a breakpoint in JavaScript. Pure documentation in CSS. */
+  --bp-xl:   1920px;
+  --bp-lg:   1366px;
+  --bp-md:   1024px;
+  --bp-sm:    768px;
+  --bp-xs:    640px;
+  --bp-xxs:   480px;
+  --bp-xxxs:  360px;
+
+  /* Mobile chrome — only meaningful below sm */
+  --mobile-tabbar-h: 56px;          /* bottom tab bar height */
+  --mobile-drawer-w: 280px;         /* hamburger drawer width */
+  --mobile-header-h: 56px;          /* slightly taller header on mobile (back btn + caret) */
+  --mobile-content-pad: 16px;       /* default content side padding */
+  --mobile-content-pad-xxs: 12px;   /* tighter for small phones */
+  --touch-target-min: 44px;         /* iOS HIG minimum */
+
+  /* Drawer/sheet overlay z-index ladder. Header is 300 (Header.css) — keep
+     drawer above sidebar but below header. Backdrop sits just below drawer. */
+  --z-mobile-backdrop:   180;
+  --z-mobile-drawer:     200;
+  --z-mobile-tabbar:     250;       /* tab bar floats above content but below header */
+  --z-mobile-fs-modal:   400;       /* full-screen modal on mobile — above everything */
+}
+
+/* ── safe-area insets (iOS notch + Android nav bar) ─────────────────────
+   On phones the bottom tab bar must respect the home indicator strip.
+   Provide a fallback so older browsers don't get 0 padding. */
+@supports (padding: env(safe-area-inset-bottom)) {
+  :root {
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-top:    env(safe-area-inset-top, 0px);
+  }
+}
+@supports not (padding: env(safe-area-inset-bottom)) {
+  :root {
+    --safe-bottom: 0px;
+    --safe-top:    0px;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   UTILITY CLASSES (always-applied, behaviour gated by media query)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Hide on mobile (xs and below — 767px) */
+.rsp-hide-mobile { display: revert; }
+@media (max-width: 767px) {
+  .rsp-hide-mobile { display: none !important; }
+}
+
+/* Show only on mobile (xs and below) */
+.rsp-mobile-only { display: none; }
+@media (max-width: 767px) {
+  .rsp-mobile-only { display: revert; }
+}
+
+/* Show only on true mobile (xxs and below — 639px) */
+.rsp-xxs-only { display: none; }
+@media (max-width: 639px) {
+  .rsp-xxs-only { display: revert; }
+}
+
+/* Hide on true mobile */
+.rsp-hide-xxs { display: revert; }
+@media (max-width: 639px) {
+  .rsp-hide-xxs { display: none !important; }
+}
+
+/* Show only on tablet/laptop (sm-lg). Hide on mobile AND on desktop xl. */
+.rsp-tablet-only { display: none; }
+@media (min-width: 768px) and (max-width: 1919px) {
+  .rsp-tablet-only { display: revert; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   MOBILE DRAWER BACKDROP — used by Sidebar/OrgSidebar/ProductSidebar
+   when they slide in as drawers on mobile.
+   ════════════════════════════════════════════════════════════════════════ */
+.rsp-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: var(--z-mobile-backdrop);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s var(--ease-smooth);
+}
+
+.rsp-drawer-backdrop--open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+[data-theme="dark"] .rsp-drawer-backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+/* Show backdrop only when drawer can exist (mobile region) */
+@media (min-width: 768px) {
+  .rsp-drawer-backdrop { display: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   MOBILE FULL-SCREEN MODAL OVERRIDE
+
+   Modals carry their own classes (.auth-modal, .cpm-modal, .crm-modal etc).
+   Add `.rsp-modal-fs` alongside the modal's class to opt into the
+   "becomes full-screen on mobile" behaviour. Centered desktop look stays.
+
+   Or add `.rsp-modal-fs-auto` to the modal's BACKDROP (overlay element)
+   and we'll handle the inner card automatically below 640px.
+
+   Components: pages opt in by adding the class — we never force-apply
+   so we don't accidentally break a modal whose desktop layout was
+   intentionally narrow (e.g. small confirm dialogs that should stay
+   small even on mobile).
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 639px) {
+  /* Backdrop hosting a full-screen modal — kill centering padding */
+  .rsp-modal-fs-backdrop {
+    padding: 0 !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+  }
+
+  /* The modal card itself — fill viewport, no rounded corners (native feel) */
+  .rsp-modal-fs {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    height: 100dvh !important;       /* dynamic viewport — handles iOS toolbar */
+    max-height: 100dvh !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  /* Sticky top bar for full-screen modals.
+     Place a div with this class as the first child to get back-arrow + title bar. */
+  .rsp-modal-fs-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    padding-top: calc(12px + var(--safe-top));
+    background: var(--card);
+    border-bottom: 1px solid var(--border-soft);
+    min-height: 56px;
+    box-sizing: border-box;
+  }
+
+  .rsp-modal-fs-back {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.18s ease;
+  }
+
+  .rsp-modal-fs-back:hover,
+  .rsp-modal-fs-back:active {
+    background: var(--bg);
+  }
+
+  .rsp-modal-fs-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Modal body — fills remaining height, scrolls internally */
+  .rsp-modal-fs-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px;
+    padding-bottom: calc(16px + var(--safe-bottom));
+    box-sizing: border-box;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   STACKED CARDS — `po-set-table` adaptation pattern for mobile
+
+   On desktop, .po-set-table is `display: flex; flex-direction: column` with
+   .po-set-row children using `display: grid` + custom grid-template-columns
+   per page. On mobile (<640px), each row becomes a stacked card.
+
+   We keep this rule loose intentionally — each page customises its grid,
+   so we just collapse to 1-col with sane defaults. Pages that need richer
+   mobile layouts (e.g. Orders with badge + amount on same line) override.
+
+   Pages that use this:
+     Orders, Customers, Returns, Targets, Promo Codes, Inventory, OrgTeam,
+     Warehouses, Discounts, TierPricing, Alerts, Integrations.
+
+   Exception: Booking — keeps its existing layout (calendar drag needs
+   horizontal-scroll, handled in Booking.css separately).
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 639px) {
+  /* Hide the desktop column-header pill row — meaningless for stacked cards */
+  .po-set-table .po-set-row--head {
+    display: none !important;
+  }
+
+  /* Card stack mode */
+  .po-set-table {
+    gap: 10px;
+  }
+
+  /* Each body row → stacked card. Height auto (desktop forced 52px), grid
+     collapses to single column, padding doubles vertically for breathing. */
+  .po-set-table .po-set-row:not(.po-set-row--head) {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto;
+    grid-auto-flow: row;
+    height: auto !important;
+    min-height: 64px;
+    padding: 14px 16px !important;
+    background: var(--card) !important;
+    border-radius: 16px !important;
+    align-items: stretch !important;
+    gap: 6px;
+    overflow: visible !important;     /* desktop hides — but stacked rows can
+                                         span past their natural height */
+  }
+
+  /* Kill desktop row hover effects on mobile — taps don't hover, and the
+     box-shadow + border-radius shift would look glitchy on touch. */
+  .po-set-table .po-set-row:not(.po-set-row--head):hover {
+    border-radius: 16px !important;
+    box-shadow: none !important;
+  }
+
+  /* Adjacent-row dividers (desktop draws a 1px line between rows) — hide
+     when the rows are floating cards with gaps */
+  .po-set-table .po-set-row:not(.po-set-row--head) + .po-set-row:not(.po-set-row--head)::before {
+    display: none;
+  }
+
+  /* First/last row rounded corners — restore independent rounding per card */
+  .po-set-table .po-set-row--head + .po-set-row,
+  .po-set-table .po-set-row:last-child:not(.po-set-row--head),
+  .po-set-table .po-set-row--head + .po-set-row:last-child {
+    border-radius: 16px !important;
+  }
+
+  /* Cells inside a stacked row — let them flow naturally instead of being
+     constrained to grid cells. Specifically: avoid the `text-align: right`
+     that some pages apply to numeric columns (looks weird stacked). */
+  .po-set-table .po-set-row:not(.po-set-row--head) > * {
+    text-align: left !important;
+    min-width: 0;
+  }
+
+  /* Opt-in: cells with [data-label] get a leading label.
+     Pages can sprinkle `data-label="Status"` etc. on cells for clarity. */
+  .po-set-table [data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 2px;
+    opacity: 0.85;
+  }
+
+  /* Opt-in: cell marked .po-cell--primary gets emphasis (name / number) */
+  .po-set-table .po-cell--primary {
+    font-weight: 600;
+    font-size: 15px;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   TAB SWITCHER (auth-tab-wrapper) — horizontal scroll on mobile
+
+   Used by Authentication, Orders/Returns, Products tabs, Booking tabs,
+   Emails tabs, Chat tabs. When tabs don't fit, they should scroll
+   horizontally instead of wrapping or pushing buttons.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  .auth-tab-wrapper,
+  .crm-tab-wrapper,
+  .po-tab-wrapper {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+    /* Don't wrap onto two lines */
+    flex-wrap: nowrap;
+    /* Allow shrinking inside flex parents */
+    max-width: 100%;
+  }
+
+  .auth-tab-wrapper::-webkit-scrollbar,
+  .crm-tab-wrapper::-webkit-scrollbar,
+  .po-tab-wrapper::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Buttons should not shrink — let them push for horizontal scroll */
+  .auth-tab-btn,
+  .crm-tab-btn,
+  .po-tab-btn {
+    flex-shrink: 0;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   FORMS — touch targets, full-width inputs
+
+   On mobile, inputs and buttons should be at least 44×44px (iOS HIG).
+   Pill-shaped inputs (radius 999px) keep their shape, just get taller.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 639px) {
+  /* Default inputs — bump padding to hit 44px */
+  .crm-input {
+    min-height: 44px;
+    padding: 11px 16px;
+    font-size: 15px;            /* iOS auto-zoom prevention: ≥16px works, 15px close */
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Compact input variant — stays small intentionally for tight forms */
+  .crm-input--sm {
+    min-height: 40px;
+    padding: 9px 14px;
+    flex: 1 1 100%;
+  }
+
+  /* Submit + add buttons → full width on mobile, comfortable height */
+  .crm-submit-btn,
+  .crm-add-btn {
+    min-height: 44px;
+    padding: 11px 24px;
+    font-size: 15px;
+  }
+
+  /* Icon buttons → bigger tap target */
+  .crm-icon-btn {
+    padding: 10px;
+    min-width: 40px;
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  /* Form gap tightens but rows still wrap easily */
+  .crm-form {
+    gap: 10px;
+  }
+}
+
+/* iOS Safari: input font-size <16px triggers auto-zoom on focus. Lift to
+   16px on inputs that accept text input on phones. */
+@media (max-width: 639px) {
+  input[type="text"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="number"],
+  input[type="search"],
+  input[type="password"],
+  input[type="url"],
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PAGE TITLE — shrink top padding on mobile (no fixed header overlap there)
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  .crm-page-title {
+    padding-top: 24px;
+    font-size: 22px;
+  }
+}
+
+@media (max-width: 479px) {
+  .crm-page-title {
+    padding-top: 20px;
+    font-size: 20px;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   COMMON 2-COL / 3-COL GRIDS → STACK ON MOBILE
+
+   Most pages use `display: grid; grid-template-columns: 1fr 1fr` (2-col)
+   or `repeat(auto-fit, minmax(280px, 1fr))` patterns. The auto-fit
+   patterns reflow naturally — the fixed `1fr 1fr` ones need help.
+
+   Pages with custom grids should override locally. This is just the
+   common-case fallback for utility-style grid classes.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 639px) {
+  .rsp-grid-stack {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PREVENT HORIZONTAL OVERFLOW
+
+   Wide tables, charts, or absolutely-positioned elements can blow out
+   the viewport horizontally on mobile. Guard the root.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  html, body {
+    overflow-x: hidden;
+  }
+}

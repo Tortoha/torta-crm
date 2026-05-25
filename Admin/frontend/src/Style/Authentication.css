@@ -1,0 +1,2244 @@
+/* ══════════════════════════════════════════════════════
+   AUTHENTICATION PAGE
+   ══════════════════════════════════════════════════════ */
+
+/* ── Sticky tab wrapper ── */
+.auth-tab-wrapper {
+  position: fixed;
+  top: 48px;
+  left: var(--current-sidebar-w, var(--sidebar-w));
+  right: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  padding: 16px 0 8px;
+  pointer-events: none;
+  transition: 0.5s ease;
+}
+
+/* ── Tab switcher pill ── */
+.auth-tab-switcher {
+  pointer-events: all;
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.07), 0 1px 4px rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+}
+
+.auth-tab-indicator {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.auth-tab-btn {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0 16px;
+  padding-left: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  transition: color 0.4s ease;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auth-tab-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.auth-tab-btn--active {
+  color: var(--accent);
+}
+
+.auth-page-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 4px 0 24px;
+  line-height: 1.5;
+}
+
+/* ══════════════════════════════════════════════════════
+   PROVIDER LIST
+   ══════════════════════════════════════════════════════ */
+
+.auth-providers-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Row ── */
+.auth-provider-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px 160px 1fr 110px 24px;
+  align-items: center;
+  gap: 0 12px;
+  height: 62px;
+  background: var(--card);
+  padding: 0 18px 0 13px;
+  cursor: pointer;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  border-radius: 0;
+  transition: border-radius 0.3s ease, box-shadow 0.8s ease;
+}
+
+.auth-provider-row--first {
+  border-radius: 24px 24px 0 0;
+}
+
+.auth-provider-row--last {
+  border-radius: 0 0 24px 24px;
+}
+
+.auth-provider-row--first.auth-provider-row--last {
+  border-radius: 24px;
+}
+
+/* separator between rows */
+.auth-provider-row+.auth-provider-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 18px;
+  height: 1px;
+  background: var(--bg);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* hover — rounding + shadow */
+.auth-provider-row:not(.auth-provider-row--disabled):hover {
+  border-radius: 18px !important;
+  box-shadow: var(--box-shadow);
+  z-index: 2;
+}
+
+/* disabled row */
+.auth-provider-row--disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+/* gloss overlay */
+.auth-provider-gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  transition: opacity 0.3s ease;
+}
+
+/* ── Cells ── */
+.auth-provider-icon-wrap {
+  position: relative;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.auth-provider-icon-wrap--dim {
+  opacity: 0.7;
+}
+
+.auth-provider-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--accent);
+}
+
+.auth-provider-name {
+  position: relative;
+  z-index: 2;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.auth-provider-desc {
+  position: relative;
+  z-index: 2;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auth-provider-chevron {
+  position: relative;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  justify-self: end;
+  flex-shrink: 0;
+}
+
+/* ── Status badges ── */
+.auth-badge-enabled {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--accent);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  width: fit-content;
+}
+
+.auth-badge-disabled {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(var(--fg-rgb), 0.55);
+  background: #e5e7eb;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  width: fit-content;
+}
+
+/* Dark mode: the light #e5e7eb pill turns washed-out and its text goes
+   white-on-light. Swap to a dark-grey chip (matches .crm-badge--gray)
+   with muted-grey text. Shared by Auth Providers, Integrations, Payments. */
+[data-theme="dark"] .auth-badge-disabled {
+  background: #2C2C2F;
+  color: var(--muted);
+}
+
+/* ══════════════════════════════════════════════════════
+   MODAL
+   ══════════════════════════════════════════════════════ */
+
+.auth-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  backdrop-filter: blur(3px);
+}
+
+.auth-modal {
+  background: var(--bg);
+  border-radius: 32px;
+  width: 960px;
+  max-width: calc(100vw - 32px);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.14), 0 4px 20px rgba(0, 0, 0, 0.06);
+  scrollbar-width: none;
+}
+
+.auth-modal::-webkit-scrollbar {
+  display: none;
+}
+
+.auth-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 16px 0;
+  gap: 16px;
+}
+
+.auth-modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auth-modal-icon-wrap {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.auth-modal-icon-svg {
+  width: 32px;
+  height: 32px;
+  color: var(--accent);
+}
+
+.auth-modal-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.auth-modal-subtitle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.auth-modal-subtitle {
+  font-size: 13px;
+  color: rgba(var(--fg-rgb), 0.55);
+}
+
+.auth-modal-verified-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #2563EB;
+  background: rgba(37, 99, 235, 0.08);
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.auth-modal-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.auth-modal-close:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.auth-modal-close-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.auth-modal-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── scoped overrides inside modal ── */
+.auth-modal .crm-input {
+  background: #fff;
+  border-radius: 999px;
+  font-size: 14px;
+  /* Force regular weight with !important — browser user-agent stylesheets
+     occasionally inherit bold on type=number inputs, and other rules in
+     Products.css have the same specificity (0,2,0) and could win based on
+     bundle order. !important + font-variant-numeric:normal makes this a
+     hard guarantee: every input inside .auth-modal renders at weight 400,
+     no tabular-numerals heaviness on numeric values. */
+  font-weight: 400 !important;
+  font-variant-numeric: normal !important;
+  color: var(--text);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.auth-modal .crm-input:focus {
+  border-color: var(--card);
+  box-shadow: var(--box-shadow);
+  outline: none;
+}
+
+.auth-modal .crm-input::placeholder {
+  color: rgba(var(--fg-rgb), 0.36);
+}
+
+.auth-modal .crm-submit-btn {
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+  transition: background 0.18s ease, transform 0.1s ease;
+}
+
+.auth-modal .crm-submit-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.auth-modal .crm-submit-btn:disabled {
+  background: var(--muted);
+  color: rgba(var(--fg-rgb), 0.36);
+  cursor: default;
+}
+
+.auth-modal .crm-add-btn {
+  border-radius: 999px;
+}
+
+/* ── Two-column email layout: form 60% | preview 40% ── */
+.auth-email-layout {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 36px;
+  align-items: center;
+}
+
+/* ── Form elements inside modal ── */
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.auth-field-hint {
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.64;
+  margin: 0 0 4px;
+  line-height: 1.5;
+  padding: 0 8px;
+}
+
+.auth-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0 8px;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.auth-hint {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.auth-msg {
+  font-size: 13px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  margin: 0;
+}
+
+.auth-msg--ok {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.auth-msg--err {
+  background: rgba(220, 38, 38, 0.08);
+  color: #E30000;
+}
+
+.auth-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.auth-btn-danger,
+.crm-submit-btn.auth-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: none;
+  background: var(--delete-tint);
+  color: var(--delete);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: 0.4s ease;
+  padding-left: 8px;
+}
+
+.auth-btn-danger:hover:not(:disabled),
+.crm-submit-btn.auth-btn-danger:hover:not(:disabled) {
+  background: var(--delete-tint-hover);
+  color: var(--delete);
+}
+
+.auth-btn-danger:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Secondary inline button next to the danger action (e.g. Cancel) — neutral text, no background. */
+.auth-btn-secondary,
+.crm-submit-btn.auth-btn-secondary {
+  background: transparent;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.auth-btn-secondary:hover:not(:disabled),
+.crm-submit-btn.auth-btn-secondary:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.auth-btn-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background-color: var(--accent);
+  color: var(--card);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: 0.4s ease;
+  border: none;
+  padding-left: 8px;
+}
+
+.auth-btn-check:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.auth-btn-check:disabled {
+  background-color: #E5E7EB;
+  color: rgba(var(--fg-rgb), 0.36);
+  cursor: default;
+}
+
+.auth-btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background-color: var(--accent-tint);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: 0.4s ease;
+  border: none;
+  padding-left: 8px;
+}
+
+.auth-btn-link:hover:not(:disabled) {
+  background-color: var(--accent-tint-hover);
+}
+
+.auth-btn-link:disabled {
+  background-color: #E5E7EB;
+  color: rgba(var(--fg-rgb), 0.36);
+  cursor: default;
+}
+
+/* ── ApplePanel-specific ────────────────────────────────────────────── */
+/* Textarea for .p8 PEM contents — sized to comfortably show the 6-line
+   PRIVATE KEY block without scrolling. Eye toggle blurs the contents when
+   off so over-shoulder readers can't grab the key. */
+.apple-p8-textarea {
+  width: 100%;
+  border-radius: 16px !important;  /* rounder than inputs (less pill-y) */
+  padding: 12px 14px;
+  resize: vertical;
+  min-height: 110px;
+  line-height: 1.45;
+  background: var(--card);
+}
+.apple-p8-upload {
+  margin-top: 8px;
+  align-self: flex-start;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.apple-https-warn {
+  background: rgba(255, 159, 10, 0.10);
+  color: #B25E00;
+  border: 1px solid rgba(255, 159, 10, 0.25);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.apple-https-warn code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+.auth-msg--warn {
+  /* generic warn variant for future use */
+  background: rgba(255, 159, 10, 0.10);
+  color: #B25E00;
+}
+
+.auth-sep {
+  height: 1px;
+  background: var(--bg);
+}
+
+.auth-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── DNS records ── */
+.auth-dns-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.auth-dns-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-tint);
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding-left: 4px !important;
+}
+
+.auth-dns-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #D97706;
+  background: rgba(217, 119, 6, 0.08);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── DNS three-block structure ── */
+
+/* Block 1 — title + verified badge + Check DNS */
+.auth-dns-header-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #fff;
+  border-radius: 16px;
+  padding: 16px 20px;
+  margin-top: 8px;
+}
+
+.auth-dns-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.auth-dns-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 3px;
+}
+
+.auth-dns-card-desc {
+  font-size: 12px;
+  color: rgba(var(--fg-rgb), 0.36);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Block 2 — thead */
+.auth-dns-thead-block {
+  background-color: var(--card);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+/* Block 3 — rows + show-all (8px gap from thead) */
+.auth-dns-rows-block {
+  background: #fff;
+  border-radius: 16px;
+  margin-top: -8px;
+}
+
+.auth-dns-show-all {
+  display: block;
+  width: 100%;
+  padding: 11px 20px;
+  border: none;
+  border-top: 1px solid #ECEEF2;
+  background: transparent;
+  color: rgba(var(--fg-rgb), 0.36);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.auth-dns-show-all:hover {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+/* ── DNS list (org-style rows) ── */
+.auth-dns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-dns-thead {
+  display: grid;
+  grid-template-columns: 62px 1fr 2.4fr 90px;
+  gap: 0 16px;
+  padding: 0 20px;
+  height: 32px;
+  align-items: center;
+  background-color: var(--card);
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.36);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.auth-dns-gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  border-radius: inherit;
+}
+
+.auth-dns-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.auth-dns-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 62px 1fr 2.4fr 90px;
+  gap: 0 16px;
+  height: 48px;
+  background: #fff;
+  padding: 0 20px;
+  align-items: center;
+  border-radius: 0;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  transition: border-radius 0.25s ease, box-shadow 0.4s ease;
+}
+
+.auth-dns-row:not(.auth-dns-row--first):not(.auth-dns-row--last):hover,
+.auth-dns-row--first:hover,
+.auth-dns-row--last:hover {
+  border-radius: 18px !important;
+  box-shadow: var(--box-shadow);
+  z-index: 2;
+}
+
+.auth-dns-row--first {
+  border-radius: 16px 16px 0 0;
+}
+
+.auth-dns-row--last {
+  border-radius: 0 0 16px 16px;
+}
+
+.auth-dns-row--first.auth-dns-row--last {
+  border-radius: 24px;
+}
+
+/* separator */
+.auth-dns-row+.auth-dns-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: #ECEEF2;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.auth-dns-type {
+  font-size: 10px;
+  font-weight: 600;
+  background: #F3F4F6;
+  color: rgba(var(--fg-rgb), 0.55);
+  border-radius: 5px;
+  padding: 2px 7px;
+  text-align: center;
+  width: fit-content;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+.auth-dns-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.auth-dns-code {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.auth-dns-value {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.auth-dns-copy {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.auth-dns-copy:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.auth-dns-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.auth-dns-status--ok {
+  color: var(--accent);
+}
+
+.auth-dns-status--pending {
+  color: #d97706;
+}
+
+.auth-dns-status--unknown {
+  color: var(--muted);
+}
+
+.auth-dns-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.auth-dns-dot--ok {
+  background: var(--accent);
+}
+
+.auth-dns-dot--unknown {
+  background: #D1D5DB;
+}
+
+/* ══════════════════════════════════════════════════════
+   EMAIL SPLIT FIELD + PREVIEW
+   ══════════════════════════════════════════════════════ */
+
+.auth-email-split {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 999px;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  overflow: hidden;
+}
+
+.auth-email-split:focus-within {
+  border-color: #2563EB;
+  box-shadow: var(--box-shadow);
+}
+
+.auth-email-prefix {
+  flex: 1;
+  min-width: 0;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding-right: 0px !important;
+}
+
+.auth-email-prefix:focus {
+  border-color: transparent !important;
+}
+
+.auth-email-suffix {
+  flex-shrink: 0;
+  padding: 0 14px 0 2px;
+  font-size: 14px;
+  font-family: inherit;
+  color: rgba(var(--fg-rgb), 0.4);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ── Preview wrapper ── */
+.auth-preview-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.auth-preview-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.36);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 10px;
+}
+
+/* ── Email Preview card (light, interactive) ── */
+.auth-preview-card {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #ffffff;
+  will-change: transform;
+  transform-style: preserve-3d;
+}
+
+.auth-preview-card:hover {
+  box-shadow: var(--box-shadow);
+}
+
+.auth-preview-gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+}
+
+.auth-preview-inner {
+  position: relative;
+  z-index: 2;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.auth-preview-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+}
+
+.auth-preview-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: var(--box-shadow);
+}
+
+/* ── Sender avatar wrapper (clickable upload) ── */
+.auth-preview-avatar-wrap {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.auth-preview-avatar-wrap--clickable {
+  cursor: pointer;
+}
+
+.auth-preview-avatar-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+.auth-preview-avatar-img--default {
+  background: var(--bg);
+  padding: 2px;
+}
+
+.auth-preview-avatar--initials {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+.auth-preview-avatar--loading {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-preview-avatar-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.auth-preview-avatar-wrap--clickable:hover .auth-preview-avatar-overlay {
+  opacity: 1;
+}
+
+.auth-preview-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auth-preview-from {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.auth-preview-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.9);
+}
+
+.auth-preview-addr {
+  font-size: 11px;
+  color: rgba(var(--fg-rgb), 0.38);
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auth-preview-to {
+  font-size: 11px;
+  color: rgba(var(--fg-rgb), 0.32);
+}
+
+.auth-preview-time {
+  font-size: 11px;
+  color: rgba(var(--fg-rgb), 0.28);
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.auth-preview-divider {
+  height: 1px;
+  background: rgba(var(--fg-rgb), 0.07);
+  margin-bottom: 14px;
+}
+
+.auth-preview-subject-line {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.55);
+  padding-left: 48px;
+  margin-bottom: 10px;
+}
+
+.auth-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 48px;
+}
+
+.auth-preview-line {
+  height: 9px;
+  background: rgba(var(--fg-rgb), 0.07);
+  border-radius: 5px;
+}
+
+/* ── Google toggle ── */
+.auth-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-toggle-label {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.auth-toggle {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.auth-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.auth-toggle-track {
+  position: absolute;
+  inset: 0;
+  background: #d1d5db;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.auth-toggle-track::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.auth-toggle input:checked+.auth-toggle-track {
+  background: #0071E3;
+}
+
+.auth-toggle input:checked+.auth-toggle-track::before {
+  transform: translateX(18px);
+}
+
+/* ── Secret input ── */
+.auth-secret-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.auth-secret-wrap .crm-input {
+  padding-right: 40px;
+  width: 100%;
+}
+
+.auth-eye-btn {
+  position: absolute;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 0;
+  transition: color 0.15s ease;
+}
+
+.auth-eye-btn:hover {
+  color: var(--text);
+}
+
+/* ── Redirect URI ── */
+.auth-uri-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 10px 12px;
+}
+
+.auth-uri-code {
+  flex: 1;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text);
+  word-break: break-all;
+}
+
+/* ── Console link ── */
+.auth-console-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  transition: opacity 0.15s ease;
+}
+
+.auth-console-link:hover {
+  opacity: 0.7;
+}
+
+/* ══════════════════════════════════════════════════════
+   URL CONFIG TAB
+   ══════════════════════════════════════════════════════ */
+
+/* ── Wrapper: constrains width, stacks cards ── */
+.urlcfg-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Card: border-radius 16px, padding 16px ── */
+.auth-urlcfg-card {
+  background: var(--card);
+  border-radius: 32px;
+  box-shadow: var(--shadow-card);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Card header ── */
+.urlcfg-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.urlcfg-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.urlcfg-card-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(var(--fg-rgb), 0.48);
+  margin: 0;
+}
+
+/* ── Input: border-radius 999px ── */
+.urlcfg-input {
+  background: var(--bg);
+  border-radius: 999px !important;
+  font-size: 13px;
+  padding: 8px 16px;
+  border: none !important;
+}
+
+.urlcfg-input:focus {
+  border-color: var(--bg) !important;
+  outline: none;
+}
+
+/* ── Input + Save в одну строку ── */
+.urlcfg-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.urlcfg-inline-row .urlcfg-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Save: padding 8px 16px, font-size 13px, border-radius 999px ── */
+.urlcfg-save-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.urlcfg-save-btn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.urlcfg-save-btn:disabled {
+  background: #E5E7EB;
+  color: rgba(var(--fg-rgb), 0.36);
+  cursor: default;
+}
+
+/* ── Add URL row ── */
+.auth-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Add URL: padding 8px 16px, font-size 13px, border-radius 999px ── */
+.auth-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  background-color: var(--accent);
+  color: #ffffff;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: none;
+}
+
+.auth-add-btn:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.auth-add-btn:disabled {
+  background-color: #E5E7EB;
+  color: rgba(var(--fg-rgb), 0.36);
+  cursor: default;
+}
+
+.auth-redirect-list {
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.auth-redirect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background-color: var(--accent-tint);
+  color: var(--text);
+  border-top: 1px solid #ECEEF2;
+}
+
+.auth-redirect-row:first-child {
+  border-top: none;
+}
+
+.auth-redirect-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.auth-redirect-url {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Delete button ── */
+.urlcfg-del-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: rgba(var(--fg-rgb), 1);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: 0.4s ease;
+}
+
+.urlcfg-del-btn:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.07);
+  color: #DC2626;
+}
+
+.urlcfg-del-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Empty state ── */
+.urlcfg-empty {
+  font-size: 13px;
+  color: rgba(var(--fg-rgb), 0.38);
+  text-align: center;
+  margin: 2px 0 0;
+}
+
+/* ══════════════════════════════════════════════════════
+   BOTTOM TOAST
+   ══════════════════════════════════════════════════════ */
+
+.auth-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 10px 22px;
+  border-radius: 999px;
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(37, 99, 235, 0.32), 0 2px 8px rgba(0, 0, 0, 0.10);
+  pointer-events: none;
+  animation: auth-toast-in 0.3s var(--ease-smooth) both;
+}
+
+@keyframes auth-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   PHONE / SMS PROVIDER PANEL
+   ══════════════════════════════════════════════════════ */
+
+.phone-textarea {
+  border-radius: 16px !important;
+  padding: 10px 14px !important;
+  height: auto !important;
+  min-height: 70px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+/* Custom provider dropdown — matches CRM design system */
+.phone-dd {
+  position: relative;
+  width: 100%;
+}
+
+.phone-dd-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.phone-dd-trigger:hover {
+  border-color: var(--accent);
+}
+
+.phone-dd-label {
+  flex: 1;
+  text-align: left;
+}
+
+.phone-dd-chev {
+  transition: transform 0.25s ease;
+  flex-shrink: 0;
+  color: rgba(var(--fg-rgb), 0.4);
+}
+
+.phone-dd-chev--open {
+  transform: rotate(180deg);
+}
+
+.phone-dd-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 10;
+  animation: phone-dd-in 0.18s ease;
+}
+
+@keyframes phone-dd-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.phone-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.phone-dd-item:hover {
+  background: var(--accent-tint);
+}
+
+.phone-dd-item--active {
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+
+
+/* Dynamic Block sliding indicator (vertical, like Sidebar) */
+.phone-dd-indicator {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 0;
+  background: var(--accent-tint);
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  will-change: transform, height, opacity;
+  transition:
+    transform 0.45s var(--ease-smooth),
+    height 0.45s var(--ease-smooth),
+    opacity 0.18s ease;
+}
+
+/* Region groups in the menu */
+.phone-dd-group+.phone-dd-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.phone-dd-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(var(--fg-rgb), 0.4);
+  padding: 6px 12px 4px;
+  user-select: none;
+}
+
+/* Items sit on top of the indicator */
+.phone-dd-item {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+  /* override the original solid bg */
+}
+
+.phone-dd-item:hover {
+  background: transparent !important;
+  /* indicator handles the hover background */
+}
+
+.phone-dd-item--active {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.phone-dd-item-label {
+  flex: 1;
+  text-align: left;
+}
+
+/* ── CSV import modal ─────────────────────────────────── */
+.csv-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 36px 24px;
+  border: 2px dashed rgba(0, 113, 227, 0.25);
+  border-radius: 18px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.csv-dropzone:hover {
+  background: rgba(0, 113, 227, 0.04);
+  border-color: var(--accent);
+}
+
+.csv-dropzone--over {
+  background: rgba(0, 113, 227, 0.08);
+  border-color: var(--accent);
+  transform: scale(1.005);
+}
+
+.csv-dropzone-icon {
+  width: 44px;
+  height: 44px;
+  color: var(--accent);
+}
+
+.csv-dropzone-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.csv-dropzone-or {
+  font-size: 12px;
+  color: var(--muted);
+  margin: -2px 0;
+}
+
+.csv-dropzone-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.csv-dropzone-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.csv-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.csv-col-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  background: var(--bg);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: 'SF Mono', Menlo, monospace;
+  color: var(--muted);
+}
+
+.csv-col-chip--req {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: rgba(0, 113, 227, 0.18);
+  font-weight: 600;
+}
+
+.csv-file-section {
+  gap: 10px;
+}
+
+.csv-file-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-radius: 14px;
+}
+
+.csv-file-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.csv-file-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.csv-file-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.csv-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: rgba(0, 113, 227, 0.04);
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.csv-summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.csv-summary-item svg {
+  color: var(--accent);
+}
+
+.csv-summary-item--warn svg {
+  color: #d93025;
+}
+
+.csv-errors-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 0;
+}
+
+.csv-errors-details ul {
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 11px;
+  margin: 4px 0 0;
+}
+
+.csv-preview-wrap {
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.csv-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+.csv-preview-table th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--card);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.csv-preview-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.csv-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 24px;
+}
+
+.csv-done-circle {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.csv-done-circle svg {
+  width: 28px;
+  height: 28px;
+}
+
+.csv-done-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.csv-done-sub {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Print barcodes modal styles live in Style/Products.css */
+
+/* ════════════════════════════════════════════════════════════════════════
+   AUTH MODAL — RESPONSIVE
+   Desktop (≥1920) untouched. Adaptations below.
+
+   The auth-modal class is the workhorse modal across the CRM (used by
+   `.auth-modal`, `.cpm-modal`, AuthProviderPanel, EmailPanel, GooglePanel,
+   plus dozens of project pages that reuse the same overlay). Making it
+   responsive cascades to all of those.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── md/sm 768-1365 ── narrower max-width + smaller padding ─────────────── */
+@media (max-width: 1023px) {
+  .auth-modal {
+    max-width: calc(100vw - 24px);
+    max-height: 92vh;
+  }
+
+  /* The 960px design assumes a two-column layout (form left, preview right).
+     Below sm, force single-column. Pages that need to keep a side-by-side
+     layout can re-override with a more specific selector. */
+  .auth-modal-body {
+    /* common nested 2-col grids → 1-col */
+    /* Pages using grid-template-columns lose the second column on mobile */
+  }
+}
+
+/* ── xs 640-767 ── tighter ──────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .auth-modal-overlay {
+    /* Reduce blur — costly on mobile GPUs and feels heavy */
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+
+  .auth-modal {
+    border-radius: 24px;
+    max-width: calc(100vw - 16px);
+  }
+
+  .auth-modal-title {
+    font-size: 16px;
+  }
+}
+
+/* ── xxs <640 ── true mobile — full-screen sheet ────────────────────────── */
+@media (max-width: 639px) {
+  .auth-modal-overlay {
+    /* Backdrop blur off entirely on mobile — perf */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 0;
+  }
+
+  .auth-modal {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+    overflow: hidden;          /* let body scroll internally instead */
+    display: flex;
+    flex-direction: column;
+    animation: auth-modal-in-mobile 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+    box-shadow: none;
+  }
+
+  @keyframes auth-modal-in-mobile {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+
+  .auth-modal-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg);
+    padding: 14px 14px 10px;
+    padding-top: calc(14px + var(--safe-top));
+    border-bottom: 1px solid var(--border-soft);
+    flex-shrink: 0;
+  }
+
+  .auth-modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 14px;
+    padding-bottom: calc(14px + var(--safe-bottom));
+    gap: 12px;
+  }
+
+  /* .cpm-modal extends .auth-modal — same full-screen behaviour */
+  .cpm-modal {
+    width: 100vw !important;
+    max-width: 100vw !important;
+  }
+
+  .cpm-modal .auth-modal-head {
+    padding: 14px 14px 10px;
+    padding-top: calc(14px + var(--safe-top));
+  }
+
+  .cpm-modal .auth-modal-body {
+    padding: 14px;
+    padding-bottom: calc(14px + var(--safe-bottom));
+  }
+
+  /* Action button rows inside the modal stick to the bottom of the viewport */
+  .auth-actions,
+  .cpm-modal .auth-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg);
+    margin: 0 -14px -14px;
+    padding: 12px 14px;
+    padding-bottom: calc(12px + var(--safe-bottom));
+    border-top: 1px solid var(--border-soft);
+    /* Buttons stretch full-width on phones for big tap target */
+    flex-wrap: wrap;
+  }
+
+  .auth-actions .crm-submit-btn,
+  .auth-actions .auth-btn-check {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .auth-actions .auth-btn-danger {
+    flex: 1 1 100%;
+    margin-left: 0 !important;        /* override the desktop "marginLeft: auto" pattern */
+  }
+
+  /* Two-column layouts inside auth-modal-body → stack to one column.
+     Pages with their own grid set up via specific class (e.g. .urlcfg-wrap
+     2-col grid) can selectively re-override; this catches the generic case. */
+  .auth-modal-body > .grid-2,
+  .auth-modal-body > [style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   AUTH TAB SWITCHER — sticky pill on top. On desktop it's `position: fixed`
+   with `left: var(--current-sidebar-w)` so it floats next to the sidebar.
+   On mobile the sidebar is a drawer (out of flow) — the tabbed pill needs
+   to ignore the sidebar var and span full content width, AND scroll
+   horizontally if there are more tabs than fit.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  .auth-tab-wrapper {
+    left: 0;
+    /* When fixed at top above scrolled content, the in-page page-title pushes
+       down already — keep the pill above it. */
+  }
+}
+
+@media (max-width: 767px) {
+  .auth-tab-wrapper {
+    padding: 10px 12px 8px;
+    justify-content: flex-start;     /* left-align so scroll feels natural */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .auth-tab-wrapper::-webkit-scrollbar { display: none; }
+
+  /* Pill auto-shrinks; buttons stop trying to fit equally and just sit at
+     natural width — overflow scrolls horizontally. */
+  .auth-tab-switcher {
+    margin: 0 auto;
+    max-width: 100%;
+  }
+
+  .auth-tab-btn {
+    flex-shrink: 0;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   AUTH PROVIDER ROW — desktop 5-col grid (icon | label | desc | status | menu).
+   On mobile we keep the icon + label visible, drop the description column,
+   and stack the status badge under the label.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  .auth-provider-row {
+    grid-template-columns: 44px 1fr auto !important;
+    grid-template-areas:
+      "icon label menu"
+      "icon desc  menu"
+      "icon status status";
+    height: auto !important;
+    padding: 12px 14px !important;
+    gap: 4px 12px !important;
+    align-items: center;
+  }
+
+  .auth-provider-row > :nth-child(1) { grid-area: icon; }
+  .auth-provider-row > :nth-child(2) { grid-area: label; }
+  .auth-provider-row > :nth-child(3) { grid-area: desc; }
+  .auth-provider-row > :nth-child(4) { grid-area: status; margin-top: 4px; }
+  .auth-provider-row > :nth-child(5) { grid-area: menu; }
+}
+
+@media (max-width: 479px) {
+  .auth-provider-row {
+    /* Even tighter on small phones: drop description, keep icon+label+menu */
+    grid-template-columns: 36px 1fr auto !important;
+    grid-template-areas:
+      "icon label menu"
+      "icon status menu";
+    padding: 10px 12px !important;
+  }
+  /* Hide the description text on very small screens */
+  .auth-provider-row > :nth-child(3) {
+    display: none;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   BULK SETTINGS — extend the existing 900px breakpoint stacker up to 1024.
+   Make the bulk hero tighter on phones.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  .bulk-section-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 639px) {
+  .bulk-settings {
+    padding-top: 16px;
+    padding-bottom: 64px;
+    gap: 12px;
+  }
+
+  .bulk-hero {
+    padding: 14px 14px;
+    gap: 10px;
+  }
+
+  .bulk-hero-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .bulk-hero-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .bulk-hero-title {
+    font-size: 13px;
+  }
+
+  .bulk-hero-sub {
+    font-size: 12px;
+  }
+
+  .bulk-section {
+    margin-bottom: 18px;
+  }
+
+  .bulk-section-head {
+    margin-bottom: 10px;
+    gap: 10px;
+  }
+
+  .bulk-section-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .bulk-section-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bulk-section-title {
+    font-size: 14px;
+  }
+
+  .bulk-field {
+    padding: 14px;
+  }
+}

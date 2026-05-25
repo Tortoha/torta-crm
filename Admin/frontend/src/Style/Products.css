@@ -1,0 +1,8664 @@
+@import './shared.css';
+
+.hidden-input {
+  display: none;
+}
+
+.crm-add-btn--mt {
+  margin-top: 12px;
+}
+
+.po-field-required {
+  margin-left: 4px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.po-field-error {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #d93025;
+  letter-spacing: 0.01em;
+}
+
+.po-input--invalid,
+.cfg-cell--invalid {
+  border-color: #d93025 !important;
+  box-shadow: 0 0 0 1px #d93025 inset !important;
+}
+
+.po-input--invalid:focus,
+.cfg-cell--invalid:focus {
+  border-color: #d93025 !important;
+  box-shadow: 0 0 0 2px rgba(217, 48, 37, 0.15) !important;
+}
+
+.layer1-name-input--invalid {
+  box-shadow: inset 0 -1px 0 0 #d93025 !important;
+}
+
+.layer1-name-input--invalid::placeholder {
+  color: #d93025;
+  opacity: 0.85;
+}
+
+/* Undo toast — Figma-style dark pill, distinct from blue .auth-toast. */
+.undo-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 18px;
+  background: #1d1d1f;
+  color: #fff;
+  border-radius: 999px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  z-index: 1100;
+  animation: undoToastIn 0.22s var(--ease-smooth, cubic-bezier(.4, 0, .2, 1));
+  max-width: calc(100vw - 32px);
+}
+
+@keyframes undoToastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.undo-toast-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.75;
+  flex: 0 0 auto;
+}
+
+.undo-toast-text {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 420px;
+}
+
+.undo-toast-btn {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  flex: 0 0 auto;
+}
+
+.undo-toast-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.undo-toast-close {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 18px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+  flex: 0 0 auto;
+}
+
+.undo-toast-close:hover {
+  background: rgba(255, 255, 255, 0.10);
+  color: #fff;
+}
+
+
+
+.cfg-row--grabbable {
+  cursor: grab;
+  touch-action: none;
+  transition: border-radius 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.cfg-row--grabbable:hover {
+  border-radius: 999px;
+}
+
+.cfg-row--grabbable:active {
+  cursor: grabbing;
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+.cfg-col-bulk {
+  width: 22px;
+  flex: 0 0 auto;
+}
+
+.cfg-bulk-check,
+.layer1-bulk-check {
+  margin: 0;
+  align-self: center;
+}
+
+/* Bulk-mode adds a leading 28px column for the checkbox. */
+.cfg-list-head--bulk-mode:not(.cf-list-head--bulk-mode):not(.spec-list-head--bulk-mode),
+.cfg-row.cfg-row--bulk-mode:not(.cf-row):not(.spec-row) {
+  grid-template-columns: 28px 2fr 1fr 1fr 44px !important;
+}
+
+/* Bulk + hide-price → drop the Price column too. */
+.cfg-list-head--bulk-mode.cfg-list-head--hide-price,
+.cfg-row.cfg-row--bulk-mode.cfg-row--hide-price {
+  grid-template-columns: 28px 2fr 1fr 44px !important;
+}
+
+.cfg-list-head--bulk-mode.spec-list-head--bulk-mode,
+.cfg-row.spec-row.cfg-row--bulk-mode {
+  grid-template-columns: 28px 1fr 1fr 44px !important;
+}
+
+.cf-list-head--bulk-mode,
+.cfg-row.cf-row.cfg-row--bulk-mode {
+  grid-template-columns: 28px 1fr 1fr 140px 140px 44px !important;
+}
+
+.layer1-bulk-check {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 4;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.layer1-drag-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.layer1-drag-wrap:active {
+  cursor: grabbing;
+}
+
+.layer1-drag-wrap>.layer1-card {
+  width: 100%;
+}
+
+.layer1-card--dragging {
+  cursor: grabbing;
+}
+
+.row-ctx-menu {
+  z-index: 1200;
+}
+
+.row-ctx-menu .org-card-dropdown-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+
+.bulk-bar {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  background: var(--card);
+  color: var(--text);
+  border-radius: 999px;
+  box-shadow: var(--box-shadow);
+  z-index: 1101;
+  animation: bulkBarIn 0.22s var(--ease-smooth, cubic-bezier(.4, 0, .2, 1));
+  max-width: calc(100vw - 32px);
+}
+
+@keyframes bulkBarIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.bulk-bar-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.bulk-bar-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+}
+
+.bulk-bar-divider {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 0 4px;
+  flex: 0 0 auto;
+}
+
+.bulk-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.bulk-bar-btn:hover {
+  background: var(--accent-tint-hover);
+}
+
+.bulk-bar-btn--danger {
+  background: var(--delete-tint);
+  color: var(--delete);
+}
+
+.bulk-bar-btn--danger:hover {
+  background: var(--delete-tint-hover);
+}
+
+.bulk-bar-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.layer1-card.layer1-card--bulk {
+  border: 1px solid var(--accent);
+  background: var(--accent-tint);
+}
+
+/* Paused product cards/rows: half-faded; only the menu button stays clickable. */
+.prod-card--paused,
+.prow--paused {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.prod-card--paused:hover,
+.prow--paused:hover {
+  opacity: 0.65;
+}
+
+/* Per-type product groups on the Products list page. */
+.prod-group {
+  margin-bottom: 28px;
+}
+
+.prod-group:last-child {
+  margin-bottom: 0;
+}
+
+.prod-group-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.prod-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Service-link banner shown on type=service products. */
+.po-service-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px;
+  background: linear-gradient(135deg, var(--accent-tint), rgba(0, 113, 227, 0.04));
+  border: 1px solid rgba(0, 113, 227, 0.15);
+}
+
+.po-service-link-icon {
+  font-size: 28px;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.po-service-link-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.po-service-link-meta {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Service / Event details — 2-column responsive grid for short fields. */
+.po-svc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+/* iOS-style toggle for boolean service fields (requires_staff, active). */
+.po-toggle {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border: none;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.2s ease;
+}
+
+.po-toggle--on {
+  background: var(--accent);
+}
+
+.po-toggle-dot {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.po-toggle--on .po-toggle-dot {
+  transform: translateX(18px);
+}
+
+/* Staff multi-select chips (Service block). */
+.po-svc-staff {
+  margin-top: 16px;
+}
+
+.po-svc-staff-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.po-svc-staff-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px 5px 5px;
+  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  transition: 0.4s ease;
+}
+
+.po-svc-staff-chip:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.po-svc-staff-chip--on {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.po-svc-staff-chip--on:hover {
+  background: var(--accent-tint-hover);
+}
+
+.po-svc-staff-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+/* Digital files block. */
+.po-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.po-files-empty {
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.po-files-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--card);
+  border-radius: 999px;
+}
+
+.po-files-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.po-files-link {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.po-files-link:hover {
+  text-decoration: underline;
+}
+
+.po-files-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.po-files-remove:hover {
+  color: #d93025;
+  background: rgba(217, 48, 37, 0.08);
+}
+
+.po-files-remove svg {
+  width: 16px;
+  height: 16px;
+}
+
+.po-files-add {
+  width: fit-content;
+}
+
+/* Custom Field type=file editor. */
+.cf-file-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 38px;
+  background: var(--card);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  font-size: 13px;
+}
+
+.cf-file-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cf-file-link:hover {
+  text-decoration: underline;
+}
+
+.cf-file-replace,
+.cf-file-empty {
+  border: none;
+  background: var(--accent-tint);
+  color: var(--accent);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.cf-file-empty {
+  flex: 1 1 auto;
+  text-align: center;
+}
+
+.cf-file-replace:hover,
+.cf-file-empty:hover {
+  background: var(--accent-tint-hover);
+}
+
+.cf-file-replace:disabled,
+.cf-file-empty:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ══ PAGE & CONTENT ══ */
+
+.prod-page {
+  position: relative;
+}
+
+.prod-toolbar--shrink {
+  margin-right: calc(520px + 16px);
+  transition: margin-right 0.48s var(--ease-smooth);
+}
+
+.prod-content {
+  transition: margin-right 0.48s var(--ease-smooth);
+}
+
+.prod-content--shrink {
+  margin-right: calc(520px + 16px);
+}
+
+.prod-count {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ══ GRID VIEW ══ */
+
+.prod-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.prod-grid.prod-grid--3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.prod-card.org-card {
+  border-radius: 16px !important;
+  overflow: hidden;
+  background-color: var(--card);
+}
+
+.prod-card .org-card-gloss {
+  border-radius: 16px !important;
+}
+
+.pcard-inner {
+  display: flex;
+  align-items: stretch;
+}
+
+.pcard-img-wrap {
+  flex-shrink: 0;
+  align-self: center;
+  height: 94px;
+  /* phantom height → all cards same height */
+  width: auto;
+  /* image's natural ratio decides width */
+  min-width: 70.5px;
+  /* floor (= 3:4 of 94px, also covers empty placeholder) */
+  max-width: 94px;
+  /* cap for landscape & square */
+  margin: 4px 0 4px 4px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: transparent;
+  /* no visible "bars" — card bg shows through */
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* center landscape vertically inside phantom 94px */
+  justify-content: center;
+}
+
+.pimg-hover {
+  transition: 0.4s ease;
+  cursor: pointer;
+}
+
+.pimg-hover:hover {
+  transform: scale(1.05);
+}
+
+.pcard-img {
+  /* Natural aspect ratio, capped so it fits inside the 94×94 phantom box */
+  max-height: 94px;
+  max-width: 94px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 12px;
+  /* round image corners (works even when image < container) */
+}
+
+.pcard-img-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(var(--fg-rgb), 0.24);
+  background: var(--bg);
+  /* visible gray placeholder area (container itself is transparent) */
+  border-radius: 12px;
+}
+
+.pcard-body {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.pcard-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.pcard-row1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pcard-price {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pcard-pipe {
+  color: var(--muted);
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.pcard-stock {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.pcard-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.pcard-stars-num {
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.pcard-stars-row {
+  display: inline-flex;
+  align-items: center;
+}
+
+.pcard-star-icon {
+  width: 10px;
+  height: 10px;
+  color: rgba(var(--fg-rgb), 0.16);
+  flex-shrink: 0;
+}
+
+.pcard-star-icon--on {
+  color: var(--accent);
+}
+
+.pcard-cat-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  height: 22px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-tint);
+  border-radius: 999px;
+  max-width: calc(100% - 100px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.pcard-menu-btn.org-card-menu-btn {
+  top: 8px !important;
+  right: 8px !important;
+}
+
+/* ══ VARIATIONS POPOVER (MacOS-style stack) ══ */
+
+.pvar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1099;
+  cursor: default;
+}
+
+.pvar-stack {
+  position: fixed;
+  z-index: 1100;
+  transform: translateX(-50%);
+  background: var(--card);
+  border-radius: 16px;
+  padding: 4px;
+  /* 6 photos × 85px + 5 gaps × 4px + 2×4 padding = 538px — caps row at 6 */
+  max-width: 538px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+  /* width: auto — popup hugs content (e.g. 2 photos = 2-photo width) */
+}
+
+/* Invisible until JS measures real height and snaps position */
+.pvar-stack:not(.pvar-stack--ready) {
+  visibility: hidden;
+}
+
+/* Entrance animation — only once position is correct */
+.pvar-stack--ready {
+  animation: pvar-pop-in 0.22s var(--ease-smooth);
+}
+
+.pvar-stack--above {
+  transform-origin: bottom center;
+}
+
+.pvar-stack:not(.pvar-stack--above) {
+  transform-origin: top center;
+}
+
+@keyframes pvar-pop-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+/* Each photo cell — 85px tall, width follows aspect (64–85px), no cropping. */
+.pvar-photo {
+  flex: 0 0 auto;
+  height: 85px;
+  min-width: 64px;
+  max-width: 85px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: pvar-row-in 0.22s var(--ease-smooth) backwards;
+}
+
+.pvar-photo .pvar-thumb {
+  max-height: 85px;
+  max-width: 85px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 12px;
+}
+
+@keyframes pvar-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pvar-thumb-wrap {
+  flex-shrink: 0;
+  height: 85px;
+  /* phantom height → all variation thumbs same height */
+  width: auto;
+  min-width: 64px;
+  /* floor (= 3:4 of 85px) */
+  max-width: 85px;
+  /* cap for landscape & square */
+  border-radius: 12px;
+  overflow: hidden;
+  background: transparent;
+  /* popover bg shows through */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pvar-thumb {
+  max-height: 85px;
+  max-width: 85px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 12px;
+}
+
+.pvar-thumb-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(var(--fg-rgb), 0.24);
+  background: var(--bg);
+  border-radius: 12px;
+}
+
+.pvar-name {
+  font-size: 11px;
+  color: var(--text);
+  font-weight: 400;
+  width: 64px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ══ LIST VIEW — reuses org-list-* classes ══ */
+
+.prod-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prod-list-head {
+  display: grid;
+  grid-template-columns: 36px 1fr 100px 110px 100px 80px 44px;
+  height: 36px;
+  background: var(--card);
+  border-radius: 18px;
+  padding: 0 16px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.prod-list-block {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Row: same tilt/gloss as org-list-row, custom grid columns */
+.prow {
+  position: relative;
+  display: grid;
+  grid-template-columns: 36px 1fr 100px 110px 100px 80px 44px;
+  min-height: 56px;
+  background: var(--card);
+  padding: 0 16px;
+  align-items: center;
+  cursor: pointer;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  border-radius: 0;
+  transition: border-radius 0.3s ease, box-shadow 0.8s ease;
+}
+
+.prow+.prow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: var(--bg);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.prow:first-child {
+  border-radius: 24px 24px 0 0;
+}
+
+.prow:last-child {
+  border-radius: 0 0 24px 24px;
+}
+
+.prow:only-child {
+  border-radius: 24px;
+}
+
+.prow:not(.org-list-row--frozen):hover {
+  border-radius: 18px !important;
+  box-shadow: var(--box-shadow);
+  z-index: 2;
+}
+
+.prow-img-wrap {
+  position: relative;
+  z-index: 2;
+  height: 40px;
+  /* phantom height → all rows same height */
+  width: auto;
+  min-width: 30px;
+  /* floor (= 3:4 of 40px, also covers empty placeholder) */
+  max-width: 40px;
+  /* cap for landscape & square */
+  border-radius: 6px;
+  overflow: hidden;
+  background: transparent;
+  /* row bg shows through */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.prow-img {
+  max-height: 40px;
+  max-width: 40px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+}
+
+.prow-img-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(var(--fg-rgb), 0.24);
+  background: var(--bg);
+  border-radius: 6px;
+}
+
+.prow-name {
+  position: relative;
+  z-index: 2;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 4px;
+}
+
+.prow-cell {
+  position: relative;
+  z-index: 2;
+  font-size: 12px;
+  color: rgba(var(--fg-rgb), 0.4);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* ══ BACKDROP ══ */
+
+.prod-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 299;
+  background: rgba(0, 0, 0, 0);
+  pointer-events: none;
+  transition: background 0.32s ease;
+}
+
+.prod-backdrop--open {
+  display: block;
+  background: rgba(0, 0, 0, 0.18);
+  pointer-events: all;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+/* ══ DRAWER ══ */
+
+.prod-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(520px, 45vw);
+  background: var(--card);
+  box-shadow: -8px 0 48px rgba(0, 6, 74, 0.14);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.44s var(--ease-smooth);
+  border-radius: var(--radius-card) 0 0 var(--radius-card);
+}
+
+.prod-drawer--open {
+  transform: translateX(0);
+}
+
+.prod-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--bg);
+  flex-shrink: 0;
+}
+
+.prod-drawer-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  margin-right: 12px;
+}
+
+.prod-drawer-product-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.prod-drawer-loading {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.prod-drawer-spinner {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Drawer tabs ── */
+
+.prod-drawer-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--bg);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.prod-drawer-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.prod-drawer-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius-item) var(--radius-item) 0 0;
+  white-space: nowrap;
+  transition: color 0.15s ease, background 0.15s ease;
+  position: relative;
+}
+
+.prod-drawer-tab::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #000;
+  border-radius: 2px 2px 0 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.prod-drawer-tab--active {
+  color: var(--text);
+}
+
+.prod-drawer-tab--active::after {
+  opacity: 1;
+}
+
+.prod-drawer-tab:hover:not(.prod-drawer-tab--active) {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.prod-tab-badge {
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.prod-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #ddd transparent;
+}
+
+/* ══ TAB CONTENT ══ */
+
+.prod-tab-content {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.prod-tab-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.prod-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prod-field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.prod-field--inline .prod-field-label {
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.prod-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prod-char-count {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: rgba(var(--fg-rgb), 0.3);
+}
+
+.prod-field-input {
+  padding: 9px 12px;
+  border: 1.5px solid #e8e8e8;
+  border-radius: var(--radius-item);
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--card);
+  outline: none;
+  transition: border-color 0.18s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.prod-field-input:focus {
+  border-color: #000;
+}
+
+.prod-field-input--mono {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.prod-field-textarea {
+  padding: 9px 12px;
+  border: 1.5px solid #e8e8e8;
+  border-radius: 16px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--card);
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 0.18s ease;
+  width: 100%;
+  box-sizing: border-box;
+  line-height: 1.5;
+}
+
+.prod-field-textarea:focus {
+  border-color: #000;
+}
+
+.prod-tab-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.prod-saved-hint {
+  font-size: 13px;
+  color: #16a34a;
+  font-weight: 500;
+}
+
+.prod-save-btn {
+  padding: 9px 20px;
+  border: none;
+  border-radius: var(--radius-item);
+  background: var(--accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.prod-save-btn:hover:not(:disabled) {
+  background-color: #007FFF;
+}
+
+.prod-save-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.prod-save-btn--sm {
+  padding: 7px 16px;
+  font-size: 13px;
+}
+
+/* ══ VARIATIONS TAB ══ */
+
+.prod-variation-card {
+  border: 1.5px solid #ebebeb;
+  border-radius: 18px;
+  overflow: hidden;
+  transition: border-color 0.18s ease;
+}
+
+.prod-variation-card:hover {
+  border-color: #d0d0d0;
+}
+
+.prod-var-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #fafafa;
+  cursor: pointer;
+}
+
+.prod-var-toggle {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.prod-var-toggle:hover {
+  background: #ebebeb;
+}
+
+.prod-var-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.prod-var-preview {
+  flex-shrink: 0;
+}
+
+.prod-var-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.prod-var-img-placeholder {
+  width: 36px;
+  height: 36px;
+  color: rgba(var(--fg-rgb), 0.24);
+}
+
+.prod-var-title {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prod-var-sizes-count {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.prod-var-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-top: 1px solid #ebebeb;
+}
+
+.prod-var-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prod-var-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Sizes table */
+.prod-sizes-wrap {
+  overflow-x: auto;
+  border: 1.5px solid #ebebeb;
+  border-radius: 12px;
+}
+
+.prod-sizes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.prod-sizes-table th {
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid #ebebeb;
+  background: #fafafa;
+}
+
+.prod-size-row td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.prod-size-row:last-child td {
+  border-bottom: none;
+}
+
+.prod-size-sold {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.prod-size-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.prod-cell-input {
+  padding: 5px 8px;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  width: 80px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.prod-cell-input:focus {
+  border-color: #000;
+  background: var(--card);
+}
+
+.prod-cell-input--num {
+  width: 70px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.prod-check-icon {
+  width: 16px;
+  height: 16px;
+  color: #16a34a;
+}
+
+/* Add size form */
+.prod-form-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.38s var(--ease-smooth), opacity 0.22s ease;
+}
+
+.prod-form-wrap--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.prod-add-size-form {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 0 4px;
+}
+
+.prod-add-size-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1.5px dashed #d0d0d0;
+  border-radius: var(--radius-item);
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.prod-add-size-btn:hover {
+  border-color: #000;
+  color: var(--text);
+}
+
+.prod-add-size-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* New variation form */
+.prod-new-var-form {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+/* ══ CUSTOM FIELDS TAB ══ */
+
+.prod-cf-table-wrap {
+  border: 1.5px solid #ebebeb;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.prod-cf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.prod-cf-table th {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #fafafa;
+  border-bottom: 1px solid #ebebeb;
+  text-align: left;
+}
+
+.prod-cf-row td {
+  padding: 9px 12px;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.prod-cf-row:last-child td {
+  border-bottom: none;
+}
+
+.prod-cf-key {
+  font-family: monospace;
+  font-size: 12px;
+  background: var(--bg);
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.prod-cf-val {
+  color: var(--muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prod-cf-form {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.prod-cf-toggle {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  border: none;
+  background: #d0d0d0;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.22s ease;
+  padding: 0;
+}
+
+.prod-cf-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.22s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.prod-cf-toggle--on {
+  background: #000;
+}
+
+.prod-cf-toggle--on::after {
+  transform: translateX(14px);
+}
+
+.prod-cf-global-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ══ REVIEWS TAB ══ */
+
+.prod-reviews-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prod-review-card {
+  border: 1.5px solid #ebebeb;
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prod-review-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.prod-review-author {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.prod-review-stars {
+  display: flex;
+  gap: 2px;
+}
+
+.prod-review-date {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.prod-review-comment {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.prod-star {
+  width: 14px;
+  height: 14px;
+  color: rgba(var(--fg-rgb), 0.2);
+}
+
+.prod-star--on {
+  color: #f59e0b;
+}
+
+.prod-star--sm {
+  width: 13px;
+  height: 13px;
+}
+
+/* ══ EMPTY STATE ══ */
+
+.prod-empty-state {
+  text-align: center;
+  padding: 28px 20px;
+  color: var(--muted);
+  font-size: 13px;
+  border: 1.5px dashed #e0e0e0;
+  border-radius: 14px;
+}
+
+/* ══ IMAGE UPLOAD ══ */
+
+.prod-dropzone {
+  position: relative;
+  width: 100%;
+  height: 130px;
+  border: 2px dashed #d0d0d0;
+  border-radius: 12px;
+  background: #fafafa;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.18s ease, background 0.18s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.prod-dropzone:hover {
+  border-color: #aaa;
+  background: #f4f4f4;
+}
+
+.prod-dropzone--over {
+  border-color: #000;
+  background: #f0f0f0;
+}
+
+.prod-dropzone--loading {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.prod-dropzone-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.prod-dropzone-upload-icon {
+  width: 28px;
+  height: 28px;
+  color: rgba(var(--fg-rgb), 0.3);
+}
+
+.prod-dropzone-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.prod-dropzone-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.prod-dropzone-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2.5px solid #e0e0e0;
+  border-top-color: #333;
+  border-radius: 50%;
+  animation: prod-spin 0.7s linear infinite;
+}
+
+@keyframes prod-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.prod-dropzone-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.prod-dropzone-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.prod-dropzone:hover .prod-dropzone-overlay {
+  opacity: 1;
+}
+
+.prod-dropzone-overlay-icon {
+  width: 22px;
+  height: 22px;
+}
+
+/* ══ API PREVIEW TAB ══ */
+
+.prod-api-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prod-api-endpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.prod-api-method {
+  font-size: 11px;
+  font-weight: 700;
+  background: #000;
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 6px;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.prod-api-url {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text);
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.prod-api-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.prod-api-json {
+  background: #1a1a1a;
+  color: rgba(var(--fg-rgb), 0.12);
+  border-radius: 14px;
+  padding: 14px 16px;
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+  margin: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #444 transparent;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* ══ RESPONSIVE ══ */
+
+/* ══ PRODUCT PAGE (pp-*) ══ */
+
+.pp-page {
+  padding-top: 48px;
+}
+
+.pp-header {
+  margin-bottom: 24px;
+}
+
+.pp-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pp-title {
+  padding-top: 0 !important;
+  margin: 0;
+}
+
+.pp-hash-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  font-family: monospace;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.pp-body {
+  background: var(--card);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+/* Product page tab nav (horizontal pill strip) */
+.pp-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid var(--bg);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pp-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.pp-tab {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius-item) var(--radius-item) 0 0;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: color 0.15s ease, background 0.15s ease;
+  position: relative;
+}
+
+.pp-tab::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #000;
+  border-radius: 2px 2px 0 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.pp-tab--active {
+  color: var(--text);
+}
+
+.pp-tab--active::after {
+  opacity: 1;
+}
+
+.pp-tab:hover:not(.pp-tab--active) {
+  background: var(--bg);
+  color: var(--text);
+}
+
+
+@media (max-width: 1240px) {
+  .prod-content--shrink {
+    margin-right: 0;
+  }
+
+  .prod-toolbar--shrink {
+    margin-right: 0;
+  }
+
+  .prod-drawer {
+    width: 100vw;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    top: auto;
+    height: 85vh;
+    transform: translateY(100%);
+  }
+
+  .prod-drawer--open {
+    transform: translateY(0);
+  }
+
+  .prod-backdrop--open {
+    display: block;
+  }
+
+  .prod-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .prod-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Products / Categories tab page wrapper — uses shared .auth-tab-switcher; trims 128px title top-padding. ─── */
+.prod-page-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.prod-page--in-tabs {
+  padding-top: 8px;
+}
+
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.cat-card {
+  padding: 16px;
+  min-height: 96px;
+  cursor: default;
+  border-radius: 16px !important;
+}
+
+.cat-card1 {
+  padding: 16px;
+  cursor: default;
+  border-radius: 16px !important;
+}
+
+.cat-card--clickable {
+  cursor: pointer;
+}
+
+.cat-card--clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cat-card-gloss {
+  border-radius: 16px !important;
+}
+
+.cat-card-body {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  padding-right: 32px;
+}
+
+.cat-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cat-card-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ─── 3-dot menu — Dynamic Block + all-red destructive items ───── */
+.cat-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+}
+
+.org-card-dropdown-item--disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.cat-edit-modal {
+  max-width: 640px;
+  width: 640px;
+}
+
+.cat-prod-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cat-prod-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cat-prod-count {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cat-prod-search-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.cat-prod-search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.cat-prod-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding-left: 36px !important;
+}
+
+/* No inner scroll — parent .auth-modal owns scrolling; nested overflow caused dual scrollbars. */
+.cat-prod-list {
+  background: var(--bg);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cat-prod-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: 0.4s ease;
+  user-select: none;
+}
+
+.cat-prod-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.cat-prod-row--checked {
+  background: var(--accent-tint);
+  transition: 0.4s ease;
+}
+
+.cat-prod-row--checked:hover {
+  background: var(--accent-tint-hover);
+}
+
+/* Custom checkbox — borderless rounded with thin SVG check; no hover state (row owns hover bg). */
+.cat-prod-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: none;
+  outline: none;
+  margin: 0;
+  background: var(--card);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.cat-prod-checkbox:checked {
+  background-color: var(--accent);
+  /* Thin, rounded checkmark drawn via inline SVG (stroke-linecap=round → soft tips) */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='none' stroke='white' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round' d='M4.2 8.4 L6.8 11 L11.8 5.6'/></svg>");
+  background-size: 16px 16px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.cat-prod-thumb-wrap {
+  flex-shrink: 0;
+  height: 36px;
+  width: auto;
+  min-width: 27px;
+  max-width: 36px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cat-prod-thumb {
+  max-height: 36px;
+  max-width: 36px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+}
+
+.cat-prod-thumb-empty {
+  width: 36px;
+  height: 36px;
+  background: var(--card);
+  border-radius: 6px;
+}
+
+.cat-prod-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cat-prod-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--card);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.cat-prod-empty {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  padding: 16px 12px;
+  margin: 0;
+}
+
+/* Tighten the field gap between Name label and input to 6px */
+.cat-edit-field {
+  gap: 6px !important;
+}
+
+.cat-modal-text {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.55;
+  margin: 0 0 4px;
+}
+
+.cat-modal-hint {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 4px 0;
+}
+
+.cat-modal-danger-text {
+  color: #dc2626 !important;
+}
+
+.cat-modal-code,
+.cat-slug-preview code {
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.cat-slug-preview {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.cat-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Cancel button — secondary outline style (used across delete modals) */
+.auth-btn-secondary {
+  background: transparent !important;
+  color: var(--text) !important;
+}
+
+.auth-btn-secondary:hover {
+  background: var(--bg) !important;
+}
+
+.prow-empty {
+  color: var(--muted);
+  opacity: 0.4;
+}
+
+/* List view — columns: img | title | category | price | stock | rating | menu */
+.prod-list-head,
+.prow {
+  grid-template-columns: 40px 2fr 1.2fr 1fr 1fr 1.2fr 32px;
+}
+
+/* ─── Category filter button + dropdown ─────────────────────── */
+.cat-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: 0.4s ease;
+  font-family: inherit;
+  border: none;
+}
+
+.cat-filter-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.cat-filter-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  transition: 0.4s ease;
+}
+
+.cat-filter-btn:hover .cat-filter-icon {
+  color: var(--accent);
+}
+
+.cat-filter-caret {
+  width: 10px;
+  height: 10px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.cat-filter-dropdown {
+  position: fixed;
+  z-index: 1000;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  /* 480 (was 360) so long lists like the analytics period dropdown
+     (10 presets + "Custom range…") fit without a scrollbar. JS in
+     Combobox.useEffect also caps to viewport-available space, so this
+     ceiling only applies when there's plenty of room. */
+  max-height: 480px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Dynamic Block sliding indicator — same pattern as Sidebar */
+.cat-filter-indicator {
+  position: absolute;
+  /* Match the dropdown's 6px padding on left/right so the indicator visually
+     aligns with the items (the indicator would otherwise overlap the padding
+     and touch the card edge, since absolute children resolve against the
+     parent's padding-box, not its content-box). */
+  left: 6px;
+  right: 6px;
+  top: 0;
+  height: 0;
+  background: var(--accent-tint);
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  will-change: transform, height, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    height 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.cat-filter-item {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.55s var(--ease-smooth);
+}
+
+/* Text colour follows the Dynamic Block indicator (hover ?? selected) */
+.cat-filter-item--current {
+  color: var(--accent);
+}
+
+.cat-filter-item--new {
+  gap: 8px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cat-filter-new-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.cat-filter-sep {
+  height: 1px;
+  background: var(--bg);
+  margin: 4px 8px;
+}
+
+.cat-filter-create-form {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.cat-filter-create-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--bg);
+  border-radius: 999px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--card);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+
+.cat-filter-create-input:focus {
+  border-color: var(--accent);
+}
+
+.cat-filter-create-go {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* ─── Category select hint ─────────────────────────────────── */
+.prod-field-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+select.prod-field-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23999'%3e%3cpath d='M7 10l5 5 5-5H7z'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+/* Inline-create form input — keep narrow enough to fit dropdown */
+.cat-filter-create-input {
+  min-width: 0;
+}
+
+.po-page {
+  position: relative;
+}
+
+/* ─── Page header (back arrow / icon / title / Reviews+API buttons) ── */
+.po-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 70px;
+  margin-bottom: 16px;
+}
+
+.po-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: var(--card);
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.18s ease;
+  flex-shrink: 0;
+}
+
+.po-back-btn:hover {
+  background: var(--bg);
+}
+
+.po-back-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.po-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.po-title-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.po-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.po-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.po-header-btn:hover {
+  background: var(--bg);
+}
+
+.po-header-btn-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.po-header-btn-count {
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  margin-left: 2px;
+}
+
+/* ─── Block (the 4 sections) ───────────────────────────────────────── */
+.po-block {
+  padding-top: 24px;
+  padding-bottom: 16px;
+}
+
+.po-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+}
+
+.po-block-title {
+  margin: 0 0 12px 0;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 500;
+  padding-top: 24px;
+}
+
+.crm-page-title1 {
+  margin: 0;
+  padding-top: 0px;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.po-block-head .po-block-title {
+  margin: 0;
+}
+
+.po-block-hint {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 0px;
+  padding-bottom: 0px;
+}
+
+.po-block-card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.po-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.po-form .crm-input {
+  background: #fff;
+  border-radius: 999px;
+  font-size: 14px;
+}
+
+.po-form .crm-input:focus {
+  border-color: var(--card);
+  box-shadow: var(--box-shadow);
+  outline: none;
+}
+
+.po-form textarea.crm-input,
+.po-form .po-textarea {
+  border-radius: 16px !important;
+  background: #fff;
+}
+
+.po-page-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.po-page-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-page-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-bottom: 6px;
+}
+
+.po-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px 4px;
+}
+
+/* ─── Field (label + input pair) ───────────────────────────────────── */
+.po-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.po-field-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0 8px;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.po-field-label1 {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+  padding: 0 4px;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.po-input,
+.po-textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.po-textarea {
+  border-radius: 16px !important;
+  /* override pill .crm-input radius for textareas */
+  resize: none;
+  min-height: 80px;
+  font-family: inherit;
+  line-height: 1.5;
+  padding: 10px 16px;
+}
+
+.po-char-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ─── "Add" pill (block-head right side) ───────────────────────────── */
+.po-add-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.18s ease;
+}
+
+.po-add-pill:hover {
+  opacity: 0.9;
+}
+
+.po-add-row-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px dashed rgba(0, 0, 0, 0.15);
+  color: var(--muted);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  align-self: flex-start;
+}
+
+.po-add-row-btn:hover {
+  background: var(--bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ─── Variations grid ──────────────────────────────────────────────── */
+.po-var-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.po-var-card {
+  position: relative;
+  background: var(--bg);
+  border-radius: 14px;
+  padding: 12px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background 0.18s ease;
+  user-select: none;
+}
+
+.po-var-card:hover {
+  background: var(--accent-tint);
+}
+
+.po-var-card--dragging {
+  opacity: 0.4;
+}
+
+.po-var-handle {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  cursor: grab;
+  display: inline-flex;
+}
+
+.po-var-card:hover .po-var-handle {
+  opacity: 0.6;
+}
+
+.po-var-handle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.po-var-thumb-wrap {
+  height: 80px;
+  width: auto;
+  min-width: 60px;
+  max-width: 80px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.po-var-thumb {
+  max-height: 80px;
+  max-width: 80px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 10px;
+}
+
+.po-var-thumb-empty {
+  width: 80px;
+  height: 80px;
+  background: var(--card);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(var(--fg-rgb), 0.24);
+}
+
+.po-var-thumb-empty svg {
+  width: 24px;
+  height: 24px;
+}
+
+.po-var-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.po-var-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ─── Custom Fields rows ──────────────────────────────────────────── */
+.po-cf-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 80px 36px 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.po-cf-row:last-child {
+  border-bottom: none;
+}
+
+.po-cf-row--new {
+  grid-template-columns: 160px 1fr 100px 36px auto;
+}
+
+.po-cf-key,
+.po-cf-key-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  padding: 6px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-cf-key-input {
+  border: none;
+  outline: none;
+}
+
+.po-cf-value,
+.po-cf-type-input {
+  height: 32px;
+  font-size: 13px;
+}
+
+.po-cf-type {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  text-transform: lowercase;
+}
+
+/* Pill toggle (Global on/off) — blue when on, grey when off */
+.po-cf-toggle {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.12);
+  border: none;
+  cursor: pointer;
+  position: relative;
+  padding: 0;
+  transition: background 0.18s ease;
+}
+
+.po-cf-toggle--on {
+  background: var(--accent);
+}
+
+.po-cf-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.18s ease;
+}
+
+.po-cf-toggle--on .po-cf-toggle-knob {
+  transform: translateX(14px);
+}
+
+.po-cf-delete {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.po-cf-delete:hover {
+  background: rgba(220, 38, 38, 0.1);
+  color: #dc2626;
+}
+
+.po-cf-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.po-cf-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.po-cf-add {
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+}
+
+/* ─── Reviews list (separate page, light card) ─────────────────────── */
+.po-review {
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.po-review:last-child {
+  border-bottom: none;
+}
+
+.po-review-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.po-review-author {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.po-review-stars {
+  color: var(--accent);
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+.po-review-date {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.po-review-comment {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ─── API preview JSON block (separate page) ───────────────────────── */
+.po-api-code {
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.po-api-json {
+  background: var(--card);
+  padding: 0px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  overflow-x: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ══ CONFIGURATION MODAL (popup from a variation card) ══ */
+
+.cfg-modal {
+  width: 760px;
+  max-width: 760px;
+}
+
+.cfg-modal-body,
+.cfg-block-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cfg-block-body .crm-input {
+  background: #fff;
+}
+
+/* Top row: image (left) + name+hint (right) */
+.cfg-top {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.cfg-image-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.cfg-name-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cfg-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* Drop zone — same visual language as Authentication file uploads */
+.cfg-dropzone {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  background: var(--bg);
+  border-radius: 14px;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s ease, outline-color 0.18s ease;
+  outline: 2px dashed transparent;
+}
+
+.cfg-dropzone:hover,
+.cfg-dropzone--over {
+  outline-color: var(--accent);
+}
+
+.cfg-dropzone--loading {
+  cursor: wait;
+}
+
+.cfg-dropzone-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cfg-dropzone-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.cfg-dropzone-empty svg {
+  width: 28px;
+  height: 28px;
+}
+
+.cfg-dropzone-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cfg-dropzone-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.cfg-dropzone-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.cfg-dropzone:hover .cfg-dropzone-overlay {
+  opacity: 1;
+}
+
+.cfg-dropzone-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: cfg-spin 0.7s linear infinite;
+}
+
+@keyframes cfg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── Configurations list (the table-ish block at the bottom) ─── */
+.cfg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg);
+  border-radius: 16px;
+}
+
+.cfg-list-head {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 44px;
+  /* name | price | cost | actions */
+  align-items: center;
+}
+
+.cfg-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 44px;
+  align-items: center;
+  gap: 4px;
+}
+
+/* hide-price mode — drops the Price column entirely (cost-only entry, price auto-derived from margin). */
+.cfg-list-head--hide-price,
+.cfg-row--hide-price {
+  grid-template-columns: 2fr 1fr 44px !important;
+}
+
+/* ── LayerTable with the Weight (g) column: name | price | cost | weight | actions.
+   Declared after the base/bulk rules so equal-specificity variants win on order. ── */
+.cfg-list-head--wt,
+.cfg-row--wt {
+  grid-template-columns: 2fr 1fr 1fr 1fr 44px !important;
+}
+.cfg-list-head--wt.cfg-list-head--hide-price,
+.cfg-row--wt.cfg-row--hide-price {
+  grid-template-columns: 2fr 1fr 1fr 44px !important;
+}
+.cfg-list-head--wt.cfg-list-head--bulk-mode,
+.cfg-row--wt.cfg-row--bulk-mode:not(.cf-row):not(.spec-row) {
+  grid-template-columns: 28px 2fr 1fr 1fr 1fr 44px !important;
+}
+.cfg-list-head--wt.cfg-list-head--bulk-mode.cfg-list-head--hide-price,
+.cfg-row--wt.cfg-row--bulk-mode.cfg-row--hide-price {
+  grid-template-columns: 28px 2fr 1fr 1fr 44px !important;
+}
+/* Read-only weight range shown on parent rows / cards. */
+.cfg-weight-range {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.layer1-meta-range {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cfg-row .cfg-cell {
+  height: 12px;
+  font-size: 14px;
+}
+
+.cfg-row .crm-input {
+  min-width: 160px;
+  padding: 10px 16px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14px;
+  background: var(--card);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.cfg-list-head {
+  background: var(--card);
+  border-radius: 999px;
+  height: 36px;
+  padding: 0 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.36);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.cfg-cell {
+  height: 34px;
+  font-size: 13px;
+}
+
+.cfg-sold-num {
+  color: rgba(var(--fg-rgb), 0.36);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.cfg-sold-num:focus {
+  border-color: transparent !important;
+}
+
+.cfg-col-sold {
+  color: rgba(var(--fg-rgb), 0.36);
+  font-variant-numeric: tabular-nums;
+}
+
+.cfg-col-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cfg-empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 14px 8px;
+  text-align: center;
+}
+
+.cfg-delete-btn,
+.cfg-add-btn {
+  width: 44px;
+  height: 36px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14px;
+  background: var(--card);
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  transition: 0.4s ease;
+}
+
+.cfg-delete-btn svg,
+.cfg-add-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cfg-delete-btn:hover {
+  background: rgba(220, 38, 38, 0.1);
+  color: #dc2626;
+}
+
+.cfg-add-btn {
+  background: var(--accent);
+  color: #fff;
+}
+
+.cfg-add-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.cfg-add-btn:disabled {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.cfg-delete-btn svg,
+.cfg-add-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cfg-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* Specifications block — 2-column variant of cfg-row (Name | Value | delete) */
+.spec-list-head,
+.cfg-row.spec-row {
+  grid-template-columns: 1fr 1fr 44px !important;
+}
+
+/* ── Grouped specifications (named sections — mirror Modifier groups 1:1) ── */
+.spec-ungrouped {
+  margin-top: 8px;
+}
+
+.spec-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* Borderless stacked sections — identical to .po-mod-group (no box). */
+.spec-group-head .po-mod-name-input {
+  font-weight: 600;
+}
+
+/* "Add section" stays a compact pill (mirrors "Add group") even though the
+   flex-column .cfg-block-body would otherwise stretch it full-width. */
+.cfg-block-body .po-mod-add-group {
+  align-self: flex-start;
+}
+
+.spec-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.spec-copy-btn {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 0.18s ease, background 0.18s ease;
+}
+
+.spec-copy-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.spec-copy-btn:disabled {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.spec-copy-btn--done {
+  background: var(--accent-tint-hover);
+  color: var(--accent);
+}
+
+.spec-copy-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cfg-top.var-edit-top {
+  grid-template-columns: 1fr 140px;
+  align-items: stretch;
+}
+
+.cfg-top.var-edit-top .cfg-name-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.cfg-top.var-edit-top .cfg-name-col .crm-input {
+  flex: 0 0 auto;
+}
+
+.var-edit-actions {
+  margin-top: auto;
+}
+
+.cfg-top.var-edit-top .cfg-dropzone,
+.cfg-top.var-edit-top .cfg-dropzone:hover,
+.cfg-top.var-edit-top .cfg-dropzone--over {
+  outline: none;
+}
+
+.layer1-card {
+  position: relative;
+}
+
+.layer1-inner {
+  display: flex;
+  align-items: stretch;
+}
+
+.layer1-img-wrap {
+  flex-shrink: 0;
+  align-self: center;
+  height: 128px;
+  /* phantom height → all cards same height */
+  width: auto;
+  /* natural ratio decides width */
+  min-width: 96px;
+  /* floor = 3:4 of 128 */
+  max-width: 128px;
+  /* cap for landscape & square */
+  margin: 4px 0 4px 4px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: transparent;
+  /* card bg shows through */
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.layer1-img-wrap--loading {
+  cursor: wait;
+}
+
+.layer1-img {
+  /* Natural aspect ratio, capped so it fits inside 128×128 phantom box */
+  max-height: 128px;
+  max-width: 128px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 12px;
+}
+
+.layer1-img-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(var(--fg-rgb), 0.24);
+  background: var(--bg);
+  /* visible gray placeholder area */
+  border-radius: 12px;
+  min-width: 96px;
+  /* matches wrap min-width so empty state fills */
+}
+
+.layer1-img-empty-icon {
+  width: 36px;
+  height: 36px;
+  color: var(--muted);
+}
+
+.layer1-img-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.layer1-img-overlay svg {
+  width: 24px;
+  height: 24px;
+}
+
+.layer1-img-wrap:hover .layer1-img-overlay,
+.layer1-img-wrap.layer1-img-wrap--open .layer1-img-overlay {
+  opacity: 1;
+}
+
+/* Photo-count badge in the corner (visible only when variation has >1 image) */
+.layer1-img-count {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ── VariationGalleryPopover — mirrors .pvar-stack: anchored above, 2-pass positioning, flex-wrap of 85px tiles. ── */
+
+.vgal-pop {
+  position: fixed;
+  z-index: 4000;
+  transform: translateX(-50%);
+  background: var(--card);
+  border-radius: 16px;
+  padding: 4px;
+  /* 6 tiles × 85 + 5 gaps × 4 + 2×4 padding = 538 — same cap as .pvar-stack */
+  max-width: 538px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* Invisible until JS measures real height and snaps position above/below */
+.vgal-pop:not(.vgal-pop--ready) {
+  visibility: hidden;
+}
+
+.vgal-pop--ready {
+  animation: pvar-pop-in 0.22s var(--ease-smooth);
+}
+
+.vgal-pop--above {
+  transform-origin: bottom center;
+}
+
+.vgal-pop:not(.vgal-pop--above) {
+  transform-origin: top center;
+}
+
+.vgal-grid {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+  /* width: auto — popup hugs content (1 photo = 1-photo wide) */
+}
+
+/* Tile = same adaptive sizing as .pvar-photo on the Products page */
+.vgal-tile {
+  position: relative;
+  flex: 0 0 auto;
+  height: 85px;
+  min-width: 64px;
+  max-width: 85px;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: grab;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vgal-tile--dragging {
+  cursor: grabbing;
+  opacity: 0.4;
+}
+
+.vgal-img {
+  max-height: 85px;
+  max-width: 85px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 12px;
+}
+
+.vgal-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: rgba(220, 53, 69, 0.92);
+  color: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.vgal-tile:hover .vgal-del {
+  opacity: 1;
+}
+
+/* Add-button — 85×85 square matching tile dims for generous tap target alongside photos. */
+.vgal-add {
+  flex: 0 0 85px;
+  width: 85px;
+  height: 85px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1.5px dashed rgba(0, 0, 0, 0.12);
+  background: transparent;
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  font-family: inherit;
+}
+
+.vgal-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.vgal-add:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.vgal-add-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: vgal-spin 0.8s linear infinite;
+}
+
+@keyframes vgal-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.layer1-body {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.layer1-name-input {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  line-height: 1.3;
+  border-radius: 0px;
+  transition: 0.3s ease;
+  box-shadow: 0px 0px 16px rgba(0, 0, 0, 0);
+}
+
+.layer1-name-input::placeholder {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.layer1-name-input:focus {
+  box-shadow: 2px 4px 16px rgba(0, 0, 0, 0.18);
+  padding-left: 8px;
+  border-radius: 999px;
+}
+
+.layer1-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.layer1-meta-label {
+  width: 44px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.layer1-meta-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.layer1-meta-input {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  line-height: 1.3;
+  border-radius: 0px;
+  transition: 0.3s ease;
+  box-shadow: 0px 0px 16px rgba(0, 0, 0, 0);
+  padding-left: 8px;
+}
+
+.layer1-meta-input::placeholder {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.layer1-meta-input:focus {
+  box-shadow: 2px 4px 16px rgba(0, 0, 0, 0.18);
+  padding-left: 8px;
+  border-radius: 999px;
+}
+
+/* Hide spinner arrows on number inputs in layer1 meta */
+.layer1-meta-input[type="number"]::-webkit-inner-spin-button,
+.layer1-meta-input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.layer1-meta-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.po-add-layer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  margin: 4px 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.4s ease;
+  background-color: var(--accent-tint);
+}
+
+.po-add-layer-btn:hover {
+  background: var(--accent-tint-hover);
+}
+
+.po-layer-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--delete);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s ease;
+  background-color: var(--delete-tint);
+}
+
+.po-layer-delete-btn:hover {
+  background: var(--delete-tint-hover);
+}
+
+.po-layer-delete-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cfg-row.cfg-row--selected .cfg-cell {
+  background: var(--card) !important;
+  color: var(--accent);
+  box-shadow: var(--accent-shadow);
+  font-weight: 600;
+}
+
+.cfg-row.cfg-row--selected .cfg-cell::placeholder {
+  color: var(--accent);
+  opacity: 0.4;
+}
+
+.cfg-row.cfg-row--clickable {
+  cursor: pointer;
+}
+
+.cfg-list-head.cf-list-head,
+.cfg-row.cf-row {
+  grid-template-columns: 1fr 1fr 140px 140px 44px !important;
+  align-items: center;
+}
+
+/* type=json rows grow vertically — keep other cells top-aligned. */
+.cfg-row.cf-row--json {
+  align-items: start;
+}
+
+.cfg-row.cf-row--json .cfg-cell:not(.cf-json-input),
+.cfg-row.cf-row--json .cf-cb-btn {
+  align-self: center;
+}
+
+/* Placeholder rows: same look as real rows, key read-only, no delete button. */
+.cfg-row.cf-row--placeholder .cfg-cell[readonly] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.cfg-row.cf-row--placeholder .cfg-cell[readonly]:focus {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* In-row combobox trigger — compact variant of .cpm-cat-btn. */
+.cf-cb-btn {
+  height: 34px;
+  padding: 0 14px !important;
+  font-size: 13px !important;
+  min-width: 0;
+}
+
+/* JSON value editor (CodeMirror 6) — toolbar + editor in a rounded inline card. */
+.cf-json-wrap {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 2px solid transparent;
+  border-radius: 16px;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+  min-width: 0;
+}
+
+.cf-json-wrap--invalid {
+  border-color: #d93025;
+  box-shadow: 0 0 0 1px #d93025 inset;
+}
+
+.cf-json-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.cf-json-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.cf-json-status {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cf-json-status--invalid {
+  color: #d93025;
+}
+
+.cf-json-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.cf-json-tool-btn:hover:not(:disabled) {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.cf-json-tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cf-json-tool-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* CodeMirror surface — overrides to match the page's typography and accent colour. */
+.cf-json-cm .cm-editor {
+  background: transparent;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Roboto Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  outline: none;
+}
+
+.cf-json-cm .cm-editor.cm-focused {
+  outline: none;
+}
+
+.cf-json-cm .cm-scroller {
+  font-family: inherit;
+  padding: 8px 0;
+}
+
+.cf-json-cm .cm-content {
+  padding: 0 12px;
+}
+
+.cf-json-cm .cm-line {
+  padding: 0;
+}
+
+.cf-json-cm .cm-gutters {
+  background: transparent;
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  color: var(--muted);
+}
+
+.cf-json-cm .cm-activeLine,
+.cf-json-cm .cm-activeLineGutter {
+  background: rgba(0, 113, 227, 0.04);
+}
+
+.cf-json-cm .cm-selectionBackground,
+.cf-json-cm .cm-content ::selection {
+  background: rgba(0, 113, 227, 0.18) !important;
+}
+
+.cf-json-cm .cm-cursor {
+  border-left-color: var(--accent);
+}
+
+.cf-json-cm--modal .cm-editor {
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.cf-json-cm--modal .cm-scroller {
+  padding: 12px 0;
+}
+
+/* Full-screen JSON modal — Esc/backdrop/Cancel discard, Save commits. */
+.cf-json-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  padding: 24px;
+  animation: cfJsonBackdropIn 0.18s ease-out;
+}
+
+@keyframes cfJsonBackdropIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.cf-json-modal {
+  width: min(960px, 100%);
+  height: min(720px, 90vh);
+  background: var(--card);
+  border-radius: 32px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.32);
+  animation: cfJsonModalIn 0.2s var(--ease-smooth, cubic-bezier(.4, 0, .2, 1));
+}
+
+@keyframes cfJsonModalIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.cf-json-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.cf-json-modal-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cf-json-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.cf-json-modal-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text);
+}
+
+.cf-json-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  padding: 16px;
+}
+
+.cf-json-modal-body .cf-json-cm,
+.cf-json-modal-body .cm-editor {
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.cf-json-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 16px;
+}
+
+/* Specifications: combobox attaching specs to a layer */
+.spec-attach-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+/* Inline-editable variation card thumbnail (drop-target for files) */
+.pcard-img-wrap.pcard-dropzone {
+  position: relative;
+  cursor: pointer;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.pcard-img-wrap.pcard-dropzone--loading {
+  cursor: wait;
+}
+
+.pcard-dropzone-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--muted);
+}
+
+.pcard-dropzone-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.pcard-img-wrap.pcard-dropzone:hover .pcard-dropzone-overlay,
+.pcard-img-wrap.pcard-dropzone.pcard-dropzone--over .pcard-dropzone-overlay {
+  opacity: 1;
+}
+
+.pcard-dropzone-overlay svg {
+  width: 22px;
+  height: 22px;
+}
+
+.pcard-title-input {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  line-height: 1.3;
+  border-radius: 0px;
+  transition: 0.3s ease;
+  box-shadow: 0px 0px 16px rgba(0, 0, 0, 0);
+}
+
+.pcard-title-input::placeholder {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.pcard-title-input:focus {
+  box-shadow: 2px 4px 16px rgba(0, 0, 0, 0.18);
+  padding-left: 8px;
+  border-radius: 999px;
+}
+
+.cpm-modal {
+  width: 560px;
+  max-width: 560px;
+}
+
+.cpm-modal .auth-modal-head {
+  padding: 22px 24px 0;
+}
+
+.cpm-modal .auth-modal-body {
+  padding: 16px;
+}
+
+.cpm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cpm-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* CRITICAL: base .crm-input has `flex: 1` (so it stretches horizontally
+   when laid out in a row). But inside .cpm-section the flex container
+   is COLUMN — and `flex: 1` then makes the input stretch VERTICALLY
+   to fill all available height. That's why Target value showed up at
+   61 px tall (DevTools-measured) instead of the expected ~40 px.
+   Force `flex: none` so the input keeps its natural content height. */
+.cpm-section > .crm-input,
+.cpm-section > .crm-input-select {
+  flex: none;
+}
+
+.cpm-textarea {
+  border-radius: 16px !important;
+  resize: none;
+  min-height: 72px;
+  font-family: inherit;
+  line-height: 1.5;
+  padding: 10px 16px;
+}
+
+.cpm-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cpm-modal .auth-actions {
+  margin-top: 16px;
+  gap: 12px;
+}
+
+.cpm-modal .auth-modal-head {
+  padding: 22px 24px 4px;
+}
+
+.cpm-cat-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 18px 11px 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: none;
+  font-family: inherit;
+  font-size: 14px;
+  /* Native <button> elements pick up the user-agent stylesheet's bolder
+     default in some browsers — force the body weight so combos read at the
+     same visual weight as adjacent inputs / labels. */
+  font-weight: 400;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: 0.4s ease
+}
+
+/* Selected/placeholder text — single line with ellipsis (prevents wrap doubling combo height). */
+.cpm-cat-btn>span {
+  font-weight: inherit;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cpm-cat-btn:hover {
+  box-shadow: 3px 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.cpm-cat-btn--open,
+.cpm-cat-btn:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.cpm-cat-placeholder {
+  color: rgba(var(--fg-rgb), 0.36);
+}
+
+.cpm-cat-caret {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.22s var(--ease-smooth);
+}
+
+.cpm-cat-caret--up {
+  transform: rotate(180deg);
+}
+
+.cpm-cat-dropdown {
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+/* ─── Modifier groups (ProductOverview) — mirrors org-toolbar: pill containers, 34px tall, 999px radius. ─── */
+
+.po-mod-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.po-mod-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Whole head row IS the drag handle (long-press anywhere); touch-action:none avoids mobile-scroll conflict. */
+.po-mod-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  touch-action: none;
+}
+
+/* Name input — search-style pill (mirrors .org-search-wrap). */
+.po-mod-name-wrap {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 0 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+.po-mod-name-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.po-mod-name-input::placeholder {
+  color: rgba(var(--fg-rgb), 0.3);
+}
+
+/* Control type segmented toggle (mirrors .ord-sort-toggle). */
+.po-mod-ctrl-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.po-mod-ctrl-indicator {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.po-mod-ctrl-btn {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 0 16px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  transition: color 0.4s ease;
+}
+
+.po-mod-ctrl-btn--current {
+  color: var(--accent);
+}
+
+/* Min / Max — single grouped pill. */
+.po-mod-num-group {
+  display: inline-flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 0 14px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.po-mod-num-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.po-mod-num-input {
+  width: 38px;
+  height: 30px;
+  border: none;
+  outline: none;
+  background: transparent;
+  text-align: center;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.po-mod-num-input::-webkit-inner-spin-button,
+.po-mod-num-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.po-mod-num-input::placeholder {
+  color: rgba(var(--fg-rgb), 0.24);
+}
+
+.po-mod-num-divider {
+  width: 1px;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 0 2px;
+}
+
+/* Required toggle pill — lights up with --accent when on. */
+.po-mod-required-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 16px;
+  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+  transition: background 0.18s var(--ease-smooth), color 0.18s var(--ease-smooth);
+}
+
+.po-mod-required-dot {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid #c4c4c4;
+  border-radius: 4px;
+  flex-shrink: 0;
+  position: relative;
+  transition: border-color 0.18s var(--ease-smooth), background 0.18s var(--ease-smooth);
+}
+
+.po-mod-required-btn--on {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.po-mod-required-btn--on .po-mod-required-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.po-mod-required-btn--on .po-mod-required-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='2.5,6.5 5,9 9.5,3.5'/></svg>") no-repeat center / 80%;
+}
+
+/* Default-item Combobox wrapper (radio-only) — reuses .cpm-cat-btn; shrunk to 34px toolbar with min-width. */
+.po-mod-default-cb {
+  flex-shrink: 0;
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.po-mod-default-cb .cpm-cat-btn {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+/* Delete-group icon button. */
+.po-mod-group-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.18s var(--ease-smooth), color 0.18s var(--ease-smooth);
+}
+
+.po-mod-group-del:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: #d12626;
+}
+
+/* Items list — mirrors Configuration Layer 2: each cell is own pill on var(--card), grid gap 4px, trash last. */
+.po-mod-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Whole row is the drag handle (long-press) — no outer pill, only cells. */
+.po-mod-item {
+  display: grid;
+  grid-template-columns: 1fr 1fr 32px;
+  align-items: center;
+  gap: 4px;
+  touch-action: none;
+}
+
+/* Cells share the cfg-row .crm-input pattern: card-coloured pill, 36px tall. */
+.po-mod-item-name,
+.po-mod-item-price {
+  height: 36px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  padding: 0 16px;
+  background: var(--card);
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+  transition: border-color 0.2s ease;
+}
+
+.po-mod-item-name:focus,
+.po-mod-item-price:focus {
+  box-shadow: var(--box-shadow);
+}
+
+.po-mod-item-name::placeholder,
+.po-mod-item-price::placeholder {
+  color: rgba(var(--fg-rgb), 0.3);
+}
+
+.po-mod-item-price::-webkit-inner-spin-button,
+.po-mod-item-price::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.po-mod-item-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.18s var(--ease-smooth), color 0.18s var(--ease-smooth);
+}
+
+.po-mod-item-del:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: #d12626;
+}
+
+.po-mod-items-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 4px 0 0 14px;
+}
+
+.po-mod-add-item {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--accent);
+  border-radius: 999px;
+  cursor: pointer;
+  margin-top: 4px;
+  transition: background 0.18s var(--ease-smooth);
+  background-color: var(--accent-tint);
+  border: none;
+}
+
+.po-mod-add-item:hover {
+  background: var(--accent-tint-hover);
+}
+
+.po-mod-add-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: opacity 0.18s var(--ease-smooth);
+}
+
+.po-mod-add-group:hover {
+  opacity: 0.9;
+}
+
+/* ─── Phase 1: Product Settings / Inventory / Q&A page styles ─────── */
+
+.po-set-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 24px;
+  margin-top: 8px;
+}
+
+.po-set-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.po-set-field--toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.po-set-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Match canonical .crm-input from shared.css; bg var(--card) keeps it visible on Settings var(--bg) backdrop. */
+.po-set-input {
+  padding: 10px 16px;
+  font-family: inherit;
+  /* prevent browser default fonts on type="number"/datetime-local */
+  font-size: 14px;
+  font-weight: 400;
+  /* defensive — some browsers render filled number/date inputs bolder */
+  background: var(--card);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  outline: none;
+  color: var(--text);
+  transition: border-color 0.2s ease;
+}
+
+.po-set-input:focus {
+  border-color: transparent;
+  /* override canonical .crm-input:focus { border-color: #000 } */
+  box-shadow: var(--box-shadow);
+}
+
+textarea.po-set-input,
+.po-set-input[rows] {
+  padding: 10px 16px;
+  border-radius: 16px;
+}
+
+.po-set-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.po-set-toggle-text {
+  font-size: 13px;
+}
+
+/* ── List table — mirrors .org-list-head/row: 36px pill header + stacked rows, hover lifts via shadow. ── */
+.po-set-table {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+/* Header row — separate 36px pill, fully rounded, sits above the row stack. */
+.po-set-row--head {
+  display: grid;
+  grid-template-columns: 2fr 2fr 1fr 1fr 1fr 1fr 32px;
+  align-items: center;
+  height: 36px;
+  background: var(--card);
+  border-radius: 18px;
+  padding: 0 16px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.36);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+/* Body row — stacked, 52px tall, white background. */
+.po-set-row:not(.po-set-row--head) {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2fr 2fr 1fr 1fr 1fr 1fr 32px;
+  align-items: center;
+  height: 52px;
+  padding: 0 16px;
+  background: var(--card);
+  font-size: 13px;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  transition: border-radius 0.3s ease, box-shadow 0.8s ease;
+}
+
+/* Row children (sans gloss) sit above gloss with own positioning so 3D translateZ doesn't break controls. */
+.po-set-row:not(.po-set-row--head)>*:not(.po-set-row-gloss) {
+  position: relative;
+  z-index: 2;
+}
+
+/* Gloss overlay (InteractiveSection paints radial gradient); absolute + grid-column span stays out of flow. */
+.po-set-row-gloss {
+  position: absolute;
+  inset: 0;
+  grid-column: 1 / -1;
+  /* defensive — even if absolute fails browsers, span full row */
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  transition: opacity 0.3s ease;
+}
+
+/* Adjacent-row dividers (mirrors .org-list-row + .org-list-row::before). */
+.po-set-row:not(.po-set-row--head)+.po-set-row:not(.po-set-row--head)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: var(--bg);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* First/last/only round outer corners; sibling combinators vs head class avoid :first-of-type tag-matching. */
+.po-set-row--head+.po-set-row {
+  border-radius: 24px 24px 0 0;
+}
+
+.po-set-row:last-child:not(.po-set-row--head) {
+  border-radius: 0 0 24px 24px;
+}
+
+.po-set-row--head+.po-set-row:last-child {
+  border-radius: 24px;
+}
+
+/* Hover — pill rounding + lift (mirror .org-list-row:hover); excludes --frozen so menu-open rows reset. */
+.po-set-row:not(.po-set-row--head):not(.po-set-row--frozen):hover {
+  border-radius: 18px !important;
+  box-shadow: var(--box-shadow);
+  z-index: 2;
+}
+
+/* Defensive: cursor over frozen row keeps neutral footprint and clears any leftover lift. */
+.po-set-row--frozen,
+.po-set-row--frozen:hover {
+  box-shadow: none !important;
+}
+
+/* Column variants — doubled class out-specifies the default 7-column .po-set-row:not(--head) template. */
+.po-set-row.po-set-row--3 {
+  grid-template-columns: 2fr 2fr 1fr 1fr 32px;
+}
+
+.po-set-row.po-set-row--5 {
+  grid-template-columns: 2fr 1.5fr 1fr 1.4fr 1.4fr 32px;
+}
+
+.po-set-row.po-set-row--6 {
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr 32px;
+}
+
+/* Edit-history audit log — 8 columns, with Note allowed to consume the
+   remaining horizontal space (1.8fr). Older variants used --6 which left no
+   room for a Batch column and truncated Note onto two lines. */
+.po-set-row.po-set-row--audit {
+  grid-template-columns:
+    1.1fr   /* When */
+    0.7fr   /* SKU */
+    0.9fr   /* Warehouse */
+    0.6fr   /* Change */
+    1fr     /* Reason */
+    0.9fr   /* Batch */
+    0.9fr   /* By */
+    1.8fr;  /* Note — widest, wraps gracefully when needed */
+  /* row height grows to fit content if Note wraps to a second line */
+  height: auto;
+  min-height: 52px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.po-eh-note {
+  /* Note text wraps and truncates to 2 lines with a "…" — tooltip on hover
+     surfaces the full text via the parent <span title=…>. Standard `line-clamp`
+     declared alongside the `-webkit-` prefix to silence vendorPrefix linters
+     and stay compatible with future browsers. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+          line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.po-set-strong {
+  font-weight: 500;
+}
+
+.po-set-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.po-stock-delta {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.po-stock-delta--up {
+  color: #16a34a;
+}
+
+.po-stock-delta--down {
+  color: #dc2626;
+}
+
+/* ── Folder-tree rows (Inventory/Discounts) — row click = primary action; chevron stops click for expand only. ── */
+.po-tree-row {
+  cursor: pointer;
+}
+
+.po-tree-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.po-tree-chevron {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.po-tree-chevron-spacer {
+  width: 22px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.po-tree-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.po-tree-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.po-tree-avatar-fallback {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.4;
+}
+
+.po-stock-cell {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.po-stock-cell--out {
+  color: #dc2626;
+}
+
+.po-stock-cell--low {
+  color: #d97706;
+}
+
+.po-numeric-muted {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Same tabular-nums styling as .po-numeric-muted but left-aligned so it
+   sits flush with its column header (used in Tier pricing's Base price
+   column — right-aligning price made it visually collide with the
+   left-aligned Tier ladder column next to it). */
+.po-numeric-left {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+/* ── Cost / Profit / Margin columns on the Inventory page ────────────
+   .po-num-head — right-aligned head label for the three financial
+                  columns so the labels sit above their numbers.
+   .po-money-cell — right-aligned tabular-nums money cell ($ / "—").
+   .po-margin   — margin % default (blue accent, bold).
+   .po-margin--bad — margin under 20 %, red. */
+.po-num-head {
+  text-align: right;
+}
+
+.po-money-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.po-margin {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.po-margin--bad {
+  color: #c92a39;
+}
+
+/* SKU code body cell on the Inventory page — same muted+small look as
+   .po-set-note but right-aligned so it lines up with adjacent numeric
+   columns (avoids the visual "MARGIN|SKUCODE" collision where Margin
+   is right-aligned and SKU code defaults to left). */
+.po-id-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Pill Edit button (accent fill) — used in Inventory + Discount rows ── */
+.po-edit-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  height: 28px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: inherit;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.po-edit-btn:hover {
+  opacity: 0.92;
+}
+
+/* ── Inline 18px square checkbox for "include this field" toggles ── */
+.po-include-cb {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Discount type radio-card options (Edit-Discount modal) ────── */
+.po-disc-type-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--card);
+  border-radius: 16px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: 0.4s var(--ease-smooth);
+  border: none;
+}
+
+.po-disc-type-option:hover {
+  box-shadow: var(--box-shadow);
+}
+
+.po-disc-type-option--selected {
+  background: var(--accent-tint);
+}
+
+.po-disc-type-option-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.po-disc-type-option--selected .po-disc-type-option-icon {
+  color: var(--accent);
+}
+
+.po-disc-type-option-body {
+  flex: 1;
+}
+
+.po-disc-type-option-label {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.po-disc-type-option--selected .po-disc-type-option-label {
+  color: var(--accent);
+}
+
+.po-disc-type-option-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.po-disc-type-option-check {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Per-discount cell colour: accent for active sale, muted dash otherwise ── */
+.po-disc-cell--active {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.po-disc-cell--strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.po-disc-cell--muted {
+  color: var(--muted);
+}
+
+/* ── Filter pill button group (Inventory) — three count chips on the right ── */
+.po-filter-pills {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.po-filter-count {
+  opacity: 0.6;
+}
+
+/* ── Right-side toolbar group (multiple controls collapsed to the right edge) ── */
+.po-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.po-toolbar-right .org-sort-toggle {
+  margin-left: 0;
+}
+
+/* Variation row stock — slightly lighter than product/leaf SKU figure. */
+.po-tree-stock--variation {
+  font-weight: 500;
+}
+
+/* Loading-row placeholder while a product is hydrating. */
+.po-tree-loading-row {
+  height: 40px;
+  opacity: 0.6;
+}
+
+.po-tree-loading-text {
+  padding-left: 48px;
+}
+
+/* Comma-style metadata after a name in tree rows ("· 2 variations · 8 SKUs"). */
+.po-tree-meta {
+  margin-left: 8px;
+}
+
+/* Flat-list row (when filter = Low / OOS) — single name cell with breadcrumb. */
+.po-flat-name-cell {
+  padding-left: 16px;
+}
+
+/* "(inherited)" tag in Discount table cells. */
+.po-tree-inherited {
+  margin-left: 6px;
+}
+
+/* Edit-Discount modal — narrower than the default 720px cpm-modal. */
+.po-disc-modal {
+  width: 560px;
+  max-width: 560px;
+}
+
+.po-disc-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Push Cancel to the far right of the action bar. */
+.po-disc-actions {
+  margin-top: 4px;
+}
+
+.po-disc-cancel-btn {
+  margin-left: auto;
+}
+
+/* ── Price cell in Discount table — "$X → $Y" with strike on original. ── */
+.po-disc-price-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.po-disc-price-plain {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.po-disc-price-before {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.po-disc-price-arrow {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.po-disc-price-after {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Live preview block under the value input in Edit-Discount modal ── */
+.po-disc-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: var(--accent-tint);
+  border-radius: 12px;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.po-disc-preview-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Bulk-apply form fields (Products → Settings tab) ─────────────── */
+.po-bulk-field--off {
+  opacity: 0.55;
+}
+
+.po-bulk-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.po-bulk-toggle-row {
+  margin-top: 8px;
+}
+
+.po-bulk-cb-disabled {
+  pointer-events: none;
+}
+
+.po-bulk-confirm-modal {
+  width: 520px;
+  max-width: 520px;
+}
+
+.po-bulk-confirm-table {
+  margin-top: 12px;
+}
+
+.po-bulk-confirm-actions {
+  margin-top: 16px;
+}
+
+.po-bulk-apply-actions {
+  margin-top: 12px;
+}
+
+.po-bulk-intro {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* Inventory edit-stock modal — narrower than the default 720px cpm-modal. */
+.po-edit-stock-modal {
+  width: 480px;
+  max-width: 480px;
+}
+
+/* ── Inventory: warehouse-group section header (clickable to collapse) ── */
+.po-wh-group {
+  margin-bottom: 24px;
+}
+
+.po-wh-group-title {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+.po-wh-group-caret {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  transition: transform 0.2s var(--ease-smooth);
+}
+
+.po-wh-group-caret--closed {
+  transform: rotate(-90deg);
+}
+
+/* ── New Warehouse modal — section labels chunk Identification/Address/Contact/Notes; .po-wh-grid pairs short fields. ── */
+.po-wh-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 12px;
+  padding: 0 4px;
+}
+
+/* First label has no extra top margin — the modal head already provides space. */
+.cpm-form>.po-wh-section-label:first-child {
+  margin-top: 0;
+}
+
+.po-wh-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .po-wh-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Toggle row — checkbox left + label right; mirrors .cpm-toggle-row but single-line for short copy. */
+.po-wh-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+/* Default-warehouse badge (Star + "Default") — same blue accent pill as verified/enabled states. */
+.po-wh-default-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.po-wh-default-pill svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── Country combo (Utils/CountryCombo.jsx) — pill trigger mimics .crm-input; popup portaled to body to avoid clip. ── */
+
+/* Trigger button — visually identical to .crm-input but interactive. */
+.po-combo-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid transparent;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.po-combo-btn:hover {
+  box-shadow: var(--box-shadow);
+}
+
+.po-combo-btn--open {
+  box-shadow: var(--box-shadow);
+}
+
+.po-combo-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.po-combo-value--empty {
+  color: var(--muted);
+}
+
+/* Flag emoji sizing — slightly larger than text so the country reads first. */
+.po-combo-flag {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.po-combo-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-combo-caret {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.2s var(--ease-smooth);
+}
+
+.po-combo-btn--open .po-combo-caret {
+  transform: rotate(180deg);
+}
+
+/* Popup — portaled to body, above the auth-modal overlay (z-index 500). */
+.po-combo-pop {
+  position: fixed;
+  z-index: 1000;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.16);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  /* Cap absolute width so very wide triggers don't make a giant popup. */
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.po-combo-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 999px;
+}
+
+.po-combo-search-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.po-combo-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  min-width: 0;
+}
+
+.po-combo-search-input::placeholder {
+  color: var(--muted);
+}
+
+.po-combo-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  /* Thin custom scrollbar to match the modal aesthetic. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+
+.po-combo-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.po-combo-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+
+.po-combo-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.po-combo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: 0.05s ease;
+}
+
+.po-combo-item:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.po-combo-item--on {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.po-combo-item--on:hover {
+  background: var(--accent-tint);
+}
+
+.po-combo-check {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.po-combo-empty {
+  padding: 14px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ── Bulk Transfer / Receive Wizard modal ──────────────────────────────
+   Base width applies to both wizards' plan step (the SKU-tree step 1 has
+   its own --narrow modifier below). Per-wizard modifiers below override
+   the width when one needs more breathing room than the other.
+   !important forces the override over the base .auth-modal { width: 960px }
+   rule (same specificity, source-order cascade is unreliable across
+   chunked Vite bundles). */
+.po-bulk-wizard {
+  width: 1980px !important;
+  max-width: calc(100vw - 32px);
+}
+
+/* Step 1 of the Receive wizard is just a 3-column SKU tree — the 1980px
+   plan-step width feels comically empty there, so shrink to a sane card. */
+.po-bulk-wizard.po-bulk-wizard--narrow {
+  width: 980px !important;
+}
+
+.po-bulk-wizard.po-bulk-wizard--receive {
+  width: 1700px !important;
+}
+
+.po-bulk-wizard.po-bulk-wizard--transfer {
+  width: 1400px !important;
+}
+
+/* Tree has no inner scroll — parent .auth-modal owns scrolling; nested overflow created dual scrollbars. */
+.po-bulk-tree {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.po-bulk-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  transition: background 0.18s var(--ease-smooth);
+}
+
+.po-bulk-tree-row:hover {
+  background: var(--bg);
+}
+
+.po-bulk-tree-row--depth-1 {
+  padding-left: 36px;
+}
+
+.po-bulk-tree-row--depth-2 {
+  padding-left: 64px;
+}
+
+.po-bulk-tree-row--depth-3 {
+  padding-left: 92px;
+}
+
+.po-bulk-tree-loading {
+  padding: 8px 10px 8px 60px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.po-bulk-tree-loading-inline {
+  font-style: italic;
+  color: var(--muted);
+}
+
+.po-bulk-wizard-actions {
+  margin-top: 12px;
+}
+
+.po-bulk-wizard-actions .po-disc-cancel-btn {
+  margin-left: auto;
+}
+
+/* ── Step 2 plan table ─────────────────────────────────────────────── */
+.po-bulk-plan-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.po-bulk-plan-quick-cb {
+  min-width: 240px;
+}
+
+.po-bulk-plan-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.po-bulk-plan-row {
+  display: grid;
+
+  grid-template-columns: 1.4fr 1.2fr 18px 1.2fr 210px 70px 36px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: var(--card);
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.po-bulk-plan-row--head {
+  background: transparent;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.36);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.po-bulk-plan-row--invalid {
+  background: var(--delete-tint);
+}
+
+/* Transfer wizard with Batch column — adds a 200px slot between To and Qty. */
+.po-bulk-plan-row--batch {
+  grid-template-columns: 1.2fr 1fr 18px 1fr 1.4fr 90px 60px 36px;
+}
+
+/* Receive wizard — SKU | WH | Batch | Units | Prod date | Expiry | Reason | Note | menu
+   Date columns are 150px so "May 14, 2026" fits without the DatePicker button
+   truncating to "May 14, 2…". Modal width grew to 1980px to keep proportions. */
+.po-bulk-plan-row--receive {
+  grid-template-columns: 1.3fr 0.9fr 1.2fr 80px 150px 150px 1fr 1.1fr 36px;
+}
+
+.po-bulk-plan-note {
+  height: 32px !important;
+  padding: 4px 12px !important;
+  font-size: 12px !important;
+}
+
+.po-bulk-plan-date {
+  display: block;
+  min-width: 0;
+}
+
+/* DatePicker renders a button inside — make it fill the cell + match other inputs */
+.po-bulk-plan-date > button {
+  width: 100% !important;
+  font-size: 11px !important;
+}
+
+/* Hint banner above the receive table — clarifies that this is incoming-only */
+.po-bulk-plan-hint {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  background: var(--accent-tint);
+  color: var(--text);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.po-bulk-plan-hint-grouping {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.po-field-required {
+  color: var(--accent);
+  margin-left: 2px;
+}
+
+.po-bulk-plan-batch-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  /* Don't stretch to row height — otherwise the inner input gets flex:1 and balloons */
+  align-self: center;
+  width: 100%;
+}
+
+/* Beat .crm-input's flex:1 + radius defaults. Without these, the input balloons
+   into a circle inside the flex-column cell. */
+.po-bulk-plan-batch-cell .po-bulk-plan-batch-input.crm-input {
+  flex: 0 0 auto !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  max-height: 32px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  padding: 0 14px !important;
+  font-size: 12px !important;
+  line-height: 32px !important;
+  border-radius: 999px !important;
+  box-sizing: border-box !important;
+}
+
+.po-bulk-plan-quick-batch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+}
+
+.po-bulk-plan-quick-batch input {
+  height: 32px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  padding: 0 14px;
+  font-size: 13px;
+  width: 240px;
+  background: var(--card);
+}
+
+.po-bulk-plan-quick-batch button {
+  padding: 6px 14px !important;
+  font-size: 12px !important;
+}
+
+.po-bulk-plan-sku {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.po-bulk-plan-bc {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-bulk-plan-arrow {
+  color: var(--muted);
+}
+
+
+.po-bulk-plan-qty {
+  font-weight: 400;
+  appearance: textfield;
+  -moz-appearance: textfield;
+  min-width: 0;
+  width: 100%;
+}
+
+.po-bulk-plan-qty::-webkit-outer-spin-button,
+.po-bulk-plan-qty::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.auth-modal .crm-input.po-bulk-plan-qty {
+  background: var(--bg);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.auth-modal .crm-input.po-bulk-plan-qty:focus {
+  background: #fff;
+  box-shadow: var(--box-shadow);
+}
+
+.po-bulk-plan-avail {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 13px;
+  white-space: nowrap;
+  padding-left: 18px;
+}
+
+.po-bulk-plan-warning {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+/* ── Per-warehouse stock matrix (Product Inventory) — rows=SKUs, cols=warehouses+Total; cells open edit modal. ── */
+.po-pwh-table {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+.po-pwh-row {
+  display: grid;
+  align-items: center;
+  background: var(--card);
+  padding: 0 16px;
+  height: 52px;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.po-pwh-row+.po-pwh-row {
+  border-top: 1px solid var(--bg);
+}
+
+.po-pwh-row:first-of-type {
+  border-radius: 18px 18px 0 0;
+}
+
+.po-pwh-row:last-child:not(.po-pwh-row--head) {
+  border-radius: 0 0 18px 18px;
+}
+
+.po-pwh-row--head {
+  height: 36px;
+  margin-bottom: 8px;
+  background: var(--card);
+  border-radius: 18px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.36);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.po-pwh-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.po-pwh-sku-code {
+  margin-left: 4px;
+}
+
+.po-pwh-default-mark {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.po-pwh-cell {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 12px;
+  text-align: center;
+  transition: background 0.18s var(--ease-smooth);
+}
+
+.po-pwh-cell:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.po-pwh-cell--empty {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.po-pwh-total {
+  font-weight: 600;
+  color: var(--accent);
+  text-align: center;
+}
+
+/* ── Tier ladder chip row — compact summary in tree-table cell ── */
+.po-tier-ladder {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.po-tier-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Tier list inside Edit-Tiers modal: one row per existing tier. ── */
+.po-tier-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.po-tier-row {
+  display: grid;
+  grid-template-columns: 70px 1fr auto 32px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--card);
+  border-radius: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.po-tier-row-qty {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.po-tier-row-price {
+  color: var(--text);
+}
+
+.po-tier-row-saving {
+  padding: 2px 8px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.po-tier-row-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  transition: background 0.18s var(--ease-smooth), color 0.18s var(--ease-smooth);
+}
+
+.po-tier-row-del:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.08);
+  color: #dc2626;
+}
+
+.po-tier-row-del:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Add-tier inline form (qty + price + button) ── */
+.po-tier-add-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.po-tier-add-input {
+  font-variant-numeric: tabular-nums;
+}
+
+.po-adjust-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.po-adjust-delta {
+  width: 130px;
+}
+
+.po-adjust-note {
+  flex: 1 1 200px;
+}
+
+/* Apply/Add buttons in toolbar use 999px pill — overrides default .crm-add-btn rectangular var(--radius-item). */
+.po-adjust-row .crm-add-btn {
+  border-radius: 999px;
+  padding: 11px 22px;
+}
+
+.po-og-preview {
+  margin-top: 14px;
+  display: flex;
+}
+
+.po-og-img {
+  max-width: 600px;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* Q&A list */
+.po-qa-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.po-qa-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--card);
+  border-radius: 16px;
+}
+
+.po-qa-q,
+.po-qa-a {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.po-qa-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.po-qa-text {
+  margin: 0;
+  font-size: 14px;
+}
+
+.po-qa-textarea {
+  height: auto;
+  padding: 10px 14px;
+  border-radius: 16px;
+}
+
+.po-qa-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ─── Combobox sizing on Phase-1+ pages — restyles BookingCreateModal Combobox trigger to 36px pill. ─── */
+
+.po-cb-wrap {
+  display: block;
+  width: 100%;
+  flex: 0 1 auto;
+}
+
+.po-cb-wrap .cpm-cat-btn {
+  padding: 11px 18px 11px 16px;
+  /* matches canonical .cpm-cat-btn */
+  font-size: 14px;
+  background: var(--card);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  min-width: 0;
+}
+
+.po-cb-wrap .cpm-cat-btn:hover {
+  box-shadow: var(--box-shadow);
+}
+
+.po-cb-wrap .cpm-cat-btn--open,
+.po-cb-wrap .cpm-cat-btn:focus-visible {
+  box-shadow: var(--box-shadow);
+  outline: none;
+}
+
+.po-cb-wrap .cpm-cat-placeholder {
+  color: rgba(var(--fg-rgb), 0.3);
+}
+
+/* Adjust-stock toolbar variants — flex-shrink so SKU/Reason pills don't squeeze delta/note inputs. */
+.po-cb-wrap--sku {
+  flex: 1 1 220px;
+  min-width: 200px;
+}
+
+.po-cb-wrap--reason {
+  flex: 0 0 200px;
+  min-width: 200px;
+}
+
+/* Compact variant — slim 34px to match toolbar elements (search/sort/view); default 42px looks oversized. */
+.po-cb-wrap--toolbar .cpm-cat-btn {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+/* ── Variation gallery Add Media MODAL (Phase 7) — body portal; matches AuthModal: 32px radius, 16px padding. ── */
+
+.vgal-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  /* above .vgal-pop (4000) so the modal lands ON TOP */
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: vgal-modal-fade 0.18s ease;
+}
+
+@keyframes vgal-modal-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.vgal-modal {
+  background: var(--bg);
+  border-radius: 32px;
+  padding: 16px;
+  width: 480px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: vgal-modal-pop 0.22s var(--ease-smooth);
+}
+
+@keyframes vgal-modal-pop {
+  from {
+    transform: translateY(8px) scale(0.97);
+    opacity: 0;
+  }
+
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.vgal-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vgal-modal-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.vgal-modal-close {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.vgal-modal-close:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text);
+}
+
+.vgal-modal-hint,
+.vgal-modal-foot {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.vgal-modal-upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 44px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  transition: opacity 0.18s ease;
+}
+
+.vgal-modal-upload:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.vgal-modal-upload:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.vgal-modal-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.vgal-modal-divider::before,
+.vgal-modal-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.vgal-modal-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.vgal-modal-url-input {
+  flex: 1;
+  padding: 10px 16px;
+  background: var(--card);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.vgal-modal-url-input:focus {
+  border-color: transparent;
+  box-shadow: var(--box-shadow);
+}
+
+.vgal-modal-url-btn {
+  border-radius: 999px;
+  padding: 0 18px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.vgal-modal-error {
+  margin: 0;
+  font-size: 12px;
+  color: #d12626;
+}
+
+/* Non-image tiles: video/3D placeholder fills the tile. */
+.vgal-media-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--bg) 0%, var(--card) 100%);
+  border: 1px dashed rgba(0, 0, 0, 0.15);
+  border-radius: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+}
+
+.vgal-tile--video video.vgal-img {
+  object-fit: cover;
+  background: #000;
+}
+
+/* ─── Promo codes (Phase 1+) — custom 8-col row + filter pills + status badges + 3-dot menu (mirrors org ListRow). ─── */
+
+.po-set-row.po-set-row--promo {
+  grid-template-columns: 1.4fr 0.9fr 0.7fr 0.9fr 0.7fr 1.4fr 1fr 32px;
+}
+
+.po-set-row--head.po-set-row--promo {
+  grid-template-columns: 1.4fr 0.9fr 0.7fr 0.9fr 0.7fr 1.4fr 1fr 32px;
+}
+
+/* Warehouse list — 7 data cols + 32px menu; Default col ~140px so "Make default" pill doesn't truncate. */
+.po-set-row.po-set-row--wh,
+.po-set-row--head.po-set-row--wh {
+  grid-template-columns: 1.3fr 0.6fr 1.2fr 0.8fr 1.1fr 0.7fr 1.3fr 32px;
+}
+
+/* Contact cell — name on top line, phone in muted text below. */
+.wh-contact-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wh-contact-name {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wh-contact-phone {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.promo-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.promo-filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.promo-filter-pills {
+  display: inline-flex;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 0;
+}
+
+.promo-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 14px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.18s var(--ease-smooth), color 0.18s var(--ease-smooth);
+}
+
+.promo-filter-pill:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.promo-filter-pill--on {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* Status badges */
+.promo-status {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.promo-status--active {
+  background: var(--accent-tint-hover);
+  color: var(--accent);
+}
+
+.promo-status--inactive {
+  background: rgba(0, 0, 0, 0.06);
+  color: rgba(var(--fg-rgb), 0.48);
+}
+
+.promo-status--expired {
+  background: rgba(220, 38, 38, 0.08);
+  color: #d12626;
+}
+
+.promo-status--scheduled {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
+/* Category count tag inside the code cell */
+.promo-cat-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: help;
+}
+
+
+.promo-modal {
+  width: 640px;
+  max-width: 100%;
+}
+
+.promo-modal .po-set-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+
+.promo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+  padding-bottom: 32px;
+}
+
+.promo-card {
+  position: relative;
+  background: var(--card);
+  border-radius: 24px;
+  padding: 18px 18px 16px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  transition: box-shadow 0.5s ease;
+}
+
+.promo-card:hover {
+  box-shadow: var(--box-shadow);
+}
+
+.promo-card--frozen {
+  cursor: default;
+}
+
+.promo-card-gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  transition: opacity 0.3s ease;
+}
+
+.promo-card>*:not(.promo-card-gloss) {
+  position: relative;
+  z-index: 2;
+}
+
+.promo-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.promo-card-code {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.promo-card-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+}
+
+.promo-card-type {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.promo-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.promo-card-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.promo-card-meta-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.promo-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* ── Warehouse cards (grid view) — mirrors promo-card: 3D tilt + gloss + meta rows + status pill footer. ── */
+.wh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 0;
+}
+
+.wh-card {
+  position: relative;
+  background: var(--card);
+  border-radius: var(--radius-card, 16px);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-card, 0 1px 3px rgba(0, 0, 0, 0.04));
+  cursor: pointer;
+  overflow: hidden;
+  transform-style: preserve-3d;
+  will-change: transform;
+  transition: box-shadow 0.25s var(--ease-smooth);
+}
+
+.wh-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.wh-card--frozen {
+  pointer-events: auto;
+}
+
+/* Gloss layer — InteractiveSection sets background-image + opacity inline; here only layout/positioning. */
+.wh-card-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.wh-card>*:not(.wh-card-gloss) {
+  position: relative;
+  z-index: 1;
+}
+
+.wh-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wh-card-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wh-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wh-card-code {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wh-card-location {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.wh-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wh-card-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.wh-card-meta-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wh-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* ── Promo code modal — extra utility classes mirroring CreateProductModal style ── */
+
+/* Subtle hint row sitting under the input — used for "0–100 %" / "max 1000" guidance. */
+.cpm-section-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  padding: 0 8px;
+}
+
+/* Toggle row — checkbox left, label + hint right (text wraps below the checkbox). */
+.cpm-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.cpm-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Scrolling is handled by .auth-modal (90vh + hidden scrollbar); do NOT add overflow on .auth-modal-body. */
+
+/* Side-by-side Date + Time pickers inside cpm-section. */
+.cpm-datetime-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* ── Bulk-select on Products list ─────────────────────── */
+/* Reuse Product Overview's .cat-prod-checkbox + .layer1-bulk-check stack for grid cards (positioned overlay with backdrop blur). Row variant adds a .prow-bulk-check column-shaped wrapper. */
+
+.prow-bulk-check {
+  margin: 0;
+  align-self: center;
+  justify-self: center;
+}
+
+/* Bulk-mode in list view adds a leading 28px checkbox column to both header and rows so columns stay aligned. */
+.prod-list-head--bulk-mode,
+.prow.prow--bulk-mode {
+  grid-template-columns: 28px 36px 1fr 100px 110px 100px 80px 44px !important;
+}
+
+.prod-card--selected,
+.prow--selected,
+.layer1-card.prod-card--selected {
+  box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-card, 0 2px 8px rgba(0, 0, 0, 0.05));
+}
+
+/* Toolbar: search is fixed-width on the left; everything else lives in .org-toolbar-right and hugs the right edge via margin-left:auto. */
+.prod-page .org-toolbar {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.prod-page .org-toolbar .org-search-wrap {
+  flex: 0 0 auto;
+  width: 280px;
+  max-width: 280px;
+}
+
+.org-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Import/Export combo pill — white card with Dynamic Block sliding indicator (view-toggle vibe). */
+.prod-ie-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 3px;
+  flex-shrink: 0;
+}
+
+.prod-ie-indicator {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  height: calc(100% - 6px);
+  background: var(--accent-tint);
+  border-radius: 999px;
+  opacity: 0;
+  z-index: 1;
+  pointer-events: none;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.prod-ie-btn {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: color 0.4s ease;
+  white-space: nowrap;
+}
+
+.prod-ie-btn--hov,
+.prod-ie-btn--hov .prod-ie-icon {
+  color: var(--accent);
+}
+
+.prod-ie-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  transition: color 0.4s ease;
+}
+
+/* ── Floating bulk toolbar — white pill (mirrors auth-tab-switcher) ─── */
+
+.bulk-pill-wrap {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9000;
+  max-width: calc(100vw - 32px);
+  animation: bulk-pill-in 0.22s var(--ease-smooth);
+}
+
+@keyframes bulk-pill-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.bulk-pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 6px;
+  background: var(--card);
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
+  font-size: 13px;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+}
+
+/* Dynamic Block sliding indicator (horizontal). Matches auth-tab-indicator. */
+.bulk-pill-indicator {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  height: calc(100% - 12px);
+  background: var(--accent-tint);
+  border-radius: 999px;
+  opacity: 0;
+  z-index: 1;
+  transition: transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    background-color 0.2s ease,
+    opacity 0.18s ease;
+  pointer-events: none;
+}
+
+.bulk-pill-count {
+  position: relative;
+  z-index: 2;
+  font-weight: 600;
+  padding: 0 12px;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Danger-tint variant: indicator flips to soft red when hovering Delete. */
+.bulk-pill-indicator--danger {
+  background: rgba(227, 52, 47, 0.08);
+}
+
+.bulk-pill-sep {
+  width: 1px;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.08);
+  margin: 0 4px;
+  position: relative;
+  z-index: 2;
+}
+
+.bulk-pill-btn {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: color 0.55s var(--ease-smooth);
+  white-space: nowrap;
+}
+
+.bulk-pill-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.bulk-pill-btn--hov {
+  color: var(--accent);
+}
+
+.bulk-pill-btn--danger.bulk-pill-btn--hov {
+  color: #d93025;
+}
+
+/* Popover (Set category / Price ±% / Set stock) — same look as Header dropdowns. */
+.bulk-pill-action-wrap {
+  position: relative;
+  z-index: 2;
+}
+
+.bulk-pill-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.06);
+  padding: 6px;
+  min-width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 10;
+  animation: bulk-pill-pop-in 0.16s var(--ease-smooth);
+}
+
+@keyframes bulk-pill-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bulk-pill-pop-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.55s var(--ease-smooth);
+}
+
+.bulk-pill-pop-item:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.bulk-pill-popover--input {
+  display: flex;
+  gap: 6px;
+  padding: 10px;
+}
+
+.bulk-pill-popover--input input {
+  flex: 1;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.bulk-pill-popover--input input:focus {
+  border: 1px solid var(--accent);
+}
+
+.bulk-pill-pop-go {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.bulk-pill-pop-go:hover {
+  background: var(--accent-hover);
+}
+
+.bulk-pill-pop-go:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Active state for the bulk pill button while its popover is open. */
+.bulk-pill-btn--active {
+  color: var(--accent);
+}
+
+/* ── Set-category popover — mirrors Header switcher (hdr-switcher-drop) but opens UPWARD because the bulk pill sits at the bottom of the viewport. */
+.bulk-cat-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  min-width: 240px;
+  max-width: 280px;
+  background: var(--card);
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transform-origin: bottom left;
+  animation: bulk-cat-pop-in 0.22s var(--ease-smooth);
+}
+
+@keyframes bulk-cat-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.bulk-cat-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 240px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.bulk-cat-list::-webkit-scrollbar {
+  display: none;
+}
+
+.bulk-cat-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 0;
+  background: var(--accent-tint);
+  border-radius: 12px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1;
+  will-change: transform, height, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    height 0.55s var(--ease-smooth),
+    opacity 0.18s ease;
+}
+
+.bulk-cat-item {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  transition: color 0.4s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bulk-cat-item--current {
+  color: var(--accent);
+}
+
+.bulk-cat-item--new {
+  color: var(--text);
+  font-weight: 500;
+  transition: color 0.4s ease;
+}
+
+.bulk-cat-item--new:hover {
+  color: var(--accent);
+}
+
+.bulk-cat-new-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.bulk-cat-divider {
+  height: 1px;
+  background: var(--bg);
+  margin: 4px 4px;
+  flex-shrink: 0;
+}
+
+.bulk-cat-create-form {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+}
+
+.bulk-cat-create-input {
+  flex: 1;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.bulk-cat-create-input:focus {
+  border-color: var(--accent);
+}
+
+/* Row context menu reuses global .org-menu-* dropdown pattern. */
+.row-ctx-menu .org-card-dropdown-item:hover {
+  background: transparent !important;
+}
+
+/* ── Print barcodes modal — per-SKU checkbox list ───── */
+.prod-print-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.prod-print-check input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* ── Batches table — reuses .po-set-row pattern from PromoCodes (tilt + gloss + frozen) ─── */
+/* Columns: Batch | Product/SKU | Remaining | Received | Production | Status | (menu) */
+.po-set-row.po-set-row--batch,
+.po-set-row--head.po-set-row--batch {
+  grid-template-columns: 1.4fr 1.8fr 1.2fr 0.9fr 0.9fr 0.8fr 32px;
+}
+
+/* Tree view — Batch / Product / SKU+Warehouse | Remaining | Received | Prod | Exp | Status | menu */
+.po-set-row.po-set-row--batch-tree,
+.po-set-row--head.po-set-row--batch-tree {
+  grid-template-columns: 2.2fr 1.2fr 0.9fr 0.9fr 0.9fr 0.8fr 32px;
+}
+
+/* Hierarchy levels — visual nesting via background + left padding */
+.po-set-row--batch-l0 {
+  background: var(--card);
+  font-weight: 500;
+}
+
+.po-set-row--batch-l1 {
+  background: rgba(0, 0, 0, 0.015);
+  font-size: 12px;
+}
+
+.po-set-row--batch-l2 {
+  background: var(--card);
+  font-size: 12px;
+}
+
+.batch-tree-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.batch-tree-name--l1 {
+  padding-left: 24px;
+}
+
+.batch-tree-name--l2 {
+  padding-left: 48px;
+}
+
+.batch-tree-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.2s var(--ease-smooth);
+}
+
+.batch-tree-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.batch-tree-icon--leaf {
+  color: var(--muted);
+}
+
+.batch-tree-sub {
+  white-space: nowrap;
+}
+
+/* Product / SKU cell stacks two lines like PromoCodes' note-meta layout. */
+.batch-product-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.batch-meta-line {
+  font-size: 11px;
+  color: var(--muted);
+  display: block;
+  margin-top: 2px;
+}
+
+.batch-remaining {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.batch-remaining-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.batch-remaining b {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.batch-remaining .po-set-note {
+  font-size: 12px;
+}
+
+.batch-bar {
+  display: block;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+  width: 100%;
+  max-width: 120px;
+}
+
+.batch-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+/* ── Tickets page ─────────────────────────────────────── */
+.ticket-row--grid {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr 0.6fr 1.2fr 0.8fr 0.9fr;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+
+.ticket-code-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.ticket-code-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.ticket-code-btn svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.6;
+}
+
+.ticket-scan-wrap {
+  padding: 8px 0;
+}
+
+.ticket-scan-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .ticket-scan-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ticket-scan-camera {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: #111;
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ticket-scan-camera video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ticket-scan-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+}
+
+.ticket-scan-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 14px;
+}
+
+.ticket-scan-result--ok {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.ticket-scan-result--fail {
+  background: var(--delete-tint);
+  color: var(--delete);
+}
+
+.ticket-scan-result>div {
+  color: var(--text);
+}
+
+/* Active-parent context next to a Layer N title (e.g. "Configuration Layer 2 | White"). */
+.po-block-title-context {
+  color: var(--accent);
+  font-weight: 500;
+  margin-left: 4px;
+  font-size: 0.95em;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PRODUCTS → SETTINGS — bulk-apply form
+   ══════════════════════════════════════════════════════════════════ */
+
+.bulk-settings {
+  padding-bottom: 96px;
+  /* leave room for sticky footer */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 24px;
+}
+
+/* ── Hero banner (explains the page) ─────────────────────────── */
+.bulk-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--accent-tint);
+  border-radius: 16px;
+}
+
+.bulk-hero-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.bulk-hero-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.bulk-hero-body {
+  flex: 1;
+}
+
+.bulk-hero-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.bulk-hero-sub {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ── Section card ────────────────────────────────────────────── */
+.bulk-section {
+  border-radius: 0px;
+  padding: 0px;
+  margin-bottom: 28px;
+}
+
+.bulk-section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.bulk-section-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.bulk-section-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.bulk-section-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.bulk-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.bulk-section-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 2px 0 0;
+  line-height: 1.4;
+}
+
+.bulk-section-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* Single-column variant — used by sections that only have one card (Batch grouping). */
+.bulk-section-fields--single {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 900px) {
+  .bulk-section-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Field card ──────────────────────────────────────────────── */
+.bulk-field {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: background 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.bulk-field-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.bulk-field-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bulk-field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.bulk-field-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* Apply switch — iOS-style pill, makes intent obvious ("turn on to include") */
+.bulk-apply-switch {
+  flex-shrink: 0;
+  position: relative;
+  width: 36px;
+  height: 22px;
+  border: 0;
+  padding: 0;
+  margin-top: 2px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.bulk-apply-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 999px;
+  transition: transform 0.2s var(--ease-smooth);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.bulk-apply-switch--on {
+  background: var(--accent);
+}
+
+.bulk-apply-switch--on .bulk-apply-switch-knob {
+  transform: translateX(14px);
+}
+
+/* Value area — fades when Apply switch is off */
+.bulk-field-value {
+  padding-left: 48px;
+  /* align below switch + 12px gap */
+  transition: opacity 0.2s ease;
+}
+
+.bulk-field-value--disabled {
+  opacity: 0.42;
+}
+
+/* ── Segmented switch — mirrors .org-sort-toggle (CRM-wide pill pattern) ─── */
+.seg-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  box-shadow: 4px 8px 32px rgba(1, 3, 32, 0.15);
+}
+
+.seg-switch--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.seg-switch-indicator {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.seg-switch-btn {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  transition: color 0.4s ease;
+}
+
+.seg-switch-btn:disabled {
+  cursor: not-allowed;
+}
+
+.seg-switch-btn--current {
+  color: var(--accent);
+}
+
+/* When the bulk-field's Apply switch is OFF, dim the segmented switch */
+.bulk-field-value--disabled .seg-switch {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* ── Number input with unit suffix ──────────────────────────── */
+.bulk-number-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bulk-number-input {
+  width: 120px !important;
+  border-radius: 999px !important;
+  background-color: var(--card) !important;
+  border: none !important;
+}
+
+.bulk-number-input:focus {
+  box-shadow: var(--box-shadow);
+}
+
+.bulk-number-unit {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── Sticky footer ──────────────────────────────────────────── */
+.bulk-footer {
+  position: fixed;
+  bottom: 16px;
+  left: calc(var(--current-sidebar-w, var(--sidebar-w)) + 24px);
+  right: 24px;
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--card);
+  border-radius: 999px;
+  padding: 8px 8px 8px 18px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
+  z-index: 80;
+  animation: bulk-footer-in 0.22s var(--ease-smooth);
+}
+
+@keyframes bulk-footer-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bulk-footer-summary {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.bulk-footer-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.bulk-footer-btn {
+  padding: 8px 18px !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px !important;
+}
+
+/* ── Confirm modal — diff list ──────────────────────────────── */
+.bulk-confirm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 4px;
+}
+
+.bulk-confirm-row {
+  display: grid;
+  grid-template-columns: 1fr 18px auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.bulk-confirm-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.bulk-confirm-arrow {
+  color: var(--accent);
+  width: 14px;
+  height: 14px;
+}
+
+.bulk-confirm-value {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-tint);
+  padding: 3px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .bulk-footer {
+    left: 12px;
+    right: 12px;
+    border-radius: 18px;
+    padding: 12px 14px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* ── Batch naming — reuses .bulk-field shell, just drops the Apply switch ─── */
+.bulk-field--noswitch .bulk-field-value {
+  padding-left: 0;
+  /* no switch above, no need to indent under it */
+}
+
+.bulk-field-hint code {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text);
+}
+
+.batch-template-value {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.batch-template-input {
+  font-size: 13px !important;
+  border-radius: 999px !important;
+  transition: 0.4s ease;
+  background-color: var(--card) !important;
+  border: none !important;
+}
+
+.batch-template-input:focus {
+  box-shadow: var(--box-shadow);
+}
+
+.batch-template-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  padding: 4px 4px 4px 12px;
+  background: var(--card);
+  border-radius: 999px;
+  box-shadow: 4px 8px 32px rgba(1, 3, 32, 0.15);
+}
+
+.batch-template-preview-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.batch-template-preview-value {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-tint);
+  padding: 3px 12px;
+  border-radius: 999px;
+}
+
+.batch-template-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.batch-template-tokens + .batch-template-tokens {
+  margin-top: -2px;
+  /* tighten gap between the three labelled rows */
+}
+
+.batch-template-tokens-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  min-width: 64px;
+}
+
+.batch-template-tokens code {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--text);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PRINT BARCODES MODAL — moved from Authentication.css. Layout is a pair of
+   modals (settings + preview) side-by-side. Settings modal uses plain cpm-form
+   chrome (same as Edit batch / Pick SKUs); preview modal shows a live iframe.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.print-bc-split-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+/* The pair owns the gap + stretch alignment so both children share the same
+   height; overlay centers the pair as a whole. */
+.print-bc-split-pair {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
+.print-bc-modal-left,
+.print-bc-modal-right {
+  height: 82vh;
+  max-height: 760px;
+  min-height: 540px;
+  margin: 0;                  /* overrides .auth-modal default centering */
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.print-bc-modal-left {
+  width: 720px;
+  max-width: 720px;
+}
+
+.print-bc-modal-right {
+  width: 480px;
+  max-width: calc(100vw - 720px - 16px - 32px);
+}
+
+/* PrintShippingLabelModal-only overrides — the shipping label modal has way
+   fewer form fields than PrintBarcodesModal (no items tree, no symbology
+   picker, no advanced-encoding toggles). The shared 720+480 + 16 + 64 ≈
+   1280px footprint felt right for the barcode modal but spilled past the
+   right edge on FullHD (1920×1080) once the user opened it on a 15.6"
+   laptop. Scope these overrides via .psl-pair / .psl-modal (only present on
+   the shipping label modal) so PrintBarcodesModal keeps its roomier defaults
+   for its richer content.
+
+   HEIGHT — single source of truth on the PAIR, not the children. Previously
+   both panes carried their own `height: 78vh; max-height: 700px`, but the
+   left pane (.print-bc-modal-left.psl-modal) and right pane each also carry
+   the base `.auth-modal` class whose own max-height (90vh) could win
+   depending on CSS bundle import order — leaving the two panes at different
+   resolved heights (left followed 78vh ≈ full-viewport, right collapsed to
+   its iframe content height). Defining the height once on .psl-pair and
+   stretching both children to `height: 100%` makes equal height structural
+   and import-order-proof: the flex row's two items literally share the same
+   box height regardless of which stylesheet loads last. */
+.psl-pair {
+  height: 78vh;
+  max-height: 700px;
+  min-height: 520px;
+}
+.psl-pair > .print-bc-modal-left,
+.psl-pair > .print-bc-modal-right {
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+}
+/* Left pane narrowed -100px, right (preview) widened +200px per user
+   feedback — the shipping label preview is the centerpiece of this modal,
+   so we let it dominate. Net footprint 480 + 16 + 620 = 1116px (still
+   58% of FullHD width, leaves ~400px of side margin). */
+.psl-modal {
+  width: 480px;
+  max-width: 480px;
+}
+.psl-modal + .print-bc-modal-right {
+  width: 620px;
+  max-width: calc(100vw - 480px - 16px - 32px);
+}
+
+/* Body should flex-fill so the action footer sticks to the bottom. */
+.print-bc-modal-left .auth-modal-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.print-bc-modal-left .auth-modal-body::-webkit-scrollbar { display: none; }
+
+/* Sticky action footer — pinned to the bottom regardless of items tree growth. */
+.print-bc-footer {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.print-bc-footer-err {
+  margin: 0 0 8px;
+}
+
+.print-bc-footer .auth-actions.print-bc-actions {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.print-bc-footer .print-bc-actions .crm-submit-btn {
+  flex: 1;
+  justify-content: center;
+  height: 40px;
+  padding: 0 16px !important;
+}
+
+.print-bc-footer .print-bc-actions .auth-btn-check {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.print-bc-download-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+/* Show-on-label checkboxes — same TriCheckbox style as Pick SKUs. The grid
+   2×2 layout never overlaps even on narrow screens. */
+.print-bc-modal-left .print-bc-checks {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  padding: 4px 0;
+}
+.print-bc-modal-left .print-bc-checks label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+/* Symbology — two side-by-side comboboxes (family + specific code). On very
+   narrow modals stack them so neither truncates. */
+.print-bc-symbology-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+@media (max-width: 520px) {
+  .print-bc-symbology-row { grid-template-columns: 1fr; }
+}
+
+/* Advanced encoding — collapsible block with checkbox rows.
+   Use display: flex (not inline-flex) so the button takes full width and the
+   muted hint never collides with the label. */
+.print-bc-modal-left .print-bc-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.print-bc-modal-left .print-bc-toggle-btn:hover { color: var(--accent); }
+.print-bc-modal-left .print-bc-toggle-btn > svg {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.print-bc-modal-left .print-bc-toggle-btn .po-set-note {
+  margin-left: auto;
+}
+
+.print-bc-adv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border-radius: 12px;
+  margin-top: 8px;
+}
+
+.print-bc-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.print-bc-check-row input.crm-input--sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  height: 28px;
+  border: none !important;
+}
+
+/* Items tree — wraps the po-bulk-tree pattern from Pick SKUs. */
+.print-bc-tree-list {
+  max-height: 280px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  margin: 0 -10px;
+}
+.print-bc-tree-list::-webkit-scrollbar { display: none; }
+
+.print-bc-tree-header {
+  font-weight: 500;
+}
+
+/* Product thumbnail in the items tree — matches the Products page card cover. */
+.print-bc-tree-img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+.print-bc-sku-qty {
+  width: 60px !important;
+}
+
+/* Preview pane — light grey backdrop + white iframe inside. */
+.print-bc-preview-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 16px;
+  overflow: hidden;
+}
+
+.print-bc-preview {
+  flex: 1;
+  background: #f4f4f6;
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 0;
+  scrollbar-width: none;
+}
+.print-bc-preview::-webkit-scrollbar { display: none; }
+
+.print-bc-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* ── PrintShippingLabelModal — per-order rows (carrier + tracking + packages)
+       Sits inside the existing print-bc-modal-left shell so the chrome,
+       footer, and preview iframe behave identically to PrintBarcodesModal.
+       psl-* = Print Shipping Label. ──────────────────────────────────────── */
+.psl-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.psl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #00000000;
+  border-radius: 12px;
+  transition: border-color 0.18s ease;
+}
+
+.psl-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.psl-row-addr {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
+  /* Address is a single line in v1 (order_history.address is freeform);
+     wrap onto multiple lines if long rather than truncating — the
+     merchant might recognise the recipient faster from the full string. */
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* Each editable field stacks vertically — label on top, input
+   below, small gap. .psl-row owns the gap between sibling fields
+   (via flex-direction: column on the parent). No 3-column grid,
+   no align-items: end magic — that combo made the Packages cell
+   sprout a huge empty gap above the input when the Combobox
+   button (taller than a plain input) forced the row to grow. */
+.psl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.psl-field .po-field-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Packages is just a small numeric count — narrow input, no need
+   to span the modal. Renders to the left, label above. */
+.psl-field--packages .crm-input {
+  width: 120px;
+  text-align: center;
+}
+
+/* ── Searchable Combobox dropdown — adds a pinned search row at
+       the top of the regular .bk-cb-dropdown. Search input UX
+       mirrors the Magaz-side CountryCombobox so the platform stays
+       consistent. ─────────────────────────────────────────────── */
+.bk-cb-dropdown--searchable {
+  display: flex;
+  flex-direction: column;
+  padding-top: 6px;
+}
+
+.bk-cb-search {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  padding: 6px;
+  flex-shrink: 0;
+  z-index: 3;
+}
+
+.bk-cb-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.03);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.bk-cb-search-input:focus {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.bk-cb-list {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 4px 4px;
+}
+
+.bk-cb-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* PrintShippingLabelModal reuses the .print-bc-footer + .print-bc-actions +
+   .print-bc-download-btn markup from PrintBarcodesModal, so the existing
+   styles further up this file apply automatically. No psl-modal-specific
+   override needed. */
+
+/* ── Chooser modal (step-1 from the Products page) ───────────────────── */
+.psl-chooser-modal {
+  width: 560px;
+  max-width: 96vw;
+}
+
+.psl-chooser-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.psl-chooser-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.psl-chooser-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.psl-chooser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.psl-chooser-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--card);
+  border-radius: 12px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: border-color 0.18s ease;
+}
+
+.psl-chooser-row:hover {
+  border-color: rgba(0, 113, 227, 0.18);
+}
+
+.psl-chooser-row-main {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.print-bc-empty,
+.print-bc-busy {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* Stack the two modals vertically ONLY on truly narrow screens (≤ 900px).
+   Most laptops are wider — they should keep the side-by-side layout. */
+@media (max-width: 900px) {
+  .print-bc-split-overlay { overflow-y: auto; }
+  .print-bc-split-pair {
+    flex-direction: column;
+    align-items: center;
+  }
+  .print-bc-modal-left,
+  .print-bc-modal-right {
+    width: min(96vw, 560px);
+    max-width: min(96vw, 560px);
+    height: auto;
+    max-height: 70vh;
+    min-height: 0;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PRODUCTS — RESPONSIVE (desktop ≥1920 untouched)
+
+   Catalog grid, list view, categories grid, warehouse-grouped trees, and
+   per-page toolbars. po-set-table tables already handled in Responsive.css.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── md (1024-1365) — narrower grids ────────────────────────────────────── */
+@media (max-width: 1365px) {
+  .prod-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .cat-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ── sm (768-1023) — toolbars wrap, grids shrink ────────────────────────── */
+@media (max-width: 1023px) {
+  .prod-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .cat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Toolbar: search + filters + buttons wrap to multiple rows */
+  .po-toolbar {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .po-toolbar-right {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+}
+
+/* ── xs (640-767) — single-col grids, simplified toolbars ───────────────── */
+@media (max-width: 767px) {
+  .prod-grid,
+  .prod-grid.prod-grid--3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .cat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Product list view: hide header row, transform body rows to stacked cards.
+     Same pattern as po-set-table — applies to .prod-list which has its own
+     grid system separate from po-set-table. */
+  .prod-list-head {
+    display: none;
+  }
+
+  .prod-list-block,
+  .prod-list-block.prod-list-block--variation,
+  .prod-list-block.prod-list-block--sku,
+  .prod-list-block.prod-list-block--l3,
+  .prod-list-block.prod-list-block--l4,
+  .prod-list-block.prod-list-block--l5 {
+    grid-template-columns: 1fr !important;
+    grid-auto-flow: row;
+    height: auto !important;
+    min-height: 60px;
+    padding: 12px 14px !important;
+    gap: 6px;
+    border-radius: 16px;
+  }
+
+  /* Hide the toolbar's static "po-page-title" wrap text overflow */
+  .po-page-title {
+    font-size: 18px;
+  }
+
+  /* Tree-view chevron rows: ensure they wrap content rather than truncate */
+  .po-tree-loading-row {
+    height: auto;
+  }
+}
+
+/* ── xxs (<640) — phone — tightest ──────────────────────────────────────── */
+@media (max-width: 639px) {
+  .prod-grid,
+  .prod-grid.prod-grid--3 {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  /* Tabs inside Products pages — TabSwitcher (auth-tab pattern) already
+     handled in Authentication.css responsive section. */
+
+  /* Per-SKU detail block grids — already had max-width: 1240 query, but
+     re-assert single-column on phones */
+  .ps-sku-fields {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 479px) {
+  /* On true small phones, even Product cards squeeze too much in 1-col
+     with the existing padding; bring it tighter. */
+  .prod-card {
+    padding: 12px !important;
+  }
+}

@@ -1,0 +1,720 @@
+/* ══════════════════════════════
+   PAGE TITLE
+   ══════════════════════════════ */
+
+.org-page-title {
+  font-size: 24px;
+  padding-top: 128px;
+  margin: 0;
+}
+
+/* ══════════════════════════════
+   TOOLBAR
+   ══════════════════════════════ */
+
+.org-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 24px;
+  padding-bottom: 16px;
+}
+
+.org-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  height: 34px;
+  box-sizing: border-box;
+  background: var(--card);
+  border-radius: 999px;
+  flex: 1;
+  max-width: 300px;
+}
+
+.org-search-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.org-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.org-search-input::placeholder {
+  color: rgba(var(--fg-rgb), 0.3);
+}
+
+/* ── Sort toggle ── */
+.org-sort-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.org-sort-indicator {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, width, opacity;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    width 0.55s var(--ease-smooth),
+    opacity 0.2s ease;
+}
+
+.org-sort-btn {
+  position: relative;
+  z-index: 2;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(var(--fg-rgb), 1);
+  white-space: nowrap;
+  transition: color 0.4s ease;
+}
+
+.org-sort-btn--current {
+  color: var(--accent);
+}
+
+.org-sort-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  transition: transform 0.4s var(--ease-smooth);
+}
+
+/* ── View toggle ── */
+.org-view-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--card);
+  border-radius: 999px;
+  width: 64px;
+  height: 34px;
+  padding: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.org-view-indicator {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 30px;
+  height: 30px;
+  background: var(--accent-tint);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  will-change: transform;
+  transition: transform 0.4s var(--ease-smooth);
+}
+
+.org-view-btn {
+  position: relative;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: rgba(var(--fg-rgb), 1);
+  flex-shrink: 0;
+  transition: color 0.25s ease;
+}
+
+.org-view-btn--current {
+  color: var(--accent) !important;
+}
+
+.org-view-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.org-new-btn {
+  padding: 8px 16px;
+  background: #0071E3;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease;
+}
+
+.org-new-btn:hover {
+  background-color: #007FFF;
+}
+
+.org-new-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* ══════════════════════════════
+   GRID VIEW
+   ══════════════════════════════ */
+
+.org-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 1100px) {
+  .org-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 780px) {
+  .org-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .org-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.org-card {
+  background: var(--card);
+  border-radius: 24px;
+  cursor: pointer;
+  color: inherit;
+  display: block;
+  box-shadow: none;
+  will-change: transform;
+  transform-style: preserve-3d;
+  overflow: hidden;
+  position: relative;
+}
+
+.org-card--tilt {
+  transition: box-shadow 0.8s ease;
+}
+
+.org-card--tilt:hover {
+  box-shadow: var(--box-shadow);
+}
+
+/* Блик — абсолютный оверлей, не трогает контент */
+.org-card-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+}
+
+.org-card-inner {
+  position: relative;
+  padding: 16px;
+}
+
+/* Badge — абсолютно в правом верхнем углу */
+.org-card-badge {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  background: #0071E3;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.org-card-badge--inactive {
+  background: #d1d5db;
+  color: rgba(var(--fg-rgb), 0.55);
+}
+
+/* Три точки */
+.org-card-menu-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  transition: background 0.4s ease, color 0.4s ease;
+  z-index: 2;
+}
+
+.org-card-menu-btn:hover {
+  background: rgba(0, 113, 227, 0.05);
+  color: #0071E3;
+}
+
+.org-card-menu-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.org-card-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 28px;
+  /* не заезжать под кнопку */
+}
+
+.org-card-meta {
+  font-size: 12px;
+  color: rgba(var(--fg-rgb), 0.64);
+  font-family: monospace;
+  margin-top: 2px;
+}
+
+/* ── Dropdown menu ── */
+.org-card-dropdown {
+  position: fixed;
+  min-width: 184px;
+  background: var(--card);
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  padding: 6px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: org-menu-in 0.18s ease;
+}
+
+@keyframes org-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.org-card-dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.4s ease, color 0.4s ease;
+}
+
+/* Hover только для items вне dynamic block */
+.org-card-dropdown-item:not(.org-card-dropdown-item--danger):not(.org-menu-item):hover {
+  background: rgba(0, 113, 227, 0.05);
+  color: #0071E3;
+}
+
+/* ── Dynamic Block ── */
+.org-menu-block {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.org-menu-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 0;
+  background: rgba(0, 113, 227, 0.05);
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: transform, height, opacity, background-color;
+  transition:
+    transform 0.55s var(--ease-smooth),
+    height 0.55s var(--ease-smooth),
+    opacity 0.2s ease,
+    background-color 0.2s ease;
+}
+
+/* Danger-tint variant: indicator background flips to a soft red when the hovered item is destructive (Delete). */
+.org-menu-indicator--danger {
+  background: rgba(227, 52, 47, 0.08);
+}
+
+/* Dark theme: the light-tuned 5–8% tints vanish on the dark card (var(--card) = #1A1A1C),
+   so the hover indicator — and Delete's red tint in particular — become invisible. Strengthen them. */
+[data-theme="dark"] .org-menu-indicator {
+  background: var(--accent-tint);
+}
+[data-theme="dark"] .org-menu-indicator--danger {
+  background: var(--delete-tint);
+}
+
+.org-menu-item {
+  position: relative;
+  z-index: 2;
+  transition: color 0.4s ease;
+}
+
+.org-menu-item--current:not(.org-card-dropdown-item--danger) {
+  color: var(--accent) !important;
+}
+
+.org-menu-item--current:not(.org-card-dropdown-item--danger) .org-card-dropdown-icon {
+  color: var(--accent) !important;
+}
+
+/* Danger item stays red whether hovered or not — never flipped to blue. */
+.org-card-dropdown-item--danger.org-menu-item,
+.org-card-dropdown-item--danger.org-menu-item .org-card-dropdown-icon {
+  color: var(--delete) !important;
+}
+
+.org-card-dropdown-item--danger {
+  color: var(--delete) !important;
+}
+
+/* Plain dropdowns (no sliding indicator — e.g. OrgTeam RowMenu) had no danger
+   hover at all. Give the Delete row a visible red wash in both themes. */
+.org-card-dropdown-item--danger:not(.org-menu-item):hover {
+  background: var(--delete-tint);
+}
+[data-theme="dark"] .org-card-dropdown-item--danger:not(.org-menu-item):hover {
+  background: var(--delete-tint);
+}
+
+.org-card-dropdown-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: color 0.4s ease;
+}
+
+.org-card-dropdown-item:not(.org-card-dropdown-item--danger):not(.org-menu-item):hover .org-card-dropdown-icon {
+  color: var(--accent) !important;
+}
+
+.org-card-dropdown-item--danger .org-card-dropdown-icon {
+  color: var(--delete) !important;
+}
+
+.org-card-dropdown-item--danger .org-card-dropdown-icon {
+  color: var(--delete) !important;
+}
+
+.org-card-dropdown-sep {
+  height: 1px;
+  background: var(--bg);
+  margin: 3px 4px;
+}
+
+/* ══════════════════════════════
+   LIST VIEW
+   ══════════════════════════════ */
+
+.org-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Header — отдельный блок ── */
+.org-list-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr 110px 130px 44px;
+  height: 36px;
+  background: var(--card);
+  border-radius: 18px;
+  padding: 0 16px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.org-list-th {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(var(--fg-rgb), 0.36);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Rows block ── */
+.org-list-block {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Row ── */
+.org-list-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr 110px 130px 44px;
+  height: 52px;
+  background: var(--card);
+  padding: 0 16px;
+  align-items: center;
+  cursor: pointer;
+  overflow: hidden;
+  will-change: transform;
+  transform-style: preserve-3d;
+  border-radius: 0;
+  transition: border-radius 0.3s ease, box-shadow 0.8s ease;
+}
+
+/* Разделители между строками */
+.org-list-row+.org-list-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: var(--bg);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Закругления крайних строк */
+.org-list-row:first-child {
+  border-radius: 24px 24px 0 0;
+}
+
+.org-list-row:last-child {
+  border-radius: 0 0 24px 24px;
+}
+
+.org-list-row:only-child {
+  border-radius: 24px;
+}
+
+/* Hover — полное закругление + тень (только если меню не открыто) */
+.org-list-row:not(.org-list-row--frozen):hover {
+  border-radius: 18px !important;
+  box-shadow: var(--box-shadow);
+  z-index: 2;
+}
+
+/* ── Gloss ── */
+.org-list-gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  transition: opacity 0.3s ease;
+}
+
+/* ── Cells ── */
+.org-list-name {
+  position: relative;
+  z-index: 2;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.org-list-key {
+  position: relative;
+  z-index: 2;
+  font-size: 12px;
+  color: rgba(var(--fg-rgb), 0.4);
+  font-family: monospace;
+}
+
+.org-list-status-cell {
+  position: relative;
+  z-index: 2;
+}
+
+.org-list-created {
+  position: relative;
+  z-index: 2;
+  font-size: 12px;
+  color: rgba(var(--fg-rgb), 0.4);
+}
+
+/* ── Menu button (grid-positioned, not absolute) ── */
+.org-list-menu-btn {
+  position: relative;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(var(--fg-rgb), 0.3);
+  transition: background 0.15s ease, color 0.15s ease;
+  justify-self: end;
+}
+
+.org-list-menu-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.org-table-arrow-icon {
+  width: 14px;
+  height: 14px;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.org-table-row:hover .org-table-arrow-icon {
+  color: var(--text);
+  transform: translateX(2px);
+}
+/* Infinite-scroll sentinel: lives at the tail of a list, sized to be detectable by IntersectionObserver while staying visually unobtrusive. */
+.inf-sentinel {
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 32px;
+}
+.inf-sentinel--empty { color: transparent; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ORGANIZATION — RESPONSIVE (desktop ≥1920 untouched)
+
+   The existing .org-grid breakpoints (1100/780/480) already handle the
+   grid view. Here we add page-title, toolbar, and list-view stacking.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1023px) {
+  .org-page-title {
+    padding-top: 96px;
+  }
+}
+
+@media (max-width: 767px) {
+  .org-page-title {
+    padding-top: 24px;
+    font-size: 22px;
+  }
+
+  /* Toolbar wraps: search full-width on top row, sort+view+new on second */
+  .org-toolbar {
+    flex-wrap: wrap;
+    padding-top: 16px;
+    padding-bottom: 12px;
+    gap: 8px;
+    row-gap: 10px;
+  }
+
+  .org-search-wrap {
+    max-width: 100%;
+    flex: 1 1 100%;
+    order: 1;
+  }
+
+  .org-sort-toggle {
+    order: 2;
+    margin-left: 0;
+    flex-shrink: 1;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .org-sort-toggle::-webkit-scrollbar { display: none; }
+
+  /* View toggle + new button push to right */
+  .org-view-toggle,
+  .org-new-btn {
+    order: 3;
+  }
+  .org-new-btn {
+    margin-left: auto;
+  }
+
+  /* List view rows → stack horizontally tighter; the row's grid columns are
+     defined per-page, hide column headers and let rows breathe */
+  .org-list-head {
+    display: none;
+  }
+}
+
+@media (max-width: 479px) {
+  .org-page-title {
+    font-size: 20px;
+    padding-top: 20px;
+  }
+
+  /* Cards tighten — let inner content squeeze nicely */
+  .org-card-inner {
+    padding: 14px;
+  }
+}

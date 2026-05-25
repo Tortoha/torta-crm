@@ -1,0 +1,1663 @@
+.an-page {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-bottom: 80px;
+}
+
+.an-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.an-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 24px;
+}
+
+.an-section-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.an-section-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.an-section-period {
+  width: 180px;
+  flex-shrink: 0;
+}
+
+.an-section-period .cpm-cat-btn {
+  /* Full-width inside .an-section-period (180px) — without this the button
+     shrinks to its content and leaves an awkward gap to the right of the
+     section header. */
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  /* Match Products .cat-filter-btn: white pill, no border / shadow,
+     hover paints with accent-tint. */
+  box-shadow: none;
+  transition: 0.4s ease;
+}
+
+.an-section-period .cpm-cat-btn:hover,
+.an-section-period .cpm-cat-btn--open {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.an-section-period .cpm-cat-caret {
+  color: var(--muted);
+}
+
+.an-section-period .cpm-cat-btn--open .cpm-cat-caret,
+.an-section-period .cpm-cat-btn:hover .cpm-cat-caret {
+  color: var(--accent);
+}
+
+.an-section-body {
+  min-height: 1px;
+}
+
+/* ── Inner tile primitive (replaces the old grey-bg cells) ──────────
+   Every "cell" inside a section now uses .an-tile — white background,
+   rounded corners, soft shadow. The old per-section .an-kpi /
+   .an-mini / .an-cust-cell etc. classes are remapped here to share
+   this look while keeping their layout overrides. */
+.an-tile,
+.an-kpi,
+.an-mini,
+.an-traffic-cell,
+.an-bk-cell,
+.an-cust-cell,
+.an-ret-cell,
+.an-rev-cell,
+.an-search-cell,
+.an-small-series,
+.an-goal-row {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px 16px;
+  box-shadow: var(--shadow-card);
+}
+
+.an-kpi {
+  padding: 16px 16px;
+}
+
+.an-empty,
+.an-mini-empty {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+  margin: 6px 0;
+}
+
+/* Pan-reset pill shown under Revenue-over-time when the user has dragged
+   the chart away from "now". One click resets offset to 0 so the chart
+   jumps back to the live window without the user having to scroll the
+   pan back manually. */
+.an-pan-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.an-pan-reset:hover {
+  background: var(--accent-tint);
+}
+
+.an-csv-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: 0.4s ease;
+  white-space: nowrap;
+}
+
+.an-csv-btn:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.an-csv-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Compare-period combobox in Revenue over time section header.
+   Slightly narrower than the main period dropdown — the labels are
+   shorter ("vs 1 week" etc.) so 160 px fits without overflow. */
+.an-compare-picker {
+  width: 170px;
+}
+
+.an-compare-picker .cpm-cat-btn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--card);
+  border: none;
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: none;
+  transition: 0.4s ease;
+}
+
+.an-compare-picker .cpm-cat-btn:hover,
+.an-compare-picker .cpm-cat-btn--open {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* Custom date range modal (opened from "Custom range…" in any section's
+   period dropdown). Compact — two native date pickers side by side. */
+.an-range-modal {
+  width: 480px;
+  max-width: 92vw;
+}
+
+.an-range-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.an-range-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.an-range-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.an-range-field > span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.an-range-field input[type="date"] {
+  /* Native date input styled to match .crm-input pill shape. The
+     browser's calendar picker pops over this on click. */
+  font-size: 13px;
+  font-family: inherit;
+  padding: 9px 16px;
+  background: #fff;
+  border: 1px solid var(--bg);
+  border-radius: 999px;
+  color: var(--text);
+}
+
+.an-range-field input[type="date"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Drill-down modal — table of orders that drove a given day's revenue.
+   Wider than the date-range modal to fit a 5-column table comfortably. */
+.an-drill-modal {
+  width: 720px;
+  max-width: 94vw;
+}
+
+.an-drill-body {
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.an-drill-status {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: capitalize;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.an-drill-status--delivered { background: var(--accent-tint); color: var(--accent); }
+.an-drill-status--shipped   { background: rgba(0, 113, 227, 0.08); color: var(--accent); }
+.an-drill-status--confirmed { background: rgba(0, 0, 0, 0.05);     color: var(--text); }
+.an-drill-status--new       { background: rgba(0, 0, 0, 0.05);     color: var(--muted); }
+
+/* ── Skeleton (loading placeholder) ────────────────────────────────── */
+.an-skeleton {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.04));
+  background-size: 200% 100%;
+  border-radius: 12px;
+  animation: an-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes an-skeleton-pulse {
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+/* ── Inline SVG chart canvas — uses width:100%, viewBox handles ratio ─ */
+.an-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ── Section 1 — Overview KPI grid ─────────────────────────────────── */
+.an-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 1000px) {
+  .an-kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .an-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.an-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 16px;
+  /* background + radius now come from the shared .an-tile rule */
+  min-width: 0;
+}
+
+.an-kpi-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.an-kpi-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.an-delta {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.an-delta--up {
+  color: var(--accent);
+}
+
+.an-delta--down {
+  color: #c92a39;
+}
+
+/* ── Section 2 — Revenue over time toolbar (Day/Week/Month segmented) ─ */
+.an-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.an-segmented {
+  display: inline-flex;
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.an-seg-btn {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.an-seg-btn:hover {
+  color: var(--text);
+}
+
+.an-seg-btn--active {
+  background: var(--accent-tint);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Section 3 — Horizontal bars (reused by category/staff/reasons) ── */
+.an-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.an-bar-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 100px;
+  align-items: center;
+  gap: 12px;
+}
+
+.an-bar-label {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.an-bar-track {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.an-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s var(--ease-smooth);
+}
+
+.an-bar-value {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+/* Percent suffix shown by HorizontalBars in `share` mode (e.g. "1 · 33%").
+   Muted so the raw count remains primary, % is supporting context. */
+.an-bar-share {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+/* ── Margin analysis section ──────────────────────────────────────── */
+/* 4-up KPI strip on top of the tree — Total revenue / Total cost /
+   Gross profit / Avg margin. Same look as other an-* KPI grids. */
+.an-margin-totals {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+@media (max-width: 800px) {
+  .an-margin-totals { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Numeric cell inside a po-tree-row in the margin tree — right-aligned
+   tabular figures so columns line up across the Product → Variation →
+   SKU depths. */
+.an-margin-numcell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Margin % colour tier. Default (≥20 %) = accent blue, --bad (<20 %) = red.
+   Green tier removed — design language uses only blue + red for status. */
+.an-margin-pct      { color: var(--accent); font-weight: 600; }
+.an-margin-pct--bad { color: #c92a39; }
+
+/* ── Section 4 — Sales funnel ──────────────────────────────────────── */
+.an-funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.an-funnel-row {
+  display: grid;
+  /* [label 200px] [count 56px] [track 1fr] [pct 140px] — the count column
+     guarantees the absolute number is always readable, even when the bar
+     is 100% wide (Site visits, in a single-test-user scenario). */
+  grid-template-columns: 200px 56px 1fr 140px;
+  align-items: center;
+  gap: 12px;
+}
+
+.an-funnel-label {
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.an-funnel-emoji {
+  font-size: 16px;
+}
+
+.an-funnel-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.an-funnel-track {
+  height: 32px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 999px;
+  /* fully rounded ends */
+  overflow: hidden;
+}
+
+.an-funnel-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s var(--ease-smooth);
+}
+
+/* Dedicated count column — bold, right-aligned tabular numbers so the
+   values line up vertically across all four steps. */
+.an-funnel-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.an-funnel-pct {
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.an-funnel-drop {
+  color: #c92a39;
+  font-size: 11px;
+}
+
+/* ── Section 5 — Funnel dynamics (3 small charts side-by-side) ─────── */
+.an-multi-chart {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .an-multi-chart {
+    grid-template-columns: 1fr;
+  }
+}
+
+.an-small-series {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.an-small-series-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.an-small-series-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hint text under the big number — small grey, explains what the % means. */
+.an-small-series-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 2px 0 6px;
+  line-height: 1.3;
+}
+
+/* Section-level intro hint — short paragraph between section title and
+   the chart row, telling the user what they're looking at. */
+.an-section-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: -4px 0 12px;
+  line-height: 1.4;
+  max-width: 760px;
+}
+
+.an-small-series-chart {
+  width: 100%;
+  height: 90px;
+}
+
+/* ── Section 6 — Heatmap (7 dows × 24 hours) ───────────────────────── */
+.an-heatmap-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Heatmap reskin (2026-05) — copies Bookings calendar visual language:
+   each cell is a rounded card, hour labels sit in chips above the grid,
+   day labels stretch to full row height on the left. No shadows, calm
+   static grid (no hover scale). */
+.an-heatmap {
+  display: grid;
+  /* All 25 columns the same width → day-label column matches cell column,
+     so the Mon/Tue/… chips render as squares the same size as the cells. */
+  grid-template-columns: repeat(25, 1fr);
+  gap: 4px;
+}
+
+.an-heatmap-corner {
+  grid-column: 1;
+}
+
+.an-heatmap-h-label,
+.an-heatmap-d-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  background: var(--card);
+  border-radius: 10px;
+}
+
+/* Hour labels (top row) are square — matches cell aspect-ratio so the
+   chips visually align with the column widths below them. */
+.an-heatmap-h-label {
+  aspect-ratio: 1 / 1;
+}
+
+/* Day labels (left column) stretch to the full row height of the cell
+   they share a row with. The grid will size the row from the cell's
+   aspect-ratio, and align-self:stretch makes the d-label fill the row. */
+.an-heatmap-d-label {
+  color: var(--muted);
+  font-size: 12px;
+  align-self: stretch;
+}
+
+.an-heatmap-cell {
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  background: var(--card);
+  /* empty default — overridden by tier modifier */
+  cursor: default;
+  /* No transform / scale on hover — calm static grid (matches Bookings
+     calendar where slot cells don't pop out either). */
+}
+
+/* Order-count intensity tiers. JSX picks the tier from (v / max) so
+   the actual colour is owned by CSS, not strewn through inline styles. */
+.an-heatmap-cell--empty {
+  background: var(--card);
+}
+
+.an-heatmap-cell--t1 {
+  background: rgba(0, 113, 227, 0.22);
+}
+
+.an-heatmap-cell--t2 {
+  background: rgba(0, 113, 227, 0.38);
+}
+
+.an-heatmap-cell--t3 {
+  background: rgba(0, 113, 227, 0.54);
+}
+
+.an-heatmap-cell--t4 {
+  background: rgba(0, 113, 227, 0.72);
+}
+
+.an-heatmap-cell--t5 {
+  background: rgba(0, 113, 227, 0.90);
+}
+
+/* ── Heatmap responsive — horizontal scroll on mobile ─────────────────────
+   25 columns (1 day-label + 24 hours) at 1fr each squeeze to ~14px on a
+   phone, losing the right half of the day. Pin a min-width so the cells
+   stay readable (~22px each) and let the wrap scroll horizontally.
+   Day-label column sticks to the left so the dow context never leaves the
+   viewport while the user pans through hours.
+   ──────────────────────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .an-heatmap-wrap {
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    /* Allow native pan in both axes — page scroll still works vertically */
+    touch-action: pan-x pan-y;
+    /* Hide scrollbar (gesture-driven scroll feels cleaner on touch) */
+    scrollbar-width: thin;
+  }
+
+  .an-heatmap {
+    /* 36px day-label + 24 × 24px hours + 24 × 4px gaps ≈ 696px */
+    min-width: 696px;
+    width: max-content;
+  }
+
+  /* Day labels stay anchored to the left edge as user pans hours.
+     Background matches the wrap so cells don't peek through. */
+  .an-heatmap-d-label,
+  .an-heatmap-corner {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--bg);
+  }
+
+  /* Slight right-pad on day labels so the first hour cell doesn't kiss
+     the sticky edge — visual breathing room while scrolling. */
+  .an-heatmap-d-label {
+    padding-right: 2px;
+  }
+}
+
+/* Accent-coloured inline link inside section-hint paragraphs. */
+.an-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.an-link:hover {
+  text-decoration: underline;
+}
+
+.an-heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  justify-content: flex-end;
+}
+
+.an-heatmap-gradient {
+  width: 100px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.04), var(--accent));
+}
+
+/* ── Section 7 — Popular products 4 quadrants ──────────────────────── */
+.an-quads {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .an-quads {
+    grid-template-columns: 1fr;
+  }
+}
+
+.an-mini {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 16px;
+}
+
+.an-mini-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 10px;
+  font-weight: 600;
+}
+
+.an-mini-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.an-mini-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  font-size: 13px;
+}
+
+.an-mini-row:last-child {
+  border-bottom: none;
+}
+
+.an-mini-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.an-mini-vals {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.an-mini-val {
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.an-mini-secondary {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.an-mini-warn {
+  color: #c46a00;
+  flex-shrink: 0;
+}
+
+/* ── Section 8 — Customers grid (new-vs-ret + top customers + geo) ── */
+.an-cust-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .an-cust-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.an-cust-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+
+.an-cust-cell--wide {
+  grid-column: 1 / -1;
+}
+
+.an-cust-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.an-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.an-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.an-legend-dot--new {
+  background: var(--accent);
+}
+
+.an-legend-dot--ret {
+  background: var(--accent);
+  opacity: 0.45;
+}
+
+/* ── Generic data table (Top customers / Top cities / Returns / Promo) ─ */
+.an-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.an-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.an-table td {
+  padding: 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  color: var(--text);
+  vertical-align: middle;
+}
+
+.an-table tr:last-child td {
+  border-bottom: none;
+}
+
+.an-table-name {
+  font-weight: 600;
+}
+
+.an-table-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.an-table-num {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.an-table th.an-table-num {
+  text-align: center;
+}
+
+.an-table th.an-table-num,
+.an-table td.an-table-num {
+  white-space: nowrap;
+}
+
+/* Distribute columns evenly across the full table width. Without
+   table-layout:fixed the browser auto-sizes columns to content, which
+   makes short numeric columns shrink and cluster on the right of long
+   text columns. Fixed layout + first-child wider gives the text column
+   a comfortable share (~40%) and splits the remainder equally among
+   numeric columns — same layout for 3, 4, 5 column tables. */
+.an-table {
+  table-layout: fixed;
+}
+
+.an-table th:first-child,
+.an-table td:first-child {
+  width: 40%;
+  text-align: left;
+}
+
+.an-table-mappin {
+  color: var(--accent);
+  margin-right: 6px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.an-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+/* ── Section 9 — Cohort retention ──────────────────────────────────── */
+.an-cohort-wrap {
+  overflow-x: auto;
+}
+
+.an-cohort {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 4px;
+  font-size: 12px;
+}
+
+.an-cohort th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  text-align: center;
+}
+
+.an-cohort th:first-child {
+  text-align: left;
+}
+
+.an-cohort td {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.an-cohort td:first-child {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.an-cohort-cell {
+  font-weight: 600;
+}
+
+.an-cohort-cell--empty {
+  background: transparent;
+}
+
+.an-cohort-cell--t0 {
+  background: rgba(0, 113, 227, 0);
+}
+
+.an-cohort-cell--t1 {
+  background: rgba(0, 113, 227, 0.2);
+}
+
+.an-cohort-cell--t2 {
+  background: rgba(0, 113, 227, 0.4);
+}
+
+.an-cohort-cell--t3 {
+  background: rgba(0, 113, 227, 0.6);
+  color: #fff;
+}
+
+.an-cohort-cell--t4 {
+  background: rgba(0, 113, 227, 0.8);
+  color: #fff;
+}
+
+.an-cohort-cell--t5 {
+  background: rgba(0, 113, 227, 1);
+  color: #fff;
+}
+
+/* ── Section 10 — Returns grid ─────────────────────────────────────── */
+.an-ret-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .an-ret-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.an-ret-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+
+.an-ret-cell--wide {
+  grid-column: 1 / -1;
+}
+
+.an-ret-stat-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.an-ret-stat-value {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0;
+}
+
+.an-ret-stat-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── Section 11 — Reviews quality grid ─────────────────────────────── */
+.an-rev-grid {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .an-rev-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.an-rev-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+
+.an-rev-cell--wide {
+  grid-column: 2 / -1;
+}
+
+@media (max-width: 800px) {
+  .an-rev-cell--wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.an-rev-rating {
+  display: block;
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.an-rev-count {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.an-rev-bar-row {
+  display: grid;
+  grid-template-columns: 36px 1fr 90px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.an-rev-bar-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.an-rev-bar-pct {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Section 12 — Bookings grid ────────────────────────────────────── */
+.an-bk-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .an-bk-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.an-bk-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+
+.an-bk-cell--wide {
+  grid-column: 1 / -1;
+}
+
+/* ── Section 13 — Inventory health ─────────────────────────────────── */
+.an-inv-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.an-inv-bar {
+  padding: 0;
+}
+
+/* Three-pill inventory health bar. Each segment is its own rounded
+   pill (border-radius 999px) flex-sized by its raw data value, with a
+   constant 4px gap between them — no surrounding track. */
+.an-inv-bar-track {
+  display: flex;
+  gap: 4px;
+  height: 24px;
+}
+
+/* Each segment a fully-rounded pill. Colours per user spec. */
+.an-inv-bar-pill {
+  border-radius: 999px;
+  height: 100%;
+  min-width: 0;
+}
+.an-inv-bar-pill--oos     { background: #E30000; }
+.an-inv-bar-pill--low     { background: #EFC20B; }
+.an-inv-bar-pill--healthy { background: #0071E3; }
+
+.an-inv-legend {
+  display: flex;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.an-inv-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.an-inv-dot--oos     { background: #E30000; }
+.an-inv-dot--low     { background: #EFC20B; }
+.an-inv-dot--healthy { background: #0071E3; }
+
+/* ── Section 14 — Promo codes ──────────────────────────────────────── */
+.an-promo-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.an-promo-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .an-promo-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Section 15 — Operations grid ──────────────────────────────────── */
+.an-ops-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .an-ops-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ── Section 12.a/b/c — Traffic / Devices / Countries shared grid ──── */
+.an-traffic-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .an-traffic-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.an-traffic-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+
+.an-traffic-cell--wide {
+  grid-column: 1 / -1;
+}
+
+/* ── Section 12.d — Search insights ────────────────────────────────── */
+.an-search-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .an-search-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.an-search-cell {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 14px;
+}
+
+.an-search-cell--wide {
+  grid-column: 1 / -1;
+}
+
+/* ── Section 12.e — Goals progress widget ──────────────────────────── */
+.an-goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.an-goal-row {
+  /* background + radius now come from the shared .an-tile rule */
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 3px solid transparent;
+}
+
+.an-goal-row--achieved {
+  border-left-color: var(--accent);
+}
+
+.an-goal-row--on_track {
+  border-left-color: rgba(0, 113, 227, 0.55);
+}
+
+.an-goal-row--behind {
+  border-left-color: #c46a00;
+}
+
+.an-goal-row--at_risk {
+  border-left-color: #c92a39;
+}
+
+.an-goal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.an-goal-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.an-goal-pct {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.an-goal-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.an-goal-fill--achieved {
+  background: var(--accent);
+}
+
+.an-goal-fill--on_track {
+  background: var(--accent);
+}
+
+.an-goal-fill--behind {
+  background: #c46a00;
+}
+
+.an-goal-fill--at_risk {
+  background: #c92a39;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   ORG ANALYTICS — cross-project comparison blocks (oa-*)
+   ══════════════════════════════════════════════════════════════════ */
+
+.oa-mixed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  font-size: 12px;
+  font-weight: 500;
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.1);
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+.oa-mixed-badge svg { width: 14px; height: 14px; }
+
+/* Two-column tiles (Revenue-by-project + Margin-by-project bar lists). */
+.oa-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+/* Margin bars use the cyan accent (matches the order-status "delivered" hue). */
+.oa-fill--margin { background: #0891b2; }
+
+/* ── Highlight cards ── */
+.oa-highlights {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.oa-highlight {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+}
+.oa-highlight-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.oa-highlight-icon svg { width: 22px; height: 22px; }
+.oa-highlight-icon--margin { background: rgba(8, 145, 178, 0.1); color: #0891b2; }
+.oa-highlight-icon--count  { background: rgba(0, 0, 0, 0.05);    color: var(--muted); }
+.oa-highlight-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.oa-highlight-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted);
+}
+.oa-highlight-name {
+  font-size: 15px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.oa-highlight-val { font-size: 13px; color: var(--accent); font-weight: 600; }
+
+/* ── Leaderboard table ── */
+.oa-table { display: flex; flex-direction: column; gap: 4px; }
+.oa-row {
+  display: grid;
+  grid-template-columns: 2.4fr 1fr 0.8fr 1fr 0.8fr;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+.oa-row--head {
+  background: transparent;
+  padding: 0 16px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.oa-num { text-align: right; font-variant-numeric: tabular-nums; }
+.oa-strong { font-weight: 600; color: var(--text); }
+.oa-name-text {
+  font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+@media (max-width: 900px) {
+  .oa-highlights { grid-template-columns: 1fr; }
+  .oa-cols { grid-template-columns: 1fr; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ANALYTICS — RESPONSIVE EXTENSION (desktop ≥1920 untouched)
+
+   Many @media queries already exist (KPI grid 6→3→2, sections collapse,
+   etc.). This block adds phone-specific tightening for sections and
+   period pickers.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  /* Section header (title + period picker) → wrap on phones so title isn't
+     squeezed into a sliver */
+  .an-section-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .an-section-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .an-section-period {
+    flex: 1 1 auto;
+  }
+
+  /* Section padding tighter on phones */
+  .an-section {
+    padding: 14px !important;
+    border-radius: 16px;
+  }
+
+  .an-section-title {
+    font-size: 15px;
+  }
+
+  /* KPI grid already steps down to 2-col below 600 via existing rules. */
+
+  /* Chart-area minimum heights — make sure SVG charts have room */
+  .an-chart-wrap svg,
+  .an-revenue-chart svg {
+    min-height: 220px;
+  }
+}
+
+@media (max-width: 479px) {
+  /* On tiny phones, KPI tiles collapse to 1-col for legibility */
+  .an-kpi-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Period picker dropdown width caps to viewport */
+  .an-section-period .cpm-cat-btn {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ADMIN PANEL ADDITIONS (Admin/frontend reuses this whole file as-is and
+   needs a handful of extra classes that don't exist in CRM's Analytics).
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Period segmented pill — mirrors CRM's .org-sort-toggle visual, scoped
+   to admin's per-section period selector. */
+.an-gran-pill {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    background: rgba(var(--fg-rgb), 0.05);
+    border-radius: 999px;
+    height: 34px;
+}
+.an-gran-ind {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    background: var(--card);
+    border-radius: 999px;
+    transition:
+        transform 0.35s var(--ease-smooth),
+        width     0.35s var(--ease-smooth),
+        opacity   0.2s;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1;
+}
+.an-gran-btn {
+    position: relative;
+    z-index: 2;
+    background: transparent;
+    border: none;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color 0.2s var(--ease-soft);
+    font-family: inherit;
+}
+.an-gran-btn--active,
+.an-gran-btn:hover { color: var(--text); }
+
+/* Title icon */
+.an-section-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--accent);
+    vertical-align: -3px;
+    margin-right: 8px;
+}
+
+/* KPI sub-label (under value) */
+.an-kpi-sub {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+}
+
+/* SVG chart — capped so it doesn't smear across ultrawide monitors. */
+.an-chart-svg {
+    display: block;
+    width: 100%;
+    max-width: 880px;
+    height: auto;
+    margin: 0 auto;
+}
+.an-chart-empty {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+/* 2-column row of side-by-side sections */
+.an-row-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+@media (max-width: 900px) {
+    .an-row-2col { grid-template-columns: 1fr; }
+}
+
+/* Bar list */
+.an-bar-list { display: flex; flex-direction: column; gap: 12px; }
+.an-bar-row {} /* uses CRM .an-bar-row from line 410 above */
+.an-bar-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 4px;
+}
+.an-bar-meta { color: var(--muted); }
+
+/* Country list */
+.an-country-list { display: flex; flex-direction: column; gap: 2px; }
+.an-country-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 4px;
+    font-size: 13px;
+    border-radius: 8px;
+    transition: background 0.15s var(--ease-soft);
+}
+.an-country-row:hover { background: rgba(var(--fg-rgb), 0.03); }
+.an-country-flag { font-size: 20px; line-height: 1; }
+.an-country-code { flex: 1; font-weight: 500; color: var(--text); }
+.an-country-count { color: var(--muted); font-variant-numeric: tabular-nums; }

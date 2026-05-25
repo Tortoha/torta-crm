@@ -1,0 +1,232 @@
+/* Copy of CRM/frontend/src/Style/Login.css (light-only — admin panel
+   doesn't switch themes), trimmed of the deepest responsive tiers we
+   don't need. Visual parity with CRM is intentional — same shape,
+   typography, transitions. */
+
+/* CRM Login.css has this rule at the top — it's what makes the email
+   and password inputs render identical widths despite the password
+   having `padding-right: 52px` for the eye icon. Without it the
+   default `content-box` model makes the password input wider than
+   email by exactly the padding-right amount. */
+*, input, textarea, button {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Wix Madefor Text", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-optical-sizing: auto;
+}
+
+section { overflow: hidden; }
+
+.regist {
+    background-color: var(--bg);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0;
+}
+
+.regis { width: 100%; }
+
+.reg {
+    background-color: var(--card);
+    color: var(--text);
+    border: 0;
+    border-radius: 48px;
+    align-items: center;
+    transition: 0.3s ease-in-out;
+    margin: 32px auto;
+    text-align: center;
+    overflow: hidden;
+    width: 376px;
+    transition: 0.6s ease-in-out;
+}
+
+.reg:hover { box-shadow: 8px 8px 32px rgba(0, 0, 0, 0.1); }
+
+.regis h1 {
+    font-size: 48px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.secsh  { width: 312px; margin: 32px auto 0; }
+.secsh0 { width: 312px; margin: 18px auto 0; }
+.secsh1 { width: 312px; margin: 0 auto; }
+
+input {
+    width: 100%;
+    height: 56px;
+    background-color: var(--bg);
+    color: var(--text);
+    border: 0;
+    border-radius: 16px;
+    font-size: 24px;
+    font-weight: 300;
+    padding: 2px 16px;
+    font-family: "Wix Madefor Text", -apple-system, BlinkMacSystemFont, sans-serif;
+    outline: none;
+}
+
+input:disabled { opacity: 0.7; cursor: not-allowed; }
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    -webkit-text-fill-color: var(--text);
+    transition: background-color 600000s 0s, color 600000s 0s;
+    caret-color: var(--text);
+}
+
+.button1 {
+    background-color: #0071e3;
+    color: #ffffff;
+    font-size: 32px;
+    margin-top: 64px;
+    padding: 0;
+    transition: 0.2s ease-in-out;
+    font-weight: 400;
+    cursor: pointer;
+}
+.button1:hover {
+    background-color: #0077ED;
+    box-shadow: 4px 4px 18px #0076ed85;
+}
+
+.button2 {
+    background-color: transparent;
+    color: var(--text);
+    font-size: 24px;
+    margin-bottom: 12px;
+    margin-top: 18px;
+    padding: 0;
+    transition: 0.2s ease-in-out;
+    font-weight: 300;
+    cursor: pointer;
+}
+.button2:hover:not(:disabled) {
+    background-color: var(--card-hover, rgba(0,0,0,0.04));
+}
+.button2:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.not-button {
+    background-color: var(--card-hover, #e5e5e5);
+    color: #ffffff;
+    font-size: 32px;
+    margin-top: 64px;
+    padding: 0;
+    font-weight: 400;
+}
+
+.error {
+    color: rgb(218, 17, 17);
+    font-size: 16px;
+    margin: 2px 0;
+}
+
+.verify-h1     { margin-bottom: 12px; }
+.verify-p {
+    color: var(--muted);
+    font-size: 16px;
+    margin: 28px 0 8px;
+    font-weight: 400;
+    text-align: center;
+}
+.verify-email {
+    font-size: 20px;
+    font-weight: 500;
+    margin-top: -4px;
+    margin-bottom: 24px;
+    text-align: center;
+}
+.verify-input {
+    letter-spacing: 6px;
+    text-align: center;
+    font-family: "SF Mono", Menlo, monospace;
+}
+
+.auth-link-wrap { width: 312px; margin: 10px auto 0; text-align: right; }
+.auth-link {
+    color: var(--muted);
+    font-size: 16px;
+    font-weight: 400;
+    text-decoration: none;
+    transition: 0.2s ease-in-out;
+}
+.auth-link:hover { color: var(--text); text-decoration: underline; }
+
+/* ── Password eye ── */
+.password-wrapper { position: relative; width: 100%; }
+.password-wrapper input { padding-right: 52px; }
+.password-eye {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    padding: 4px;
+    font-size: 18px;
+    line-height: 1;
+}
+.password-eye:hover { color: var(--text); }
+
+/* ── Google / OAuth (1:1 copy from CRM) ── */
+.oauth-wrap {
+    width: 312px;
+    margin: 0 auto;
+}
+.oauth-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 14px 0 12px;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 400;
+}
+.oauth-divider::before,
+.oauth-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border, rgba(0, 0, 0, 0.08));
+}
+.oauth-btn {
+    width: 100%;
+    height: 56px;
+    background: #fff;
+    border: 1.5px solid var(--border, rgba(0, 0, 0, 0.12));
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 32px;
+    font-family: inherit;
+    font-size: 18px;
+    font-weight: 400;
+    color: #333;
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.oauth-btn:hover:not(:disabled) {
+    border-color: rgba(var(--fg-rgb), 0.25);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.oauth-logo { width: 22px; height: 22px; flex-shrink: 0; }
+
+/* ── Responsive (single small breakpoint, admin is desktop-first) ── */
+@media (max-width: 480px) {
+    .regist { padding: 16px; }
+    .reg { width: 100%; max-width: 400px; border-radius: 36px; margin: 20px auto; }
+    h1 { font-size: 36px; }
+    .secsh, .secsh0, .secsh1, .oauth-wrap, .adm-locked-note { width: calc(100% - 48px); }
+    input { height: 50px; font-size: 20px; }
+    .button1, .not-button { font-size: 26px; margin-top: 48px; }
+}

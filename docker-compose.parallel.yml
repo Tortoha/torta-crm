@@ -1,0 +1,47 @@
+# Overlay for parallel-with-native mode.
+#
+# Used via:  docker compose -f docker-compose.yml -f docker-compose.parallel.yml up -d --build
+#
+# Shifts every published host port +10000 (or +1 for postgres) so the Docker
+# stack can run AT THE SAME TIME as the native VS Code Run All stack without
+# colliding on TCP ports. Native keeps the standard 5432/8000/8001/5174/5175;
+# Docker takes 5433/18000/18001/15174/15175.
+#
+# IMPORTANT: the `!override` tag tells Compose to REPLACE the base ports list
+# instead of MERGING. Without it, Compose concatenates [base, overlay] and
+# Docker binds BOTH port pairs to the same container, occupying the native
+# ports too (killing the native dev). `!override` requires Compose v2.20+.
+#
+# Frontends are also rebuilt with VITE_API_BASE pointing at the SHIFTED
+# backend ports so the in-browser bundle hits the Docker backend (not the
+# native one).
+
+services:
+  postgres:
+    ports: !override
+      - "5433:5432"
+
+  crm-backend:
+    ports: !override
+      - "18001:8001"
+
+  external-api:
+    ports: !override
+      - "18000:8000"
+
+  crm-frontend:
+    ports: !override
+      - "15174:80"
+    build:
+      args:
+        # Bake the shifted backend URLs into the Vite bundle so the browser
+        # hits the Docker stack (not native :8001 / :8000).
+        VITE_API_BASE: http://localhost:18001
+        VITE_EXTERNAL_API_BASE: http://localhost:18000
+
+  admin-frontend:
+    ports: !override
+      - "15175:80"
+    build:
+      args:
+        VITE_API_BASE: http://localhost:18001

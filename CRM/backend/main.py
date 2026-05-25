@@ -68,6 +68,12 @@ JWT_HOURS        = ACCESS_TOKEN_MINUTES / 60
 CRM_FRONTEND_URL = os.getenv("CRM_FRONTEND_URL", "http://localhost:5174")
 CRM_BACKEND_URL  = os.getenv("CRM_BACKEND_URL",  "http://localhost:8001")
 MAGAZ_BACKEND_URL= os.getenv("MAGAZ_BACKEND_URL", "http://localhost:8000")
+ADMIN_FRONTEND_URL = os.getenv("ADMIN_FRONTEND_URL", "http://localhost:5175")
+# Hard-locked owner email. Admin panel rejects login attempts (email OR Google)
+# for anyone else, regardless of the ADMIN_EMAILS allowlist or is_admin flag.
+# This is a single-tenant operator console; flexibility belongs in the regular
+# CRM Team page, not here.
+ADMIN_LOCKED_EMAIL = os.getenv("ADMIN_LOCKED_EMAIL", "iskandersuleiemenov@gmail.com").lower().strip()
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 
 # Production-only fail-closed. Empty / well-known defaults for these two
@@ -397,6 +403,107 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] terms_accepted columns migration failed: {e}")
+
+    # ─── Admin panel + ban system + signup geo (2026-05) ──────────────
+    # Powers the operator console at admin.tortacrm.com (separate Vite app
+    # in Admin/frontend/). Three ban tiers:
+    #   'soft'  → login blocked, projects untouched (reversible warning)
+    #   'hard'  → login blocked + all their crm_projects.is_active=FALSE
+    #             (their customers' storefronts go offline too)
+    #   delete  → not a ban_level — actual row removal via DELETE endpoint
+    # ban_level NULL = active normal user.
+    # is_admin: granted via env ADMIN_EMAILS list OR explicit column flag.
+    # signup_country/_ip: populated at registration via IP-geoloc, used for
+    # the "where are our users" map in admin Analytics.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS is_admin       BOOLEAN     NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS ban_level      VARCHAR(10) DEFAULT NULL")
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS banned_reason  TEXT        DEFAULT NULL")
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS banned_at      TIMESTAMPTZ DEFAULT NULL")
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS banned_by      INTEGER     DEFAULT NULL")
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS signup_country CHAR(2)     DEFAULT NULL")
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS signup_ip      VARCHAR(45) DEFAULT NULL")
+            # ban_level enum-check (soft|hard — delete is a separate action)
+            cur.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE crm_users
+                      ADD CONSTRAINT crm_users_ban_level_check
+                      CHECK (ban_level IS NULL OR ban_level IN ('soft','hard'));
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END $$;
+            """)
+            # banned_by FK to admin who issued the ban (SET NULL on admin delete)
+            cur.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE crm_users
+                      ADD CONSTRAINT crm_users_banned_by_fkey
+                      FOREIGN KEY (banned_by) REFERENCES crm_users(id) ON DELETE SET NULL;
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END $$;
+            """)
+            # Indexes for admin queries
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_users_is_admin   ON crm_users (is_admin) WHERE is_admin=TRUE")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_users_ban_level  ON crm_users (ban_level) WHERE ban_level IS NOT NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_users_country    ON crm_users (signup_country)")
+            # Bootstrap: grant admin to founder email so first login works
+            cur.execute("""
+                UPDATE crm_users
+                   SET is_admin = TRUE
+                 WHERE LOWER(email) = LOWER(%s)
+            """, ('iskandersuleiemenov@gmail.com',))
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] admin/ban/signup_country columns failed: {e}")
+
+    # ─── Two-password split: CRM password vs Admin-panel password ──────
+    # Original design had ONE password per user (crm_users.password) used
+    # for both CRM and Admin login. Owner wanted them split:
+    #   crm_users.password       = CRM-form password ('REDACTED')
+    #   crm_users.admin_password = Admin-form password ('REDACTED')
+    # The admin form sends `admin_login=true` to /api/send-code which then
+    # verifies against the admin_password column instead. CRM form works
+    # unchanged, against the regular password column.
+    # Both fields are guarded one-shots — they only write when (a) the
+    # column was just added, OR (b) the current state matches the
+    # *previous* lock state (where I'd over-written .password with the
+    # admin pwd) so we can heal that and put values where they belong.
+    try:
+        target_email = 'iskandersuleiemenov@gmail.com'
+        crm_pw       = 'REDACTED'
+        admin_pw     = 'REDACTED'
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS admin_password VARCHAR(128) DEFAULT NULL")
+            conn.commit()
+        row = db_one("SELECT id, password, admin_password FROM crm_users WHERE LOWER(email) = LOWER(%s)", (target_email,))
+        if row:
+            cur_pwd       = row.get("password") or ""
+            cur_admin_pwd = row.get("admin_password") or ""
+            updates = []
+            params  = []
+            # Seed admin_password if it's missing.
+            if not cur_admin_pwd:
+                updates.append("admin_password = %s")
+                params.append(hash_pw(admin_pw))
+            # Heal: if .password currently matches the admin pwd (legacy
+            # state from when I'd wrongly over-written it), reset .password
+            # to the desired CRM value.
+            password_is_admin = False
+            try: password_is_admin = verify_pw(admin_pw, cur_pwd)
+            except Exception: pass
+            if password_is_admin:
+                updates.append("password = %s")
+                params.append(hash_pw(crm_pw))
+            if updates:
+                params.append(row["id"])
+                with db_cursor() as (conn, cur):
+                    cur.execute(f"UPDATE crm_users SET {', '.join(updates)} WHERE id = %s", tuple(params))
+                    conn.commit()
+                print(f"[migration] two-password split applied for {target_email}: {len(updates)} field(s) updated")
+    except NameError:
+        pass
+    except Exception as e:
+        print(f"[migration] two-password split failed: {e}")
 
     # ─── Refresh tokens (long-lived sessions, rotated on use) ─────────
     try:
@@ -4093,7 +4200,17 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 app.add_middleware(CSRFMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
+    allow_origins=[
+        # CRM frontend (Vite dev + Docker nginx — standard port)
+        "http://localhost:5174", "http://127.0.0.1:5174",
+        # Admin panel (Vite dev + Docker nginx — standard port)
+        "http://localhost:5175", "http://127.0.0.1:5175",
+        # PARALLEL Docker ports — when running native + Docker side-by-side
+        # via docker-compose.parallel.yml, the Docker frontends serve on
+        # +10000 ports and call the Docker backend on :18001 from these origins.
+        "http://localhost:15174", "http://127.0.0.1:15174",
+        "http://localhost:15175", "http://127.0.0.1:15175",
+    ],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
@@ -4158,6 +4275,12 @@ class SendCodeRequest(BaseModel):
     # Required on `type="register"` only — we never re-prompt existing users.
     terms_accepted: bool = False
     terms_version:  str  = "1.0"
+    # Admin frontend (admin.tortacrm.com) sets this to True. When True:
+    #   - email MUST be ADMIN_LOCKED_EMAIL (else 400 generic invalid creds)
+    #   - password is checked against `crm_users.admin_password` instead of
+    #     the regular `password` column (so CRM and Admin have separate
+    #     passwords for the same user record)
+    admin_login: bool = False
 
 class VerifyCodeRequest(BaseModel):
     email: str; code: str
@@ -4798,9 +4921,28 @@ def get_current_user(request: Request) -> dict:
         raise HTTPException(401, "Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Invalid token")
-    user = db_one("SELECT id, name, email, role FROM crm_users WHERE id = %s AND is_active = TRUE", (user_id,))
+    user = db_one(
+        "SELECT id, name, email, role, is_admin, ban_level, banned_reason "
+        "FROM crm_users WHERE id = %s AND is_active = TRUE",
+        (user_id,),
+    )
     if not user:
         raise HTTPException(401, "User not found")
+    # Banned users: soft + hard both block CRM/Admin login at the gate.
+    # Storefront customers (Magaz `users` table) are separate from `crm_users`.
+    if user.get("ban_level") in ("soft", "hard"):
+        reason = user.get("banned_reason") or "Account suspended"
+        raise HTTPException(403, f"Account banned: {reason}")
+    return user
+
+
+def require_admin(user: dict) -> dict:
+    """Hard-locked: only ADMIN_LOCKED_EMAIL passes. is_admin flag and
+    ADMIN_EMAILS env are intentionally ignored — this is a single-owner
+    panel by design. To grant another operator access you must edit
+    ADMIN_LOCKED_EMAIL in env, restart, and ban+re-create your account."""
+    if (user.get("email") or "").lower() != ADMIN_LOCKED_EMAIL:
+        raise HTTPException(403, "Admin access restricted")
     return user
 
 def check_rate_limit(keys: list, now: datetime):
@@ -5457,17 +5599,29 @@ def send_code(body: SendCodeRequest, request: Request):
     elif body.type == "login":
         if not existing or not existing.get("is_active"):
             record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
-        if not verify_pw(body.password or "", existing["password"]):
-            record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
-        # Lazy migration of legacy SHA-256 hashes
-        if is_legacy_hash(existing["password"]):
-            try:
-                with db_cursor() as (conn2, cur2):
-                    cur2.execute("UPDATE crm_users SET password=%s WHERE id=%s",
-                                 (hash_pw(body.password), existing["id"]))
-                    conn2.commit()
-            except Exception:
-                pass
+        # Admin-login path: check `admin_password` instead of regular password,
+        # plus enforce the email is the locked single-owner one. Both branches
+        # return the same generic 400 so the form never leaks which email is
+        # admin-allowed.
+        if body.admin_login:
+            if email != ADMIN_LOCKED_EMAIL:
+                record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
+            admin_hash = existing.get("admin_password") or ""
+            if not admin_hash or not verify_pw(body.password or "", admin_hash):
+                record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
+        else:
+            if not verify_pw(body.password or "", existing["password"]):
+                record_fail(keys, now); raise HTTPException(400, "Invalid email or password")
+            # Lazy migration of legacy SHA-256 hashes (CRM-login path only —
+            # admin_password never had a SHA-256 era, it was born scrypt).
+            if is_legacy_hash(existing["password"]):
+                try:
+                    with db_cursor() as (conn2, cur2):
+                        cur2.execute("UPDATE crm_users SET password=%s WHERE id=%s",
+                                     (hash_pw(body.password), existing["id"]))
+                        conn2.commit()
+                except Exception:
+                    pass
     else:
         raise HTTPException(400, "Invalid type")
 
@@ -5528,15 +5682,20 @@ def verify_code(body: VerifyCodeRequest, response: Response, request: Request):
             # Record the ToS+Privacy consent (timestamp + version + IP) at
             # the same moment we create the user. Single transaction so we
             # never end up with a user row without consent data.
+            # signup_country: best-effort IP-geoloc (admin Analytics "where
+            # are our users" map). Failures silently leave NULL.
+            country = _geoloc_country(ip)
             cur.execute(
                 """INSERT INTO crm_users
                    (name, email, password, role,
-                    terms_accepted_at, terms_version, terms_ip)
-                   VALUES (%s, %s, %s, 'owner', NOW(), %s, %s)
+                    terms_accepted_at, terms_version, terms_ip,
+                    signup_country, signup_ip)
+                   VALUES (%s, %s, %s, 'owner', NOW(), %s, %s, %s, %s)
                    RETURNING id""",
                 (sanitize(pending["name"]), email, hash_pw(pending["password"]),
                  pending.get("terms_version") or "1.0",
-                 pending.get("terms_ip"))
+                 pending.get("terms_ip"),
+                 country, ip)
             )
             user_id = cur.fetchone()["id"]
             conn.commit()
@@ -5584,7 +5743,9 @@ def get_me(user: dict = Depends(get_current_user)):
         # consent page before they can use any other route. Email-flow
         # users always have it set (verify_code writes it). Google-flow
         # users start with NULL and clear it by clicking Accept.
-        "SELECT id, name, email, role, avatar_url, "
+        # is_admin powers the admin.tortacrm.com gate — frontend redirects
+        # non-admin users away from the admin panel.
+        "SELECT id, name, email, role, avatar_url, is_admin, "
         "       terms_accepted_at, terms_version "
         "FROM crm_users WHERE id = %s AND is_active = TRUE",
         (user["id"],)
@@ -5594,6 +5755,14 @@ def get_me(user: dict = Depends(get_current_user)):
     s = db_one("SELECT language, theme FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
     u["language"] = (s or {}).get("language", "en")
     u["theme"]    = (s or {}).get("theme") or "system"
+    # Also include env-allowlist effect so frontend always sees real admin state
+    allow = {
+        e.strip().lower()
+        for e in os.getenv("ADMIN_EMAILS", "").split(",")
+        if e.strip()
+    }
+    if allow and (u.get("email") or "").lower() in allow:
+        u["is_admin"] = True
     return u
 
 
@@ -13629,7 +13798,7 @@ def update_settings(request: UpdateSettingsRequest, user: dict = Depends(get_cur
 # ── GOOGLE OAUTH (CRM login) ─────────────────────────────
 
 @app.get("/api/auth/google/login")
-def google_login():
+def google_login(request: Request):
     import urllib.parse
     # CSRF protection — random state stored in short-lived cookie
     state = secrets.token_urlsafe(32)
@@ -13650,6 +13819,14 @@ def google_login():
         key="crm_oa_state", value=state, httponly=True, max_age=600,
         samesite="lax", secure=COOKIE_SECURE, path="/",
     )
+    # When the admin panel initiates Google OAuth it appends ?from=admin so we
+    # can (a) reject any non-locked email at the callback and (b) redirect
+    # back to the admin panel URL instead of the CRM dashboard.
+    if (request.query_params.get("from") or "").lower() == "admin":
+        redirect.set_cookie(
+            key="crm_oa_from", value="admin", httponly=True, max_age=600,
+            samesite="lax", secure=COOKIE_SECURE, path="/",
+        )
     return redirect
 
 
@@ -13696,10 +13873,22 @@ def google_callback(request: Request, code: str = None, error: str = None, state
         import traceback; traceback.print_exc()
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_verify")
 
+    # Admin panel OAuth flow: reject ANY email != ADMIN_LOCKED_EMAIL at the
+    # gate, even before we'd issue a JWT. We never upsert that user (no row
+    # gets created), and we never set the auth cookies. The redirect goes
+    # back to the admin login screen with an error param the UI can show.
+    from_admin = (request.cookies.get("crm_oa_from") or "").lower() == "admin"
+    if from_admin and email.lower() != ADMIN_LOCKED_EMAIL:
+        r = RedirectResponse(f"{ADMIN_FRONTEND_URL}/login?error=admin_not_allowed", status_code=302)
+        r.delete_cookie("crm_oa_state", path="/")
+        r.delete_cookie("crm_oa_from",  path="/")
+        return r
+
     user_id   = _upsert_google_user(g_id, email, name, picture)
     jwt_token = make_token(user_id)
     refresh   = issue_refresh_token(user_id, request, label="Google login")
-    redirect  = RedirectResponse(f"{CRM_FRONTEND_URL}/dashboard", status_code=302)
+    landing   = f"{ADMIN_FRONTEND_URL}/" if from_admin else f"{CRM_FRONTEND_URL}/dashboard"
+    redirect  = RedirectResponse(landing, status_code=302)
     redirect.set_cookie(key="crm_token", value=jwt_token, httponly=True,
                         samesite="lax", secure=COOKIE_SECURE,
                         max_age=ACCESS_TOKEN_MINUTES * 60, path="/")
@@ -13707,6 +13896,7 @@ def google_callback(request: Request, code: str = None, error: str = None, state
                         samesite="lax", secure=COOKIE_SECURE,
                         max_age=REFRESH_TOKEN_DAYS * 86400, path="/")
     redirect.delete_cookie("crm_oa_state", path="/")
+    redirect.delete_cookie("crm_oa_from",  path="/")
     return redirect
 
 
@@ -24690,3 +24880,259 @@ def push_notification(user_id: int, project_id: Optional[int], ntype: str,
             pass
     except Exception as e:
         print(f"[notifications] push failed: {e}")
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  ADMIN PANEL ENDPOINTS  (powers admin.tortacrm.com)
+# ════════════════════════════════════════════════════════════════════════
+# All endpoints gated by require_admin (column flag OR env allowlist).
+# Separate frontend lives in Admin/frontend/ — a stripped-down Vite app
+# that uses the same /api/send-code + /api/verify-code login flow but
+# blocks non-admin users at the gate after /api/me returns is_admin=false.
+
+def _geoloc_country(ip: str) -> Optional[str]:
+    """Best-effort IP → ISO-3166 alpha-2 country code via ipapi.co
+    (free tier 1000/day, no API key). 2-second timeout — failure is
+    silent (returns None) so signup never hangs on a geo-lookup outage.
+    Loopback/private addresses bypass the call entirely."""
+    if not ip or ip in ("unknown", "127.0.0.1", "::1"):
+        return None
+    # Skip RFC1918 private ranges + Docker internal — they'd just return null
+    for prefix in ("10.", "172.", "192.168.", "169.254."):
+        if ip.startswith(prefix):
+            return None
+    try:
+        req = urllib.request.Request(
+            f"https://ipapi.co/{ip}/country/",
+            headers={"User-Agent": "TortaCRM/1.0 (admin geo)"}
+        )
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            code = resp.read().decode("utf-8", errors="ignore").strip().upper()
+            # ipapi returns 2-letter codes or "Undefined" on failure
+            if code and len(code) == 2 and code.isalpha():
+                return code
+    except Exception:
+        pass
+    return None
+
+
+@app.get("/api/admin/stats")
+def admin_stats(period: str = "30d", user: dict = Depends(get_current_user)):
+    """Overview KPIs for the admin Analytics page.
+
+    Returns: totals, plan breakdown, country breakdown (top 10), signups
+    series for the requested period (7d/30d/90d/all)."""
+    require_admin(user)
+
+    # Period → SQL interval (signups series x-axis)
+    period_days = {"7d": 7, "30d": 30, "90d": 90, "all": 3650}.get(period, 30)
+
+    totals = db_one("""
+        SELECT
+            (SELECT COUNT(*) FROM crm_users)                              AS users_total,
+            (SELECT COUNT(*) FROM crm_users WHERE ban_level IS NOT NULL)  AS users_banned,
+            (SELECT COUNT(*) FROM crm_users WHERE is_admin = TRUE)        AS admins,
+            (SELECT COUNT(*) FROM crm_organizations)                      AS orgs_total,
+            (SELECT COUNT(*) FROM crm_projects)                           AS projects_total,
+            (SELECT COUNT(*) FROM crm_projects WHERE is_active = TRUE)    AS projects_active,
+            (SELECT COUNT(*) FROM order_history WHERE created_at >= NOW() - INTERVAL '24 hours') AS orders_24h,
+            (SELECT COUNT(*) FROM order_history)                          AS orders_total
+    """)
+
+    # Plan breakdown — relies on crm_subscriptions. Falls back to all-Free
+    # if the table doesn't exist yet (pre-Paddle wiring).
+    try:
+        plans = db_all("""
+            SELECT
+                COALESCE(s.plan_code, 'free') AS plan_code,
+                COUNT(DISTINCT o.id)          AS org_count
+            FROM crm_organizations o
+            LEFT JOIN crm_subscriptions s ON s.org_id = o.id AND s.status = 'active'
+            GROUP BY COALESCE(s.plan_code, 'free')
+            ORDER BY org_count DESC
+        """)
+    except Exception:
+        plans = [{"plan_code": "free", "org_count": totals.get("orgs_total", 0)}]
+
+    countries = db_all("""
+        SELECT
+            COALESCE(signup_country, 'XX') AS country,
+            COUNT(*)                       AS users
+        FROM crm_users
+        GROUP BY COALESCE(signup_country, 'XX')
+        ORDER BY users DESC
+        LIMIT 10
+    """)
+
+    signups_series = db_all(f"""
+        SELECT
+            DATE_TRUNC('day', created_at)::date AS day,
+            COUNT(*)                            AS signups
+        FROM crm_users
+        WHERE created_at >= NOW() - INTERVAL '{int(period_days)} days'
+        GROUP BY DATE_TRUNC('day', created_at)::date
+        ORDER BY day ASC
+    """)
+
+    return {
+        "totals":         totals,
+        "plans":          plans,
+        "countries":      countries,
+        "signups_series": signups_series,
+        "period":         period,
+    }
+
+
+@app.get("/api/admin/users")
+def admin_list_users(
+    q: str = "",
+    status: str = "all",         # all | active | banned | admin
+    country: str = "",
+    page: int = 1,
+    per_page: int = 50,
+    user: dict = Depends(get_current_user),
+):
+    """Paginated user list for the admin Users table."""
+    require_admin(user)
+    page     = max(1, page)
+    per_page = max(1, min(per_page, 200))
+    offset   = (page - 1) * per_page
+
+    where  = ["1=1"]
+    params: list = []
+    if q:
+        where.append("(LOWER(email) LIKE %s OR LOWER(name) LIKE %s)")
+        like = f"%{q.lower()}%"
+        params += [like, like]
+    if status == "banned":
+        where.append("ban_level IS NOT NULL")
+    elif status == "active":
+        where.append("ban_level IS NULL")
+    elif status == "admin":
+        where.append("is_admin = TRUE")
+    if country:
+        where.append("signup_country = %s")
+        params.append(country.upper())
+
+    wsql = " AND ".join(where)
+
+    total = db_one(f"SELECT COUNT(*) AS n FROM crm_users WHERE {wsql}", tuple(params))["n"]
+
+    rows = db_all(f"""
+        SELECT
+            u.id, u.name, u.email, u.role, u.is_admin, u.ban_level, u.banned_reason,
+            u.banned_at, u.signup_country, u.created_at, u.last_login_at,
+            (SELECT COUNT(*) FROM crm_organizations WHERE owner_id = u.id) AS orgs,
+            (SELECT COUNT(*) FROM crm_projects WHERE crm_user_id = u.id)   AS projects
+        FROM crm_users u
+        WHERE {wsql}
+        ORDER BY u.created_at DESC
+        LIMIT %s OFFSET %s
+    """, tuple(params + [per_page, offset]))
+
+    return {
+        "users":    rows,
+        "total":    total,
+        "page":     page,
+        "per_page": per_page,
+        "pages":    max(1, (total + per_page - 1) // per_page),
+    }
+
+
+@app.get("/api/admin/users/{user_id}")
+def admin_user_detail(user_id: int, user: dict = Depends(get_current_user)):
+    """Full detail view of one user for the admin User Details page."""
+    require_admin(user)
+    u = db_one("""
+        SELECT id, name, email, role, is_admin, ban_level, banned_reason,
+               banned_at, banned_by, signup_country, signup_ip, created_at,
+               last_login_at, terms_accepted_at, terms_version, avatar_url
+        FROM crm_users WHERE id = %s
+    """, (user_id,))
+    if not u:
+        raise HTTPException(404, "User not found")
+    u["orgs"]     = db_all("SELECT id, name, slug, created_at FROM crm_organizations WHERE owner_id=%s ORDER BY created_at DESC", (user_id,))
+    u["projects"] = db_all("SELECT id, name, api_key, is_active, created_at FROM crm_projects WHERE crm_user_id=%s ORDER BY created_at DESC", (user_id,))
+    return u
+
+
+class AdminBanRequest(BaseModel):
+    level:  str               # 'soft' | 'hard'
+    reason: Optional[str] = None
+
+
+@app.post("/api/admin/users/{user_id}/ban")
+def admin_ban_user(
+    user_id: int,
+    body: AdminBanRequest,
+    actor: dict = Depends(get_current_user),
+):
+    """Soft (login-only block) or Hard (block + suspend all projects) ban."""
+    require_admin(actor)
+    if body.level not in ("soft", "hard"):
+        raise HTTPException(400, "level must be 'soft' or 'hard'")
+    if user_id == actor["id"]:
+        raise HTTPException(400, "Cannot ban yourself")
+
+    target = db_one("SELECT id, is_admin FROM crm_users WHERE id = %s", (user_id,))
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target.get("is_admin"):
+        raise HTTPException(403, "Cannot ban another admin — revoke admin first")
+
+    with db_cursor() as (conn, cur):
+        cur.execute("""
+            UPDATE crm_users
+               SET ban_level     = %s,
+                   banned_reason = %s,
+                   banned_at     = NOW(),
+                   banned_by     = %s
+             WHERE id = %s
+        """, (body.level, sanitize((body.reason or "").strip())[:1000], actor["id"], user_id))
+        if body.level == "hard":
+            # Hard ban: also suspend every project the user owns so their
+            # customers' storefronts go dark (Magaz /api/{api_key}/* lookups
+            # filter by `is_active=TRUE`).
+            cur.execute("UPDATE crm_projects SET is_active = FALSE WHERE crm_user_id = %s", (user_id,))
+        conn.commit()
+    return {"ok": True, "level": body.level}
+
+
+@app.post("/api/admin/users/{user_id}/unban")
+def admin_unban_user(user_id: int, actor: dict = Depends(get_current_user)):
+    """Reverse a soft or hard ban. Hard-ban project re-activation has to be
+    done manually in CRM (so admin can verify nothing else changed first)."""
+    require_admin(actor)
+    with db_cursor() as (conn, cur):
+        cur.execute("""
+            UPDATE crm_users
+               SET ban_level     = NULL,
+                   banned_reason = NULL,
+                   banned_at     = NULL,
+                   banned_by     = NULL
+             WHERE id = %s
+        """, (user_id,))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: int, actor: dict = Depends(get_current_user)):
+    """Nuclear option: cascade-delete user + all their orgs + projects.
+    Use only for fraud/spam/legal-takedown. Irreversible.
+    Refuses to delete yourself or another admin."""
+    require_admin(actor)
+    if user_id == actor["id"]:
+        raise HTTPException(400, "Cannot delete yourself")
+    target = db_one("SELECT id, email, is_admin FROM crm_users WHERE id = %s", (user_id,))
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target.get("is_admin"):
+        raise HTTPException(403, "Cannot delete another admin — revoke admin first")
+    with db_cursor() as (conn, cur):
+        # FKs are ON DELETE CASCADE on crm_organizations.owner_id,
+        # crm_projects.crm_user_id, crm_settings.crm_user_id, etc.,
+        # so a single DELETE on crm_users sweeps the whole graph.
+        cur.execute("DELETE FROM crm_users WHERE id = %s", (user_id,))
+        conn.commit()
+    return {"ok": True, "deleted_email": target["email"]}

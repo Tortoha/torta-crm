@@ -1,0 +1,13 @@
+/* Body reset + font. Design tokens (--bg, --card, --accent, etc.) come from
+   Layout.css which we eager-import in main.jsx so they're available even on
+   the /login page (which doesn't render the AdminLayout). */
+
+@import url('https://fonts.googleapis.com/css2?family=Wix+Madefor+Text:ital,wght@0,400..800;1,400..800&display=swap');
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  font-family: "Wix Madefor Text", sans-serif;
+  font-optical-sizing: auto;
+}
