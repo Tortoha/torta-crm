@@ -1,0 +1,38 @@
+# Node / Vite cruft — anything that doesn't need to ship in the build
+# context. node_modules especially is huge, and Docker re-installs via
+# `npm install` inside the builder stage anyway.
+
+node_modules/
+.npm/
+.cache/
+
+# Build output (regenerated inside the image)
+dist/
+dist-ssr/
+.vite/
+
+# Local dev
+.env
+.env.local
+.env.*.local
+*.log
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Docker artefacts
+Dockerfile*
+.dockerignore
+
+# Fly config (read from host, not baked into image)
+fly.toml
+
+# Git
+.git/
+.gitignore
+
+# OS / editor temp files
+Thumbs.db

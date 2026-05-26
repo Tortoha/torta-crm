@@ -98,13 +98,30 @@ import hmac as _hmac, base64 as _b64
 # E.164 phone format: + followed by 1–9, then 1..14 digits (max 15 total)
 _E164_RE = _re.compile(r"^\+[1-9]\d{1,14}$")
 
-DB_CONFIG = {
-    "host":     os.getenv("DB_HOST",     "localhost"),
-    "port":     int(os.getenv("DB_PORT", "5432")),
-    "user":     os.getenv("DB_USER",     "postgres"),
-    "password": os.getenv("DB_PASSWORD", ""),
-    "dbname":   os.getenv("DB_NAME",     "crmdb"),
-}
+def _resolve_db_config():
+    """DATABASE_URL (Fly Postgres attach) takes priority; falls back to the
+    individual DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME vars used by our
+    docker-compose and native dev .env files. Mirror of CRM backend logic."""
+    url = os.getenv("DATABASE_URL", "").strip()
+    if url:
+        from urllib.parse import urlparse, unquote
+        u = urlparse(url)
+        return {
+            "host":     u.hostname or "localhost",
+            "port":     int(u.port or 5432),
+            "user":     unquote(u.username or "postgres"),
+            "password": unquote(u.password or ""),
+            "dbname":   (u.path or "/").lstrip("/") or "postgres",
+        }
+    return {
+        "host":     os.getenv("DB_HOST",     "localhost"),
+        "port":     int(os.getenv("DB_PORT", "5432")),
+        "user":     os.getenv("DB_USER",     "postgres"),
+        "password": os.getenv("DB_PASSWORD", ""),
+        "dbname":   os.getenv("DB_NAME",     "crmdb"),
+    }
+
+DB_CONFIG = _resolve_db_config()
 
 hashids = Hashids(salt="qpzmrld10vsljklfgdnsdsafjkhfl526742228666777mzpqnxowhgf", min_length=6)
 

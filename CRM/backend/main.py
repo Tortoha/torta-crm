@@ -97,13 +97,35 @@ else:
     if not INTERNAL_API_KEY:
         INTERNAL_API_KEY = "dev-only-internal-key-padding-xxxx"
         print("[security] WARNING: INTERNAL_API_KEY env not set — using dev-only placeholder. DO NOT deploy to prod without setting it.")
-DB_CONFIG        = {
-    "host":     os.getenv("DB_HOST",     "localhost"),
-    "port":     int(os.getenv("DB_PORT", "5432")),
-    "user":     os.getenv("DB_USER",     "postgres"),
-    "password": os.getenv("DB_PASSWORD", ""),
-    "dbname":   os.getenv("DB_NAME",     "crmdb"),
-}
+def _resolve_db_config():
+    """Build psycopg2 connection dict.
+
+    Two sources, in priority order:
+      1. DATABASE_URL  (single URL) — what `fly postgres attach` sets, and the
+         canonical 12-factor convention. Parsed into the 5 individual fields.
+      2. DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME  (5 env vars) —
+         what our docker-compose and native dev .env files use.
+    """
+    url = os.getenv("DATABASE_URL", "").strip()
+    if url:
+        from urllib.parse import urlparse, unquote
+        u = urlparse(url)
+        return {
+            "host":     u.hostname or "localhost",
+            "port":     int(u.port or 5432),
+            "user":     unquote(u.username or "postgres"),
+            "password": unquote(u.password or ""),
+            "dbname":   (u.path or "/").lstrip("/") or "postgres",
+        }
+    return {
+        "host":     os.getenv("DB_HOST",     "localhost"),
+        "port":     int(os.getenv("DB_PORT", "5432")),
+        "user":     os.getenv("DB_USER",     "postgres"),
+        "password": os.getenv("DB_PASSWORD", ""),
+        "dbname":   os.getenv("DB_NAME",     "crmdb"),
+    }
+
+DB_CONFIG = _resolve_db_config()
 
 SES_API_URL      = os.getenv("SES_API_URL",      "https://ses.tortacrm.com")
 SES_INTERNAL_KEY = os.getenv("SES_INTERNAL_KEY", "")
@@ -4210,6 +4232,12 @@ app.add_middleware(
         # +10000 ports and call the Docker backend on :18001 from these origins.
         "http://localhost:15174", "http://127.0.0.1:15174",
         "http://localhost:15175", "http://127.0.0.1:15175",
+        # PRODUCTION domains (Fly.io) — CRM frontend on root + admin on subdomain.
+        # api-crm.tortacrm.com is THIS backend's own URL, not an origin.
+        # api.tortacrm.com is the External API (different app, different origin —
+        # but it has its own DynamicCORSMiddleware that resolves per-project).
+        "https://tortacrm.com",
+        "https://admin.tortacrm.com",
     ],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
@@ -5556,18 +5584,47 @@ def send_reset_email(email: str, token: str) -> bool:
 
 # ── CSRF TOKEN ───────────────────────────────────────────
 
+def _parent_cookie_domain(request: Request) -> Optional[str]:
+    """Derive the registrable-domain to scope cookies across sibling subdomains.
+    In prod we serve the frontend on `tortacrm.com` and the backend on
+    `api-crm.tortacrm.com` — the CSRF cookie has to be readable from BOTH so
+    that JS on the frontend can echo it in the X-CSRF-Token header. Without
+    Domain=.tortacrm.com the browser scopes the cookie to api-crm.* and JS on
+    the apex sees nothing → "CSRF token missing or invalid".
+    Returns None for localhost / private-IP hosts (native dev) where same-host
+    JS can already read same-host cookies."""
+    host = (request.url.hostname or "").lower()
+    if not host or host in ("localhost", "127.0.0.1"):
+        return None
+    # Private network ranges — no Domain attribute needed.
+    if any(host.startswith(p) for p in ("10.", "172.", "192.168.", "169.254.")):
+        return None
+    # Strip leftmost label: api-crm.tortacrm.com → tortacrm.com
+    # foo.bar.tortacrm.com → bar.tortacrm.com (cookies for siblings under bar)
+    parts = host.split(".")
+    if len(parts) < 2:
+        return None
+    return "." + ".".join(parts[-2:])
+
+
 @app.get("/api/csrf")
 def get_csrf_token(request: Request, response: Response):
     token = request.cookies.get("csrf_token", "")
     if not token:
         token = secrets.token_hex(32)
+    # samesite changed from "strict" to "lax" — strict blocks the cookie when
+    # the request is initiated by a cross-subdomain fetch (browser treats it
+    # as third-party even within the same eTLD+1). Lax keeps the CSRF defense
+    # (token-in-header must match token-in-cookie) while letting JS on the
+    # frontend reliably read this cookie set by the backend's response.
     response.set_cookie(
         "csrf_token", token,
         httponly=False,          # JS must read this to echo it as a header
-        samesite="strict",
+        samesite="lax",
         secure=COOKIE_SECURE,
         max_age=86400,           # 24 h — refreshed on each page load
         path="/",
+        domain=_parent_cookie_domain(request),
     )
     return {"csrf_token": token}
 
