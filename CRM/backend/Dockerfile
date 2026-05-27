@@ -65,4 +65,16 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://localhost:8001/docs > /dev/null || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers", "--forwarded-allow-ips=*"]
+# Single uvicorn worker — multi-worker (`--workers 2`) was attempted to
+# parallelise sync psycopg2 calls, but the ThreadedConnectionPool is created
+# at module-import time (before uvicorn forks workers). After fork, both
+# workers inherit the same TCP sockets to Postgres → first DB op corrupts
+# the shared session → workers crash immediately on startup. Classic
+# Python-fork+psycopg2 footgun.
+#
+# Proper fix (post-diploma): move pool creation into a FastAPI `lifespan`
+# event so each worker creates its own pool AFTER fork. For now Postgres
+# is the bigger bottleneck anyway — keep this single-worker, lean on the
+# bumped DB memory (1 GB) for headroom.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", \
+     "--proxy-headers", "--forwarded-allow-ips=*"]

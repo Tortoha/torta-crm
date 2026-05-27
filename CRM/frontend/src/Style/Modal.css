@@ -238,3 +238,80 @@
     margin-top: auto;
   }
 }
+
+/* ══════════════════════════════════════════════════════
+   PLAN LIMIT MODAL (PlanLimitModal.jsx)
+   Global modal triggered by the planLimit fetch interceptor when any
+   request comes back HTTP 402 with body.detail.error == 'plan_limit_exceeded'.
+   ══════════════════════════════════════════════════════ */
+
+.plimit-modal {
+  max-width: 440px;
+}
+
+.plimit-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plimit-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.plimit-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.plimit-cta-line {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.plimit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.plimit-btn-ghost,
+.plimit-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.18s ease;
+}
+
+.plimit-btn-ghost {
+  background: transparent;
+  color: var(--muted);
+}
+
+.plimit-btn-ghost:hover {
+  background: rgba(var(--fg-rgb), 0.05);
+  color: var(--text);
+}
+
+.plimit-btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.plimit-btn-primary:hover {
+  background: var(--accent-hover);
+}

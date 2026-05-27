@@ -9,6 +9,14 @@ import ProductLayout  from './ProductLayout.jsx';
 import SettingsLayout from './SettingsLayout.jsx';
 import DocsLayout     from './DocsLayout.jsx';
 
+// ── Global plan-limit handling ──
+// Installs a fetch interceptor at module load (once) that turns every 402
+// "plan_limit_exceeded" response into a window CustomEvent the PlanLimitModal
+// listens for. Modal mounts inside <Router> so it can use useNavigate().
+import PlanLimitModal from './Elements/PlanLimitModal.jsx';
+import { installPlanLimitInterceptor } from './Utils/planLimit.js';
+installPlanLimitInterceptor();
+
 // ── Страницы — lazy (каждая в отдельном chunk) ──
 const Home          = lazy(() => import('./Home.jsx'));
 const Login         = lazy(() => import('./Login.jsx'));
@@ -84,6 +92,10 @@ function PageLoader() {
 function App() {
   return (
     <Router>
+      {/* Global plan-limit modal — fires when a 402 plan_limit_exceeded
+          response reaches the fetch interceptor. Mounted outside Routes
+          so it works on every page. */}
+      <PlanLimitModal />
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/"                          element={<Home />} />

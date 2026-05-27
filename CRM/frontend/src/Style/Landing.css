@@ -1996,6 +1996,20 @@
   background: var(--accent-hover);
 }
 
+/* Button variant — when CTA is a <button> (logged-in user opening Paddle
+   checkout) instead of a <Link> (anonymous user going to /registration).
+   Resets native button chrome + adds pointer cursor + disabled state. */
+.pr-card-cta--btn {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pr-card-cta--btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .pr-card-list {
   list-style: none;
   margin: 8px 0 0;

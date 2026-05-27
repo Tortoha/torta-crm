@@ -3,7 +3,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone, time as dt_time
 import sys as _sys, os as _os
@@ -151,6 +151,45 @@ AWS_S3_BUCKET         = os.getenv("AWS_S3_BUCKET",         "torta-crm")
 AWS_S3_REGION         = os.getenv("AWS_S3_REGION",         "eu-central-1")
 AWS_CLOUDFRONT_URL    = os.getenv("AWS_CLOUDFRONT_URL",    "")
 
+# ── Paddle (SaaS billing, Merchant of Record) ───────────────────────
+# This block is for OUR billing — i.e. how Torta charges tenants for their
+# subscription. Do NOT confuse with the per-tenant Paddle integration that
+# lives in PROVIDER_FIELDS (which lets a CRM merchant connect their OWN
+# Paddle account to accept payments from their OWN customers). The two
+# namespaces never share creds or state.
+#
+# Environment defaults to 'sandbox' so a missing/typo'd env var can't
+# accidentally charge a real card in dev. In prod set PADDLE_ENVIRONMENT
+# to 'production' explicitly via `fly secrets set ...`.
+PADDLE_ENVIRONMENT    = os.getenv("PADDLE_ENVIRONMENT", "sandbox").lower()  # 'sandbox' | 'production'
+PADDLE_API_KEY        = os.getenv("PADDLE_API_KEY",        "")
+PADDLE_WEBHOOK_SECRET = os.getenv("PADDLE_WEBHOOK_SECRET", "")
+PADDLE_CLIENT_TOKEN   = os.getenv("PADDLE_CLIENT_TOKEN",   "")
+
+# 6 price IDs (3 plans × 2 billing cycles). Free is not billable.
+# Frontend reads these via GET /api/billing/config; backend reverse-maps
+# them via _PADDLE_PRICE_TO_PLAN to resolve plan_slug at webhook + checkout.
+PADDLE_PRICE_STANDARD_MONTHLY = os.getenv("PADDLE_PRICE_STANDARD_MONTHLY", "")
+PADDLE_PRICE_STANDARD_YEARLY  = os.getenv("PADDLE_PRICE_STANDARD_YEARLY",  "")
+PADDLE_PRICE_PLUS_MONTHLY     = os.getenv("PADDLE_PRICE_PLUS_MONTHLY",     "")
+PADDLE_PRICE_PLUS_YEARLY      = os.getenv("PADDLE_PRICE_PLUS_YEARLY",      "")
+PADDLE_PRICE_PRO_MONTHLY      = os.getenv("PADDLE_PRICE_PRO_MONTHLY",      "")
+PADDLE_PRICE_PRO_YEARLY       = os.getenv("PADDLE_PRICE_PRO_YEARLY",       "")
+
+# Reverse map (price_id → (plan_slug, billing_cycle)). Built once at module load.
+# Used by the webhook handler to derive the plan from a Paddle event — we never
+# trust custom_data alone (forge-resistant).
+_PADDLE_PRICE_TO_PLAN: "dict[str, tuple[str, str]]" = {
+    pid: (slug, cycle) for pid, slug, cycle in [
+        (PADDLE_PRICE_STANDARD_MONTHLY, "standard", "monthly"),
+        (PADDLE_PRICE_STANDARD_YEARLY,  "standard", "yearly"),
+        (PADDLE_PRICE_PLUS_MONTHLY,     "plus",     "monthly"),
+        (PADDLE_PRICE_PLUS_YEARLY,      "plus",     "yearly"),
+        (PADDLE_PRICE_PRO_MONTHLY,      "pro",      "monthly"),
+        (PADDLE_PRICE_PRO_YEARLY,       "pro",      "yearly"),
+    ] if pid
+}
+
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 def _s3_client():
@@ -217,6 +256,24 @@ def s3_delete_prefix(prefix: str) -> None:
         pass
 
 app = FastAPI()
+
+
+# ── anyio threadpool size ──────────────────────────────────────────
+# FastAPI runs every sync `def` route in anyio's threadpool to avoid blocking
+# the event loop. Default size is small on a 1-CPU machine (~40 at best,
+# but throttled by GIL contention). Our typical page does 8-10 parallel
+# fetches from the SPA, each `Depends(get_current_user) + require_page_auto`
+# burns a thread for 300-800 ms. With a small threadpool they all queue
+# behind each other → 6 s page-load even though every individual query is
+# fast. Bumping to 100 lets the whole fan-in run truly concurrently.
+@app.on_event("startup")
+async def _configure_threadpool():
+    try:
+        import anyio.to_thread as _att
+        _att.current_default_thread_limiter().total_tokens = 100
+        print("[startup] anyio threadpool capacity = 100")
+    except Exception as e:
+        print(f"[startup] threadpool bump skipped: {e}")
 
 # ── Rate limiting ────────────────────────────────────────────────────────
 try:
@@ -4936,6 +4993,45 @@ def revoke_refresh_by_raw(raw: str, reason: str = REVOKE_REASON_LOGOUT):
         )
         conn.commit()
 
+# ── User row cache ─────────────────────────────────────────────────
+# Every API request hits get_current_user → 1 DB SELECT crm_users. On a
+# typical page-load fan-in of 8-10 parallel requests, that's 8-10 identical
+# lookups for the same JWT. Cache user rows by id for 30s in-process —
+# bounded by # of active users (tiny), no background eviction needed.
+#
+# Safety: ban_level / is_active changes propagate within 30s max. Acceptable
+# trade-off for a CRM (vs banking app where you'd want 0s). Cache key is
+# user_id (not the JWT itself) so a re-issued token with same sub doesn't
+# bypass the cache.
+_USER_CACHE: "dict[int, tuple[dict, float]]" = {}
+_USER_CACHE_TTL = 30  # seconds
+
+
+def _lookup_user_cached(user_id: int) -> "dict | None":
+    """Return crm_users row by id, cached for _USER_CACHE_TTL seconds.
+    Returns None if the user doesn't exist or is_active=FALSE — caller
+    surfaces the 401."""
+    now = _time.time()
+    hit = _USER_CACHE.get(user_id)
+    if hit and hit[1] > now:
+        return hit[0]
+    row = db_one(
+        "SELECT id, name, email, role, is_admin, ban_level, banned_reason "
+        "FROM crm_users WHERE id = %s AND is_active = TRUE",
+        (user_id,),
+    )
+    if row:
+        _USER_CACHE[user_id] = (row, now + _USER_CACHE_TTL)
+    return row
+
+
+def _invalidate_user_cache(user_id: int) -> None:
+    """Drop a user from the cache after a known mutation (ban, profile
+    update, role change). Call this from any endpoint that writes to
+    crm_users so the change is visible immediately, not after 30s."""
+    _USER_CACHE.pop(user_id, None)
+
+
 def get_current_user(request: Request) -> dict:
     token = request.cookies.get("crm_token")
     if not token:
@@ -4949,11 +5045,7 @@ def get_current_user(request: Request) -> dict:
         raise HTTPException(401, "Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Invalid token")
-    user = db_one(
-        "SELECT id, name, email, role, is_admin, ban_level, banned_reason "
-        "FROM crm_users WHERE id = %s AND is_active = TRUE",
-        (user_id,),
-    )
+    user = _lookup_user_cached(user_id)
     if not user:
         raise HTTPException(401, "User not found")
     # Banned users: soft + hard both block CRM/Admin login at the gate.
@@ -5119,19 +5211,18 @@ def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
     `resource` would exceed the plan limit. No-op when the limit is null
     (unlimited) or the resource isn't gated in the plan.
 
-    ── Currently SOFT-DISABLED ──
-    Plan-based gating is intentionally turned off until payment via Paddle
-    is fully wired up + tested. Without payments live, blocking Free users
-    at "1 project" or "1 team member" only hurts the diploma demo — nobody
-    can upgrade yet. Re-enable by deleting this early-return. The body
-    below is intact + correct, so flipping back on is a one-line change.
+    Phase 2 (LIVE) — gating is enabled now that Paddle checkout works
+    end-to-end. The 402 body carries { error, plan, resource, limit,
+    current, requested } so the frontend's upgrade modal can render the
+    correct copy without a second roundtrip.
 
-    When you flip it back on, also:
-    1. Make sure POST /api/subscriptions/checkout works end-to-end
-    2. Run the existing usage backfill (so existing orgs have realistic
-       starting counts and don't get blocked retroactively on real usage)
-    3. Watch /api/orgs/{id}/usage in the frontend to surface meters."""
-    return  # ← remove this line to re-enable plan-based limits
+    Emergency kill switch: set PLAN_ENFORCEMENT_DISABLED=1 on Fly (or in
+    .env locally) to bypass every check without code change. Use only for
+    incident response — every real fix belongs in plan limits / pricing,
+    not in this gate.
+    """
+    if os.getenv("PLAN_ENFORCEMENT_DISABLED", "0") == "1":
+        return
 
     if not org_id:
         return
@@ -5179,6 +5270,158 @@ def _project_org_id(project_id) -> int | None:
         return None
     r = db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,))
     return int(r["org_id"]) if r and r.get("org_id") else None
+
+# ── Paddle SaaS billing helpers ──────────────────────────────────────
+# These talk to Paddle on behalf of OUR product (charging tenants for their
+# Torta subscription). They are deliberately separated from the per-tenant
+# Paddle integration in PROVIDER_FIELDS (which lets a CRM tenant connect
+# their OWN Paddle to bill their OWN customers) — different creds, different
+# customers, never share state.
+
+def _paddle_saas_api_base() -> str:
+    """Paddle API root for our SaaS billing. Defaults to sandbox; flip to
+    'production' via PADDLE_ENVIRONMENT only after live keys + a webhook
+    secret are set on Fly."""
+    return ("https://api.paddle.com" if PADDLE_ENVIRONMENT == "production"
+            else "https://sandbox-api.paddle.com")
+
+
+def _paddle_saas_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {PADDLE_API_KEY}",
+        "Content-Type":  "application/json",
+    }
+
+
+def _paddle_verify_webhook(raw_body: bytes, signature_header: str) -> bool:
+    """Constant-time HMAC verification for inbound webhooks.
+
+    Paddle sends `Paddle-Signature: ts=<unix_ts>;h1=<hmac_sha256_hex>` and
+    expects HMAC-SHA256 over the literal string `<ts>:<raw_body_bytes>`
+    using PADDLE_WEBHOOK_SECRET as key. Returns False (rejects) when the
+    secret env var isn't set — fail-closed so a missing secret in dev
+    doesn't silently accept forged events.
+    """
+    if not PADDLE_WEBHOOK_SECRET or not signature_header:
+        return False
+    parts: dict[str, str] = {}
+    for chunk in signature_header.split(";"):
+        if "=" in chunk:
+            k, v = chunk.split("=", 1)
+            parts[k.strip()] = v.strip()
+    ts  = parts.get("ts",  "")
+    sig = parts.get("h1",  "")
+    if not ts or not sig:
+        return False
+    msg = f"{ts}:".encode("utf-8") + raw_body
+    expected = hmac.new(PADDLE_WEBHOOK_SECRET.encode("utf-8"),
+                        msg, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sig)
+
+
+def _paddle_resolve_plan(price_id: str) -> "tuple[str | None, str | None]":
+    """price_id → (plan_slug, billing_cycle). Returns (None, None) for
+    unknown IDs. ALWAYS resolve plan via this map — never trust custom_data
+    alone (the client controls what custom_data goes into the transaction,
+    so a forged checkout could otherwise claim 'pro' on a 'standard' price)."""
+    if not price_id:
+        return None, None
+    pair = _PADDLE_PRICE_TO_PLAN.get(price_id)
+    if not pair:
+        return None, None
+    return pair
+
+
+def _paddle_apply_subscription(event_type: str, data: dict) -> None:
+    """Apply one subscription.* webhook event to our DB.
+
+    Idempotent — rerunning the same event is safe. Unknown / missing fields
+    are tolerated (skipped with a log line) rather than raised so Paddle
+    won't retry indefinitely on a single malformed event.
+
+    State sync targets:
+      • crm_subscriptions row (UPSERT on org_id)
+      • crm_organizations.plan_slug (denormalised pointer for fast _org_plan)
+    """
+    sub_id  = (data.get("id") or "").strip()
+    cust_id = (data.get("customer_id") or "").strip()
+    status  = (data.get("status") or "").strip() or "active"
+
+    # Pull the first item's price_id; multi-item subs aren't part of our
+    # catalog (one plan per org), so first-item is sufficient.
+    items = data.get("items") or []
+    price_id = ""
+    if items:
+        first = items[0] if isinstance(items, list) else {}
+        price = (first.get("price") or {}) if isinstance(first, dict) else {}
+        price_id = price.get("id") or first.get("price_id") or ""
+
+    plan_slug, _cycle = _paddle_resolve_plan(price_id)
+
+    # custom_data: { org_id, plan_slug, cycle } — set by us at checkout creation.
+    custom = data.get("custom_data") or {}
+    org_id = None
+    try:
+        org_id = int((custom or {}).get("org_id") or 0) or None
+    except (TypeError, ValueError):
+        org_id = None
+    # Fallback: existing subscription with this paddle_subscription_id.
+    # Saves us on subscription.updated when custom_data is stripped.
+    if not org_id and sub_id:
+        row = db_one(
+            "SELECT org_id FROM crm_subscriptions WHERE paddle_subscription_id=%s",
+            (sub_id,))
+        org_id = row["org_id"] if row else None
+    if not org_id:
+        print(f"[paddle/webhook] {event_type}: no org_id resolvable (sub={sub_id!r}). Skipped.")
+        return
+    if not plan_slug:
+        print(f"[paddle/webhook] {event_type}: unknown price_id {price_id!r}. Skipped.")
+        return
+
+    period = data.get("current_billing_period") or {}
+    starts = period.get("starts_at") or None
+    ends   = period.get("ends_at")   or None
+    cancelled_at = data.get("canceled_at") or None
+
+    # Plan-slug write strategy:
+    #   • subscription.expired → drop to 'free' (paid period actually ended).
+    #   • subscription.canceled → keep paid plan until period_end; status='canceled'
+    #     tells the UI to surface "ending on <date>". Server only flips to free
+    #     when we get the .expired event.
+    #   • everything else (active / past_due / paused / created / activated / updated):
+    #     mirror Paddle's status as-is, keep the paid plan_slug.
+    if event_type == "subscription.expired":
+        new_plan = "free"
+    else:
+        new_plan = plan_slug
+
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                INSERT INTO crm_subscriptions
+                    (org_id, plan_slug, status, current_period_start, current_period_end,
+                     cancelled_at, paddle_customer_id, paddle_subscription_id, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (org_id) DO UPDATE SET
+                    plan_slug              = EXCLUDED.plan_slug,
+                    status                 = EXCLUDED.status,
+                    current_period_start   = EXCLUDED.current_period_start,
+                    current_period_end     = EXCLUDED.current_period_end,
+                    cancelled_at           = EXCLUDED.cancelled_at,
+                    paddle_customer_id     = COALESCE(EXCLUDED.paddle_customer_id,
+                                                      crm_subscriptions.paddle_customer_id),
+                    paddle_subscription_id = COALESCE(EXCLUDED.paddle_subscription_id,
+                                                      crm_subscriptions.paddle_subscription_id),
+                    updated_at             = NOW()
+            """, (org_id, new_plan, status, starts, ends, cancelled_at,
+                  cust_id or None, sub_id or None))
+            cur.execute("UPDATE crm_organizations SET plan_slug=%s WHERE id=%s",
+                        (new_plan, org_id))
+            conn.commit()
+            print(f"[paddle/webhook] {event_type}: org={org_id} → plan={new_plan} status={status}")
+    except Exception as e:
+        print(f"[paddle/webhook] DB write failed for org={org_id}: {e}")
 
 # ── Auth Providers fan-out ───────────────────────────────────────────
 # When an org shares customers, the Auth Providers config (Google / email
@@ -5277,14 +5520,70 @@ def _fx_convert(amount: float, from_ccy: str, to_ccy: str) -> float:
     # amount(from) → USD → to
     return float(amount) / fr * tr
 
+# ── Project owner + team-membership caches ─────────────────────────
+# Both are hit on EVERY authenticated request via require_team_member_or_owner.
+# For a typical page-load (10 parallel fetches), that's 10 owner lookups +
+# up to 10 membership lookups = 20 redundant DB round-trips. Cache project
+# owner (single small int, never changes) for 60s, and the (project, user)
+# membership tuple for 60s too. Membership rarely flips — when it does
+# (e.g. owner kicks a member from Team page), the change propagates within
+# 60s. Acceptable for CRM.
+_PROJECT_OWNER_CACHE: "dict[int, tuple[int | None, float]]" = {}
+_PROJECT_OWNER_TTL = 60
+
+_TEAM_MEMBERSHIP_CACHE: "dict[tuple[int, int], tuple[bool, float]]" = {}
+_TEAM_MEMBERSHIP_TTL = 60
+
+
+def _lookup_project_owner_cached(project_id: int) -> "int | None":
+    """Return crm_projects.crm_user_id for an active project, cached 60s.
+    Returns None if the project doesn't exist or is_active=FALSE."""
+    now = _time.time()
+    hit = _PROJECT_OWNER_CACHE.get(project_id)
+    if hit and hit[1] > now:
+        return hit[0]
+    row = db_one(
+        "SELECT crm_user_id FROM crm_projects WHERE id=%s AND is_active=TRUE",
+        (project_id,),
+    )
+    owner_id = row["crm_user_id"] if row else None
+    _PROJECT_OWNER_CACHE[project_id] = (owner_id, now + _PROJECT_OWNER_TTL)
+    return owner_id
+
+
+def _is_team_member_cached(project_id: int, user_id: int) -> bool:
+    """Return True if user is in crm_team_members for project_id. 60s TTL."""
+    now = _time.time()
+    key = (project_id, user_id)
+    hit = _TEAM_MEMBERSHIP_CACHE.get(key)
+    if hit and hit[1] > now:
+        return hit[0]
+    row = db_one(
+        "SELECT 1 FROM crm_team_members WHERE project_id=%s AND crm_user_id=%s",
+        (project_id, user_id),
+    )
+    is_member = bool(row)
+    _TEAM_MEMBERSHIP_CACHE[key] = (is_member, now + _TEAM_MEMBERSHIP_TTL)
+    return is_member
+
+
+def _invalidate_project_caches(project_id: int) -> None:
+    """Drop owner + membership cache entries after project / membership
+    mutations (rename, deactivate, kick member, add member). Call from
+    any write endpoint that touches crm_projects or crm_team_members."""
+    _PROJECT_OWNER_CACHE.pop(project_id, None)
+    # Drop every membership row that mentions this project.
+    for k in [k for k in _TEAM_MEMBERSHIP_CACHE if k[0] == project_id]:
+        _TEAM_MEMBERSHIP_CACHE.pop(k, None)
+
+
 def require_team_member_or_owner(user: dict, project_id: int):
-    key_row = db_one("SELECT crm_user_id FROM crm_projects WHERE id=%s AND is_active=TRUE", (project_id,))
-    if not key_row:
+    owner_id = _lookup_project_owner_cached(project_id)
+    if owner_id is None:
         raise HTTPException(404, "Project not found")
-    if key_row["crm_user_id"] == user["id"]:
+    if owner_id == user["id"]:
         return
-    if not db_one("SELECT id FROM crm_team_members WHERE project_id=%s AND crm_user_id=%s",
-                  (project_id, user["id"])):
+    if not _is_team_member_cached(project_id, user["id"]):
         raise HTTPException(403, "Not a member of this project")
 
 # ── RBAC: org-scoped roles → per-project assignments → page permissions ──
@@ -6393,6 +6692,169 @@ def get_org_usage(org_id: int, user: dict = Depends(get_current_user)):
         "limits": {r: limits.get(f"{r}_max") for r in resources},
         "percent": pct,
     }
+
+
+# ── Paddle SaaS billing endpoints ────────────────────────────────────
+# Three public/semi-public surfaces + one public webhook receiver.
+# Public means "no JWT required" — the webhook validates HMAC instead,
+# and /api/billing/config returns only safe-to-publish values (client_token
+# + price IDs are designed by Paddle to be embedded in client HTML).
+
+@app.get("/api/billing/config")
+def get_billing_config():
+    """Surface for the frontend Paddle.Setup() call. Returns environment +
+    client_token + 6 price_ids. Empty strings come back when env vars aren't
+    set (dev without Paddle creds) so the frontend can degrade gracefully
+    to the legacy /registration CTA."""
+    return {
+        "environment":  PADDLE_ENVIRONMENT,
+        "client_token": PADDLE_CLIENT_TOKEN,
+        "prices": {
+            "standard": {
+                "monthly": PADDLE_PRICE_STANDARD_MONTHLY,
+                "yearly":  PADDLE_PRICE_STANDARD_YEARLY,
+            },
+            "plus": {
+                "monthly": PADDLE_PRICE_PLUS_MONTHLY,
+                "yearly":  PADDLE_PRICE_PLUS_YEARLY,
+            },
+            "pro": {
+                "monthly": PADDLE_PRICE_PRO_MONTHLY,
+                "yearly":  PADDLE_PRICE_PRO_YEARLY,
+            },
+        },
+    }
+
+
+class CheckoutRequest(BaseModel):
+    price_id: str
+
+
+@app.post("/api/orgs/{org_id}/billing/checkout")
+def create_billing_checkout(org_id: int, body: CheckoutRequest,
+                             user: dict = Depends(get_current_user)):
+    """Create a Paddle transaction for upgrading this org. Owner-only.
+
+    Returns { transaction_id, environment, client_token } so the frontend
+    can immediately call Paddle.Checkout.open({ transactionId }) — inline
+    overlay, no redirect away from our domain.
+    """
+    if not PADDLE_API_KEY:
+        raise HTTPException(503, "Paddle billing not configured")
+
+    is_owner = bool(db_one(
+        "SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+        (org_id, user["id"])))
+    if not is_owner:
+        raise HTTPException(403, "Only the org owner can purchase plans")
+
+    price_id = (body.price_id or "").strip()
+    plan_slug, cycle = _paddle_resolve_plan(price_id)
+    if not plan_slug:
+        raise HTTPException(400, "Unknown price_id")
+
+    # Reuse existing Paddle customer when we already have one (keeps the
+    # customer's saved cards + billing history on Paddle side intact).
+    sub_row = db_one(
+        "SELECT paddle_customer_id FROM crm_subscriptions WHERE org_id=%s",
+        (org_id,))
+    existing_customer = (sub_row or {}).get("paddle_customer_id")
+
+    payload: dict = {
+        "items": [{"price_id": price_id, "quantity": 1}],
+        "custom_data": {
+            "org_id":    str(org_id),
+            "plan_slug": plan_slug,
+            "cycle":     cycle or "monthly",
+        },
+    }
+    if existing_customer:
+        payload["customer_id"] = existing_customer
+    else:
+        # Email lets Paddle send receipts + creates a Customer row their side.
+        owner_row = db_one("SELECT email FROM crm_users WHERE id=%s", (user["id"],))
+        if owner_row and owner_row.get("email"):
+            payload["customer"] = {"email": owner_row["email"]}
+
+    r = _http_request(
+        "POST",
+        f"{_paddle_saas_api_base()}/transactions",
+        headers=_paddle_saas_headers(),
+        body=json.dumps(payload).encode("utf-8"),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        # Surface the rejection reason in server logs but keep client message generic.
+        print(f"[paddle/checkout] org={org_id} price={price_id} HTTP {r['status']} body={r['body']!r}")
+        raise HTTPException(502, "Payment provider rejected the request")
+    txn = (r["body"] or {}).get("data") or {}
+    return {
+        "transaction_id": txn.get("id"),
+        "environment":    PADDLE_ENVIRONMENT,
+        "client_token":   PADDLE_CLIENT_TOKEN,
+    }
+
+
+@app.get("/api/orgs/{org_id}/subscription")
+def get_org_subscription(org_id: int, user: dict = Depends(get_current_user)):
+    """Current subscription state for the billing UI. Owner or any org
+    member can read — same access rule as /api/orgs/{id}/usage."""
+    is_owner = bool(db_one(
+        "SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+        (org_id, user["id"])))
+    is_member = bool(db_one(
+        "SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s",
+        (org_id, user["id"])))
+    if not (is_owner or is_member):
+        raise HTTPException(404, "Organization not found")
+    row = db_one("""
+        SELECT s.plan_slug, s.status,
+               s.current_period_start, s.current_period_end,
+               s.cancelled_at, s.paddle_subscription_id,
+               p.name AS plan_name, p.price_usd
+          FROM crm_subscriptions s
+          JOIN crm_subscription_plans p ON p.slug = s.plan_slug
+         WHERE s.org_id = %s
+    """, (org_id,))
+    if not row:
+        # Defensive default — every org should already have a row from the
+        # migration backfill, but a freshly created org might race ahead.
+        row = {
+            "plan_slug": "free", "plan_name": "Free", "price_usd": 0,
+            "status": "active",
+            "current_period_start": None, "current_period_end": None,
+            "cancelled_at": None, "paddle_subscription_id": None,
+        }
+    return row
+
+
+@app.post("/api/paddle/webhook")
+async def paddle_webhook(request: Request):
+    """Public webhook receiver for Paddle.com → Torta state sync.
+
+    HMAC-verified first; rejects with 400 on missing/bad signature so an
+    attacker can't probe whether a given event_type would have been accepted.
+    """
+    raw = await request.body()
+    sig = request.headers.get("paddle-signature", "")
+    if not _paddle_verify_webhook(raw, sig):
+        raise HTTPException(400, "Invalid signature")
+    try:
+        payload = json.loads(raw.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(400, "Malformed payload")
+    event_type = (payload.get("event_type") or "").strip()
+    data = payload.get("data") or {}
+    if event_type.startswith("subscription."):
+        _paddle_apply_subscription(event_type, data)
+    elif event_type.startswith("transaction."):
+        # Subscription events cover the state we care about; transaction
+        # events are mostly for receipts / dispute tracking → log only.
+        txn_id = (data.get("id") if isinstance(data, dict) else "") or "?"
+        print(f"[paddle/webhook] {event_type}: txn={txn_id}")
+    else:
+        print(f"[paddle/webhook] ignored event {event_type!r}")
+    # Paddle considers any 2xx as ack and stops retrying.
+    return {"ok": True}
 
 
 @app.get("/api/orgs/{org_id}/customers")
@@ -9987,8 +10449,10 @@ def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
         "SELECT p.id AS product_id, p.title, p.subtitle, p.description,"
         "       p.product_type, p.sku AS product_sku, p.barcode AS product_barcode,"
         "       p.brand, p.manufacturer, p.country_of_origin,"
+        "       p.seo_title, p.seo_description,"
         "       pc.name AS category, p.is_paused, p.is_archived,"
-        "       l1.variation_name, l2.configuration_name, l2.sku_code, l2.barcode,"
+        "       l1.variation_name, l1.images AS image_urls,"
+        "       l2.configuration_name, l2.sku_code, l2.barcode,"
         "       l2.price, l2.stock_quantity, l2.cost_price, l2.compare_at_price,"
         "       l2.weight_g, l2.length_cm, l2.width_cm, l2.height_cm"
         "  FROM products p"
@@ -10018,12 +10482,24 @@ def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
         return s
 
     w.writerow([
-        "product_id", "title", "subtitle", "description", "product_type", "product_sku", "product_barcode",
-        "brand", "manufacturer", "country_of_origin", "category", "is_paused", "is_archived",
-        "variation_name", "configuration_name", "sku_code", "sku_barcode", "price", "stock_quantity",
-        "cost_price", "compare_at_price", "weight_g", "length_cm", "width_cm", "height_cm",
+        "product_id", "title", "subtitle", "description", "product_type",
+        "product_sku", "product_barcode",
+        "brand", "manufacturer", "country_of_origin",
+        "category", "is_paused", "is_archived",
+        "seo_title", "seo_description",
+        "variation_name", "image_urls",
+        "configuration_name", "sku_code", "sku_barcode",
+        "price", "stock_quantity",
+        "cost_price", "compare_at_price",
+        "weight_g", "length_cm", "width_cm", "height_cm",
     ])
     for r in rows:
+        # Images come from Postgres as a Python list (TEXT[] column). Re-emit
+        # as pipe-separated URLs so the import-side _split_pipe_urls round-trips
+        # cleanly. Pipe avoids the comma ambiguity with URL query strings.
+        imgs = r.get("image_urls") or []
+        imgs_cell = "|".join(u for u in imgs if isinstance(u, str)) if isinstance(imgs, list) else ""
+
         w.writerow([
             r["product_id"],
             _safe_cell(r.get("title", "")), _safe_cell(r.get("subtitle") or ""),
@@ -10034,7 +10510,9 @@ def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
             _safe_cell(r.get("country_of_origin") or ""),
             _safe_cell(r.get("category") or ""),
             "yes" if r.get("is_paused") else "", "yes" if r.get("is_archived") else "",
+            _safe_cell(r.get("seo_title") or ""), _safe_cell(r.get("seo_description") or ""),
             _safe_cell(r.get("variation_name") or ""),
+            _safe_cell(imgs_cell),
             _safe_cell(r.get("configuration_name") or ""),
             _safe_cell(r.get("sku_code") or ""), _safe_cell(r.get("barcode") or ""),
             r["price"] if r.get("price") is not None else "",
@@ -10053,18 +10531,158 @@ def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
     )
 
 
+# Strip everything that's not a digit / decimal mark / minus sign. Currency
+# symbols ($, €, ₸, USD, "руб.", trailing units), spaces (thousands sep),
+# parens (negative accounting style) — all gone. Comma vs dot is normalised
+# later in _coerce_number() based on which characters survived.
+_CSV_NUM_STRIP = re.compile(r"[^\d.,\-]")
+
+
+def _coerce_bool(v):
+    """Tolerant CSV cell → bool | None. Matches the export's "yes"/"" output
+    plus common variants so re-importing an exported CSV survives round-trip
+    and hand-edited CSVs with TRUE/1/on don't fail.
+
+    Empty / unknown values → None (caller treats as "leave existing value
+    untouched" instead of false — important so partial imports don't
+    accidentally un-pause / un-archive products)."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if not isinstance(v, str):
+        return None
+    s = v.strip().lower()
+    if not s:
+        return None
+    if s in ("yes", "y", "true", "1", "on"):
+        return True
+    if s in ("no", "n", "false", "0", "off"):
+        return False
+    return None
+
+
+def _split_pipe_urls(v):
+    """Pipe-separated URL list → cleaned Python list. Comma is unsafe because
+    URLs commonly carry commas in query strings (e.g. `?filter=red,blue`).
+    Strips whitespace, rejects entries that aren't http(s) URLs."""
+    if v is None or not isinstance(v, str):
+        return []
+    out = []
+    for u in v.split("|"):
+        u = u.strip()
+        if u and (u.startswith("http://") or u.startswith("https://")):
+            # Cap length defensively — S3 URLs can be long but >2 KB is junk.
+            out.append(u[:2000])
+    return out
+
+
+def _coerce_number(v, *, as_int: bool):
+    """Tolerant CSV cell → float | int | None.
+
+    Real-world CSV exports from Excel / Numbers / Google Sheets / 1C carry
+    locale-specific formatting that Pydantic's default coercion refuses:
+      • Empty / whitespace cell                  ('')
+      • Currency symbols                          ('$100', '100 ₸', '€1.20')
+      • Thousand separators (commas or spaces)    ('1,234.56', '1 234,56')
+      • European decimal comma                    ('100,50')
+      • Mixed garbage                             ('see SKU', 'free')
+
+    Rule: coerce what's coerceable, return None on parse failure. The row
+    still imports — bad cell just doesn't update price/stock. Refusing the
+    entire batch on one bad cell (Pydantic's default) is worse UX than
+    silently dropping the cell — the user can always re-import the fixes.
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return None  # 'True'/'False' shouldn't smuggle in as 1/0
+    if isinstance(v, (int, float)):
+        return int(v) if as_int else float(v)
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    # Negative accounting style "(120)" → "-120"
+    if s.startswith("(") and s.endswith(")"):
+        s = "-" + s[1:-1]
+    s = _CSV_NUM_STRIP.sub("", s)
+    if not s or s in ("-", ".", ",", "-.", "-,"):
+        return None
+    # Decimal mark disambiguation:
+    #   "1,234.56"  → both present, comma is thousands → strip it
+    #   "1234,56"   → comma alone → treat as decimal point
+    #   "1234.56"   → dot alone → keep as-is
+    if "." in s and "," in s:
+        s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        f = float(s)
+    except ValueError:
+        return None
+    return int(f) if as_int else f
+
+
 class CsvImportRow(BaseModel):
+    # ── Product-level fields (one row per product; first row of a title wins) ──
     title:               Optional[str] = None
     subtitle:            Optional[str] = None
     description:         Optional[str] = None
     product_type:        Optional[str] = None
     category:            Optional[str] = None
+    brand:               Optional[str] = None
+    manufacturer:        Optional[str] = None
+    country_of_origin:   Optional[str] = None
+    product_sku:         Optional[str] = None    # product-level identifier
+    product_barcode:     Optional[str] = None    # product-level EAN/UPC
+    is_paused:           Optional[bool] = None   # storefront-hidden but not deleted
+    is_archived:         Optional[bool] = None   # soft-deleted
+    seo_title:           Optional[str] = None
+    seo_description:     Optional[str] = None
+
+    # ── Variation-level fields (Layer 1 row — colour / material / size axis) ──
     variation_name:      Optional[str] = None
+    image_urls:          Optional[str] = None    # pipe-separated URLs → array
+
+    # ── SKU-level fields (Layer 2 row — concrete sellable unit) ────────────
     configuration_name:  Optional[str] = None
     sku_code:            Optional[str] = None
     sku_barcode:         Optional[str] = None
     price:               Optional[float] = None
     stock_quantity:      Optional[int]   = None
+    cost_price:          Optional[float] = None
+    compare_at_price:    Optional[float] = None
+    weight_g:            Optional[float] = None
+    length_cm:           Optional[float] = None
+    width_cm:            Optional[float] = None
+    height_cm:           Optional[float] = None
+
+    # mode='before' runs BEFORE Pydantic's strict float/int parser, so we
+    # can sanitise the raw string first instead of letting validation blow up.
+    # Same validator applied to every numeric field — they all accept the
+    # same currency-symbol / thousands-separator mess.
+    @field_validator(
+        "price", "cost_price", "compare_at_price",
+        "weight_g", "length_cm", "width_cm", "height_cm",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_float(cls, v):
+        return _coerce_number(v, as_int=False)
+
+    @field_validator("stock_quantity", mode="before")
+    @classmethod
+    def _coerce_stock(cls, v):
+        return _coerce_number(v, as_int=True)
+
+    @field_validator("is_paused", "is_archived", mode="before")
+    @classmethod
+    def _coerce_flag(cls, v):
+        return _coerce_bool(v)
 
 
 class CsvImportRequest(BaseModel):
@@ -10133,6 +10751,11 @@ def import_products_csv(project_id: int, request: CsvImportRequest,
                         cat_cache[cname.lower()] = cat_id
 
                 # Upsert product (matched by title within this project, within this import).
+                # Product-level metadata (brand, manufacturer, SEO, flags, dimensions
+                # don't apply here) is written ONLY on CREATE — re-importing a row
+                # whose title already exists doesn't clobber product-level edits
+                # made via the UI in between. SKU-level fields (price/stock/etc.)
+                # always upsert, see L2 block below.
                 if title in title_to_pid:
                     pid = title_to_pid[title]
                     counters["products_matched"] += 1
@@ -10143,20 +10766,44 @@ def import_products_csv(project_id: int, request: CsvImportRequest,
                     if existing:
                         pid = existing["id"]; counters["products_matched"] += 1
                     else:
+                        # User-supplied product SKU & barcode take precedence over the
+                        # auto-minted values — this lets export → import preserve IDs
+                        # across projects. Invalid EAN-13 input gets dropped (auto-mint
+                        # kicks in) so a hand-typo doesn't poison the catalog.
+                        user_psku = sanitize((row.product_sku or "").strip())[:80]
+                        user_pbar = sanitize((row.product_barcode or "").strip())[:80]
+                        if user_pbar and not _normalize_ean13(user_pbar):
+                            user_pbar = ""
                         cur.execute(
-                            "INSERT INTO products (project_id, title, subtitle, description, category_id, product_type, sku)"
-                            " VALUES (%s, %s, %s, %s, %s, %s, '') RETURNING id",
+                            """INSERT INTO products
+                                 (project_id, title, subtitle, description, category_id, product_type,
+                                  sku, barcode, brand, manufacturer, country_of_origin,
+                                  is_paused, is_archived, seo_title, seo_description)
+                               VALUES (%s, %s, %s, %s, %s, %s,
+                                       %s, %s, %s, %s, %s,
+                                       %s, %s, %s, %s) RETURNING id""",
                             (project_id, title,
                              sanitize((row.subtitle or "").strip())[:300],
                              sanitize((row.description or "").strip())[:5000],
-                             cat_id, ptype)
+                             cat_id, ptype,
+                             user_psku, user_pbar,
+                             sanitize((row.brand or "").strip())[:120],
+                             sanitize((row.manufacturer or "").strip())[:120],
+                             sanitize((row.country_of_origin or "").strip())[:120],
+                             bool(row.is_paused)   if row.is_paused   is not None else False,
+                             bool(row.is_archived) if row.is_archived is not None else False,
+                             sanitize((row.seo_title or "").strip())[:200],
+                             sanitize((row.seo_description or "").strip())[:500],
+                            )
                         )
                         pid = cur.fetchone()["id"]
-                        mode, length = _resolve_sku_settings(project_id)
-                        gen = _gen_unique_product_sku(cur, project_id, mode, length)
-                        if gen: cur.execute("UPDATE products SET sku=%s WHERE id=%s", (gen, pid))
-                        # Auto-mint EAN-13 so the imported product is scannable immediately.
-                        _ensure_product_ean13(cur, pid)
+                        # Auto-mint only if the user didn't supply (their value already saved above).
+                        if not user_psku:
+                            mode, length = _resolve_sku_settings(project_id)
+                            gen = _gen_unique_product_sku(cur, project_id, mode, length)
+                            if gen: cur.execute("UPDATE products SET sku=%s WHERE id=%s", (gen, pid))
+                        if not user_pbar:
+                            _ensure_product_ean13(cur, pid)
                         counters["products_created"] += 1
                     title_to_pid[title] = pid
 
@@ -10164,23 +10811,45 @@ def import_products_csv(project_id: int, request: CsvImportRequest,
                 # Match case-insensitively so reimporting "Red" / "red" / "RED"
                 # doesn't silently create duplicate variations.
                 vname = sanitize((row.variation_name or "Default").strip())[:120]
+                img_urls = _split_pipe_urls(row.image_urls)
                 cur.execute("SELECT id FROM product_configurations_l1"
                             " WHERE product_id=%s AND LOWER(variation_name)=LOWER(%s) LIMIT 1",
                             (pid, vname))
                 lv = cur.fetchone()
-                if lv: vid = lv["id"]
+                if lv:
+                    vid = lv["id"]
+                    # Replace images only when the import supplied any — empty
+                    # image_urls (the common case for non-photo CSVs) leaves
+                    # existing photos alone instead of wiping them.
+                    if img_urls:
+                        cur.execute(
+                            "UPDATE product_configurations_l1 SET images=%s WHERE id=%s",
+                            (img_urls, vid))
                 else:
                     cur.execute(
                         "INSERT INTO product_configurations_l1 (product_id, variation_name, images, price, stock_quantity, sold_quantity, position)"
-                        " VALUES (%s, %s, '{}', NULL, 0, 0, 0) RETURNING id",
-                        (pid, vname)
+                        " VALUES (%s, %s, %s, NULL, 0, 0, 0) RETURNING id",
+                        (pid, vname, img_urls)
                     )
                     vid = cur.fetchone()["id"]
 
                 # SKU (Layer 2) row — upsert by configuration_name (case-insensitive too).
                 cname2 = sanitize((row.configuration_name or "Default").strip())[:120]
-                price = row.price if row.price is not None and row.price >= 0 else None
-                stock = max(0, int(row.stock_quantity)) if row.stock_quantity is not None else 0
+
+                # Numeric fields: None when unsupplied OR negative (caller wins
+                # if they supplied 0). UPDATE branch uses COALESCE so missing
+                # cells leave the existing value alone; INSERT branch writes
+                # NULL which DB-defaults to NULL (acceptable for cost/dims).
+                def _non_neg(v):
+                    return v if (v is not None and v >= 0) else None
+                price    = _non_neg(row.price)
+                cost     = _non_neg(row.cost_price)
+                compare  = _non_neg(row.compare_at_price)
+                weight   = _non_neg(row.weight_g)
+                length_  = _non_neg(row.length_cm)
+                width_   = _non_neg(row.width_cm)
+                height_  = _non_neg(row.height_cm)
+                stock    = max(0, int(row.stock_quantity)) if row.stock_quantity is not None else 0
                 sku_code = sanitize((row.sku_code or "").strip())[:80]
                 sku_bar  = sanitize((row.sku_barcode or "").strip())[:80]
 
@@ -10210,18 +10879,33 @@ def import_products_csv(project_id: int, request: CsvImportRequest,
                     cur.execute(
                         "SET LOCAL torta.skip_audit = 'on';"
                         "UPDATE product_configurations_l2"
-                        "   SET price=COALESCE(%s, price), stock_quantity=%s, sku_code=COALESCE(NULLIF(%s,''), sku_code),"
-                        "       barcode=COALESCE(NULLIF(%s,''), barcode)"
+                        "   SET price            = COALESCE(%s, price),"
+                        "       stock_quantity   = %s,"
+                        "       cost_price       = COALESCE(%s, cost_price),"
+                        "       compare_at_price = COALESCE(%s, compare_at_price),"
+                        "       weight_g         = COALESCE(%s, weight_g),"
+                        "       length_cm        = COALESCE(%s, length_cm),"
+                        "       width_cm         = COALESCE(%s, width_cm),"
+                        "       height_cm        = COALESCE(%s, height_cm),"
+                        "       sku_code         = COALESCE(NULLIF(%s, ''), sku_code),"
+                        "       barcode          = COALESCE(NULLIF(%s, ''), barcode)"
                         " WHERE id=%s",
-                        (price, stock, sku_code, sku_bar, lc["id"])
+                        (price, stock, cost, compare, weight, length_, width_, height_,
+                         sku_code, sku_bar, lc["id"])
                     )
                     counters["skus_updated"] += 1
                 else:
                     cur.execute(
                         "INSERT INTO product_configurations_l2"
-                        "  (product_id, variation_id, configuration_name, price, stock_quantity, sku_code, barcode, sold_quantity, position)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s, 0, 0) RETURNING id",
-                        (pid, vid, cname2, price, stock, sku_code, sku_bar)
+                        "  (product_id, variation_id, configuration_name, price, stock_quantity,"
+                        "   cost_price, compare_at_price, weight_g, length_cm, width_cm, height_cm,"
+                        "   sku_code, barcode, sold_quantity, position)"
+                        " VALUES (%s, %s, %s, %s, %s,"
+                        "         %s, %s, %s, %s, %s, %s,"
+                        "         %s, %s, 0, 0) RETURNING id",
+                        (pid, vid, cname2, price, stock,
+                         cost, compare, weight, length_, width_, height_,
+                         sku_code, sku_bar)
                     )
                     new_sku_id = cur.fetchone()["id"]
                     # Auto-mint EAN-13 only if the CSV didn't supply one — caller's
@@ -14625,41 +15309,63 @@ def get_orders_stats(project_id: int = Query(...),
     # UTC-midnight silently dropped off the count — that was the real cause of
     # "digital orders aren't counted" (they ARE in order_history; the day
     # boundary just excluded them).
-    tz_obj = _tz(get_project_timezone(project_id))
+    #
+    # Round-trip optimisation: previously this fired 5 db_one calls (timezone,
+    # new_count, otoday, btoday, currency). We now fold timezone+currency into
+    # ONE preamble query, and the three count/sum aggregates into ONE big
+    # SELECT — total 2 round-trips instead of 5. Recent feed stays separate
+    # because its UNION ALL shape doesn't compose into a scalar SELECT.
+    proj = db_one(
+        "SELECT timezone, currency FROM crm_projects WHERE id=%s",
+        (project_id,),
+    ) or {}
+    tz_obj = _tz(proj.get("timezone") or "UTC")
     _day0 = datetime.now(tz_obj).replace(hour=0, minute=0, second=0, microsecond=0)
     day_start = _day0.astimezone(timezone.utc)
     day_end   = (_day0 + timedelta(days=1)).astimezone(timezone.utc)
+    proj_currency = proj.get("currency") or "USD"
 
     # new_count = all-time orders still in 'new' status (drives the "N new"
     # pill). Today counts mirror the Analytics overview EXACTLY so the two
     # surfaces never disagree: order_history (physical + digital) excluding
     # cancelled/refunded, PLUS completed bookings (by starts_at — money is
     # earned when the service is delivered, not when it's booked).
-    nc = db_one(
-        "SELECT COUNT(*) FILTER (WHERE status='new') AS n FROM order_history WHERE project_id=%s",
-        (project_id,)
+    agg = db_one(
+        """
+        SELECT
+          COALESCE((SELECT COUNT(*) FILTER (WHERE status = 'new')
+                     FROM order_history WHERE project_id = %s), 0)     AS new_count,
+          COALESCE((SELECT COUNT(*) FROM order_history
+                     WHERE project_id = %s
+                       AND created_at >= %s AND created_at < %s
+                       AND status NOT IN ('cancelled', 'refunded')), 0) AS o_cnt,
+          COALESCE((SELECT SUM(total_amount) FROM order_history
+                     WHERE project_id = %s
+                       AND created_at >= %s AND created_at < %s
+                       AND status NOT IN ('cancelled', 'refunded')), 0) AS o_rev,
+          COALESCE((SELECT COUNT(*) FROM bookings b
+                     LEFT JOIN booking_services s ON s.id = b.service_id
+                    WHERE b.project_id = %s
+                      AND b.starts_at >= %s AND b.starts_at < %s
+                      AND b.status = 'completed'), 0)                   AS b_cnt,
+          COALESCE((SELECT SUM(COALESCE(s.price, b.freeform_price, 0))
+                     FROM bookings b
+                     LEFT JOIN booking_services s ON s.id = b.service_id
+                    WHERE b.project_id = %s
+                      AND b.starts_at >= %s AND b.starts_at < %s
+                      AND b.status = 'completed'), 0)                   AS b_rev
+        """,
+        (
+            project_id,                          # new_count
+            project_id, day_start, day_end,      # o_cnt
+            project_id, day_start, day_end,      # o_rev
+            project_id, day_start, day_end,      # b_cnt
+            project_id, day_start, day_end,      # b_rev
+        ),
     ) or {}
-    otoday = db_one(
-        """SELECT COUNT(*) AS cnt, COALESCE(SUM(total_amount), 0) AS rev
-             FROM order_history
-            WHERE project_id=%s AND created_at >= %s AND created_at < %s
-              AND status NOT IN ('cancelled', 'refunded')""",
-        (project_id, day_start, day_end)
-    ) or {}
-    btoday = db_one(
-        """SELECT COUNT(*) AS cnt,
-                  COALESCE(SUM(COALESCE(s.price, b.freeform_price, 0)), 0) AS rev
-             FROM bookings b
-             LEFT JOIN booking_services s ON s.id = b.service_id
-            WHERE b.project_id=%s AND b.starts_at >= %s AND b.starts_at < %s
-              AND b.status = 'completed'""",
-        (project_id, day_start, day_end)
-    ) or {}
-    new_count     = int(nc.get("n") or 0)
-    today_orders  = int(otoday.get("cnt") or 0) + int(btoday.get("cnt") or 0)
-    today_revenue = float(otoday.get("rev") or 0) + float(btoday.get("rev") or 0)
-    proj_currency = (db_one("SELECT currency FROM crm_projects WHERE id=%s", (project_id,))
-                     or {}).get("currency") or "USD"
+    new_count     = int(agg.get("new_count") or 0)
+    today_orders  = int(agg.get("o_cnt") or 0) + int(agg.get("b_cnt") or 0)
+    today_revenue = float(agg.get("o_rev") or 0) + float(agg.get("b_rev") or 0)
     # Recent feed merges store orders AND service bookings so the overview
     # surfaces all customer activity, not just physical/digital sales. Each
     # side is normalised to the same shape (kind discriminates the badge +
@@ -14727,13 +15433,75 @@ def get_orders_stats(project_id: int = Query(...),
 @app.get("/api/projects/{project_id}/overview-status")
 def project_overview_status(project_id: int, user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+
+    # Previously: 8 sequential db_one() calls = 8 DB round-trips. Each is
+    # cheap (~1–5 ms) but the round-trip dominates over the actual query
+    # work, especially across the Fly → Postgres link. Consolidating into
+    # ONE SELECT with subqueries → one round-trip total. Same query plans
+    # (Postgres evaluates subqueries independently anyway), but the page
+    # paint shaves ~50–150 ms off in the median + much more under load.
+    # Each subquery returns 0 or 1 row → wrap COUNT-style ones in COALESCE
+    # so missing rows yield 0 not NULL. Return shape on the wire is
+    # IDENTICAL to the old version — frontend untouched.
+    # 11 positional %s = project_id repeated, in declaration order. Verbose
+    # but matches the rest of the codebase's convention (no dict params used
+    # anywhere else in main.py).
+    row = db_one(
+        """
+        SELECT
+          -- URL config
+          (SELECT NULLIF(TRIM(frontend_url), '')
+             FROM crm_url_config WHERE project_id = %s)               AS frontend_url,
+          -- Auth methods
+          (SELECT is_verified
+             FROM crm_email_domains WHERE project_id = %s)            AS email_verified,
+          (SELECT NULLIF(TRIM(google_client_id), '')
+             FROM crm_oauth_settings WHERE project_id = %s)           AS google_client_id,
+          (SELECT is_enabled
+             FROM crm_sms_settings WHERE project_id = %s)             AS sms_enabled,
+          COALESCE((SELECT COUNT(*) FROM crm_auth_providers
+                     WHERE project_id = %s AND is_enabled = TRUE), 0) AS oauth_count,
+          -- Alerts
+          COALESCE((SELECT COUNT(*) FILTER (WHERE is_active)
+                     FROM crm_alerts WHERE project_id = %s), 0)       AS alerts_active,
+          COALESCE((SELECT COUNT(*) FILTER (
+                       WHERE last_fired_at >= NOW() - INTERVAL '7 days')
+                     FROM crm_alerts WHERE project_id = %s), 0)       AS alerts_fired,
+          -- Inventory — out-of-stock + low-stock SKU counts (canonical logic:
+          -- threshold 0 → fall back to 10; OOS qty 0 counted regardless).
+          COALESCE((SELECT COUNT(*) FILTER (WHERE l2.stock_quantity = 0)
+                     FROM product_configurations_l2 l2
+                     JOIN product_configurations_l1 l1 ON l1.id = l2.variation_id
+                     JOIN products p ON p.id = l1.product_id
+                    WHERE p.project_id = %s AND p.is_archived = FALSE), 0) AS inv_oos,
+          COALESCE((SELECT COUNT(*) FILTER (WHERE l2.stock_quantity > 0
+                       AND l2.stock_quantity <= COALESCE(NULLIF(p.low_stock_threshold, 0), 10))
+                     FROM product_configurations_l2 l2
+                     JOIN product_configurations_l1 l1 ON l1.id = l2.variation_id
+                     JOIN products p ON p.id = l1.product_id
+                    WHERE p.project_id = %s AND p.is_archived = FALSE), 0) AS inv_low,
+          -- Revenue 7d vs prior 7d
+          COALESCE((SELECT SUM(total_amount) FILTER (
+                       WHERE created_at >= CURRENT_DATE - INTERVAL '7 days')
+                     FROM order_history
+                    WHERE project_id = %s
+                      AND status NOT IN ('cancelled', 'refunded')), 0)     AS rev_this_week,
+          COALESCE((SELECT SUM(total_amount) FILTER (
+                       WHERE created_at >= CURRENT_DATE - INTERVAL '14 days'
+                         AND created_at <  CURRENT_DATE - INTERVAL '7 days')
+                     FROM order_history
+                    WHERE project_id = %s
+                      AND status NOT IN ('cancelled', 'refunded')), 0)     AS rev_prior_week
+        """,
+        (project_id,) * 11,
+    ) or {}
+
     checks = []
 
     # 1. URL Configuration — gates OAuth redirects + email links.
-    # NOTE: checks carry stable labelKey/detailKey (+ params); the frontend
-    # localises them via i18n. No human-readable English is sent from here.
-    url_row = db_one("SELECT frontend_url FROM crm_url_config WHERE project_id=%s", (project_id,))
-    if url_row and (url_row.get("frontend_url") or "").strip():
+    # Checks carry stable labelKey/detailKey (+ params); the frontend
+    # localises them via i18n. No human-readable English from here.
+    if row.get("frontend_url"):
         checks.append({"key": "url_config", "labelKey": "urlConfig",
                        "status": "ok", "detailKey": "siteUrlConnected"})
     else:
@@ -14742,18 +15510,13 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
 
     # 2. Customer Authentication — any sign-in method live for the storefront?
     methods = []
-    em = db_one("SELECT is_verified FROM crm_email_domains WHERE project_id=%s", (project_id,))
-    if em and em.get("is_verified"):
+    if row.get("email_verified"):
         methods.append("email")
-    oa = db_one("SELECT google_client_id FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
-    if oa and (oa.get("google_client_id") or "").strip():
+    if row.get("google_client_id"):
         methods.append("google")
-    sms = db_one("SELECT is_enabled FROM crm_sms_settings WHERE project_id=%s", (project_id,))
-    if sms and sms.get("is_enabled"):
+    if row.get("sms_enabled"):
         methods.append("phone")
-    gen = db_one("SELECT COUNT(*) AS n FROM crm_auth_providers WHERE project_id=%s AND is_enabled=TRUE",
-                 (project_id,))
-    oauth_count = int(gen.get("n") or 0) if gen else 0
+    oauth_count = int(row.get("oauth_count") or 0)
     if methods or oauth_count > 0:
         checks.append({"key": "auth", "labelKey": "auth", "status": "ok",
                        "methods": methods, "oauthCount": oauth_count})
@@ -14762,14 +15525,8 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
                        "status": "info", "detailKey": "noMethods"})
 
     # 3. Alerts — active subscriptions + recently-fired count (last 7 days).
-    al = db_one(
-        """SELECT COUNT(*) FILTER (WHERE is_active) AS active,
-                  COUNT(*) FILTER (WHERE last_fired_at >= NOW() - INTERVAL '7 days') AS fired
-             FROM crm_alerts WHERE project_id=%s""",
-        (project_id,)
-    ) or {}
-    active_alerts = int(al.get("active") or 0)
-    fired_alerts  = int(al.get("fired") or 0)
+    active_alerts = int(row.get("alerts_active") or 0)
+    fired_alerts  = int(row.get("alerts_fired") or 0)
     if fired_alerts > 0:
         checks.append({"key": "alerts", "labelKey": "alerts", "status": "warn",
                        "detailKey": "alertsFired", "detailParams": {"count": fired_alerts}})
@@ -14780,25 +15537,9 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
         checks.append({"key": "alerts", "labelKey": "alerts",
                        "status": "info", "detailKey": "notConfigured"})
 
-    # 4. Inventory — out-of-stock + low-stock SKU counts. Mirrors the
-    #    canonical /api/analytics/inventory-health logic exactly: threshold 0
-    #    means "not configured" → fall back to the project-wide default of 10,
-    #    and out-of-stock (qty 0) is always counted regardless of threshold.
-    #    (The previous `low_stock_threshold > 0` filter hid every OOS SKU on
-    #    a store that never set per-product thresholds.)
-    inv = db_one(
-        """SELECT
-             COUNT(*) FILTER (WHERE l2.stock_quantity = 0) AS oos,
-             COUNT(*) FILTER (WHERE l2.stock_quantity > 0
-                AND l2.stock_quantity <= COALESCE(NULLIF(p.low_stock_threshold, 0), 10)) AS low
-           FROM product_configurations_l2 l2
-           JOIN product_configurations_l1 l1 ON l1.id = l2.variation_id
-           JOIN products p ON p.id = l1.product_id
-          WHERE p.project_id = %s AND p.is_archived = FALSE""",
-        (project_id,)
-    ) or {}
-    oos = int(inv.get("oos") or 0)
-    low = int(inv.get("low") or 0)
+    # 4. Inventory — out-of-stock + low-stock SKU counts.
+    oos = int(row.get("inv_oos") or 0)
+    low = int(row.get("inv_low") or 0)
     if oos > 0 or low > 0:
         checks.append({"key": "inventory", "labelKey": "inventory",
                        "status": "warn", "oos": oos, "low": low})
@@ -14808,20 +15549,8 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
 
     # 5. Analytics anomaly — revenue last 7d vs prior 7d. A >40% drop on a
     #    non-trivial prior week is flagged; everything else reads "no anomalies".
-    rev = db_one(
-        """SELECT
-             COALESCE(SUM(total_amount) FILTER (
-               WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'), 0)  AS this_week,
-             COALESCE(SUM(total_amount) FILTER (
-               WHERE created_at >= CURRENT_DATE - INTERVAL '14 days'
-                 AND created_at <  CURRENT_DATE - INTERVAL '7 days'), 0)  AS prior_week
-           FROM order_history
-           WHERE project_id = %s
-             AND status NOT IN ('cancelled', 'refunded')""",
-        (project_id,)
-    ) or {}
-    this_week  = float(rev.get("this_week") or 0)
-    prior_week = float(rev.get("prior_week") or 0)
+    this_week  = float(row.get("rev_this_week") or 0)
+    prior_week = float(row.get("rev_prior_week") or 0)
     if prior_week >= 50 and this_week < prior_week * 0.6:
         drop_pct = round((1 - this_week / prior_week) * 100)
         checks.append({"key": "analytics", "labelKey": "analytics", "status": "warn",
@@ -14846,72 +15575,113 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
 @app.get("/api/projects/{project_id}/overview-extra")
 def project_overview_extra(project_id: int, user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
-    proj = db_one("SELECT api_key, org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}
+
+    # Previously: 11 sequential db_one() calls (the project row + timezone
+    # + 5 action counts + 5 advisor checks). Each is a DB round-trip, and
+    # round-trip latency dominates over the cheap aggregate queries — same
+    # story as overview-status. Collapse to 2 round-trips:
+    #   1) Preamble: org_id + timezone (needed before bookings day-window).
+    #   2) Big consolidated SELECT: all 5 action counts + every advisor field.
+    # Same query plans, same return shape — wire-level identical, just
+    # ~10× faster on Fly because we save 9 RTTs.
+
+    # ── 1. Preamble — org_id + timezone in one query ──
+    proj = db_one(
+        "SELECT org_id, timezone FROM crm_projects WHERE id=%s",
+        (project_id,),
+    ) or {}
     org_id = proj.get("org_id")
-
-    # ── Action Center — operational queue with quick-link routes ──
-    actions = []
-    fulfil = db_one(
-        "SELECT COUNT(*) AS n FROM order_history WHERE project_id=%s AND status IN ('new','confirmed')",
-        (project_id,)
-    ) or {}
-    actions.append({"key": "fulfill",
-                    "count": int(fulfil.get("n") or 0), "route": "orders"})
-
-    ret = db_one(
-        "SELECT COUNT(*) AS n FROM order_returns WHERE project_id=%s AND status = ANY(%s)",
-        (project_id, list(RETURN_GROUP_ACTION))
-    ) or {}
-    actions.append({"key": "returns",
-                    "count": int(ret.get("n") or 0), "route": "orders?tab=returns"})
-
-    # Bookings happening today (project tz), still upcoming (pending/confirmed).
-    tz_obj = _tz(get_project_timezone(project_id))
+    tz_obj = _tz(proj.get("timezone") or "UTC")
     _d0 = datetime.now(tz_obj).replace(hour=0, minute=0, second=0, microsecond=0)
     day_start = _d0.astimezone(timezone.utc)
     day_end   = (_d0 + timedelta(days=1)).astimezone(timezone.utc)
-    bk = db_one(
-        """SELECT COUNT(*) AS n FROM bookings
-            WHERE project_id=%s AND starts_at >= %s AND starts_at < %s
-              AND status IN ('pending', 'confirmed')""",
-        (project_id, day_start, day_end)
-    ) or {}
-    actions.append({"key": "bookings",
-                    "count": int(bk.get("n") or 0), "route": "booking"})
 
-    inv = db_one(
-        """SELECT COUNT(*) AS n
-             FROM product_configurations_l2 l2
-             JOIN product_configurations_l1 l1 ON l1.id = l2.variation_id
-             JOIN products p ON p.id = l1.product_id
-            WHERE p.project_id=%s AND p.is_archived=FALSE
-              AND l2.stock_quantity <= COALESCE(NULLIF(p.low_stock_threshold, 0), 10)""",
-        (project_id,)
-    ) or {}
-    actions.append({"key": "restock",
-                    "count": int(inv.get("n") or 0), "route": "products/inventory"})
+    # ── 2. Consolidated aggregate query ──
+    # NB: org-level subqueries return NULL when org_id is None (since
+    # `WHERE id = NULL` matches nothing) — handled by COALESCE / .get() at
+    # the Python layer below. Three catalog-quality subqueries scan the
+    # products table separately; index on (project_id) makes each scan
+    # cheap, and the round-trip savings dwarf any duplicated work.
+    row = db_one(
+        """
+        SELECT
+          -- Action Center counts
+          COALESCE((SELECT COUNT(*) FROM order_history
+                     WHERE project_id = %s
+                       AND status IN ('new', 'confirmed')), 0)             AS fulfill_count,
+          COALESCE((SELECT COUNT(*) FROM order_returns
+                     WHERE project_id = %s
+                       AND status = ANY(%s)), 0)                           AS returns_count,
+          COALESCE((SELECT COUNT(*) FROM bookings
+                     WHERE project_id = %s
+                       AND starts_at >= %s AND starts_at < %s
+                       AND status IN ('pending', 'confirmed')), 0)         AS bookings_today,
+          COALESCE((SELECT COUNT(*)
+                     FROM product_configurations_l2 l2
+                     JOIN product_configurations_l1 l1 ON l1.id = l2.variation_id
+                     JOIN products p ON p.id = l1.product_id
+                    WHERE p.project_id = %s AND p.is_archived = FALSE
+                      AND l2.stock_quantity <= COALESCE(NULLIF(p.low_stock_threshold, 0), 10)), 0)
+                                                                            AS restock_count,
+          COALESCE((SELECT COUNT(*) FROM crm_chat_conversations
+                     WHERE project_id = %s AND unread_count > 0), 0)       AS messages_count,
 
-    msg = db_one(
-        "SELECT COUNT(*) AS n FROM crm_chat_conversations WHERE project_id=%s AND unread_count > 0",
-        (project_id,)
+          -- Advisor: payment (org-level; NULL when org_id missing)
+          (SELECT slug              FROM crm_organizations    WHERE id = %s) AS org_slug,
+          (SELECT payment_provider  FROM crm_organizations    WHERE id = %s) AS org_payment_provider,
+          (SELECT is_connected      FROM crm_payment_credentials WHERE org_id = %s) AS payment_connected,
+
+          -- Advisor: email
+          (SELECT domain       FROM crm_email_domains WHERE project_id = %s) AS email_domain,
+          (SELECT is_verified  FROM crm_email_domains WHERE project_id = %s) AS email_verified,
+
+          -- Advisor: catalog quality — 3 scalar subqueries scanning products.
+          COALESCE((SELECT COUNT(*) FROM products p
+                     WHERE p.project_id = %s AND p.is_archived = FALSE
+                       AND NOT EXISTS (SELECT 1 FROM product_configurations_l1 l1
+                                        WHERE l1.product_id = p.id
+                                          AND COALESCE(array_length(l1.images, 1), 0) >= 1)), 0) AS no_img,
+          COALESCE((SELECT COUNT(*) FROM products p
+                     WHERE p.project_id = %s AND p.is_archived = FALSE
+                       AND COALESCE(p.description, '') = ''), 0)              AS no_desc,
+          COALESCE((SELECT COUNT(*) FROM products p
+                     WHERE p.project_id = %s AND p.is_archived = FALSE
+                       AND COALESCE(p.seo_title, '') = ''
+                       AND COALESCE(p.seo_description, '') = ''), 0)          AS no_seo
+        """,
+        (
+            project_id,                            # fulfill_count
+            project_id, list(RETURN_GROUP_ACTION), # returns_count
+            project_id, day_start, day_end,        # bookings_today
+            project_id,                            # restock_count
+            project_id,                            # messages_count
+            org_id, org_id, org_id,                # 3× org advisor
+            project_id, project_id,                # 2× email advisor
+            project_id, project_id, project_id,    # 3× catalog quality
+        ),
     ) or {}
-    actions.append({"key": "messages",
-                    "count": int(msg.get("n") or 0), "route": "chat"})
+
+    # ── Action Center ──
+    actions = [
+        {"key": "fulfill",  "count": int(row.get("fulfill_count")  or 0), "route": "orders"},
+        {"key": "returns",  "count": int(row.get("returns_count")  or 0), "route": "orders?tab=returns"},
+        {"key": "bookings", "count": int(row.get("bookings_today") or 0), "route": "booking"},
+        {"key": "restock",  "count": int(row.get("restock_count")  or 0), "route": "products/inventory"},
+        {"key": "messages", "count": int(row.get("messages_count") or 0), "route": "chat"},
+    ]
 
     # ── Store Advisor — fixable setup / best-practice issues ──
+    # Advisor entries carry a stable key (+ params); the frontend localises
+    # title/detail via i18n — no English text is sent from here.
     advisor = []
 
     # Payment (org-level). 'manual' is a valid choice → info nudge; a real
     # provider that isn't connected yet → critical (orders can't be charged).
     if org_id:
-        org = db_one("SELECT slug, payment_provider FROM crm_organizations WHERE id=%s", (org_id,)) or {}
-        provider = (org.get("payment_provider") or "manual")
-        slug = org.get("slug")
-        pc = db_one("SELECT is_connected FROM crm_payment_credentials WHERE org_id=%s", (org_id,)) or {}
-        connected = bool(pc.get("is_connected"))
+        provider  = (row.get("org_payment_provider") or "manual")
+        slug      = row.get("org_slug")
+        connected = bool(row.get("payment_connected"))
         pay_route = f"/org/{slug}/payments" if slug else None
-        # Advisor entries carry a stable key (+ params); the frontend localises
-        # title/detail via i18n — no English text is sent from here.
         if provider == "manual":
             advisor.append({"key": "payment_none", "severity": "info", "route": pay_route})
         elif not connected:
@@ -14919,28 +15689,15 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
                             "params": {"provider": provider.title()}, "route": pay_route})
 
     # Email domain (per-project). Unverified → confirmations may hit spam.
-    em = db_one("SELECT domain, is_verified FROM crm_email_domains WHERE project_id=%s", (project_id,)) or {}
-    if not em.get("domain"):
+    if not row.get("email_domain"):
         advisor.append({"key": "email_none", "severity": "info", "route": "authentication"})
-    elif not em.get("is_verified"):
+    elif not row.get("email_verified"):
         advisor.append({"key": "email_unverified", "severity": "warning", "route": "authentication"})
 
     # Catalog quality — counts of active products missing key fields.
-    cat = db_one(
-        """SELECT
-             COUNT(*) FILTER (WHERE NOT EXISTS (
-               SELECT 1 FROM product_configurations_l1 l1
-                WHERE l1.product_id = p.id AND COALESCE(array_length(l1.images, 1), 0) >= 1)) AS no_img,
-             COUNT(*) FILTER (WHERE COALESCE(p.description, '') = '')        AS no_desc,
-             COUNT(*) FILTER (WHERE COALESCE(p.seo_title, '') = ''
-                              AND COALESCE(p.seo_description, '') = '')        AS no_seo
-           FROM products p
-          WHERE p.project_id=%s AND p.is_archived=FALSE""",
-        (project_id,)
-    ) or {}
-    no_img  = int(cat.get("no_img") or 0)
-    no_desc = int(cat.get("no_desc") or 0)
-    no_seo  = int(cat.get("no_seo") or 0)
+    no_img  = int(row.get("no_img")  or 0)
+    no_desc = int(row.get("no_desc") or 0)
+    no_seo  = int(row.get("no_seo")  or 0)
     if no_img > 0:
         advisor.append({"key": "no_images", "severity": "warning",
                         "params": {"count": no_img}, "route": "products"})
@@ -14954,6 +15711,33 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
     sev_rank = {"critical": 0, "warning": 1, "info": 2}
     advisor.sort(key=lambda a: sev_rank.get(a["severity"], 3))
     return {"actions": actions, "advisor": advisor}
+
+
+@app.get("/api/projects/{project_id}/overview-bundle")
+def project_overview_bundle(project_id: int, user: dict = Depends(get_current_user)):
+    """Single-fetch bootstrap for the Project Overview page.
+
+    Combines 4 endpoints (email-domain + orders/stats + overview-status +
+    overview-extra) so the SPA can render the whole page on ONE round-trip
+    to Frankfurt instead of four. At ~150 ms RTT each that's a ~450 ms
+    network saving for KZ → fra users, plus better threadpool utilisation
+    (one thread holding for a moment, not four threads holding sequentially).
+
+    Each inner function still calls require_page_auto, but that path is
+    backed by the project-owner + team-membership caches added alongside —
+    so the duplicate auth checks are effectively free (4 dict reads).
+
+    Wire shape is { email_domain, orders_stats, overview_status,
+    overview_extra }, and each section matches its original endpoint's
+    response exactly. Frontend distributes into 4 setState calls.
+    """
+    require_page_auto(user, project_id)
+    return {
+        "email_domain":    get_email_domain(project_id=project_id, user=user),
+        "orders_stats":    get_orders_stats(project_id=project_id, user=user),
+        "overview_status": project_overview_status(project_id, user=user),
+        "overview_extra":  project_overview_extra(project_id, user=user),
+    }
 
 
 @app.get("/api/orders/stream")

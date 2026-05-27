@@ -1553,6 +1553,16 @@
   }
 }
 
+/* Error variant: same pill, red accent. Used for failed Paddle checkouts,
+   payment errors, generic transient failures. Keeps the same shape +
+   typography as the success toast so the user's eye lands in the same
+   spot — only the colour changes. */
+.auth-toast--err {
+  background: #d92d20;
+  box-shadow: 0 4px 20px rgba(217, 45, 32, 0.32),
+              0 2px 8px rgba(0, 0, 0, 0.10);
+}
+
 /* ══════════════════════════════════════════════════════
    PHONE / SMS PROVIDER PANEL
    ══════════════════════════════════════════════════════ */

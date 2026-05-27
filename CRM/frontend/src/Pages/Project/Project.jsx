@@ -392,56 +392,74 @@ function Project() {
   const prevIdRef    = useRef(-1);
 
   // ── Fetch data ───────────────────────────────────────────
+  // ONE round-trip to /overview-bundle returns all 4 sections (email_domain,
+  // orders_stats, overview_status, overview_extra). Previously this fired
+  // 4 separate fetches in parallel; on Fly the threadpool serialised them
+  // because every endpoint independently ran require_page_auto + Depends
+  // (get_current_user). The bundle pays that cost once, then fans out
+  // into the 4 setState calls — same screen, ~450 ms less network spent
+  // (RTT KZ → fra ≈ 150 ms × 3 saved hops) + fewer connection slots used.
   useEffect(() => {
-    Promise.all([
-      fetch(`${API_BASE}/api/email-domain${pq}`,   { credentials: 'include' })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/api/orders/stats${pq}`,   { credentials: 'include' })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/api/projects/${projectId}/overview-status`, { credentials: 'include' })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/api/projects/${projectId}/overview-extra`, { credentials: 'include' })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([email, s, h, x]) => {
-      setEmailDomain(email);
-      setStats(s);
-      setHealth(h);
-      setExtra(x);
-    });
+    fetch(`${API_BASE}/api/projects/${projectId}/overview-bundle`,
+          { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(bundle => {
+        if (!bundle) {
+          setEmailDomain(null); setStats(null); setHealth(null); setExtra(null);
+          return;
+        }
+        setEmailDomain(bundle.email_domain    ?? null);
+        setStats      (bundle.orders_stats    ?? null);
+        setHealth     (bundle.overview_status ?? null);
+        setExtra      (bundle.overview_extra  ?? null);
+      })
+      .catch(() => {
+        setEmailDomain(null); setStats(null); setHealth(null); setExtra(null);
+      });
   }, [projectId]);
 
   // ── SSE — live new-order updates ─────────────────────────
+  // Defer the EventSource handshake by 800 ms so it doesn't compete with
+  // the initial-paint fetches for the same network sockets. SSE only keeps
+  // the "N new" pill in sync; missing the first 800 ms of new orders is
+  // invisible to the operator and saves real wall-clock time on the page.
   useEffect(() => {
     prevCountRef.current = -1;
     prevIdRef.current    = -1;
-    const es = new EventSource(
-      `${API_BASE}/api/orders/stream${pq}`,
-      { withCredentials: true },
-    );
-    sseRef.current = es;
-    es.onmessage = (e) => {
-      try {
-        const d      = JSON.parse(e.data);
-        const count  = d.new_count;
-        const lastId = d.last_id ?? 0;
-        const isInit = prevCountRef.current === -1;
-        const newOrder = !isInit && lastId > prevIdRef.current;
-        const countChanged = !isInit && count !== prevCountRef.current;
-        if (newOrder || countChanged) {
-          fetch(`${API_BASE}/api/orders/stats${pq}`, { credentials: 'include' })
-            .then(r => r.ok ? r.json() : null)
-            .then(s => { if (s) setStats(s); })
-            .catch(() => {});
-        } else if (!isInit) {
-          setStats(prev => prev
-            ? { ...prev, new_count: count }
-            : { new_count: count, today_orders: 0, today_revenue: 0, recent: [] });
-        }
-        prevCountRef.current = count;
-        prevIdRef.current    = lastId;
-      } catch { /* ignore */ }
+    let es = null;
+    const timerId = setTimeout(() => {
+      es = new EventSource(
+        `${API_BASE}/api/orders/stream${pq}`,
+        { withCredentials: true },
+      );
+      sseRef.current = es;
+      es.onmessage = (e) => {
+        try {
+          const d      = JSON.parse(e.data);
+          const count  = d.new_count;
+          const lastId = d.last_id ?? 0;
+          const isInit = prevCountRef.current === -1;
+          const newOrder = !isInit && lastId > prevIdRef.current;
+          const countChanged = !isInit && count !== prevCountRef.current;
+          if (newOrder || countChanged) {
+            fetch(`${API_BASE}/api/orders/stats${pq}`, { credentials: 'include' })
+              .then(r => (r.ok ? r.json() : null))
+              .then(s => { if (s) setStats(s); })
+              .catch(() => {});
+          } else if (!isInit) {
+            setStats(prev => prev
+              ? { ...prev, new_count: count }
+              : { new_count: count, today_orders: 0, today_revenue: 0, recent: [] });
+          }
+          prevCountRef.current = count;
+          prevIdRef.current    = lastId;
+        } catch { /* ignore */ }
+      };
+    }, 800);
+    return () => {
+      clearTimeout(timerId);
+      if (es) es.close();
     };
-    return () => es.close();
   }, [projectId]);
 
   // ── Derived ──────────────────────────────────────────────

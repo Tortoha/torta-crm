@@ -14,7 +14,8 @@
 //     trick (no max-height guess, no jumps); caret rotates 180°.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { createPortal } from 'react-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   CheckCircle, MinusCircle, ArrowRight, CaretDown,
@@ -23,6 +24,9 @@ import Header from '../../Elements/Header.jsx';
 import Footer from './Footer.jsx';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
 import { API_BASE } from '../../api.js';
+import {
+  getBillingConfig, openCheckout, onPaddleEvent,
+} from '../../Utils/paddle.js';
 import '../../Style/Landing.css';
 import '../../Style/Products.css';   // po-set-table + po-set-row primitives
 
@@ -79,7 +83,7 @@ function BillingToggle({ active, onChange }) {
 
 // ── Plan card ────────────────────────────────────────────────────────────────
 
-function PlanCard({ planKey, popular, billing }) {
+function PlanCard({ planKey, popular, billing, user, ownedOrg, billingCfg, onUpgrade, busyKey }) {
   const { t } = useTranslation();
   const base = `pricing.plans.${planKey}`;
   const features = t(`${base}.features`, { returnObjects: true });
@@ -99,6 +103,43 @@ function PlanCard({ planKey, popular, billing }) {
     ? t('pricing.billing.billedAs', { amount: YEARLY_TOTAL[planKey] })
     : null;
 
+  // ── CTA logic ──
+  // 3 distinct paths:
+  //   A) Anonymous user → keep the legacy /registration link (same UX as before)
+  //   B) Logged-in user, free plan card → /dashboard (their existing org/start)
+  //   C) Logged-in user, paid plan card + at least one owned org + Paddle is
+  //      configured → onClick triggers inline checkout (Paddle.js overlay).
+  // When (C)'s preconditions aren't met (no org / Paddle not yet configured
+  // on this env) we fall back to /registration so the CTA is never dead.
+  const priceForPlan = !isFree && billingCfg && billingCfg.prices && billingCfg.prices[planKey]
+    ? billingCfg.prices[planKey][yearly ? 'yearly' : 'monthly']
+    : '';
+  const canCheckout = !!user && !isFree && !!ownedOrg && !!priceForPlan;
+  const isBusy = busyKey === planKey;
+  const ctaLabel = t(`${base}.cta`);
+
+  let ctaEl;
+  if (canCheckout) {
+    ctaEl = (
+      <button type="button"
+              className={`pr-card-cta pr-card-cta--btn${popular ? ' pr-card-cta--solid' : ''}`}
+              onClick={() => onUpgrade(planKey, priceForPlan)}
+              disabled={isBusy}>
+        {isBusy
+          ? t('pricing.billing.processing', { defaultValue: 'Opening checkout…' })
+          : ctaLabel}
+        {!isBusy && <ArrowRight size={14} weight="bold" />}
+      </button>
+    );
+  } else {
+    const to = user ? '/dashboard' : '/registration';
+    ctaEl = (
+      <Link to={to} className={`pr-card-cta${popular ? ' pr-card-cta--solid' : ''}`}>
+        {ctaLabel} <ArrowRight size={14} weight="bold" />
+      </Link>
+    );
+  }
+
   return (
     <div className={`pr-card${popular ? ' pr-card--popular' : ''}`}>
       {badge && <span className="pr-card-badge">{badge}</span>}
@@ -109,9 +150,7 @@ function PlanCard({ planKey, popular, billing }) {
         <span className="pr-card-price-sub">{priceSub}</span>
       </div>
       <p className="pr-card-billed-as">{billedAs || ' '}</p>
-      <Link to="/registration" className={`pr-card-cta${popular ? ' pr-card-cta--solid' : ''}`}>
-        {t(`${base}.cta`)} <ArrowRight size={14} weight="bold" />
-      </Link>
+      {ctaEl}
       <ul className="pr-card-list">
         {Array.isArray(features) && features.map((f, i) => (
           <li key={i}>
@@ -171,15 +210,96 @@ function FaqRow({ qKey }) {
 
 export default function Pricing() {
   const { t } = useTranslation();
-  const [user, setUser]       = useState(null);
-  const [billing, setBilling] = useState('monthly');
+  const navigate = useNavigate();
+  const [user, setUser]             = useState(null);
+  const [billing, setBilling]       = useState('monthly');
+  const [orgs, setOrgs]             = useState([]);   // user's orgs (each has is_owner flag)
+  const [billingCfg, setBillingCfg] = useState(null); // /api/billing/config response
+  const [busyKey, setBusyKey]       = useState(null); // plan currently in checkout (spinner state)
+  const [toast, setToast]           = useState(null); // bottom toast: { msg, kind: 'ok' | 'err' }
+
+  // First-owned org auto-selected for the diploma's common case (each user
+  // owns one org). Multi-org users still upgrade — they just upgrade their
+  // first-created owned org. Switching org for billing belongs in a future
+  // dedicated billing page inside org settings.
+  const ownedOrg = useMemo(
+    () => (orgs || []).find(o => o && o.is_owner) || null,
+    [orgs],
+  );
+
+  // Auto-dismiss toast after 3.2s — same timing as global auth-toast in
+  // Authentication.css so the visual rhythm is consistent across the app.
+  useEffect(() => {
+    if (!toast) return undefined;
+    const id = setTimeout(() => setToast(null), 3200);
+    return () => clearTimeout(id);
+  }, [toast]);
 
   useEffect(() => {
+    // Parallel fetch — none of these depend on each other.
     fetch(`${API_BASE}/api/me`, { credentials: 'include' })
       .then(r => (r.ok ? r.json() : null))
       .then(setUser)
       .catch(() => {});
+    fetch(`${API_BASE}/api/orgs`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : []))
+      .then(rows => setOrgs(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+    getBillingConfig().then(setBillingCfg).catch(() => setBillingCfg(null));
   }, []);
+
+  // Subscribe to Paddle events while this page is mounted. We only react to
+  // checkout.completed (success) — the "closed" event without "completed"
+  // means the user dismissed Paddle's modal, which is silent.
+  useEffect(() => {
+    const off = onPaddleEvent(ev => {
+      if (!ev) return;
+      if (ev.name === 'checkout.completed' || ev.name === 'checkout.payment.succeeded') {
+        setBusyKey(null);
+        setToast({ msg: t('pricing.billing.success', { defaultValue: 'Plan upgraded — welcome aboard!' }), kind: 'ok' });
+        // Land on the dashboard; the webhook will have updated plan_slug
+        // by the time the user clicks around. Race-free in practice — Paddle
+        // fires the webhook a beat before completing the overlay event.
+        setTimeout(() => navigate('/dashboard'), 1200);
+      } else if (ev.name === 'checkout.error' || ev.name === 'checkout.payment.failed') {
+        setBusyKey(null);
+        setToast({ msg: t('pricing.billing.failed', { defaultValue: 'Payment failed — try a different card.' }), kind: 'err' });
+      } else if (ev.name === 'checkout.closed') {
+        setBusyKey(null);  // user dismissed overlay; silent
+      }
+    });
+    return off;
+  }, [navigate, t]);
+
+  // Click handler: POST to /billing/checkout then hand the txn_id to Paddle.js.
+  // Errors flow into the bottom toast; spinner clears on event or error.
+  async function handleUpgrade(planKey, priceId) {
+    if (!ownedOrg) return;
+    setBusyKey(planKey);
+    try {
+      const r = await fetch(`${API_BASE}/api/orgs/${ownedOrg.id}/billing/checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ price_id: priceId }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${r.status}`);
+      }
+      const { transaction_id } = await r.json();
+      if (!transaction_id) throw new Error('No transaction_id returned');
+      await openCheckout(transaction_id);
+      // Spinner clears via Paddle event (completed/closed/error). If Paddle
+      // never reports back (e.g. extension blocked Paddle.js), we still want
+      // to release the spinner — a small safety timer caps it at 30s.
+      setTimeout(() => setBusyKey(b => (b === planKey ? null : b)), 30000);
+    } catch (e) {
+      setBusyKey(null);
+      setToast({ msg: t('pricing.billing.failed', { defaultValue: 'Payment failed — try a different card.' }), kind: 'err' });
+      console.error('[pricing/upgrade]', e);
+    }
+  }
 
   useEffect(() => {
     document.title = t('pricing.meta.title');
@@ -223,7 +343,15 @@ export default function Pricing() {
           <div className="ln-wrap">
             <div className="pr-plans-grid">
               {PLAN_KEYS.map(k => (
-                <PlanCard key={k} planKey={k} popular={k === 'standard'} billing={billing} />
+                <PlanCard key={k}
+                          planKey={k}
+                          popular={k === 'standard'}
+                          billing={billing}
+                          user={user}
+                          ownedOrg={ownedOrg}
+                          billingCfg={billingCfg}
+                          onUpgrade={handleUpgrade}
+                          busyKey={busyKey} />
               ))}
             </div>
           </div>
@@ -280,6 +408,16 @@ export default function Pricing() {
 
         <Footer />
       </main>
+
+      {/* Toast portal — bottom pill, same pattern as global auth-toast.
+          Re-mounts on every (msg, kind) change so the 3.2s timer restarts
+          when a second event arrives mid-display. */}
+      {toast && createPortal(
+        <div className={`auth-toast${toast.kind === 'err' ? ' auth-toast--err' : ''}`}>
+          {toast.msg}
+        </div>,
+        document.body,
+      )}
     </>
   );
 }

@@ -7,13 +7,25 @@ import { API_BASE } from '../../../api.js';
 import '../../../Style/Authentication.css';
 
 // Two-step CSV import: parse client-side preview → dry-run server validation → commit.
-// Expected columns (header row required): title, subtitle, description, product_type, category,
-// variation_name, configuration_name, sku_code, sku_barcode, price, stock_quantity
+// Header row required. The whitelist below is symmetric with the export CSV
+// (export.csv produces the same column names) so re-importing an exported CSV
+// preserves every field cleanly — useful for migrating a catalog between
+// projects (e.g. localhost → prod).
 const REQUIRED_HEADERS = ['title'];
 const KNOWN_HEADERS = [
+  // Product-level
   'title', 'subtitle', 'description', 'product_type', 'category',
-  'variation_name', 'configuration_name', 'sku_code', 'sku_barcode',
+  'brand', 'manufacturer', 'country_of_origin',
+  'product_sku', 'product_barcode',
+  'is_paused', 'is_archived',
+  'seo_title', 'seo_description',
+  // Variation-level
+  'variation_name', 'image_urls',
+  // SKU-level
+  'configuration_name', 'sku_code', 'sku_barcode',
   'price', 'stock_quantity',
+  'cost_price', 'compare_at_price',
+  'weight_g', 'length_cm', 'width_cm', 'height_cm',
 ];
 
 // Minimal RFC-4180 parser: quoted fields, escaped quotes (""), embedded newlines + commas in quotes. No external dep.
@@ -75,11 +87,13 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
       }
       setHeaders(hdr); setRows(parsed.slice(1)); setStage('preview');
 
+      // Send raw string values — backend's _coerce_number / _coerce_bool
+      // validators handle currency symbols, US/EU decimals, yes/no/true/false
+      // etc. Avoids the old parseFloat(`$120`) → NaN bug that silently dropped
+      // prices in the user's first migration attempt.
       const objs = parsed.slice(1).map(r => {
         const o = {};
         hdr.forEach((h, i) => { if (KNOWN_HEADERS.includes(h)) o[h] = (r[i] ?? '').trim(); });
-        if (o.price) o.price = parseFloat(o.price);
-        if (o.stock_quantity) o.stock_quantity = parseInt(o.stock_quantity, 10);
         return o;
       });
       const res = await fetch(`${API_BASE}/api/projects/${projectId}/products/import`, {
@@ -101,8 +115,6 @@ export default function ImportCsvModal({ pq, onClose, onDone }) {
       const objs = rows.map(r => {
         const o = {};
         headers.forEach((h, i) => { if (KNOWN_HEADERS.includes(h)) o[h] = (r[i] ?? '').trim(); });
-        if (o.price) o.price = parseFloat(o.price);
-        if (o.stock_quantity) o.stock_quantity = parseInt(o.stock_quantity, 10);
         return o;
       });
       const res = await fetch(`${API_BASE}/api/projects/${projectId}/products/import`, {
