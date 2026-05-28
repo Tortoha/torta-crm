@@ -17880,6 +17880,29 @@ async def save_chat_integration(req: ChatIntegrationRequest,
         elif channel == "discord":
             await discord_poller.start(project_id, config["bot_token"])
 
+    # ── Email inbound: register/unregister with SES so Postfix accepts mail ──
+    # We do this AFTER the DB write so the user sees the saved state in the UI
+    # even if SES is briefly unreachable. SES failures don't fail the save —
+    # we log them and let the user retry. Re-enabling on the next save is
+    # idempotent on the SES side (it short-circuits if already in the right state).
+    if channel == "email":
+        domain = (config.get("domain") or "").strip().lower()
+        if domain:
+            ses_method = "POST" if req.is_active else "DELETE"
+            try:
+                await loop.run_in_executor(
+                    None, lambda: _ses(ses_method, f"/domains/{domain}/inbound")
+                )
+            except HTTPException as e:
+                # _ses() raises HTTPException — re-raise only for 4xx config
+                # errors (caller needs to fix something), swallow 5xx so the
+                # save still succeeds and the user can retry inbound later.
+                if 400 <= e.status_code < 500 and e.status_code != 404:
+                    raise
+                print(f"[chat/email] SES inbound {ses_method} failed for {domain}: {e.detail}")
+            except Exception as e:
+                print(f"[chat/email] SES inbound {ses_method} failed for {domain}: {e}")
+
     # ── Return webhook URL hint for webhook-only channels ─────────────────────
     extra: dict = {}
     if channel in CHAT_WEBHOOK_CHANNELS:
@@ -17917,6 +17940,20 @@ async def delete_chat_integration(channel: str,
                     pass
     elif channel == "discord":
         await discord_poller.stop(project_id)
+    elif channel == "email" and row:
+        # Disconnect inbound on the Postfix side so we stop accepting mail
+        # for this merchant's domain — otherwise mail.log would fill with
+        # bounces or, worse, mails would land in the pipe with no integration
+        # to deliver them to. SES failures are non-fatal: the DB row goes
+        # away regardless, and the admin can re-sync later.
+        domain = ((row.get("config") or {}).get("domain") or "").strip().lower()
+        if domain:
+            try:
+                await loop.run_in_executor(
+                    None, lambda: _ses("DELETE", f"/domains/{domain}/inbound")
+                )
+            except Exception as e:
+                print(f"[chat/email] SES inbound DELETE failed for {domain}: {e}")
 
     # ── Persist ───────────────────────────────────────────────────────────────
     def _delete():
