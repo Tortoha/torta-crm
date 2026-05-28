@@ -532,18 +532,26 @@ def create_token(user_id: int) -> str:
                "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_MINUTES)}
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
 
+# SameSite policy for storefront-session cookies: must be "none" in prod so
+# a customer can log in on `yourstore.com` (cross-origin to api.tortacrm.com)
+# and the session cookie tags along on every subsequent API call. Browsers
+# enforce SameSite=None + Secure, so we gate on COOKIE_SECURE — dev (HTTP)
+# stays on "lax" which is fine for same-origin Vite proxy setups.
+_SESSION_SAMESITE = "none" if COOKIE_SECURE else "lax"
+
+
 def set_auth_cookie(response: Response, token: str):
     response.set_cookie(
         key="authx_token", value=token,
         httponly=True, max_age=ACCESS_TOKEN_MINUTES * 60,
-        samesite="lax", secure=COOKIE_SECURE, path="/",
+        samesite=_SESSION_SAMESITE, secure=COOKIE_SECURE, path="/",
     )
 
 def set_refresh_cookie(response: Response, raw: str):
     response.set_cookie(
         key="authx_refresh", value=raw,
         httponly=True, max_age=REFRESH_TOKEN_DAYS * 86400,
-        samesite="lax", secure=COOKIE_SECURE, path="/",
+        samesite=_SESSION_SAMESITE, secure=COOKIE_SECURE, path="/",
     )
 
 def clear_auth_cookies(response: Response):
@@ -2691,7 +2699,14 @@ def get_csrf_token(api_key: str, request: Request, response: Response,
     response.set_cookie(
         "csrf_token", token,
         httponly=False,       # JS must read this to echo it as a header
-        samesite="strict",
+        # SameSite=None is required for cross-origin SDK usage: a storefront
+        # on `yourstore.com` calls `api.tortacrm.com` — without None the
+        # cookie is never sent back, every POST 403s with "CSRF missing".
+        # The CSRF protection still holds via the double-submit check
+        # (attacker on evil.com can't read the cookie cross-origin so can't
+        # forge the matching X-CSRF-Token header). Falls back to "lax" in
+        # dev because browsers reject SameSite=None without Secure flag.
+        samesite="none" if COOKIE_SECURE else "lax",
         secure=COOKIE_SECURE,
         max_age=86400,
         path="/",
@@ -4194,9 +4209,14 @@ def get_cart(request: Request, api_key_record: dict = Depends(resolve_api_key)):
             "SELECT shipping_cost, free_shipping_threshold FROM shipping_settings WHERE project_id=%s LIMIT 1",
             (project_id,)
         )
+        # Defaults 0/0 when the merchant hasn't visited Products → Settings yet.
+        # Was 10/2000 (hidden magic fallback) but that confused merchants — they
+        # saw `0` in CRM but cart showed $10, no way to set it back to 0 without
+        # those magic numbers re-appearing. Now: whatever's in DB is what's used,
+        # and DB defaults to 0 too. "Free shipping always" out of the box.
         settings       = cursor.fetchone()
-        shipping_cost  = float(settings["shipping_cost"])           if settings else 10.0
-        free_threshold = float(settings["free_shipping_threshold"]) if settings else 2000.0
+        shipping_cost  = float(settings["shipping_cost"])           if settings else 0.0
+        free_threshold = float(settings["free_shipping_threshold"]) if settings else 0.0
 
         cursor.execute(
             "SELECT product_id FROM favorites WHERE user_id=%s AND project_id=%s",
@@ -4675,9 +4695,10 @@ def apply_promo_code(data: ApplyPromoCode, request: Request,
             "SELECT shipping_cost, free_shipping_threshold FROM shipping_settings WHERE project_id=%s LIMIT 1",
             (project_id,)
         )
+        # Defaults 0/0 — see canonical comment in the cart-totals branch above.
         settings       = cursor.fetchone()
-        shipping_cost  = float(settings["shipping_cost"])           if settings else 10.0
-        free_threshold = float(settings["free_shipping_threshold"]) if settings else 2000.0
+        shipping_cost  = float(settings["shipping_cost"])           if settings else 0.0
+        free_threshold = float(settings["free_shipping_threshold"]) if settings else 0.0
         final_shipping = 0.0 if subtotal >= free_threshold else shipping_cost
 
     return {
@@ -8500,12 +8521,18 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
     token   = create_token(user_id)
     refresh = issue_refresh_token(user_id, project_id, request, label="Google login")
     redirect = RedirectResponse(f"{frontend}", status_code=302)
+    # Use _SESSION_SAMESITE (= "none" in prod) so the cookies survive the
+    # cross-origin fetches the storefront makes after redirect. Was hardcoded
+    # "lax" — that worked for same-origin storefronts but blocked all cross-
+    # origin fetch from a storefront on a different domain (cookies stored
+    # but never sent → /users/me 401 → user appears not logged in even
+    # though the OAuth callback technically succeeded).
     redirect.set_cookie(key="authx_token", value=token, httponly=True,
                         max_age=ACCESS_TOKEN_MINUTES * 60,
-                        samesite="lax", secure=COOKIE_SECURE, path="/")
+                        samesite=_SESSION_SAMESITE, secure=COOKIE_SECURE, path="/")
     redirect.set_cookie(key="authx_refresh", value=refresh, httponly=True,
                         max_age=REFRESH_TOKEN_DAYS * 86400,
-                        samesite="lax", secure=COOKIE_SECURE, path="/")
+                        samesite=_SESSION_SAMESITE, secure=COOKIE_SECURE, path="/")
     redirect.delete_cookie("oa_state_google", path="/")
     return redirect
 
@@ -9174,11 +9201,14 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
     token   = create_token(user_id)
     refresh = issue_refresh_token(user_id, project_id, request, label=f"{provider} login")
     redirect = RedirectResponse(f"{frontend}", status_code=302)
+    # OAuth final cookies — same SameSite policy as the session helpers so
+    # the storefront on a cross-origin domain keeps the user logged in after
+    # the provider redirect roundtrip.
     redirect.set_cookie(key="authx_token", value=token, httponly=True,
-                        max_age=ACCESS_TOKEN_MINUTES * 60, samesite="lax",
+                        max_age=ACCESS_TOKEN_MINUTES * 60, samesite=_SESSION_SAMESITE,
                         secure=COOKIE_SECURE, path="/")
     redirect.set_cookie(key="authx_refresh", value=refresh, httponly=True,
-                        max_age=REFRESH_TOKEN_DAYS * 86400, samesite="lax",
+                        max_age=REFRESH_TOKEN_DAYS * 86400, samesite=_SESSION_SAMESITE,
                         secure=COOKIE_SECURE, path="/")
     # Clean up PKCE + state cookies (cookies are now set with path="/")
     if cfg.get("pkce"):

@@ -115,17 +115,34 @@ export function createClient(baseUrl, publishableKey, options = {}) {
 
   // ─── CSRF helpers ─────────────────────────────────────────────────────────
   // The External backend uses a double-submit cookie pattern:
-  //   GET /csrf  → sets readable cookie `csrf_token`
-  //   POST/PUT/...   → must include X-CSRF-Token: <same value>
-  // An attacker on evil.com cannot read our cookie, so cannot forge the header.
+  //   GET /csrf  → sets cookie `csrf_token` AND returns { csrf_token } in body
+  //   POST/PUT/... → must include X-CSRF-Token: <same value>
+  // An attacker on evil.com cannot read our cookie cross-origin, so cannot
+  // forge the matching header.
+  //
+  // IMPORTANT — cross-origin caveat: when the SDK runs on `yourstore.com`
+  // and talks to `api.tortacrm.com`, `document.cookie` on yourstore.com
+  // CANNOT see the api.tortacrm.com cookie (browser origin isolation).
+  // The browser still SENDS the cookie automatically (Secure + SameSite=None),
+  // but JS can't read it to echo as a header. Solution: store the token
+  // from the response body in memory and use that for the header.
   const _CSRF_SAFE = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 
+  // In-memory token — survives across requests within one SDK instance,
+  // re-fetched if the cookie expires (server returns 403, caller retries).
+  let _csrfToken = "";
+
   function _getCsrfToken() {
-    try {
-      const m = (typeof document !== "undefined" ? document.cookie : "")
-        .match(/(?:^|;\s*)csrf_token=([^;]+)/);
-      return m ? decodeURIComponent(m[1]) : "";
-    } catch { return ""; }
+    // In-memory token only. Previous versions fell back to document.cookie
+    // for "same-origin convenience", but that path silently picked up stale
+    // csrf_token cookies left over from earlier dev sessions (e.g. an old
+    // native localhost:8000 cookie when the SDK is now pointed at prod
+    // api.tortacrm.com — same `localhost` domain → same cookie jar →
+    // SDK reads the wrong token → double-submit mismatch → 403).
+    //
+    // The in-memory cache is populated from /csrf's response body, which
+    // is always accurate regardless of origin / leftover cookies.
+    return _csrfToken;
   }
 
   let _csrfPromise = null;
@@ -134,11 +151,19 @@ export function createClient(baseUrl, publishableKey, options = {}) {
     if (_csrfPromise) return _csrfPromise;
     _csrfPromise = (async () => {
       try {
-        await fetch(`${base}/csrf`, {
+        const res = await fetch(`${base}/csrf`, {
           credentials: "include",
           headers: { "X-Publishable-Key": publishableKey },
         });
-      } catch { /* non-fatal */ } finally {
+        // Cache the token from the response body — this is the ONLY way
+        // to access it when the SDK runs cross-origin to the API.
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data && typeof data.csrf_token === "string" && data.csrf_token) {
+            _csrfToken = data.csrf_token;
+          }
+        }
+      } catch { /* non-fatal: next mutable request retries */ } finally {
         _csrfPromise = null;
       }
     })();

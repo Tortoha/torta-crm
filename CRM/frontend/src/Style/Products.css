@@ -4407,7 +4407,12 @@ select.prod-field-input {
   width: 100%;
   padding: 11px 18px 11px 16px;
   border-radius: 999px;
-  background: #fff;
+  /* Theme-aware via --input-bg (white in light, dark grey in dark). Was
+     hardcoded `background: #fff` which needed a `[data-theme="dark"]` patch
+     in Layout.css to overcome; the patch didn't apply inside the modal's
+     portal in some cases, leaving a white pill on dark background. Using
+     the var natively works in both themes without an override. */
+  background: var(--input-bg);
   border: none;
   font-family: inherit;
   font-size: 14px;
@@ -5957,8 +5962,13 @@ textarea.po-set-input,
   box-sizing: border-box;
 }
 
+/* Focus highlight — was previously hard-coded `background: #fff` which
+   turned the input into white-on-white in dark theme (text invisible).
+   Use `--card` (theme-aware: white in light, elevated dark in dark)
+   plus an accent border for clear focus indication. */
 .auth-modal .crm-input.po-bulk-plan-qty:focus {
-  background: #fff;
+  background: var(--card);
+  border-color: var(--accent);
   box-shadow: var(--box-shadow);
 }
 
@@ -7775,6 +7785,17 @@ textarea.po-set-input,
 
 .bulk-field-value--disabled {
   opacity: 0.42;
+}
+
+/* Currency / unit suffix sitting inline next to a numeric input
+   (e.g. "10 USD" in ShippingSection). Muted + small so it reads as
+   a label, not part of the number. */
+.bulk-field-unit {
+  margin-left: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Segmented switch — mirrors .org-sort-toggle (CRM-wide pill pattern) ─── */

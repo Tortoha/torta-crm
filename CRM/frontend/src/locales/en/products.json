@@ -710,6 +710,14 @@
       "fieldCard": {
         "includeHint": "Include this field in the bulk apply"
       },
+      "shipping": {
+        "title": "Shipping fees",
+        "subtitle": "Charged to customers at checkout. Drives the Cart Summary's <b>Estimated Shipping</b> and <b>To free shipping</b> lines. Saved on change — no Apply needed.",
+        "costLabel": "Flat shipping cost",
+        "costHint": "Charged on every order. Set to 0 to bundle shipping into product prices.",
+        "thresholdLabel": "Free-shipping threshold",
+        "thresholdHint": "Subtotal above which shipping drops to 0. Set to 0 to disable free shipping."
+      },
       "batchGrouping": {
         "perConfig": "Per configuration",
         "perProduct": "Per product",

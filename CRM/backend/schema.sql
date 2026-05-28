@@ -3288,10 +3288,12 @@ ALTER SEQUENCE "public"."shipping_carriers_id_seq" OWNED BY "public"."shipping_c
 
 CREATE TABLE "public"."shipping_settings" (
     "id" integer NOT NULL,
-    "project_id" integer,
-    "shipping_cost" numeric(10,2) DEFAULT 10.00,
-    "free_shipping_threshold" numeric(10,2) DEFAULT 2000.00,
-    "updated_at" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    "project_id" integer NOT NULL,
+    "shipping_cost" numeric(10,2) DEFAULT 0,
+    "free_shipping_threshold" numeric(10,2) DEFAULT 0,
+    "created_at" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updated_at" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT "shipping_settings_project_id_key" UNIQUE ("project_id")
 );
 
 

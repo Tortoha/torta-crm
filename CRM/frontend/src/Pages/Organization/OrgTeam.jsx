@@ -534,6 +534,35 @@ export default function OrgTeam() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Live updates without WebSocket — listen for `visibilitychange` + `focus`
+  // and refetch when the tab becomes visible again. This mirrors how
+  // WhatsApp / Slack / Linear keep team pages fresh: another admin removes
+  // a member or accepts an invite, current user switches tabs back, sees
+  // updated list immediately — no manual refresh. Cheap (1 fetch on tab
+  // return) vs setting up an org-events WebSocket stream (overkill for
+  // diploma scope; the page sees an edit at most a few times a day).
+  //
+  // Debounce: skip refetch if we did one within the last 5 s — protects
+  // against alt-tabbing rapidly between tabs.
+  useEffect(() => {
+    if (!orgId) return;
+    let lastFetch = Date.now();
+    const REFETCH_DEBOUNCE_MS = 5000;
+    const maybeRefetch = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastFetch < REFETCH_DEBOUNCE_MS) return;
+      lastFetch = now;
+      load();
+    };
+    document.addEventListener('visibilitychange', maybeRefetch);
+    window.addEventListener('focus', maybeRefetch);
+    return () => {
+      document.removeEventListener('visibilitychange', maybeRefetch);
+      window.removeEventListener('focus', maybeRefetch);
+    };
+  }, [orgId, load]);
+
   const removeMember = async (m) => {
     if (!window.confirm(t('org.team.members.removeConfirm', { name: m.name || m.email }))) return;
     const r = await fetch(`${API_BASE}/api/orgs/${orgId}/members/${m.id}`, { method: 'DELETE', credentials: 'include' });

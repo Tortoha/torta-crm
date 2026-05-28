@@ -98,6 +98,16 @@
   background: rgba(255, 255, 255, 0.22);
 }
 
+/* PhonePanel custom provider dropdown — both the trigger pill and the
+   pop-up menu hardcode `background: #fff` (Authentication.css:1600/1634).
+   Override to elevated dark surfaces so the dropdown stays readable in
+   dark theme. */
+[data-theme="dark"] .phone-dd-trigger,
+[data-theme="dark"] .phone-dd-menu {
+  background: var(--card);
+  border-color: var(--border-soft);
+}
+
 /* Inputs sit on cards — give the focus ring an accent edge instead of #000. */
 [data-theme="dark"] .crm-input:focus,
 [data-theme="dark"] .crm-input:focus-visible {

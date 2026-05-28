@@ -2165,6 +2165,37 @@ def run_migrations():
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_subs_project ON crm_webhook_subscriptions(project_id)")
 
+            # ── Heal: add UNIQUE(project_id, url) so the merchant can't
+            # accidentally register the same webhook target twice and get
+            # duplicate deliveries on every event. Idempotent via pg_constraint
+            # check (same pattern as shipping_settings heal). For existing rows
+            # that already have duplicates, the ADD CONSTRAINT would fail — so
+            # we deduplicate first (keep lowest id), then add the constraint.
+            try:
+                cur.execute("""
+                    DELETE FROM crm_webhook_subscriptions a
+                     USING crm_webhook_subscriptions b
+                     WHERE a.project_id = b.project_id
+                       AND a.url        = b.url
+                       AND a.id         > b.id
+                """)
+                cur.execute("""
+                    DO $$ BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                             WHERE conname = 'crm_webhook_subscriptions_project_url_key'
+                        ) THEN
+                            ALTER TABLE crm_webhook_subscriptions
+                                ADD CONSTRAINT crm_webhook_subscriptions_project_url_key
+                                UNIQUE (project_id, url);
+                        END IF;
+                    END $$;
+                """)
+                conn.commit()
+            except Exception as _e:
+                conn.rollback()
+                print(f"[migration] crm_webhook_subscriptions UNIQUE heal skipped: {_e}")
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS crm_webhook_deliveries (
                     id              SERIAL PRIMARY KEY,
@@ -3341,6 +3372,55 @@ def run_migrations():
                     updated_at              TIMESTAMPTZ   NOT NULL DEFAULT NOW()
                 )
             """)
+            # ── Backfill / heal old schema (2026-05-27) ─────────────────────
+            # Prod schema.sql bootstrapped this table WITHOUT a UNIQUE constraint
+            # on project_id and with DEFAULT 10/2000 (relics of the old "magic
+            # fallback" behaviour in External). CREATE TABLE IF NOT EXISTS above
+            # is a no-op when the table exists, so the new column defs never get
+            # applied. Bring the existing table up to spec by hand:
+            #   1) Add UNIQUE (project_id)         — required by UPSERT in the
+            #      shipping-settings PUT endpoint. Without it INSERT … ON
+            #      CONFLICT (project_id) fails with PG error 42P10 → 500.
+            #   2) Flip defaults to 0/0            — match new "no magic
+            #      defaults" semantics: empty = free shipping, no threshold.
+            #   3) Add created_at if missing       — old schema lacked it.
+            #   4) Make project_id NOT NULL        — defensive; existing rows
+            #      always have it set, but the column itself was nullable.
+            try:
+                # IF NOT EXISTS for the UNIQUE constraint is PG14+; safer to
+                # check pg_constraint catalogue first to stay compatible with
+                # older Postgres versions on Fly free-tier.
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                             WHERE conname = 'shipping_settings_project_id_key'
+                        ) AND NOT EXISTS (
+                            SELECT 1 FROM pg_indexes
+                             WHERE indexname = 'shipping_settings_project_id_key'
+                        ) THEN
+                            ALTER TABLE shipping_settings
+                                ADD CONSTRAINT shipping_settings_project_id_key
+                                UNIQUE (project_id);
+                        END IF;
+                    END $$;
+                """)
+                cur.execute("ALTER TABLE shipping_settings "
+                            "ALTER COLUMN shipping_cost SET DEFAULT 0")
+                cur.execute("ALTER TABLE shipping_settings "
+                            "ALTER COLUMN free_shipping_threshold SET DEFAULT 0")
+                cur.execute("ALTER TABLE shipping_settings "
+                            "ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+                cur.execute("ALTER TABLE shipping_settings "
+                            "ALTER COLUMN project_id SET NOT NULL")
+                conn.commit()
+                print("[migration] shipping_settings healed (UNIQUE constraint + defaults 0/0)")
+            except Exception as _e:
+                # Don't crash startup on heal failure — the create-table above
+                # works for fresh schemas, only old prods need this heal.
+                conn.rollback()
+                print(f"[migration] shipping_settings heal skipped: {_e}")
             # ── Analytics page hot-path indices (added 2026-05 after audit) ──
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_site_visits_project_created "
@@ -3795,12 +3875,14 @@ _pool = ThreadedConnectionPool(1, 20, **DB_CONFIG)
 # ── Analytics response cache (in-process, TTL=60s) ──────────────────
 import time as _time
 _ANALYTICS_CACHE: dict = {}
-# Cache TTL: short enough that the dashboard feels live during testing
-# and after merchant actions (status change, new order, etc.) AND long
-# enough to absorb the 22 parallel fetches that hit on Analytics-page
-# mount. 10s gives ~6× write reduction at peak load without making the
-# numbers feel "stuck" — a 10-second lag on a B2B dashboard is invisible.
-_ANALYTICS_CACHE_TTL = 10  # seconds
+# Cache TTL: previously 10 s for "feels live" on demo, but on a hosted
+# multi-user prod the same dashboard is opened by the operator many times
+# a minute (tab back, refresh, navigate away + back) — 10 s evictions
+# meant every visit paid the cold-aggregation cost (~5 s on Fly).
+# Bumped to 60 s — a one-minute lag on a B2B dashboard is invisible,
+# operator actions (new order / status change) still surface within the
+# minute, and we get effectively-instant repeat opens.
+_ANALYTICS_CACHE_TTL = 60  # seconds
 
 def _analytics_cache_get(key):
     hit = _ANALYTICS_CACHE.get(key)
@@ -8599,6 +8681,80 @@ def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
     p["last_used_at"] = p["last_used_at"].isoformat() if p.get("last_used_at") else None
     p["created_at"]   = str(p["created_at"])
     return p
+
+
+@app.get("/api/projects/by-key/{api_key}/layout-bundle")
+def get_project_layout_bundle(api_key: str, user: dict = Depends(get_current_user)):
+    """Single round-trip for Layout.jsx — returns { user, project, access } in
+    one shot. Layout used to fire 3 sequential fetches (me + project + access);
+    on Fly each one was ~150 ms RTT + processing, the chain dominated every
+    page-navigation perceived latency. This bundle is one fetch + ~5 queries
+    server-side (cheap with TTL caches), under 200 ms even from Kazakhstan.
+
+    Frontend caches the response in a per-apiKey Map (60 s TTL) so navigating
+    between pages of the same project skips the network entirely — Layout
+    re-mounts but reads from cache.
+
+    Wire shape matches the original three responses exactly so the frontend
+    can spread it into its three setState slots without translation:
+      user    — same shape as /api/me
+      project — same shape as /api/projects/by-key/{api_key}
+      access  — same shape as /api/projects/{id}/my-access
+    """
+    # 1. Project + org join — same SELECT as /projects/by-key for shape parity.
+    p = db_one("""
+        SELECT p.id, p.name, p.api_key, p.publishable_key, p.secret_key, p.is_active,
+               p.last_used_at, p.created_at,
+               COALESCE(p.timezone, 'UTC') AS timezone,
+               COALESCE(p.currency, 'USD') AS currency,
+               COALESCE(p.tz_auto,  TRUE)  AS tz_auto,
+               o.id AS org_id, o.name AS org_name, o.slug AS org_slug
+          FROM crm_projects p
+          JOIN crm_organizations o ON o.id = p.org_id
+         WHERE p.api_key = %s
+    """, (api_key,))
+    if not p:
+        raise HTTPException(404, "Project not found")
+    require_team_member_or_owner(user, p["id"])
+    full, _ = _is_full_access(user["id"], p["id"])
+    if not full:
+        p.pop("secret_key", None)
+    p["last_used_at"] = p["last_used_at"].isoformat() if p.get("last_used_at") else None
+    p["created_at"]   = str(p["created_at"])
+
+    # 2. User — same SELECT/shape as /api/me (incl. settings join + admin allowlist).
+    u = db_one(
+        "SELECT id, name, email, role, avatar_url, is_admin, "
+        "       terms_accepted_at, terms_version "
+        "FROM crm_users WHERE id = %s AND is_active = TRUE",
+        (user["id"],)
+    )
+    if not u:
+        raise HTTPException(401, "User not found")
+    s = db_one("SELECT language, theme FROM crm_settings WHERE crm_user_id=%s", (user["id"],))
+    u["language"] = (s or {}).get("language", "en")
+    u["theme"]    = (s or {}).get("theme") or "system"
+    allow = {
+        e.strip().lower()
+        for e in os.getenv("ADMIN_EMAILS", "").split(",")
+        if e.strip()
+    }
+    u["is_admin"] = bool(u.get("is_admin")) or (u.get("email", "").lower() in allow)
+    if u.get("terms_accepted_at"):
+        u["terms_accepted_at"] = u["terms_accepted_at"].isoformat()
+
+    # 3. Access — same logic as /api/projects/{id}/my-access.
+    if full:
+        access = {"is_owner": True, "pages": _PROJECT_PAGES,
+                  "permissions": {pg: "manage" for pg in _PROJECT_PAGES}}
+    else:
+        perms = _user_project_permissions(user["id"], p["id"])
+        # If perms is None the user has no access — but we already passed
+        # require_team_member_or_owner above, so a None here is a defensive fallback.
+        access = {"is_owner": False, "pages": _PROJECT_PAGES,
+                  "permissions": perms or {}}
+
+    return {"user": u, "project": p, "access": access}
 
 
 @app.get("/api/projects/{project_id}")
@@ -13417,6 +13573,80 @@ def update_project_batch_settings(project_id: int, req: ProjectBatchSettingsRequ
         cur.execute("UPDATE crm_projects SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
     return {"ok": True}
+
+
+# ── Shipping settings (per-project, customer-facing cart math) ─────
+# These two scalars drive the cart-summary "Estimated Shipping" + "To free
+# shipping" lines that the storefront SDK shows: shipping_cost is the flat
+# fee applied per order, free_shipping_threshold is the subtotal above
+# which it drops to zero. Reads happen in External (`shipping_settings`
+# row by project_id) — UPSERT here so the row exists / gets updated in
+# one shot regardless of whether the project ever saved before.
+#
+# Semantics:
+#   shipping_cost           = 0  → shipping always free (merchant bundles into price)
+#   free_shipping_threshold = 0  → no free shipping ever (charge cost on every order)
+
+@app.get("/api/projects/{project_id}/shipping-settings")
+def get_shipping_settings(project_id: int, user: dict = Depends(get_current_user)):
+    require_page(user, project_id, "settings", "view")
+    row = db_one(
+        "SELECT shipping_cost, free_shipping_threshold "
+        "  FROM shipping_settings WHERE project_id = %s",
+        (project_id,)
+    )
+    if not row:
+        # Brand-new project — row doesn't exist yet. Return zeros so the
+        # frontend can render the form cleanly; PUT will create on first save.
+        return {"shipping_cost": 0.0, "free_shipping_threshold": 0.0}
+    return {
+        "shipping_cost":           float(row["shipping_cost"]),
+        "free_shipping_threshold": float(row["free_shipping_threshold"]),
+    }
+
+
+class ProjectShippingSettingsRequest(BaseModel):
+    shipping_cost:           Optional[float] = None
+    free_shipping_threshold: Optional[float] = None
+
+
+@app.put("/api/projects/{project_id}/shipping-settings")
+def update_shipping_settings(project_id: int, req: ProjectShippingSettingsRequest,
+                              user: dict = Depends(get_current_user)):
+    require_page(user, project_id, "settings", "manage")
+    sent = req.model_dump(exclude_unset=True)
+    # Validation: non-negative + sane upper bound. NUMERIC(10,2) tops out at
+    # 99,999,999.99 — pick a friendlier 1M cap so a stray decimal-comma swap
+    # doesn't accidentally turn "100" into "10000000".
+    for k in ('shipping_cost', 'free_shipping_threshold'):
+        if k in sent and sent[k] is not None:
+            v = float(sent[k])
+            if v < 0:           raise HTTPException(400, f"{k} must be non-negative")
+            if v > 1_000_000:   raise HTTPException(400, f"{k} must be ≤ 1,000,000")
+    if not sent:
+        return {"ok": True}
+    # Partial PUTs (one field at a time) should preserve the other field —
+    # fetch existing row, merge missing keys, then UPSERT the merged pair.
+    existing = db_one(
+        "SELECT shipping_cost, free_shipping_threshold "
+        "  FROM shipping_settings WHERE project_id = %s",
+        (project_id,)
+    ) or {"shipping_cost": 0, "free_shipping_threshold": 0}
+    final_cost = float(sent['shipping_cost']) if 'shipping_cost' in sent \
+                 else float(existing["shipping_cost"])
+    final_thr  = float(sent['free_shipping_threshold']) if 'free_shipping_threshold' in sent \
+                 else float(existing["free_shipping_threshold"])
+    with db_cursor() as (conn, cur):
+        cur.execute("""
+            INSERT INTO shipping_settings (project_id, shipping_cost, free_shipping_threshold)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (project_id) DO UPDATE
+              SET shipping_cost           = EXCLUDED.shipping_cost,
+                  free_shipping_threshold = EXCLUDED.free_shipping_threshold,
+                  updated_at              = NOW()
+        """, (project_id, final_cost, final_thr))
+        conn.commit()
+    return {"ok": True, "shipping_cost": final_cost, "free_shipping_threshold": final_thr}
 
 
 # Stock adjust + audit log: manual restock/write-off/damage; updates stock + emits product_stock_log row.

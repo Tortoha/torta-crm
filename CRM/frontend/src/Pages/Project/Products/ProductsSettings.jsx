@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
 import {
   Truck, Package, Buildings, ArrowRight, CheckCircle, Stack, TreeStructure,
-  Hash, ArrowsClockwise,
+  Hash, ArrowsClockwise, CurrencyDollar,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { Combobox } from '../Booking/BookingCreateModal.jsx';
@@ -125,6 +125,10 @@ export default function ProductsSettings() {
       {/* Identification — SKU generation (org-wide setting; lives here because the
           merchant naturally goes to Product Settings to manage SKU behaviour). */}
       <SkuGenerationSection orgId={orgId} showToast={showToast} />
+
+      {/* Shipping fees (project-wide, save on blur — drives Cart Summary's
+          "Estimated Shipping" + "To free shipping" lines via External API). */}
+      <ShippingSection projectId={projectId} project={project} showToast={showToast} />
 
       {/* Batch grouping + naming are project-wide rules — save immediately, no confirm step.
           Barcode binding moved into the Print barcodes modal itself (per-print choice). */}
@@ -436,6 +440,144 @@ const GROUPING_HINT = {
   product: 'products.settings.batchGrouping.hintProduct',
   global:  'products.settings.batchGrouping.hintGlobal',
 };
+
+// ── Shipping settings (per-project, save-on-blur) ──
+// Two scalars: flat shipping_cost charged per order, and the
+// free_shipping_threshold above which the cost drops to zero.
+// Both default to 0 — semantically "no free shipping configured" (cost
+// charged on every order) and "shipping always free" respectively.
+//
+// Save-on-blur (mirrors BatchGroupingSection pattern): the user types,
+// onBlur fires PUT, success → toast. Backend UPSERTs so the row exists
+// even on first-ever save. Stable across reloads via the GET on mount.
+
+function ShippingSection({ projectId, project, showToast }) {
+  const { t } = useTranslation();
+  // Project currency is the source of truth for the `$` / `₸` prefix.
+  // Falls back to `$` if the project hasn't set one yet (rare — project
+  // creation always picks a currency).
+  const currency = project?.currency || 'USD';
+
+  const [cost,       setCost]      = useState('');
+  const [threshold,  setThreshold] = useState('');
+  const [loaded,     setLoaded]    = useState(false);
+
+  // Track last-saved values so blur only fires when something actually changed
+  // — avoids spurious "Saved" toasts when the user just tabs through.
+  const savedRef = useRef({ cost: 0, threshold: 0 });
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/projects/${projectId}/shipping-settings`,
+          { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d) {
+          const c = Number(d.shipping_cost) || 0;
+          const th = Number(d.free_shipping_threshold) || 0;
+          setCost(String(c));
+          setThreshold(String(th));
+          savedRef.current = { cost: c, threshold: th };
+        }
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [projectId]);
+
+  const save = async (patch) => {
+    const r = await fetch(`${API_BASE}/api/projects/${projectId}/shipping-settings`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (r.ok) {
+      const j = await r.json().catch(() => null);
+      if (j) {
+        savedRef.current = {
+          cost:      Number(j.shipping_cost) || 0,
+          threshold: Number(j.free_shipping_threshold) || 0,
+        };
+      }
+      showToast?.(t('products.settings.toast.saved'));
+    }
+  };
+
+  // Normalise + persist on blur. Parse loose (e.g. "10,5" → 10.5), clamp
+  // negative → 0, write back to state so the input shows the normalised
+  // value the backend actually stored.
+  const onCostBlur = () => {
+    const raw = String(cost).replace(',', '.').trim();
+    const n = raw === '' ? 0 : Math.max(0, parseFloat(raw) || 0);
+    setCost(String(n));
+    if (n !== savedRef.current.cost) save({ shipping_cost: n });
+  };
+
+  const onThresholdBlur = () => {
+    const raw = String(threshold).replace(',', '.').trim();
+    const n = raw === '' ? 0 : Math.max(0, parseFloat(raw) || 0);
+    setThreshold(String(n));
+    if (n !== savedRef.current.threshold) save({ free_shipping_threshold: n });
+  };
+
+  return (
+    <section className="bulk-section">
+      <header className="bulk-section-head">
+        <div className="bulk-section-icon"><CurrencyDollar weight="duotone" /></div>
+        <div className="bulk-section-text">
+          <h2 className="bulk-section-title">{t('products.settings.shipping.title')}</h2>
+          {/* dangerouslySetInnerHTML — subtitle includes <b> tags around the
+              two terms that appear in the storefront UI ("Estimated Shipping",
+              "To free shipping"). Same pattern as SkuGenerationSection. Plain
+              `{t(...)}` would escape them and render literal `<b>` text. */}
+          <p className="bulk-section-sub"
+             dangerouslySetInnerHTML={{ __html: t('products.settings.shipping.subtitle') }} />
+        </div>
+      </header>
+
+      <div className="bulk-section-fields">
+        {/* Shipping cost (flat fee charged on every order, dropped to 0 over threshold) */}
+        <div className="bulk-field bulk-field--noswitch bulk-field--on">
+          <div className="bulk-field-head">
+            <div className="bulk-field-text">
+              <span className="bulk-field-label">{t('products.settings.shipping.costLabel')}</span>
+              <span className="bulk-field-hint">{t('products.settings.shipping.costHint')}</span>
+            </div>
+          </div>
+          <div className="bulk-field-value">
+            <input className="crm-input" type="number" min={0} step="0.01"
+              value={cost}
+              disabled={!loaded}
+              placeholder="0"
+              style={{ maxWidth: 160 }}
+              onChange={e => setCost(e.target.value)}
+              onBlur={onCostBlur} />
+            <span className="bulk-field-unit">{currency}</span>
+          </div>
+        </div>
+
+        {/* Free-shipping threshold (subtotal above which cost → 0). 0 = never free. */}
+        <div className="bulk-field bulk-field--noswitch bulk-field--on">
+          <div className="bulk-field-head">
+            <div className="bulk-field-text">
+              <span className="bulk-field-label">{t('products.settings.shipping.thresholdLabel')}</span>
+              <span className="bulk-field-hint">{t('products.settings.shipping.thresholdHint')}</span>
+            </div>
+          </div>
+          <div className="bulk-field-value">
+            <input className="crm-input" type="number" min={0} step="0.01"
+              value={threshold}
+              disabled={!loaded}
+              placeholder="0"
+              style={{ maxWidth: 160 }}
+              onChange={e => setThreshold(e.target.value)}
+              onBlur={onThresholdBlur} />
+            <span className="bulk-field-unit">{currency}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 
 function BatchGroupingSection({ projectId, showToast }) {
   const { t } = useTranslation();

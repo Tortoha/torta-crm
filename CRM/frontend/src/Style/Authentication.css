@@ -564,7 +564,9 @@
 }
 
 .auth-btn-check:disabled {
-  background-color: #E5E7EB;
+  /* Theme-aware disabled tint — hardcoded #E5E7EB becomes a washed-out
+     blob on dark backgrounds. See .urlcfg-save-btn:disabled. */
+  background-color: rgba(var(--fg-rgb), 0.08);
   color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
@@ -592,7 +594,8 @@
 }
 
 .auth-btn-link:disabled {
-  background-color: #E5E7EB;
+  /* Theme-aware disabled tint — see .urlcfg-save-btn:disabled. */
+  background-color: rgba(var(--fg-rgb), 0.08);
   color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
@@ -1408,7 +1411,10 @@
 }
 
 .urlcfg-save-btn:disabled {
-  background: #E5E7EB;
+  /* Was `background: #E5E7EB` (hardcoded light grey) — readable in light theme
+     but blends into a washed-out blob in dark theme. Theme-aware tint based
+     on the foreground colour is invisible-to-active enough either way. */
+  background: rgba(var(--fg-rgb), 0.08);
   color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
@@ -1443,7 +1449,8 @@
 }
 
 .auth-add-btn:disabled {
-  background-color: #E5E7EB;
+  /* See .urlcfg-save-btn:disabled — same theme-aware fix. */
+  background-color: rgba(var(--fg-rgb), 0.08);
   color: rgba(var(--fg-rgb), 0.36);
   cursor: default;
 }
