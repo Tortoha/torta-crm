@@ -5252,9 +5252,11 @@ def _org_plan(org_id) -> dict:
             "limits": row["limits"] or {}}
 
 def _org_usage(org_id: int, resource: str) -> int:
-    """Current usage count for one resource. Names match the *_max keys in
-    plan limits (minus the _max suffix). Returns 0 on any error — caller treats
-    "can't count" as "no current usage" (safer than blocking by mistake)."""
+    """Current usage count for one resource. Returns 0 on any error —
+    caller treats "can't count" as "no current usage" (safer than blocking
+    by mistake). Resource names are the UI labels; the per-plan caps live
+    under different keys (see `_RESOURCE_LIMIT_KEY`).
+    """
     if not org_id:
         return 0
     try:
@@ -5282,11 +5284,45 @@ def _org_usage(org_id: int, resource: str) -> int:
                    AND status IN ('sending','sent')
                    AND DATE(COALESCE(updated_at, created_at)) = CURRENT_DATE
             """, (org_id,))
+        elif resource == "database_bytes":
+            # Approximate on-disk size of the org's tenant data via
+            # pg_column_size SUM over the heavy-write tables. Doesn't count
+            # indexes / TOAST / row overhead — multiply by ~1.3 for a closer
+            # estimate (still cheap enough to run per page load).
+            r = db_one("""
+                SELECT (
+                  COALESCE((SELECT SUM(pg_column_size(o.*)) FROM order_history o
+                            JOIN crm_projects p ON p.id = o.project_id
+                            WHERE p.org_id = %s), 0) +
+                  COALESCE((SELECT SUM(pg_column_size(pr.*)) FROM products pr
+                            JOIN crm_projects p ON p.id = pr.project_id
+                            WHERE p.org_id = %s), 0) +
+                  COALESCE((SELECT SUM(pg_column_size(u.*)) FROM users u
+                            WHERE u.org_id = %s
+                               OR u.project_id IN (SELECT id FROM crm_projects WHERE org_id = %s)), 0) +
+                  COALESCE((SELECT SUM(pg_column_size(c.*)) FROM carts c
+                            JOIN crm_projects p ON p.id = c.project_id
+                            WHERE p.org_id = %s), 0)
+                ) * 13 / 10 AS n
+            """, (org_id, org_id, org_id, org_id, org_id))
         else:
             return 0
         return int((r or {}).get("n") or 0)
     except Exception:
         return 0
+
+
+# Resource label → key inside plan.limits JSONB. Without this map the usage
+# endpoint looks up `broadcasts_today_max` (doesn't exist) and reports
+# Unlimited for Standard/Plus/Pro, hiding the real per-plan caps.
+_RESOURCE_LIMIT_KEY = {
+    "projects":         "projects_max",
+    "team_members":     "team_members_max",
+    "storefront_users": "storefront_users_max",
+    "storage_bytes":    "storage_bytes_max",
+    "broadcasts_today": "broadcasts_per_day_max",
+    "database_bytes":   "db_size_bytes_max",
+}
 
 def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
     """Raise HTTPException(402) if adding `amount` to the org's usage of
@@ -5310,7 +5346,7 @@ def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
         return
     plan = _org_plan(org_id)
     limits = plan.get("limits") or {}
-    limit = limits.get(f"{resource}_max")
+    limit = limits.get(_RESOURCE_LIMIT_KEY.get(resource, f"{resource}_max"))
     if limit is None:
         return
     current = _org_usage(org_id, resource)
@@ -5326,6 +5362,65 @@ def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
                 "requested": int(amount),
             },
         )
+
+def _reconcile_org_storage(org_id: int) -> dict:
+    """Walk S3 for every project that belongs to this org, SUM real object
+    sizes, and OVERWRITE crm_organizations.storage_used_bytes. Returns a
+    detail dict {total_bytes, object_count, projects, status, reason}
+    that the endpoint surfaces back so the UI can show a useful state
+    when something's missing (S3 keys unset, prefix unmatched, etc.).
+    """
+    detail: dict = {"total_bytes": 0, "object_count": 0,
+                    "projects": [], "status": "ok", "reason": None}
+    if not org_id:
+        detail.update(status="error", reason="no_org_id")
+        return detail
+    if not (S3_AVAILABLE and AWS_ACCESS_KEY_ID):
+        detail.update(status="skipped", reason="s3_not_configured")
+        return detail
+    try:
+        rows = db_all("SELECT id, api_key FROM crm_projects WHERE org_id=%s", (org_id,))
+        s3 = _s3_client()
+        total = 0
+        obj_count = 0
+        # Multiple prefixes — current code uploads to projects/{id}/... but
+        # older uploads or org-shared assets may sit under top-level folders
+        # like products/, attachments/, etc. We attribute everything matching
+        # `projects/{id}/` to the org; bare `products/<filename>` (no project
+        # prefix) is ignored — those would need a manual claim mechanism.
+        for row in rows or []:
+            pid = row["id"]
+            project_total = 0
+            project_count = 0
+            prefix = f"projects/{pid}/"
+            paginator = s3.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=AWS_S3_BUCKET, Prefix=prefix):
+                contents = page.get("Contents") or []
+                for obj in contents:
+                    project_total += int(obj.get("Size") or 0)
+                    project_count += 1
+            total     += project_total
+            obj_count += project_count
+            detail["projects"].append({
+                "project_id": pid, "prefix": prefix,
+                "bytes": project_total, "objects": project_count,
+            })
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "UPDATE crm_organizations SET storage_used_bytes=%s WHERE id=%s",
+                (total, org_id),
+            )
+            conn.commit()
+        detail["total_bytes"]  = total
+        detail["object_count"] = obj_count
+        print(f"[storage/reconcile] org={org_id} total={total} objects={obj_count} "
+              f"projects={[(p['project_id'], p['bytes'], p['objects']) for p in detail['projects']]}")
+        return detail
+    except Exception as e:
+        print(f"[storage/reconcile] org={org_id} failed: {e}")
+        detail.update(status="error", reason=f"exception: {e}")
+        return detail
+
 
 def _org_storage_inc(org_id: int, delta: int) -> None:
     """Best-effort: bump the storage counter on the org by `delta` bytes (can
@@ -5504,6 +5599,132 @@ def _paddle_apply_subscription(event_type: str, data: dict) -> None:
             print(f"[paddle/webhook] {event_type}: org={org_id} → plan={new_plan} status={status}")
     except Exception as e:
         print(f"[paddle/webhook] DB write failed for org={org_id}: {e}")
+
+# ── Paddle subscription sync (webhook-independent) ───────────────────
+# Webhooks aren't always reliable in dev (ngrok URL rotation, destination
+# drift). These helpers pull the truth from Paddle's REST API so the Billing
+# page can stay accurate regardless of webhook health. Called from
+# /api/orgs/{id}/billing/sync and lazily on Billing page mount.
+
+def _paddle_find_customer_by_email(email: str) -> "str | None":
+    """GET /customers?search=<email> — returns customer_id of the FIRST exact
+    email match, or None. Used when an org's subscription row has no
+    paddle_customer_id yet (e.g. payment completed without webhook landing).
+    """
+    if not (PADDLE_API_KEY and email):
+        return None
+    from urllib.parse import quote
+    r = _http_request(
+        "GET",
+        f"{_paddle_saas_api_base()}/customers?search={quote(email)}&per_page=10",
+        headers=_paddle_saas_headers(),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        return None
+    data = (r["body"] or {}).get("data") or []
+    target = email.strip().lower()
+    for c in data:
+        if (c.get("email") or "").strip().lower() == target:
+            return c.get("id")
+    return None
+
+
+def _paddle_sync_org_subscription(org_id: int, owner_email: str) -> bool:
+    """Pull fresh subscription state from Paddle and UPSERT crm_subscriptions.
+    Returns True if a sub was found and written, False otherwise. Idempotent —
+    callable on every page load.
+    """
+    if not PADDLE_API_KEY:
+        return False
+    customer_id, _ = _org_paddle_ids(org_id)
+    if not customer_id:
+        customer_id = _paddle_find_customer_by_email(owner_email)
+        if not customer_id:
+            return False
+        # Persist customer_id even before we find a sub (we know they have one
+        # since they're in Paddle's Customer table).
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                INSERT INTO crm_subscriptions
+                    (org_id, plan_slug, status, paddle_customer_id, updated_at)
+                VALUES (%s, 'free', 'active', %s, NOW())
+                ON CONFLICT (org_id) DO UPDATE SET
+                    paddle_customer_id = COALESCE(EXCLUDED.paddle_customer_id,
+                                                  crm_subscriptions.paddle_customer_id),
+                    updated_at = NOW()
+            """, (org_id, customer_id))
+            conn.commit()
+
+    # Pull all subscriptions for this customer (including canceled — UI needs
+    # to show "Ending on …" until period actually ends).
+    r = _http_request(
+        "GET",
+        f"{_paddle_saas_api_base()}/subscriptions"
+        f"?customer_id={customer_id}&status=active,trialing,past_due,paused,canceled"
+        f"&per_page=10",
+        headers=_paddle_saas_headers(),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/sync] org={org_id} subs fetch failed: HTTP {r['status']}")
+        return False
+    subs = (r["body"] or {}).get("data") or []
+    if not subs:
+        return False
+
+    # Prefer active > trialing > past_due > paused > canceled > expired so a
+    # newly upgraded org doesn't get stuck showing a stale canceled sub.
+    PRIORITY = {"active": 0, "trialing": 1, "past_due": 2,
+                "paused": 3, "canceled": 4, "expired": 5}
+    target = sorted(subs, key=lambda s: PRIORITY.get(s.get("status") or "", 6))[0]
+
+    sub_id   = (target.get("id") or "").strip()
+    status   = (target.get("status") or "active").strip()
+    items    = target.get("items") or []
+    price_id = ""
+    if items:
+        first = items[0] if isinstance(items, list) else {}
+        price = (first.get("price") or {}) if isinstance(first, dict) else {}
+        price_id = price.get("id") or first.get("price_id") or ""
+    plan_slug, _cycle = _paddle_resolve_plan(price_id)
+    if not plan_slug:
+        print(f"[paddle/sync] org={org_id} unknown price_id {price_id!r}. Skipped.")
+        return False
+
+    new_plan = "free" if status == "expired" else plan_slug
+    period = target.get("current_billing_period") or {}
+    starts = period.get("starts_at") or None
+    ends   = period.get("ends_at")   or None
+    cancelled_at = target.get("canceled_at") or None
+
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                INSERT INTO crm_subscriptions
+                    (org_id, plan_slug, status, current_period_start, current_period_end,
+                     cancelled_at, paddle_customer_id, paddle_subscription_id, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (org_id) DO UPDATE SET
+                    plan_slug              = EXCLUDED.plan_slug,
+                    status                 = EXCLUDED.status,
+                    current_period_start   = EXCLUDED.current_period_start,
+                    current_period_end     = EXCLUDED.current_period_end,
+                    cancelled_at           = EXCLUDED.cancelled_at,
+                    paddle_customer_id     = COALESCE(EXCLUDED.paddle_customer_id,
+                                                      crm_subscriptions.paddle_customer_id),
+                    paddle_subscription_id = COALESCE(EXCLUDED.paddle_subscription_id,
+                                                      crm_subscriptions.paddle_subscription_id),
+                    updated_at             = NOW()
+            """, (org_id, new_plan, status, starts, ends, cancelled_at,
+                  customer_id, sub_id or None))
+            cur.execute("UPDATE crm_organizations SET plan_slug=%s WHERE id=%s",
+                        (new_plan, org_id))
+            conn.commit()
+            print(f"[paddle/sync] org={org_id} → plan={new_plan} status={status} sub={sub_id}")
+        return True
+    except Exception as e:
+        print(f"[paddle/sync] DB write failed for org={org_id}: {e}")
+        return False
+
 
 # ── Auth Providers fan-out ───────────────────────────────────────────
 # When an org shares customers, the Auth Providers config (Google / email
@@ -6739,6 +6960,21 @@ def set_member_assignment(org_id: int, member_user_id: int, body: dict = Body(..
     return {"ok": True}
 
 
+@app.post("/api/orgs/{org_id}/usage/reconcile-storage")
+def reconcile_org_storage_endpoint(org_id: int,
+                                   user: dict = Depends(get_current_user)):
+    """Owner-only. Scans S3 for actual usage and overwrites the org's
+    storage counter. Used on Usage page mount to surface real numbers
+    even when the upload-time delta-counter has drifted."""
+    is_owner = bool(db_one(
+        "SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+        (org_id, user["id"])))
+    if not is_owner:
+        raise HTTPException(403, "Only the org owner can reconcile storage")
+    detail = _reconcile_org_storage(org_id)
+    return detail
+
+
 @app.get("/api/orgs/{org_id}/usage")
 def get_org_usage(org_id: int, user: dict = Depends(get_current_user)):
     """Current plan + usage stats for the billing UI. Owner or any org member
@@ -6757,11 +6993,11 @@ def get_org_usage(org_id: int, user: dict = Depends(get_current_user)):
     plan      = _org_plan(org_id)
     limits    = plan.get("limits") or {}
     resources = ["projects", "team_members", "storefront_users",
-                 "storage_bytes", "broadcasts_today"]
+                 "storage_bytes", "database_bytes", "broadcasts_today"]
     usage     = {r: _org_usage(org_id, r) for r in resources}
     pct: dict = {}
     for r in resources:
-        lim = limits.get(f"{r}_max")
+        lim = limits.get(_RESOURCE_LIMIT_KEY.get(r, f"{r}_max"))
         if lim is None:
             pct[r] = None                    # unlimited
         elif lim == 0:
@@ -6771,7 +7007,7 @@ def get_org_usage(org_id: int, user: dict = Depends(get_current_user)):
     return {
         "plan": plan,
         "usage": usage,
-        "limits": {r: limits.get(f"{r}_max") for r in resources},
+        "limits": {r: limits.get(_RESOURCE_LIMIT_KEY.get(r, f"{r}_max")) for r in resources},
         "percent": pct,
     }
 
@@ -6869,6 +7105,28 @@ def create_billing_checkout(org_id: int, body: CheckoutRequest,
         print(f"[paddle/checkout] org={org_id} price={price_id} HTTP {r['status']} body={r['body']!r}")
         raise HTTPException(502, "Payment provider rejected the request")
     txn = (r["body"] or {}).get("data") or {}
+
+    # Persist customer_id immediately so future syncs work even if the
+    # subscription.created webhook never arrives (local dev / ngrok rotation /
+    # webhook destination drift). The subscription row stays at 'free' until
+    # the payment completes — the customer_id alone has no plan implication.
+    txn_customer_id = (txn.get("customer_id") or "").strip()
+    if txn_customer_id:
+        try:
+            with db_cursor() as (conn, cur):
+                cur.execute("""
+                    INSERT INTO crm_subscriptions
+                        (org_id, plan_slug, status, paddle_customer_id, updated_at)
+                    VALUES (%s, 'free', 'active', %s, NOW())
+                    ON CONFLICT (org_id) DO UPDATE SET
+                        paddle_customer_id = COALESCE(EXCLUDED.paddle_customer_id,
+                                                      crm_subscriptions.paddle_customer_id),
+                        updated_at = NOW()
+                """, (org_id, txn_customer_id))
+                conn.commit()
+        except Exception as e:
+            print(f"[paddle/checkout] customer_id persist failed: {e}")
+
     return {
         "transaction_id": txn.get("id"),
         "environment":    PADDLE_ENVIRONMENT,
@@ -6891,7 +7149,7 @@ def get_org_subscription(org_id: int, user: dict = Depends(get_current_user)):
     row = db_one("""
         SELECT s.plan_slug, s.status,
                s.current_period_start, s.current_period_end,
-               s.cancelled_at, s.paddle_subscription_id,
+               s.cancelled_at, s.paddle_subscription_id, s.paddle_customer_id,
                p.name AS plan_name, p.price_usd
           FROM crm_subscriptions s
           JOIN crm_subscription_plans p ON p.slug = s.plan_slug
@@ -6904,9 +7162,225 @@ def get_org_subscription(org_id: int, user: dict = Depends(get_current_user)):
             "plan_slug": "free", "plan_name": "Free", "price_usd": 0,
             "status": "active",
             "current_period_start": None, "current_period_end": None,
-            "cancelled_at": None, "paddle_subscription_id": None,
+            "cancelled_at": None,
+            "paddle_subscription_id": None, "paddle_customer_id": None,
         }
     return row
+
+
+# ── Org billing detail endpoints ─────────────────────────────────────
+# Fetch lists/actions backing the /org/:slug/billing page. All owner-only:
+# only the org owner can view payment history or cancel the subscription.
+
+def _require_org_owner(org_id: int, user: dict) -> None:
+    is_owner = bool(db_one(
+        "SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+        (org_id, user["id"])))
+    if not is_owner:
+        raise HTTPException(403, "Only the org owner can manage billing")
+
+
+def _org_paddle_ids(org_id: int) -> "tuple[str | None, str | None]":
+    """Returns (customer_id, subscription_id) from crm_subscriptions row."""
+    row = db_one(
+        "SELECT paddle_customer_id, paddle_subscription_id "
+        "FROM crm_subscriptions WHERE org_id=%s",
+        (org_id,))
+    if not row:
+        return None, None
+    return row.get("paddle_customer_id"), row.get("paddle_subscription_id")
+
+
+@app.get("/api/orgs/{org_id}/billing/invoices")
+def list_billing_invoices(org_id: int, user: dict = Depends(get_current_user)):
+    """List Paddle transactions for this org's customer. Empty list for orgs
+    that never paid (free tier — no paddle_customer_id yet)."""
+    _require_org_owner(org_id, user)
+    customer_id, _ = _org_paddle_ids(org_id)
+    if not customer_id:
+        return {"invoices": []}
+    r = _http_request(
+        "GET",
+        f"{_paddle_saas_api_base()}/transactions"
+        f"?customer_id={customer_id}&status=billed,paid,completed&per_page=50",
+        headers=_paddle_saas_headers(),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/invoices] org={org_id} HTTP {r['status']} body={r['body']!r}")
+        return {"invoices": []}
+    data = (r["body"] or {}).get("data") or []
+    out: list[dict] = []
+    for txn in data:
+        details = (txn.get("details") or {}).get("totals") or {}
+        # Pull the first payment's method-details for the per-row "paid with X"
+        # column. Returns None when the row was free or method is unrecognized.
+        pays = (txn.get("payments") or [])
+        pm = _parse_payment_method((pays[0].get("method_details") or {})) if pays else None
+        out.append({
+            "id":             txn.get("id"),
+            "status":         txn.get("status"),
+            "amount":         details.get("total"),
+            "currency":       (txn.get("currency_code") or "").upper(),
+            "billed_at":      txn.get("billed_at") or txn.get("created_at"),
+            "payment_method": pm,
+            "invoice_url":    None,  # populated lazily — see /invoices/{id}/pdf
+        })
+    return {"invoices": out}
+
+
+@app.get("/api/orgs/{org_id}/billing/invoices/{txn_id}/pdf")
+def get_invoice_pdf_url(org_id: int, txn_id: str,
+                        user: dict = Depends(get_current_user)):
+    """Returns a short-lived signed URL to Paddle's hosted invoice PDF.
+    Generated on demand (per click) so the URL never leaks to logs."""
+    _require_org_owner(org_id, user)
+    r = _http_request(
+        "GET",
+        f"{_paddle_saas_api_base()}/transactions/{txn_id}/invoice",
+        headers=_paddle_saas_headers(),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/invoice-pdf] txn={txn_id} HTTP {r['status']} body={r['body']!r}")
+        raise HTTPException(502, "Could not retrieve invoice")
+    url = ((r["body"] or {}).get("data") or {}).get("url")
+    if not url:
+        raise HTTPException(502, "No invoice URL returned")
+    return {"url": url}
+
+
+_PAYMENT_METHOD_LABELS = {
+    "card":       "Card",
+    "google_pay": "Google Pay",
+    "apple_pay":  "Apple Pay",
+    "paypal":     "PayPal",
+    "link":       "Link",
+    "alipay":     "Alipay",
+    "wechat_pay": "WeChat Pay",
+    "ideal":      "iDEAL",
+}
+
+
+def _parse_payment_method(md: dict) -> dict:
+    """Normalize Paddle's method_details into a {brand, last4, expiry, type}
+    shape the UI can render uniformly. Wallets (Google Pay / Apple Pay /
+    Link) often nest the underlying card so we surface that when present;
+    otherwise we show the wallet name itself ("Google Pay") with no last4."""
+    if not md:
+        return {}
+    raw_type = (md.get("type") or "").lower()
+    card = md.get("card") or {}
+    last4 = card.get("last4")
+    expiry = None
+    if card.get("expiry_month"):
+        try:
+            expiry = f"{int(card.get('expiry_month')):02}/{int(card.get('expiry_year', 0)) % 100:02}"
+        except (TypeError, ValueError):
+            expiry = None
+    if raw_type == "card":
+        # Brand = visa/mastercard/etc — capitalize for display.
+        brand = (card.get("type") or "Card").replace("_", " ").title()
+        return {"type": "card", "brand": brand, "last4": last4, "expiry": expiry}
+    # Wallets / other methods: prefer wallet label as brand; keep last4 if
+    # Paddle exposed the underlying card (some integrations do).
+    label = _PAYMENT_METHOD_LABELS.get(raw_type, raw_type.replace("_", " ").title() if raw_type else "Card")
+    return {"type": raw_type, "brand": label, "last4": last4, "expiry": expiry}
+
+
+@app.get("/api/orgs/{org_id}/billing/payment-method")
+def get_billing_payment_method(org_id: int,
+                               user: dict = Depends(get_current_user)):
+    """Surface the latest payment method stored on Paddle's customer record.
+    Wallets (Google Pay / Apple Pay) show their name; cards show the brand."""
+    _require_org_owner(org_id, user)
+    customer_id, _ = _org_paddle_ids(org_id)
+    if not customer_id:
+        return {"payment_method": None}
+    r = _http_request(
+        "GET",
+        f"{_paddle_saas_api_base()}/transactions"
+        f"?customer_id={customer_id}&status=billed,paid,completed"
+        f"&per_page=1&order_by=billed_at[desc]",
+        headers=_paddle_saas_headers(),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        return {"payment_method": None}
+    data = (r["body"] or {}).get("data") or []
+    if not data:
+        return {"payment_method": None}
+    payments = (data[0].get("payments") or [])
+    if not payments:
+        return {"payment_method": None}
+    return {"payment_method": _parse_payment_method(payments[0].get("method_details") or {})}
+
+
+class CancelSubscriptionRequest(BaseModel):
+    # Paddle accepts 'next_billing_period' (default — keeps service to period
+    # end) or 'immediately'. We always use the former — no surprise outages.
+    effective_from: str = "next_billing_period"
+
+
+@app.post("/api/orgs/{org_id}/billing/cancel")
+def cancel_subscription(org_id: int, body: CancelSubscriptionRequest,
+                        user: dict = Depends(get_current_user)):
+    """Owner-cancellation. The webhook (subscription.canceled) updates our
+    DB asynchronously; we return immediately on Paddle ack."""
+    _require_org_owner(org_id, user)
+    _, sub_id = _org_paddle_ids(org_id)
+    if not sub_id:
+        raise HTTPException(409, "No active paid subscription to cancel")
+    eff = body.effective_from if body.effective_from in ("next_billing_period", "immediately") else "next_billing_period"
+    r = _http_request(
+        "POST",
+        f"{_paddle_saas_api_base()}/subscriptions/{sub_id}/cancel",
+        headers=_paddle_saas_headers(),
+        body=json.dumps({"effective_from": eff}).encode("utf-8"),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/cancel] org={org_id} sub={sub_id} HTTP {r['status']} body={r['body']!r}")
+        raise HTTPException(502, "Cancellation failed at payment provider")
+    return {"ok": True}
+
+
+@app.post("/api/orgs/{org_id}/billing/sync")
+def sync_org_billing(org_id: int, user: dict = Depends(get_current_user)):
+    """Pull current subscription state from Paddle and write to our DB.
+    Owner-only. Used as a webhook-independent fallback — called from the
+    Billing page on mount and after checkout.completed so the UI always
+    shows the truth even when the webhook destination is misconfigured."""
+    _require_org_owner(org_id, user)
+    if not PADDLE_API_KEY:
+        return {"synced": False, "reason": "not_configured"}
+    row = db_one("SELECT email FROM crm_users WHERE id=%s", (user["id"],))
+    owner_email = (row or {}).get("email") or ""
+    synced = _paddle_sync_org_subscription(org_id, owner_email)
+    return {"synced": synced}
+
+
+@app.post("/api/orgs/{org_id}/billing/update-payment-method")
+def create_update_payment_method_transaction(
+        org_id: int, user: dict = Depends(get_current_user)):
+    """Spawn a Paddle transaction whose only purpose is to capture a new card.
+    Returns a transaction_id the frontend hands to Paddle.Checkout.open() —
+    Paddle then runs an inline flow that updates the saved payment method
+    without charging the customer."""
+    _require_org_owner(org_id, user)
+    _, sub_id = _org_paddle_ids(org_id)
+    if not sub_id:
+        raise HTTPException(409, "No active paid subscription")
+    r = _http_request(
+        "GET",  # Paddle's docs spell this GET despite returning a new txn
+        f"{_paddle_saas_api_base()}/subscriptions/{sub_id}/update-payment-method-transaction",
+        headers=_paddle_saas_headers(),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/update-pm] org={org_id} sub={sub_id} HTTP {r['status']} body={r['body']!r}")
+        raise HTTPException(502, "Payment provider rejected the update")
+    txn = (r["body"] or {}).get("data") or {}
+    return {
+        "transaction_id": txn.get("id"),
+        "environment":    PADDLE_ENVIRONMENT,
+        "client_token":   PADDLE_CLIENT_TOKEN,
+    }
 
 
 @app.post("/api/paddle/webhook")

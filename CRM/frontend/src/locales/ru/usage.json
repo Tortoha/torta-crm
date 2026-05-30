@@ -1,0 +1,33 @@
+{
+  "usage": {
+    "title": "Лимиты",
+    "unlimited": "Без лимита",
+
+    "planSection": "Текущий тариф",
+    "planFreeSub": "Сейчас Free — подходит для тестов и разовых задач.",
+    "planPaidSub": "${{price}}/мес · Все платные функции и вебхуки включены.",
+    "upgradeBtn":  "Перейти выше",
+    "manageBtn":   "Управление",
+
+    "usageSection": "Использовано в этом периоде",
+    "barPercent":   "Использовано {{percent}}%",
+    "barUnlimited": "Без ограничения на этом тарифе",
+
+    "capsSection": "Лимиты тарифа",
+    "caps": {
+      "apiRate":          "API-запросы / мин",
+      "broadcasts":       "Email-рассылки",
+      "broadcastsNone":   "Не включены",
+      "broadcastsLim":    "{{n}} в день"
+    },
+
+    "metrics": {
+      "projects":         "Проекты",
+      "team_members":     "Команда",
+      "storefront_users": "Клиенты магазина",
+      "storage_bytes":    "Хранилище файлов",
+      "database_bytes":   "Размер БД",
+      "broadcasts_today": "Рассылок сегодня"
+    }
+  }
+}

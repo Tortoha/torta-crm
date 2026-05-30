@@ -1,0 +1,317 @@
+.ob-page {
+  padding: 0 24px 96px;
+  max-width: 960px;
+}
+
+.ob-page--loading {
+  display: grid;
+  place-items: center;
+  min-height: 400px;
+}
+
+.bulk-billing {
+  padding-bottom: 96px;
+  display: flex;
+  flex-direction: column;
+  padding-top: 24px;
+}
+
+/* Section header tweak — no icon variant so the title hugs the left edge. */
+.ob-section-head .bulk-section-text {
+  margin-left: 0;
+}
+
+/* ── Current plan card ─────────────────────────────────────────────── */
+.ob-plan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ob-plan-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ob-plan-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.ob-plan-name-text {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ob-plan-price-meta {
+  font-size: 13px;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.ob-plan-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Cancel button — ghost-tint style (used in the bottom Cancellation
+ * section). Standard `.auth-btn-danger` look kept verbatim so the visual
+ * matches other destructive ghost buttons elsewhere in the app. */
+.ob-cancel-btn {
+  background: var(--delete-tint);
+}
+.ob-cancel-btn:hover:not(:disabled) {
+  background: var(--delete-tint-hover);
+}
+
+/* ── Bottom Cancellation section ───────────────────────────────────
+ * Anthropic-style "Cancel plan / [Cancel]" row. Label left, solid-red
+ * destructive button right. */
+.ob-cancel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.ob-cancel-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+
+/* ── Status badge ────────────────────────────────────────────────── */
+.ob-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-transform: capitalize;
+  letter-spacing: 0.2px;
+}
+
+.ob-badge--ok {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.ob-badge--warn {
+  background: rgba(255, 159, 10, 0.12);
+  color: #ff9f0a;
+}
+
+.ob-badge--off {
+  background: rgba(var(--fg-rgb), 0.08);
+  color: var(--muted);
+}
+
+/* ── Payment method card ──────────────────────────────────────────── */
+.ob-pm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ob-pm-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ob-pm-line1 {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.ob-pm-dots {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.ob-pm-line2 {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ── Invoices — po-set-row variant ───────────────────────────────── */
+/* Doubled selector out-specifies the base 7-column template in Products.css.
+ * 5 cols: Date / Amount / Paid with / Status / PDF-button. */
+.po-set-row--head.po-set-row--ob-inv,
+.po-set-row.po-set-row--ob-inv:not(.po-set-row--head) {
+  grid-template-columns: 1.2fr 0.9fr 1.3fr 1fr 32px;
+}
+.ob-inv-method {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ob-inv-amount {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ob-inv-pdf {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  border-radius: 999px;
+  color: var(--muted);
+  transition: background 0.2s var(--ease-soft), color 0.2s;
+}
+
+.ob-inv-pdf:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* ── Empty / loading states ──────────────────────────────────────── */
+.ob-empty {
+  margin: 0;
+  padding: 12px 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ob-skel {
+  width: 60%;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.08);
+  animation: ob-pulse 1.2s infinite;
+}
+
+@keyframes ob-pulse {
+
+  0%,
+  100% {
+    opacity: 0.6
+  }
+
+  50% {
+    opacity: 1
+  }
+}
+
+/* ── Cancel modal extras ─────────────────────────────────────────── */
+.ob-modal-list {
+  margin: 8px 0 0;
+  padding: 0 0 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.ob-modal-list li {
+  margin: 4px 0;
+}
+
+/* ── Change Plan Modal ────────────────────────────────────────────── */
+/* Wider shell to host 4 real pr-card columns side-by-side. The base
+ * .auth-modal is 960px which is too narrow for 4 plan cards + features —
+ * 1180px lets each card breathe (~270px each). */
+.cpm-modal--plans                         { width: 1180px; }
+
+/* Toggle row — center the BillingToggle horizontally with a touch of margin. */
+.cpm-toggle-row                           { display: flex; justify-content: center;
+                                            margin: 0 0 20px; }
+.cpm-toggle-row .pr-bill-toggle           { margin-top: 0; }
+
+/* Plan grid inside the modal — slightly tighter card paddings than Pricing
+ * (modal has its own 16px padding around the body) and a soft accent ring
+ * around the suggested plan (?upgrade=<plan>). */
+.cpm-plans-grid                           { gap: 12px; }
+.cpm-plans-grid .pr-card                  { padding: 22px 18px 18px; gap: 10px;
+                                            border-radius: 20px; }
+.cpm-plans-grid .pr-card-price-amount     { font-size: 30px; }
+.cpm-plans-grid .pr-card-list             { gap: 7px; }
+
+/* Highlight ring around the plan the user came from (?upgrade=<plan>). */
+.cpm-plans-grid[data-hint="standard"] .pr-card:nth-child(2),
+.cpm-plans-grid[data-hint="plus"]     .pr-card:nth-child(3),
+.cpm-plans-grid[data-hint="pro"]      .pr-card:nth-child(4) {
+  box-shadow: 0 0 0 2px var(--accent), 0 4px 24px rgba(0, 113, 227, 0.18);
+}
+
+/* "Current plan" CTA replacement — looks like a disabled pill with accent. */
+.pr-card-cta--current                     { background: var(--accent-tint) !important;
+                                            color: var(--accent) !important;
+                                            cursor: default;
+                                            pointer-events: none; }
+.pr-card-cta--current:hover               { background: var(--accent-tint) !important; }
+.pr-card-cta--solid-mute                  { opacity: 1; }
+
+/* Footer row — Pricing link on the left, Close on the right. */
+.cpm-foot                                 { display: flex; align-items: center; gap: 12px;
+                                            margin-top: 16px; padding-top: 16px;
+                                            border-top: 1px solid rgba(var(--fg-rgb), 0.06); }
+.cpm-foot-link                            { display: inline-flex; align-items: center; gap: 6px;
+                                            color: var(--accent); font-size: 13px; font-weight: 500;
+                                            text-decoration: none;
+                                            transition: opacity 0.2s; }
+.cpm-foot-link:hover                      { opacity: 0.8; }
+
+/* Responsive: 1100px → 2×2, 720px → 1 column. */
+@media (max-width: 1100px) {
+  .cpm-modal--plans                       { width: 760px; }
+  .cpm-plans-grid                         { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 720px) {
+  .cpm-modal--plans                       { width: calc(100vw - 32px); }
+  .cpm-plans-grid                         { grid-template-columns: 1fr; }
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .ob-page {
+    padding: 0 16px 96px;
+  }
+
+  .ob-plan-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .ob-plan-right {
+    width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .ob-plan-right>a,
+  .ob-plan-right>button {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+  }
+
+  /* Invoices stack: drop Method + Status columns on narrow screens. */
+  .po-set-row--head.po-set-row--ob-inv,
+  .po-set-row.po-set-row--ob-inv:not(.po-set-row--head) {
+    grid-template-columns: 1.4fr 1fr 32px;
+  }
+
+  .po-set-row--ob-inv>span:nth-child(3),
+  .po-set-row--ob-inv>span:nth-child(4) {
+    display: none;
+  }
+}

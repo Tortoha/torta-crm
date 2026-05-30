@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { FolderSimple, ChartLine, UsersThree, CreditCard } from '@phosphor-icons/react';
 
 // Org pages only the owner may open — members are bounced to the project list.
-const OWNER_ONLY_ORG_PAGES = ['analytics', 'team', 'payments', 'settings'];
+const OWNER_ONLY_ORG_PAGES = ['analytics', 'team', 'payments', 'billing', 'usage', 'settings'];
 import OrgSidebar from './Elements/OrgSidebar.jsx';
 import Header from './Elements/Header.jsx';
 import MobileTabBar from './Elements/MobileTabBar.jsx';

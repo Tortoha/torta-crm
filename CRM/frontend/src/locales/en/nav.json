@@ -26,6 +26,8 @@
     "projects": "Projects",
     "team": "Team",
     "payments": "Payments",
+    "billing": "Billing",
+    "usage": "Usage",
     "more": "More",
     "mobile": "Mobile navigation"
   }

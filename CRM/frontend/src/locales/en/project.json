@@ -253,7 +253,7 @@
       "enabled": "Enabled",
       "pendingDns": "Pending DNS",
       "notConfigured": "Not configured",
-      "subscription": "Subscription",
+      "plan": "Plan",
       "planFree": "Free",
       "orders": "Orders",
       "ordersToday": "{{count}} today",

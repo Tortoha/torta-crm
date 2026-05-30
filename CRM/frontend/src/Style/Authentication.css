@@ -548,7 +548,9 @@
   padding: 8px 16px;
   border-radius: 999px;
   background-color: var(--accent);
-  color: var(--card);
+  /* Background is always the solid blue accent → text must be #fff in both
+     themes. Using var(--card) here gave dark text on dark blue in dark theme. */
+  color: #fff;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -557,6 +559,9 @@
   transition: 0.4s ease;
   border: none;
   padding-left: 8px;
+  /* Class is button-styled — used on both <button> and <Link>. Strip the
+     default <a> underline so the Link variant doesn't read as a hyperlink. */
+  text-decoration: none;
 }
 
 .auth-btn-check:hover:not(:disabled) {

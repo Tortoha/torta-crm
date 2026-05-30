@@ -253,7 +253,7 @@
       "enabled": "Включено",
       "pendingDns": "Ожидание DNS",
       "notConfigured": "Не настроено",
-      "subscription": "Подписка",
+      "plan": "Тариф",
       "planFree": "Бесплатный",
       "orders": "Заказы",
       "ordersToday": "{{count}} сегодня",

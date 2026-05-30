@@ -503,13 +503,14 @@ function Project() {
               : t('project.overview.notConfigured')}
             onClick={() => navigate('authentication')} />
 
-          {/* Subscription plan */}
+          {/* Subscription plan — clicks through to org Billing page where
+              the actual upgrade/cancel UI lives. */}
           <PovWidget
             icon={<ShoppingBag weight="regular" />}
-            label={t('project.overview.subscription')}
+            label={t('project.overview.plan')}
             statusClass="pov-widget-status--plan"
             status={planLabel}
-            onClick={() => navigate('settings')} />
+            onClick={() => ctxProject?.org_slug && navigate(`/org/${ctxProject.org_slug}/billing`)} />
 
           {/* Orders — count includes physical + digital + service bookings */}
           <PovWidget

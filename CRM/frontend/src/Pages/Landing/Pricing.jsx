@@ -14,8 +14,7 @@
 //     trick (no max-height guess, no jumps); caret rotates 180°.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   CheckCircle, MinusCircle, ArrowRight, CaretDown,
@@ -24,9 +23,6 @@ import Header from '../../Elements/Header.jsx';
 import Footer from './Footer.jsx';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
 import { API_BASE } from '../../api.js';
-import {
-  getBillingConfig, openCheckout, onPaddleEvent,
-} from '../../Utils/paddle.js';
 import '../../Style/Landing.css';
 import '../../Style/Products.css';   // po-set-table + po-set-row primitives
 
@@ -39,7 +35,7 @@ const YEARLY_TOTAL = { standard: 100, plus: 250, pro: 1000 };
 
 // ── Billing toggle ───────────────────────────────────────────────────────────
 
-function BillingToggle({ active, onChange }) {
+export function BillingToggle({ active, onChange }) {
   const { t } = useTranslation();
   const [hovered, setHovered] = useState(null);
   const indRef  = useRef(null);
@@ -82,8 +78,11 @@ function BillingToggle({ active, onChange }) {
 }
 
 // ── Plan card ────────────────────────────────────────────────────────────────
+// Exported so the Billing page's "Change subscription plan" modal can reuse
+// the exact same visual without forking — we just pass `ctaSlot` to replace
+// the default Link with a button that opens Paddle checkout in place.
 
-function PlanCard({ planKey, popular, billing, user, ownedOrg, billingCfg, onUpgrade, busyKey }) {
+export function PlanCard({ planKey, popular, billing, user, ownedOrgs, ctaSlot }) {
   const { t } = useTranslation();
   const base = `pricing.plans.${planKey}`;
   const features = t(`${base}.features`, { returnObjects: true });
@@ -104,41 +103,34 @@ function PlanCard({ planKey, popular, billing, user, ownedOrg, billingCfg, onUpg
     : null;
 
   // ── CTA logic ──
-  // 3 distinct paths:
-  //   A) Anonymous user → keep the legacy /registration link (same UX as before)
-  //   B) Logged-in user, free plan card → /dashboard (their existing org/start)
-  //   C) Logged-in user, paid plan card + at least one owned org + Paddle is
-  //      configured → onClick triggers inline checkout (Paddle.js overlay).
-  // When (C)'s preconditions aren't met (no org / Paddle not yet configured
-  // on this env) we fall back to /registration so the CTA is never dead.
-  const priceForPlan = !isFree && billingCfg && billingCfg.prices && billingCfg.prices[planKey]
-    ? billingCfg.prices[planKey][yearly ? 'yearly' : 'monthly']
-    : '';
-  const canCheckout = !!user && !isFree && !!ownedOrg && !!priceForPlan;
-  const isBusy = busyKey === planKey;
+  // Pricing never directly opens Paddle checkout — it routes users to the
+  // right place and the actual purchase happens inside the org's Billing
+  // page (one clear "money lives here" surface, consistent regardless of
+  // entry point):
+  //   A) Anonymous → /registration
+  //   B) Logged-in, free plan card → /dashboard
+  //   C) Logged-in, paid plan card, owns exactly 1 org → /org/<slug>/billing
+  //      with ?upgrade=<plan>&cycle=<billing> so the modal auto-opens
+  //   D) Logged-in, paid plan card, owns 2+ orgs → /dashboard (let them
+  //      pick which org to upgrade; one modal per org is the wrong UX)
+  //   E) Logged-in, paid plan card, owns 0 orgs → /dashboard (they need
+  //      to create the org first; that flow lives in Dashboard)
+  // `ctaSlot` overrides the default Link entirely — used by ChangePlanModal
+  // where we render a Subscribe button + Current-plan badge inline.
   const ctaLabel = t(`${base}.cta`);
+  const owned = Array.isArray(ownedOrgs) ? ownedOrgs : (ownedOrgs ? [ownedOrgs] : []);
+  let to;
+  if (!user)                to = '/registration';
+  else if (isFree)          to = '/dashboard';
+  else if (owned.length === 1 && owned[0]?.slug)
+                            to = `/org/${owned[0].slug}/billing?upgrade=${planKey}&cycle=${billing}`;
+  else                      to = '/dashboard';   // 0 owned OR 2+ owned
 
-  let ctaEl;
-  if (canCheckout) {
-    ctaEl = (
-      <button type="button"
-              className={`pr-card-cta pr-card-cta--btn${popular ? ' pr-card-cta--solid' : ''}`}
-              onClick={() => onUpgrade(planKey, priceForPlan)}
-              disabled={isBusy}>
-        {isBusy
-          ? t('pricing.billing.processing', { defaultValue: 'Opening checkout…' })
-          : ctaLabel}
-        {!isBusy && <ArrowRight size={14} weight="bold" />}
-      </button>
-    );
-  } else {
-    const to = user ? '/dashboard' : '/registration';
-    ctaEl = (
-      <Link to={to} className={`pr-card-cta${popular ? ' pr-card-cta--solid' : ''}`}>
-        {ctaLabel} <ArrowRight size={14} weight="bold" />
-      </Link>
-    );
-  }
+  const ctaEl = ctaSlot ?? (
+    <Link to={to} className={`pr-card-cta${popular ? ' pr-card-cta--solid' : ''}`}>
+      {ctaLabel} <ArrowRight size={14} weight="bold" />
+    </Link>
+  );
 
   return (
     <div className={`pr-card${popular ? ' pr-card--popular' : ''}`}>
@@ -210,33 +202,18 @@ function FaqRow({ qKey }) {
 
 export default function Pricing() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
-  const [user, setUser]             = useState(null);
-  const [billing, setBilling]       = useState('monthly');
-  const [orgs, setOrgs]             = useState([]);   // user's orgs (each has is_owner flag)
-  const [billingCfg, setBillingCfg] = useState(null); // /api/billing/config response
-  const [busyKey, setBusyKey]       = useState(null); // plan currently in checkout (spinner state)
-  const [toast, setToast]           = useState(null); // bottom toast: { msg, kind: 'ok' | 'err' }
+  const [user,    setUser]    = useState(null);
+  const [billing, setBilling] = useState('monthly');
+  const [orgs,    setOrgs]    = useState([]); // user's orgs (each has is_owner flag)
 
-  // First-owned org auto-selected for the diploma's common case (each user
-  // owns one org). Multi-org users still upgrade — they just upgrade their
-  // first-created owned org. Switching org for billing belongs in a future
-  // dedicated billing page inside org settings.
-  const ownedOrg = useMemo(
-    () => (orgs || []).find(o => o && o.is_owner) || null,
+  // All owned orgs — PlanCard routes to /org/:slug/billing only when there's
+  // exactly one (auto-select). 2+ owned → /dashboard (org picker), 0 → /dashboard.
+  const ownedOrgs = useMemo(
+    () => (orgs || []).filter(o => o && o.is_owner),
     [orgs],
   );
 
-  // Auto-dismiss toast after 3.2s — same timing as global auth-toast in
-  // Authentication.css so the visual rhythm is consistent across the app.
   useEffect(() => {
-    if (!toast) return undefined;
-    const id = setTimeout(() => setToast(null), 3200);
-    return () => clearTimeout(id);
-  }, [toast]);
-
-  useEffect(() => {
-    // Parallel fetch — none of these depend on each other.
     fetch(`${API_BASE}/api/me`, { credentials: 'include' })
       .then(r => (r.ok ? r.json() : null))
       .then(setUser)
@@ -245,65 +222,9 @@ export default function Pricing() {
       .then(r => (r.ok ? r.json() : []))
       .then(rows => setOrgs(Array.isArray(rows) ? rows : []))
       .catch(() => {});
-    getBillingConfig().then(setBillingCfg).catch(() => setBillingCfg(null));
   }, []);
 
-  // Subscribe to Paddle events while this page is mounted. We only react to
-  // checkout.completed (success) — the "closed" event without "completed"
-  // means the user dismissed Paddle's modal, which is silent.
-  useEffect(() => {
-    const off = onPaddleEvent(ev => {
-      if (!ev) return;
-      if (ev.name === 'checkout.completed' || ev.name === 'checkout.payment.succeeded') {
-        setBusyKey(null);
-        setToast({ msg: t('pricing.billing.success', { defaultValue: 'Plan upgraded — welcome aboard!' }), kind: 'ok' });
-        // Land on the dashboard; the webhook will have updated plan_slug
-        // by the time the user clicks around. Race-free in practice — Paddle
-        // fires the webhook a beat before completing the overlay event.
-        setTimeout(() => navigate('/dashboard'), 1200);
-      } else if (ev.name === 'checkout.error' || ev.name === 'checkout.payment.failed') {
-        setBusyKey(null);
-        setToast({ msg: t('pricing.billing.failed', { defaultValue: 'Payment failed — try a different card.' }), kind: 'err' });
-      } else if (ev.name === 'checkout.closed') {
-        setBusyKey(null);  // user dismissed overlay; silent
-      }
-    });
-    return off;
-  }, [navigate, t]);
-
-  // Click handler: POST to /billing/checkout then hand the txn_id to Paddle.js.
-  // Errors flow into the bottom toast; spinner clears on event or error.
-  async function handleUpgrade(planKey, priceId) {
-    if (!ownedOrg) return;
-    setBusyKey(planKey);
-    try {
-      const r = await fetch(`${API_BASE}/api/orgs/${ownedOrg.id}/billing/checkout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ price_id: priceId }),
-      });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
-        throw new Error(body.detail || `HTTP ${r.status}`);
-      }
-      const { transaction_id } = await r.json();
-      if (!transaction_id) throw new Error('No transaction_id returned');
-      await openCheckout(transaction_id);
-      // Spinner clears via Paddle event (completed/closed/error). If Paddle
-      // never reports back (e.g. extension blocked Paddle.js), we still want
-      // to release the spinner — a small safety timer caps it at 30s.
-      setTimeout(() => setBusyKey(b => (b === planKey ? null : b)), 30000);
-    } catch (e) {
-      setBusyKey(null);
-      setToast({ msg: t('pricing.billing.failed', { defaultValue: 'Payment failed — try a different card.' }), kind: 'err' });
-      console.error('[pricing/upgrade]', e);
-    }
-  }
-
-  useEffect(() => {
-    document.title = t('pricing.meta.title');
-  }, [t]);
+  // (No document.title override — keep "Torta CRM" across navigation.)
 
   // Flatten compare groups into ordered chunks for rendering. Each group has
   // a label header + N rows; we render them as separate sub-tables so a tiny
@@ -348,10 +269,7 @@ export default function Pricing() {
                           popular={k === 'standard'}
                           billing={billing}
                           user={user}
-                          ownedOrg={ownedOrg}
-                          billingCfg={billingCfg}
-                          onUpgrade={handleUpgrade}
-                          busyKey={busyKey} />
+                          ownedOrgs={ownedOrgs} />
               ))}
             </div>
           </div>
@@ -408,16 +326,6 @@ export default function Pricing() {
 
         <Footer />
       </main>
-
-      {/* Toast portal — bottom pill, same pattern as global auth-toast.
-          Re-mounts on every (msg, kind) change so the 3.2s timer restarts
-          when a second event arrives mid-display. */}
-      {toast && createPortal(
-        <div className={`auth-toast${toast.kind === 'err' ? ' auth-toast--err' : ''}`}>
-          {toast.msg}
-        </div>,
-        document.body,
-      )}
     </>
   );
 }

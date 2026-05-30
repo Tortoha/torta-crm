@@ -15,6 +15,21 @@
 
 import { initializePaddle } from '@paddle/paddle-js';
 import { API_BASE } from '../api.js';
+import i18n from '../i18n.js';
+
+// Paddle Checkout supports these locales (others fall back to English).
+const PADDLE_LOCALES = new Set([
+  'ar', 'da', 'de', 'en', 'es', 'fr', 'it', 'ja', 'ko',
+  'nl', 'no', 'pl', 'pt', 'ru', 'sv', 'zh-Hans',
+]);
+
+function _autoSettings() {
+  const theme = (typeof document !== 'undefined'
+    && document.documentElement.dataset.theme === 'dark') ? 'dark' : 'light';
+  const lang = (i18n.language || 'en').slice(0, 2).toLowerCase();
+  const locale = PADDLE_LOCALES.has(lang) ? lang : 'en';
+  return { theme, locale };
+}
 
 // ── Listener fan-out ───────────────────────────────────────────────────
 const _listeners = new Set();
@@ -101,9 +116,16 @@ export function getPaddle() {
 export async function openCheckout(transactionId, settings = {}) {
   const paddle = await getPaddle();
   if (!paddle) throw new Error('paddle_not_configured');
+  const auto = _autoSettings();
   paddle.Checkout.open({
     transactionId,
-    settings: { displayMode: 'overlay', theme: 'light', ...settings },
+    settings: {
+      displayMode:       'overlay',
+      theme:             auto.theme,
+      locale:            auto.locale,
+      showAddDiscounts:  false,
+      ...settings,
+    },
   });
 }
 

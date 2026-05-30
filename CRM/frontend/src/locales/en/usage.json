@@ -1,0 +1,33 @@
+{
+  "usage": {
+    "title": "Usage",
+    "unlimited": "Unlimited",
+
+    "planSection": "Current plan",
+    "planFreeSub": "You're on the Free plan — perfect for trying things out.",
+    "planPaidSub": "${{price}}/mo · Includes all paid features and webhooks.",
+    "upgradeBtn":  "Upgrade",
+    "manageBtn":   "Manage",
+
+    "usageSection": "Usage this period",
+    "barPercent":   "{{percent}}% used",
+    "barUnlimited": "No cap on this plan",
+
+    "capsSection": "Plan limits",
+    "caps": {
+      "apiRate":          "API requests / min",
+      "broadcasts":       "Email broadcasts",
+      "broadcastsNone":   "Not included",
+      "broadcastsLim":    "{{n}}/day"
+    },
+
+    "metrics": {
+      "projects":         "Projects",
+      "team_members":     "Team members",
+      "storefront_users": "Storefront users",
+      "storage_bytes":    "File storage",
+      "database_bytes":   "Database size",
+      "broadcasts_today": "Broadcasts today"
+    }
+  }
+}

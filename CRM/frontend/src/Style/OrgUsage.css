@@ -1,0 +1,256 @@
+/* Org Usage — mirrors Project Analytics visual language (an-section /
+ * an-tile / an-kpi-grid). Adds usage-specific bits: progress bars, plan
+ * header banner, plan-cap tiles. */
+
+.ou-page {
+  padding: 0 24px 96px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ou-page--loading {
+  display: grid;
+  place-items: center;
+  min-height: 400px;
+}
+
+.ou-skel {
+  width: 60%;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.08);
+  animation: ou-pulse 1.2s infinite;
+}
+
+@keyframes ou-pulse {
+
+  0%,
+  100% {
+    opacity: 0.6
+  }
+
+  50% {
+    opacity: 1
+  }
+}
+
+/* ── Plan banner ─────────────────────────────────────────────────── */
+.ou-plan {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 20px;
+}
+
+.ou-plan-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.ou-plan-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.ou-plan-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ou-plan-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.ou-plan-cta {
+  flex-shrink: 0;
+}
+
+/* ── Usage tiles grid ────────────────────────────────────────────── */
+.ou-kpi-grid {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+@media (max-width: 1100px) {
+  .ou-kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .ou-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.ou-tile {
+  padding: 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ou-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ou-tile-icon {
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+
+.ou-tile-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ou-used {
+  color: var(--text);
+}
+
+.ou-sep {
+  color: var(--muted);
+  margin: 0 2px;
+}
+
+.ou-limit {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.ou-tile-foot {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+/* ── Progress bar ────────────────────────────────────────────────── */
+.ou-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.08);
+  overflow: hidden;
+}
+
+.ou-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s var(--ease-soft);
+}
+
+.ou-bar-fill--ok {
+  background: var(--accent);
+}
+
+.ou-bar-fill--warn {
+  background: #ff9f0a;
+}
+
+.ou-bar-fill--crit {
+  background: var(--delete);
+}
+
+.ou-bar-fill--unlimited {
+  background: rgba(var(--fg-rgb), 0.25);
+}
+
+/* Severity-coloured value text — subtle accent on the "used" number. */
+.ou-tile--crit .ou-used {
+  color: var(--delete);
+}
+
+.ou-tile--warn .ou-used {
+  color: #ff9f0a;
+}
+
+/* ── Static plan caps grid ───────────────────────────────────────── */
+.ou-caps-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 700px) {
+  .ou-caps-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ou-cap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+
+.ou-cap-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.ou-cap-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ou-cap-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.ou-cap-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Mobile ──────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .ou-page {
+    padding: 0 16px 96px;
+  }
+
+  .ou-plan {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ou-plan-cta {
+    width: 100%;
+    justify-content: center;
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "billing": {
+    "title": "Billing",
+    "free": "Free",
+    "month": "mo",
+
+    "currentPlan": "Current plan",
+    "currentPlanSub": "Manage your subscription, change plan or cancel.",
+    "upgrade": "Choose a plan",
+    "changePlan": "Change subscription plan",
+    "renewsOn": "Renews on {{date}}",
+    "endsOn": "Ends on {{date}}",
+
+    "paymentMethod": "Payment method",
+    "paymentMethodSub": "Card on file for future charges.",
+    "updateCard": "Update card",
+    "expires": "Expires {{date}}",
+    "noCard": "No card on file yet.",
+    "noCardFree": "No card on file — Free plan doesn't require one.",
+    "cardUpdated": "Payment method updated",
+    "cardUpdateFailed": "Could not start card update",
+
+    "invoices": "Invoices",
+    "invoicesSub": "Receipts and payment history from Paddle.",
+    "noInvoices": "No invoices yet.",
+    "openPdf": "Open invoice PDF",
+    "pdfFailed": "Could not open invoice",
+    "col": {
+      "date":   "Date",
+      "amount": "Amount",
+      "method": "Paid with",
+      "status": "Status"
+    },
+
+    "cancellation": "Cancellation",
+    "cancellationSub": "Cancel anytime. You keep access until the current period ends.",
+    "cancelLabel": "Cancel plan",
+    "cancelLabelHint": "Access continues until {{date}}",
+    "cancel": {
+      "btn":     "Cancel",
+      "title":   "Cancel subscription?",
+      "body":    "Your {{plan}} plan stays active until {{date}}. After that the org reverts to Free.",
+      "b1":      "No refund for the current period",
+      "b2":      "Your data stays — projects & customers are preserved",
+      "b3":      "You can re-subscribe any time",
+      "confirm": "Cancel subscription",
+      "keep":    "Keep subscription"
+    },
+    "cancelOk":     "Subscription cancelled — active until period end",
+    "cancelFailed": "Cancellation failed — try again",
+
+    "updated": "Subscription updated",
+
+    "modal": {
+      "title":           "Change subscription plan",
+      "sub":             "Pick a plan to upgrade or downgrade. Changes are pro-rated by Paddle.",
+      "currentPlan":     "Current plan",
+      "subscribe":       "Subscribe",
+      "downgrade":       "Downgrade to Free",
+      "notConfigured":   "Plan not configured yet",
+      "failed":          "Could not start checkout — try again",
+      "seeFullPricing":  "See full plan comparison"
+    },
+
+    "status": {
+      "active":     "Active",
+      "trialing":   "Trial",
+      "past_due":   "Past due",
+      "paused":     "Paused",
+      "canceled":   "Canceled",
+      "expired":    "Expired",
+      "billed":     "Billed",
+      "paid":       "Paid",
+      "completed":  "Completed",
+      "cancelling": "Ending soon"
+    }
+  }
+}

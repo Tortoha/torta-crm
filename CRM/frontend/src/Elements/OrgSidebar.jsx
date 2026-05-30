@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { FolderSimple, ChartLine, ArrowLineLeft, ArrowLineRight,
-         CreditCard, GearSix, UsersThree, Users } from '@phosphor-icons/react';
+         CreditCard, GearSix, UsersThree, Users,
+         ShoppingBag, ChartBar } from '@phosphor-icons/react';
 
 function buildItems(orgSlug, isOwner, t) {
   const base = `/org/${orgSlug}`;
@@ -16,6 +17,8 @@ function buildItems(orgSlug, isOwner, t) {
     { to: `${base}/customers`, label: t('nav.customers'), Icon: Users      },
     { to: `${base}/team`,      label: t('nav.team'),      Icon: UsersThree },
     { to: `${base}/payments`,  label: t('nav.payments'),  Icon: CreditCard },
+    { to: `${base}/billing`,   label: t('nav.billing'),   Icon: ShoppingBag},
+    { to: `${base}/usage`,     label: t('nav.usage'),     Icon: ChartBar   },
     { to: `${base}/settings`,  label: t('nav.settings'),  Icon: GearSix    },
   );
   return items;
