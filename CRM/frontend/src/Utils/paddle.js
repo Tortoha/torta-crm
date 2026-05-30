@@ -130,6 +130,34 @@ export async function openCheckout(transactionId, settings = {}) {
 }
 
 /**
+ * Open Paddle's checkout INLINE inside our own page (no dark overlay). The
+ * form renders into a div whose class === `frameTarget`. Used by the
+ * dedicated /org/:slug/checkout page so the payment form lives inside our
+ * layout (Sidebar + Header stay) instead of floating over a dimmed page.
+ *
+ * `frameTarget` is a CSS CLASS NAME (not an id, not a selector) — Paddle
+ * looks up the first element with that class and mounts its iframe there.
+ */
+export async function openInlineCheckout(transactionId, frameTarget, settings = {}) {
+  const paddle = await getPaddle();
+  if (!paddle) throw new Error('paddle_not_configured');
+  const auto = _autoSettings();
+  paddle.Checkout.open({
+    transactionId,
+    settings: {
+      displayMode:        'inline',
+      frameTarget,
+      frameInitialHeight: 450,
+      frameStyle:         'width: 100%; min-width: 312px; background-color: transparent; border: none;',
+      theme:              auto.theme,
+      locale:             auto.locale,
+      showAddDiscounts:   false,
+      ...settings,
+    },
+  });
+}
+
+/**
  * Close any open checkout overlay. Safe to call when nothing is open
  * (Paddle no-ops). Used by the upgrade modal when the user clicks Cancel.
  */

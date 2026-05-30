@@ -1,0 +1,195 @@
+/* Org Checkout — dedicated inline-Paddle page. Two-column: order summary
+ * (left) + Paddle iframe (right). Card radius 16px, page chrome matches the
+ * rest of the org pages. */
+
+.oc-page {
+  position: relative;
+  padding: 0 24px 96px;
+  max-width: 1040px;
+}
+
+/* Back link — floats at the very top-left so it doesn't add to the title's
+ * offset; the title keeps the standard CRM 128px top spacing below it. */
+.oc-back {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 12px 6px 8px;
+  border-radius: 999px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  font-family: inherit;
+  transition: background 0.2s var(--ease-soft), color 0.2s;
+}
+
+.oc-back:hover {
+  background: rgba(var(--fg-rgb), 0.06);
+  color: var(--text);
+}
+
+/* Standard CRM title spacing (128px) — matches every other page's rhythm. */
+.oc-title {
+  padding-top: 128px;
+}
+
+/* ── Two-column grid ─────────────────────────────────────────────── */
+.oc-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 12px;
+  margin-top: 24px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .oc-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Order summary (left) ────────────────────────────────────────── */
+.oc-summary-card {
+  background: var(--card);
+  border-radius: 24px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: sticky;
+  top: 16px;
+}
+
+.oc-summary-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.oc-summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.oc-summary-plan {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.oc-summary-price {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.oc-features {
+  margin: 4px 0 0 !important;
+}
+
+.oc-features li {
+  font-size: 12.5px;
+}
+
+.oc-card-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* Trust row at the bottom of the summary. */
+.oc-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(var(--fg-rgb), 0.06);
+}
+
+.oc-trust-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── Payment column (right) — ALWAYS LIGHT ───────────────────────────
+ * Paddle's inline form is pinned to its light theme (see OrgCheckout.jsx),
+ * so the host card is a fixed white surface in BOTH CRM themes. Reads as a
+ * deliberate "secure payment" panel rather than a half-matched dark form
+ * with white inputs. State colors below are hardcoded dark-on-white since
+ * theme vars would be wrong against this fixed-light background. */
+.oc-pay {
+  background: #ffffff;
+  border-radius: 24px;
+  padding: 6px;
+  min-height: 460px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* Paddle inline iframe wrapper — Paddle injects an <iframe> here. */
+.paddle-checkout-frame {
+  width: 100%;
+  min-height: 440px;
+}
+
+/* Loading / error / done states (centered in the pay column). */
+.oc-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 440px;
+  text-align: center;
+  color: #6b6b70;
+  font-size: 14px;
+}
+
+.oc-state--error {
+  color: #1a1a1a;
+}
+
+.oc-state--done .oc-done-icon {
+  color: var(--accent);
+}
+
+.oc-spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 0, 0, 0.10);
+  border-top-color: var(--accent);
+  animation: oc-spin 0.8s linear infinite;
+}
+
+@keyframes oc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Mobile ──────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .oc-page {
+    padding: 0 16px 96px;
+  }
+
+  .oc-summary-card {
+    position: static;
+  }
+}

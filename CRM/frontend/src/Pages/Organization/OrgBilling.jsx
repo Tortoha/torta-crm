@@ -16,7 +16,7 @@ import {
   ArrowsClockwise, PencilSimple,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
-import { openCheckout, closeCheckout, onPaddleEvent, getBillingConfig } from '../../Utils/paddle.js';
+import { closeCheckout, onPaddleEvent } from '../../Utils/paddle.js';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
 import { PlanCard, BillingToggle } from '../Landing/Pricing.jsx';
 import i18n from '../../i18n.js';
@@ -141,17 +141,13 @@ function CancelModal({ planName, periodEnd, busy, onCancel, onConfirm }) {
 const PLAN_KEYS = ['free', 'standard', 'plus', 'pro'];
 
 function ChangePlanModal({
-  orgId, currentPlan, initialPlan, initialCycle,
-  onClose, onCheckoutStart, onError,
+  currentPlan, initialPlan, initialCycle,
+  onClose, onSubscribe,
 }) {
   const { t } = useTranslation();
-  const [billing,    setBilling]    = useState(initialCycle === 'yearly' ? 'yearly' : 'monthly');
-  const [billingCfg, setBillingCfg] = useState(null);
-  const [busyKey,    setBusyKey]    = useState(null);
+  const [billing, setBilling] = useState(initialCycle === 'yearly' ? 'yearly' : 'monthly');
 
-  useEffect(() => { getBillingConfig().then(setBillingCfg).catch(() => setBillingCfg(null)); }, []);
-
-  async function handlePick(planKey) {
+  function handlePick(planKey) {
     if (planKey === currentPlan) return;
     if (planKey === 'free') {
       // Downgrade to Free = cancel subscription. Close the modal so the
@@ -159,34 +155,11 @@ function ChangePlanModal({
       onClose({ downgradeToFree: true });
       return;
     }
-    const priceId = billingCfg?.prices?.[planKey]?.[billing];
-    if (!priceId) {
-      onError(t('billing.modal.notConfigured', { defaultValue: 'Plan not configured yet' }));
-      return;
-    }
-    setBusyKey(planKey);
-    try {
-      const r = await fetch(`${API_BASE}/api/orgs/${orgId}/billing/checkout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ price_id: priceId }),
-      });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
-        throw new Error(body.detail || `HTTP ${r.status}`);
-      }
-      const { transaction_id } = await r.json();
-      if (!transaction_id) throw new Error('no_txn');
-      // Close the modal first so Paddle's overlay sits above only the page.
-      onClose({});
-      onCheckoutStart(planKey);
-      await openCheckout(transaction_id);
-    } catch (e) {
-      console.error('[change-plan]', e);
-      setBusyKey(null);
-      onError(t('billing.modal.failed', { defaultValue: 'Could not start checkout — try again' }));
-    }
+    // Hand off to the dedicated checkout page — the modal is a pure picker.
+    // The page creates the transaction + mounts Paddle inline; this keeps
+    // the heavy payment iframe out of the Billing view entirely.
+    onClose({});
+    onSubscribe(planKey, billing);
   }
 
   // Highlight the initial plan from ?upgrade= on first mount — visually a
@@ -202,19 +175,15 @@ function ChangePlanModal({
         </div>
       );
     }
-    const isBusy = busyKey === planKey;
     const isFree = planKey === 'free';
     return (
       <button type="button"
               className={`pr-card-cta pr-card-cta--btn${popular ? ' pr-card-cta--solid' : ''}`}
-              onClick={() => handlePick(planKey)}
-              disabled={isBusy || !!busyKey}>
-        {isBusy
-          ? t('pricing.billing.processing', { defaultValue: 'Opening…' })
-          : (isFree
-              ? t('billing.modal.downgrade', { defaultValue: 'Downgrade to Free' })
-              : t('billing.modal.subscribe', { defaultValue: 'Subscribe' }))}
-        {!isBusy && <ArrowRight size={14} weight="bold" />}
+              onClick={() => handlePick(planKey)}>
+        {isFree
+          ? t('billing.modal.downgrade', { defaultValue: 'Downgrade to Free' })
+          : t('billing.modal.subscribe', { defaultValue: 'Subscribe' })}
+        <ArrowRight size={14} weight="bold" />
       </button>
     );
   };
@@ -384,26 +353,11 @@ export default function OrgBilling() {
     return off;
   }, [syncFromPaddle, t]);
 
-  async function handleUpdateCard() {
-    if (!org?.id) return;
-    setBusy(true);
-    try {
-      const r = await fetch(`${API_BASE}/api/orgs/${org.id}/billing/update-payment-method`, {
-        method: 'POST', credentials: 'include',
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const { transaction_id } = await r.json();
-      if (!transaction_id) throw new Error('no_txn');
-      await openCheckout(transaction_id);
-    } catch (e) {
-      console.error('[billing/update-card]', e);
-      setToast({
-        kind: 'err',
-        msg: t('billing.cardUpdateFailed', { defaultValue: 'Could not start card update' })
-      });
-    } finally {
-      setBusy(false);
-    }
+  function handleUpdateCard() {
+    if (!org?.slug) return;
+    // The dedicated checkout page handles the update-payment-method txn +
+    // inline Paddle form, same as plan changes.
+    navigate(`/org/${org.slug}/checkout?action=update-card`);
   }
 
   async function handleCancelConfirm() {
@@ -526,7 +480,7 @@ export default function OrgBilling() {
                     </div>
                     <button type="button" className="auth-btn-check ob-primary-btn"
                       onClick={handleUpdateCard}
-                      disabled={busy || !isPaid}>
+                      disabled={!isPaid}>
                       <PencilSimple size={14} weight="regular" />
                       {t('billing.updateCard', { defaultValue: 'Update card' })}
                     </button>
@@ -634,7 +588,6 @@ export default function OrgBilling() {
       {/* ── Modals + toasts ── */}
       {planOpen && (
         <ChangePlanModal
-          orgId={org?.id}
           currentPlan={planSlug}
           initialPlan={upgradeHint}
           initialCycle={cycleHint}
@@ -644,10 +597,9 @@ export default function OrgBilling() {
               setCancelOpen(true);
             }
           }}
-          onCheckoutStart={() => {
-            // Paddle event listener (above) will refresh state and toast.
-          }}
-          onError={msg => setToast({ kind: 'err', msg })}
+          onSubscribe={(planKey, cycle) =>
+            navigate(`/org/${org?.slug}/checkout?plan=${planKey}&cycle=${cycle}`)
+          }
         />
       )}
       {cancelOpen && (

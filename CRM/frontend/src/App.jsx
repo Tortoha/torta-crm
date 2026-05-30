@@ -38,6 +38,7 @@ const OrgTeam       = lazy(() => import('./Pages/Organization/OrgTeam.jsx'));
 const OrgSettings   = lazy(() => import('./Pages/Organization/OrgSettings.jsx'));
 const OrgBilling    = lazy(() => import('./Pages/Organization/OrgBilling.jsx'));
 const OrgUsage      = lazy(() => import('./Pages/Organization/OrgUsage.jsx'));
+const OrgCheckout   = lazy(() => import('./Pages/Organization/OrgCheckout.jsx'));
 // Project
 const Project       = lazy(() => import('./Pages/Project/Project.jsx'));
 const Analytics     = lazy(() => import('./Pages/Project/Analytics.jsx'));
@@ -123,6 +124,7 @@ function App() {
             <Route path="payments"                element={<OrgPayments />} />
             <Route path="billing"                 element={<OrgBilling />} />
             <Route path="usage"                   element={<OrgUsage />} />
+            <Route path="checkout"                element={<OrgCheckout />} />
             <Route path="team"                    element={<OrgTeam />} />
             <Route path="settings"                element={<OrgSettings />} />
           </Route>

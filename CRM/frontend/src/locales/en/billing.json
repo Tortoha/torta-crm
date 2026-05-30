@@ -74,5 +74,21 @@
       "completed":  "Completed",
       "cancelling": "Ending soon"
     }
+  },
+  "checkout": {
+    "back":          "Back to billing",
+    "titlePlan":     "Subscribe to {{plan}}",
+    "titleCard":     "Update payment method",
+    "priceMonthly":  "${{m}}/mo",
+    "priceYearly":   "${{m}}/mo · billed ${{y}}/year",
+    "summaryPlan":   "Order summary",
+    "summaryCard":   "New card on file",
+    "cardNote":      "Your subscription and plan stay exactly the same — only the saved card changes.",
+    "secure":        "Secure checkout",
+    "byPaddle":      "Payments by Paddle",
+    "preparing":     "Preparing secure checkout…",
+    "error":         "Could not start checkout. Please try again.",
+    "notConfigured": "This plan is not available yet.",
+    "done":          "All set! Taking you back…"
   }
 }
