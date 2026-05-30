@@ -7,6 +7,7 @@ import Modal from './Modal.jsx';
 import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
 import NotificationsBell from './NotificationsBell.jsx';
 import { encodeId } from '../Utils/hashids.js';
+import { DynamicBlock } from '../Utils/DynamicBlock.js';
 import '../Style/Header.css';
 
 /* ── Initials avatar ── */
@@ -414,7 +415,10 @@ function UserMenu({ user, project }) {
   const navigate = useNavigate();
   const { t }    = useTranslation();
   const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(null);
   const wrapRef = useRef(null);
+  // Sliding indicator across the Settings / Pricing rows (follows hover).
+  const { indRef, setItemRef } = DynamicBlock(hovered, open);
 
   useEffect(() => {
     const h = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
@@ -459,12 +463,25 @@ function UserMenu({ user, project }) {
             </div>
           </div>
           <div className="hdr-user-sep" />
-          <button className="hdr-drop-item" onClick={() => { setOpen(false); navigate('/settings/account'); }} type="button">
-            <GearSix className="hdr-drop-icon" /> {t('header.userMenu.settings')}
-          </button>
-          <button className="hdr-drop-item hdr-drop-item--danger" onClick={logout} type="button">
-            <SignOut className="hdr-drop-icon" /> {t('header.userMenu.logout')}
-          </button>
+          <div className="hdr-um-dyn" onMouseLeave={() => setHovered(null)}>
+            <div ref={indRef}
+                 className={`hdr-sw-indicator${hovered === 'logout' ? ' hdr-sw-indicator--danger' : ''}`} />
+            <button ref={setItemRef('settings')} className="hdr-drop-item"
+                    onMouseEnter={() => setHovered('settings')}
+                    onClick={() => { setOpen(false); navigate('/settings/account'); }} type="button">
+              <GearSix className="hdr-drop-icon" /> {t('header.userMenu.settings')}
+            </button>
+            <button ref={setItemRef('pricing')} className="hdr-drop-item"
+                    onMouseEnter={() => setHovered('pricing')}
+                    onClick={() => { setOpen(false); navigate('/pricing'); }} type="button">
+              <Tag className="hdr-drop-icon" /> {t('header.userMenu.pricing', { defaultValue: 'Pricing' })}
+            </button>
+            <button ref={setItemRef('logout')} className="hdr-drop-item hdr-drop-item--danger"
+                    onMouseEnter={() => setHovered('logout')}
+                    onClick={logout} type="button">
+              <SignOut className="hdr-drop-icon" /> {t('header.userMenu.logout')}
+            </button>
+          </div>
         </div>
       </div>
     </div>

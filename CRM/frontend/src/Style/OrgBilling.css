@@ -225,10 +225,10 @@
 }
 
 /* ── Change Plan Modal ────────────────────────────────────────────── */
-/* Wider shell to host 4 real pr-card columns side-by-side. The base
- * .auth-modal is 960px which is too narrow for 4 plan cards + features —
- * 1180px lets each card breathe (~270px each). */
-.cpm-modal--plans                         { width: 1180px; }
+/* Shell tracks the viewport up to 1820px so 5 plan cards get ~340px each
+ * on a wide screen (instead of being fixed-narrow). Never exceeds the
+ * viewport (minus a 40px margin). */
+.cpm-modal--plans                         { width: min(1820px, calc(100vw - 40px)); }
 
 /* Toggle row — center the BillingToggle horizontally with a touch of margin. */
 .cpm-toggle-row                           { display: flex; justify-content: center;
@@ -247,7 +247,8 @@
 /* Highlight ring around the plan the user came from (?upgrade=<plan>). */
 .cpm-plans-grid[data-hint="standard"] .pr-card:nth-child(2),
 .cpm-plans-grid[data-hint="plus"]     .pr-card:nth-child(3),
-.cpm-plans-grid[data-hint="pro"]      .pr-card:nth-child(4) {
+.cpm-plans-grid[data-hint="pro"]      .pr-card:nth-child(4),
+.cpm-plans-grid[data-hint="max"]      .pr-card:nth-child(5) {
   box-shadow: 0 0 0 2px var(--accent), 0 4px 24px rgba(0, 113, 227, 0.18);
 }
 
@@ -269,13 +270,16 @@
                                             transition: opacity 0.2s; }
 .cpm-foot-link:hover                      { opacity: 0.8; }
 
-/* Responsive: 1100px → 2×2, 720px → 1 column. */
-@media (max-width: 1100px) {
-  .cpm-modal--plans                       { width: 760px; }
+/* 5 cols only while the viewport is genuinely wide (≥1660px → modal ~1620px
+ * → ~310px/card). Below that, 3 → 2 → 1 so cards never get squeezed. */
+@media (max-width: 1660px) {
+  .cpm-plans-grid                         { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 1040px) {
   .cpm-plans-grid                         { grid-template-columns: repeat(2, 1fr); }
 }
-@media (max-width: 720px) {
-  .cpm-modal--plans                       { width: calc(100vw - 32px); }
+@media (max-width: 680px) {
+  .cpm-modal--plans                       { width: calc(100vw - 24px); }
   .cpm-plans-grid                         { grid-template-columns: 1fr; }
 }
 

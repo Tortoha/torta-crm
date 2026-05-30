@@ -29,9 +29,10 @@ const FRAME_TARGET = 'paddle-checkout-frame';
 // Plan display data (mirrors Pricing). Kept local — tiny + avoids importing
 // the whole Pricing module just for names/prices.
 const PLAN_META = {
-  standard: { name: 'Standard', monthly: 10,  yearlyTotal: 100  },
-  plus:     { name: 'Plus',     monthly: 25,  yearlyTotal: 250  },
-  pro:      { name: 'Pro',      monthly: 100, yearlyTotal: 1000 },
+  standard: { name: 'Standard', monthly: 10,  yearlyTotal: 110  },
+  plus:     { name: 'Plus',     monthly: 25,  yearlyTotal: 275  },
+  pro:      { name: 'Pro',      monthly: 30,  yearlyTotal: 330  },
+  max:      { name: 'Max',      monthly: 599, yearlyTotal: 6589 },
 };
 
 export default function OrgCheckout() {

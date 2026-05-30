@@ -417,7 +417,13 @@
   transition:
     transform 0.55s var(--ease-smooth),
     height 0.55s var(--ease-smooth),
+    background 0.3s ease,
     opacity 0.2s ease;
+}
+
+/* Danger variant — indicator turns red as it slides onto the Log out row. */
+.hdr-sw-indicator--danger {
+  background: var(--delete-tint);
 }
 
 .hdr-switcher-item {
@@ -789,6 +795,27 @@
 .hdr-drop-item:not(.hdr-drop-item--danger):hover {
   background: var(--accent-tint);
   color: var(--accent);
+}
+
+/* ── Dynamic Block wrapper (Settings / Pricing rows) ──────────────
+   The sliding .hdr-sw-indicator provides the hover background, so the
+   per-item :hover bg is suppressed here; only the text/icon color
+   change stays (driven by real hover, in sync with the indicator). */
+.hdr-um-dyn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hdr-um-dyn .hdr-drop-item {
+  position: relative;
+  z-index: 2;
+}
+
+.hdr-um-dyn .hdr-drop-item:hover,
+[data-theme="dark"] .hdr-um-dyn .hdr-drop-item--danger:hover {
+  background: transparent;
 }
 
 .hdr-drop-item--danger {

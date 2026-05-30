@@ -108,15 +108,28 @@ def _resolve_db_config():
     """
     url = os.getenv("DATABASE_URL", "").strip()
     if url:
-        from urllib.parse import urlparse, unquote
+        from urllib.parse import urlparse, unquote, parse_qs
         u = urlparse(url)
-        return {
+        q = parse_qs(u.query or "")
+        cfg = {
             "host":     u.hostname or "localhost",
             "port":     int(u.port or 5432),
             "user":     unquote(u.username or "postgres"),
             "password": unquote(u.password or ""),
             "dbname":   (u.path or "/").lstrip("/") or "postgres",
         }
+        # SSL: honor an explicit sslmode in the URL (Neon ships
+        # ?sslmode=require). When absent, force SSL for any REMOTE host —
+        # managed Postgres (Neon/Supabase/RDS) rejects unencrypted — but
+        # leave Fly internal (.flycast/.internal) and localhost plaintext.
+        host = cfg["host"]
+        sslmode = q.get("sslmode", [None])[0]
+        if sslmode:
+            cfg["sslmode"] = sslmode
+        elif host not in ("localhost", "127.0.0.1") \
+                and not host.endswith(".flycast") and not host.endswith(".internal"):
+            cfg["sslmode"] = "require"
+        return cfg
     return {
         "host":     os.getenv("DB_HOST",     "localhost"),
         "port":     int(os.getenv("DB_PORT", "5432")),
@@ -144,12 +157,29 @@ GOOGLE_CLIENT_ID        = os.getenv("GOOGLE_CLIENT_ID",     "")
 GOOGLE_CLIENT_SECRET    = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI     = os.getenv("GOOGLE_REDIRECT_URI",  "http://localhost:8001/api/auth/google/callback")
 
-# ── AWS S3 ──────────────────────────────────────────────────────
+# ── Object storage — Cloudflare R2 (preferred) or AWS S3 (fallback) ──
+# R2 is S3-compatible: same boto3 client, just a different endpoint_url +
+# credentials. R2 has ZERO egress fees (vs S3/CloudFront ~$0.085/GB) which
+# is the reason we migrated — image-heavy storefronts on the Pro/Max tiers
+# could otherwise rack up egress that exceeds the plan price.
 AWS_ACCESS_KEY_ID     = os.getenv("AWS_ACCESS_KEY_ID",     "")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
 AWS_S3_BUCKET         = os.getenv("AWS_S3_BUCKET",         "torta-crm")
 AWS_S3_REGION         = os.getenv("AWS_S3_REGION",         "eu-central-1")
 AWS_CLOUDFRONT_URL    = os.getenv("AWS_CLOUDFRONT_URL",    "")
+
+# Cloudflare R2 — when these are set, all uploads/reads go to R2 instead of S3.
+R2_ENDPOINT           = os.getenv("R2_ENDPOINT",           "")  # https://<acct>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID      = os.getenv("R2_ACCESS_KEY_ID",      "")
+R2_SECRET_ACCESS_KEY  = os.getenv("R2_SECRET_ACCESS_KEY",  "")
+R2_BUCKET             = os.getenv("R2_BUCKET",             "torta-crm")
+R2_PUBLIC_URL         = os.getenv("R2_PUBLIC_URL",         "")  # https://pub-xxxx.r2.dev or custom domain
+
+# R2 takes precedence when fully configured. The whole app reads STORAGE_*
+# so switching providers is one flag, not a sweep through every call site.
+R2_ENABLED      = bool(R2_ENDPOINT and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY)
+STORAGE_BUCKET  = R2_BUCKET if R2_ENABLED else AWS_S3_BUCKET
+STORAGE_ENABLED = R2_ENABLED or bool(AWS_ACCESS_KEY_ID)
 
 # ── Paddle (SaaS billing, Merchant of Record) ───────────────────────
 # This block is for OUR billing — i.e. how Torta charges tenants for their
@@ -166,7 +196,7 @@ PADDLE_API_KEY        = os.getenv("PADDLE_API_KEY",        "")
 PADDLE_WEBHOOK_SECRET = os.getenv("PADDLE_WEBHOOK_SECRET", "")
 PADDLE_CLIENT_TOKEN   = os.getenv("PADDLE_CLIENT_TOKEN",   "")
 
-# 6 price IDs (3 plans × 2 billing cycles). Free is not billable.
+# 8 price IDs (4 paid plans × 2 billing cycles). Free is not billable.
 # Frontend reads these via GET /api/billing/config; backend reverse-maps
 # them via _PADDLE_PRICE_TO_PLAN to resolve plan_slug at webhook + checkout.
 PADDLE_PRICE_STANDARD_MONTHLY = os.getenv("PADDLE_PRICE_STANDARD_MONTHLY", "")
@@ -175,6 +205,8 @@ PADDLE_PRICE_PLUS_MONTHLY     = os.getenv("PADDLE_PRICE_PLUS_MONTHLY",     "")
 PADDLE_PRICE_PLUS_YEARLY      = os.getenv("PADDLE_PRICE_PLUS_YEARLY",      "")
 PADDLE_PRICE_PRO_MONTHLY      = os.getenv("PADDLE_PRICE_PRO_MONTHLY",      "")
 PADDLE_PRICE_PRO_YEARLY       = os.getenv("PADDLE_PRICE_PRO_YEARLY",       "")
+PADDLE_PRICE_MAX_MONTHLY      = os.getenv("PADDLE_PRICE_MAX_MONTHLY",      "")
+PADDLE_PRICE_MAX_YEARLY       = os.getenv("PADDLE_PRICE_MAX_YEARLY",       "")
 
 # Reverse map (price_id → (plan_slug, billing_cycle)). Built once at module load.
 # Used by the webhook handler to derive the plan from a Paddle event — we never
@@ -187,18 +219,39 @@ _PADDLE_PRICE_TO_PLAN: "dict[str, tuple[str, str]]" = {
         (PADDLE_PRICE_PLUS_YEARLY,      "plus",     "yearly"),
         (PADDLE_PRICE_PRO_MONTHLY,      "pro",      "monthly"),
         (PADDLE_PRICE_PRO_YEARLY,       "pro",      "yearly"),
+        (PADDLE_PRICE_MAX_MONTHLY,      "max",      "monthly"),
+        (PADDLE_PRICE_MAX_YEARLY,       "max",      "yearly"),
     ] if pid
 }
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 def _s3_client():
+    """Returns a boto3 client pointed at R2 (when configured) or AWS S3.
+    R2 is S3-compatible — only endpoint_url + creds + region differ."""
+    if R2_ENABLED:
+        return boto3.client(
+            "s3",
+            endpoint_url=R2_ENDPOINT,
+            region_name="auto",
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        )
     return boto3.client(
         "s3",
         region_name=AWS_S3_REGION,
         aws_access_key_id=AWS_ACCESS_KEY_ID,
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     )
+
+def _public_url_for(key: str) -> str:
+    """Public URL a browser uses to fetch the object. R2 → r2.dev / custom
+    domain; S3 → CloudFront if set, else the direct bucket URL."""
+    if R2_ENABLED and R2_PUBLIC_URL:
+        return f"{R2_PUBLIC_URL.rstrip('/')}/{key}"
+    if AWS_CLOUDFRONT_URL:
+        return f"{AWS_CLOUDFRONT_URL.rstrip('/')}/{key}"
+    return f"https://{AWS_S3_BUCKET}.s3.{AWS_S3_REGION}.amazonaws.com/{key}"
 
 def s3_upload(data: io.BytesIO, key: str, content_type: str = "image/webp",
               cache_control: str = "max-age=31536000",
@@ -209,14 +262,12 @@ def s3_upload(data: io.BytesIO, key: str, content_type: str = "image/webp",
     # that sneaks past the allowlist (defense-in-depth against stored XSS).
     if content_disposition:
         extra["ContentDisposition"] = content_disposition
-    s3.upload_fileobj(data, AWS_S3_BUCKET, key, ExtraArgs=extra)
-    if AWS_CLOUDFRONT_URL:
-        return f"{AWS_CLOUDFRONT_URL.rstrip('/')}/{key}"
-    return f"https://{AWS_S3_BUCKET}.s3.{AWS_S3_REGION}.amazonaws.com/{key}"
+    s3.upload_fileobj(data, STORAGE_BUCKET, key, ExtraArgs=extra)
+    return _public_url_for(key)
 
 def s3_delete(key: str) -> None:
     try:
-        _s3_client().delete_object(Bucket=AWS_S3_BUCKET, Key=key)
+        _s3_client().delete_object(Bucket=STORAGE_BUCKET, Key=key)
     except Exception:
         pass
 
@@ -241,7 +292,7 @@ def s3_delete_prefix(prefix: str) -> None:
     try:
         s3 = _s3_client()
         paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=AWS_S3_BUCKET, Prefix=prefix):
+        for page in paginator.paginate(Bucket=STORAGE_BUCKET, Prefix=prefix):
             objs = page.get("Contents") or []
             if not objs:
                 continue
@@ -249,7 +300,7 @@ def s3_delete_prefix(prefix: str) -> None:
             for i in range(0, len(objs), 1000):
                 chunk = objs[i:i+1000]
                 s3.delete_objects(
-                    Bucket=AWS_S3_BUCKET,
+                    Bucket=STORAGE_BUCKET,
                     Delete={"Objects": [{"Key": o["Key"]} for o in chunk], "Quiet": True},
                 )
     except Exception:
@@ -3783,17 +3834,25 @@ def run_migrations():
             cur.execute("CREATE INDEX IF NOT EXISTS ix_subs_paddle_sub ON crm_subscriptions(paddle_subscription_id) WHERE paddle_subscription_id IS NOT NULL")
             cur.execute("CREATE INDEX IF NOT EXISTS ix_subs_paddle_cust ON crm_subscriptions(paddle_customer_id) WHERE paddle_customer_id IS NOT NULL")
 
-            # ── Seed / refresh the 4 canonical plans BEFORE the FK so the 'free'
-            # default on existing org rows resolves against a populated plans table. ──
+            # ── Seed / refresh the 5 canonical plans BEFORE the FK so the 'free'
+            # default on existing org rows resolves against a populated plans table.
+            # Runs every startup (ON CONFLICT DO UPDATE) so limit/price changes here
+            # propagate on restart — including the $100→$30 Pro reprice + new Max tier. ──
             # null = unlimited, 0 on broadcasts_per_day_max = broadcasts blocked
             # (Free transactional emails are unrestricted via _email_is_transactional). ──
             import json as _json
+            # ── 5-tier ladder (decoy + anchor pricing) ──
+            # Free   — bait (generous storefront users → memory fills → upgrade pressure)
+            # Standard $10 — affordable entry ("competitors start at $25")
+            # Plus $25     — DECOY: deliberately weak vs Pro for +$5 (asymmetric dominance)
+            # Pro  $30  ⭐ — the hero / target tier (Pro dominates Plus on every metric)
+            # Max  $599    — enterprise anchor (makes $30 Pro feel free)
             PLANS = [
                 ("free", "Free", 0, 0, {
                     "projects_max": 1, "team_members_max": 1,
-                    "storefront_users_max": 100,
-                    "storage_bytes_max": 268435456,           # 0.25 GB
-                    "db_size_bytes_max": 104857600,           # 100 MB
+                    "storefront_users_max": 1000,
+                    "storage_bytes_max": 104857600,           # 100 MB
+                    "db_size_bytes_max": 26214400,            # 25 MB
                     "broadcasts_per_day_max": 0,              # blocks campaign sends
                     "api_requests_per_minute_max": 60,
                     "features": [],
@@ -3804,30 +3863,41 @@ def run_migrations():
                     "storefront_users_max": 5000,
                     "storage_bytes_max": 26843545600,         # 25 GB
                     "db_size_bytes_max": 5368709120,          # 5 GB
-                    "broadcasts_per_day_max": 1500,
-                    "api_requests_per_minute_max": 600,
+                    "broadcasts_per_day_max": 1000,
+                    "api_requests_per_minute_max": 500,
                     "features": ["webhooks"],
                     "support_level": "email",
                 }),
                 ("plus", "Plus", 2, 25, {
-                    "projects_max": 10, "team_members_max": 25,
-                    "storefront_users_max": 25000,
-                    "storage_bytes_max": 107374182400,        # 100 GB
-                    "db_size_bytes_max": 26843545600,         # 25 GB
-                    "broadcasts_per_day_max": 5000,
-                    "api_requests_per_minute_max": 3000,
-                    "features": ["webhooks", "cross_org_analytics"],
+                    "projects_max": 10, "team_members_max": 10,
+                    "storefront_users_max": 12500,
+                    "storage_bytes_max": 53687091200,         # 50 GB
+                    "db_size_bytes_max": 16106127360,         # 15 GB
+                    "broadcasts_per_day_max": 2000,
+                    "api_requests_per_minute_max": 1500,
+                    "features": ["webhooks"],
                     "support_level": "email",
                 }),
-                ("pro", "Pro", 3, 100, {
-                    "projects_max": None, "team_members_max": None,
-                    "storefront_users_max": None,
-                    "storage_bytes_max": 1099511627776,       # 1 TB
-                    "db_size_bytes_max": 268435456000,        # 250 GB
-                    "broadcasts_per_day_max": 50000,
-                    "api_requests_per_minute_max": 10000,
-                    "features": ["webhooks", "cross_org_analytics", "priority_compute"],
+                ("pro", "Pro", 3, 30, {
+                    "projects_max": 150, "team_members_max": 250,
+                    "storefront_users_max": 100000,
+                    "storage_bytes_max": 107374182400,        # 100 GB
+                    "db_size_bytes_max": 26843545600,         # 25 GB
+                    "broadcasts_per_day_max": 10000,
+                    "api_requests_per_minute_max": 3000,
+                    "features": ["webhooks", "cross_org_analytics", "audit_log", "priority_compute"],
                     "support_level": "priority",
+                }),
+                ("max", "Max", 4, 599, {
+                    "projects_max": 1000, "team_members_max": 5000,
+                    "storefront_users_max": 1000000,
+                    "storage_bytes_max": 2199023255552,       # 2 TB
+                    "db_size_bytes_max": 268435456000,        # 250 GB
+                    "broadcasts_per_day_max": 30000,
+                    "api_requests_per_minute_max": 10000,
+                    "features": ["webhooks", "cross_org_analytics", "audit_log",
+                                 "priority_compute", "sso", "white_label"],
+                    "support_level": "dedicated",
                 }),
             ]
             for slug, name, ord_, price, limits in PLANS:
@@ -5224,9 +5294,9 @@ _PLAN_FREE_FALLBACK = {
     "slug": "free", "name": "Free", "price_usd": 0.0,
     "limits": {
         "projects_max": 1, "team_members_max": 1,
-        "storefront_users_max": 100,
-        "storage_bytes_max": 268435456,
-        "db_size_bytes_max": 104857600,
+        "storefront_users_max": 1000,
+        "storage_bytes_max": 104857600,           # 100 MB
+        "db_size_bytes_max": 26214400,            # 25 MB
         "broadcasts_per_day_max": 0,
         "api_requests_per_minute_max": 60,
         "features": [],
@@ -5375,8 +5445,8 @@ def _reconcile_org_storage(org_id: int) -> dict:
     if not org_id:
         detail.update(status="error", reason="no_org_id")
         return detail
-    if not (S3_AVAILABLE and AWS_ACCESS_KEY_ID):
-        detail.update(status="skipped", reason="s3_not_configured")
+    if not (S3_AVAILABLE and STORAGE_ENABLED):
+        detail.update(status="skipped", reason="storage_not_configured")
         return detail
     try:
         rows = db_all("SELECT id, api_key FROM crm_projects WHERE org_id=%s", (org_id,))
@@ -5394,7 +5464,7 @@ def _reconcile_org_storage(org_id: int) -> dict:
             project_count = 0
             prefix = f"projects/{pid}/"
             paginator = s3.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=AWS_S3_BUCKET, Prefix=prefix):
+            for page in paginator.paginate(Bucket=STORAGE_BUCKET, Prefix=prefix):
                 contents = page.get("Contents") or []
                 for obj in contents:
                     project_total += int(obj.get("Size") or 0)
@@ -7039,6 +7109,10 @@ def get_billing_config():
             "pro": {
                 "monthly": PADDLE_PRICE_PRO_MONTHLY,
                 "yearly":  PADDLE_PRICE_PRO_YEARLY,
+            },
+            "max": {
+                "monthly": PADDLE_PRICE_MAX_MONTHLY,
+                "yearly":  PADDLE_PRICE_MAX_YEARLY,
             },
         },
     }
@@ -14928,7 +15002,7 @@ async def upload_image(
 
     filename = f"{secrets.token_hex(16)}.webp"
 
-    if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
+    if S3_AVAILABLE and STORAGE_ENABLED:
         folder = f"projects/{project_id}/products" if project_id else "products"
         key = f"{folder}/{filename}"
         # Plan-gate: org storage budget. Legacy avatar-style uploads without a
@@ -15006,7 +15080,7 @@ async def upload_media(
             raise HTTPException(400, f"Mime mismatch: file says '{declared}', extension says '{expected}'")
 
     filename = f"{secrets.token_hex(16)}.{ext}"
-    if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
+    if S3_AVAILABLE and STORAGE_ENABLED:
         folder = f"projects/{project_id}/products" if project_id else "products"
         key = f"{folder}/{filename}"
         org_id = _project_org_id(project_id) if project_id else None
@@ -15124,7 +15198,7 @@ async def upload_file(
 
     filename = f"{secrets.token_hex(12)}_{safe_name}"
 
-    if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
+    if S3_AVAILABLE and STORAGE_ENABLED:
         folder = f"projects/{project_id}/files" if project_id else "files"
         key = f"{folder}/{filename}"
         org_id = _project_org_id(project_id) if project_id else None
@@ -15169,7 +15243,7 @@ async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_c
     except Exception:
         raise HTTPException(400, "Invalid image file")
 
-    if S3_AVAILABLE and AWS_ACCESS_KEY_ID:
+    if S3_AVAILABLE and STORAGE_ENABLED:
         # Уникальный ключ с меткой времени — новый URL каждый раз, никакого кеша
         ts  = int(time.time())
         key = f"avatars/{user['id']}/avatar_{ts}.webp"
@@ -22430,6 +22504,50 @@ def email_template_get(etype: str, project_id: int = Query(...), user: dict = De
 
 
 @app.put("/api/email-templates/{etype}")
+def _collect_storage_urls(blocks) -> set:
+    """Recursively pull every URL inside an email blocks structure that points
+    at OUR object storage (R2 / CloudFront / S3). Used to garbage-collect
+    images dropped from a template on save."""
+    prefixes = tuple(p for p in (
+        R2_PUBLIC_URL.rstrip("/") if R2_PUBLIC_URL else "",
+        AWS_CLOUDFRONT_URL.rstrip("/") if AWS_CLOUDFRONT_URL else "",
+        f"https://{AWS_S3_BUCKET}.s3.{AWS_S3_REGION}.amazonaws.com",
+    ) if p)
+    out: set = set()
+    def walk(x):
+        if isinstance(x, str):
+            if prefixes and x.startswith(prefixes):
+                out.add(x)
+        elif isinstance(x, dict):
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    walk(blocks)
+    return out
+
+
+def _gc_email_images(old_blocks, new_blocks, project_id: int) -> None:
+    """Delete storage objects for images removed from an email template —
+    unless the same URL is still referenced by another email template in this
+    project (don't delete a shared image). Best-effort; never raises."""
+    try:
+        removed = _collect_storage_urls(old_blocks) - _collect_storage_urls(new_blocks)
+        for url in removed:
+            still = db_one(
+                "SELECT 1 FROM crm_email_templates "
+                "WHERE project_id=%s AND blocks::text LIKE %s LIMIT 1",
+                (project_id, f"%{url}%"))
+            if still:
+                continue  # still used elsewhere in this project's emails
+            key = s3_key_from_url(url)
+            if key:
+                s3_delete(key)
+    except Exception as e:
+        print(f"[email/gc] project={project_id} cleanup skipped: {e}")
+
+
 def email_template_save(etype: str, req: EmailTemplateSave,
                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
@@ -22450,6 +22568,8 @@ def email_template_save(etype: str, req: EmailTemplateSave,
             (project_id, etype, sanitize(subject), json.dumps(blocks))
         )
         conn.commit()
+    # GC images that were removed from the template in this edit.
+    _gc_email_images(cur_blocks, blocks, project_id)
     return {"ok": True}
 
 

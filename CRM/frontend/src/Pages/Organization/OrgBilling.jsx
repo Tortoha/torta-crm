@@ -138,7 +138,7 @@ function CancelModal({ planName, periodEnd, busy, onCancel, onConfirm }) {
 // PlanCard + BillingToggle so the visual matches /pricing exactly —
 // no parallel design to maintain.
 
-const PLAN_KEYS = ['free', 'standard', 'plus', 'pro'];
+const PLAN_KEYS = ['free', 'standard', 'plus', 'pro', 'max'];
 
 function ChangePlanModal({
   currentPlan, initialPlan, initialCycle,
@@ -224,9 +224,9 @@ function ChangePlanModal({
             {PLAN_KEYS.map(k => (
               <PlanCard key={k}
                         planKey={k}
-                        popular={k === 'standard'}
+                        popular={k === 'pro'}
                         billing={billing}
-                        ctaSlot={ctaForPlan(k, k === 'standard')} />
+                        ctaSlot={ctaForPlan(k, k === 'pro')} />
             ))}
           </div>
 

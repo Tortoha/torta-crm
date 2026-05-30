@@ -104,15 +104,26 @@ def _resolve_db_config():
     docker-compose and native dev .env files. Mirror of CRM backend logic."""
     url = os.getenv("DATABASE_URL", "").strip()
     if url:
-        from urllib.parse import urlparse, unquote
+        from urllib.parse import urlparse, unquote, parse_qs
         u = urlparse(url)
-        return {
+        q = parse_qs(u.query or "")
+        cfg = {
             "host":     u.hostname or "localhost",
             "port":     int(u.port or 5432),
             "user":     unquote(u.username or "postgres"),
             "password": unquote(u.password or ""),
             "dbname":   (u.path or "/").lstrip("/") or "postgres",
         }
+        # SSL: honor URL sslmode (Neon ships ?sslmode=require); else force SSL
+        # for remote managed Postgres, leave Fly internal / localhost plaintext.
+        host = cfg["host"]
+        sslmode = q.get("sslmode", [None])[0]
+        if sslmode:
+            cfg["sslmode"] = sslmode
+        elif host not in ("localhost", "127.0.0.1") \
+                and not host.endswith(".flycast") and not host.endswith(".internal"):
+            cfg["sslmode"] = "require"
+        return cfg
     return {
         "host":     os.getenv("DB_HOST",     "localhost"),
         "port":     int(os.getenv("DB_PORT", "5432")),

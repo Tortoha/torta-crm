@@ -7,6 +7,7 @@
     "userMenu": {
       "ariaLabel": "Меню пользователя",
       "settings": "Настройки",
+      "pricing": "Тарифы",
       "logout": "Выйти"
     },
     "org": {

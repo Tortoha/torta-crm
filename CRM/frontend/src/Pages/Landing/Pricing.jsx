@@ -26,12 +26,13 @@ import { API_BASE } from '../../api.js';
 import '../../Style/Landing.css';
 import '../../Style/Products.css';   // po-set-table + po-set-row primitives
 
-const PLAN_KEYS = ['free', 'standard', 'plus', 'pro'];
+const PLAN_KEYS = ['free', 'standard', 'plus', 'pro', 'max'];
 const COMPARE_GROUPS = ['limits', 'features'];
 
 // Yearly numeric values — used to render the "billed as $X/year" sub-line
 // below the monthly equivalent. Free stays at $0/year, so it's omitted.
-const YEARLY_TOTAL = { standard: 100, plus: 250, pro: 1000 };
+// Yearly = monthly × 11 (1 month free, ~8% off).
+const YEARLY_TOTAL = { standard: 110, plus: 275, pro: 330, max: 6589 };
 
 // ── Billing toggle ───────────────────────────────────────────────────────────
 
@@ -266,7 +267,7 @@ export default function Pricing() {
               {PLAN_KEYS.map(k => (
                 <PlanCard key={k}
                           planKey={k}
-                          popular={k === 'standard'}
+                          popular={k === 'pro'}
                           billing={billing}
                           user={user}
                           ownedOrgs={ownedOrgs} />
