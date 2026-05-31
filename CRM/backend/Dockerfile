@@ -56,6 +56,12 @@ COPY --from=builder --chown=app:app /root/.local /home/app/.local
 # (much heavier) pip-install layer cache.
 COPY --chown=app:app . /app
 
+# git doesn't track empty dirs, so `uploads/` is absent in CI / clean-checkout
+# builds. main.py runs os.makedirs("uploads") at import — that fails when /app
+# stays root-owned (WORKDIR created it as root, before USER). Pre-create the dir
+# and hand the whole /app tree to the unprivileged run user.
+RUN mkdir -p /app/uploads && chown -R app:app /app
+
 USER app
 
 EXPOSE 8001
