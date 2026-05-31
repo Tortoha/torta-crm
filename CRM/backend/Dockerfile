@@ -76,5 +76,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # event so each worker creates its own pool AFTER fork. For now Postgres
 # is the bigger bottleneck anyway — keep this single-worker, lean on the
 # bumped DB memory (1 GB) for headroom.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", \
-     "--proxy-headers", "--forwarded-allow-ips=*"]
+# Shell form (not exec array) so ${PORT} expands at runtime: Cloud Run injects
+# its own PORT (8080 by default) and routes to it; Fly/Docker fall back to the
+# ENV PORT=8001 above. `exec` makes uvicorn PID 1 so it receives SIGTERM
+# directly (graceful shutdown on Cloud Run scale-down / Fly redeploy).
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001} \
+     --proxy-headers --forwarded-allow-ips=*

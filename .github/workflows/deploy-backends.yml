@@ -1,0 +1,78 @@
+name: Deploy backends to Cloud Run
+
+# Auto-deploy the FastAPI backends to Google Cloud Run on push to main.
+# Mirrors the Cloudflare Workers auto-deploy used for the frontends.
+#
+# Per-service path filtering: api-crm rebuilds only when CRM/backend changes,
+# api only when External changes. Both rebuild on a manual run.
+#
+# Secrets/env vars are NOT stored here: `gcloud run deploy` WITHOUT an
+# env-vars file preserves the env vars already set on the live service, so
+# app secrets stay in Cloud Run only. The GCP_SA_KEY secret just grants
+# deploy permission (service account github-deployer@tortacrm).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'CRM/backend/**'
+      - 'External/**'
+      - '.github/workflows/deploy-backends.yml'
+  workflow_dispatch: {}
+
+env:
+  PROJECT_ID: tortacrm
+  REGION: europe-west1
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      crm: ${{ steps.filter.outputs.crm }}
+      ext: ${{ steps.filter.outputs.ext }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            crm:
+              - 'CRM/backend/**'
+            ext:
+              - 'External/**'
+
+  deploy-api-crm:
+    needs: changes
+    if: ${{ needs.changes.outputs.crm == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy api-crm (CRM backend)
+        run: |
+          gcloud run deploy api-crm \
+            --source CRM/backend \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --quiet
+
+  deploy-api:
+    needs: changes
+    if: ${{ needs.changes.outputs.ext == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy api (External API)
+        run: |
+          gcloud run deploy api \
+            --source External \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --quiet

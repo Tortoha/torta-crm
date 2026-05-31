@@ -58,4 +58,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://localhost:8000/docs > /dev/null || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+# Shell form so ${PORT} expands at runtime: Cloud Run injects its own PORT
+# (8080) and routes to it; Fly/Docker fall back to ENV PORT=8000 above.
+# `exec` makes uvicorn PID 1 → receives SIGTERM for graceful shutdown.
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} \
+     --proxy-headers --forwarded-allow-ips=*
