@@ -3852,7 +3852,7 @@ def run_migrations():
                     "projects_max": 1, "team_members_max": 1,
                     "storefront_users_max": 1000,
                     "storage_bytes_max": 104857600,           # 100 MB
-                    "db_size_bytes_max": 26214400,            # 25 MB
+                    "db_size_bytes_max": 20971520,            # 20 MB
                     "broadcasts_per_day_max": 0,              # blocks campaign sends
                     "api_requests_per_minute_max": 60,
                     "features": [],
@@ -3861,8 +3861,8 @@ def run_migrations():
                 ("standard", "Standard", 1, 10, {
                     "projects_max": 3, "team_members_max": 3,
                     "storefront_users_max": 5000,
-                    "storage_bytes_max": 26843545600,         # 25 GB
-                    "db_size_bytes_max": 5368709120,          # 5 GB
+                    "storage_bytes_max": 16106127360,         # 15 GB
+                    "db_size_bytes_max": 3221225472,          # 3 GB
                     "broadcasts_per_day_max": 1000,
                     "api_requests_per_minute_max": 500,
                     "features": ["webhooks"],
@@ -3871,8 +3871,8 @@ def run_migrations():
                 ("plus", "Plus", 2, 25, {
                     "projects_max": 10, "team_members_max": 10,
                     "storefront_users_max": 12500,
-                    "storage_bytes_max": 53687091200,         # 50 GB
-                    "db_size_bytes_max": 16106127360,         # 15 GB
+                    "storage_bytes_max": 42949672960,         # 40 GB
+                    "db_size_bytes_max": 8589934592,          # 8 GB
                     "broadcasts_per_day_max": 2000,
                     "api_requests_per_minute_max": 1500,
                     "features": ["webhooks"],
@@ -3882,7 +3882,7 @@ def run_migrations():
                     "projects_max": 150, "team_members_max": 250,
                     "storefront_users_max": 100000,
                     "storage_bytes_max": 107374182400,        # 100 GB
-                    "db_size_bytes_max": 26843545600,         # 25 GB
+                    "db_size_bytes_max": 21474836480,         # 20 GB
                     "broadcasts_per_day_max": 10000,
                     "api_requests_per_minute_max": 3000,
                     "features": ["webhooks", "cross_org_analytics", "audit_log", "priority_compute"],
@@ -3892,7 +3892,7 @@ def run_migrations():
                     "projects_max": 1000, "team_members_max": 5000,
                     "storefront_users_max": 1000000,
                     "storage_bytes_max": 2199023255552,       # 2 TB
-                    "db_size_bytes_max": 268435456000,        # 250 GB
+                    "db_size_bytes_max": 274877906944,        # 256 GB
                     "broadcasts_per_day_max": 30000,
                     "api_requests_per_minute_max": 10000,
                     "features": ["webhooks", "cross_org_analytics", "audit_log",
@@ -5296,7 +5296,7 @@ _PLAN_FREE_FALLBACK = {
         "projects_max": 1, "team_members_max": 1,
         "storefront_users_max": 1000,
         "storage_bytes_max": 104857600,           # 100 MB
-        "db_size_bytes_max": 26214400,            # 25 MB
+        "db_size_bytes_max": 20971520,            # 20 MB
         "broadcasts_per_day_max": 0,
         "api_requests_per_minute_max": 60,
         "features": [],
