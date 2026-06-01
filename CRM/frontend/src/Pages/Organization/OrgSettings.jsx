@@ -89,11 +89,13 @@ function OrgCurrencyWarningModal({ fromCode, toCode, onCancel, onConfirm }) {
 // ── Delete organization modal ─────────────────────────────────────────
 // Blocked while the org still has projects (backend rejects it too). When
 // allowed, requires typing the org name to arm the irreversible delete.
-function DeleteOrgModal({ orgName, projectCount, busy, error, onCancel, onConfirm }) {
+function DeleteOrgModal({ orgName, projectCount, planSlug, busy, error, onCancel, onConfirm }) {
   const { t } = useTranslation();
   const [confirmText, setConfirmText] = useState('');
   const blocked = (projectCount || 0) > 0;
   const armed = !blocked && confirmText.trim() === orgName.trim() && !busy;
+  const isPaid = planSlug && planSlug !== 'free';
+  const planLabel = isPaid ? planSlug.charAt(0).toUpperCase() + planSlug.slice(1) : '';
   return (
     <div className="auth-modal-overlay" onClick={onCancel}>
       <div className="auth-modal" onClick={e => e.stopPropagation()} style={{ width: 480 }}>
@@ -113,6 +115,11 @@ function DeleteOrgModal({ orgName, projectCount, busy, error, onCancel, onConfir
               <p className="cpm-section-hint" style={{ marginTop: 0 }}>
                 {t('org.settings.deleteModal.allowedPre')}<b>{orgName}</b>{t('org.settings.deleteModal.allowedPost')}
               </p>
+              {isPaid && (
+                <p className="auth-msg auth-msg--err" style={{ marginTop: 0 }}>
+                  {t('org.settings.deleteModal.billingWarning', { plan: planLabel })}
+                </p>
+              )}
               <input className="crm-input" placeholder={orgName} value={confirmText}
                 onChange={e => setConfirmText(e.target.value)}
                 style={{ marginTop: 4 }} autoFocus />
@@ -446,6 +453,7 @@ export default function OrgSettings() {
         <DeleteOrgModal
           orgName={org?.name || ''}
           projectCount={projectCount}
+          planSlug={org?.plan_slug}
           busy={deleting}
           error={deleteErr}
           onCancel={() => { if (!deleting) setShowDelete(false); }}

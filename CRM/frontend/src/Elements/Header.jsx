@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen, Tag, List } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
+import CreateOrgForm from './CreateOrgForm.jsx';
 import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
 import NotificationsBell from './NotificationsBell.jsx';
 import { encodeId } from '../Utils/hashids.js';
@@ -60,9 +61,6 @@ function OrgSwitcher({ project, org: orgProp }) {
   const [loaded,  setLoaded]  = useState(false);
   const [query,   setQuery]   = useState('');
   const [modal,   setModal]   = useState(false);
-  const [newName, setNewName] = useState('');
-  const [saving,  setSaving]  = useState(false);
-  const [err,     setErr]     = useState('');
   const wrapRef   = useRef(null);
   const searchRef = useRef(null);
 
@@ -76,6 +74,9 @@ function OrgSwitcher({ project, org: orgProp }) {
   const orgId   = orgProp?.id   ?? project?.org_id   ?? null;
   const orgName = orgProp?.name ?? project?.org_name ?? '…';
   const orgSlug = orgProp?.slug ?? project?.org_slug ?? '';
+  // Subscription tier pill next to the org name (Supabase/Neon style).
+  const orgPlan   = orgProp?.plan_slug ?? project?.plan_slug ?? null;
+  const planLabel = orgPlan ? orgPlan.charAt(0).toUpperCase() + orgPlan.slice(1) : null;
 
   const activeId = orgId;
   const curId    = hovId ?? activeId;
@@ -114,28 +115,9 @@ function OrgSwitcher({ project, org: orgProp }) {
     setQuery('');
   };
 
-  const openModal  = () => { setOpen(false); setModal(true); setNewName(''); setErr(''); };
-  const closeModal = () => { setModal(false); setNewName(''); setErr(''); };
-
-  const createOrg = async e => {
-    e.preventDefault();
-    const name = newName.trim();
-    if (!name) return setErr(t('header.form.nameRequired'));
-    setSaving(true); setErr('');
-    try {
-      const res  = await fetch(`${API_BASE}/api/orgs`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setErr(data.detail || t('header.form.error')); return; }
-      setOrgs(prev => [data, ...prev]);
-      closeModal();
-      navigate(`/org/${data.slug}`);
-    } catch { setErr(t('common.networkError')); }
-    finally { setSaving(false); }
-  };
+  const openModal  = () => { setOpen(false); setModal(true); };
+  const closeModal = () => setModal(false);
+  const addOrg     = org => setOrgs(prev => (prev.some(o => o.id === org.id) ? prev : [org, ...prev]));
 
   return (
     <>
@@ -144,6 +126,7 @@ function OrgSwitcher({ project, org: orgProp }) {
           <button className="hdr-switcher-name" onClick={() => navigate(`/org/${orgSlug}`)} type="button">
             {orgName}
           </button>
+          {planLabel && <span className="hdr-plan-badge">{planLabel}</span>}
           <button className="hdr-switcher-arrow" onClick={handleOpen} type="button" aria-label={t('header.org.showOrganizations')}>
             <CaretDown className={`hdr-switcher-chevron${open ? ' hdr-switcher-chevron--open' : ''}`} />
           </button>
@@ -202,23 +185,19 @@ function OrgSwitcher({ project, org: orgProp }) {
 
       {modal && (
         <Modal title={t('header.org.modalTitle')} onClose={closeModal} maxWidth={400}>
-          <form onSubmit={createOrg}>
-            <div className="hdr-modal-field">
-              <h4 className="hdr-modal-label">{t('header.org.nameLabel')}</h4>
-              <input
-                className="hdr-modal-input"
-                placeholder={t('header.org.namePlaceholder')}
-                value={newName}
-                onChange={e => { setNewName(e.target.value); setErr(''); }}
-                autoFocus
-                maxLength={100}
-              />
-            </div>
-            {err && <span className="hdr-modal-err">{err}</span>}
-            <button className="hdr-modal-submit" type="submit" disabled={saving || !newName.trim()}>
-              {saving ? t('header.form.creating') : t('header.form.create')}
-            </button>
-          </form>
+          <CreateOrgForm
+            labels={{
+              name:            t('header.org.nameLabel'),
+              namePlaceholder: t('header.org.namePlaceholder'),
+              plan:            t('header.org.planLabel', { defaultValue: 'Plan' }),
+              create:          t('header.form.create'),
+              creating:        t('header.form.creating'),
+              nameRequired:    t('header.form.nameRequired'),
+              error:           t('header.form.error'),
+            }}
+            onOrgCreated={addOrg}
+            onDone={org => { closeModal(); navigate(`/org/${org.slug}`); }}
+          />
         </Modal>
       )}
     </>

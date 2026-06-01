@@ -20,7 +20,8 @@ const RESOURCE_LABELS = {
   team_members:       'team members',
   storefront_users:   'storefront customers',
   storage_bytes:      'storage',
-  broadcasts_today:   'broadcasts (today)',
+  emails_today:       'emails (today)',
+  broadcasts:         'email broadcasts',
 };
 
 // Pretty-print byte counts for storage limits — same shape as the

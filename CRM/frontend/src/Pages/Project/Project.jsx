@@ -469,8 +469,10 @@ function Project() {
   const emailConfigured = emailDomain?.domain && !emailDomain?.dkim_ok;
   const newCount        = stats?.new_count ?? 0;
   const currency        = stats?.currency || ctxProject?.currency || 'USD';
-  // Plan is hardcoded Free until billing ships — single source of truth here.
-  const planLabel       = t('project.overview.planFree');
+  // Plan label = the org's real subscription tier (ctxProject.plan_slug),
+  // capitalised (free → Free, pro → Pro). Falls back to Free if absent.
+  const plan            = ctxProject?.plan_slug || 'free';
+  const planLabel       = plan.charAt(0).toUpperCase() + plan.slice(1);
 
   return (
     <div className="pov-page">
