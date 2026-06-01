@@ -6,6 +6,7 @@ import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import Header from '../../Elements/Header.jsx';
 import Modal from '../../Elements/Modal.jsx';
+import CreateOrgForm from '../../Elements/CreateOrgForm.jsx';
 import '../../Style/Layout.css';
 import '../../Style/Dashboard.css';
 
@@ -28,20 +29,20 @@ const TILT = {
 function OrgCard({ org }) {
   const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(TILT);
+  const plan = org.plan_slug || 'free';
+  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
   return (
     <Link ref={ref} className="db-card db-card--tilt" to={`/org/${org.slug}`} {...handlers}>
       <div ref={glossRef} className="db-card-gloss" />
       <div className="db-card-inner">
-        <span className="db-card-badge">
-          {t('dashboard.projectCount', { count: org.projects_count })}
-        </span>
+        <span className="db-card-badge">{planLabel}</span>
         <div className="db-card-row">
           <div className="db-card-icon">
             <FolderSimple className="db-card-icon-svg" />
           </div>
           <div className="db-card-text">
             <div className="db-card-name">{org.name}</div>
-            <div className="db-card-meta">{fmtDate(org.created_at)}</div>
+            <div className="db-card-meta">{t('dashboard.projectCount', { count: org.projects_count })} · {fmtDate(org.created_at)}</div>
           </div>
         </div>
       </div>
@@ -58,31 +59,13 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(false);
   const [search,  setSearch]  = useState('');
-  const [orgName, setOrgName] = useState('');
-  const [orgSaving, setOrgSaving] = useState(false);
-  const [orgErr,  setOrgErr]  = useState('');
   const navigate = useNavigate();
 
-  const closeOrgModal = () => { setModal(false); setOrgName(''); setOrgErr(''); };
+  const closeOrgModal = () => setModal(false);
 
-  const createOrg = async e => {
-    e.preventDefault();
-    const trimmed = orgName.trim();
-    if (!trimmed) return setOrgErr(t('dashboard.nameRequired'));
-    setOrgSaving(true); setOrgErr('');
-    try {
-      const res  = await fetch(`${API_BASE}/api/orgs`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmed }),
-      });
-      const data = await res.json();
-      if (!res.ok) return setOrgErr(data.detail || t('dashboard.error'));
-      setOrgs(prev => [data, ...prev]);
-      closeOrgModal();
-    } catch { setOrgErr(t('common.networkError')); }
-    finally   { setOrgSaving(false); }
-  };
+  // A new org row appeared in the DB (free submit OR paid silent-create) —
+  // prepend it so it shows immediately, even if the user abandons payment.
+  const addOrg = org => setOrgs(prev => (prev.some(o => o.id === org.id) ? prev : [org, ...prev]));
 
   useEffect(() => {
     Promise.all([
@@ -142,17 +125,19 @@ function Dashboard() {
 
       {modal && (
         <Modal title={t('dashboard.modalTitle')} onClose={closeOrgModal} maxWidth={400}>
-          <form onSubmit={createOrg}>
-            <div className="hdr-modal-field">
-              <h4 className="hdr-modal-label">{t('dashboard.nameLabel')}</h4>
-              <input className="hdr-modal-input" placeholder={t('dashboard.namePlaceholder')} autoFocus maxLength={100}
-                value={orgName} onChange={e => { setOrgName(e.target.value); setOrgErr(''); }} />
-            </div>
-            {orgErr && <span className="hdr-modal-err">{orgErr}</span>}
-            <button className="hdr-modal-submit" type="submit" disabled={orgSaving || !orgName.trim()}>
-              {orgSaving ? t('dashboard.creating') : t('dashboard.create')}
-            </button>
-          </form>
+          <CreateOrgForm
+            labels={{
+              name:            t('dashboard.nameLabel'),
+              namePlaceholder: t('dashboard.namePlaceholder'),
+              plan:            t('dashboard.planLabel', { defaultValue: 'Plan' }),
+              create:          t('dashboard.create'),
+              creating:        t('dashboard.creating'),
+              nameRequired:    t('dashboard.nameRequired'),
+              error:           t('dashboard.error'),
+            }}
+            onOrgCreated={addOrg}
+            onDone={(org, { paid }) => { closeOrgModal(); if (paid) navigate(`/org/${org.slug}`); }}
+          />
         </Modal>
       )}
     </div>

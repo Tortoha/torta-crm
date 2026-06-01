@@ -29,7 +29,7 @@ const RESOURCE_DEFS = [
   { key: 'storefront_users', Icon: Users,           type: 'count' },
   { key: 'storage_bytes',    Icon: HardDrives,      type: 'bytes' },
   { key: 'database_bytes',   Icon: Database,        type: 'bytes' },
-  { key: 'broadcasts_today', Icon: PaperPlaneTilt,  type: 'count' },
+  { key: 'emails_today',     Icon: PaperPlaneTilt,  type: 'count' },
 ];
 
 function fmtBytes(n) {
@@ -218,14 +218,9 @@ export default function OrgUsage() {
               <div className="ou-cap-text">
                 <div className="ou-cap-label">{t('usage.caps.broadcasts', { defaultValue: 'Email broadcasts' })}</div>
                 <div className="ou-cap-value">
-                  {limits.broadcasts_today === 0
-                    ? t('usage.caps.broadcastsNone',   { defaultValue: 'Not included' })
-                    : (limits.broadcasts_today
-                        ? t('usage.caps.broadcastsLim', {
-                            defaultValue: '{{n}}/day',
-                            n: limits.broadcasts_today,
-                          })
-                        : t('usage.unlimited', { defaultValue: 'Unlimited' }))}
+                  {planSlug === 'free'
+                    ? t('usage.caps.broadcastsNone',     { defaultValue: 'Not included' })
+                    : t('usage.caps.broadcastsIncluded', { defaultValue: 'Included' })}
                 </div>
               </div>
             </div>

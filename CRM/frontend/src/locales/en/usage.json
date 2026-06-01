@@ -18,6 +18,7 @@
       "apiRate":          "API requests / min",
       "broadcasts":       "Email broadcasts",
       "broadcastsNone":   "Not included",
+      "broadcastsIncluded": "Included",
       "broadcastsLim":    "{{n}}/day"
     },
 
@@ -27,7 +28,7 @@
       "storefront_users": "Storefront users",
       "storage_bytes":    "File storage",
       "database_bytes":   "Database size",
-      "broadcasts_today": "Broadcasts today"
+      "emails_today":     "Emails today"
     }
   }
 }

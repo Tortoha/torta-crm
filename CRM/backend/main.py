@@ -2349,6 +2349,22 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] crm_email_* failed: {e}")
 
+    # Per-org daily email counter — every store→customer email (transactional +
+    # broadcast) increments it; the plan's emails_per_day_max gates further sends.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_email_usage (
+                    org_id INTEGER NOT NULL REFERENCES crm_organizations(id) ON DELETE CASCADE,
+                    day    DATE    NOT NULL,
+                    sent   INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (org_id, day)
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_email_usage failed: {e}")
+
     # Broadcast opt-out on storefront customers (transactional emails ignore this).
     try:
         with db_cursor() as (conn, cur):
@@ -3838,8 +3854,9 @@ def run_migrations():
             # default on existing org rows resolves against a populated plans table.
             # Runs every startup (ON CONFLICT DO UPDATE) so limit/price changes here
             # propagate on restart — including the $100→$30 Pro reprice + new Max tier. ──
-            # null = unlimited, 0 on broadcasts_per_day_max = broadcasts blocked
-            # (Free transactional emails are unrestricted via _email_is_transactional). ──
+            # null = unlimited. emails_per_day_max = total store->customer emails/day
+            # (transactional + broadcast), metered in crm_email_usage and enforced
+            # per-send in send_email. Broadcasts are a paid feature (gated separately). ──
             import json as _json
             # ── 5-tier ladder (decoy + anchor pricing) ──
             # Free   — bait (generous storefront users → memory fills → upgrade pressure)
@@ -3853,7 +3870,7 @@ def run_migrations():
                     "storefront_users_max": 1000,
                     "storage_bytes_max": 104857600,           # 100 MB
                     "db_size_bytes_max": 20971520,            # 20 MB
-                    "broadcasts_per_day_max": 0,              # blocks campaign sends
+                    "emails_per_day_max": 100,              # 100 emails/day; broadcasts need a paid plan
                     "api_requests_per_minute_max": 60,
                     "features": [],
                     "support_level": "none",
@@ -3863,7 +3880,7 @@ def run_migrations():
                     "storefront_users_max": 5000,
                     "storage_bytes_max": 16106127360,         # 15 GB
                     "db_size_bytes_max": 3221225472,          # 3 GB
-                    "broadcasts_per_day_max": 1000,
+                    "emails_per_day_max": 1000,
                     "api_requests_per_minute_max": 500,
                     "features": ["webhooks"],
                     "support_level": "email",
@@ -3873,7 +3890,7 @@ def run_migrations():
                     "storefront_users_max": 12500,
                     "storage_bytes_max": 42949672960,         # 40 GB
                     "db_size_bytes_max": 8589934592,          # 8 GB
-                    "broadcasts_per_day_max": 2000,
+                    "emails_per_day_max": 2000,
                     "api_requests_per_minute_max": 1500,
                     "features": ["webhooks"],
                     "support_level": "email",
@@ -3883,7 +3900,7 @@ def run_migrations():
                     "storefront_users_max": 100000,
                     "storage_bytes_max": 107374182400,        # 100 GB
                     "db_size_bytes_max": 21474836480,         # 20 GB
-                    "broadcasts_per_day_max": 10000,
+                    "emails_per_day_max": 10000,
                     "api_requests_per_minute_max": 3000,
                     "features": ["webhooks", "cross_org_analytics", "audit_log", "priority_compute"],
                     "support_level": "priority",
@@ -3893,7 +3910,7 @@ def run_migrations():
                     "storefront_users_max": 1000000,
                     "storage_bytes_max": 2199023255552,       # 2 TB
                     "db_size_bytes_max": 274877906944,        # 256 GB
-                    "broadcasts_per_day_max": 30000,
+                    "emails_per_day_max": 30000,
                     "api_requests_per_minute_max": 10000,
                     "features": ["webhooks", "cross_org_analytics", "audit_log",
                                  "priority_compute", "sso", "white_label"],
@@ -4088,16 +4105,26 @@ def _ses(method: str, path: str, data: dict | None = None) -> dict:
 
 def send_email(to: str, subject: str, html: str,
                from_email: str = EMAIL_FROM,
-               from_name: str = "Torta CRM") -> bool:
+               from_name: str = "Torta CRM",
+               project_id: int | None = None) -> bool:
+    # Per-org daily email quota: store→customer emails pass project_id so each
+    # send counts toward emails_per_day_max. Platform emails (CRM login/reset,
+    # merchant alerts/exports) pass nothing → never counted, never gated.
+    org_id = _project_org_id(project_id) if project_id else None
+    if org_id is not None and not _email_quota_room(org_id):
+        print(f"[email] org {org_id} hit daily email limit — skipping send to {to}")
+        return False
     try:
         _ses("POST", "/send", {
             "to": to, "subject": subject, "html": html,
             "from_email": from_email, "from_name": from_name,
         })
-        return True
     except Exception as e:
         print(f"Email error: {e}")
         return False
+    if org_id is not None:
+        _email_count_inc(org_id)
+    return True
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
@@ -5297,7 +5324,7 @@ _PLAN_FREE_FALLBACK = {
         "storefront_users_max": 1000,
         "storage_bytes_max": 104857600,           # 100 MB
         "db_size_bytes_max": 20971520,            # 20 MB
-        "broadcasts_per_day_max": 0,
+        "emails_per_day_max": 100,
         "api_requests_per_minute_max": 60,
         "features": [],
         "support_level": "none",
@@ -5346,14 +5373,10 @@ def _org_usage(org_id: int, resource: str) -> int:
             """, (org_id, org_id))
         elif resource == "storage_bytes":
             r = db_one("SELECT storage_used_bytes AS n FROM crm_organizations WHERE id=%s", (org_id,))
-        elif resource == "broadcasts_today":
-            # Sum across all projects of the org, only campaigns that actually went out today.
-            r = db_one("""
-                SELECT COUNT(*) AS n FROM crm_email_campaigns
-                 WHERE project_id IN (SELECT id FROM crm_projects WHERE org_id=%s)
-                   AND status IN ('sending','sent')
-                   AND DATE(COALESCE(updated_at, created_at)) = CURRENT_DATE
-            """, (org_id,))
+        elif resource == "emails_today":
+            # Every store->customer email (transactional + broadcast) bumps the
+            # per-org daily counter in crm_email_usage — this is the metered total.
+            r = db_one("SELECT sent AS n FROM crm_email_usage WHERE org_id=%s AND day=CURRENT_DATE", (org_id,))
         elif resource == "database_bytes":
             # Approximate on-disk size of the org's tenant data via
             # pg_column_size SUM over the heavy-write tables. Doesn't count
@@ -5383,16 +5406,37 @@ def _org_usage(org_id: int, resource: str) -> int:
 
 
 # Resource label → key inside plan.limits JSONB. Without this map the usage
-# endpoint looks up `broadcasts_today_max` (doesn't exist) and reports
+# endpoint looks up `emails_today_max` (doesn't exist) and reports
 # Unlimited for Standard/Plus/Pro, hiding the real per-plan caps.
 _RESOURCE_LIMIT_KEY = {
     "projects":         "projects_max",
     "team_members":     "team_members_max",
     "storefront_users": "storefront_users_max",
     "storage_bytes":    "storage_bytes_max",
-    "broadcasts_today": "broadcasts_per_day_max",
+    "emails_today":     "emails_per_day_max",
     "database_bytes":   "db_size_bytes_max",
 }
+
+def _email_quota_room(org_id: int) -> bool:
+    """True if the org can send >=1 more email today (under emails_per_day_max).
+    None limit = unlimited."""
+    limit = (_org_plan(org_id).get("limits") or {}).get("emails_per_day_max")
+    if limit is None:
+        return True
+    r = db_one("SELECT sent FROM crm_email_usage WHERE org_id=%s AND day=CURRENT_DATE", (org_id,))
+    return (int(r["sent"]) if r else 0) < int(limit)
+
+def _email_count_inc(org_id: int, n: int = 1) -> None:
+    """UPSERT-increment the org's daily sent-email counter."""
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO crm_email_usage (org_id, day, sent) VALUES (%s, CURRENT_DATE, %s) "
+                "ON CONFLICT (org_id, day) DO UPDATE SET sent = crm_email_usage.sent + EXCLUDED.sent",
+                (org_id, n))
+            conn.commit()
+    except Exception as e:
+        print(f"[email_count] inc failed for org {org_id}: {e}")
 
 def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
     """Raise HTTPException(402) if adding `amount` to the org's usage of
@@ -6667,6 +6711,7 @@ def get_orgs(user: dict = Depends(get_current_user)):
     # member can't infer how many other projects exist in the org).
     rows = db_all("""
         SELECT o.id, o.name, o.slug, o.created_at,
+               COALESCE(o.plan_slug, 'free') AS plan_slug,
                (o.owner_id = %s) AS is_owner,
                CASE WHEN o.owner_id = %s
                     THEN (SELECT COUNT(*) FROM crm_projects p WHERE p.org_id = o.id)
@@ -6705,13 +6750,14 @@ def create_org(request: CreateOrgRequest, user: dict = Depends(get_current_user)
         new_id = cur.fetchone()["id"]
         _seed_preset_roles(cur, new_id)
         conn.commit()
-        return {"id": new_id, "name": name, "slug": slug, "is_owner": True, "projects_count": 0}
+        return {"id": new_id, "name": name, "slug": slug, "plan_slug": "free", "is_owner": True, "projects_count": 0}
 
 
 @app.get("/api/orgs/by-slug/{slug}")
 def get_org_by_slug(slug: str, user: dict = Depends(get_current_user)):
     org = db_one("""
         SELECT o.id, o.name, o.slug, o.created_at, o.currency, o.customers_shared,
+               COALESCE(o.plan_slug, 'free') AS plan_slug,
                (o.owner_id = %s) AS is_owner
         FROM crm_organizations o
         WHERE o.slug = %s
@@ -6729,6 +6775,7 @@ def get_org_by_slug(slug: str, user: dict = Depends(get_current_user)):
 def get_org(org_id: int, user: dict = Depends(get_current_user)):
     org = db_one("""
         SELECT o.id, o.name, o.slug, o.created_at, o.currency, o.customers_shared,
+               COALESCE(o.plan_slug, 'free') AS plan_slug,
                (o.owner_id = %s) AS is_owner
         FROM crm_organizations o
         WHERE o.id = %s
@@ -6821,6 +6868,18 @@ def delete_org(org_id: int, user: dict = Depends(get_current_user)):
     require_org_owner(user, org_id)
     count = db_one("SELECT COUNT(*) AS c FROM crm_projects WHERE org_id=%s", (org_id,))["c"]
     if count > 0: raise HTTPException(400, "Delete all projects in this organization first")
+
+    # Stop billing BEFORE the org is gone. If the org has a live Paddle
+    # subscription, cancel it IMMEDIATELY — otherwise we'd keep charging the
+    # owner for an organization that no longer exists, with no org left to cancel
+    # from. Block the deletion if Paddle won't ack, so a live subscription is
+    # never orphaned. (crm_subscriptions is ON DELETE CASCADE, so the row vanishes
+    # with the org — we must read + cancel the sub_id first.)
+    _, sub_id = _org_paddle_ids(org_id)
+    if sub_id and PADDLE_API_KEY:
+        if not _paddle_cancel_subscription(sub_id, "immediately"):
+            raise HTTPException(502, "Couldn't cancel the paid subscription — please try again before deleting the organization.")
+
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_team_members WHERE org_id=%s", (org_id,))
         cur.execute("DELETE FROM crm_roles        WHERE org_id=%s", (org_id,))
@@ -7063,7 +7122,7 @@ def get_org_usage(org_id: int, user: dict = Depends(get_current_user)):
     plan      = _org_plan(org_id)
     limits    = plan.get("limits") or {}
     resources = ["projects", "team_members", "storefront_users",
-                 "storage_bytes", "database_bytes", "broadcasts_today"]
+                 "storage_bytes", "database_bytes", "emails_today"]
     usage     = {r: _org_usage(org_id, r) for r in resources}
     pct: dict = {}
     for r in resources:
@@ -7208,6 +7267,135 @@ def create_billing_checkout(org_id: int, body: CheckoutRequest,
     }
 
 
+class ClaimRequest(BaseModel):
+    transaction_id: str
+
+
+@app.post("/api/billing/new-org-transaction")
+def create_new_org_transaction(body: CheckoutRequest, user: dict = Depends(get_current_user)):
+    """Open a Paddle transaction for a BRAND-NEW org, before the org exists.
+
+    The org is deliberately NOT created here. Only after the customer actually
+    pays (checkout.completed) does the client POST /api/orgs and then call
+    /billing/claim to attach the subscription. That is what makes "the org is
+    created only after payment" literally true — close the modal mid-flow and
+    nothing was created. custom_data carries owner_id + plan so a webhook can
+    still reconcile if the client dies between paying and claiming.
+    """
+    if not PADDLE_API_KEY:
+        raise HTTPException(503, "Paddle billing not configured")
+
+    price_id = (body.price_id or "").strip()
+    plan_slug, cycle = _paddle_resolve_plan(price_id)
+    if not plan_slug:
+        raise HTTPException(400, "Unknown price_id")
+
+    payload: dict = {
+        "items": [{"price_id": price_id, "quantity": 1}],
+        "custom_data": {
+            "intent":    "new_org",
+            "owner_id":  str(user["id"]),
+            "plan_slug": plan_slug,
+            "cycle":     cycle or "monthly",
+        },
+    }
+    # Prefill the buyer's email (and reuse their saved Paddle customer when we
+    # already know one — keeps cards + receipts under a single customer record).
+    owner_row   = db_one("SELECT email FROM crm_users WHERE id=%s", (user["id"],))
+    owner_email = (owner_row or {}).get("email") or ""
+    existing_customer = _paddle_find_customer_by_email(owner_email) if owner_email else None
+    if existing_customer:
+        payload["customer_id"] = existing_customer
+    elif owner_email:
+        payload["customer"] = {"email": owner_email}
+
+    r = _http_request(
+        "POST", f"{_paddle_saas_api_base()}/transactions",
+        headers=_paddle_saas_headers(),
+        body=json.dumps(payload).encode("utf-8"),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/new-org-txn] user={user['id']} price={price_id} HTTP {r['status']} body={r['body']!r}")
+        raise HTTPException(502, "Payment provider rejected the request")
+    txn = (r["body"] or {}).get("data") or {}
+    return {
+        "transaction_id": txn.get("id"),
+        "environment":    PADDLE_ENVIRONMENT,
+        "client_token":   PADDLE_CLIENT_TOKEN,
+    }
+
+
+@app.post("/api/orgs/{org_id}/billing/claim")
+def claim_org_transaction(org_id: int, body: ClaimRequest, user: dict = Depends(get_current_user)):
+    """Attach the just-paid subscription to a freshly created org by reading the
+    EXACT transaction the client completed. Precise — unlike sync-by-email, which
+    can pick the wrong sub when one user owns several paid orgs. Owner-only."""
+    if not PADDLE_API_KEY:
+        raise HTTPException(503, "Paddle billing not configured")
+    is_owner = bool(db_one(
+        "SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+        (org_id, user["id"])))
+    if not is_owner:
+        raise HTTPException(403, "Only the org owner can claim a subscription")
+
+    txn_id = (body.transaction_id or "").strip()
+    if not txn_id:
+        raise HTTPException(400, "transaction_id required")
+
+    r = _http_request("GET", f"{_paddle_saas_api_base()}/transactions/{txn_id}",
+                      headers=_paddle_saas_headers())
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/claim] org={org_id} txn={txn_id} HTTP {r['status']}")
+        raise HTTPException(502, "Could not read the transaction")
+    txn = (r["body"] or {}).get("data") or {}
+
+    sub_id  = (txn.get("subscription_id") or "").strip()
+    cust_id = (txn.get("customer_id") or "").strip()
+    items   = txn.get("items") or []
+    price_id = ""
+    if items:
+        first = items[0] if isinstance(items, list) else {}
+        price = (first.get("price") or {}) if isinstance(first, dict) else {}
+        price_id = price.get("id") or first.get("price_id") or ""
+    plan_slug, _cycle = _paddle_resolve_plan(price_id)
+    if not plan_slug:
+        # Fallback to the plan we stamped into custom_data when opening this txn.
+        # Safe here: new-org-transaction set it server-side from a validated
+        # price (not client input), so it can't be forged to claim a higher tier.
+        cand = ((txn.get("custom_data") or {}).get("plan_slug") or "").strip().lower()
+        if cand in ("standard", "plus", "pro", "max"):
+            plan_slug = cand
+    if not plan_slug:
+        print(f"[paddle/claim] org={org_id} txn={txn_id}: unresolved plan "
+              f"(price={price_id!r}, custom={txn.get('custom_data')!r})")
+        raise HTTPException(400, "Unknown price on transaction")
+
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                INSERT INTO crm_subscriptions
+                    (org_id, plan_slug, status, paddle_customer_id, paddle_subscription_id, updated_at)
+                VALUES (%s, %s, 'active', %s, %s, NOW())
+                ON CONFLICT (org_id) DO UPDATE SET
+                    plan_slug              = EXCLUDED.plan_slug,
+                    status                 = 'active',
+                    paddle_customer_id     = COALESCE(EXCLUDED.paddle_customer_id,
+                                                      crm_subscriptions.paddle_customer_id),
+                    paddle_subscription_id = COALESCE(EXCLUDED.paddle_subscription_id,
+                                                      crm_subscriptions.paddle_subscription_id),
+                    updated_at             = NOW()
+            """, (org_id, plan_slug, cust_id or None, sub_id or None))
+            cur.execute("UPDATE crm_organizations SET plan_slug=%s WHERE id=%s",
+                        (plan_slug, org_id))
+            conn.commit()
+            print(f"[paddle/claim] org={org_id} → plan={plan_slug} sub={sub_id or '∅'}")
+    except Exception as e:
+        print(f"[paddle/claim] DB write failed org={org_id}: {e}")
+        raise HTTPException(500, "Could not save subscription")
+
+    return {"ok": True, "plan_slug": plan_slug}
+
+
 @app.get("/api/orgs/{org_id}/subscription")
 def get_org_subscription(org_id: int, user: dict = Depends(get_current_user)):
     """Current subscription state for the billing UI. Owner or any org
@@ -7267,16 +7455,22 @@ def _org_paddle_ids(org_id: int) -> "tuple[str | None, str | None]":
 
 @app.get("/api/orgs/{org_id}/billing/invoices")
 def list_billing_invoices(org_id: int, user: dict = Depends(get_current_user)):
-    """List Paddle transactions for this org's customer. Empty list for orgs
-    that never paid (free tier — no paddle_customer_id yet)."""
+    """List Paddle transactions for THIS org's subscription. Empty list for orgs
+    that never paid (free tier — no subscription yet).
+
+    Scoped to subscription_id, NOT customer_id: one Paddle customer (= one CRM
+    user, keyed by email) can own several paid orgs, so filtering by customer_id
+    would spill every org's invoices into each org's Billing page. Each org has
+    its own subscription, so its subscription_id is the correct, isolated key.
+    """
     _require_org_owner(org_id, user)
-    customer_id, _ = _org_paddle_ids(org_id)
-    if not customer_id:
+    _customer_id, subscription_id = _org_paddle_ids(org_id)
+    if not subscription_id:
         return {"invoices": []}
     r = _http_request(
         "GET",
         f"{_paddle_saas_api_base()}/transactions"
-        f"?customer_id={customer_id}&status=billed,paid,completed&per_page=50",
+        f"?subscription_id={subscription_id}&status=billed,paid,completed&per_page=50",
         headers=_paddle_saas_headers(),
     )
     if r["status"] >= 400 or r["status"] == 0:
@@ -7387,6 +7581,26 @@ def get_billing_payment_method(org_id: int,
     return {"payment_method": _parse_payment_method(payments[0].get("method_details") or {})}
 
 
+def _paddle_cancel_subscription(sub_id: str, effective_from: str = "immediately") -> bool:
+    """Cancel a Paddle subscription. Returns True on Paddle ack, False otherwise.
+    'immediately' stops billing right now (used on org deletion — no org left to
+    keep billing for); 'next_billing_period' keeps service to period end (normal
+    user-initiated cancel)."""
+    if not (PADDLE_API_KEY and sub_id):
+        return False
+    eff = effective_from if effective_from in ("next_billing_period", "immediately") else "immediately"
+    r = _http_request(
+        "POST",
+        f"{_paddle_saas_api_base()}/subscriptions/{sub_id}/cancel",
+        headers=_paddle_saas_headers(),
+        body=json.dumps({"effective_from": eff}).encode("utf-8"),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/cancel] sub={sub_id} eff={eff} HTTP {r['status']} body={r['body']!r}")
+        return False
+    return True
+
+
 class CancelSubscriptionRequest(BaseModel):
     # Paddle accepts 'next_billing_period' (default — keeps service to period
     # end) or 'immediately'. We always use the former — no surprise outages.
@@ -7403,14 +7617,7 @@ def cancel_subscription(org_id: int, body: CancelSubscriptionRequest,
     if not sub_id:
         raise HTTPException(409, "No active paid subscription to cancel")
     eff = body.effective_from if body.effective_from in ("next_billing_period", "immediately") else "next_billing_period"
-    r = _http_request(
-        "POST",
-        f"{_paddle_saas_api_base()}/subscriptions/{sub_id}/cancel",
-        headers=_paddle_saas_headers(),
-        body=json.dumps({"effective_from": eff}).encode("utf-8"),
-    )
-    if r["status"] >= 400 or r["status"] == 0:
-        print(f"[paddle/cancel] org={org_id} sub={sub_id} HTTP {r['status']} body={r['body']!r}")
+    if not _paddle_cancel_subscription(sub_id, eff):
         raise HTTPException(502, "Cancellation failed at payment provider")
     return {"ok": True}
 
@@ -9216,7 +9423,8 @@ def get_project_by_key(api_key: str, user: dict = Depends(get_current_user)):
                COALESCE(p.timezone, 'UTC') AS timezone,
                COALESCE(p.currency, 'USD') AS currency,
                COALESCE(p.tz_auto,  TRUE)  AS tz_auto,
-               o.id AS org_id, o.name AS org_name, o.slug AS org_slug
+               o.id AS org_id, o.name AS org_name, o.slug AS org_slug,
+               COALESCE(o.plan_slug, 'free') AS plan_slug
         FROM crm_projects p
         JOIN crm_organizations o ON o.id = p.org_id
         WHERE p.api_key = %s
@@ -9256,7 +9464,8 @@ def get_project_layout_bundle(api_key: str, user: dict = Depends(get_current_use
                COALESCE(p.timezone, 'UTC') AS timezone,
                COALESCE(p.currency, 'USD') AS currency,
                COALESCE(p.tz_auto,  TRUE)  AS tz_auto,
-               o.id AS org_id, o.name AS org_name, o.slug AS org_slug
+               o.id AS org_id, o.name AS org_name, o.slug AS org_slug,
+               COALESCE(o.plan_slug, 'free') AS plan_slug
           FROM crm_projects p
           JOIN crm_organizations o ON o.id = p.org_id
          WHERE p.api_key = %s
@@ -16946,7 +17155,7 @@ def _email_customer_about_return(project_id: int, return_id: int,
             f"Return #{return_id}"
             "</p></div>"
         )
-        send_email(row["to_email"], subject, html, from_email=from_email, from_name=from_name)
+        send_email(row["to_email"], subject, html, from_email=from_email, from_name=from_name, project_id=project_id)
     except Exception as e:
         # Never break the lifecycle transition because of an email problem
         print(f"[return email] best-effort failed for return {return_id}: {e}")
@@ -22477,7 +22686,7 @@ def _send_template_email(project_id, etype, to, variables, *, from_name=None, fr
     branding = _resolve_email_branding(project_id)
     subject = email_engine.render_subject(subject_tpl, variables) or EMAIL_TYPES.get(etype, {}).get("subject", "")
     html = render_email(blocks, branding, variables, unsubscribe_url=unsubscribe_url)
-    return send_email(to, subject, html, from_name, from_email)
+    return send_email(to, subject, html, from_name, from_email, project_id=project_id)
 
 
 @app.get("/api/email-templates")
@@ -22725,7 +22934,7 @@ def _send_campaign_to_recipients(campaign):
                      "store_name": _project_store_name(project_id)}
             subject = email_engine.render_subject(campaign["subject"], cvars)
             html = render_email(blocks, branding, cvars, unsubscribe_url=unsub)
-            if send_email(u["email"], subject, html, from_name, from_email):
+            if send_email(u["email"], subject, html, from_name, from_email, project_id=project_id):
                 sent += 1
         except Exception as e:
             print(f"[campaign {campaign['id']}] send to {u.get('email')} failed: {e}")
@@ -22734,26 +22943,27 @@ def _send_campaign_to_recipients(campaign):
 
 def _run_campaign(campaign, now):
     cid = campaign["id"]
-    # Plan-gate: broadcasts on Free are disabled entirely (broadcasts_per_day_max=0).
+    # Plan-gate: broadcasts are a paid feature (Free can't send campaigns); the
+    # per-email quota (emails_per_day_max) is enforced inside send_email.
     # The scheduler reaches here for any campaign whose run-time arrived; if the
     # org isn't allowed to broadcast we flip the campaign to 'blocked' rather
     # than spam its "sending" state forever. Send-now endpoint pre-checks too
     # so the user gets a 402 immediately when clicking the button.
     org_id = _project_org_id(campaign.get("project_id"))
     plan = _org_plan(org_id) if org_id else _PLAN_FREE_FALLBACK
-    bcast_limit = (plan.get("limits") or {}).get("broadcasts_per_day_max")
-    if bcast_limit is not None:
-        current = _org_usage(org_id, "broadcasts_today") if org_id else 0
-        if current + 1 > int(bcast_limit):
-            with db_cursor() as (conn, cur):
-                cur.execute(
-                    "UPDATE crm_email_campaigns "
-                    "   SET status='blocked', last_error=%s, updated_at=NOW() "
-                    " WHERE id=%s",
-                    (f"Broadcasts blocked on the {plan['name']} plan — upgrade to send campaigns.", cid),
-                )
-                conn.commit()
-            return 0, 0
+    # Broadcasts are a paid feature (Free can't send campaigns). The per-email
+    # quota (emails_per_day_max) is then enforced per-recipient inside
+    # send_email — a campaign that runs out of quota mid-send just stops.
+    def _block(reason):
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_email_campaigns SET status='blocked', last_error=%s, updated_at=NOW() WHERE id=%s",
+                        (reason, cid))
+            conn.commit()
+        return 0, 0
+    if plan.get("slug") == "free":
+        return _block(f"Email broadcasts aren't available on the {plan['name']} plan — upgrade to send campaigns.")
+    if org_id is not None and not _email_quota_room(org_id):
+        return _block(f"Daily email limit reached on the {plan['name']} plan — try again tomorrow or upgrade.")
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_email_campaigns SET status='sending', updated_at=NOW() WHERE id=%s", (cid,))
         conn.commit()
@@ -22894,7 +23104,13 @@ def email_campaign_send_now(cid: int, background_tasks: BackgroundTasks,
     # Pre-check the plan gate so the user gets 402 immediately instead of a
     # silent 'blocked' campaign status discovered later. _run_campaign also
     # checks (for scheduler-triggered runs).
-    enforce_limit(_project_org_id(project_id), "broadcasts_today")
+    _bn_org  = _project_org_id(project_id)
+    _bn_plan = _org_plan(_bn_org) if _bn_org else _PLAN_FREE_FALLBACK
+    if _bn_plan.get("slug") == "free":
+        raise HTTPException(402, {"error": "plan_limit_exceeded", "plan": _bn_plan.get("slug"),
+                                  "resource": "broadcasts",
+                                  "message": "Email broadcasts require a paid plan."})
+    enforce_limit(_bn_org, "emails_today")
     background_tasks.add_task(_run_campaign, dict(row), _utcnow())
     return {"ok": True}
 

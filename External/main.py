@@ -238,7 +238,7 @@ def _send_template_email(project_id, etype, to, variables, *, from_name=None, fr
     branding = _resolve_email_branding(project_id)
     subject = email_engine.render_subject(subject_tpl, variables) or email_engine.EMAIL_TYPES.get(etype, {}).get("subject", "")
     html = email_engine.render_email(blocks, branding, variables, unsubscribe_url=unsubscribe_url)
-    return send_email(to, subject, html, from_name, from_email)
+    return send_email(to, subject, html, from_name, from_email, project_id=project_id)
 
 
 def _project_team_user_ids(project_id: int) -> list[int]:
@@ -1814,8 +1814,49 @@ class CartPageResponse(BaseModel):
 
 # ── EMAIL ────────────────────────────────────────────────
 
+# ── Per-org daily email quota (shared crm_email_usage table, created by CRM) ──
+def _email_org_id(project_id):
+    if not project_id:
+        return None
+    r = db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,))
+    return r.get("org_id") if r else None
+
+def _email_quota_room(org_id) -> bool:
+    """True if the org can send >=1 more email today (under emails_per_day_max).
+    None limit / no plan row = unlimited."""
+    if not org_id:
+        return True
+    row = db_one("SELECT (p.limits->>'emails_per_day_max') AS lim "
+                 "FROM crm_organizations o "
+                 "JOIN crm_subscription_plans p ON p.slug = COALESCE(o.plan_slug, 'free') "
+                 "WHERE o.id = %s", (org_id,))
+    lim = row.get("lim") if row else None
+    if lim is None:
+        return True
+    r = db_one("SELECT sent FROM crm_email_usage WHERE org_id=%s AND day=CURRENT_DATE", (org_id,))
+    return (int(r["sent"]) if r else 0) < int(lim)
+
+def _email_count_inc(org_id, n: int = 1) -> None:
+    if not org_id:
+        return
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("INSERT INTO crm_email_usage (org_id, day, sent) VALUES (%s, CURRENT_DATE, %s) "
+                        "ON CONFLICT (org_id, day) DO UPDATE SET sent = crm_email_usage.sent + EXCLUDED.sent",
+                        (org_id, n))
+            conn.commit()
+    except Exception as e:
+        print(f"[email_count] inc failed for org {org_id}: {e}")
+
 def send_email(to: str, subject: str, html: str,
-               from_name: str = "Torta Store", from_email: str = EMAIL_FROM) -> bool:
+               from_name: str = "Torta Store", from_email: str = EMAIL_FROM,
+               project_id: int = None) -> bool:
+    # Store->customer emails pass project_id → each send counts toward the org's
+    # daily quota (emails_per_day_max). Over the limit → skip (block).
+    org_id = _email_org_id(project_id) if project_id else None
+    if org_id is not None and not _email_quota_room(org_id):
+        print(f"[email] org {org_id} hit daily email limit — skipping send to {to}")
+        return False
     try:
         body = json.dumps({
             "to": to, "subject": subject, "html": html,
@@ -1827,9 +1868,12 @@ def send_email(to: str, subject: str, html: str,
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read()).get("ok", False)
+            ok = json.loads(resp.read()).get("ok", False)
     except Exception as e:
         print(f"Email error: {e}"); return False
+    if ok and org_id is not None:
+        _email_count_inc(org_id)
+    return ok
 
 def send_code_email(email: str, code: int, project_id: int = None) -> bool:
     return _send_template_email(project_id, "verification", email,

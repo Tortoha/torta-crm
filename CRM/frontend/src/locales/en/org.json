@@ -148,6 +148,7 @@
         "blockedPost": ". Delete every project first — an organization with projects can't be removed.",
         "allowedPre": "This permanently deletes ",
         "allowedPost": ". This can't be undone. Type the organization name to confirm.",
+        "billingWarning": "This organization is on the {{plan}} plan — deleting it cancels the subscription immediately. No further charges.",
         "deleting": "Deleting…",
         "deleteButton": "Delete organization",
         "close": "Close",

@@ -9,6 +9,17 @@
     "loading": "Loading…",
     "search": "Search…",
     "networkError": "Network error",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "createOrg": {
+      "needName": "Enter an organization name above to continue to payment.",
+      "preparing": "Preparing secure checkout…",
+      "error": "Could not start checkout. Please try again.",
+      "notConfigured": "This plan is not available yet.",
+      "retry": "Try again",
+      "finalizing": "Payment received — setting up your organization…",
+      "finalizeError": "Payment went through, but setup didn't finish. Tap retry.",
+      "done": "All set! Opening your organization…",
+      "perMonth": "/mo"
+    }
   }
 }

@@ -18,6 +18,7 @@
       "apiRate":          "API-запросы / мин",
       "broadcasts":       "Email-рассылки",
       "broadcastsNone":   "Не включены",
+      "broadcastsIncluded": "Включены",
       "broadcastsLim":    "{{n}} в день"
     },
 
@@ -27,7 +28,7 @@
       "storefront_users": "Клиенты магазина",
       "storage_bytes":    "Хранилище файлов",
       "database_bytes":   "Размер БД",
-      "broadcasts_today": "Рассылок сегодня"
+      "emails_today":     "Писем сегодня"
     }
   }
 }

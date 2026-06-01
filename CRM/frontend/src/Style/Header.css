@@ -277,6 +277,23 @@
   color: #0071E3;
 }
 
+/* Plan-tier pill next to the org name (Supabase/Neon style) — small,
+   accent-tinted, never shrinks (the org name ellipsises around it). */
+.hdr-plan-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  margin: 0 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--accent-tint);
+  color: var(--accent);
+  user-select: none;
+}
+
 .hdr-product-crumb {
   max-width: 180px;
   overflow: hidden;
@@ -617,6 +634,65 @@
 .hdr-modal-input::placeholder {
   color: rgba(var(--fg-rgb), 0.3);
 }
+
+/* ── Inline paid checkout (org-create modal, Supabase-style) ── */
+.hdr-pay { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+
+.hdr-pay-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--accent-tint);
+  border-radius: 16px;
+  padding: 12px 16px;
+}
+.hdr-pay-plan  { font-size: 14px; font-weight: 600; color: var(--text); }
+.hdr-pay-price { font-size: 13px; font-weight: 600; color: var(--accent); }
+
+.hdr-pay-hint {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  padding: 4px;
+}
+
+/* Fixed white payment card — Paddle stays light, so the host surface is a
+   deliberate white panel in both CRM themes (mirrors OrgCheckout's .oc-pay). */
+.hdr-pay-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 6px;
+  min-height: 430px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.paddle-create-frame { width: 100%; min-height: 420px; }
+
+/* State views live INSIDE the white card → dark-on-white (theme vars would be
+   wrong against the fixed light surface). */
+.hdr-pay-state-l {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 420px;
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #6b6b70;
+}
+.hdr-pay-state-l--done { color: var(--accent); font-weight: 600; }
+.hdr-pay-err-l { color: #c0392b; font-size: 13px; }
+
+.hdr-pay-spinner-l {
+  width: 28px; height: 28px; flex-shrink: 0;
+  border: 3px solid rgba(0, 0, 0, 0.10);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: hdr-pay-spin 0.8s linear infinite;
+}
+@keyframes hdr-pay-spin { to { transform: rotate(360deg); } }
 
 .hdr-modal-err {
   font-size: 12px;
