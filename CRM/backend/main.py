@@ -140,6 +140,23 @@ def _resolve_db_config():
 
 DB_CONFIG = _resolve_db_config()
 
+
+def _direct_db_config():
+    """DB_CONFIG variant on Neon's DIRECT (non-pooled) endpoint.
+
+    Neon's pooled host ('…-pooler.…') is PgBouncer in transaction-pooling mode,
+    which does NOT support LISTEN/NOTIFY — async notifications never reach a
+    pooled client. The realtime LISTEN background task therefore needs a
+    session-pinned DIRECT connection. We derive it by dropping '-pooler' from
+    the host; for non-Neon hosts (localhost / Fly / an already-direct URL) it's
+    a harmless no-op. Only LISTEN must be direct — NOTIFY (the send side) goes
+    through the pool fine (delivered server-side at COMMIT)."""
+    cfg = dict(DB_CONFIG)
+    host = cfg.get("host") or ""
+    if "-pooler." in host:
+        cfg["host"] = host.replace("-pooler.", ".", 1)
+    return cfg
+
 SES_API_URL      = os.getenv("SES_API_URL",      "https://ses.tortacrm.com")
 SES_INTERNAL_KEY = os.getenv("SES_INTERNAL_KEY", "")
 EMAIL_FROM       = os.getenv("EMAIL_FROM",       "support@tortacrm.com")
@@ -17895,6 +17912,22 @@ def push_project_event(project_id: int, event_type: str, data: dict | None = Non
         pass
 
 
+def push_chat_event(project_id: int, event: dict):
+    """Fan a chat event out to this project's WebSocket subscribers ACROSS every
+    backend instance. Delivery is via PostgreSQL NOTIFY on `crm_chat_events`;
+    the LISTEN background task on each instance (including this one) routes it to
+    its local chat_hub. Single delivery everywhere — no in-process fast-path, so
+    no duplicate frame to same-instance clients. Non-fatal: a missed live frame
+    just means the agent sees the message on next refresh."""
+    try:
+        payload = {"project_id": int(project_id), "event": event}
+        with db_cursor() as (conn, cur):
+            cur.execute("SELECT pg_notify(%s, %s)", ("crm_chat_events", json.dumps(payload, default=str)))
+            conn.commit()
+    except Exception:
+        pass
+
+
 # ── Generic inbound-message handler (channel-agnostic) ────────────────────────
 
 async def _handle_inbound_message(project_id: int, channel: str,
@@ -17942,7 +17975,7 @@ async def _handle_inbound_message(project_id: int, channel: str,
         return conv, message
 
     conv, message = await loop.run_in_executor(None, _upsert)
-    await chat_hub.broadcast(project_id, {
+    push_chat_event(project_id, {
         "type":         "message.created",
         "conversation": _serialize_conv(conv),
         "message":      _serialize_msg(message, project_id),
@@ -18760,7 +18793,7 @@ async def close_conversation(conv_id: int,
         cur.execute("UPDATE crm_chat_conversations SET is_active=FALSE WHERE id=%s AND project_id=%s",
                     (conv_id, project_id))
         conn.commit()
-    await chat_hub.broadcast(project_id, {"type": "conversation.closed", "conversation_id": conv_id})
+    push_chat_event(project_id, {"type": "conversation.closed", "conversation_id": conv_id})
     return {"ok": True}
 
 
@@ -18773,7 +18806,7 @@ async def reopen_conversation(conv_id: int,
         cur.execute("UPDATE crm_chat_conversations SET is_active=TRUE WHERE id=%s AND project_id=%s",
                     (conv_id, project_id))
         conn.commit()
-    await chat_hub.broadcast(project_id, {"type": "conversation.reopened", "conversation_id": conv_id})
+    push_chat_event(project_id, {"type": "conversation.reopened", "conversation_id": conv_id})
     return {"ok": True}
 
 
@@ -19042,7 +19075,7 @@ async def send_message(conv_id: int,
         conn.commit()
 
     payload = _serialize_msg(msg, project_id)
-    await chat_hub.broadcast(project_id, {
+    push_chat_event(project_id, {
         "type":            "message.created",
         "conversation_id": conv_id,
         "message":         payload,
@@ -19066,7 +19099,7 @@ async def delete_chat_message(msg_id: int,
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_chat_messages WHERE id=%s", (msg_id,))
         conn.commit()
-    await chat_hub.broadcast(project_id, {
+    push_chat_event(project_id, {
         "type":            "message.deleted",
         "conversation_id": row["conversation_id"],
         "message_id":      msg_id,
@@ -26258,15 +26291,20 @@ def _start_pg_event_listener():
         import select as _sel
         while True:
             try:
-                conn = psycopg2.connect(**DB_CONFIG)
+                # DIRECT (non-pooled) connection — Neon's pooled endpoint is
+                # PgBouncer and silently never delivers LISTEN notifications.
+                conn = psycopg2.connect(**_direct_db_config())
                 conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
                 with conn.cursor() as cur:
                     cur.execute("LISTEN crm_project_events")
                     # User-targeted notifications (cross-process bell push).
-                    # External writes to crm_notifications + NOTIFY on this
+                    # Both CRM (push_notification) and External NOTIFY on this
                     # channel; we fan out to the matching user's bell UI
                     # subscribers via NotifHub.
                     cur.execute("LISTEN crm_user_notifications")
+                    # Live chat (Chat with Customers) — push_chat_event NOTIFYs
+                    # here so every instance's chat_hub gets the frame.
+                    cur.execute("LISTEN crm_chat_events")
                 global _health_listener_last_ok
                 _health_listener_last_ok = _utcnow()
                 while True:
@@ -26295,6 +26333,12 @@ def _start_pg_event_listener():
                                 if uid:
                                     asyncio.run_coroutine_threadsafe(
                                         notif_hub.broadcast(uid, event), main_loop)
+                            elif notify.channel == "crm_chat_events":
+                                pid   = int(event.get("project_id") or 0)
+                                inner = event.get("event") or {}
+                                if pid and inner:
+                                    asyncio.run_coroutine_threadsafe(
+                                        chat_hub.broadcast(pid, inner), main_loop)
                             else:
                                 pid = int(event.get("project_id") or 0)
                                 if pid:
@@ -26787,13 +26831,16 @@ def push_notification(user_id: int, project_id: Optional[int], ntype: str,
             "is_read":    False,
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         }
-        # In-process fast-path: directly fan out to local NotifHub subscribers
-        # without round-tripping through Postgres NOTIFY. CRM-originated pushes
-        # take this path.
+        # Cross-instance fan-out: NOTIFY on crm_user_notifications. The LISTEN
+        # background task on EVERY backend instance (including this one) picks it
+        # up and delivers to the matching user's NotifHub subscribers — so the
+        # bell updates live regardless of which Cloud Run instance the user's
+        # WebSocket is pinned to. (The old in-process fast-path only reached
+        # subscribers on THIS instance — invisible on multi-instance Cloud Run.)
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(notif_hub.broadcast(user_id, msg))
+            with db_cursor() as (conn, cur):
+                cur.execute("SELECT pg_notify(%s, %s)", ("crm_user_notifications", json.dumps(msg, default=str)))
+                conn.commit()
         except Exception:
             pass
     except Exception as e:
