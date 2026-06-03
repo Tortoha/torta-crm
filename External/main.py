@@ -844,6 +844,29 @@ def _classify_referrer(referrer: str) -> dict:
     return {"traffic_source": "referral", "referrer_host": host}
 
 
+# In-memory sliding-window rate limiter for checkout (place-order + init-payment).
+# Separate bucket from tracking so the two don't share a budget. A real customer
+# never places a dozen orders a minute — this only bites bots hammering the public
+# storefront key (and each init-payment also creates a real provider PaymentIntent,
+# so spamming it would rack up provider-side objects). Keyed per (user_id || IP).
+_ORDER_RL = {}   # key: "u:<id>" or "ip:<addr>" → list[float]
+def _rate_limit_orders(request: Request, user_id: int | None, max_per_min: int = 12):
+    import time
+    now = time.time()
+    cutoff = now - 60.0
+    key = f"u:{user_id}" if user_id else f"ip:{get_client_ip(request)}"
+    bucket = [t for t in (_ORDER_RL.get(key) or []) if t > cutoff]
+    if len(bucket) >= max_per_min:
+        raise HTTPException(429, "Too many checkout attempts — please wait a minute.")
+    bucket.append(now)
+    _ORDER_RL[key] = bucket
+    if len(_ORDER_RL) > 256:
+        for k in list(_ORDER_RL.keys()):
+            _ORDER_RL[k] = [t for t in _ORDER_RL[k] if t > cutoff]
+            if not _ORDER_RL[k]:
+                del _ORDER_RL[k]
+
+
 # In-memory sliding-window rate limiter for tracking endpoints.
 # Window: 60 seconds. Limit: 20 events per (user_id || IP) per window.
 # Lost on process restart — fine, attacker just has to wait one minute.
@@ -1847,6 +1870,43 @@ def _email_count_inc(org_id, n: int = 1) -> None:
             conn.commit()
     except Exception as e:
         print(f"[email_count] inc failed for org {org_id}: {e}")
+
+def _enforce_storefront_users(org_id) -> None:
+    """Raise 402 (plan_limit_exceeded) if the org is at its storefront-users cap
+    — i.e. registered (non-guest) customers. No-op when org_id is missing, the
+    limit is null (unlimited) or PLAN_ENFORCEMENT_DISABLED=1.
+
+    Guests (anonymous carts) NEVER count toward the cap and are never blocked.
+    Call this in every NEW-registration path right before the row is created or
+    a guest is upgraded to a real account — never on plain login of an existing
+    registered customer (that doesn't add to the count)."""
+    if not org_id:
+        return
+    if os.getenv("PLAN_ENFORCEMENT_DISABLED", "0") == "1":
+        return
+    row = db_one("SELECT (p.limits->>'storefront_users_max') AS lim, p.slug AS slug "
+                 "FROM crm_organizations o "
+                 "JOIN crm_subscription_plans p ON p.slug = COALESCE(o.plan_slug, 'free') "
+                 "WHERE o.id = %s", (org_id,))
+    lim = (row or {}).get("lim")
+    if lim is None:
+        return
+    cnt = db_one(
+        "SELECT COUNT(*) AS n FROM users "
+        " WHERE NOT COALESCE(is_guest, FALSE) "
+        "   AND (org_id = %s OR project_id IN (SELECT id FROM crm_projects WHERE org_id = %s))",
+        (org_id, org_id))
+    current = int((cnt or {}).get("n") or 0)
+    if current >= int(lim):
+        raise HTTPException(402, detail={
+            "error":     "plan_limit_exceeded",
+            "plan":      (row or {}).get("slug"),
+            "resource":  "storefront_users",
+            "limit":     int(lim),
+            "current":   current,
+            "requested": 1,
+        })
+
 
 def send_email(to: str, subject: str, html: str,
                from_name: str = "Torta Store", from_email: str = EMAIL_FROM,
@@ -2901,6 +2961,11 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
             # whole point of the auto-claim feature. We do that BEFORE
             # the INSERT path so the happy guest case is one query.
             existing = get_user_by_email(email, project_id, org_id)
+            # Storefront-users cap: gate BEFORE creating/upgrading a registered
+            # customer (new INSERT or guest→registered upgrade). Plain login of
+            # an already-registered customer never reaches this register branch.
+            if (existing is None) or existing.get("is_guest"):
+                _enforce_storefront_users(org_id)
             if existing and existing.get("is_guest"):
                 cursor.execute(
                     "UPDATE users SET name=%s, last_name=COALESCE(%s,last_name), password_hash=%s,"
@@ -3072,6 +3137,7 @@ def upsert_customer(body: CustomerUpsertBody, api_key: str,
             user_id = cur.fetchone()["id"]
             created = False
         else:
+            _enforce_storefront_users(org_id)
             cur.execute(
                 "INSERT INTO users "
                 "  (project_id, org_id, name, last_name, email, phone, birthdate, address, "
@@ -3461,10 +3527,20 @@ def get_storefront_config(api_key_record: dict = Depends(resolve_api_key)):
     Kept intentionally minimal — just the values the public storefront
     needs. Admin-only fields (margins, costs, internal flags) stay
     inside the CRM API."""
+    provider, creds, is_test_mode, _stripe_acct = _get_org_payment_config(api_key_record["id"])
+    online = provider not in ("manual", "other") and bool(creds)
     return {
         "currency":     api_key_record.get("currency") or "USD",
         "project_name": api_key_record.get("name"),
         "timezone":     api_key_record.get("timezone") or "UTC",
+        # Payment: online_payment=True means the merchant connected a real
+        # provider, so POST /orders runs in strict mode (needs a verified
+        # payment_intent). The storefront uses this to decide whether to
+        # collect a card (init-payment → Stripe Elements) or just record the
+        # order (manual/other). Never leaks credentials — only the public flag.
+        "payment_provider":  provider,
+        "online_payment":    online,
+        "payment_test_mode": bool(is_test_mode) if online else False,
     }
 
 
@@ -4879,56 +4955,6 @@ PROVIDER_FIELDS: dict[str, list[dict]] = {
         {"key": "secret_key",      "secret": True,  "required": True},
         {"key": "webhook_secret",  "secret": True,  "required": False},
     ],
-    "tinkoff": [
-        {"key": "terminal_key", "secret": False, "required": True},
-        {"key": "password",     "secret": True,  "required": True},
-    ],
-    "cloudpayments": [
-        {"key": "public_id",  "secret": False, "required": True},
-        {"key": "api_secret", "secret": True,  "required": True},
-    ],
-    "yookassa": [
-        {"key": "shop_id",    "secret": False, "required": True},
-        {"key": "secret_key", "secret": True,  "required": True},
-    ],
-    "paypal": [
-        {"key": "client_id",     "secret": False, "required": True},
-        {"key": "client_secret", "secret": True,  "required": True},
-        {"key": "webhook_id",    "secret": False, "required": False},
-    ],
-    "adyen": [
-        {"key": "api_key",          "secret": True,  "required": True},
-        {"key": "merchant_account", "secret": False, "required": True},
-        {"key": "client_key",       "secret": False, "required": False},
-        {"key": "hmac_key",         "secret": True,  "required": False},
-    ],
-    "braintree": [
-        {"key": "merchant_id", "secret": False, "required": True},
-        {"key": "public_key",  "secret": False, "required": True},
-        {"key": "private_key", "secret": True,  "required": True},
-    ],
-    "square": [
-        {"key": "access_token",          "secret": True,  "required": True},
-        {"key": "application_id",        "secret": False, "required": True},
-        {"key": "location_id",           "secret": False, "required": True},
-        {"key": "webhook_signature_key", "secret": True,  "required": False},
-    ],
-    "mollie": [
-        {"key": "api_key", "secret": True, "required": True},
-    ],
-    "razorpay": [
-        {"key": "key_id",         "secret": False, "required": True},
-        {"key": "key_secret",     "secret": True,  "required": True},
-        {"key": "webhook_secret", "secret": True,  "required": False},
-    ],
-    "paddle": [
-        {"key": "api_key",        "secret": True, "required": True},
-        {"key": "webhook_secret", "secret": True, "required": False},
-    ],
-    "paybox": [
-        {"key": "merchant_id", "secret": False, "required": True},
-        {"key": "secret_key",  "secret": True,  "required": True},
-    ],
     "manual": [],
     "other":  [],
 }
@@ -5101,1238 +5127,9 @@ def stripe_parse_event(raw_body: bytes) -> dict:
     }
 
 
-# ── Tinkoff ────────────────────────────────────────────────────────────────
+# -- Non-Stripe provider integrations removed: Stripe is the only API-native
+# gateway; every other gateway runs as manual/other (record-only). See git history. --
 
-_TINKOFF_BASE = "https://securepay.tinkoff.ru/v2"
-
-
-def _tinkoff_sign(params: dict, password: str) -> str:
-    items = {k: v for k, v in params.items() if not isinstance(v, (dict, list))}
-    items["Password"] = password
-    concat = "".join(str(items[k]) for k in sorted(items))
-    return hashlib.sha256(concat.encode("utf-8")).hexdigest()
-
-
-def tinkoff_create_intent(creds: dict, amount_kopecks: int, currency: str,
-                            *, order_metadata: dict, idempotency_key: str) -> dict:
-    tk = creds.get("terminal_key", "").strip()
-    pw = creds.get("password", "").strip()
-    if not tk or not pw:
-        return _err("Missing terminal_key or password")
-    payload = {
-        "TerminalKey": tk,
-        "Amount":      amount_kopecks,
-        "OrderId":     str(order_metadata.get("order_pending_id") or idempotency_key),
-        "Description": (order_metadata.get("description") or "")[:250],
-    }
-    payload = {k: v for k, v in payload.items() if v not in ("", None)}
-    payload["Token"] = _tinkoff_sign(payload, pw)
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_TINKOFF_BASE}/Init",
-                       headers={"Content-Type": "application/json"}, body=body)
-    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
-        return _ok({
-            "intent_id":     str(r["body"].get("PaymentId", "")),
-            "client_secret": "",
-            "redirect_url":  r["body"].get("PaymentURL", ""),
-            "status":        r["body"].get("Status", ""),
-        }, r["body"])
-    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"Tinkoff Init failed (HTTP {r['status']})",
-                r["body"] if isinstance(r["body"], dict) else {})
-
-
-def tinkoff_get_intent(creds: dict, payment_id: str) -> dict:
-    tk = creds.get("terminal_key", "").strip()
-    pw = creds.get("password", "").strip()
-    if not tk or not pw:
-        return _err("Missing terminal_key or password")
-    payload = {"TerminalKey": tk, "PaymentId": payment_id}
-    payload["Token"] = _tinkoff_sign(payload, pw)
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_TINKOFF_BASE}/GetState",
-                       headers={"Content-Type": "application/json"}, body=body)
-    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
-        status = r["body"].get("Status", "")
-        return _ok({
-            "intent_id":  payment_id,
-            "status":     status,
-            "amount":     r["body"].get("Amount", 0),
-            "currency":   "RUB",
-            "charge_id":  payment_id,
-            "metadata":   {},
-        }, r["body"])
-    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"Tinkoff GetState failed", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def tinkoff_verify_webhook(payload_bytes: bytes, password: str) -> tuple[bool, str]:
-    """Tinkoff webhook body is JSON. The Token field in the body is the signature
-    over all other top-level fields. We re-sign and compare."""
-    try:
-        body = json.loads(payload_bytes.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return False, "Malformed webhook body"
-    token = body.pop("Token", "")
-    if not token:
-        return False, "Missing Token in body"
-    expected = _tinkoff_sign(body, password)
-    if hmac.compare_digest(token.lower(), expected.lower()):
-        return True, ""
-    return False, "Signature mismatch"
-
-
-def tinkoff_parse_event(raw_body: bytes) -> dict:
-    try:
-        body = json.loads(raw_body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"type": "unknown", "raw_type": "", "event_id": "", "intent_id": "",
-                "charge_id": "", "status": "", "amount": 0, "currency": "RUB",
-                "metadata": {}, "raw": {}}
-    status = body.get("Status", "")
-    canonical = "unknown"
-    if status == "CONFIRMED": canonical = "payment.succeeded"
-    elif status == "REJECTED": canonical = "payment.failed"
-    elif status in ("REFUNDED", "PARTIAL_REFUNDED"): canonical = "refund.succeeded"
-    return {
-        "type":      canonical,
-        "raw_type":  status,
-        "event_id":  str(body.get("PaymentId", "")),  # Tinkoff has no event_id — PaymentId+Status is unique
-        "intent_id": str(body.get("PaymentId", "")),
-        "charge_id": str(body.get("PaymentId", "")),
-        "status":    status,
-        "amount":    body.get("Amount", 0),
-        "currency":  "RUB",
-        "metadata":  {"OrderId": body.get("OrderId", "")},
-        "raw":       body,
-    }
-
-
-# ── CloudPayments ──────────────────────────────────────────────────────────
-
-_CLOUDPAYMENTS_BASE = "https://api.cloudpayments.ru"
-
-
-def cloudpayments_create_intent(creds: dict, amount: float, currency: str,
-                                  *, order_metadata: dict, idempotency_key: str) -> dict:
-    """CloudPayments uses widget-based checkout — merchant embeds widget on storefront
-    with public_id, amount, etc. We don't pre-create an intent server-side; instead
-    we return the public_id and amount so the storefront can launch the widget."""
-    pid = creds.get("public_id", "").strip()
-    if not pid:
-        return _err("Missing public_id")
-    return _ok({
-        "intent_id":     "cp_" + idempotency_key,
-        "public_id":     pid,
-        "amount":        round(float(amount) / 100.0, 2) if currency.upper() != "RUB" else round(float(amount), 2),
-        "currency":      currency or "RUB",
-        "invoice_id":    str(order_metadata.get("order_pending_id") or idempotency_key),
-        "description":   order_metadata.get("description", ""),
-    })
-
-
-def cloudpayments_get_intent(creds: dict, transaction_id: str) -> dict:
-    pid = creds.get("public_id", "").strip()
-    sec = creds.get("api_secret", "").strip()
-    if not pid or not sec:
-        return _err("Missing public_id or api_secret")
-    body = json.dumps({"TransactionId": int(transaction_id)}).encode("utf-8")
-    r = _http_request("POST", f"{_CLOUDPAYMENTS_BASE}/payments/get",
-                       headers={"Content-Type": "application/json"},
-                       body=body, basic_auth=(pid, sec))
-    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
-        m = r["body"].get("Model") or {}
-        return _ok({
-            "intent_id":  str(m.get("TransactionId", "")),
-            "status":     m.get("Status", ""),
-            "amount":     m.get("Amount", 0),
-            "currency":   m.get("Currency", "RUB"),
-            "charge_id":  str(m.get("TransactionId", "")),
-            "metadata":   {"InvoiceId": m.get("InvoiceId", "")},
-        }, r["body"])
-    return _err("CloudPayments status fetch failed", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def cloudpayments_verify_webhook(payload_bytes: bytes, signature_header: str,
-                                   api_secret: str) -> tuple[bool, str]:
-    if not signature_header:
-        return False, "Missing Content-HMAC header"
-    expected = base64.b64encode(
-        hmac.new(api_secret.encode(), payload_bytes, hashlib.sha256).digest()
-    ).decode("ascii")
-    if hmac.compare_digest(expected, signature_header):
-        return True, ""
-    return False, "Signature mismatch"
-
-
-def cloudpayments_parse_event(raw_body: bytes) -> dict:
-    parsed = urllib.parse.parse_qs(raw_body.decode("utf-8", errors="replace"))
-    flat = {k: v[0] if v else "" for k, v in parsed.items()}
-    status = flat.get("Status", "")
-    operation = flat.get("OperationType", "")
-    canonical = "unknown"
-    if status == "Completed" and operation == "Payment": canonical = "payment.succeeded"
-    elif status == "Declined": canonical = "payment.failed"
-    elif operation == "Refund": canonical = "refund.succeeded"
-    return {
-        "type":      canonical,
-        "raw_type":  f"{operation}.{status}",
-        "event_id":  flat.get("TransactionId", ""),
-        "intent_id": flat.get("TransactionId", ""),
-        "charge_id": flat.get("TransactionId", ""),
-        "status":    status,
-        "amount":    float(flat.get("Amount", 0) or 0) * 100,
-        "currency":  flat.get("Currency", "RUB"),
-        "metadata":  {"InvoiceId": flat.get("InvoiceId", "")},
-        "raw":       flat,
-    }
-
-
-# ── YooKassa ───────────────────────────────────────────────────────────────
-
-_YOOKASSA_BASE = "https://api.yookassa.ru/v3"
-
-# YooKassa sends webhooks from a fixed IP range. They don't sign webhooks.
-# Source: https://yookassa.ru/developers/using-api/webhooks#ip
-_YOOKASSA_IPS = [
-    ipaddress.ip_network("185.71.76.0/27"),
-    ipaddress.ip_network("185.71.77.0/27"),
-    ipaddress.ip_network("77.75.153.0/25"),
-    ipaddress.ip_network("77.75.154.128/25"),
-    ipaddress.ip_network("2a02:5180::/32"),
-]
-
-
-def yookassa_create_intent(creds: dict, amount: float, currency: str,
-                             *, order_metadata: dict, idempotency_key: str,
-                             return_url: str = "") -> dict:
-    shop = creds.get("shop_id", "").strip()
-    sec  = creds.get("secret_key", "").strip()
-    if not shop or not sec:
-        return _err("Missing shop_id or secret_key")
-    payload = {
-        "amount":      {"value": f"{round(float(amount), 2):.2f}", "currency": currency or "RUB"},
-        "capture":     True,
-        "description": (order_metadata.get("description") or "")[:128],
-        "metadata":    {k: str(v)[:255] for k, v in order_metadata.items()},
-    }
-    if return_url:
-        payload["confirmation"] = {"type": "redirect", "return_url": return_url}
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_YOOKASSA_BASE}/payments",
-                       headers={"Content-Type": "application/json",
-                                "Idempotence-Key": idempotency_key},
-                       body=body, basic_auth=(shop, sec))
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        confirm = r["body"].get("confirmation") or {}
-        return _ok({
-            "intent_id":    r["body"].get("id", ""),
-            "redirect_url": confirm.get("confirmation_url", ""),
-            "status":       r["body"].get("status", ""),
-            "amount":       r["body"].get("amount", {}).get("value", "0"),
-            "currency":     r["body"].get("amount", {}).get("currency", currency),
-        }, r["body"])
-    desc = (r["body"] or {}).get("description", "") if isinstance(r["body"], dict) else ""
-    return _err(desc or f"YooKassa /payments failed", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def yookassa_get_intent(creds: dict, payment_id: str) -> dict:
-    shop = creds.get("shop_id", "").strip()
-    sec  = creds.get("secret_key", "").strip()
-    if not shop or not sec:
-        return _err("Missing shop_id or secret_key")
-    r = _http_request("GET", f"{_YOOKASSA_BASE}/payments/{payment_id}",
-                       basic_auth=(shop, sec))
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        return _ok({
-            "intent_id":  r["body"].get("id", ""),
-            "status":     r["body"].get("status", ""),
-            "amount":     r["body"].get("amount", {}).get("value", "0"),
-            "currency":   r["body"].get("amount", {}).get("currency", ""),
-            "charge_id":  r["body"].get("id", ""),
-            "metadata":   r["body"].get("metadata", {}) or {},
-        }, r["body"])
-    return _err(f"YooKassa fetch failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def yookassa_verify_webhook(payload_bytes: bytes, signature_header: str,
-                              source_ip: str) -> tuple[bool, str]:
-    """YooKassa doesn't sign webhooks. Instead they whitelist IP.
-    We accept events from the documented IP range only."""
-    if not source_ip:
-        return False, "Source IP unavailable"
-    try:
-        ip = ipaddress.ip_address(source_ip.split(",")[0].strip())
-    except ValueError:
-        return False, f"Invalid IP: {source_ip}"
-    for net in _YOOKASSA_IPS:
-        if ip in net:
-            return True, ""
-    return False, f"IP {ip} not in YooKassa whitelist"
-
-
-def yookassa_parse_event(raw_body: bytes) -> dict:
-    try:
-        event = json.loads(raw_body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"type": "unknown", "raw_type": "", "event_id": "", "intent_id": "",
-                "charge_id": "", "status": "", "amount": 0, "currency": "RUB",
-                "metadata": {}, "raw": {}}
-    raw_type = event.get("event", "")
-    obj = event.get("object") or {}
-    canonical = "unknown"
-    if raw_type == "payment.succeeded": canonical = "payment.succeeded"
-    elif raw_type == "payment.canceled": canonical = "payment.failed"
-    elif raw_type == "refund.succeeded": canonical = "refund.succeeded"
-    return {
-        "type":      canonical,
-        "raw_type":  raw_type,
-        # YooKassa has no event_id — use (payment_id + event_type) for idempotency
-        "event_id":  f"{obj.get('id', '')}.{raw_type}",
-        "intent_id": obj.get("id", "") if raw_type.startswith("payment.") else (obj.get("payment_id") or ""),
-        "charge_id": obj.get("id", ""),
-        "status":    obj.get("status", ""),
-        "amount":    int(float(obj.get("amount", {}).get("value", 0) or 0) * 100),
-        "currency":  obj.get("amount", {}).get("currency", "RUB"),
-        "metadata":  obj.get("metadata", {}) or {},
-        "raw":       event,
-    }
-
-
-# ── PayPal ─────────────────────────────────────────────────────────────────
-
-_PAYPAL_BASE_LIVE    = "https://api-m.paypal.com"
-_PAYPAL_BASE_SANDBOX = "https://api-m.sandbox.paypal.com"
-
-
-def _paypal_base(is_test: bool) -> str:
-    return _PAYPAL_BASE_SANDBOX if is_test else _PAYPAL_BASE_LIVE
-
-
-def _paypal_token(creds: dict, is_test: bool) -> tuple[str, str]:
-    cid  = creds.get("client_id", "").strip()
-    csec = creds.get("client_secret", "").strip()
-    if not cid or not csec:
-        return "", "Missing client_id or client_secret"
-    r = _http_request("POST", f"{_paypal_base(is_test)}/v1/oauth2/token",
-                       headers={"Content-Type": "application/x-www-form-urlencoded"},
-                       body=b"grant_type=client_credentials",
-                       basic_auth=(cid, csec))
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        return r["body"].get("access_token", ""), ""
-    return "", f"PayPal token failed (HTTP {r['status']})"
-
-
-def paypal_create_intent(creds: dict, amount: float, currency: str,
-                          *, order_metadata: dict, idempotency_key: str,
-                          is_test: bool = True) -> dict:
-    token, err = _paypal_token(creds, is_test)
-    if err:
-        return _err(err)
-    payload = {
-        "intent": "CAPTURE",
-        "purchase_units": [{
-            "reference_id":  str(order_metadata.get("order_pending_id") or idempotency_key)[:255],
-            "amount":        {"value": f"{round(float(amount), 2):.2f}", "currency_code": (currency or "USD").upper()},
-            "description":   (order_metadata.get("description") or "")[:127],
-        }],
-    }
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_paypal_base(is_test)}/v2/checkout/orders",
-                       headers={"Content-Type": "application/json",
-                                "PayPal-Request-Id": idempotency_key},
-                       body=body, bearer=token)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        approve_url = ""
-        for link in (r["body"].get("links") or []):
-            if link.get("rel") == "approve":
-                approve_url = link.get("href", "")
-                break
-        return _ok({
-            "intent_id":    r["body"].get("id", ""),
-            "redirect_url": approve_url,
-            "status":       r["body"].get("status", ""),
-        }, r["body"])
-    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"PayPal create failed (HTTP {r['status']})",
-                r["body"] if isinstance(r["body"], dict) else {})
-
-
-def paypal_get_intent(creds: dict, order_id: str, is_test: bool = True) -> dict:
-    token, err = _paypal_token(creds, is_test)
-    if err:
-        return _err(err)
-    r = _http_request("GET", f"{_paypal_base(is_test)}/v2/checkout/orders/{order_id}",
-                       bearer=token)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        pu = (r["body"].get("purchase_units") or [{}])[0]
-        cap = (pu.get("payments", {}).get("captures") or [{}])[0]
-        return _ok({
-            "intent_id":  r["body"].get("id", ""),
-            "status":     r["body"].get("status", ""),
-            "amount":     pu.get("amount", {}).get("value", "0"),
-            "currency":   pu.get("amount", {}).get("currency_code", ""),
-            "charge_id":  cap.get("id", ""),
-            "metadata":   {"reference_id": pu.get("reference_id", "")},
-        }, r["body"])
-    return _err(f"PayPal fetch failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def paypal_verify_webhook(creds: dict, headers: dict, raw_body: bytes,
-                            webhook_id: str, is_test: bool = True) -> tuple[bool, str]:
-    """Calls PayPal's verify-webhook-signature endpoint — they do the actual cert
-    chain validation server-side. Safer than implementing RSA + cert chain locally."""
-    if not webhook_id:
-        return False, "Webhook ID not configured"
-    token, err = _paypal_token(creds, is_test)
-    if err:
-        return False, err
-    try:
-        event_body = json.loads(raw_body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return False, "Malformed webhook body"
-    payload = {
-        "auth_algo":         headers.get("paypal-auth-algo", ""),
-        "cert_url":          headers.get("paypal-cert-url", ""),
-        "transmission_id":   headers.get("paypal-transmission-id", ""),
-        "transmission_sig":  headers.get("paypal-transmission-sig", ""),
-        "transmission_time": headers.get("paypal-transmission-time", ""),
-        "webhook_id":        webhook_id,
-        "webhook_event":     event_body,
-    }
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_paypal_base(is_test)}/v1/notifications/verify-webhook-signature",
-                       headers={"Content-Type": "application/json"},
-                       body=body, bearer=token)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        if r["body"].get("verification_status") == "SUCCESS":
-            return True, ""
-        return False, "PayPal verification_status = " + str(r["body"].get("verification_status", "FAIL"))
-    return False, f"PayPal verify call failed (HTTP {r['status']})"
-
-
-def paypal_parse_event(raw_body: bytes) -> dict:
-    try:
-        event = json.loads(raw_body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"type": "unknown", "raw_type": "", "event_id": "", "intent_id": "",
-                "charge_id": "", "status": "", "amount": 0, "currency": "USD",
-                "metadata": {}, "raw": {}}
-    raw_type = event.get("event_type", "")
-    res = event.get("resource") or {}
-    canonical = "unknown"
-    if raw_type in ("PAYMENT.CAPTURE.COMPLETED", "CHECKOUT.ORDER.COMPLETED"):
-        canonical = "payment.succeeded"
-    elif raw_type == "PAYMENT.CAPTURE.DENIED":
-        canonical = "payment.failed"
-    elif raw_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.SALE.REFUNDED"):
-        canonical = "refund.succeeded"
-    elif raw_type == "CUSTOMER.DISPUTE.CREATED":
-        canonical = "dispute.created"
-    amt = float((res.get("amount") or {}).get("value", 0) or 0)
-    return {
-        "type":      canonical,
-        "raw_type":  raw_type,
-        "event_id":  event.get("id", ""),
-        "intent_id": res.get("supplementary_data", {}).get("related_ids", {}).get("order_id", "") or "",
-        "charge_id": res.get("id", ""),
-        "status":    res.get("status", ""),
-        "amount":    int(amt * 100),
-        "currency":  (res.get("amount") or {}).get("currency_code", "USD"),
-        "metadata":  {"custom_id": res.get("custom_id", "")},
-        "raw":       event,
-    }
-
-
-# ── Adyen ──────────────────────────────────────────────────────────────────
-
-def _adyen_base(is_test: bool) -> str:
-    return "https://checkout-test.adyen.com/v71" if is_test else "https://checkout-live.adyen.com/v71"
-
-
-def adyen_create_intent(creds: dict, amount_minor: int, currency: str,
-                          *, order_metadata: dict, idempotency_key: str,
-                          is_test: bool = True, return_url: str = "") -> dict:
-    api_key = creds.get("api_key", "").strip()
-    mac     = creds.get("merchant_account", "").strip()
-    if not api_key or not mac:
-        return _err("Missing api_key or merchant_account")
-    payload = {
-        "amount":          {"value": amount_minor, "currency": (currency or "USD").upper()},
-        "merchantAccount": mac,
-        "reference":       str(order_metadata.get("order_pending_id") or idempotency_key)[:80],
-        "returnUrl":       return_url or "https://example.com/return",
-    }
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_adyen_base(is_test)}/sessions",
-                       headers={"X-API-Key": api_key, "Content-Type": "application/json",
-                                "Idempotency-Key": idempotency_key}, body=body)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        return _ok({
-            "intent_id":     r["body"].get("id", ""),
-            "session_data":  r["body"].get("sessionData", ""),  # required by Drop-in
-            "client_key":    creds.get("client_key", ""),
-            "status":        "pending",
-        }, r["body"])
-    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"Adyen session failed (HTTP {r['status']})",
-                r["body"] if isinstance(r["body"], dict) else {})
-
-
-def adyen_get_intent(creds: dict, session_id: str, is_test: bool = True) -> dict:
-    api_key = creds.get("api_key", "").strip()
-    if not api_key or not session_id:
-        return _err("Missing api_key or session_id")
-    r = _http_request("GET", f"{_adyen_base(is_test)}/sessions/{session_id}",
-                       headers={"X-API-Key": api_key})
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        status = r["body"].get("status", "")
-        amount = (r["body"].get("amount") or {}).get("value", 0)
-        return _ok({"intent_id": session_id, "status": status,
-                     "amount": amount,
-                     "currency": (r["body"].get("amount") or {}).get("currency", ""),
-                     "charge_id": session_id, "metadata": {}}, r["body"])
-    return _err(f"Adyen fetch failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def adyen_verify_webhook(raw_body: bytes, hmac_key: str) -> tuple[bool, str]:
-    """Adyen signs each notification item separately. HMAC over:
-       pspReference:originalReference:merchantAccountCode:merchantReference:value:currency:eventCode:success
-       — encoded bytes → HMAC-SHA256 → base64. Compared to notificationItems[].additionalData.hmacSignature.
-    See: https://docs.adyen.com/development-resources/webhooks/verify-hmac-signatures
-    """
-    if not hmac_key:
-        return False, "HMAC key not configured"
-    try:
-        obj = json.loads(raw_body.decode("utf-8"))
-        items = obj.get("notificationItems") or []
-        if not items:
-            return False, "No notificationItems in body"
-        item = (items[0] or {}).get("NotificationRequestItem") or {}
-        sig_provided = (item.get("additionalData") or {}).get("hmacSignature", "")
-        if not sig_provided:
-            return False, "Missing hmacSignature"
-        amount = item.get("amount") or {}
-        signed = ":".join([
-            str(item.get("pspReference", "")),
-            str(item.get("originalReference", "")),
-            str(item.get("merchantAccountCode", "")),
-            str(item.get("merchantReference", "")),
-            str(amount.get("value", "")),
-            str(amount.get("currency", "")),
-            str(item.get("eventCode", "")),
-            str(item.get("success", "")),
-        ])
-        try:
-            key_bytes = bytes.fromhex(hmac_key)
-        except ValueError:
-            key_bytes = hmac_key.encode()
-        expected = base64.b64encode(
-            hmac.new(key_bytes, signed.encode("utf-8"), hashlib.sha256).digest()
-        ).decode("ascii")
-        if hmac.compare_digest(expected, sig_provided):
-            return True, ""
-        return False, "Signature mismatch"
-    except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as e:
-        return False, f"Malformed body: {e}"
-
-
-def adyen_parse_event(raw_body: bytes) -> dict:
-    try:
-        obj = json.loads(raw_body.decode("utf-8"))
-        items = obj.get("notificationItems") or []
-        item = (items[0] or {}).get("NotificationRequestItem") or {}
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"type": "unknown", "raw_type": "", "event_id": "", "intent_id": "",
-                "charge_id": "", "status": "", "amount": 0, "currency": "",
-                "metadata": {}, "raw": {}}
-    code = item.get("eventCode", "")
-    success = str(item.get("success", "")).lower() == "true"
-    canonical = "unknown"
-    if code == "AUTHORISATION" and success:    canonical = "payment.succeeded"
-    elif code == "AUTHORISATION":              canonical = "payment.failed"
-    elif code == "REFUND" and success:         canonical = "refund.succeeded"
-    elif code == "NOTIFICATION_OF_CHARGEBACK": canonical = "dispute.created"
-    amt = (item.get("amount") or {}).get("value", 0) or 0
-    return {
-        "type":      canonical,
-        "raw_type":  code,
-        "event_id":  item.get("pspReference", ""),
-        "intent_id": item.get("originalReference", "") or item.get("pspReference", ""),
-        "charge_id": item.get("pspReference", ""),
-        "status":    "succeeded" if success else "failed",
-        "amount":    int(amt),
-        "currency":  (item.get("amount") or {}).get("currency", ""),
-        "metadata":  {"merchantReference": item.get("merchantReference", "")},
-        "raw":       item,
-    }
-
-
-# ── Braintree ──────────────────────────────────────────────────────────────
-
-def _braintree_url(is_test: bool) -> str:
-    return ("https://payments.sandbox.braintree-api.com/graphql" if is_test
-            else "https://payments.braintree-api.com/graphql")
-
-
-def braintree_create_intent(creds: dict, amount_cents: int, currency: str,
-                              *, order_metadata: dict, idempotency_key: str,
-                              is_test: bool = True) -> dict:
-    """Create a client-token via GraphQL `createClientToken` mutation.
-    Frontend uses this token to initialise Drop-in UI."""
-    pub = creds.get("public_key", "").strip()
-    pri = creds.get("private_key", "").strip()
-    if not pub or not pri:
-        return _err("Missing public_key or private_key")
-    body = json.dumps({
-        "query": "mutation t($i: CreateClientTokenInput) { createClientToken(input: $i) { clientToken } }",
-        "variables": {"i": {}},
-    }).encode("utf-8")
-    r = _http_request("POST", _braintree_url(is_test),
-                       headers={"Content-Type": "application/json",
-                                "Braintree-Version": "2019-01-01"},
-                       body=body, basic_auth=(pub, pri))
-    if r["status"] == 200 and isinstance(r["body"], dict) and not r["body"].get("errors"):
-        token = r["body"].get("data", {}).get("createClientToken", {}).get("clientToken", "")
-        return _ok({
-            "intent_id":     "bt_" + idempotency_key,
-            "client_secret": token,
-            "amount":        amount_cents,
-            "currency":      currency.upper(),
-            "status":        "pending",
-        }, r["body"])
-    err = (r["body"] or {}).get("errors", [{}])[0].get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(err or f"Braintree intent failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def braintree_get_intent(creds: dict, transaction_id: str, is_test: bool = True) -> dict:
-    pub = creds.get("public_key", "").strip()
-    pri = creds.get("private_key", "").strip()
-    if not pub or not pri:
-        return _err("Missing public_key or private_key")
-    body = json.dumps({
-        "query": "query t($i: ID!) { node(id: $i) { ... on Transaction { id status amount { value currencyCode } } } }",
-        "variables": {"i": transaction_id},
-    }).encode("utf-8")
-    r = _http_request("POST", _braintree_url(is_test),
-                       headers={"Content-Type": "application/json",
-                                "Braintree-Version": "2019-01-01"},
-                       body=body, basic_auth=(pub, pri))
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        tx = r["body"].get("data", {}).get("node") or {}
-        amt = tx.get("amount", {}) or {}
-        return _ok({
-            "intent_id": tx.get("id", ""),
-            "status":    tx.get("status", ""),
-            "amount":    float(amt.get("value", 0) or 0),
-            "currency":  amt.get("currencyCode", ""),
-            "charge_id": tx.get("id", ""),
-            "metadata":  {},
-        }, r["body"])
-    return _err(f"Braintree fetch failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def braintree_verify_webhook(payload_form: dict, private_key: str) -> tuple[bool, str]:
-    """Braintree webhooks POST form-encoded {bt_signature, bt_payload}.
-    bt_signature is "publicKey|signature". Verify HMAC-SHA1 of bt_payload with private_key
-    (matches the part after the pipe).
-    """
-    sig = payload_form.get("bt_signature", "")
-    pl  = payload_form.get("bt_payload", "")
-    if not sig or not pl:
-        return False, "Missing bt_signature or bt_payload"
-    parts = sig.split("|", 1)
-    if len(parts) != 2:
-        return False, "Malformed bt_signature"
-    expected = hmac.new(private_key.encode(),
-                          pl.encode("utf-8"),
-                          hashlib.sha1).hexdigest()
-    if hmac.compare_digest(expected, parts[1]):
-        return True, ""
-    return False, "Signature mismatch"
-
-
-def braintree_parse_event(raw_body: bytes) -> dict:
-    """Braintree webhooks are form-encoded with bt_payload = base64(XML).
-    We don't parse the XML here — just return a stub canonical event."""
-    try:
-        parsed = urllib.parse.parse_qs(raw_body.decode("utf-8"))
-        bt_payload = (parsed.get("bt_payload") or [""])[0]
-        decoded = base64.b64decode(bt_payload + "=" * (-len(bt_payload) % 4)).decode("utf-8", errors="replace")
-    except Exception:
-        decoded = ""
-    # Best-effort kind-detection by string match
-    canonical = "unknown"
-    if "transaction_settled"   in decoded: canonical = "payment.succeeded"
-    elif "transaction_settlement_declined" in decoded: canonical = "payment.failed"
-    elif "transaction_disbursed" in decoded: canonical = "payment.succeeded"
-    elif "disputes_opened"     in decoded: canonical = "dispute.created"
-    elif "subscription_charged_successfully" in decoded: canonical = "payment.succeeded"
-    return {
-        "type": canonical, "raw_type": "braintree_xml_payload",
-        "event_id": hashlib.sha256(decoded.encode()).hexdigest()[:24] if decoded else "",
-        "intent_id": "", "charge_id": "",
-        "status": "", "amount": 0, "currency": "",
-        "metadata": {}, "raw": {"xml_preview": decoded[:500]},
-    }
-
-
-# ── Square ─────────────────────────────────────────────────────────────────
-
-def _square_base(is_test: bool) -> str:
-    return "https://connect.squareupsandbox.com/v2" if is_test else "https://connect.squareup.com/v2"
-
-
-def square_create_intent(creds: dict, amount_minor: int, currency: str,
-                          *, order_metadata: dict, idempotency_key: str,
-                          is_test: bool = True, return_url: str = "") -> dict:
-    tok = creds.get("access_token", "").strip()
-    loc = creds.get("location_id", "").strip()
-    if not tok or not loc:
-        return _err("Missing access_token or location_id")
-    payload = {
-        "idempotency_key": idempotency_key,
-        "quick_pay": {
-            "name":     order_metadata.get("description") or "Order",
-            "price_money": {"amount": amount_minor, "currency": (currency or "USD").upper()},
-            "location_id": loc,
-        },
-        "checkout_options": {
-            "redirect_url": return_url or "",
-        },
-    }
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_square_base(is_test)}/online-checkout/payment-links",
-                       headers={"Square-Version": "2024-10-17",
-                                "Content-Type": "application/json"},
-                       body=body, bearer=tok)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        link = r["body"].get("payment_link") or {}
-        return _ok({
-            "intent_id":    link.get("id", ""),
-            "redirect_url": link.get("url", ""),
-            "status":       "pending",
-        }, r["body"])
-    errors = (r["body"] or {}).get("errors", []) if isinstance(r["body"], dict) else []
-    msg = errors[0].get("detail", "") if errors else ""
-    return _err(msg or f"Square intent failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def square_get_intent(creds: dict, payment_link_id: str, is_test: bool = True) -> dict:
-    """Square doesn't have a direct 'get intent' — we look up the linked Payment via
-    list-payments filtered by note=payment_link_id. Simpler path: just trust the
-    front-end provided payment_id (via Square.js callback)."""
-    tok = creds.get("access_token", "").strip()
-    if not tok:
-        return _err("Missing access_token")
-    r = _http_request("GET", f"{_square_base(is_test)}/payments/{payment_link_id}",
-                       headers={"Square-Version": "2024-10-17"}, bearer=tok)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        p = r["body"].get("payment") or {}
-        am = p.get("amount_money") or {}
-        return _ok({
-            "intent_id": p.get("id", ""),
-            "status":    p.get("status", ""),
-            "amount":    am.get("amount", 0),
-            "currency":  am.get("currency", ""),
-            "charge_id": p.get("id", ""),
-            "metadata":  {"reference_id": p.get("reference_id", "")},
-        }, r["body"])
-    return _err(f"Square fetch failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def square_verify_webhook(payload_bytes: bytes, signature_header: str,
-                            url: str, signature_key: str) -> tuple[bool, str]:
-    """Header X-Square-HmacSha256-Signature = base64(HMAC-SHA256(notificationUrl + body, signatureKey)).
-    See: https://developer.squareup.com/docs/webhooks/step3validate
-    """
-    if not signature_key:
-        return False, "Webhook signature key not configured"
-    if not signature_header:
-        return False, "Missing Square signature header"
-    string_to_sign = url.encode("utf-8") + payload_bytes
-    expected = base64.b64encode(
-        hmac.new(signature_key.encode(), string_to_sign, hashlib.sha256).digest()
-    ).decode("ascii")
-    if hmac.compare_digest(expected, signature_header):
-        return True, ""
-    return False, "Signature mismatch"
-
-
-def square_parse_event(raw_body: bytes) -> dict:
-    try:
-        event = json.loads(raw_body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"type": "unknown", "raw_type": "", "event_id": "", "intent_id": "",
-                "charge_id": "", "status": "", "amount": 0, "currency": "",
-                "metadata": {}, "raw": {}}
-    raw_type = event.get("type", "")
-    obj = (event.get("data") or {}).get("object") or {}
-    p   = obj.get("payment") or obj.get("refund") or {}
-    canonical = "unknown"
-    if raw_type == "payment.updated" and p.get("status") == "COMPLETED": canonical = "payment.succeeded"
-    elif raw_type == "payment.updated" and p.get("status") in ("FAILED", "CANCELED"): canonical = "payment.failed"
-    elif raw_type == "refund.updated" and p.get("status") == "COMPLETED": canonical = "refund.succeeded"
-    elif raw_type == "dispute.created":                                   canonical = "dispute.created"
-    am = p.get("amount_money") or {}
-    return {
-        "type":      canonical,
-        "raw_type":  raw_type,
-        "event_id":  event.get("event_id", "") or event.get("id", ""),
-        "intent_id": p.get("id", ""),
-        "charge_id": p.get("id", ""),
-        "status":    p.get("status", ""),
-        "amount":    am.get("amount", 0),
-        "currency":  am.get("currency", ""),
-        "metadata":  {"reference_id": p.get("reference_id", "")},
-        "raw":       event,
-    }
-
-
-# ── Mollie ─────────────────────────────────────────────────────────────────
-
-_MOLLIE_BASE = "https://api.mollie.com/v2"
-
-
-def mollie_create_intent(creds: dict, amount: float, currency: str,
-                          *, order_metadata: dict, idempotency_key: str,
-                          return_url: str = "", webhook_url: str = "") -> dict:
-    key = creds.get("api_key", "").strip()
-    if not key:
-        return _err("Missing api_key")
-    payload = {
-        "amount":      {"value": f"{round(amount, 2):.2f}", "currency": (currency or "EUR").upper()},
-        "description": (order_metadata.get("description") or "Order")[:255],
-        "redirectUrl": return_url or "https://example.com/return",
-        "metadata":    {k: str(v)[:255] for k, v in order_metadata.items()},
-    }
-    if webhook_url:
-        payload["webhookUrl"] = webhook_url
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_MOLLIE_BASE}/payments",
-                       headers={"Content-Type": "application/json",
-                                "Idempotency-Key": idempotency_key},
-                       body=body, bearer=key)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        return _ok({
-            "intent_id":    r["body"].get("id", ""),
-            "redirect_url": (r["body"].get("_links") or {}).get("checkout", {}).get("href", ""),
-            "status":       r["body"].get("status", ""),
-        }, r["body"])
-    msg = (r["body"] or {}).get("detail", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"Mollie intent failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def mollie_get_intent(creds: dict, payment_id: str) -> dict:
-    key = creds.get("api_key", "").strip()
-    if not key:
-        return _err("Missing api_key")
-    r = _http_request("GET", f"{_MOLLIE_BASE}/payments/{payment_id}", bearer=key)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        am = r["body"].get("amount") or {}
-        return _ok({
-            "intent_id": r["body"].get("id", ""),
-            "status":    r["body"].get("status", ""),
-            "amount":    am.get("value", "0"),
-            "currency":  am.get("currency", ""),
-            "charge_id": r["body"].get("id", ""),
-            "metadata":  r["body"].get("metadata") or {},
-        }, r["body"])
-    return _err(f"Mollie fetch failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def mollie_verify_webhook(raw_body: bytes) -> tuple[bool, str]:
-    """Mollie does NOT sign webhooks. They send only the payment id in form data; we
-    re-fetch the payment from API by ID to authenticate. Since the API call uses our
-    secret key, only legitimate payments under our account return data.
-
-    Caller MUST do the re-fetch (mollie_get_intent) and check it matches the body's
-    payment id. We just verify the body has a valid `id` field shape.
-    """
-    parsed = urllib.parse.parse_qs(raw_body.decode("utf-8", errors="replace"))
-    pid = (parsed.get("id") or [""])[0]
-    if not pid or not pid.startswith(("tr_", "ord_")):
-        return False, "Missing or malformed Mollie payment id"
-    return True, ""
-
-
-def mollie_parse_event(raw_body: bytes) -> dict:
-    """Mollie webhook body is form-encoded {id: tr_XYZ}. No event type — caller
-    must fetch payment status separately.
-    """
-    parsed = urllib.parse.parse_qs(raw_body.decode("utf-8", errors="replace"))
-    pid = (parsed.get("id") or [""])[0]
-    return {
-        "type": "unknown", "raw_type": "mollie_notification",
-        "event_id": pid, "intent_id": pid, "charge_id": pid,
-        "status": "needs_lookup", "amount": 0, "currency": "EUR",
-        "metadata": {}, "raw": {"id": pid},
-    }
-
-
-# ── Razorpay ───────────────────────────────────────────────────────────────
-
-_RAZORPAY_BASE = "https://api.razorpay.com/v1"
-
-
-def razorpay_create_intent(creds: dict, amount_minor: int, currency: str,
-                             *, order_metadata: dict, idempotency_key: str) -> dict:
-    """POST /v1/orders — Razorpay's intent equivalent. Frontend loads Razorpay
-    Checkout with the returned order id + key_id."""
-    kid  = creds.get("key_id", "").strip()
-    ksec = creds.get("key_secret", "").strip()
-    if not kid or not ksec:
-        return _err("Missing key_id or key_secret")
-    payload = {
-        "amount":   amount_minor,
-        "currency": (currency or "INR").upper(),
-        "receipt":  str(order_metadata.get("order_pending_id") or idempotency_key)[:40],
-        "notes":    {k: str(v)[:255] for k, v in order_metadata.items()},
-    }
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_RAZORPAY_BASE}/orders",
-                       headers={"Content-Type": "application/json",
-                                "X-Idempotency-Key": idempotency_key},
-                       body=body, basic_auth=(kid, ksec))
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        return _ok({
-            "intent_id":       r["body"].get("id", ""),
-            "publishable_key": kid,    # Razorpay key_id is safe to expose to frontend
-            "amount":          r["body"].get("amount", 0),
-            "currency":        r["body"].get("currency", ""),
-            "status":          r["body"].get("status", ""),
-        }, r["body"])
-    desc = (r["body"] or {}).get("error", {}).get("description", "") if isinstance(r["body"], dict) else ""
-    return _err(desc or f"Razorpay intent failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def razorpay_get_intent(creds: dict, order_id: str) -> dict:
-    kid  = creds.get("key_id", "").strip()
-    ksec = creds.get("key_secret", "").strip()
-    if not kid or not ksec:
-        return _err("Missing key_id or key_secret")
-    # Razorpay: orders → payments. We fetch the order's payments to find a captured one.
-    r = _http_request("GET", f"{_RAZORPAY_BASE}/orders/{order_id}/payments",
-                       basic_auth=(kid, ksec))
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        items = r["body"].get("items") or []
-        captured = next((p for p in items if p.get("status") == "captured"), None)
-        ref = captured or (items[0] if items else {})
-        return _ok({
-            "intent_id": order_id,
-            "status":    ref.get("status", "created"),
-            "amount":    ref.get("amount", 0),
-            "currency":  ref.get("currency", ""),
-            "charge_id": ref.get("id", ""),
-            "metadata":  ref.get("notes") or {},
-        }, r["body"])
-    return _err(f"Razorpay fetch failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def razorpay_verify_webhook(raw_body: bytes, signature_header: str,
-                              webhook_secret: str) -> tuple[bool, str]:
-    if not webhook_secret:
-        return False, "Webhook secret not configured"
-    if not signature_header:
-        return False, "Missing X-Razorpay-Signature header"
-    expected = hmac.new(webhook_secret.encode(), raw_body, hashlib.sha256).hexdigest()
-    if hmac.compare_digest(expected, signature_header):
-        return True, ""
-    return False, "Signature mismatch"
-
-
-def razorpay_parse_event(raw_body: bytes) -> dict:
-    try:
-        event = json.loads(raw_body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"type": "unknown", "raw_type": "", "event_id": "", "intent_id": "",
-                "charge_id": "", "status": "", "amount": 0, "currency": "INR",
-                "metadata": {}, "raw": {}}
-    raw_type = event.get("event", "")
-    payload  = event.get("payload") or {}
-    p_pay    = (payload.get("payment") or {}).get("entity") or {}
-    p_ref    = (payload.get("refund")  or {}).get("entity") or {}
-    canonical = "unknown"
-    if raw_type == "payment.captured":             canonical = "payment.succeeded"
-    elif raw_type == "payment.failed":             canonical = "payment.failed"
-    elif raw_type in ("refund.processed", "refund.created"): canonical = "refund.succeeded"
-    elif raw_type == "payment.dispute.created":    canonical = "dispute.created"
-    obj = p_ref or p_pay
-    return {
-        "type":      canonical,
-        "raw_type":  raw_type,
-        "event_id":  event.get("id", "") or obj.get("id", ""),
-        "intent_id": obj.get("order_id", "") or obj.get("payment_id", ""),
-        "charge_id": obj.get("id", ""),
-        "status":    obj.get("status", ""),
-        "amount":    obj.get("amount", 0),
-        "currency":  obj.get("currency", "INR"),
-        "metadata":  obj.get("notes") or {},
-        "raw":       event,
-    }
-
-
-# ── Paddle Billing ─────────────────────────────────────────────────────────
-
-def _paddle_base(is_test: bool) -> str:
-    return "https://sandbox-api.paddle.com" if is_test else "https://api.paddle.com"
-
-
-def paddle_create_intent(creds: dict, amount: float, currency: str,
-                          *, order_metadata: dict, idempotency_key: str,
-                          is_test: bool = True, return_url: str = "") -> dict:
-    tok = creds.get("api_key", "").strip()
-    if not tok:
-        return _err("Missing api_key")
-    # Paddle requires a `items` list with price_id refs to existing catalog products.
-    # For ad-hoc cart amounts we use the `non_catalog_items` / custom_data alternative.
-    # In practice this requires catalog setup on the merchant side. Return the auth
-    # token + a non-catalog transaction as best-effort.
-    payload = {
-        "items": [{
-            "quantity": 1,
-            "price": {
-                "description":  (order_metadata.get("description") or "Order")[:200],
-                "unit_price":   {"amount": str(int(round(amount * 100))),
-                                  "currency_code": (currency or "USD").upper()},
-                "tax_mode":     "external",
-                "quantity":     {"minimum": 1, "maximum": 1},
-            },
-        }],
-        "custom_data": {k: str(v)[:255] for k, v in order_metadata.items()},
-    }
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_paddle_base(is_test)}/transactions",
-                       headers={"Content-Type": "application/json",
-                                "Paddle-Idempotency-Key": idempotency_key},
-                       body=body, bearer=tok)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        d = r["body"].get("data") or {}
-        return _ok({
-            "intent_id":     d.get("id", ""),
-            "client_secret": d.get("checkout", {}).get("url", ""),
-            "status":        d.get("status", "draft"),
-        }, r["body"])
-    err = (r["body"] or {}).get("error", {}).get("detail", "") if isinstance(r["body"], dict) else ""
-    return _err(err or f"Paddle intent failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def paddle_get_intent(creds: dict, transaction_id: str, is_test: bool = True) -> dict:
-    tok = creds.get("api_key", "").strip()
-    if not tok:
-        return _err("Missing api_key")
-    r = _http_request("GET", f"{_paddle_base(is_test)}/transactions/{transaction_id}",
-                       bearer=tok)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        d = r["body"].get("data") or {}
-        total = (d.get("details") or {}).get("totals") or {}
-        return _ok({
-            "intent_id": d.get("id", ""),
-            "status":    d.get("status", ""),
-            "amount":    total.get("grand_total", "0"),
-            "currency":  d.get("currency_code", ""),
-            "charge_id": d.get("id", ""),
-            "metadata":  d.get("custom_data") or {},
-        }, r["body"])
-    return _err(f"Paddle fetch failed (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def paddle_verify_webhook(raw_body: bytes, signature_header: str,
-                            webhook_secret: str,
-                            tolerance: int = _WEBHOOK_REPLAY_TOLERANCE) -> tuple[bool, str]:
-    """Header Paddle-Signature = "ts=<unix>;h1=<HMAC-SHA256(ts:body, secret)>".
-    https://developer.paddle.com/webhooks/signature-verification
-    """
-    if not webhook_secret:
-        return False, "Webhook secret not configured"
-    if not signature_header:
-        return False, "Missing Paddle-Signature header"
-    parts = {}
-    for kv in signature_header.split(";"):
-        if "=" in kv:
-            k, v = kv.split("=", 1)
-            parts[k.strip()] = v.strip()
-    ts  = parts.get("ts", "")
-    h1  = parts.get("h1", "")
-    if not ts or not h1:
-        return False, "Malformed Paddle-Signature"
-    try:
-        ts_int = int(ts)
-    except ValueError:
-        return False, "Bad timestamp"
-    if abs(time.time() - ts_int) > tolerance:
-        return False, f"Timestamp outside tolerance ({tolerance}s)"
-    signed = f"{ts}:".encode() + raw_body
-    expected = hmac.new(webhook_secret.encode(), signed, hashlib.sha256).hexdigest()
-    if hmac.compare_digest(expected, h1):
-        return True, ""
-    return False, "Signature mismatch"
-
-
-def paddle_parse_event(raw_body: bytes) -> dict:
-    try:
-        event = json.loads(raw_body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {"type": "unknown", "raw_type": "", "event_id": "", "intent_id": "",
-                "charge_id": "", "status": "", "amount": 0, "currency": "USD",
-                "metadata": {}, "raw": {}}
-    raw_type = event.get("event_type", "")
-    data = event.get("data") or {}
-    canonical = "unknown"
-    if raw_type in ("transaction.completed", "transaction.paid"):     canonical = "payment.succeeded"
-    elif raw_type == "transaction.payment_failed":                    canonical = "payment.failed"
-    elif raw_type in ("adjustment.created", "adjustment.updated"):
-        if data.get("action") == "refund":                            canonical = "refund.succeeded"
-    return {
-        "type":      canonical,
-        "raw_type":  raw_type,
-        "event_id":  event.get("event_id", ""),
-        "intent_id": data.get("id", "") or data.get("transaction_id", ""),
-        "charge_id": data.get("id", ""),
-        "status":    data.get("status", ""),
-        "amount":    int(float((data.get("details") or {}).get("totals", {}).get("grand_total", 0) or 0)),
-        "currency":  data.get("currency_code", "USD"),
-        "metadata":  data.get("custom_data") or {},
-        "raw":       event,
-    }
-
-
-# ── PayBox.money (Kazakhstan) ──────────────────────────────────────────────
-
-_PAYBOX_BASE = "https://api.paybox.money"
-
-
-def _paybox_sign(endpoint: str, params: dict, secret_key: str) -> str:
-    parts = [endpoint]
-    for k in sorted(params.keys()):
-        parts.append(str(params[k]))
-    parts.append(secret_key)
-    return hashlib.sha1(";".join(parts).encode("utf-8")).hexdigest()
-
-
-def paybox_create_intent(creds: dict, amount: float, currency: str,
-                          *, order_metadata: dict, idempotency_key: str,
-                          return_url: str = "") -> dict:
-    mid = creds.get("merchant_id", "").strip()
-    sec = creds.get("secret_key", "").strip()
-    if not mid or not sec:
-        return _err("Missing merchant_id or secret_key")
-    params = {
-        "pg_merchant_id":   mid,
-        "pg_amount":        f"{round(amount, 2):.2f}",
-        "pg_currency":      (currency or "KZT").upper(),
-        "pg_description":   (order_metadata.get("description") or "Order")[:200],
-        "pg_order_id":      str(order_metadata.get("order_pending_id") or idempotency_key)[:40],
-        "pg_salt":          idempotency_key[:32],
-        "pg_success_url":   return_url or "",
-        "pg_failure_url":   return_url or "",
-        "pg_result_url":    "",  # filled in by storefront via separate webhook config
-    }
-    params = {k: v for k, v in params.items() if v}
-    params["pg_sig"] = _paybox_sign("init_payment.php", params, sec)
-    body = urllib.parse.urlencode(params).encode("utf-8")
-    r = _http_request("POST", f"{_PAYBOX_BASE}/init_payment.php",
-                       headers={"Content-Type": "application/x-www-form-urlencoded"},
-                       body=body)
-    if r["status"] == 200:
-        # PayBox responds with XML containing <pg_redirect_url> + <pg_payment_id>.
-        text = json.dumps(r["body"]) if isinstance(r["body"], dict) else str(r["body"])
-        import re as _re
-        url_match = _re.search(r"<pg_redirect_url>(.+?)</pg_redirect_url>", text)
-        pid_match = _re.search(r"<pg_payment_id>(.+?)</pg_payment_id>", text)
-        status_match = _re.search(r"<pg_status>(.+?)</pg_status>", text)
-        if status_match and status_match.group(1).strip() == "ok":
-            return _ok({
-                "intent_id":    pid_match.group(1).strip() if pid_match else "",
-                "redirect_url": url_match.group(1).strip() if url_match else "",
-                "status":       "pending",
-            }, {"raw_xml": text[:500]})
-        return _err(f"PayBox declined: {text[:200]}", {})
-    return _err(f"PayBox intent failed (HTTP {r['status']})", {})
-
-
-def paybox_get_intent(creds: dict, payment_id: str) -> dict:
-    mid = creds.get("merchant_id", "").strip()
-    sec = creds.get("secret_key", "").strip()
-    if not mid or not sec:
-        return _err("Missing merchant_id or secret_key")
-    params = {
-        "pg_merchant_id": mid,
-        "pg_payment_id":  payment_id,
-        "pg_salt":        secrets.token_hex(8),
-    }
-    params["pg_sig"] = _paybox_sign("get_status.php", params, sec)
-    body = urllib.parse.urlencode(params).encode("utf-8")
-    r = _http_request("POST", f"{_PAYBOX_BASE}/get_status.php",
-                       headers={"Content-Type": "application/x-www-form-urlencoded"},
-                       body=body)
-    if r["status"] == 200:
-        text = json.dumps(r["body"]) if isinstance(r["body"], dict) else str(r["body"])
-        import re as _re
-        ts = _re.search(r"<pg_transaction_status>(.+?)</pg_transaction_status>", text)
-        amt = _re.search(r"<pg_amount>([\d.]+)</pg_amount>", text)
-        cur = _re.search(r"<pg_currency>(.+?)</pg_currency>", text)
-        return _ok({
-            "intent_id": payment_id,
-            "status":    ts.group(1).strip() if ts else "unknown",
-            "amount":    int(float(amt.group(1)) * 100) if amt else 0,
-            "currency":  (cur.group(1).strip() if cur else "KZT"),
-            "charge_id": payment_id,
-            "metadata":  {},
-        }, {"raw_xml": text[:500]})
-    return _err(f"PayBox fetch failed (HTTP {r['status']})", {})
-
-
-def paybox_verify_webhook(payload_form: dict, secret_key: str) -> tuple[bool, str]:
-    """PayBox sends form-encoded notification with pg_sig. Re-sign with our key
-    over /result.php endpoint name."""
-    if not secret_key:
-        return False, "Secret key not configured"
-    sig = payload_form.get("pg_sig", "")
-    if not sig:
-        return False, "Missing pg_sig"
-    params = {k: v for k, v in payload_form.items() if k != "pg_sig"}
-    expected = _paybox_sign("result.php", params, secret_key)
-    if hmac.compare_digest(expected, sig):
-        return True, ""
-    return False, "Signature mismatch"
-
-
-def paybox_parse_event(raw_body: bytes) -> dict:
-    parsed = urllib.parse.parse_qs(raw_body.decode("utf-8", errors="replace"))
-    flat = {k: v[0] if v else "" for k, v in parsed.items()}
-    result = flat.get("pg_result", "")
-    canonical = "unknown"
-    if result == "1":  canonical = "payment.succeeded"
-    elif result == "0": canonical = "payment.failed"
-    return {
-        "type":      canonical,
-        "raw_type":  f"pg_result={result}",
-        "event_id":  flat.get("pg_payment_id", ""),
-        "intent_id": flat.get("pg_payment_id", ""),
-        "charge_id": flat.get("pg_payment_id", ""),
-        "status":    "succeeded" if result == "1" else "failed",
-        "amount":    int(float(flat.get("pg_amount", 0) or 0) * 100),
-        "currency":  flat.get("pg_currency", "KZT"),
-        "metadata":  {"pg_order_id": flat.get("pg_order_id", "")},
-        "raw":       flat,
-    }
-
-
-# ── Dispatcher ─────────────────────────────────────────────────────────────
 
 def create_intent(provider: str, creds: dict, *, amount: float, currency: str,
                    order_metadata: dict, idempotency_key: str | None = None,
@@ -6343,67 +5140,15 @@ def create_intent(provider: str, creds: dict, *, amount: float, currency: str,
     if not idempotency_key:
         idempotency_key = "intent-" + secrets.token_urlsafe(16)
     if provider == "manual" or provider == "other":
-        # Manual mode — no real intent. Caller should still record the order
-        # but treat payment as "external / off-platform" and require manual confirmation.
+        # Manual mode — no real intent. Caller records the order but treats
+        # payment as "external / off-platform" (manual confirmation).
         return _ok({"intent_id": "manual-" + idempotency_key, "status": "manual_required"})
-    amount_minor = int(round(amount * 100))
     if provider == "stripe":
+        amount_minor = int(round(amount * 100))
         return stripe_create_intent(creds, amount_minor, currency,
                                      order_metadata=order_metadata,
                                      idempotency_key=idempotency_key,
                                      stripe_account_id=stripe_account_id)
-    if provider == "tinkoff":
-        return tinkoff_create_intent(creds, amount_minor, currency,
-                                      order_metadata=order_metadata,
-                                      idempotency_key=idempotency_key)
-    if provider == "cloudpayments":
-        return cloudpayments_create_intent(creds, amount, currency,
-                                            order_metadata=order_metadata,
-                                            idempotency_key=idempotency_key)
-    if provider == "yookassa":
-        return yookassa_create_intent(creds, amount, currency,
-                                       order_metadata=order_metadata,
-                                       idempotency_key=idempotency_key,
-                                       return_url=return_url)
-    if provider == "paypal":
-        return paypal_create_intent(creds, amount, currency,
-                                     order_metadata=order_metadata,
-                                     idempotency_key=idempotency_key,
-                                     is_test=is_test_mode)
-    if provider == "adyen":
-        return adyen_create_intent(creds, amount_minor, currency,
-                                    order_metadata=order_metadata,
-                                    idempotency_key=idempotency_key,
-                                    is_test=is_test_mode, return_url=return_url)
-    if provider == "braintree":
-        return braintree_create_intent(creds, amount_minor, currency,
-                                        order_metadata=order_metadata,
-                                        idempotency_key=idempotency_key,
-                                        is_test=is_test_mode)
-    if provider == "square":
-        return square_create_intent(creds, amount_minor, currency,
-                                     order_metadata=order_metadata,
-                                     idempotency_key=idempotency_key,
-                                     is_test=is_test_mode, return_url=return_url)
-    if provider == "mollie":
-        return mollie_create_intent(creds, amount, currency,
-                                     order_metadata=order_metadata,
-                                     idempotency_key=idempotency_key,
-                                     return_url=return_url)
-    if provider == "razorpay":
-        return razorpay_create_intent(creds, amount_minor, currency,
-                                       order_metadata=order_metadata,
-                                       idempotency_key=idempotency_key)
-    if provider == "paddle":
-        return paddle_create_intent(creds, amount, currency,
-                                     order_metadata=order_metadata,
-                                     idempotency_key=idempotency_key,
-                                     is_test=is_test_mode, return_url=return_url)
-    if provider == "paybox":
-        return paybox_create_intent(creds, amount, currency,
-                                     order_metadata=order_metadata,
-                                     idempotency_key=idempotency_key,
-                                     return_url=return_url)
     return _err(f"Unknown provider: {provider}")
 
 
@@ -6411,18 +5156,8 @@ def get_intent(provider: str, creds: dict, *, intent_id: str,
                 is_test_mode: bool = True, stripe_account_id: str = "") -> dict:
     if provider in ("manual", "other"):
         return _ok({"intent_id": intent_id, "status": "manual_required"})
-    if provider == "stripe":         return stripe_get_intent(creds, intent_id, stripe_account_id)
-    if provider == "tinkoff":        return tinkoff_get_intent(creds, intent_id)
-    if provider == "cloudpayments":  return cloudpayments_get_intent(creds, intent_id)
-    if provider == "yookassa":       return yookassa_get_intent(creds, intent_id)
-    if provider == "paypal":         return paypal_get_intent(creds, intent_id, is_test_mode)
-    if provider == "adyen":          return adyen_get_intent(creds, intent_id, is_test_mode)
-    if provider == "braintree":      return braintree_get_intent(creds, intent_id, is_test_mode)
-    if provider == "square":         return square_get_intent(creds, intent_id, is_test_mode)
-    if provider == "mollie":         return mollie_get_intent(creds, intent_id)
-    if provider == "razorpay":       return razorpay_get_intent(creds, intent_id)
-    if provider == "paddle":         return paddle_get_intent(creds, intent_id, is_test_mode)
-    if provider == "paybox":         return paybox_get_intent(creds, intent_id)
+    if provider == "stripe":
+        return stripe_get_intent(creds, intent_id, stripe_account_id)
     return _err(f"Unknown provider: {provider}")
 
 
@@ -6438,41 +5173,6 @@ def verify_webhook(provider: str, creds: dict, *, raw_body: bytes,
     if provider == "stripe":
         return stripe_verify_webhook(raw_body, h.get("stripe-signature", ""),
                                       creds.get("webhook_secret", ""))
-    if provider == "tinkoff":
-        return tinkoff_verify_webhook(raw_body, creds.get("password", ""))
-    if provider == "cloudpayments":
-        return cloudpayments_verify_webhook(raw_body, h.get("content-hmac", ""),
-                                             creds.get("api_secret", ""))
-    if provider == "yookassa":
-        return yookassa_verify_webhook(raw_body, "", source_ip)
-    if provider == "paypal":
-        return paypal_verify_webhook(creds, h, raw_body,
-                                      creds.get("webhook_id", ""), is_test_mode)
-    if provider == "adyen":
-        return adyen_verify_webhook(raw_body, creds.get("hmac_key", ""))
-    if provider == "braintree":
-        # Braintree body is form-encoded {bt_signature, bt_payload}
-        parsed = urllib.parse.parse_qs(raw_body.decode("utf-8", errors="replace"))
-        flat = {k: (v[0] if v else "") for k, v in parsed.items()}
-        return braintree_verify_webhook(flat, creds.get("private_key", ""))
-    if provider == "square":
-        return square_verify_webhook(raw_body,
-                                       h.get("x-square-hmacsha256-signature", "")
-                                       or h.get("square-hmacsha256-signature", ""),
-                                       request_url,
-                                       creds.get("webhook_signature_key", ""))
-    if provider == "mollie":
-        return mollie_verify_webhook(raw_body)
-    if provider == "razorpay":
-        return razorpay_verify_webhook(raw_body, h.get("x-razorpay-signature", ""),
-                                         creds.get("webhook_secret", ""))
-    if provider == "paddle":
-        return paddle_verify_webhook(raw_body, h.get("paddle-signature", ""),
-                                       creds.get("webhook_secret", ""))
-    if provider == "paybox":
-        parsed = urllib.parse.parse_qs(raw_body.decode("utf-8", errors="replace"))
-        flat = {k: (v[0] if v else "") for k, v in parsed.items()}
-        return paybox_verify_webhook(flat, creds.get("secret_key", ""))
     if provider in ("manual", "other"):
         return False, "Provider does not support webhooks"
     return False, f"Unknown provider: {provider}"
@@ -6480,17 +5180,6 @@ def verify_webhook(provider: str, creds: dict, *, raw_body: bytes,
 
 def parse_event(provider: str, raw_body: bytes) -> dict:
     if provider == "stripe":         return stripe_parse_event(raw_body)
-    if provider == "tinkoff":        return tinkoff_parse_event(raw_body)
-    if provider == "cloudpayments":  return cloudpayments_parse_event(raw_body)
-    if provider == "yookassa":       return yookassa_parse_event(raw_body)
-    if provider == "paypal":         return paypal_parse_event(raw_body)
-    if provider == "adyen":          return adyen_parse_event(raw_body)
-    if provider == "braintree":      return braintree_parse_event(raw_body)
-    if provider == "square":         return square_parse_event(raw_body)
-    if provider == "mollie":         return mollie_parse_event(raw_body)
-    if provider == "razorpay":       return razorpay_parse_event(raw_body)
-    if provider == "paddle":         return paddle_parse_event(raw_body)
-    if provider == "paybox":         return paybox_parse_event(raw_body)
     return {"type": "unknown", "raw_type": "", "event_id": "", "intent_id": "",
             "charge_id": "", "status": "", "amount": 0, "currency": "",
             "metadata": {}, "raw": {}}
@@ -6631,6 +5320,7 @@ def init_payment(data: PlaceOrderRequest, request: Request,
     """
     project_id = api_key_record["id"]
     user_id    = get_current_user_id(request)
+    _rate_limit_orders(request, user_id, max_per_min=15)
     if not user_id:
         raise HTTPException(401, "Login required to place an order")
 
@@ -6719,6 +5409,7 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
     # case a stale session somehow lost its cookie between cart and
     # checkout (defensive).
     user_id = get_or_create_guest_user(request, response, project_id)
+    _rate_limit_orders(request, user_id, max_per_min=12)
 
     # Structured name — compose into legacy recipient_name "{last} {first} {middle}".
     # If only the legacy field was sent (older clients), keep it as-is.
@@ -8552,6 +7243,7 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
                 cursor.execute("UPDATE users SET google_id=%s WHERE id=%s", (g_id, user["id"]))
                 conn.commit()
         if not user:
+            _enforce_storefront_users(org_id)
             cursor.execute(
                 "INSERT INTO users (name, email, password_hash, project_id, org_id, google_id) VALUES(%s,%s,'',%s,%s,%s) RETURNING id",
                 (sanitize(name), email, project_id, org_id, g_id)
@@ -9218,6 +7910,7 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
         # 4c. Create new user
         is_new_user = False
         if not user:
+            _enforce_storefront_users(org_id)
             # Email may be missing (X doesn't return it without elevated access) — generate a stable placeholder
             email_to_use = email or f"{provider}_{oid}@oauth.local"
             try:
@@ -9957,6 +8650,7 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
             cur.execute("UPDATE users SET phone_verified=TRUE WHERE id=%s", (user["id"],))
             user_id = user["id"]
         else:
+            _enforce_storefront_users(org_id)
             try:
                 cur.execute(
                     "INSERT INTO users (name, email, password_hash, project_id, org_id, phone, phone_verified) "

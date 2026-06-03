@@ -9,6 +9,7 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from 
 import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { API_BASE } from '../../api.js';
+import { presignedUpload } from '../../Utils/upload.js';
 import { decodeHash } from '../../Utils/hashids.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import { useUndoStack } from '../../Utils/UndoStack.js';
@@ -1003,12 +1004,12 @@ function CfFileInput({ value, onChange, productId, pq }) {
   const upload = async (file) => {
     if (!file) return;
     setBusy(true);
-    const fd = new FormData(); fd.append('file', file);
     try {
-      const res = await fetch(`${API_BASE}/api/upload/file${pq}`, { method: 'POST', credentials: 'include', body: fd });
-      const data = await res.json();
-      if (res.ok && data.url) onChange(data.url);
-    } catch {}
+      const { url } = await presignedUpload(file, { pq, kind: 'file' });
+      if (url) onChange(url);
+    } catch (e) {
+      if (e.message) alert(e.message);   // file-too-large etc.; 402 already shows the plan modal
+    }
     setBusy(false);
   };
 
@@ -1323,14 +1324,11 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
   const upload = async (file) => {
     if (!file) return;
     setUploading(true);
-    const fd = new FormData(); fd.append('file', file);
     try {
-      const res = await fetch(`${API_BASE}/api/upload/image${pq}`, {
-        method: 'POST', credentials: 'include', body: fd,
-      });
-      const data = await res.json();
-      if (res.ok && data.url) setImageUrl(data.url);
-      else showToast?.(t('productDetail.service.uploadFailed'));
+      const { url } = await presignedUpload(file, { pq, kind: 'image' });
+      if (url) setImageUrl(url);
+    } catch (e) {
+      if (!e.planLimit) showToast?.(e.message || t('productDetail.service.uploadFailed'));
     } finally { setUploading(false); }
   };
 

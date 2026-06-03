@@ -4,6 +4,7 @@ import Verification from './Verification.jsx';
 import Layout from './Layout.jsx';
 import Analytics from './Pages/Analytics.jsx';
 import Users from './Pages/Users.jsx';
+import Logs from './Pages/Logs.jsx';
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Analytics />} />
           <Route path="users" element={<Users />} />
+          <Route path="logs" element={<Logs />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

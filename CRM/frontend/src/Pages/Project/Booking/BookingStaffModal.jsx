@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { X, User, UploadSimple } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { presignedUpload } from '../../../Utils/upload.js';
 import { TimePicker } from './BookingCreateModal.jsx';
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -32,14 +33,11 @@ function BookingStaffModal({ projectId, member, allServices, slotInterval = 30, 
   const upload = async (file) => {
     if (!file) return;
     setUploading(true);
-    const fd = new FormData(); fd.append('file', file);
     try {
-      const res = await fetch(`${API_BASE}/api/upload/image${pq}`, {
-        method: 'POST', credentials: 'include', body: fd,
-      });
-      const data = await res.json();
-      if (res.ok && data.url) upd('avatar_url', data.url);
-      else setErr(t('booking.staffModal.uploadFailed'));
+      const { url } = await presignedUpload(file, { pq, kind: 'image' });
+      if (url) upd('avatar_url', url);
+    } catch (e) {
+      if (!e.planLimit) setErr(e.message || t('booking.staffModal.uploadFailed'));
     } finally { setUploading(false); }
   };
 

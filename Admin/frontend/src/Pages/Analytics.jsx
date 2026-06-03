@@ -16,6 +16,8 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import '../Style/Analytics.css';
+import '../Style/Logs.css';
+import { LineChart } from '../Utils/LineChart.jsx';
 
 const PERIODS = [
   { value: '7d',  label: '7 days' },
@@ -95,45 +97,24 @@ function Kpi({ label, value, sub }) {
   );
 }
 
-// ── Minimal SVG line chart — no recharts dependency ────────────────────
-function LineChartMini({ data }) {
+// ── Signups chart — thin wrapper around the VERBATIM CRM "Revenue over time"
+// LineChart (Utils/LineChart.jsx), so it's pixel-identical (draggable pan,
+// gridlines, smoothed line, hover crosshair + tooltip). Backend returns a
+// gap-filled daily series; we just feed it in with signups/day keys.
+function SignupsChart({ data }) {
   if (!data?.length) {
     return <div className="an-chart-empty">No data for this period.</div>;
   }
-  const W = 800, H = 240;
-  const PAD_L = 48, PAD_R = 16, PAD_T = 12, PAD_B = 36;
-  const innerW = W - PAD_L - PAD_R;
-  const innerH = H - PAD_T - PAD_B;
-  const maxY = Math.max(1, ...data.map(d => Number(d.signups)));
-  const stepX = data.length > 1 ? innerW / (data.length - 1) : innerW;
-  const pt = (i, v) => [PAD_L + i * stepX, PAD_T + innerH - (Number(v) / maxY) * innerH];
-  const path = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${pt(i, d.signups).join(' ')}`).join(' ');
-  const area = `${path} L ${PAD_L + (data.length - 1) * stepX} ${PAD_T + innerH} L ${PAD_L} ${PAD_T + innerH} Z`;
-  const yTicks = 4;
-  const yLines = Array.from({ length: yTicks + 1 }, (_, i) => {
-    const v = (maxY / yTicks) * i;
-    return { y: PAD_T + innerH - (v / maxY) * innerH, v: Math.round(v) };
-  });
+  const vpb = Math.max(7, Math.min(data.length, 60));
   return (
-    // Drop preserveAspectRatio="none" → SVG keeps the natural viewBox aspect
-    // ratio (W:H) so a sparse 5-point chart doesn't get smeared across 1500px
-    // of monitor. CSS clamps max-width so it doesn't grow past 880px even on
-    // 4K displays. Below that width it scales down proportionally.
-    <svg viewBox={`0 0 ${W} ${H}`} className="an-chart-svg">
-      {yLines.map((t, i) => (
-        <g key={i}>
-          <line x1={PAD_L} x2={W - PAD_R} y1={t.y} y2={t.y} stroke="var(--chart-grid)" />
-          <text x={PAD_L - 8} y={t.y + 4} textAnchor="end" fontSize="11"
-                fill="var(--muted)" className="an-chart-tick">{t.v}</text>
-        </g>
-      ))}
-      <path d={area} fill="var(--accent-tint)" />
-      <path d={path} stroke="var(--accent)" strokeWidth="2" fill="none" />
-      {data.map((d, i) => {
-        const [x, y] = pt(i, d.signups);
-        return <circle key={i} cx={x} cy={y} r="3.5" fill="var(--accent)" />;
-      })}
-    </svg>
+    <LineChart
+      data={data}
+      valueKey="signups"
+      dateKey="day"
+      height={300}
+      viewportBuckets={vpb}
+      formatValue={(v) => `${Math.round(+v || 0)} signup${Math.round(+v || 0) === 1 ? '' : 's'}`}
+    />
   );
 }
 
@@ -241,7 +222,7 @@ export default function Analytics() {
       {/* SECTION 2 — Signups over time chart */}
       <Section title="Signups over time" Icon={UsersThree} hidePeriod>
         {!data ? <div className="an-chart-empty">Loading…</div> : (
-          <LineChartMini data={series} />
+          <SignupsChart data={series} />
         )}
       </Section>
 

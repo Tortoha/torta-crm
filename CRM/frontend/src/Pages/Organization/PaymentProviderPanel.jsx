@@ -23,26 +23,10 @@ const MASKED_PLACEHOLDER = '••••••••';
 
 // Console links per provider so merchant can quickly jump to "where do I get these keys".
 const PROVIDER_CONSOLE = {
-  stripe:        { url: 'https://dashboard.stripe.com/apikeys',         name: 'Stripe Dashboard' },
-  tinkoff:       { url: 'https://business.tbank.ru/oplata/dashboard',   name: 'Tinkoff Business' },
-  cloudpayments: { url: 'https://merchant.cloudpayments.ru/',           name: 'CloudPayments Dashboard' },
-  yookassa:      { url: 'https://yookassa.ru/my',                       name: 'YooKassa Dashboard' },
-  paypal:        { url: 'https://developer.paypal.com/dashboard',       name: 'PayPal Developer' },
-  adyen:         { url: 'https://ca-test.adyen.com/ca/ca/config/api_credentials_new.shtml',
-                                                                          name: 'Adyen Customer Area' },
-  braintree:     { url: 'https://sandbox.braintreegateway.com/login',   name: 'Braintree Sandbox' },
-  square:        { url: 'https://developer.squareup.com/apps',          name: 'Square Developer Dashboard' },
-  mollie:        { url: 'https://my.mollie.com/dashboard/developers/api-keys',
-                                                                          name: 'Mollie API Keys' },
-  razorpay:      { url: 'https://dashboard.razorpay.com/app/keys',      name: 'Razorpay Dashboard' },
-  paddle:        { url: 'https://sandbox-vendors.paddle.com/authentication',
-                                                                          name: 'Paddle Authentication' },
-  paybox:        { url: 'https://paybox.money/lk/',                     name: 'PayBox.money Dashboard' },
+  stripe: { url: 'https://dashboard.stripe.com/apikeys', name: 'Stripe Dashboard' },
 };
 
 // Free-form hint keys (resolved via t('org.payments.panel.hint.<key>')).
-// tinkoff/cloudpayments/yookassa are not in the UI catalog but kept for
-// self-hosters — they fall back to their raw key if no translation exists.
 
 
 export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose }) {

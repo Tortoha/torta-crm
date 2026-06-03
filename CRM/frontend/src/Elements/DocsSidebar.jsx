@@ -5,7 +5,7 @@ import {
   Rocket, Buildings, Lightning, UsersThree, Plugs, Compass,
   Lock, Storefront, ShoppingCart, Star, CalendarCheck, ChatCircle, ChartLine,
   House, Target, Tag, Package, Users, EnvelopeSimple, FileText, GearSix,
-  CaretDown,
+  CreditCard, CaretDown,
 } from '@phosphor-icons/react';
 
 // Three groups: CRM navigation + API guides + API reference. Same collapsible-
@@ -35,6 +35,7 @@ function buildGroups(t) {
         { to: '/docs/chat-page',      label: t('docs.pages.chatPage'),       Icon: ChatCircle },
         { to: '/docs/authentication', label: t('docs.pages.authentication'), Icon: Lock },
         { to: '/docs/integrations',   label: t('docs.pages.integrations'),   Icon: Plugs },
+        { to: '/docs/payments',       label: t('docs.pages.payments'),       Icon: CreditCard },
         { to: '/docs/documents',      label: t('docs.pages.documents'),      Icon: FileText },
         { to: '/docs/settings',       label: t('docs.pages.settings'),       Icon: GearSix },
       ],
@@ -53,6 +54,7 @@ function buildGroups(t) {
         { to: '/docs/auth',              label: t('docs.pages.auth'),             Icon: Lock },
         { to: '/docs/catalog',           label: t('docs.pages.catalog'),          Icon: Storefront },
         { to: '/docs/cart-orders',       label: t('docs.pages.cartOrders'),       Icon: ShoppingCart },
+        { to: '/docs/payments-api',      label: t('docs.pages.paymentsApi'),      Icon: CreditCard },
         { to: '/docs/reviews-favorites', label: t('docs.pages.reviewsFavorites'), Icon: Star },
         { to: '/docs/booking',           label: t('docs.pages.booking'),          Icon: CalendarCheck },
         { to: '/docs/chat',              label: t('docs.pages.chat'),             Icon: ChatCircle },

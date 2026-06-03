@@ -5,6 +5,7 @@ import Header from "./Header";
 import { client } from "./api.js";
 import { fmtMoney } from "./currency.js";
 import CountryCombobox from "./CountryCombobox.jsx";
+import StripePaymentModal from "./StripePaymentModal.jsx";
 import "./Style/Checkout.css";
 import "./Style/Load.css";
 
@@ -20,6 +21,11 @@ function Checkout() {
   const [cart,       setCart]       = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error,      setError]      = useState("");
+  // Storefront payment config (GET /config → online_payment / test mode).
+  const [storeConfig, setStoreConfig] = useState(null);
+  // When the merchant requires online payment, holds the Stripe card step:
+  // { publishableKey, clientSecret, amountLabel, testMode, payload }.
+  const [stripeStep, setStripeStep] = useState(null);
 
   // Pre-fill promo from Cart page navigation state
   const initPromo = location.state?.promoCode || "";
@@ -151,6 +157,12 @@ function Checkout() {
         if (result.status === 401) { navigate("/cart"); return; }
         if (!result.ok || !result.data?.items?.length) { navigate("/cart"); return; }
         setCart(result.data);
+
+        // Does the merchant require online card payment? Drives the Payment
+        // section UI + whether checkout runs the strict init-payment flow.
+        client.config?.get?.()
+          .then(r => { if (mounted && r?.ok) setStoreConfig(r.data); })
+          .catch(() => {});
 
         // What contact methods can this merchant accept? Drives the
         // "Email / Phone" choice in the Contact section. Optional —
@@ -307,7 +319,7 @@ function Checkout() {
       recipient_first_name:  form.recipient_first_name.trim(),
       recipient_last_name:   form.recipient_last_name.trim(),
       delivery_method: cart.requires_shipping ? form.delivery_method : "digital",
-      payment_method:  form.payment_method,
+      payment_method:  storeConfig?.online_payment ? "card" : form.payment_method,
       fulfillment_type: cart.requires_shipping ? form.fulfillment_type : "courier",
     };
     if (form.recipient_middle_name.trim())
@@ -344,15 +356,55 @@ function Checkout() {
     if (form.comment.trim()) payload.comment     = form.comment.trim();
     if (form.promo_code.trim()) payload.promo_code = form.promo_code.trim();
 
+    // ── Strict-mode online payment ───────────────────────────────────────
+    // If the merchant connected a real provider, the order can't be created
+    // without a verified payment. Step 1: create the PaymentIntent.
+    if (storeConfig?.online_payment) {
+      const idem = (window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
+      const init = await client.payments.initPayment(payload, { idempotencyKey: idem });
+      if (!init.ok) {
+        setError(init.error || "Could not start payment. Please try again.");
+        setSubmitting(false);
+        return;
+      }
+      const d = init.data || {};
+      if (d.needs_payment_intent && d.client_secret) {
+        // Open the card modal — the order is placed only after the customer's
+        // card is confirmed (handleStripePaid).
+        setStripeStep({
+          publishableKey: d.publishable_key,
+          clientSecret:   d.client_secret,
+          amountLabel:    fmt(d.amount),
+          testMode:       !!d.is_test_mode,
+          payload,
+        });
+        setSubmitting(false);
+        return;
+      }
+      // Provider fell back to manual (e.g. creds removed) → place directly.
+    }
+
     const { ok, data, error } = await client.orders.place(payload);
     if (ok) {
-      // Address auto-save now happens server-side on /place — the
-      // first courier order with a structured address creates the
-      // user's default saved-address row automatically. No manual
-      // checkbox needed here.
       navigate("/order-success", { state: { orderId: data.order_id } });
     } else {
       setError(error || "Failed to place order. Please try again.");
+      setSubmitting(false);
+    }
+  };
+
+  // After Stripe confirms the card, place the order WITH the verified intent id.
+  const handleStripePaid = async (paymentIntentId) => {
+    const payload = { ...stripeStep.payload, payment_intent_id: paymentIntentId };
+    const { ok, data, error } = await client.orders.place(payload);
+    if (ok) {
+      setStripeStep(null);
+      navigate("/order-success", { state: { orderId: data.order_id } });
+    } else {
+      // Payment succeeded but order save failed — surface clearly. The intent
+      // is idempotency-guarded server-side, so a retry won't double-charge.
+      setStripeStep(null);
+      setError(error || "Payment went through but the order could not be saved. Please contact support.");
       setSubmitting(false);
     }
   };
@@ -686,27 +738,44 @@ function Checkout() {
             <div className="checkout-section">
               <h2 className="checkout-section-title">Payment</h2>
 
-              <div className="checkout-toggle">
-                <button
-                  type="button"
-                  className={`checkout-toggle-btn${form.payment_method === "card" ? " checkout-toggle-btn--active" : ""}`}
-                  onClick={() => set("payment_method", "card")}
-                >
-                  <CreditCard weight="bold" /> Card
-                </button>
-                <button
-                  type="button"
-                  className={`checkout-toggle-btn${form.payment_method === "cash" ? " checkout-toggle-btn--active" : ""}`}
-                  onClick={() => set("payment_method", "cash")}
-                >
-                  <Money weight="bold" /> Pay on Delivery
-                </button>
-              </div>
-
-              {form.payment_method === "card" && (
-                <p className="checkout-note">
-                  Online card payment is coming soon. Your order will be confirmed and we'll reach out with payment details.
-                </p>
+              {storeConfig?.online_payment ? (
+                // Merchant connected a real provider → strict mode: the order
+                // can't be placed without a verified payment, so we collect the
+                // card (Stripe Elements) right after "Place Order".
+                <>
+                  <div className="checkout-toggle">
+                    <button type="button"
+                      className="checkout-toggle-btn checkout-toggle-btn--active"
+                      onClick={() => set("payment_method", "card")}>
+                      <CreditCard weight="bold" /> Card
+                    </button>
+                  </div>
+                  <p className="checkout-note">
+                    Secure card payment — you'll enter your card on the next step.
+                    Your card is handled directly by the payment provider; we never see it.
+                    {storeConfig?.payment_test_mode ? " (Test mode)" : ""}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="checkout-toggle">
+                    <button type="button"
+                      className={`checkout-toggle-btn${form.payment_method === "card" ? " checkout-toggle-btn--active" : ""}`}
+                      onClick={() => set("payment_method", "card")}>
+                      <CreditCard weight="bold" /> Card
+                    </button>
+                    <button type="button"
+                      className={`checkout-toggle-btn${form.payment_method === "cash" ? " checkout-toggle-btn--active" : ""}`}
+                      onClick={() => set("payment_method", "cash")}>
+                      <Money weight="bold" /> Pay on Delivery
+                    </button>
+                  </div>
+                  {form.payment_method === "card" && (
+                    <p className="checkout-note">
+                      Online card payment is coming soon. Your order will be confirmed and we'll reach out with payment details.
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
@@ -812,6 +881,17 @@ function Checkout() {
         </div>
 
       </div>
+
+      {stripeStep && (
+        <StripePaymentModal
+          publishableKey={stripeStep.publishableKey}
+          clientSecret={stripeStep.clientSecret}
+          amountLabel={stripeStep.amountLabel}
+          testMode={stripeStep.testMode}
+          onPaid={handleStripePaid}
+          onClose={() => { setStripeStep(null); setSubmitting(false); }}
+        />
+      )}
     </>
   );
 }

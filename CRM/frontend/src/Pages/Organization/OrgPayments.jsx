@@ -20,33 +20,19 @@ import PaymentProviderPanel from './PaymentProviderPanel.jsx';
 import '../../Style/Authentication.css';
 
 
-// Provider catalog. All 9 listed providers are fully implemented (CRM + External
-// adapters in payment_providers.py). Each row opens a credentials modal on click.
+// Provider catalog — deliberately just Stripe + Manual + Other.
 //
-// Russian-only providers (Tinkoff, CloudPayments, YooKassa) are deliberately
-// excluded from the UI catalog — backend code remains intact for self-hosters
-// who need them, but the international CRM positions itself around globally-
-// usable gateways. PayBox.money is included because it's the standard Kazakhstan
-// option.
+// Stripe is the ONE deep, API-native integration (non-custodial: the merchant
+// connects their own account, customers pay inline via Stripe Elements, money
+// lands straight in the merchant's Stripe). Every other gateway needs its own
+// bespoke client flow (redirect / widget / SDK / catalog), so instead of a
+// dozen half-built integrations we offer a generic record-only path:
+//   • Manual — cash / bank transfer / pay-on-delivery (order recorded, no API).
+//   • Other  — free-form: merchant uses ANY gateway (Kaspi, their own link,
+//              PayPal, …) and records the reference in the Returns workflow.
 const AVAILABLE = [
   { id: 'stripe', label: 'Stripe',
     iconify: 'logos:stripe' },
-  { id: 'paypal', label: 'PayPal',
-    iconify: 'logos:paypal' },
-  { id: 'adyen', label: 'Adyen',
-    iconify: 'simple-icons:adyen', color: '#0ABF53' },
-  { id: 'braintree', label: 'Braintree',
-    iconify: 'simple-icons:braintree', color: '#172A4E' },
-  { id: 'square', label: 'Square',
-    iconify: 'simple-icons:square', color: '#3E4348' },
-  { id: 'mollie', label: 'Mollie',
-    iconify: 'simple-icons:mollie', color: '#001B44' },
-  { id: 'razorpay', label: 'Razorpay',
-    iconify: 'simple-icons:razorpay', color: '#0C2451' },
-  { id: 'paddle', label: 'Paddle',
-    iconify: 'simple-icons:paddle', color: '#0F1626' },
-  { id: 'paybox', label: 'PayBox.money',
-    phosphor: CreditCard },
   { id: 'manual', label: 'Manual',
     phosphor: Money },
   { id: 'other', label: 'Other',

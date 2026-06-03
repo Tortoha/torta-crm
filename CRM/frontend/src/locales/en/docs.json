@@ -24,6 +24,8 @@
       "integrations": "Integrations",
       "documents": "Documents",
       "settings": "Settings",
+      "payments": "Payments",
+      "paymentsApi": "Payments",
       "quickstart": "Quickstart",
       "frameworks": "Frameworks",
       "concepts": "Concepts",

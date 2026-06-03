@@ -323,6 +323,55 @@ def s3_delete_prefix(prefix: str) -> None:
     except Exception:
         pass
 
+def s3_presigned_put(key: str, content_type: str, *,
+                     content_disposition: Optional[str] = None, expires: int = 3600) -> str:
+    """Presigned PUT URL — the browser uploads the file DIRECTLY to R2/S3 with it,
+    bypassing the backend (Cloud Run caps request bodies at ~32 MB and can't hold
+    multi-GB files in RAM). Whatever headers we sign here (Content-Type, and
+    Content-Disposition when set) the browser MUST echo on the PUT, or the
+    signature check fails."""
+    s3 = _s3_client()
+    params = {"Bucket": STORAGE_BUCKET, "Key": key, "ContentType": content_type}
+    if content_disposition:
+        params["ContentDisposition"] = content_disposition
+    return s3.generate_presigned_url("put_object", Params=params, ExpiresIn=expires)
+
+def s3_head_size(key: str) -> int:
+    """Real byte size of an object (after a direct browser upload) via HEAD.
+    0 if missing / on error — caller treats that as 'not uploaded'."""
+    try:
+        h = _s3_client().head_object(Bucket=STORAGE_BUCKET, Key=key)
+        return int(h.get("ContentLength") or 0)
+    except Exception:
+        return 0
+
+def s3_ensure_cors() -> None:
+    """Allow browsers on our app origins to PUT directly to the bucket — required
+    for presigned direct uploads. Idempotent (safe on every boot). If the R2 API
+    token lacks bucket-CORS permission this no-ops; set CORS in the Cloudflare R2
+    dashboard manually then."""
+    if not STORAGE_ENABLED:
+        return
+    origins = [o.strip() for o in os.getenv("UPLOAD_CORS_ORIGINS", "").split(",") if o.strip()] or [
+        "https://tortacrm.com", "https://www.tortacrm.com", "https://admin.tortacrm.com",
+        "http://localhost:5173", "http://localhost:5174", "http://localhost:5175",
+    ]
+    try:
+        _s3_client().put_bucket_cors(
+            Bucket=STORAGE_BUCKET,
+            CORSConfiguration={"CORSRules": [{
+                "AllowedMethods": ["PUT", "GET", "HEAD"],
+                "AllowedOrigins":  origins,
+                "AllowedHeaders":  ["*"],
+                "ExposeHeaders":   ["ETag"],
+                "MaxAgeSeconds":   3600,
+            }]},
+        )
+        print("[storage] bucket CORS ensured for presigned uploads")
+    except Exception as e:
+        print(f"[storage] CORS setup skipped ({e}) — set it in the R2 dashboard if direct uploads 403")
+
+
 app = FastAPI()
 
 
@@ -398,6 +447,25 @@ async def _crm_format_validation_error(request: Request, exc: _RVE):
         msg = e.get("msg") or "Invalid value"
         parts.append(f"{field}: {msg}")
     return _J({"detail": "; ".join(parts)}, status_code=422)
+
+
+# ── SERVER-ERROR LOGGER (admin "Technical logs" tab) ──────
+# Logs unhandled exceptions + any 5xx response to crm_error_log. Best-effort:
+# the table may not exist yet during first-boot migrations, so _log_error
+# swallows everything — logging must never break a request.
+@app.middleware("http")
+async def _admin_error_logger(request: Request, call_next):
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        _log_error(request, 500, f"{type(exc).__name__}: {exc}")
+        raise
+    try:
+        if response.status_code >= 500:
+            _log_error(request, response.status_code, "")
+    except Exception:
+        pass
+    return response
 
 
 # ── STARTUP MIGRATIONS ───────────────────────────────────
@@ -593,6 +661,52 @@ def run_migrations():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_users_is_admin   ON crm_users (is_admin) WHERE is_admin=TRUE")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_users_ban_level  ON crm_users (ban_level) WHERE ban_level IS NOT NULL")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_users_country    ON crm_users (signup_country)")
+            # last_country: refreshed at LOGIN (signup_country is frozen at
+            # registration and stays NULL for dev/localhost signups). Admin
+            # "Top countries" reads COALESCE(last_country, signup_country).
+            cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS last_country CHAR(2) DEFAULT NULL")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_crm_users_last_country ON crm_users (last_country)")
+            # ── Admin "Logs" page tables (3 of the 4 tabs; the Activity tab is
+            # derived live from existing tables, no storage needed). ──
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_login_log (
+                    id         BIGSERIAL PRIMARY KEY,
+                    user_id    INTEGER,
+                    email      VARCHAR(255),
+                    ip         VARCHAR(45),
+                    country    CHAR(2),
+                    method     VARCHAR(20),
+                    success    BOOLEAN     NOT NULL DEFAULT TRUE,
+                    detail     VARCHAR(120),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_login_log_created ON crm_login_log (created_at DESC)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_admin_audit (
+                    id             BIGSERIAL PRIMARY KEY,
+                    admin_id       INTEGER,
+                    admin_email    VARCHAR(255),
+                    action         VARCHAR(40),
+                    target_user_id INTEGER,
+                    target_email   VARCHAR(255),
+                    detail         VARCHAR(500),
+                    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON crm_admin_audit (created_at DESC)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_error_log (
+                    id         BIGSERIAL PRIMARY KEY,
+                    method     VARCHAR(10),
+                    path       VARCHAR(300),
+                    status     INTEGER,
+                    error      TEXT,
+                    ip         VARCHAR(45),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_error_log_created ON crm_error_log (created_at DESC)")
             # Bootstrap: grant admin to founder email so first login works
             cur.execute("""
                 UPDATE crm_users
@@ -3137,9 +3251,7 @@ def run_migrations():
             cur.execute("""
                 ALTER TABLE crm_organizations ADD CONSTRAINT crm_organizations_payment_provider_check
                   CHECK (payment_provider IN (
-                    'stripe','tinkoff','cloudpayments','yookassa','paypal',
-                    'adyen','braintree','square','mollie','razorpay','paddle','paybox',
-                    'manual','other'
+                    'stripe','manual','other'
                   ))
             """)
             conn.commit()
@@ -3190,9 +3302,7 @@ def run_migrations():
             cur.execute("""
                 ALTER TABLE crm_payment_credentials ADD CONSTRAINT crm_payment_credentials_provider_check
                   CHECK (provider IN (
-                    'stripe','tinkoff','cloudpayments','yookassa','paypal',
-                    'adyen','braintree','square','mollie','razorpay','paddle','paybox',
-                    'manual','other'
+                    'stripe','manual','other'
                   ))
             """)
             cur.execute("""DO $$ BEGIN
@@ -3899,7 +4009,7 @@ def run_migrations():
                     "db_size_bytes_max": 3221225472,          # 3 GB
                     "emails_per_day_max": 1000,
                     "api_requests_per_minute_max": 500,
-                    "features": ["webhooks"],
+                    "features": ["webhooks", "cross_org_analytics"],
                     "support_level": "email",
                 }),
                 ("plus", "Plus", 2, 25, {
@@ -3909,7 +4019,7 @@ def run_migrations():
                     "db_size_bytes_max": 8589934592,          # 8 GB
                     "emails_per_day_max": 2000,
                     "api_requests_per_minute_max": 1500,
-                    "features": ["webhooks"],
+                    "features": ["webhooks", "cross_org_analytics"],
                     "support_level": "email",
                 }),
                 ("pro", "Pro", 3, 30, {
@@ -3919,7 +4029,7 @@ def run_migrations():
                     "db_size_bytes_max": 21474836480,         # 20 GB
                     "emails_per_day_max": 10000,
                     "api_requests_per_minute_max": 3000,
-                    "features": ["webhooks", "cross_org_analytics", "audit_log", "priority_compute"],
+                    "features": ["webhooks", "cross_org_analytics", "priority_compute"],
                     "support_level": "priority",
                 }),
                 ("max", "Max", 4, 599, {
@@ -3929,8 +4039,7 @@ def run_migrations():
                     "db_size_bytes_max": 274877906944,        # 256 GB
                     "emails_per_day_max": 30000,
                     "api_requests_per_minute_max": 10000,
-                    "features": ["webhooks", "cross_org_analytics", "audit_log",
-                                 "priority_compute", "sso", "white_label"],
+                    "features": ["webhooks", "cross_org_analytics", "priority_compute"],
                     "support_level": "dedicated",
                 }),
             ]
@@ -3949,6 +4058,10 @@ def run_migrations():
             # add the plan_slug column with that default + the FK constraint. ──
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS plan_slug VARCHAR(32) NOT NULL DEFAULT 'free'")
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS storage_used_bytes BIGINT NOT NULL DEFAULT 0")
+            # DB-size cache + 7-day grace clock (see _refresh_org_db_size).
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_size_bytes BIGINT NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_size_checked_at TIMESTAMP")
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_over_since TIMESTAMP")
             cur.execute("ALTER TABLE crm_organizations DROP CONSTRAINT IF EXISTS crm_organizations_plan_slug_fkey")
             cur.execute("""
                 ALTER TABLE crm_organizations
@@ -5382,11 +5495,15 @@ def _org_usage(org_id: int, resource: str) -> int:
             # list too, so the limit reads as "total people in the team".
             r = db_one("SELECT COUNT(*)+1 AS n FROM crm_org_members WHERE org_id=%s", (org_id,))
         elif resource == "storefront_users":
-            # Org-shared customers carry org_id directly; per-project ones don't.
+            # Registered (non-guest) customers only — guests are transient
+            # anonymous carts and don't count toward the cap (matches External's
+            # _enforce_storefront_users). Org-shared customers carry org_id
+            # directly; per-project ones are reached via their project.
             r = db_one("""
                 SELECT COUNT(*) AS n FROM users
-                 WHERE org_id = %s
-                    OR project_id IN (SELECT id FROM crm_projects WHERE org_id=%s)
+                 WHERE NOT COALESCE(is_guest, FALSE)
+                   AND (org_id = %s
+                        OR project_id IN (SELECT id FROM crm_projects WHERE org_id=%s))
             """, (org_id, org_id))
         elif resource == "storage_bytes":
             r = db_one("SELECT storage_used_bytes AS n FROM crm_organizations WHERE id=%s", (org_id,))
@@ -5395,26 +5512,10 @@ def _org_usage(org_id: int, resource: str) -> int:
             # per-org daily counter in crm_email_usage — this is the metered total.
             r = db_one("SELECT sent AS n FROM crm_email_usage WHERE org_id=%s AND day=CURRENT_DATE", (org_id,))
         elif resource == "database_bytes":
-            # Approximate on-disk size of the org's tenant data via
-            # pg_column_size SUM over the heavy-write tables. Doesn't count
-            # indexes / TOAST / row overhead — multiply by ~1.3 for a closer
-            # estimate (still cheap enough to run per page load).
-            r = db_one("""
-                SELECT (
-                  COALESCE((SELECT SUM(pg_column_size(o.*)) FROM order_history o
-                            JOIN crm_projects p ON p.id = o.project_id
-                            WHERE p.org_id = %s), 0) +
-                  COALESCE((SELECT SUM(pg_column_size(pr.*)) FROM products pr
-                            JOIN crm_projects p ON p.id = pr.project_id
-                            WHERE p.org_id = %s), 0) +
-                  COALESCE((SELECT SUM(pg_column_size(u.*)) FROM users u
-                            WHERE u.org_id = %s
-                               OR u.project_id IN (SELECT id FROM crm_projects WHERE org_id = %s)), 0) +
-                  COALESCE((SELECT SUM(pg_column_size(c.*)) FROM carts c
-                            JOIN crm_projects p ON p.id = c.project_id
-                            WHERE p.org_id = %s), 0)
-                ) * 13 / 10 AS n
-            """, (org_id, org_id, org_id, org_id, org_id))
+            # Cached (TTL-refreshed) — the heavy pg_column_size SUM lives in
+            # _compute_org_db_size; reading the cached column keeps hot paths
+            # (enforcement, bell warnings) cheap.
+            return _refresh_org_db_size(org_id)
         else:
             return 0
         return int((r or {}).get("n") or 0)
@@ -5493,6 +5594,140 @@ def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
                 "requested": int(amount),
             },
         )
+
+
+# ── Database-size: cached measurement + 7-day grace before hard-block ──────
+# The pg_column_size SUM is heavy, so we cache it on crm_organizations and
+# refresh at most once per _DB_SIZE_TTL_SEC. `db_over_since` is the grace clock:
+# stamped the moment usage first crosses the cap, cleared the moment it drops
+# back under (or the plan grows). Merchant creates (products/projects) are
+# blocked only AFTER the grace window — customer writes (orders/carts) never.
+_DB_SIZE_TTL_SEC = 300
+_DB_GRACE_DAYS   = 7
+
+def _compute_org_db_size(org_id: int) -> int:
+    """Heavy: pg_column_size SUM over the org's biggest tables, ×1.3 for index/
+    TOAST/row overhead. Called at most once per TTL via _refresh_org_db_size."""
+    try:
+        r = db_one("""
+            SELECT (
+              COALESCE((SELECT SUM(pg_column_size(o.*)) FROM order_history o
+                        JOIN crm_projects p ON p.id = o.project_id
+                        WHERE p.org_id = %s), 0) +
+              COALESCE((SELECT SUM(pg_column_size(pr.*)) FROM products pr
+                        JOIN crm_projects p ON p.id = pr.project_id
+                        WHERE p.org_id = %s), 0) +
+              COALESCE((SELECT SUM(pg_column_size(u.*)) FROM users u
+                        WHERE u.org_id = %s
+                           OR u.project_id IN (SELECT id FROM crm_projects WHERE org_id = %s)), 0) +
+              COALESCE((SELECT SUM(pg_column_size(c.*)) FROM carts c
+                        JOIN crm_projects p ON p.id = c.project_id
+                        WHERE p.org_id = %s), 0)
+            ) * 13 / 10 AS n
+        """, (org_id, org_id, org_id, org_id, org_id))
+        return int((r or {}).get("n") or 0)
+    except Exception:
+        return 0
+
+def _refresh_org_db_size(org_id: int, *, force: bool = False) -> int:
+    """Return the org's DB size in bytes — refreshing the cached column at most
+    once per _DB_SIZE_TTL_SEC and maintaining the db_over_since grace clock."""
+    if not org_id:
+        return 0
+    row = db_one(
+        "SELECT db_size_bytes, "
+        " (db_size_checked_at IS NULL OR db_size_checked_at < NOW() - make_interval(secs => %s)) AS stale "
+        " FROM crm_organizations WHERE id=%s", (_DB_SIZE_TTL_SEC, org_id))
+    if not row:
+        return 0
+    if not (force or row.get("stale")):
+        return int(row.get("db_size_bytes") or 0)
+    size  = _compute_org_db_size(org_id)
+    limit = (_org_plan(org_id).get("limits") or {}).get("db_size_bytes_max")
+    over  = limit is not None and size > int(limit)
+    try:
+        with db_cursor() as (conn, cur):
+            if over:
+                cur.execute("UPDATE crm_organizations SET db_size_bytes=%s, db_size_checked_at=NOW(), "
+                            "db_over_since=COALESCE(db_over_since, NOW()) WHERE id=%s", (size, org_id))
+            else:
+                cur.execute("UPDATE crm_organizations SET db_size_bytes=%s, db_size_checked_at=NOW(), "
+                            "db_over_since=NULL WHERE id=%s", (size, org_id))
+            conn.commit()
+    except Exception as e:
+        print(f"[db_size] refresh failed org={org_id}: {e}")
+    return size
+
+def _enforce_db_size(org_id) -> None:
+    """Grace-aware DB-size gate for MERCHANT creates (products/projects). Over the
+    cap is tolerated for _DB_GRACE_DAYS days (a pinned bell warning runs the
+    countdown); only after that do we hard-block. Customer writes never gated."""
+    if os.getenv("PLAN_ENFORCEMENT_DISABLED", "0") == "1" or not org_id:
+        return
+    limit = (_org_plan(org_id).get("limits") or {}).get("db_size_bytes_max")
+    if limit is None:
+        return
+    size = _refresh_org_db_size(org_id)
+    if size <= int(limit):
+        return
+    row = db_one(
+        "SELECT (db_over_since IS NOT NULL AND db_over_since < NOW() - make_interval(days => %s)) AS expired "
+        " FROM crm_organizations WHERE id=%s", (_DB_GRACE_DAYS, org_id))
+    if row and row.get("expired"):
+        raise HTTPException(402, detail={
+            "error": "plan_limit_exceeded", "plan": _org_plan(org_id)["slug"],
+            "resource": "database_bytes", "limit": int(limit),
+            "current": int(size), "requested": 1,
+        })
+
+def _org_limit_warnings(org_id) -> list:
+    """Live (un-stored) soft-limit warnings, shaped as notification items so the
+    bell renders them with its existing row UI — prepended FIRST (negative ids →
+    mark-read is a server-side no-op → they re-appear every fetch while the
+    violation lasts → effectively pinned + non-dismissible, zero frontend work).
+    Auto-clear when resolved. EXCLUDES projects/team_members (always 1/1 on Free
+    → pure noise)."""
+    out: list = []
+    if not org_id:
+        return out
+    limits = (_org_plan(org_id).get("limits") or {})
+    slug = (db_one("SELECT slug FROM crm_organizations WHERE id=%s", (org_id,)) or {}).get("slug") or ""
+    link = f"/org/{slug}/usage" if slug else None
+    now_iso = _utcnow().isoformat()
+
+    def _w(rid, title, message):
+        out.append({"id": rid, "project_id": None, "type": "limit_warning",
+                    "title": title, "message": message, "link": link,
+                    "is_read": False, "created_at": now_iso})
+
+    db_limit = limits.get("db_size_bytes_max")
+    if db_limit is not None:
+        size = _refresh_org_db_size(org_id)
+        if size > int(db_limit):
+            row = db_one(
+                "SELECT GREATEST(0, CEIL(%s - EXTRACT(EPOCH FROM (NOW()-db_over_since))/86400))::int AS d "
+                " FROM crm_organizations WHERE id=%s", (_DB_GRACE_DAYS, org_id))
+            d = int((row or {}).get("d") or 0)
+            if d > 0:
+                _w(-1, "Database storage over limit",
+                   f"Free space or upgrade — creating products & projects locks in {d} day{'s' if d != 1 else ''}.")
+            else:
+                _w(-1, "Database limit reached",
+                   "Creating products and projects is blocked. Upgrade your plan to continue.")
+    if limits.get("emails_per_day_max") is not None and \
+            _org_usage(org_id, "emails_today") >= int(limits["emails_per_day_max"]):
+        _w(-2, "Daily email limit reached",
+           "Emails are paused until tomorrow. Upgrade for a higher daily limit.")
+    if limits.get("storefront_users_max") is not None and \
+            _org_usage(org_id, "storefront_users") >= int(limits["storefront_users_max"]):
+        _w(-3, "Customer limit reached",
+           "New customer sign-ups are blocked. Upgrade to keep growing.")
+    if limits.get("storage_bytes_max") is not None and \
+            _org_usage(org_id, "storage_bytes") >= int(limits["storage_bytes_max"]):
+        _w(-4, "File storage full",
+           "Image and file uploads are blocked. Free space or upgrade.")
+    return out
+
 
 def _reconcile_org_storage(org_id: int) -> dict:
     """Walk S3 for every project that belongs to this org, SUM real object
@@ -6465,7 +6700,10 @@ def verify_code(body: VerifyCodeRequest, response: Response, request: Request):
         _pv_del(email)
         raise HTTPException(429, "Too many invalid attempts. Request a new code.")
     if not verify_otp(code, pending.get("code_hash", "")):
-        record_fail(keys, now); raise HTTPException(400, "Invalid code")
+        record_fail(keys, now)
+        _record_login(request, user_id=None, email=email, method="email",
+                      success=False, detail="invalid_code")
+        raise HTTPException(400, "Invalid code")
 
     with db_cursor() as (conn, cur):
         if pending["type"] == "register":
@@ -6479,13 +6717,13 @@ def verify_code(body: VerifyCodeRequest, response: Response, request: Request):
                 """INSERT INTO crm_users
                    (name, email, password, role,
                     terms_accepted_at, terms_version, terms_ip,
-                    signup_country, signup_ip)
-                   VALUES (%s, %s, %s, 'owner', NOW(), %s, %s, %s, %s)
+                    signup_country, signup_ip, last_country)
+                   VALUES (%s, %s, %s, 'owner', NOW(), %s, %s, %s, %s, %s)
                    RETURNING id""",
                 (sanitize(pending["name"]), email, hash_pw(pending["password"]),
                  pending.get("terms_version") or "1.0",
                  pending.get("terms_ip"),
-                 country, ip)
+                 country, ip, country)
             )
             user_id = cur.fetchone()["id"]
             conn.commit()
@@ -6497,6 +6735,8 @@ def verify_code(body: VerifyCodeRequest, response: Response, request: Request):
             cur.execute("UPDATE crm_users SET last_login_at = NOW() WHERE id = %s", (user_id,))
             conn.commit()
 
+    _record_login(request, user_id=user_id, email=email, method="email",
+                  detail=("registered" if pending["type"] == "register" else "login"))
     set_cookie(response, make_token(user_id))
     set_refresh_cookie(response, issue_refresh_token(user_id, request, label="Email login"))
     _pv_del(email)
@@ -8030,9 +8270,7 @@ def regenerate_org_skus(org_id: int, user: dict = Depends(get_current_user)):
 # Org-wide payment provider settings. Variant A model — CRM never touches money.
 # Merchant connects their own Stripe/Tinkoff/etc. account on their storefront; this records
 # which provider they use so the Returns workflow can show the right refund instructions.
-PAYMENT_PROVIDERS = ("stripe", "tinkoff", "cloudpayments", "yookassa", "paypal",
-                      "adyen", "braintree", "square", "mollie", "razorpay", "paddle", "paybox",
-                      "manual", "other")
+PAYMENT_PROVIDERS = ("stripe", "manual", "other")
 
 @app.get("/api/orgs/{org_id}/payment-settings")
 def get_org_payment_settings(org_id: int, user: dict = Depends(get_current_user)):
@@ -8439,567 +8677,15 @@ def stripe_create_refund(creds: dict, charge_or_intent_id: str, amount_cents: in
     return _err(msg or f"Stripe refund failed (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
 
 
-# ── Tinkoff ────────────────────────────────────────────────────────────────
+# -- Non-Stripe provider test/refund integrations removed (Stripe only;
+# manual/other are record-only). See git history. --
 
-_TINKOFF_BASE = "https://securepay.tinkoff.ru/v2"
-
-
-def _tinkoff_sign(params: dict, password: str) -> str:
-    items = {k: v for k, v in params.items() if not isinstance(v, (dict, list))}
-    items["Password"] = password
-    concat = "".join(str(items[k]) for k in sorted(items))
-    return hashlib.sha256(concat.encode("utf-8")).hexdigest()
-
-
-def tinkoff_test_connection(creds: dict) -> dict:
-    """Tinkoff has no read-only endpoint — we ping GetState with a fake PaymentId.
-    A valid terminal+password returns INVALID_REQUEST_PARAMETERS error code,
-    while invalid creds return BAD_TOKEN — that's how we distinguish."""
-    tk = creds.get("terminal_key", "").strip()
-    pw = creds.get("password", "").strip()
-    if not tk or not pw:
-        return _err("Missing terminal_key or password")
-    payload = {"TerminalKey": tk, "PaymentId": "0"}
-    payload["Token"] = _tinkoff_sign(payload, pw)
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_TINKOFF_BASE}/GetState",
-                       headers={"Content-Type": "application/json"}, body=body)
-    if r["status"] != 200 or not isinstance(r["body"], dict):
-        return _err(f"Tinkoff API unavailable (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-    if r["body"].get("Success") is True:
-        # Unlikely with PaymentId=0, but accept it
-        return _ok({}, r["body"])
-    code = str(r["body"].get("ErrorCode", ""))
-    # Bad credentials → ErrorCode "8" or message "Неверный токен"; we treat anything
-    # other than auth-failure codes as "creds OK, just bad request params"
-    if code in ("8",) or "Token" in str(r["body"].get("Message", "")) or "токен" in str(r["body"].get("Details", "")).lower():
-        return _err("Invalid Tinkoff terminal_key or password", r["body"])
-    return _ok({}, r["body"])
-
-
-def tinkoff_create_refund(creds: dict, payment_id: str, amount_kopecks: int,
-                           idempotency_key: str) -> dict:
-    """POST /v2/Cancel — refunds the (paid) payment. Tinkoff uses 'Cancel' for both
-    void (pre-capture) and refund (post-capture)."""
-    tk = creds.get("terminal_key", "").strip()
-    pw = creds.get("password", "").strip()
-    if not tk or not pw:
-        return _err("Missing terminal_key or password")
-    if amount_kopecks <= 0:
-        return _err("Refund amount must be positive")
-    payload = {"TerminalKey": tk, "PaymentId": payment_id, "Amount": amount_kopecks,
-               "IP": "", "Receipt": ""}
-    payload = {k: v for k, v in payload.items() if v not in ("", None)}
-    payload["Token"] = _tinkoff_sign(payload, pw)
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_TINKOFF_BASE}/Cancel",
-                       headers={"Content-Type": "application/json",
-                                "Idempotency-Key": idempotency_key}, body=body)
-    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
-        return _ok({"refund_id": str(r["body"].get("PaymentId", "")), "status": r["body"].get("Status", "")}, r["body"])
-    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else f"HTTP {r['status']}"
-    return _err(msg or f"Tinkoff refund failed (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── CloudPayments ──────────────────────────────────────────────────────────
-
-_CLOUDPAYMENTS_BASE = "https://api.cloudpayments.ru"
-
-
-def cloudpayments_test_connection(creds: dict) -> dict:
-    pid = creds.get("public_id", "").strip()
-    sec = creds.get("api_secret", "").strip()
-    if not pid or not sec:
-        return _err("Missing public_id or api_secret")
-    r = _http_request("POST", f"{_CLOUDPAYMENTS_BASE}/test",
-                       headers={"Content-Type": "application/json"},
-                       body=b"{}", basic_auth=(pid, sec))
-    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
-        return _ok({}, r["body"])
-    if r["status"] == 401:
-        return _err("Invalid CloudPayments public_id or api_secret", r["body"] if isinstance(r["body"], dict) else {})
-    return _err(f"CloudPayments rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def cloudpayments_create_refund(creds: dict, transaction_id: str, amount: float,
-                                 idempotency_key: str) -> dict:
-    pid = creds.get("public_id", "").strip()
-    sec = creds.get("api_secret", "").strip()
-    if not pid or not sec:
-        return _err("Missing public_id or api_secret")
-    if amount <= 0:
-        return _err("Refund amount must be positive")
-    body = json.dumps({"TransactionId": int(transaction_id), "Amount": round(float(amount), 2)}).encode("utf-8")
-    r = _http_request("POST", f"{_CLOUDPAYMENTS_BASE}/payments/refund",
-                       headers={"Content-Type": "application/json",
-                                "X-Request-ID": idempotency_key},
-                       body=body, basic_auth=(pid, sec))
-    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success") is True:
-        m = r["body"].get("Model") or {}
-        return _ok({"refund_id": str(m.get("TransactionId", "")), "status": "succeeded"}, r["body"])
-    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else f"HTTP {r['status']}"
-    return _err(msg or f"CloudPayments refund failed", r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── YooKassa ───────────────────────────────────────────────────────────────
-
-_YOOKASSA_BASE = "https://api.yookassa.ru/v3"
-
-
-def yookassa_test_connection(creds: dict) -> dict:
-    shop = creds.get("shop_id", "").strip()
-    sec  = creds.get("secret_key", "").strip()
-    if not shop or not sec:
-        return _err("Missing shop_id or secret_key")
-    r = _http_request("GET", f"{_YOOKASSA_BASE}/me", basic_auth=(shop, sec))
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        return _ok({"shop": r["body"].get("name", "")}, r["body"])
-    if r["status"] == 401:
-        return _err("Invalid YooKassa shop_id or secret_key", r["body"] if isinstance(r["body"], dict) else {})
-    return _err(f"YooKassa rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def yookassa_create_refund(creds: dict, payment_id: str, amount: float,
-                            currency: str, idempotency_key: str) -> dict:
-    shop = creds.get("shop_id", "").strip()
-    sec  = creds.get("secret_key", "").strip()
-    if not shop or not sec:
-        return _err("Missing shop_id or secret_key")
-    if amount <= 0:
-        return _err("Refund amount must be positive")
-    payload = {
-        "payment_id": payment_id,
-        "amount": {"value": f"{round(float(amount), 2):.2f}", "currency": currency or "RUB"},
-    }
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_YOOKASSA_BASE}/refunds",
-                       headers={"Content-Type": "application/json",
-                                "Idempotence-Key": idempotency_key},
-                       body=body, basic_auth=(shop, sec))
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        return _ok({"refund_id": r["body"].get("id", ""), "status": r["body"].get("status", "")}, r["body"])
-    if r["status"] == 401:
-        return _err("Invalid YooKassa credentials", r["body"] if isinstance(r["body"], dict) else {})
-    desc = (r["body"] or {}).get("description", "") if isinstance(r["body"], dict) else ""
-    return _err(desc or f"YooKassa refund failed (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── PayPal ─────────────────────────────────────────────────────────────────
-
-_PAYPAL_BASE_LIVE    = "https://api-m.paypal.com"
-_PAYPAL_BASE_SANDBOX = "https://api-m.sandbox.paypal.com"
-
-
-def _paypal_base(is_test: bool) -> str:
-    return _PAYPAL_BASE_SANDBOX if is_test else _PAYPAL_BASE_LIVE
-
-
-def _paypal_token(creds: dict, is_test: bool) -> tuple[str, str]:
-    cid  = creds.get("client_id", "").strip()
-    csec = creds.get("client_secret", "").strip()
-    if not cid or not csec:
-        return "", "Missing client_id or client_secret"
-    r = _http_request("POST", f"{_paypal_base(is_test)}/v1/oauth2/token",
-                       headers={"Content-Type": "application/x-www-form-urlencoded"},
-                       body=b"grant_type=client_credentials",
-                       basic_auth=(cid, csec))
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        tok = r["body"].get("access_token", "")
-        if tok:
-            return tok, ""
-    return "", f"PayPal token request failed (HTTP {r['status']})"
-
-
-def paypal_test_connection(creds: dict, is_test: bool = True) -> dict:
-    token, err = _paypal_token(creds, is_test)
-    if err:
-        return _err(err)
-    return _ok({"mode": "sandbox" if is_test else "live"})
-
-
-def paypal_create_refund(creds: dict, capture_id: str, amount: float,
-                          currency: str, idempotency_key: str,
-                          is_test: bool = True) -> dict:
-    if amount <= 0:
-        return _err("Refund amount must be positive")
-    token, err = _paypal_token(creds, is_test)
-    if err:
-        return _err(err)
-    payload = {"amount": {"value": f"{round(float(amount), 2):.2f}", "currency_code": (currency or "USD").upper()}}
-    body = json.dumps(payload).encode("utf-8")
-    r = _http_request("POST", f"{_paypal_base(is_test)}/v2/payments/captures/{capture_id}/refund",
-                       headers={"Content-Type": "application/json",
-                                "PayPal-Request-Id": idempotency_key},
-                       body=body, bearer=token)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        return _ok({"refund_id": r["body"].get("id", ""), "status": r["body"].get("status", "")}, r["body"])
-    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else f"HTTP {r['status']}"
-    return _err(msg or "PayPal refund failed", r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── Adyen ──────────────────────────────────────────────────────────────────
-
-def _adyen_base(is_test: bool) -> str:
-    return "https://checkout-test.adyen.com/v71" if is_test else "https://checkout-live.adyen.com/v71"
-
-
-def adyen_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
-    api_key = creds.get("api_key", "").strip()
-    mac     = creds.get("merchant_account", "").strip()
-    if not api_key or not mac:
-        return _err("Missing api_key or merchant_account")
-    body = json.dumps({"merchantAccount": mac}).encode("utf-8")
-    r = _http_request("POST", f"{_adyen_base(is_test_mode)}/paymentMethods",
-                       headers={"X-API-Key": api_key, "Content-Type": "application/json"},
-                       body=body)
-    if r["status"] == 200:
-        return _ok({}, r["body"] if isinstance(r["body"], dict) else {})
-    if r["status"] in (401, 403):
-        return _err("Invalid Adyen API key or merchant account", r["body"] if isinstance(r["body"], dict) else {})
-    return _err(f"Adyen rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def adyen_create_refund(creds: dict, psp_reference: str, amount_minor: int,
-                         currency: str, idempotency_key: str,
-                         is_test_mode: bool = True) -> dict:
-    api_key = creds.get("api_key", "").strip()
-    mac     = creds.get("merchant_account", "").strip()
-    if not api_key or not mac:
-        return _err("Missing api_key or merchant_account")
-    if amount_minor <= 0:
-        return _err("Refund amount must be positive")
-    body = json.dumps({
-        "merchantAccount": mac,
-        "amount": {"value": amount_minor, "currency": (currency or "USD").upper()},
-    }).encode("utf-8")
-    r = _http_request("POST", f"{_adyen_base(is_test_mode)}/payments/{psp_reference}/refunds",
-                       headers={"X-API-Key": api_key, "Content-Type": "application/json",
-                                "Idempotency-Key": idempotency_key},
-                       body=body)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        return _ok({"refund_id": r["body"].get("pspReference", ""),
-                     "status": r["body"].get("status", "received")}, r["body"])
-    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"Adyen refund failed (HTTP {r['status']})",
-                r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── Braintree (GraphQL) ────────────────────────────────────────────────────
-
-def _braintree_url(is_test: bool) -> str:
-    return ("https://payments.sandbox.braintree-api.com/graphql" if is_test
-            else "https://payments.braintree-api.com/graphql")
-
-
-def _braintree_headers() -> dict:
-    return {"Content-Type": "application/json",
-            "Braintree-Version": "2019-01-01",
-            "Accept": "application/json"}
-
-
-def braintree_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
-    pub = creds.get("public_key", "").strip()
-    pri = creds.get("private_key", "").strip()
-    mid = creds.get("merchant_id", "").strip()
-    if not pub or not pri or not mid:
-        return _err("Missing merchant_id, public_key or private_key")
-    body = json.dumps({"query": "query { ping }"}).encode("utf-8")
-    r = _http_request("POST", _braintree_url(is_test_mode),
-                       headers=_braintree_headers(), body=body,
-                       basic_auth=(pub, pri))
-    if r["status"] == 200 and isinstance(r["body"], dict) and not r["body"].get("errors"):
-        return _ok({"ping": r["body"].get("data", {}).get("ping")}, r["body"])
-    if r["status"] == 401:
-        return _err("Invalid Braintree credentials", r["body"] if isinstance(r["body"], dict) else {})
-    err = (r["body"] or {}).get("errors", [{}])[0].get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(err or f"Braintree rejected (HTTP {r['status']})",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-def braintree_create_refund(creds: dict, transaction_id: str, amount: float,
-                             idempotency_key: str, is_test_mode: bool = True) -> dict:
-    pub = creds.get("public_key", "").strip()
-    pri = creds.get("private_key", "").strip()
-    if not pub or not pri:
-        return _err("Missing public_key or private_key")
-    if amount <= 0:
-        return _err("Refund amount must be positive")
-    # Braintree GraphQL refunds use { transactionId, amount }. The amount is decimal-string.
-    body = json.dumps({
-        "query": "mutation r($i: RefundTransactionInput!) { refundTransaction(input: $i) { refund { id status } } }",
-        "variables": {"i": {"transactionId": transaction_id,
-                              "refund": {"amount": f"{round(amount, 2):.2f}"}}},
-    }).encode("utf-8")
-    r = _http_request("POST", _braintree_url(is_test_mode),
-                       headers={**_braintree_headers(), "Braintree-Idempotency": idempotency_key},
-                       body=body, basic_auth=(pub, pri))
-    if r["status"] == 200 and isinstance(r["body"], dict) and not r["body"].get("errors"):
-        d = r["body"].get("data", {}).get("refundTransaction", {}).get("refund", {})
-        return _ok({"refund_id": d.get("id", ""), "status": d.get("status", "")}, r["body"])
-    err = (r["body"] or {}).get("errors", [{}])[0].get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(err or "Braintree refund failed",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── Square ─────────────────────────────────────────────────────────────────
-
-def _square_base(is_test: bool) -> str:
-    return "https://connect.squareupsandbox.com/v2" if is_test else "https://connect.squareup.com/v2"
-
-
-def square_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
-    tok = creds.get("access_token", "").strip()
-    if not tok:
-        return _err("Missing access_token")
-    r = _http_request("GET", f"{_square_base(is_test_mode)}/locations",
-                       headers={"Square-Version": "2024-10-17", "Accept": "application/json"},
-                       bearer=tok)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        locs = r["body"].get("locations") or []
-        return _ok({"locations_count": len(locs)}, r["body"])
-    if r["status"] == 401:
-        return _err("Invalid Square access token", r["body"] if isinstance(r["body"], dict) else {})
-    return _err(f"Square rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def square_create_refund(creds: dict, payment_id: str, amount_minor: int,
-                          currency: str, idempotency_key: str,
-                          is_test_mode: bool = True) -> dict:
-    tok = creds.get("access_token", "").strip()
-    if not tok:
-        return _err("Missing access_token")
-    if amount_minor <= 0:
-        return _err("Refund amount must be positive")
-    body = json.dumps({
-        "idempotency_key": idempotency_key,
-        "amount_money": {"amount": amount_minor, "currency": (currency or "USD").upper()},
-        "payment_id": payment_id,
-    }).encode("utf-8")
-    r = _http_request("POST", f"{_square_base(is_test_mode)}/refunds",
-                       headers={"Square-Version": "2024-10-17",
-                                "Content-Type": "application/json"},
-                       body=body, bearer=tok)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        ref = r["body"].get("refund") or {}
-        return _ok({"refund_id": ref.get("id", ""), "status": ref.get("status", "")}, r["body"])
-    errors = (r["body"] or {}).get("errors", []) if isinstance(r["body"], dict) else []
-    msg = errors[0].get("detail", "") if errors else f"HTTP {r['status']}"
-    return _err(msg or "Square refund failed", r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── Mollie ─────────────────────────────────────────────────────────────────
-
-_MOLLIE_BASE = "https://api.mollie.com/v2"
-
-
-def mollie_test_connection(creds: dict) -> dict:
-    key = creds.get("api_key", "").strip()
-    if not key:
-        return _err("Missing api_key")
-    r = _http_request("GET", f"{_MOLLIE_BASE}/methods", bearer=key)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        return _ok({"is_test": key.startswith("test_")}, r["body"])
-    if r["status"] == 401:
-        return _err("Invalid Mollie API key", r["body"] if isinstance(r["body"], dict) else {})
-    return _err(f"Mollie rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def mollie_create_refund(creds: dict, payment_id: str, amount: float,
-                          currency: str, idempotency_key: str) -> dict:
-    key = creds.get("api_key", "").strip()
-    if not key:
-        return _err("Missing api_key")
-    if amount <= 0:
-        return _err("Refund amount must be positive")
-    body = json.dumps({"amount": {"value": f"{round(amount, 2):.2f}",
-                                    "currency": (currency or "EUR").upper()}}).encode("utf-8")
-    r = _http_request("POST", f"{_MOLLIE_BASE}/payments/{payment_id}/refunds",
-                       headers={"Content-Type": "application/json",
-                                "Idempotency-Key": idempotency_key},
-                       body=body, bearer=key)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        return _ok({"refund_id": r["body"].get("id", ""),
-                     "status": r["body"].get("status", "")}, r["body"])
-    msg = (r["body"] or {}).get("detail", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or "Mollie refund failed", r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── Razorpay ───────────────────────────────────────────────────────────────
-
-_RAZORPAY_BASE = "https://api.razorpay.com/v1"
-
-
-def razorpay_test_connection(creds: dict) -> dict:
-    kid = creds.get("key_id", "").strip()
-    ksec = creds.get("key_secret", "").strip()
-    if not kid or not ksec:
-        return _err("Missing key_id or key_secret")
-    r = _http_request("GET", f"{_RAZORPAY_BASE}/payments?count=1", basic_auth=(kid, ksec))
-    if r["status"] == 200:
-        return _ok({"is_test": kid.startswith("rzp_test_")}, r["body"] if isinstance(r["body"], dict) else {})
-    if r["status"] == 401:
-        return _err("Invalid Razorpay key_id or key_secret", r["body"] if isinstance(r["body"], dict) else {})
-    return _err(f"Razorpay rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def razorpay_create_refund(creds: dict, payment_id: str, amount_minor: int,
-                            idempotency_key: str) -> dict:
-    kid = creds.get("key_id", "").strip()
-    ksec = creds.get("key_secret", "").strip()
-    if not kid or not ksec:
-        return _err("Missing key_id or key_secret")
-    if amount_minor <= 0:
-        return _err("Refund amount must be positive")
-    body = json.dumps({"amount": amount_minor}).encode("utf-8")
-    r = _http_request("POST", f"{_RAZORPAY_BASE}/payments/{payment_id}/refund",
-                       headers={"Content-Type": "application/json",
-                                "X-Idempotency-Key": idempotency_key},
-                       body=body, basic_auth=(kid, ksec))
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        return _ok({"refund_id": r["body"].get("id", ""),
-                     "status": r["body"].get("status", "")}, r["body"])
-    desc = (r["body"] or {}).get("error", {}).get("description", "") if isinstance(r["body"], dict) else ""
-    return _err(desc or "Razorpay refund failed", r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── Paddle Billing (new API) ───────────────────────────────────────────────
-
-def _paddle_base(is_test: bool) -> str:
-    return "https://sandbox-api.paddle.com" if is_test else "https://api.paddle.com"
-
-
-def paddle_test_connection(creds: dict, is_test_mode: bool = True) -> dict:
-    tok = creds.get("api_key", "").strip()
-    if not tok:
-        return _err("Missing api_key")
-    r = _http_request("GET", f"{_paddle_base(is_test_mode)}/event-types", bearer=tok)
-    if r["status"] == 200:
-        return _ok({}, r["body"] if isinstance(r["body"], dict) else {})
-    if r["status"] in (401, 403):
-        return _err("Invalid Paddle API key", r["body"] if isinstance(r["body"], dict) else {})
-    return _err(f"Paddle rejected (HTTP {r['status']})", r["body"] if isinstance(r["body"], dict) else {})
-
-
-def paddle_create_refund(creds: dict, transaction_id: str, amount: float,
-                          currency: str, idempotency_key: str,
-                          is_test_mode: bool = True) -> dict:
-    """POST /adjustments — Paddle's refund mechanism. Requires line item details
-    in real refunds, but a simple full-transaction refund can be issued by passing
-    `action='refund'` + items=[{...}]. For diploma we use a simplified payload."""
-    tok = creds.get("api_key", "").strip()
-    if not tok:
-        return _err("Missing api_key")
-    if amount <= 0:
-        return _err("Refund amount must be positive")
-    # Paddle adjustments require per-item details; without them we can't issue a refund
-    # via API alone. For now we return an instruction to use the dashboard. Future:
-    # fetch the transaction's items first, then build the adjustments payload.
-    body = json.dumps({
-        "action": "refund",
-        "transaction_id": transaction_id,
-        "reason": f"Refund {round(amount, 2)} {(currency or 'USD').upper()}",
-    }).encode("utf-8")
-    r = _http_request("POST", f"{_paddle_base(is_test_mode)}/adjustments",
-                       headers={"Content-Type": "application/json",
-                                "Paddle-Idempotency-Key": idempotency_key},
-                       body=body, bearer=tok)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        d = r["body"].get("data") or {}
-        return _ok({"refund_id": d.get("id", ""), "status": d.get("status", "pending")}, r["body"])
-    err = (r["body"] or {}).get("error", {}).get("detail", "") if isinstance(r["body"], dict) else ""
-    return _err(err or "Paddle refund failed — line-item details may be required",
-                 r["body"] if isinstance(r["body"], dict) else {})
-
-
-# ── PayBox.money (Kazakhstan) ──────────────────────────────────────────────
-
-_PAYBOX_BASE = "https://api.paybox.money"
-
-
-def _paybox_sign(endpoint: str, params: dict, secret_key: str) -> str:
-    parts = [endpoint]
-    for k in sorted(params.keys()):
-        parts.append(str(params[k]))
-    parts.append(secret_key)
-    return hashlib.sha1(";".join(parts).encode("utf-8")).hexdigest()
-
-
-def paybox_test_connection(creds: dict) -> dict:
-    """POST /get_status with a fake payment id — a valid creds+signature gets
-    response error_code=10 (payment not found), invalid signature gets 1."""
-    mid = creds.get("merchant_id", "").strip()
-    sec = creds.get("secret_key", "").strip()
-    if not mid or not sec:
-        return _err("Missing merchant_id or secret_key")
-    params = {
-        "pg_merchant_id": mid,
-        "pg_payment_id":  "0",
-        "pg_salt":        secrets.token_hex(8),
-    }
-    params["pg_sig"] = _paybox_sign("get_status.php", params, sec)
-    body = urllib.parse.urlencode(params).encode("utf-8")
-    r = _http_request("POST", f"{_PAYBOX_BASE}/get_status.php",
-                       headers={"Content-Type": "application/x-www-form-urlencoded"},
-                       body=body)
-    # PayBox returns XML; we don't parse it here — just check HTTP and look for
-    # "wrong signature" markers in the response body.
-    if r["status"] == 200:
-        text = json.dumps(r["body"]) if isinstance(r["body"], dict) else str(r["body"])
-        if "wrong signature" in text.lower() or "неверная подпись" in text.lower():
-            return _err("Invalid PayBox merchant_id or secret_key", {})
-        return _ok({}, {})
-    return _err(f"PayBox rejected (HTTP {r['status']})", {})
-
-
-def paybox_create_refund(creds: dict, payment_id: str, amount: float,
-                          currency: str, idempotency_key: str) -> dict:
-    mid = creds.get("merchant_id", "").strip()
-    sec = creds.get("secret_key", "").strip()
-    if not mid or not sec:
-        return _err("Missing merchant_id or secret_key")
-    if amount <= 0:
-        return _err("Refund amount must be positive")
-    params = {
-        "pg_merchant_id": mid,
-        "pg_payment_id":  payment_id,
-        "pg_refund_amount": f"{round(amount, 2):.2f}",
-        "pg_salt":        idempotency_key[:32],
-    }
-    params["pg_sig"] = _paybox_sign("revoke.php", params, sec)
-    body = urllib.parse.urlencode(params).encode("utf-8")
-    r = _http_request("POST", f"{_PAYBOX_BASE}/revoke.php",
-                       headers={"Content-Type": "application/x-www-form-urlencoded"},
-                       body=body)
-    if r["status"] == 200:
-        # PayBox returns XML, but we treat 200 with body containing pg_status=ok as success
-        text = json.dumps(r["body"]) if isinstance(r["body"], dict) else str(r["body"])
-        if "pg_status=ok" in text or "<pg_status>ok</pg_status>" in text:
-            return _ok({"refund_id": payment_id, "status": "succeeded"}, {})
-        if "wrong signature" in text.lower():
-            return _err("Invalid PayBox signature", {})
-        # Otherwise — likely declined / error response
-        return _err(f"PayBox refund declined: {text[:200]}", {})
-    return _err(f"PayBox refund failed (HTTP {r['status']})", {})
-
-
-# ── Dispatcher ─────────────────────────────────────────────────────────────
 
 def test_connection(provider: str, creds: dict, *, is_test_mode: bool = True,
                      stripe_account_id: str = "") -> dict:
     if provider == "manual" or provider == "other":
         return _ok({"note": "Manual / Other providers don't have a remote check — credentials are saved as-is."})
     if provider == "stripe":         return stripe_test_connection(creds, stripe_account_id)
-    if provider == "tinkoff":        return tinkoff_test_connection(creds)
-    if provider == "cloudpayments":  return cloudpayments_test_connection(creds)
-    if provider == "yookassa":       return yookassa_test_connection(creds)
-    if provider == "paypal":         return paypal_test_connection(creds, is_test_mode)
-    if provider == "adyen":          return adyen_test_connection(creds, is_test_mode)
-    if provider == "braintree":      return braintree_test_connection(creds, is_test_mode)
-    if provider == "square":         return square_test_connection(creds, is_test_mode)
-    if provider == "mollie":         return mollie_test_connection(creds)
-    if provider == "razorpay":       return razorpay_test_connection(creds)
-    if provider == "paddle":         return paddle_test_connection(creds, is_test_mode)
-    if provider == "paybox":         return paybox_test_connection(creds)
     return _err(f"Unknown provider: {provider}")
 
 
@@ -9020,32 +8706,10 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
     if provider == "manual" or provider == "other":
         # No real API call — just succeed. CRM stores reference manually entered.
         return _ok({"refund_id": "", "status": "manual"})
-    amount_minor = int(round(amount * 100))
     if provider == "stripe":
+        amount_minor = int(round(amount * 100))
         return stripe_create_refund(creds, charge_or_intent_id, amount_minor,
                                      idempotency_key, stripe_account_id)
-    if provider == "tinkoff":
-        return tinkoff_create_refund(creds, charge_or_intent_id, amount_minor, idempotency_key)
-    if provider == "cloudpayments":
-        return cloudpayments_create_refund(creds, charge_or_intent_id, amount, idempotency_key)
-    if provider == "yookassa":
-        return yookassa_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key)
-    if provider == "paypal":
-        return paypal_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key, is_test_mode)
-    if provider == "adyen":
-        return adyen_create_refund(creds, charge_or_intent_id, amount_minor, currency, idempotency_key, is_test_mode)
-    if provider == "braintree":
-        return braintree_create_refund(creds, charge_or_intent_id, amount, idempotency_key, is_test_mode)
-    if provider == "square":
-        return square_create_refund(creds, charge_or_intent_id, amount_minor, currency, idempotency_key, is_test_mode)
-    if provider == "mollie":
-        return mollie_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key)
-    if provider == "razorpay":
-        return razorpay_create_refund(creds, charge_or_intent_id, amount_minor, idempotency_key)
-    if provider == "paddle":
-        return paddle_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key, is_test_mode)
-    if provider == "paybox":
-        return paybox_create_refund(creds, charge_or_intent_id, amount, currency, idempotency_key)
     return _err(f"Unknown provider: {provider}")
 
 
@@ -9366,6 +9030,7 @@ def stripe_connect_oauth_callback(request: Request,
 def create_project(org_id: int, request: CreateProjectRequest, req: Request, user: dict = Depends(get_current_user)):
     require_org_owner(user, org_id)
     enforce_limit(org_id, "projects")
+    _enforce_db_size(org_id)
 
     name = request.name.strip()
     if not name:          raise HTTPException(400, "Name is required")
@@ -10032,6 +9697,7 @@ def list_products(project_id: int = Query(...),
 @app.post("/api/products")
 def create_product(request: CreateProductRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _enforce_db_size((db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("org_id"))
     name = request.title.strip()
     if not name: raise HTTPException(400, "Title is required")
     if request.category_id is not None:
@@ -15197,134 +14863,13 @@ def reply_to_review(product_id: int, review_id: int, req: ReviewReplyRequest,
 
 # ── UPLOAD ───────────────────────────────────────────────
 
-@app.post("/api/upload/image")
-async def upload_image(
-    file: UploadFile = File(...),
-    project_id: Optional[int] = Query(None),
-    user: dict = Depends(get_current_user),
-):
-    # Cross-tenant guard: a user must be a member of the project they're
-    # uploading into. Without this any logged-in user can write to
-    # another tenant's S3 prefix (`projects/{other_pid}/products/...`)
-    # and exhaust their storage budget. project_id is optional (legacy
-    # "avatar-like" uploads have no project_id), so we only enforce
-    # when it's provided.
-    if project_id is not None:
-        require_page_auto(user, project_id)
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(400, "Only image files are allowed")
-    contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(400, "File too large (max 10MB)")
-    if not PIL_AVAILABLE:
-        raise HTTPException(500, "Pillow not installed. Run: pip install Pillow")
-    try:
-        img = PilImage.open(io.BytesIO(contents)).convert("RGB")
-        out = io.BytesIO()
-        img.save(out, "WEBP", quality=85, method=4)
-        out.seek(0)
-    except Exception:
-        raise HTTPException(400, "Invalid image file")
-
-    filename = f"{secrets.token_hex(16)}.webp"
-
-    if S3_AVAILABLE and STORAGE_ENABLED:
-        folder = f"projects/{project_id}/products" if project_id else "products"
-        key = f"{folder}/{filename}"
-        # Plan-gate: org storage budget. Legacy avatar-style uploads without a
-        # project_id bypass billing (they go to a global folder).
-        file_size = out.getbuffer().nbytes
-        org_id = _project_org_id(project_id) if project_id else None
-        if org_id:
-            enforce_limit(org_id, "storage_bytes", amount=file_size)
-        try:
-            url = s3_upload(out, key)
-            if org_id:
-                _org_storage_inc(org_id, file_size)
-            return {"url": url}
-        except (BotoCoreError, ClientError) as e:
-            raise HTTPException(500, f"S3 upload failed: {e}")
-    else:
-        path = os.path.join(UPLOADS_DIR, filename)
-        with open(path, "wb") as f:
-            f.write(out.read())
-        return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}"}
-
-
-# Media upload (Phase 7): images/videos/3D/AR; preserves original format (no server-side transcoding).
-
-ALLOWED_MEDIA_EXTS = {
-    # images — also accepted by /api/upload/image for back-compat
-    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
-    'webp': 'image/webp', 'gif': 'image/gif',
-    # video
-    'mp4': 'video/mp4', 'webm': 'video/webm', 'mov': 'video/quicktime', 'm4v': 'video/x-m4v',
-    # 3D / AR
-    'glb': 'model/gltf-binary', 'usdz': 'model/vnd.usdz+zip', 'gltf': 'model/gltf+json',
-}
-
-MEDIA_SIZE_LIMITS = {
-    'image': 10 * 1024 * 1024,    # 10 MB
-    'video': 100 * 1024 * 1024,   # 100 MB
-    'model':  50 * 1024 * 1024,   #  50 MB
-}
-
-def _media_kind_from_ext(ext: str) -> Optional[str]:
-    if ext in ('jpg', 'jpeg', 'png', 'webp', 'gif'): return 'image'
-    if ext in ('mp4', 'webm', 'mov', 'm4v'):         return 'video'
-    if ext in ('glb', 'usdz', 'gltf'):               return 'model'
-    return None
-
-
-@app.post("/api/upload/media")
-async def upload_media(
-    file: UploadFile = File(...),
-    project_id: Optional[int] = Query(None),
-    user: dict = Depends(get_current_user),
-):
-    # Cross-tenant guard — see upload_image for rationale.
-    if project_id is not None:
-        require_page_auto(user, project_id)
-    fname = (file.filename or '').strip()
-    ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
-    if ext not in ALLOWED_MEDIA_EXTS:
-        raise HTTPException(400, f"File type .{ext or '?'} not allowed. "
-                                  f"Allowed: {sorted(ALLOWED_MEDIA_EXTS.keys())}")
-    kind = _media_kind_from_ext(ext)
-    contents = await file.read()
-    cap = MEDIA_SIZE_LIMITS.get(kind, 10 * 1024 * 1024)
-    if len(contents) > cap:
-        raise HTTPException(400, f"File too large (max {cap // (1024*1024)} MB for {kind})")
-
-    # Mime-type sniff defence — refuse if declared mime mismatches ext (.glb-renamed-from-.exe).
-    declared = (file.content_type or '').lower()
-    expected = ALLOWED_MEDIA_EXTS[ext]
-    # Browsers send 'application/octet-stream' for unknown types — accept that.
-    if declared and declared != expected and declared != 'application/octet-stream':
-        # Allow image/* for any image ext (browsers vary on jpeg vs jpg).
-        if not (kind == 'image' and declared.startswith('image/')):
-            raise HTTPException(400, f"Mime mismatch: file says '{declared}', extension says '{expected}'")
-
-    filename = f"{secrets.token_hex(16)}.{ext}"
-    if S3_AVAILABLE and STORAGE_ENABLED:
-        folder = f"projects/{project_id}/products" if project_id else "products"
-        key = f"{folder}/{filename}"
-        org_id = _project_org_id(project_id) if project_id else None
-        if org_id:
-            enforce_limit(org_id, "storage_bytes", amount=len(contents))
-        try:
-            buf = io.BytesIO(contents); buf.seek(0)
-            url = s3_upload(buf, key, content_type=expected)
-            if org_id:
-                _org_storage_inc(org_id, len(contents))
-            return {"url": url, "type": kind, "size": len(contents)}
-        except (BotoCoreError, ClientError) as e:
-            raise HTTPException(500, f"S3 upload failed: {e}")
-    else:
-        path = os.path.join(UPLOADS_DIR, filename)
-        with open(path, "wb") as f:
-            f.write(contents)
-        return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}", "type": kind, "size": len(contents)}
+# Image & media uploads (product photos, video, 3D/AR) go BROWSER → R2 directly
+# via the presigned flow below (/api/upload/presign → /api/upload/confirm). The
+# old POST-through-the-backend endpoints (/api/upload/image, /api/upload/media)
+# were removed: Cloud Run's ~32 MB request-body cap made them unusable for large
+# media, and presign() already does the same storage-quota pre-flight + the
+# cross-tenant guard. /api/upload/file (below) still serves digital-product file
+# attachments, and /api/upload/avatar profile pictures.
 
 
 # Trusted external embed hosts for "Paste URL" path — narrow (SSRF/clickjacking risk).
@@ -15387,7 +14932,8 @@ _UPLOAD_ALLOWED_MIME = {
     "text/csv",
     "audio/mpeg", "audio/wav", "audio/ogg",
     "video/mp4", "video/webm", "video/quicktime",
-    # Images are OK here too — /upload/image is the preferred path but this one accepts them as generic files.
+    # Images are OK here too — accepted as generic downloadable files (the presigned
+    # upload is the preferred path for product images).
     "image/png", "image/jpeg", "image/webp", "image/gif",
 }
 _UPLOAD_FORBIDDEN_EXT = {
@@ -15402,7 +14948,7 @@ async def upload_file(
     project_id: Optional[int] = Query(None),
     user: dict = Depends(get_current_user),
 ):
-    # Cross-tenant guard — see upload_image for rationale.
+    # Cross-tenant guard: only a member of this project may upload into its prefix.
     if project_id is not None:
         require_page_auto(user, project_id)
     import re as _re_local
@@ -15420,7 +14966,7 @@ async def upload_file(
         raise HTTPException(400, f"File extension {ext} is not allowed")
     mime = (file.content_type or "application/octet-stream").lower()
     if mime not in _UPLOAD_ALLOWED_MIME:
-        raise HTTPException(400, f"MIME type {mime} is not allowed for generic uploads. Use /api/upload/image for images.")
+        raise HTTPException(400, f"MIME type {mime} is not allowed for generic uploads.")
 
     filename = f"{secrets.token_hex(12)}_{safe_name}"
 
@@ -15449,6 +14995,77 @@ async def upload_file(
         with open(path, "wb") as f:
             f.write(contents)
         return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}", "name": file.filename, "size": len(contents)}
+
+
+# ── Presigned direct-to-R2 upload (large files: digital goods, video) ──────
+# The browser uploads straight to R2 — Cloud Run can't relay multi-GB request
+# bodies (~32 MB cap) nor hold them in RAM. presign() validates the file fits
+# (per-file cap + org storage quota → the pre-flight that powers the frontend
+# "not enough storage" Alert) and returns a signed PUT URL; confirm() bills the
+# real size once the object has landed.
+_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024   # 4 GB per file
+
+class PresignRequest(BaseModel):
+    filename: str
+    content_type: Optional[str] = ""
+    size: int
+    kind: Optional[str] = "file"             # "image" | "media" | "file"
+
+class ConfirmUploadRequest(BaseModel):
+    key: str
+
+@app.post("/api/upload/presign")
+def presign_upload(body: PresignRequest, project_id: int = Query(...),
+                   user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    if not STORAGE_ENABLED:
+        raise HTTPException(503, "Object storage not configured")
+    size = int(body.size or 0)
+    if size <= 0:
+        raise HTTPException(400, "size required")
+    if size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(400, detail={
+            "error": "file_too_large", "limit": _MAX_UPLOAD_BYTES, "requested": size,
+            "message": f"File exceeds the {_MAX_UPLOAD_BYTES // (1024**3)} GB per-file limit.",
+        })
+    org_id = _project_org_id(project_id)
+    if org_id:
+        # Pre-flight quota check — raises 402 plan_limit_exceeded (the Alert).
+        enforce_limit(org_id, "storage_bytes", amount=size)
+    import re as _re_local
+    safe = (_re_local.sub(r"[^a-zA-Z0-9._-]", "_", body.filename or "file")[:120] or "file")
+    ext  = safe.rsplit(".", 1)[-1].lower() if "." in safe else ""
+    kind = (body.kind or "file").lower()
+    folder = (f"projects/{project_id}/products" if kind in ("image", "media")
+              else f"projects/{project_id}/files")
+    key   = f"{folder}/{secrets.token_hex(16)}" + (f".{ext}" if ext else "")
+    ctype = body.content_type or "application/octet-stream"
+    # Digital downloads: ANY file type is allowed, but forced as `attachment` so
+    # it can never render/execute — it's a download from the R2 (cdn) domain,
+    # not our app origin.
+    disp = f'attachment; filename="{safe}"' if kind == "file" else None
+    return {
+        "upload_url":          s3_presigned_put(key, ctype, content_disposition=disp),
+        "public_url":          _public_url_for(key),
+        "key":                 key,
+        "content_type":        ctype,
+        "content_disposition": disp,
+    }
+
+@app.post("/api/upload/confirm")
+def confirm_upload(body: ConfirmUploadRequest, project_id: int = Query(...),
+                   user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    key = (body.key or "").strip()
+    if not key.startswith(f"projects/{project_id}/"):
+        raise HTTPException(403, "Key does not belong to this project")
+    size = s3_head_size(key)
+    if size <= 0:
+        raise HTTPException(400, "Upload not found in storage")
+    org_id = _project_org_id(project_id)
+    if org_id:
+        _org_storage_inc(org_id, size)
+    return {"ok": True, "url": _public_url_for(key), "size": size}
 
 
 @app.post("/api/upload/avatar")
@@ -23521,7 +23138,18 @@ def list_notifications(project_id: Optional[int] = Query(None), unread_only: boo
     )
     unread = sum(1 for r in unread_rows
                  if _notif_visible_to(user["id"], r["project_id"], r["type"], acc_cache))
-    return {"items": rows, "unread": unread, "has_more": has_more}
+    # Live (un-stored) soft-limit warnings — prepended FIRST as notification rows
+    # (negative ids → mark-read is a no-op → non-dismissible). First page only;
+    # counted into the unread badge so they always draw attention while active.
+    warnings: list = []
+    if before is None and project_id is not None:
+        _worg = (db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("org_id")
+        try:
+            warnings = _org_limit_warnings(_worg)
+        except Exception:
+            warnings = []
+    return {"items": warnings + rows, "unread": unread + len(warnings),
+            "has_more": has_more, "pinned": warnings}
 
 
 @app.post("/api/notifications/{notif_id}/read")
@@ -26356,6 +25984,7 @@ def _start_pg_event_listener():
 
 @app.on_event("startup")
 async def _start_listener_on_boot():
+    s3_ensure_cors()
     _start_pg_event_listener()
     _start_mv_refresher()
     _start_alerts_evaluator()
@@ -26881,6 +26510,107 @@ def _geoloc_country(ip: str) -> Optional[str]:
     return None
 
 
+def _geo_ip_from_request(req) -> Optional[str]:
+    """Left-most PUBLIC IP from X-Forwarded-For, for geolocation only
+    (analytics — spoofing just mislabels one's own country, not a security
+    risk, so unlike get_ip() we don't require a trusted-proxy peer)."""
+    cands = []
+    try:
+        fwd = req.headers.get("x-forwarded-for") if req else None
+        if fwd:
+            cands += [p.strip() for p in fwd.split(",")]
+        if req is not None and getattr(req, "client", None):
+            cands.append(req.client.host)
+    except Exception:
+        return None
+    for ip in cands:
+        if not ip or ip in ("unknown", "127.0.0.1", "::1"):
+            continue
+        if any(ip.startswith(p) for p in ("10.", "172.", "192.168.", "169.254.")):
+            continue
+        return ip
+    return None
+
+
+def _record_login(req, *, user_id, email, method, success=True, detail=""):
+    """Append a crm_login_log row and, on a successful login, backfill
+    crm_users.last_country when the user has no country yet (this is how
+    existing/localhost-signup accounts finally get a real country)."""
+    ip = None
+    try:
+        ip = _geo_ip_from_request(req) or get_ip(req)
+    except Exception:
+        ip = None
+    country = None
+    try:
+        if success and user_id:
+            row = db_one("SELECT last_country, signup_country FROM crm_users WHERE id=%s", (user_id,))
+            country = (row or {}).get("last_country") or (row or {}).get("signup_country")
+            if not country:
+                country = _geoloc_country(ip)
+                if country:
+                    with db_cursor() as (conn, cur):
+                        cur.execute("UPDATE crm_users SET last_country=%s WHERE id=%s", (country, user_id))
+                        conn.commit()
+    except Exception:
+        country = None
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO crm_login_log (user_id, email, ip, country, method, success, detail) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (user_id, (email or "")[:255], (ip or "")[:45], country,
+                 method, bool(success), (detail or "")[:120]))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _admin_audit(actor, action, *, target_user_id=None, target_email=None, detail=""):
+    """Record an admin action in crm_admin_audit (admin Logs → Audit tab)."""
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO crm_admin_audit "
+                "(admin_id, admin_email, action, target_user_id, target_email, detail) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                ((actor or {}).get("id"), ((actor or {}).get("email") or "")[:255], action,
+                 target_user_id, (target_email or "")[:255], (detail or "")[:500]))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _log_error(req, status, error):
+    """Best-effort write to crm_error_log (admin Logs → Technical tab)."""
+    try:
+        method = path = ""
+        try:
+            method = (req.method or "")[:10]
+            path   = str(req.url.path)[:300]
+        except Exception:
+            pass
+        ip = None
+        try:
+            ip = get_ip(req)
+        except Exception:
+            ip = None
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO crm_error_log (method, path, status, error, ip) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (method, path, int(status), (error or "")[:4000], (ip or "")[:45]))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _paginate(page, per_page):
+    page = max(1, int(page or 1))
+    per_page = max(1, min(int(per_page or 50), 200))
+    return page, per_page, (page - 1) * per_page
+
+
 @app.get("/api/admin/stats")
 def admin_stats(period: str = "30d", user: dict = Depends(get_current_user)):
     """Overview KPIs for the admin Analytics page.
@@ -26921,21 +26651,28 @@ def admin_stats(period: str = "30d", user: dict = Depends(get_current_user)):
 
     countries = db_all("""
         SELECT
-            COALESCE(signup_country, 'XX') AS country,
-            COUNT(*)                       AS users
+            COALESCE(last_country, signup_country, 'XX') AS country,
+            COUNT(*)                                     AS users
         FROM crm_users
-        GROUP BY COALESCE(signup_country, 'XX')
+        GROUP BY COALESCE(last_country, signup_country, 'XX')
         ORDER BY users DESC
         LIMIT 10
     """)
 
+    # Continuous daily series — gaps filled with 0 so the scrollable chart
+    # has exactly one point per calendar day (matches CRM "Revenue over time").
     signups_series = db_all(f"""
-        SELECT
-            DATE_TRUNC('day', created_at)::date AS day,
-            COUNT(*)                            AS signups
-        FROM crm_users
-        WHERE created_at >= NOW() - INTERVAL '{int(period_days)} days'
-        GROUP BY DATE_TRUNC('day', created_at)::date
+        SELECT d::date AS day, COALESCE(s.signups, 0) AS signups
+        FROM generate_series(
+                (CURRENT_DATE - INTERVAL '{int(period_days) - 1} days')::date,
+                CURRENT_DATE::date,
+                INTERVAL '1 day') AS d
+        LEFT JOIN (
+            SELECT DATE_TRUNC('day', created_at)::date AS day, COUNT(*) AS signups
+            FROM crm_users
+            WHERE created_at >= CURRENT_DATE - INTERVAL '{int(period_days) - 1} days'
+            GROUP BY 1
+        ) s ON s.day = d::date
         ORDER BY day ASC
     """)
 
@@ -27060,6 +26797,8 @@ def admin_ban_user(
             # filter by `is_active=TRUE`).
             cur.execute("UPDATE crm_projects SET is_active = FALSE WHERE crm_user_id = %s", (user_id,))
         conn.commit()
+    _admin_audit(actor, "ban", target_user_id=user_id,
+                 detail=f"{body.level} ban: {sanitize((body.reason or '').strip())[:400]}")
     return {"ok": True, "level": body.level}
 
 
@@ -27078,6 +26817,7 @@ def admin_unban_user(user_id: int, actor: dict = Depends(get_current_user)):
              WHERE id = %s
         """, (user_id,))
         conn.commit()
+    _admin_audit(actor, "unban", target_user_id=user_id)
     return {"ok": True}
 
 
@@ -27100,4 +26840,88 @@ def admin_delete_user(user_id: int, actor: dict = Depends(get_current_user)):
         # so a single DELETE on crm_users sweeps the whole graph.
         cur.execute("DELETE FROM crm_users WHERE id = %s", (user_id,))
         conn.commit()
+    _admin_audit(actor, "delete_user", target_user_id=user_id, target_email=target["email"])
     return {"ok": True, "deleted_email": target["email"]}
+
+
+# ── ADMIN LOGS — 4 tabs: activity / logins / audit / errors ──────────────
+@app.get("/api/admin/logs/activity")
+def admin_logs_activity(page: int = 1, per_page: int = 50, user: dict = Depends(get_current_user)):
+    """Platform activity feed — derived LIVE from existing tables (no event
+    store). Newest first across signups / orgs / projects / orders / bans."""
+    require_admin(user)
+    page, per_page, offset = _paginate(page, per_page)
+    full = """
+        SELECT * FROM (
+            SELECT 'signup'  AS kind, email AS title,
+                   COALESCE(last_country, signup_country, '') AS meta, created_at
+              FROM crm_users
+            UNION ALL
+            SELECT 'org',     name, slug,                     created_at FROM crm_organizations
+            UNION ALL
+            SELECT 'project', name, api_key,                  created_at FROM crm_projects
+            UNION ALL
+            SELECT 'order',   'Order #' || id::text, COALESCE(status, ''), created_at FROM order_history
+            UNION ALL
+            SELECT 'ban',     email, COALESCE(ban_level, ''), banned_at FROM crm_users WHERE banned_at IS NOT NULL
+        ) e
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT %s OFFSET %s
+    """
+    fallback = """
+        SELECT * FROM (
+            SELECT 'signup'  AS kind, email AS title,
+                   COALESCE(last_country, signup_country, '') AS meta, created_at
+              FROM crm_users
+            UNION ALL
+            SELECT 'org',     name, slug,    created_at FROM crm_organizations
+            UNION ALL
+            SELECT 'project', name, api_key, created_at FROM crm_projects
+        ) e
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT %s OFFSET %s
+    """
+    try:
+        rows = db_all(full, (per_page, offset))
+    except Exception:
+        rows = db_all(fallback, (per_page, offset))
+    return {"items": rows, "page": page, "per_page": per_page}
+
+
+@app.get("/api/admin/logs/logins")
+def admin_logs_logins(page: int = 1, per_page: int = 50, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    page, per_page, offset = _paginate(page, per_page)
+    rows = db_all("""
+        SELECT id, user_id, email, ip, country, method, success, detail, created_at
+          FROM crm_login_log
+         ORDER BY created_at DESC
+         LIMIT %s OFFSET %s
+    """, (per_page, offset))
+    return {"items": rows, "page": page, "per_page": per_page}
+
+
+@app.get("/api/admin/logs/audit")
+def admin_logs_audit(page: int = 1, per_page: int = 50, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    page, per_page, offset = _paginate(page, per_page)
+    rows = db_all("""
+        SELECT id, admin_id, admin_email, action, target_user_id, target_email, detail, created_at
+          FROM crm_admin_audit
+         ORDER BY created_at DESC
+         LIMIT %s OFFSET %s
+    """, (per_page, offset))
+    return {"items": rows, "page": page, "per_page": per_page}
+
+
+@app.get("/api/admin/logs/errors")
+def admin_logs_errors(page: int = 1, per_page: int = 50, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    page, per_page, offset = _paginate(page, per_page)
+    rows = db_all("""
+        SELECT id, method, path, status, error, ip, created_at
+          FROM crm_error_log
+         ORDER BY created_at DESC
+         LIMIT %s OFFSET %s
+    """, (per_page, offset))
+    return {"items": rows, "page": page, "per_page": per_page}

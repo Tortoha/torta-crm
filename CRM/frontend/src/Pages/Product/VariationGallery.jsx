@@ -6,6 +6,7 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from 
 import { SortableContext, useSortable, rectSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { API_BASE } from '../../api.js';
+import { presignedUpload } from '../../Utils/upload.js';
 
 // ── Multi-photo gallery popover for one L1 variation ────────────────
 // 6-col grid; +button multi-upload; DnD reorder (slot 0 = cover); X deletes (S3 cleanup via PUT diff).
@@ -115,7 +116,7 @@ export default function VariationGalleryPopover({
     return res.ok;
   };
 
-  // Phase 7 — multi-type upload via /api/upload/media (preserves format; no WebP conversion).
+  // Phase 7 — multi-type upload via presigned direct-to-R2 (preserves format; no WebP conversion).
   const ACCEPT_EXT = "image/*,video/*,.glb,.usdz,.gltf";
 
   const onUpload = async (fileList) => {
@@ -123,13 +124,13 @@ export default function VariationGalleryPopover({
     setUploading(true);
     try {
       const results = await Promise.all(Array.from(fileList).map(async (file) => {
-        const fd = new FormData(); fd.append('file', file);
-        const r = await fetch(`${API_BASE}/api/upload/media${pq}`, {
-          method: 'POST', credentials: 'include', body: fd,
-        });
-        if (!r.ok) return null;
-        const j = await r.json();
-        return j?.url || null;
+        try {
+          const { url } = await presignedUpload(file, { pq, kind: 'media' });
+          return url || null;
+        } catch (e) {
+          if (e.message) alert(e.message);   // file-too-large etc.; 402 already shows the plan modal
+          return null;
+        }
       }));
       const newUrls = results.filter(Boolean);
       if (newUrls.length) {
