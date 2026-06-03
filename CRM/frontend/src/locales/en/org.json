@@ -302,14 +302,6 @@
       "comingSoon": "Coming soon",
       "providers": {
         "stripe": "Global card payments — 50+ countries, Stripe Payment Intents + Refunds API",
-        "paypal": "PayPal Orders v2 — works in 200+ markets, capture + refund",
-        "adyen": "Enterprise unified payments — 250+ payment methods, hosted Drop-in",
-        "braintree": "PayPal-owned full-service gateway — cards + PayPal + Apple Pay + Google Pay",
-        "square": "In-person + online payments — US, UK, AU, CA, JP, IE",
-        "mollie": "European gateway — iDEAL, Bancontact, SOFORT, SEPA, cards",
-        "razorpay": "India + South Asia gateway — cards, UPI, wallets, EMI",
-        "paddle": "Merchant of record for SaaS — handles tax + invoicing globally",
-        "paybox": "Kazakhstan acquiring — KZT cards + KaspiPay + EasyPay",
         "manual": "No API integration — cash, bank transfer, etc. Refunds are record-only",
         "other": "Free-form provider — record references manually in Returns workflow"
       },
@@ -358,14 +350,6 @@
         "stripeUnavailable": "Stripe Connect unavailable",
         "hint": {
           "stripe": "Process card payments globally. Test mode keys work without real money.",
-          "paypal": "PayPal Orders v2 API. Sandbox keys → test accounts; live keys → real money.",
-          "adyen": "Adyen Unified Commerce platform. Use test API key for sandbox, then switch to live. HMAC key signs webhooks.",
-          "braintree": "PayPal Braintree GraphQL API. Sandbox merchant_id starts with letters; live ids look different. Webhooks signed via private_key.",
-          "square": "Square Connect APIs. Use sandbox access_token (EAAAEy…) for testing; webhook_signature_key signs notifications.",
-          "mollie": "Mollie supports iDEAL, Bancontact, SEPA, cards. API key prefix (test_/live_) selects the mode automatically. Webhooks unsigned — we re-fetch payment status to verify.",
-          "razorpay": "Razorpay for India + South Asia. key_id is safe to expose on the frontend; key_secret stays on backend. Webhook secret signs notifications with HMAC-SHA256.",
-          "paddle": "Paddle Billing (new API). Merchant of record — handles VAT/tax globally. Catalog products usually required; non-catalog mode works for ad-hoc cart amounts.",
-          "paybox": "PayBox.money — Kazakhstan-focused acquiring. Supports KZT cards, KaspiPay, EasyPay. Signature-based auth (SHA1 over sorted params + secret_key).",
           "manual": "No API. Orders recorded as payment_status=\"manual\", refunds are record-only — you process money externally (cash / bank transfer).",
           "other": "For providers we haven't integrated. You'll need to manually record references in the Returns workflow."
         }

@@ -421,6 +421,28 @@ export function createClient(baseUrl, publishableKey, options = {}) {
       },
     },
 
+    // ── Payments ───────────────────────────────────────────────────────────────
+    // Strict-mode checkout, step 1. Call initPayment() with the SAME payload you
+    // would pass to orders.place(); the backend creates a PaymentIntent on the
+    // merchant's connected provider and returns what the storefront needs to
+    // collect payment:
+    //   { provider, needs_payment_intent, client_secret, publishable_key,
+    //     redirect_url, amount, currency, is_test_mode }
+    // If needs_payment_intent is false (manual/other, or no provider) just call
+    // orders.place(payload) directly. After a successful card confirmation, call
+    // orders.place({ ...payload, payment_intent_id }).
+    payments: {
+      /**
+       * @param {object} payload  - same shape as orders.place(payload)
+       * @param {object} [opts]
+       * @param {string} [opts.idempotencyKey] - dedupe retries of the same checkout click
+       */
+      async initPayment(payload, opts = {}) {
+        const headers = opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {};
+        return req("POST", "/orders/init-payment", payload, headers);
+      },
+    },
+
     // ── Saved delivery addresses ─────────────────────────────────────────────
     // Per-user address book. Logged-in customers can tick "Save this address"
     // at checkout, then on the next order pick from a dropdown instead of

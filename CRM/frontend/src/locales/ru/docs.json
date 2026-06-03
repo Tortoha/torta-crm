@@ -24,6 +24,8 @@
       "integrations": "Интеграции",
       "documents": "Документы",
       "settings": "Настройки",
+      "payments": "Платежи",
+      "paymentsApi": "Платежи",
       "quickstart": "Быстрый старт",
       "frameworks": "Фреймворки",
       "concepts": "Концепции",

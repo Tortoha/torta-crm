@@ -7,7 +7,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  ChartLine, UsersThree, CaretDown, ArrowLineLeft, ArrowLineRight,
+  ChartLine, UsersThree, ClipboardText, CaretDown, ArrowLineLeft, ArrowLineRight,
 } from '@phosphor-icons/react';
 
 // Single section, two items. Mirrors CRM's buildSections() return shape so
@@ -19,6 +19,7 @@ function buildSections() {
       items: [
         { to: '/',      label: 'Analytics', Icon: ChartLine, exact: true },
         { to: '/users', label: 'Users',     Icon: UsersThree },
+        { to: '/logs',  label: 'Logs',      Icon: ClipboardText },
       ],
     },
   ];
