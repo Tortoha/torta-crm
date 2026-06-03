@@ -1848,6 +1848,43 @@ def _email_count_inc(org_id, n: int = 1) -> None:
     except Exception as e:
         print(f"[email_count] inc failed for org {org_id}: {e}")
 
+def _enforce_storefront_users(org_id) -> None:
+    """Raise 402 (plan_limit_exceeded) if the org is at its storefront-users cap
+    — i.e. registered (non-guest) customers. No-op when org_id is missing, the
+    limit is null (unlimited) or PLAN_ENFORCEMENT_DISABLED=1.
+
+    Guests (anonymous carts) NEVER count toward the cap and are never blocked.
+    Call this in every NEW-registration path right before the row is created or
+    a guest is upgraded to a real account — never on plain login of an existing
+    registered customer (that doesn't add to the count)."""
+    if not org_id:
+        return
+    if os.getenv("PLAN_ENFORCEMENT_DISABLED", "0") == "1":
+        return
+    row = db_one("SELECT (p.limits->>'storefront_users_max') AS lim, p.slug AS slug "
+                 "FROM crm_organizations o "
+                 "JOIN crm_subscription_plans p ON p.slug = COALESCE(o.plan_slug, 'free') "
+                 "WHERE o.id = %s", (org_id,))
+    lim = (row or {}).get("lim")
+    if lim is None:
+        return
+    cnt = db_one(
+        "SELECT COUNT(*) AS n FROM users "
+        " WHERE NOT COALESCE(is_guest, FALSE) "
+        "   AND (org_id = %s OR project_id IN (SELECT id FROM crm_projects WHERE org_id = %s))",
+        (org_id, org_id))
+    current = int((cnt or {}).get("n") or 0)
+    if current >= int(lim):
+        raise HTTPException(402, detail={
+            "error":     "plan_limit_exceeded",
+            "plan":      (row or {}).get("slug"),
+            "resource":  "storefront_users",
+            "limit":     int(lim),
+            "current":   current,
+            "requested": 1,
+        })
+
+
 def send_email(to: str, subject: str, html: str,
                from_name: str = "Torta Store", from_email: str = EMAIL_FROM,
                project_id: int = None) -> bool:
@@ -2901,6 +2938,11 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
             # whole point of the auto-claim feature. We do that BEFORE
             # the INSERT path so the happy guest case is one query.
             existing = get_user_by_email(email, project_id, org_id)
+            # Storefront-users cap: gate BEFORE creating/upgrading a registered
+            # customer (new INSERT or guest→registered upgrade). Plain login of
+            # an already-registered customer never reaches this register branch.
+            if (existing is None) or existing.get("is_guest"):
+                _enforce_storefront_users(org_id)
             if existing and existing.get("is_guest"):
                 cursor.execute(
                     "UPDATE users SET name=%s, last_name=COALESCE(%s,last_name), password_hash=%s,"
@@ -3072,6 +3114,7 @@ def upsert_customer(body: CustomerUpsertBody, api_key: str,
             user_id = cur.fetchone()["id"]
             created = False
         else:
+            _enforce_storefront_users(org_id)
             cur.execute(
                 "INSERT INTO users "
                 "  (project_id, org_id, name, last_name, email, phone, birthdate, address, "
@@ -8552,6 +8595,7 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
                 cursor.execute("UPDATE users SET google_id=%s WHERE id=%s", (g_id, user["id"]))
                 conn.commit()
         if not user:
+            _enforce_storefront_users(org_id)
             cursor.execute(
                 "INSERT INTO users (name, email, password_hash, project_id, org_id, google_id) VALUES(%s,%s,'',%s,%s,%s) RETURNING id",
                 (sanitize(name), email, project_id, org_id, g_id)
@@ -9218,6 +9262,7 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
         # 4c. Create new user
         is_new_user = False
         if not user:
+            _enforce_storefront_users(org_id)
             # Email may be missing (X doesn't return it without elevated access) — generate a stable placeholder
             email_to_use = email or f"{provider}_{oid}@oauth.local"
             try:
@@ -9957,6 +10002,7 @@ def phone_verify_code(req: PhoneVerifyCodeRequest, api_key: str,
             cur.execute("UPDATE users SET phone_verified=TRUE WHERE id=%s", (user["id"],))
             user_id = user["id"]
         else:
+            _enforce_storefront_users(org_id)
             try:
                 cur.execute(
                     "INSERT INTO users (name, email, password_hash, project_id, org_id, phone, phone_verified) "

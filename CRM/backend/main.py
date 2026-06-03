@@ -323,6 +323,55 @@ def s3_delete_prefix(prefix: str) -> None:
     except Exception:
         pass
 
+def s3_presigned_put(key: str, content_type: str, *,
+                     content_disposition: Optional[str] = None, expires: int = 3600) -> str:
+    """Presigned PUT URL — the browser uploads the file DIRECTLY to R2/S3 with it,
+    bypassing the backend (Cloud Run caps request bodies at ~32 MB and can't hold
+    multi-GB files in RAM). Whatever headers we sign here (Content-Type, and
+    Content-Disposition when set) the browser MUST echo on the PUT, or the
+    signature check fails."""
+    s3 = _s3_client()
+    params = {"Bucket": STORAGE_BUCKET, "Key": key, "ContentType": content_type}
+    if content_disposition:
+        params["ContentDisposition"] = content_disposition
+    return s3.generate_presigned_url("put_object", Params=params, ExpiresIn=expires)
+
+def s3_head_size(key: str) -> int:
+    """Real byte size of an object (after a direct browser upload) via HEAD.
+    0 if missing / on error — caller treats that as 'not uploaded'."""
+    try:
+        h = _s3_client().head_object(Bucket=STORAGE_BUCKET, Key=key)
+        return int(h.get("ContentLength") or 0)
+    except Exception:
+        return 0
+
+def s3_ensure_cors() -> None:
+    """Allow browsers on our app origins to PUT directly to the bucket — required
+    for presigned direct uploads. Idempotent (safe on every boot). If the R2 API
+    token lacks bucket-CORS permission this no-ops; set CORS in the Cloudflare R2
+    dashboard manually then."""
+    if not STORAGE_ENABLED:
+        return
+    origins = [o.strip() for o in os.getenv("UPLOAD_CORS_ORIGINS", "").split(",") if o.strip()] or [
+        "https://tortacrm.com", "https://www.tortacrm.com", "https://admin.tortacrm.com",
+        "http://localhost:5173", "http://localhost:5174", "http://localhost:5175",
+    ]
+    try:
+        _s3_client().put_bucket_cors(
+            Bucket=STORAGE_BUCKET,
+            CORSConfiguration={"CORSRules": [{
+                "AllowedMethods": ["PUT", "GET", "HEAD"],
+                "AllowedOrigins":  origins,
+                "AllowedHeaders":  ["*"],
+                "ExposeHeaders":   ["ETag"],
+                "MaxAgeSeconds":   3600,
+            }]},
+        )
+        print("[storage] bucket CORS ensured for presigned uploads")
+    except Exception as e:
+        print(f"[storage] CORS setup skipped ({e}) — set it in the R2 dashboard if direct uploads 403")
+
+
 app = FastAPI()
 
 
@@ -3899,7 +3948,7 @@ def run_migrations():
                     "db_size_bytes_max": 3221225472,          # 3 GB
                     "emails_per_day_max": 1000,
                     "api_requests_per_minute_max": 500,
-                    "features": ["webhooks"],
+                    "features": ["webhooks", "cross_org_analytics"],
                     "support_level": "email",
                 }),
                 ("plus", "Plus", 2, 25, {
@@ -3909,7 +3958,7 @@ def run_migrations():
                     "db_size_bytes_max": 8589934592,          # 8 GB
                     "emails_per_day_max": 2000,
                     "api_requests_per_minute_max": 1500,
-                    "features": ["webhooks"],
+                    "features": ["webhooks", "cross_org_analytics"],
                     "support_level": "email",
                 }),
                 ("pro", "Pro", 3, 30, {
@@ -3919,7 +3968,7 @@ def run_migrations():
                     "db_size_bytes_max": 21474836480,         # 20 GB
                     "emails_per_day_max": 10000,
                     "api_requests_per_minute_max": 3000,
-                    "features": ["webhooks", "cross_org_analytics", "audit_log", "priority_compute"],
+                    "features": ["webhooks", "cross_org_analytics", "priority_compute"],
                     "support_level": "priority",
                 }),
                 ("max", "Max", 4, 599, {
@@ -3929,8 +3978,7 @@ def run_migrations():
                     "db_size_bytes_max": 274877906944,        # 256 GB
                     "emails_per_day_max": 30000,
                     "api_requests_per_minute_max": 10000,
-                    "features": ["webhooks", "cross_org_analytics", "audit_log",
-                                 "priority_compute", "sso", "white_label"],
+                    "features": ["webhooks", "cross_org_analytics", "priority_compute"],
                     "support_level": "dedicated",
                 }),
             ]
@@ -3949,6 +3997,10 @@ def run_migrations():
             # add the plan_slug column with that default + the FK constraint. ──
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS plan_slug VARCHAR(32) NOT NULL DEFAULT 'free'")
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS storage_used_bytes BIGINT NOT NULL DEFAULT 0")
+            # DB-size cache + 7-day grace clock (see _refresh_org_db_size).
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_size_bytes BIGINT NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_size_checked_at TIMESTAMP")
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_over_since TIMESTAMP")
             cur.execute("ALTER TABLE crm_organizations DROP CONSTRAINT IF EXISTS crm_organizations_plan_slug_fkey")
             cur.execute("""
                 ALTER TABLE crm_organizations
@@ -5382,11 +5434,15 @@ def _org_usage(org_id: int, resource: str) -> int:
             # list too, so the limit reads as "total people in the team".
             r = db_one("SELECT COUNT(*)+1 AS n FROM crm_org_members WHERE org_id=%s", (org_id,))
         elif resource == "storefront_users":
-            # Org-shared customers carry org_id directly; per-project ones don't.
+            # Registered (non-guest) customers only — guests are transient
+            # anonymous carts and don't count toward the cap (matches External's
+            # _enforce_storefront_users). Org-shared customers carry org_id
+            # directly; per-project ones are reached via their project.
             r = db_one("""
                 SELECT COUNT(*) AS n FROM users
-                 WHERE org_id = %s
-                    OR project_id IN (SELECT id FROM crm_projects WHERE org_id=%s)
+                 WHERE NOT COALESCE(is_guest, FALSE)
+                   AND (org_id = %s
+                        OR project_id IN (SELECT id FROM crm_projects WHERE org_id=%s))
             """, (org_id, org_id))
         elif resource == "storage_bytes":
             r = db_one("SELECT storage_used_bytes AS n FROM crm_organizations WHERE id=%s", (org_id,))
@@ -5395,26 +5451,10 @@ def _org_usage(org_id: int, resource: str) -> int:
             # per-org daily counter in crm_email_usage — this is the metered total.
             r = db_one("SELECT sent AS n FROM crm_email_usage WHERE org_id=%s AND day=CURRENT_DATE", (org_id,))
         elif resource == "database_bytes":
-            # Approximate on-disk size of the org's tenant data via
-            # pg_column_size SUM over the heavy-write tables. Doesn't count
-            # indexes / TOAST / row overhead — multiply by ~1.3 for a closer
-            # estimate (still cheap enough to run per page load).
-            r = db_one("""
-                SELECT (
-                  COALESCE((SELECT SUM(pg_column_size(o.*)) FROM order_history o
-                            JOIN crm_projects p ON p.id = o.project_id
-                            WHERE p.org_id = %s), 0) +
-                  COALESCE((SELECT SUM(pg_column_size(pr.*)) FROM products pr
-                            JOIN crm_projects p ON p.id = pr.project_id
-                            WHERE p.org_id = %s), 0) +
-                  COALESCE((SELECT SUM(pg_column_size(u.*)) FROM users u
-                            WHERE u.org_id = %s
-                               OR u.project_id IN (SELECT id FROM crm_projects WHERE org_id = %s)), 0) +
-                  COALESCE((SELECT SUM(pg_column_size(c.*)) FROM carts c
-                            JOIN crm_projects p ON p.id = c.project_id
-                            WHERE p.org_id = %s), 0)
-                ) * 13 / 10 AS n
-            """, (org_id, org_id, org_id, org_id, org_id))
+            # Cached (TTL-refreshed) — the heavy pg_column_size SUM lives in
+            # _compute_org_db_size; reading the cached column keeps hot paths
+            # (enforcement, bell warnings) cheap.
+            return _refresh_org_db_size(org_id)
         else:
             return 0
         return int((r or {}).get("n") or 0)
@@ -5493,6 +5533,140 @@ def enforce_limit(org_id: int, resource: str, *, amount: int = 1) -> None:
                 "requested": int(amount),
             },
         )
+
+
+# ── Database-size: cached measurement + 7-day grace before hard-block ──────
+# The pg_column_size SUM is heavy, so we cache it on crm_organizations and
+# refresh at most once per _DB_SIZE_TTL_SEC. `db_over_since` is the grace clock:
+# stamped the moment usage first crosses the cap, cleared the moment it drops
+# back under (or the plan grows). Merchant creates (products/projects) are
+# blocked only AFTER the grace window — customer writes (orders/carts) never.
+_DB_SIZE_TTL_SEC = 300
+_DB_GRACE_DAYS   = 7
+
+def _compute_org_db_size(org_id: int) -> int:
+    """Heavy: pg_column_size SUM over the org's biggest tables, ×1.3 for index/
+    TOAST/row overhead. Called at most once per TTL via _refresh_org_db_size."""
+    try:
+        r = db_one("""
+            SELECT (
+              COALESCE((SELECT SUM(pg_column_size(o.*)) FROM order_history o
+                        JOIN crm_projects p ON p.id = o.project_id
+                        WHERE p.org_id = %s), 0) +
+              COALESCE((SELECT SUM(pg_column_size(pr.*)) FROM products pr
+                        JOIN crm_projects p ON p.id = pr.project_id
+                        WHERE p.org_id = %s), 0) +
+              COALESCE((SELECT SUM(pg_column_size(u.*)) FROM users u
+                        WHERE u.org_id = %s
+                           OR u.project_id IN (SELECT id FROM crm_projects WHERE org_id = %s)), 0) +
+              COALESCE((SELECT SUM(pg_column_size(c.*)) FROM carts c
+                        JOIN crm_projects p ON p.id = c.project_id
+                        WHERE p.org_id = %s), 0)
+            ) * 13 / 10 AS n
+        """, (org_id, org_id, org_id, org_id, org_id))
+        return int((r or {}).get("n") or 0)
+    except Exception:
+        return 0
+
+def _refresh_org_db_size(org_id: int, *, force: bool = False) -> int:
+    """Return the org's DB size in bytes — refreshing the cached column at most
+    once per _DB_SIZE_TTL_SEC and maintaining the db_over_since grace clock."""
+    if not org_id:
+        return 0
+    row = db_one(
+        "SELECT db_size_bytes, "
+        " (db_size_checked_at IS NULL OR db_size_checked_at < NOW() - make_interval(secs => %s)) AS stale "
+        " FROM crm_organizations WHERE id=%s", (_DB_SIZE_TTL_SEC, org_id))
+    if not row:
+        return 0
+    if not (force or row.get("stale")):
+        return int(row.get("db_size_bytes") or 0)
+    size  = _compute_org_db_size(org_id)
+    limit = (_org_plan(org_id).get("limits") or {}).get("db_size_bytes_max")
+    over  = limit is not None and size > int(limit)
+    try:
+        with db_cursor() as (conn, cur):
+            if over:
+                cur.execute("UPDATE crm_organizations SET db_size_bytes=%s, db_size_checked_at=NOW(), "
+                            "db_over_since=COALESCE(db_over_since, NOW()) WHERE id=%s", (size, org_id))
+            else:
+                cur.execute("UPDATE crm_organizations SET db_size_bytes=%s, db_size_checked_at=NOW(), "
+                            "db_over_since=NULL WHERE id=%s", (size, org_id))
+            conn.commit()
+    except Exception as e:
+        print(f"[db_size] refresh failed org={org_id}: {e}")
+    return size
+
+def _enforce_db_size(org_id) -> None:
+    """Grace-aware DB-size gate for MERCHANT creates (products/projects). Over the
+    cap is tolerated for _DB_GRACE_DAYS days (a pinned bell warning runs the
+    countdown); only after that do we hard-block. Customer writes never gated."""
+    if os.getenv("PLAN_ENFORCEMENT_DISABLED", "0") == "1" or not org_id:
+        return
+    limit = (_org_plan(org_id).get("limits") or {}).get("db_size_bytes_max")
+    if limit is None:
+        return
+    size = _refresh_org_db_size(org_id)
+    if size <= int(limit):
+        return
+    row = db_one(
+        "SELECT (db_over_since IS NOT NULL AND db_over_since < NOW() - make_interval(days => %s)) AS expired "
+        " FROM crm_organizations WHERE id=%s", (_DB_GRACE_DAYS, org_id))
+    if row and row.get("expired"):
+        raise HTTPException(402, detail={
+            "error": "plan_limit_exceeded", "plan": _org_plan(org_id)["slug"],
+            "resource": "database_bytes", "limit": int(limit),
+            "current": int(size), "requested": 1,
+        })
+
+def _org_limit_warnings(org_id) -> list:
+    """Live (un-stored) soft-limit warnings, shaped as notification items so the
+    bell renders them with its existing row UI — prepended FIRST (negative ids →
+    mark-read is a server-side no-op → they re-appear every fetch while the
+    violation lasts → effectively pinned + non-dismissible, zero frontend work).
+    Auto-clear when resolved. EXCLUDES projects/team_members (always 1/1 on Free
+    → pure noise)."""
+    out: list = []
+    if not org_id:
+        return out
+    limits = (_org_plan(org_id).get("limits") or {})
+    slug = (db_one("SELECT slug FROM crm_organizations WHERE id=%s", (org_id,)) or {}).get("slug") or ""
+    link = f"/org/{slug}/usage" if slug else None
+    now_iso = _utcnow().isoformat()
+
+    def _w(rid, title, message):
+        out.append({"id": rid, "project_id": None, "type": "limit_warning",
+                    "title": title, "message": message, "link": link,
+                    "is_read": False, "created_at": now_iso})
+
+    db_limit = limits.get("db_size_bytes_max")
+    if db_limit is not None:
+        size = _refresh_org_db_size(org_id)
+        if size > int(db_limit):
+            row = db_one(
+                "SELECT GREATEST(0, CEIL(%s - EXTRACT(EPOCH FROM (NOW()-db_over_since))/86400))::int AS d "
+                " FROM crm_organizations WHERE id=%s", (_DB_GRACE_DAYS, org_id))
+            d = int((row or {}).get("d") or 0)
+            if d > 0:
+                _w(-1, "Database storage over limit",
+                   f"Free space or upgrade — creating products & projects locks in {d} day{'s' if d != 1 else ''}.")
+            else:
+                _w(-1, "Database limit reached",
+                   "Creating products and projects is blocked. Upgrade your plan to continue.")
+    if limits.get("emails_per_day_max") is not None and \
+            _org_usage(org_id, "emails_today") >= int(limits["emails_per_day_max"]):
+        _w(-2, "Daily email limit reached",
+           "Emails are paused until tomorrow. Upgrade for a higher daily limit.")
+    if limits.get("storefront_users_max") is not None and \
+            _org_usage(org_id, "storefront_users") >= int(limits["storefront_users_max"]):
+        _w(-3, "Customer limit reached",
+           "New customer sign-ups are blocked. Upgrade to keep growing.")
+    if limits.get("storage_bytes_max") is not None and \
+            _org_usage(org_id, "storage_bytes") >= int(limits["storage_bytes_max"]):
+        _w(-4, "File storage full",
+           "Image and file uploads are blocked. Free space or upgrade.")
+    return out
+
 
 def _reconcile_org_storage(org_id: int) -> dict:
     """Walk S3 for every project that belongs to this org, SUM real object
@@ -9366,6 +9540,7 @@ def stripe_connect_oauth_callback(request: Request,
 def create_project(org_id: int, request: CreateProjectRequest, req: Request, user: dict = Depends(get_current_user)):
     require_org_owner(user, org_id)
     enforce_limit(org_id, "projects")
+    _enforce_db_size(org_id)
 
     name = request.name.strip()
     if not name:          raise HTTPException(400, "Name is required")
@@ -10032,6 +10207,7 @@ def list_products(project_id: int = Query(...),
 @app.post("/api/products")
 def create_product(request: CreateProductRequest, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _enforce_db_size((db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("org_id"))
     name = request.title.strip()
     if not name: raise HTTPException(400, "Title is required")
     if request.category_id is not None:
@@ -15197,134 +15373,13 @@ def reply_to_review(product_id: int, review_id: int, req: ReviewReplyRequest,
 
 # ── UPLOAD ───────────────────────────────────────────────
 
-@app.post("/api/upload/image")
-async def upload_image(
-    file: UploadFile = File(...),
-    project_id: Optional[int] = Query(None),
-    user: dict = Depends(get_current_user),
-):
-    # Cross-tenant guard: a user must be a member of the project they're
-    # uploading into. Without this any logged-in user can write to
-    # another tenant's S3 prefix (`projects/{other_pid}/products/...`)
-    # and exhaust their storage budget. project_id is optional (legacy
-    # "avatar-like" uploads have no project_id), so we only enforce
-    # when it's provided.
-    if project_id is not None:
-        require_page_auto(user, project_id)
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(400, "Only image files are allowed")
-    contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(400, "File too large (max 10MB)")
-    if not PIL_AVAILABLE:
-        raise HTTPException(500, "Pillow not installed. Run: pip install Pillow")
-    try:
-        img = PilImage.open(io.BytesIO(contents)).convert("RGB")
-        out = io.BytesIO()
-        img.save(out, "WEBP", quality=85, method=4)
-        out.seek(0)
-    except Exception:
-        raise HTTPException(400, "Invalid image file")
-
-    filename = f"{secrets.token_hex(16)}.webp"
-
-    if S3_AVAILABLE and STORAGE_ENABLED:
-        folder = f"projects/{project_id}/products" if project_id else "products"
-        key = f"{folder}/{filename}"
-        # Plan-gate: org storage budget. Legacy avatar-style uploads without a
-        # project_id bypass billing (they go to a global folder).
-        file_size = out.getbuffer().nbytes
-        org_id = _project_org_id(project_id) if project_id else None
-        if org_id:
-            enforce_limit(org_id, "storage_bytes", amount=file_size)
-        try:
-            url = s3_upload(out, key)
-            if org_id:
-                _org_storage_inc(org_id, file_size)
-            return {"url": url}
-        except (BotoCoreError, ClientError) as e:
-            raise HTTPException(500, f"S3 upload failed: {e}")
-    else:
-        path = os.path.join(UPLOADS_DIR, filename)
-        with open(path, "wb") as f:
-            f.write(out.read())
-        return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}"}
-
-
-# Media upload (Phase 7): images/videos/3D/AR; preserves original format (no server-side transcoding).
-
-ALLOWED_MEDIA_EXTS = {
-    # images — also accepted by /api/upload/image for back-compat
-    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
-    'webp': 'image/webp', 'gif': 'image/gif',
-    # video
-    'mp4': 'video/mp4', 'webm': 'video/webm', 'mov': 'video/quicktime', 'm4v': 'video/x-m4v',
-    # 3D / AR
-    'glb': 'model/gltf-binary', 'usdz': 'model/vnd.usdz+zip', 'gltf': 'model/gltf+json',
-}
-
-MEDIA_SIZE_LIMITS = {
-    'image': 10 * 1024 * 1024,    # 10 MB
-    'video': 100 * 1024 * 1024,   # 100 MB
-    'model':  50 * 1024 * 1024,   #  50 MB
-}
-
-def _media_kind_from_ext(ext: str) -> Optional[str]:
-    if ext in ('jpg', 'jpeg', 'png', 'webp', 'gif'): return 'image'
-    if ext in ('mp4', 'webm', 'mov', 'm4v'):         return 'video'
-    if ext in ('glb', 'usdz', 'gltf'):               return 'model'
-    return None
-
-
-@app.post("/api/upload/media")
-async def upload_media(
-    file: UploadFile = File(...),
-    project_id: Optional[int] = Query(None),
-    user: dict = Depends(get_current_user),
-):
-    # Cross-tenant guard — see upload_image for rationale.
-    if project_id is not None:
-        require_page_auto(user, project_id)
-    fname = (file.filename or '').strip()
-    ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
-    if ext not in ALLOWED_MEDIA_EXTS:
-        raise HTTPException(400, f"File type .{ext or '?'} not allowed. "
-                                  f"Allowed: {sorted(ALLOWED_MEDIA_EXTS.keys())}")
-    kind = _media_kind_from_ext(ext)
-    contents = await file.read()
-    cap = MEDIA_SIZE_LIMITS.get(kind, 10 * 1024 * 1024)
-    if len(contents) > cap:
-        raise HTTPException(400, f"File too large (max {cap // (1024*1024)} MB for {kind})")
-
-    # Mime-type sniff defence — refuse if declared mime mismatches ext (.glb-renamed-from-.exe).
-    declared = (file.content_type or '').lower()
-    expected = ALLOWED_MEDIA_EXTS[ext]
-    # Browsers send 'application/octet-stream' for unknown types — accept that.
-    if declared and declared != expected and declared != 'application/octet-stream':
-        # Allow image/* for any image ext (browsers vary on jpeg vs jpg).
-        if not (kind == 'image' and declared.startswith('image/')):
-            raise HTTPException(400, f"Mime mismatch: file says '{declared}', extension says '{expected}'")
-
-    filename = f"{secrets.token_hex(16)}.{ext}"
-    if S3_AVAILABLE and STORAGE_ENABLED:
-        folder = f"projects/{project_id}/products" if project_id else "products"
-        key = f"{folder}/{filename}"
-        org_id = _project_org_id(project_id) if project_id else None
-        if org_id:
-            enforce_limit(org_id, "storage_bytes", amount=len(contents))
-        try:
-            buf = io.BytesIO(contents); buf.seek(0)
-            url = s3_upload(buf, key, content_type=expected)
-            if org_id:
-                _org_storage_inc(org_id, len(contents))
-            return {"url": url, "type": kind, "size": len(contents)}
-        except (BotoCoreError, ClientError) as e:
-            raise HTTPException(500, f"S3 upload failed: {e}")
-    else:
-        path = os.path.join(UPLOADS_DIR, filename)
-        with open(path, "wb") as f:
-            f.write(contents)
-        return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}", "type": kind, "size": len(contents)}
+# Image & media uploads (product photos, video, 3D/AR) go BROWSER → R2 directly
+# via the presigned flow below (/api/upload/presign → /api/upload/confirm). The
+# old POST-through-the-backend endpoints (/api/upload/image, /api/upload/media)
+# were removed: Cloud Run's ~32 MB request-body cap made them unusable for large
+# media, and presign() already does the same storage-quota pre-flight + the
+# cross-tenant guard. /api/upload/file (below) still serves digital-product file
+# attachments, and /api/upload/avatar profile pictures.
 
 
 # Trusted external embed hosts for "Paste URL" path — narrow (SSRF/clickjacking risk).
@@ -15387,7 +15442,8 @@ _UPLOAD_ALLOWED_MIME = {
     "text/csv",
     "audio/mpeg", "audio/wav", "audio/ogg",
     "video/mp4", "video/webm", "video/quicktime",
-    # Images are OK here too — /upload/image is the preferred path but this one accepts them as generic files.
+    # Images are OK here too — accepted as generic downloadable files (the presigned
+    # upload is the preferred path for product images).
     "image/png", "image/jpeg", "image/webp", "image/gif",
 }
 _UPLOAD_FORBIDDEN_EXT = {
@@ -15402,7 +15458,7 @@ async def upload_file(
     project_id: Optional[int] = Query(None),
     user: dict = Depends(get_current_user),
 ):
-    # Cross-tenant guard — see upload_image for rationale.
+    # Cross-tenant guard: only a member of this project may upload into its prefix.
     if project_id is not None:
         require_page_auto(user, project_id)
     import re as _re_local
@@ -15420,7 +15476,7 @@ async def upload_file(
         raise HTTPException(400, f"File extension {ext} is not allowed")
     mime = (file.content_type or "application/octet-stream").lower()
     if mime not in _UPLOAD_ALLOWED_MIME:
-        raise HTTPException(400, f"MIME type {mime} is not allowed for generic uploads. Use /api/upload/image for images.")
+        raise HTTPException(400, f"MIME type {mime} is not allowed for generic uploads.")
 
     filename = f"{secrets.token_hex(12)}_{safe_name}"
 
@@ -15449,6 +15505,77 @@ async def upload_file(
         with open(path, "wb") as f:
             f.write(contents)
         return {"url": f"{CRM_BACKEND_URL}/uploads/{filename}", "name": file.filename, "size": len(contents)}
+
+
+# ── Presigned direct-to-R2 upload (large files: digital goods, video) ──────
+# The browser uploads straight to R2 — Cloud Run can't relay multi-GB request
+# bodies (~32 MB cap) nor hold them in RAM. presign() validates the file fits
+# (per-file cap + org storage quota → the pre-flight that powers the frontend
+# "not enough storage" Alert) and returns a signed PUT URL; confirm() bills the
+# real size once the object has landed.
+_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024   # 4 GB per file
+
+class PresignRequest(BaseModel):
+    filename: str
+    content_type: Optional[str] = ""
+    size: int
+    kind: Optional[str] = "file"             # "image" | "media" | "file"
+
+class ConfirmUploadRequest(BaseModel):
+    key: str
+
+@app.post("/api/upload/presign")
+def presign_upload(body: PresignRequest, project_id: int = Query(...),
+                   user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    if not STORAGE_ENABLED:
+        raise HTTPException(503, "Object storage not configured")
+    size = int(body.size or 0)
+    if size <= 0:
+        raise HTTPException(400, "size required")
+    if size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(400, detail={
+            "error": "file_too_large", "limit": _MAX_UPLOAD_BYTES, "requested": size,
+            "message": f"File exceeds the {_MAX_UPLOAD_BYTES // (1024**3)} GB per-file limit.",
+        })
+    org_id = _project_org_id(project_id)
+    if org_id:
+        # Pre-flight quota check — raises 402 plan_limit_exceeded (the Alert).
+        enforce_limit(org_id, "storage_bytes", amount=size)
+    import re as _re_local
+    safe = (_re_local.sub(r"[^a-zA-Z0-9._-]", "_", body.filename or "file")[:120] or "file")
+    ext  = safe.rsplit(".", 1)[-1].lower() if "." in safe else ""
+    kind = (body.kind or "file").lower()
+    folder = (f"projects/{project_id}/products" if kind in ("image", "media")
+              else f"projects/{project_id}/files")
+    key   = f"{folder}/{secrets.token_hex(16)}" + (f".{ext}" if ext else "")
+    ctype = body.content_type or "application/octet-stream"
+    # Digital downloads: ANY file type is allowed, but forced as `attachment` so
+    # it can never render/execute — it's a download from the R2 (cdn) domain,
+    # not our app origin.
+    disp = f'attachment; filename="{safe}"' if kind == "file" else None
+    return {
+        "upload_url":          s3_presigned_put(key, ctype, content_disposition=disp),
+        "public_url":          _public_url_for(key),
+        "key":                 key,
+        "content_type":        ctype,
+        "content_disposition": disp,
+    }
+
+@app.post("/api/upload/confirm")
+def confirm_upload(body: ConfirmUploadRequest, project_id: int = Query(...),
+                   user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    key = (body.key or "").strip()
+    if not key.startswith(f"projects/{project_id}/"):
+        raise HTTPException(403, "Key does not belong to this project")
+    size = s3_head_size(key)
+    if size <= 0:
+        raise HTTPException(400, "Upload not found in storage")
+    org_id = _project_org_id(project_id)
+    if org_id:
+        _org_storage_inc(org_id, size)
+    return {"ok": True, "url": _public_url_for(key), "size": size}
 
 
 @app.post("/api/upload/avatar")
@@ -23521,7 +23648,18 @@ def list_notifications(project_id: Optional[int] = Query(None), unread_only: boo
     )
     unread = sum(1 for r in unread_rows
                  if _notif_visible_to(user["id"], r["project_id"], r["type"], acc_cache))
-    return {"items": rows, "unread": unread, "has_more": has_more}
+    # Live (un-stored) soft-limit warnings — prepended FIRST as notification rows
+    # (negative ids → mark-read is a no-op → non-dismissible). First page only;
+    # counted into the unread badge so they always draw attention while active.
+    warnings: list = []
+    if before is None and project_id is not None:
+        _worg = (db_one("SELECT org_id FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("org_id")
+        try:
+            warnings = _org_limit_warnings(_worg)
+        except Exception:
+            warnings = []
+    return {"items": warnings + rows, "unread": unread + len(warnings),
+            "has_more": has_more, "pinned": warnings}
 
 
 @app.post("/api/notifications/{notif_id}/read")
@@ -26356,6 +26494,7 @@ def _start_pg_event_listener():
 
 @app.on_event("startup")
 async def _start_listener_on_boot():
+    s3_ensure_cors()
     _start_pg_event_listener()
     _start_mv_refresher()
     _start_alerts_evaluator()

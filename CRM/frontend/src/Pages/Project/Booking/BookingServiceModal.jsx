@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation, Trans } from 'react-i18next';
 import { X, UploadSimple, Image as ImageIcon } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { presignedUpload } from '../../../Utils/upload.js';
 
 // New-service modal. Creates a `products` row with type=service (which
 // auto-seeds a linked booking_service via backend), then PUTs the
@@ -48,14 +49,11 @@ function BookingServiceModal({ projectId, service, allStaff, onClose, onSaved })
   const upload = async (file) => {
     if (!file) return;
     setUploading(true);
-    const fd = new FormData(); fd.append('file', file);
     try {
-      const res = await fetch(`${API_BASE}/api/upload/image${pq}`, {
-        method: 'POST', credentials: 'include', body: fd,
-      });
-      const data = await res.json();
-      if (res.ok && data.url) upd('image_url', data.url);
-      else setErr(t('booking.serviceModal.uploadFailed'));
+      const { url } = await presignedUpload(file, { pq, kind: 'image' });
+      if (url) upd('image_url', url);
+    } catch (e) {
+      if (!e.planLimit) setErr(e.message || t('booking.serviceModal.uploadFailed'));
     } finally { setUploading(false); }
   };
 

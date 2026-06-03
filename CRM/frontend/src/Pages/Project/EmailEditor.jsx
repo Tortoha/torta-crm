@@ -6,6 +6,7 @@ import {
   DotsSixVertical, UploadSimple, PaintBucket,
 } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../../api.js';
+import { presignedUpload } from '../../Utils/upload.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import { HexColorPicker, RgbaStringColorPicker } from 'react-colorful';
 
@@ -107,19 +108,11 @@ export default function EmailEditor({ projectId, previewType, subject, blocks, o
   const setBg = (patch) => commit(content, { type: 'background', props: { ...((bgBlock || {}).props || {}), ...patch } });
 
   // ── Uploads (Ctrl+V / Drag-Drop / button) ──
-  const uploadImage = async (file) => {
-    const fd = new FormData(); fd.append('file', file);
-    const r = await fetch(`${API_BASE}/api/upload/image?project_id=${projectId}`, { method: 'POST', credentials: 'include', body: fd });
-    const d = await r.json();
-    if (!r.ok) throw new Error(pickError(d));
-    return d.url;
-  };
+  const uploadImage = async (file) =>
+    (await presignedUpload(file, { pq: `?project_id=${projectId}`, kind: 'image' })).url;
   const uploadFile = async (file) => {
-    const fd = new FormData(); fd.append('file', file);
-    const r = await fetch(`${API_BASE}/api/upload/file?project_id=${projectId}`, { method: 'POST', credentials: 'include', body: fd });
-    const d = await r.json();
-    if (!r.ok) throw new Error(pickError(d));
-    return { url: d.url, name: d.name || file.name };
+    const { url } = await presignedUpload(file, { pq: `?project_id=${projectId}`, kind: 'file' });
+    return { url, name: file.name };
   };
 
   const ingestImageFile = async (file) => {

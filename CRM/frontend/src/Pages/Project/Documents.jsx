@@ -18,6 +18,7 @@ import {
   EnvelopeSimple,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { presignedUpload } from '../../Utils/upload.js';
 import '../../Style/Authentication.css';
 import '../../Style/Products.css';
 // Page-specific CSS — template-preview cards + logo uploader live
@@ -135,14 +136,11 @@ export default function Documents() {
   const upload = async (file) => {
     if (!file) return;
     setUploading(true);
-    const fd = new FormData(); fd.append('file', file);
     try {
-      const res = await fetch(`${API_BASE}/api/upload/image${pq}`, {
-        method: 'POST', credentials: 'include', body: fd,
-      });
-      const data = await res.json();
-      if (res.ok && data.url) persist({ logo_url: data.url });
-      else showToast(t('project.documents.uploadFailed'));
+      const { url } = await presignedUpload(file, { pq, kind: 'image' });
+      if (url) persist({ logo_url: url });
+    } catch (e) {
+      if (!e.planLimit) showToast(e.message || t('project.documents.uploadFailed'));
     } finally { setUploading(false); }
   };
 
@@ -167,9 +165,9 @@ export default function Documents() {
         </div>
       </Section>
 
-      {/* Company info — name + logo. Logo is uploaded to S3 via the standard
-          /api/upload/image endpoint; the returned URL is stamped into PDF
-          headers at 28×28 mm. */}
+      {/* Company info — name + logo. Logo is uploaded to R2 via the presigned
+          direct-to-R2 flow (Utils/upload.js); the returned URL is stamped into
+          PDF headers at 28×28 mm. */}
       <Section icon={<Buildings weight="duotone" />} title={t('project.documents.companyInfo')}
         subtitle={t('project.documents.companyInfoSub')}>
         <FieldCard label={t('project.documents.companyName')}
