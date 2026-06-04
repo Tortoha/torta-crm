@@ -21,5 +21,12 @@
       "done": "All set! Opening your organization…",
       "perMonth": "/mo"
     }
+  },
+  "upgrade": {
+    "title": "Available on Standard and above",
+    "sub": "Upgrade your plan to unlock this feature.",
+    "subFeature": "Upgrade to Standard or higher to unlock {{feature}}.",
+    "cta": "Upgrade",
+    "crossOrg": "cross-organization analytics"
   }
 }
