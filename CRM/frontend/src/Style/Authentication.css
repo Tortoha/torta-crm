@@ -419,8 +419,8 @@
 }
 
 .auth-modal .crm-submit-btn:disabled {
-  background: var(--muted);
-  color: rgba(var(--fg-rgb), 0.36);
+  background: rgba(var(--fg-rgb), 0.08);
+  color: rgba(var(--fg-rgb), 0.45);
   cursor: default;
 }
 

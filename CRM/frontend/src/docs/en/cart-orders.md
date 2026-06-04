@@ -73,12 +73,14 @@ const r = await client.orders.place({
   address_street: "Abay 10",
   address_apartment: "12",
   comment: "Call before arrival",
-  payment_method: "card",            // "card" | "cash" (default card)
+  payment_method: "stripe",          // chosen method: "stripe" | "manual" | "other"
   promo_code: "SUMMER10",            // optional
 });
 ```
 
 > The structured `address_*` fields are preferred. A legacy single `address` string still works — the backend composes it for you.
+
+> `payment_method` is the method the customer picked — read the enabled ones from `client.config.get().payment_methods`. For a card (`stripe`) order, run the `initPayment` flow first; offline methods (`manual` / `other`) place directly. See [Payments](/docs/payments-api).
 
 ## Order history
 

@@ -3315,6 +3315,81 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] crm_payment_credentials failed: {e}")
 
+    # Multi-method payments (WooCommerce/Shopify model) — instead of ONE active
+    # provider per org, each org has a SET of independently-enabled methods that
+    # coexist; the customer picks one at checkout. Stripe = the online card
+    # gateway (needs connected credentials in crm_payment_credentials). manual =
+    # cash / pay-on-delivery. other = free-form offline (Kaspi, bank transfer)
+    # with a custom label + customer-facing instructions. Always >=1 enabled.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_payment_methods (
+                    id            BIGSERIAL PRIMARY KEY,
+                    org_id        INTEGER     NOT NULL
+                                              REFERENCES crm_organizations(id) ON DELETE CASCADE,
+                    method        VARCHAR(30) NOT NULL,
+                    is_enabled    BOOLEAN     NOT NULL DEFAULT FALSE,
+                    display_label VARCHAR(120) NOT NULL DEFAULT '',
+                    instructions  TEXT        NOT NULL DEFAULT '',
+                    sort_order    INTEGER     NOT NULL DEFAULT 0,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(org_id, method)
+                )
+            """)
+            cur.execute("ALTER TABLE crm_payment_methods DROP CONSTRAINT IF EXISTS crm_payment_methods_method_check")
+            cur.execute("""
+                ALTER TABLE crm_payment_methods ADD CONSTRAINT crm_payment_methods_method_check
+                  CHECK (method IN ('stripe','manual','other'))
+            """)
+            conn.commit()
+
+            # One-time seed: for every org that has NO method rows yet, derive its
+            # CURRENT single active method and enable exactly that one — so the
+            # migration preserves existing behavior. The merchant can then turn on
+            # additional methods via the new toggles. External /config also has a
+            # defensive fallback to a synthetic manual method if rows are missing.
+            cur.execute("""
+                SELECT o.id AS org_id, o.payment_provider,
+                       pc.provider AS cred_provider, pc.is_connected,
+                       (pc.credentials_encrypted <> '') AS has_creds
+                  FROM crm_organizations o
+                  LEFT JOIN crm_payment_credentials pc ON pc.org_id = o.id
+                 WHERE NOT EXISTS (SELECT 1 FROM crm_payment_methods pm WHERE pm.org_id = o.id)
+            """)
+            _seed_rows = cur.fetchall()
+            _DEF_LABELS = {"stripe": "Card", "manual": "Cash / Pay on delivery", "other": "Other"}
+            for r in _seed_rows:
+                # Resolve current active method (mirror of External _get_org_payment_config)
+                if r.get("has_creds") and r.get("cred_provider"):
+                    if r["cred_provider"] in ("manual", "other"):
+                        active = r["cred_provider"]
+                    elif r.get("is_connected"):
+                        active = "stripe"
+                    else:
+                        active = "manual"          # configured but unverified → behaves manual
+                else:
+                    active = (r.get("payment_provider") or "manual")
+                    if active == "stripe":
+                        active = "manual"          # no creds → stripe not functional
+                enabled = {"stripe": active == "stripe",
+                           "manual": active == "manual",
+                           "other":  active == "other"}
+                if not any(enabled.values()):
+                    enabled["manual"] = True       # guarantee >=1 method
+                for idx, m in enumerate(("stripe", "manual", "other")):
+                    cur.execute(
+                        "INSERT INTO crm_payment_methods"
+                        "  (org_id, method, is_enabled, display_label, sort_order)"
+                        " VALUES (%s, %s, %s, %s, %s)"
+                        " ON CONFLICT (org_id, method) DO NOTHING",
+                        (r["org_id"], m, enabled[m], _DEF_LABELS[m], idx)
+                    )
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_payment_methods failed: {e}")
+
     # Webhook event log — idempotency + audit trail. UNIQUE(provider, event_id) makes replays no-ops.
     # Stripe/Tinkoff/etc. retry webhooks on 5xx, so we INSERT first then process; if conflict, skip.
     try:
@@ -3373,8 +3448,13 @@ def run_migrations():
                         "ON order_history(payment_intent_id) WHERE payment_intent_id <> ''")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_order_history_payment_status "
                         "ON order_history(project_id, payment_status, created_at DESC)")
-            # Backfill: orders that existed before this migration are treated as 'manual' (no provider involved).
-            cur.execute("UPDATE order_history SET payment_status='manual' WHERE payment_status='pending' AND created_at < NOW() - INTERVAL '1 hour'")
+            # Backfill: pre-strict-mode orders left 'pending' and never confirmed are
+            # treated as 'manual'. EXCLUDE provider='other' — those are intentionally
+            # 'pending' (external/offline gateway, awaiting the merchant's Mark-as-paid
+            # confirmation) and must NOT be auto-settled by this legacy cleanup.
+            cur.execute("UPDATE order_history SET payment_status='manual' "
+                        "WHERE payment_status='pending' AND COALESCE(payment_provider,'') <> 'other' "
+                        "AND created_at < NOW() - INTERVAL '1 hour'")
             conn.commit()
     except Exception as e:
         print(f"[migration] order_history payment columns failed: {e}")
@@ -8714,6 +8794,122 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
 
 
 
+# ── Multi-method payments (WooCommerce/Shopify model) ───────────────────────
+# Each org enables a SET of methods that coexist; the customer picks one at
+# checkout. Stripe is the online card gateway (needs connected credentials);
+# manual/other are offline (record-only) with a label + customer instructions.
+
+ALLOWED_PAY_METHODS = ("stripe", "manual", "other")
+_PAY_METHOD_DEFAULT_LABELS = {
+    "stripe": "Card", "manual": "Cash / Pay on delivery", "other": "Other",
+}
+
+
+def _ensure_payment_methods(org_id: int) -> None:
+    """Lazy-seed default method rows for an org that has none yet (new orgs:
+    manual enabled, stripe/other disabled). Existing orgs were bulk-seeded in
+    the migration to mirror their prior single active method."""
+    with db_cursor() as (conn, cur):
+        cur.execute("SELECT 1 FROM crm_payment_methods WHERE org_id=%s LIMIT 1", (org_id,))
+        if cur.fetchone():
+            return
+        for idx, m in enumerate(("stripe", "manual", "other")):
+            cur.execute(
+                "INSERT INTO crm_payment_methods"
+                "  (org_id, method, is_enabled, display_label, sort_order)"
+                " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (org_id, method) DO NOTHING",
+                (org_id, m, m == "manual", _PAY_METHOD_DEFAULT_LABELS[m], idx)
+            )
+        conn.commit()
+
+
+def _org_stripe_connected(org_id: int) -> bool:
+    cred = db_one(
+        "SELECT provider, is_connected FROM crm_payment_credentials WHERE org_id=%s",
+        (org_id,)
+    )
+    return bool(cred and cred.get("provider") == "stripe" and cred.get("is_connected"))
+
+
+@app.get("/api/orgs/{org_id}/payment-methods")
+def get_org_payment_methods(org_id: int, user: dict = Depends(get_current_user)):
+    """List the org's payment methods (enabled/label/instructions) + whether the
+    Stripe online gateway is connected (gates enabling the 'stripe' method)."""
+    require_org_owner(user, org_id)
+    _ensure_payment_methods(org_id)
+    rows = db_all(
+        "SELECT method, is_enabled, display_label, instructions, sort_order"
+        "  FROM crm_payment_methods WHERE org_id=%s ORDER BY sort_order, method",
+        (org_id,)
+    )
+    return {
+        "methods": [
+            {
+                "method":        r["method"],
+                "is_enabled":    bool(r["is_enabled"]),
+                "display_label": r["display_label"] or "",
+                "instructions":  r["instructions"] or "",
+                "sort_order":    r["sort_order"],
+            } for r in rows
+        ],
+        "stripe_connected": _org_stripe_connected(org_id),
+    }
+
+
+class UpdatePaymentMethodBody(BaseModel):
+    is_enabled:    Optional[bool] = None
+    display_label: Optional[str]  = None
+    instructions:  Optional[str]  = None
+
+
+@app.patch("/api/orgs/{org_id}/payment-methods/{method}")
+def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMethodBody,
+                              user: dict = Depends(get_current_user)):
+    """Toggle a method on/off and/or set its display label + customer instructions.
+    Guards: enabling 'stripe' requires connected credentials; never leave the org
+    with zero enabled methods (re-enables 'manual' as the universal fallback)."""
+    require_org_owner(user, org_id)
+    method = (method or "").strip().lower()
+    if method not in ALLOWED_PAY_METHODS:
+        raise HTTPException(400, f"Unknown method. Allowed: {ALLOWED_PAY_METHODS}")
+    _ensure_payment_methods(org_id)
+
+    # The online card gateway can only be turned on once Stripe is connected.
+    if method == "stripe" and body.is_enabled and not _org_stripe_connected(org_id):
+        raise HTTPException(400, "Connect your Stripe account first (add + test API "
+                                  "keys) before enabling card payments.")
+
+    sets: list[str] = []
+    params: list = []
+    if body.is_enabled is not None:
+        sets.append("is_enabled=%s");    params.append(bool(body.is_enabled))
+    if body.display_label is not None:
+        sets.append("display_label=%s"); params.append(sanitize(body.display_label.strip())[:120])
+    if body.instructions is not None:
+        sets.append("instructions=%s");  params.append(sanitize(body.instructions.strip())[:2000])
+    if not sets:
+        raise HTTPException(400, "Nothing to update")
+    sets.append("updated_at=NOW()")
+    params.extend([org_id, method])
+    with db_cursor() as (conn, cur):
+        cur.execute(f"UPDATE crm_payment_methods SET {', '.join(sets)} "
+                    "WHERE org_id=%s AND method=%s", tuple(params))
+        conn.commit()
+
+    # Invariant: >=1 enabled method, else checkout has no payment option.
+    forced_manual = False
+    if body.is_enabled is False:
+        cnt = db_one("SELECT COUNT(*) AS c FROM crm_payment_methods "
+                     "WHERE org_id=%s AND is_enabled", (org_id,))
+        if not cnt or cnt["c"] == 0:
+            with db_cursor() as (conn, cur):
+                cur.execute("UPDATE crm_payment_methods SET is_enabled=TRUE, updated_at=NOW() "
+                            "WHERE org_id=%s AND method='manual'", (org_id,))
+                conn.commit()
+            forced_manual = True
+    return {"ok": True, "forced_manual": forced_manual}
+
+
 @app.get("/api/orgs/{org_id}/payment-credentials")
 def get_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
     """Returns provider catalog (which fields are needed for each) + current state.
@@ -8756,7 +8952,11 @@ def get_org_payment_credentials(org_id: int, user: dict = Depends(get_current_us
             for p, fields in PROVIDER_FIELDS.items()
         },
         # Stripe Connect availability
-        "stripe_connect_available": bool(os.getenv("STRIPE_CONNECT_CLIENT_ID", "").strip()),
+        "stripe_connect_available": bool(
+            os.getenv("STRIPE_CONNECT_CLIENT_ID", "").strip()
+            and os.getenv("STRIPE_CONNECT_REDIRECT_URI", "").strip()
+            and os.getenv("STRIPE_PLATFORM_SECRET_KEY", "").strip()
+        ),
     }
 
 
@@ -8889,6 +9089,15 @@ def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_u
                 (result["error"][:1000], org_id)
             )
         conn.commit()
+    # Connecting Stripe = the merchant wants card payments → auto-enable the
+    # 'stripe' method (they can still toggle it off). Mirrors Shopify enabling
+    # the gateway on activation.
+    if result["ok"] and row["provider"] == "stripe":
+        _ensure_payment_methods(org_id)
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_payment_methods SET is_enabled=TRUE, updated_at=NOW() "
+                        "WHERE org_id=%s AND method='stripe'", (org_id,))
+            conn.commit()
     return {"ok": result["ok"], "error": result["error"], "data": result["data"]}
 
 
@@ -8899,6 +9108,16 @@ def delete_org_payment_credentials(org_id: int, user: dict = Depends(get_current
     require_org_owner(user, org_id)
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s", (org_id,))
+        # Card payments can't run without the gateway → disable the 'stripe'
+        # method. Offline methods (manual/other) are untouched.
+        cur.execute("UPDATE crm_payment_methods SET is_enabled=FALSE, updated_at=NOW() "
+                    "WHERE org_id=%s AND method='stripe'", (org_id,))
+        # Keep the >=1-enabled invariant: if nothing is left on, fall back to manual.
+        cur.execute("SELECT COUNT(*) AS c FROM crm_payment_methods "
+                    "WHERE org_id=%s AND is_enabled", (org_id,))
+        if (cur.fetchone() or {}).get("c", 0) == 0:
+            cur.execute("UPDATE crm_payment_methods SET is_enabled=TRUE, updated_at=NOW() "
+                        "WHERE org_id=%s AND method='manual'", (org_id,))
         conn.commit()
     return {"ok": True}
 
@@ -8954,12 +9173,22 @@ def stripe_connect_oauth_callback(request: Request,
 
     require_org_owner(user, org_id)
 
+    # This endpoint is a BROWSER landing (Stripe redirects the user here), so on
+    # any failure we bounce back to the Payments page with a ?connect_error=…
+    # param rather than dumping a raw JSON error — the page shows a toast.
+    _slug_row = db_one("SELECT slug FROM crm_organizations WHERE id=%s", (org_id,))
+    _slug = (_slug_row or {}).get("slug") or ""
+    def _connect_fail(msg: str):
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"{CRM_FRONTEND_URL}/org/{_slug}/payments?connect_error={quote(msg[:200])}")
+
     client_id = os.getenv("STRIPE_CONNECT_CLIENT_ID", "").strip()
-    # Stripe expects POST to /oauth/token with secret key auth
+    # Stripe expects POST to /oauth/token with secret key auth.
     # We need the PLATFORM's secret key (Torta's own), not the merchant's.
     platform_sk = os.getenv("STRIPE_PLATFORM_SECRET_KEY", "").strip()
     if not platform_sk:
-        raise HTTPException(503, "Platform secret key not configured")
+        return _connect_fail("Stripe Connect is not configured on the server")
 
     body = urllib.parse.urlencode({
         "grant_type": "authorization_code",
@@ -8975,16 +9204,16 @@ def stripe_connect_oauth_callback(request: Request,
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")
-        raise HTTPException(400, f"Stripe rejected the OAuth code: {err_body[:300]}")
+        return _connect_fail(f"Stripe rejected the connection: {err_body[:120]}")
     except Exception as e:
-        raise HTTPException(500, f"Stripe OAuth exchange failed: {e}")
+        return _connect_fail(f"Stripe OAuth exchange failed: {e}")
 
     stripe_user_id  = data.get("stripe_user_id", "")
     stripe_pub_key  = data.get("stripe_publishable_key", "")
     access_token    = data.get("access_token", "")
     livemode        = bool(data.get("livemode", False))
     if not stripe_user_id or not access_token:
-        raise HTTPException(500, "Stripe OAuth response missing fields")
+        return _connect_fail("Stripe response was missing account details")
 
     # Store: access_token is treated as the secret_key for refund calls.
     creds = {
@@ -9017,6 +9246,13 @@ def stripe_connect_oauth_callback(request: Request,
             "UPDATE crm_organizations SET payment_provider='stripe' WHERE id=%s",
             (org_id,)
         )
+        conn.commit()
+
+    # Connecting via OAuth = card payments wanted → auto-enable the 'stripe' method.
+    _ensure_payment_methods(org_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_payment_methods SET is_enabled=TRUE, updated_at=NOW() "
+                    "WHERE org_id=%s AND method='stripe'", (org_id,))
         conn.commit()
 
     # Redirect back to OrgSettings → Payments
@@ -16676,6 +16912,46 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
         "new_status": new_status,
     })
     return {"ok": True, "status": new_status}
+
+
+class UpdatePaymentStatus(BaseModel):
+    payment_status: str   # 'paid' | 'pending' | 'manual'
+
+
+@app.patch("/api/orders/{order_id}/payment-status")
+def update_order_payment_status(order_id: int, body: UpdatePaymentStatus,
+                                project_id: int = Query(...),
+                                user: dict = Depends(get_current_user)):
+    """Manually confirm (or un-confirm) payment for an OFFLINE order. Used when
+    the merchant collects via 'other' (Kaspi / bank / own link) or cash and wants
+    to mark it settled — this is the "accounted for later" step for an order that
+    arrived as 'pending'. Card (Stripe) orders are verified automatically and
+    cannot be set by hand."""
+    require_page_auto(user, project_id)
+    if body.payment_status not in ("paid", "pending", "manual"):
+        raise HTTPException(400, "Allowed payment_status: paid, pending, manual")
+    o = db_one(
+        "SELECT id, payment_provider FROM order_history WHERE id=%s AND project_id=%s",
+        (order_id, project_id)
+    )
+    if not o:
+        raise HTTPException(404, "Order not found")
+    if o["payment_provider"] not in ("manual", "other", "", None):
+        raise HTTPException(400, "Card payments are confirmed automatically — this "
+                                  "order's payment status can't be set manually")
+    paid_at = ", payment_paid_at = NOW()" if body.payment_status == "paid" \
+              else ", payment_paid_at = NULL"
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            f"UPDATE order_history SET payment_status=%s{paid_at}, updated_at=NOW() "
+            "WHERE id=%s AND project_id=%s",
+            (body.payment_status, order_id, project_id)
+        )
+        conn.commit()
+    push_project_event(project_id, "order_payment_changed", {
+        "order_id": order_id, "payment_status": body.payment_status,
+    })
+    return {"ok": True, "payment_status": body.payment_status}
 
 
 # ── RETURNS / REFUNDS ─────────────────────────────────────
@@ -26634,20 +26910,31 @@ def admin_stats(period: str = "30d", user: dict = Depends(get_current_user)):
             (SELECT COUNT(*) FROM order_history)                          AS orders_total
     """)
 
-    # Plan breakdown — relies on crm_subscriptions. Falls back to all-Free
-    # if the table doesn't exist yet (pre-Paddle wiring).
+    # Plan breakdown — source of truth is crm_organizations.plan_slug (the
+    # denormalised "current plan" pointer, always set, default 'free', kept in
+    # sync by _paddle_apply_subscription). We JOIN the plans table for the real
+    # name + monthly price so MRR stays correct when pricing changes — no
+    # hardcoded prices on the frontend.
+    #
+    # NOTE: the old query grouped by `s.plan_code` on crm_subscriptions, but that
+    # column does not exist (it's `plan_slug`) — the query threw and the bare
+    # except below silently returned hardcoded all-Free, so the widget NEVER
+    # reflected real plans. Fixed to read o.plan_slug.
     try:
         plans = db_all("""
             SELECT
-                COALESCE(s.plan_code, 'free') AS plan_code,
-                COUNT(DISTINCT o.id)          AS org_count
+                COALESCE(o.plan_slug, 'free') AS plan_code,
+                COALESCE(p.name, 'Free')      AS plan_name,
+                COALESCE(p.price_usd, 0)      AS price_usd,
+                COUNT(*)                      AS org_count
             FROM crm_organizations o
-            LEFT JOIN crm_subscriptions s ON s.org_id = o.id AND s.status = 'active'
-            GROUP BY COALESCE(s.plan_code, 'free')
-            ORDER BY org_count DESC
+            LEFT JOIN crm_subscription_plans p ON p.slug = COALESCE(o.plan_slug, 'free')
+            GROUP BY COALESCE(o.plan_slug, 'free'), p.name, p.price_usd, p.display_order
+            ORDER BY COALESCE(p.display_order, 0) ASC
         """)
     except Exception:
-        plans = [{"plan_code": "free", "org_count": totals.get("orgs_total", 0)}]
+        plans = [{"plan_code": "free", "plan_name": "Free", "price_usd": 0,
+                  "org_count": totals.get("orgs_total", 0)}]
 
     countries = db_all("""
         SELECT

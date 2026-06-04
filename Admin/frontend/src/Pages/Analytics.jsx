@@ -26,8 +26,9 @@ const PERIODS = [
   { value: 'all', label: 'All time' },
 ];
 
-const PLAN_LABEL = { free: 'Free', standard: 'Standard', plus: 'Plus', pro: 'Pro' };
-const PLAN_MRR   = { free: 0, standard: 100, plus: 250, pro: 1000 };
+// Fallback labels only — the real name + price now come from the backend
+// (crm_subscription_plans), so MRR never desyncs when pricing changes.
+const PLAN_LABEL = { free: 'Free', standard: 'Standard', plus: 'Plus', pro: 'Pro', max: 'Max' };
 
 // ── Section wrapper — mirrors CRM SectionShell shape ─────────────────
 // Same .an-section / .an-section-head / .an-section-title classes the
@@ -188,13 +189,17 @@ export default function Analytics() {
   const countries = data?.countries || [];
   const series    = data?.signups_series || [];
 
+  // MRR = Σ (orgs on a plan × that plan's monthly price). Price comes from the
+  // backend (real crm_subscription_plans.price_usd), so it never goes stale.
   const mrr = useMemo(
-    () => plans.reduce((s, p) => s + (Number(p.org_count) || 0) * (PLAN_MRR[p.plan_code] || 0), 0),
+    () => plans.reduce((s, p) => s + (Number(p.org_count) || 0) * (Number(p.price_usd) || 0), 0),
     [plans]
   );
 
   const planRows = plans.map(p => ({
-    key: p.plan_code, label: PLAN_LABEL[p.plan_code] || p.plan_code, value: Number(p.org_count) || 0,
+    key: p.plan_code,
+    label: p.plan_name || PLAN_LABEL[p.plan_code] || p.plan_code,
+    value: Number(p.org_count) || 0,
   }));
 
   return (

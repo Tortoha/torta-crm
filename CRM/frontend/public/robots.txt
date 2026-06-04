@@ -1,0 +1,14 @@
+# Torta CRM — crawl rules
+# Public marketing + docs are open; the authenticated app shell isn't useful
+# to index (it just redirects to login), so it's disallowed to keep the
+# search index clean.
+
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /org/
+Disallow: /project/
+Disallow: /product/
+Disallow: /accept-terms
+
+Sitemap: https://tortacrm.com/sitemap.xml

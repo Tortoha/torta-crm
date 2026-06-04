@@ -161,7 +161,16 @@ function Checkout() {
         // Does the merchant require online card payment? Drives the Payment
         // section UI + whether checkout runs the strict init-payment flow.
         client.config?.get?.()
-          .then(r => { if (mounted && r?.ok) setStoreConfig(r.data); })
+          .then(r => {
+            if (!mounted || !r?.ok) return;
+            setStoreConfig(r.data);
+            // Default the selected payment method to the first ENABLED one
+            // (multi-method model — methods coexist, buyer picks one).
+            const pms = r.data?.payment_methods;
+            if (Array.isArray(pms) && pms.length) {
+              setForm(f => ({ ...f, payment_method: pms[0].method }));
+            }
+          })
           .catch(() => {});
 
         // What contact methods can this merchant accept? Drives the
@@ -319,7 +328,7 @@ function Checkout() {
       recipient_first_name:  form.recipient_first_name.trim(),
       recipient_last_name:   form.recipient_last_name.trim(),
       delivery_method: cart.requires_shipping ? form.delivery_method : "digital",
-      payment_method:  storeConfig?.online_payment ? "card" : form.payment_method,
+      payment_method:  form.payment_method,   // chosen method key (stripe|manual|other)
       fulfillment_type: cart.requires_shipping ? form.fulfillment_type : "courier",
     };
     if (form.recipient_middle_name.trim())
@@ -357,9 +366,13 @@ function Checkout() {
     if (form.promo_code.trim()) payload.promo_code = form.promo_code.trim();
 
     // ── Strict-mode online payment ───────────────────────────────────────
-    // If the merchant connected a real provider, the order can't be created
-    // without a verified payment. Step 1: create the PaymentIntent.
-    if (storeConfig?.online_payment) {
+    // Online (card) methods need a verified PaymentIntent before the order can
+    // be created — collect the card via Stripe Elements. Offline methods
+    // (manual / other) are placed directly (record-only).
+    const _methods  = storeConfig?.payment_methods || [];
+    const _selected = _methods.find(m => m.method === form.payment_method);
+    const _isOnline = _selected ? !!_selected.online : !!storeConfig?.online_payment;
+    if (_isOnline) {
       const idem = (window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
       const init = await client.payments.initPayment(payload, { idempotencyKey: idem });
       if (!init.ok) {
@@ -386,7 +399,12 @@ function Checkout() {
 
     const { ok, data, error } = await client.orders.place(payload);
     if (ok) {
-      navigate("/order-success", { state: { orderId: data.order_id } });
+      navigate("/order-success", { state: {
+        orderId: data.order_id,
+        // Offline methods carry "how to pay" instructions to the success screen.
+        paymentLabel:        _selected && !_selected.online ? (_selected.label || "") : "",
+        paymentInstructions: _selected && !_selected.online ? (_selected.instructions || "") : "",
+      }});
     } else {
       setError(error || "Failed to place order. Please try again.");
       setSubmitting(false);
@@ -734,49 +752,49 @@ function Checkout() {
               </div>
             )}
 
-            {/* Payment */}
+            {/* Payment — multi-method picker (methods coexist; buyer picks one) */}
             <div className="checkout-section">
               <h2 className="checkout-section-title">Payment</h2>
 
-              {storeConfig?.online_payment ? (
-                // Merchant connected a real provider → strict mode: the order
-                // can't be placed without a verified payment, so we collect the
-                // card (Stripe Elements) right after "Place Order".
-                <>
-                  <div className="checkout-toggle">
-                    <button type="button"
-                      className="checkout-toggle-btn checkout-toggle-btn--active"
-                      onClick={() => set("payment_method", "card")}>
-                      <CreditCard weight="bold" /> Card
-                    </button>
-                  </div>
-                  <p className="checkout-note">
-                    Secure card payment — you'll enter your card on the next step.
-                    Your card is handled directly by the payment provider; we never see it.
-                    {storeConfig?.payment_test_mode ? " (Test mode)" : ""}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div className="checkout-toggle">
-                    <button type="button"
-                      className={`checkout-toggle-btn${form.payment_method === "card" ? " checkout-toggle-btn--active" : ""}`}
-                      onClick={() => set("payment_method", "card")}>
-                      <CreditCard weight="bold" /> Card
-                    </button>
-                    <button type="button"
-                      className={`checkout-toggle-btn${form.payment_method === "cash" ? " checkout-toggle-btn--active" : ""}`}
-                      onClick={() => set("payment_method", "cash")}>
-                      <Money weight="bold" /> Pay on Delivery
-                    </button>
-                  </div>
-                  {form.payment_method === "card" && (
-                    <p className="checkout-note">
-                      Online card payment is coming soon. Your order will be confirmed and we'll reach out with payment details.
-                    </p>
-                  )}
-                </>
-              )}
+              {(() => {
+                // Methods from /config. Fall back to a sensible single option for
+                // older /config responses that predate `payment_methods`.
+                const pms = storeConfig?.payment_methods;
+                const methods = (Array.isArray(pms) && pms.length)
+                  ? pms
+                  : (storeConfig?.online_payment
+                      ? [{ method: "stripe", label: "Card",            online: true,  instructions: "" }]
+                      : [{ method: "manual", label: "Pay on Delivery", online: false, instructions: "" }]);
+                const selected = methods.find(m => m.method === form.payment_method) || methods[0];
+
+                return (
+                  <>
+                    <div className="checkout-toggle">
+                      {methods.map(m => (
+                        <button key={m.method} type="button"
+                          className={`checkout-toggle-btn${selected?.method === m.method ? " checkout-toggle-btn--active" : ""}`}
+                          onClick={() => set("payment_method", m.method)}>
+                          {m.online ? <CreditCard weight="bold" /> : <Money weight="bold" />} {m.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {selected?.online ? (
+                      <p className="checkout-note">
+                        Secure card payment — you'll enter your card on the next step.
+                        Your card is handled directly by the payment provider; we never see it.
+                        {storeConfig?.payment_test_mode ? " (Test mode)" : ""}
+                      </p>
+                    ) : (
+                      <p className="checkout-note" style={{ whiteSpace: "pre-line" }}>
+                        {selected?.instructions
+                          ? selected.instructions
+                          : "Your order will be recorded and we'll confirm payment details with you."}
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             {/* Additional */}
