@@ -30,7 +30,7 @@
         "cta": "Start free",
         "features": [
           "1 project (storefront)",
-          "1 team member",
+          "5 team members",
           "Up to 1,000 storefront users",
           "100 MB file storage",
           "20 MB database",
@@ -48,7 +48,7 @@
         "cta": "Subscribe",
         "features": [
           "Up to 3 projects",
-          "Up to 3 team members",
+          "Up to 15 team members",
           "Up to 5,000 storefront users",
           "15 GB file storage",
           "3 GB database",
@@ -67,7 +67,7 @@
         "cta": "Subscribe",
         "features": [
           "Up to 10 projects",
-          "Up to 10 team members",
+          "Up to 40 team members",
           "Up to 12,500 storefront users",
           "40 GB file storage",
           "8 GB database",
@@ -131,7 +131,7 @@
           "title": "Limits",
           "rows": {
             "projects":   { "label": "Projects (storefronts)", "values": ["1", "3", "10", "150", "1,000"] },
-            "team":       { "label": "Team members", "values": ["1", "3", "10", "250", "5,000"] },
+            "team":       { "label": "Team members", "values": ["5", "15", "40", "250", "5,000"] },
             "shoppers":   { "label": "Storefront users", "values": ["1,000", "5,000", "12,500", "100,000", "1,000,000"] },
             "storage":    { "label": "File storage", "values": ["100 MB", "15 GB", "40 GB", "100 GB", "2 TB"] },
             "database":   { "label": "Database size", "values": ["20 MB", "3 GB", "8 GB", "20 GB", "256 GB"] },
@@ -150,7 +150,7 @@
             "broadcasts":   { "label": "Email broadcasts", "values": [false, true, true, true, true] },
             "chat":         { "label": "Live web chat", "values": [true, true, true, true, true] },
             "webhooks":     { "label": "Webhooks & integrations", "values": ["Basic", true, true, true, true] },
-            "rbac":         { "label": "Roles & permissions", "values": [false, true, true, true, true] },
+            "rbac":         { "label": "Roles & permissions", "values": [true, true, true, true, true] },
             "orgAnalytics": { "label": "Cross-organization analytics", "values": [false, true, true, true, true] }
           }
         }

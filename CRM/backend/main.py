@@ -4073,7 +4073,7 @@ def run_migrations():
             # Max  $599    — enterprise anchor (makes $30 Pro feel free)
             PLANS = [
                 ("free", "Free", 0, 0, {
-                    "projects_max": 1, "team_members_max": 1,
+                    "projects_max": 1, "team_members_max": 5,
                     "storefront_users_max": 1000,
                     "storage_bytes_max": 104857600,           # 100 MB
                     "db_size_bytes_max": 20971520,            # 20 MB
@@ -4083,7 +4083,7 @@ def run_migrations():
                     "support_level": "none",
                 }),
                 ("standard", "Standard", 1, 10, {
-                    "projects_max": 3, "team_members_max": 3,
+                    "projects_max": 3, "team_members_max": 15,
                     "storefront_users_max": 5000,
                     "storage_bytes_max": 16106127360,         # 15 GB
                     "db_size_bytes_max": 3221225472,          # 3 GB
@@ -4093,7 +4093,7 @@ def run_migrations():
                     "support_level": "email",
                 }),
                 ("plus", "Plus", 2, 25, {
-                    "projects_max": 10, "team_members_max": 10,
+                    "projects_max": 10, "team_members_max": 40,
                     "storefront_users_max": 12500,
                     "storage_bytes_max": 42949672960,         # 40 GB
                     "db_size_bytes_max": 8589934592,          # 8 GB
