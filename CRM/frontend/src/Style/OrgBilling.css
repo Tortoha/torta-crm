@@ -238,8 +238,17 @@
 /* Plan grid inside the modal — slightly tighter card paddings than Pricing
  * (modal has its own 16px padding around the body) and a soft accent ring
  * around the suggested plan (?upgrade=<plan>). */
-.cpm-plans-grid                           { gap: 12px; }
-.cpm-plans-grid .pr-card                  { padding: 22px 18px 18px; gap: 10px;
+/* Option A — horizontally-scrollable card row. Each card keeps a readable
+ * min-width and grows to fill on wide screens; when 5 cards don't fit (medium
+ * or narrow windows) the row scrolls horizontally instead of squashing the
+ * cards. Overrides .pr-plans-grid's CSS grid with flex. */
+.cpm-plans-grid                           { display: flex; gap: 12px;
+                                            overflow-x: auto; padding-bottom: 6px;
+                                            scroll-snap-type: x proximity;
+                                            -webkit-overflow-scrolling: touch; }
+.cpm-plans-grid .pr-card                  { flex: 1 0 210px; min-width: 210px;
+                                            scroll-snap-align: start;
+                                            padding: 22px 18px 18px; gap: 10px;
                                             border-radius: 20px; }
 .cpm-plans-grid .pr-card-price-amount     { font-size: 30px; }
 .cpm-plans-grid .pr-card-list             { gap: 7px; }
@@ -270,17 +279,11 @@
                                             transition: opacity 0.2s; }
 .cpm-foot-link:hover                      { opacity: 0.8; }
 
-/* 5 cols only while the viewport is genuinely wide (≥1660px → modal ~1620px
- * → ~310px/card). Below that, 3 → 2 → 1 so cards never get squeezed. */
-@media (max-width: 1660px) {
-  .cpm-plans-grid                         { grid-template-columns: repeat(3, 1fr); }
-}
-@media (max-width: 1040px) {
-  .cpm-plans-grid                         { grid-template-columns: repeat(2, 1fr); }
-}
+/* The flex row above handles every width via horizontal scroll, so no
+ * column-count breakpoints are needed — cards never squash. On phones the
+ * modal just goes (nearly) full-width. */
 @media (max-width: 680px) {
   .cpm-modal--plans                       { width: calc(100vw - 24px); }
-  .cpm-plans-grid                         { grid-template-columns: 1fr; }
 }
 
 /* ── Responsive ──────────────────────────────────────────────────── */
