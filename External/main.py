@@ -1497,7 +1497,7 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
                 resp.headers["Access-Control-Allow-Credentials"] = "true"
                 resp.headers["Vary"]                             = "Origin"
             resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Publishable-Key, X-Web-Chat-Id, X-CSRF-Token"
+            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Publishable-Key, X-Web-Chat-Id, X-CSRF-Token, Idempotency-Key"
             resp.headers["Access-Control-Max-Age"]       = "600"
             return resp
 
@@ -3528,16 +3528,19 @@ def get_storefront_config(api_key_record: dict = Depends(resolve_api_key)):
     needs. Admin-only fields (margins, costs, internal flags) stay
     inside the CRM API."""
     provider, creds, is_test_mode, _stripe_acct = _get_org_payment_config(api_key_record["id"])
-    online = provider not in ("manual", "other") and bool(creds)
+    # Multi-method model (WooCommerce/Shopify): the storefront renders a picker
+    # of all enabled methods; the customer chooses one. 'online' methods (Stripe)
+    # need a card + verified PaymentIntent; offline methods are record-only and
+    # may carry customer-facing `instructions` (e.g. "Send Kaspi to +7…").
+    methods = _get_enabled_payment_methods(api_key_record["id"])
+    # online_payment kept for back-compat (older storefront builds): true when a
+    # usable online card method is among the enabled set.
+    online = any(m["online"] for m in methods)
     return {
         "currency":     api_key_record.get("currency") or "USD",
         "project_name": api_key_record.get("name"),
         "timezone":     api_key_record.get("timezone") or "UTC",
-        # Payment: online_payment=True means the merchant connected a real
-        # provider, so POST /orders runs in strict mode (needs a verified
-        # payment_intent). The storefront uses this to decide whether to
-        # collect a card (init-payment → Stripe Elements) or just record the
-        # order (manual/other). Never leaks credentials — only the public flag.
+        "payment_methods":   methods,
         "payment_provider":  provider,
         "online_payment":    online,
         "payment_test_mode": bool(is_test_mode) if online else False,
@@ -5216,6 +5219,65 @@ def _get_org_payment_config(project_id: int) -> tuple[str, dict | None, bool, st
              row.get("stripe_account_id") or "")
 
 
+_PAY_METHOD_FALLBACK_LABELS = {
+    "stripe": "Card", "manual": "Cash / Pay on delivery", "other": "Other",
+}
+
+
+def _get_enabled_payment_methods(project_id: int) -> list[dict]:
+    """Enabled payment methods for the project's org (WooCommerce/Shopify model —
+    methods coexist, the customer picks one at checkout). Returns
+    [{method, label, instructions, online}] in sort order. The 'stripe' (online
+    card) entry is only included when the org actually has connected credentials.
+    Defensive fallback to a single manual method when the org has no rows yet."""
+    rows = db_all(
+        "SELECT pm.method, pm.display_label, pm.instructions, pm.sort_order"
+        "  FROM crm_payment_methods pm"
+        "  JOIN crm_projects pr ON pr.org_id = pm.org_id"
+        " WHERE pr.id = %s AND pm.is_enabled = TRUE"
+        " ORDER BY pm.sort_order, pm.method",
+        (project_id,)
+    )
+    provider, creds, _is_test, _acct = _get_org_payment_config(project_id)
+    stripe_usable = (provider == "stripe" and bool(creds))
+
+    out: list[dict] = []
+    for r in rows:
+        m = r["method"]
+        if m == "stripe" and not stripe_usable:
+            continue   # enabled in UI but gateway not connected → not offerable
+        out.append({
+            "method":       m,
+            "label":        r["display_label"] or _PAY_METHOD_FALLBACK_LABELS.get(m, m),
+            "instructions": r["instructions"] or "",
+            "online":       m == "stripe",
+        })
+    if not out:
+        out = [{"method": "manual",
+                "label": _PAY_METHOD_FALLBACK_LABELS["manual"],
+                "instructions": "", "online": False}]
+    return out
+
+
+def _resolve_chosen_method(project_id: int, requested: str | None) -> tuple[str, list[dict]]:
+    """Map the customer's requested payment method to a VALID enabled method.
+    Security: a client cannot claim an offline method to bypass a required card.
+      • requested ∈ enabled            → use it
+      • requested invalid, 1 method    → use that one (no real choice existed)
+      • requested invalid, >1 methods  → 400 (must pick a real option)
+    Legacy aliases: card→stripe, cash/cod→manual."""
+    methods = _get_enabled_payment_methods(project_id)
+    keys = [m["method"] for m in methods]
+    alias = {"card": "stripe", "cash": "manual", "cod": "manual"}
+    req = (requested or "").strip().lower()
+    req = alias.get(req, req)
+    if req in keys:
+        return req, methods
+    if len(keys) == 1:
+        return keys[0], methods
+    raise HTTPException(400, "Selected payment method is not available.")
+
+
 def _compute_cart_total(cursor, project_id: int, user_id: int,
                          delivery_method: str, address: str,
                          promo_code: str | None) -> dict:
@@ -5324,6 +5386,8 @@ def init_payment(data: PlaceOrderRequest, request: Request,
     if not user_id:
         raise HTTPException(401, "Login required to place an order")
 
+    # Which method did the customer pick? (validated against the enabled set)
+    chosen, _methods = _resolve_chosen_method(project_id, data.payment_method)
     provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id)
 
     # Compute total
@@ -5334,9 +5398,11 @@ def init_payment(data: PlaceOrderRequest, request: Request,
         if not totals["ok"]:
             raise HTTPException(400, totals["error"])
 
-    if provider in ("manual", "other"):
+    # Offline method (manual / other) — no PaymentIntent; the order is recorded
+    # as pending and the merchant collects payment off-platform.
+    if chosen != "stripe":
         return {
-            "provider":    provider,
+            "provider":    chosen,
             "intent_id":   "",
             "client_secret": "",
             "redirect_url": "",
@@ -5346,8 +5412,9 @@ def init_payment(data: PlaceOrderRequest, request: Request,
             "needs_payment_intent": False,
         }
 
-    if not creds:
-        # Provider configured but credentials missing/broken — fall back to manual
+    # Online card chosen but the gateway isn't actually connected — degrade to
+    # record-only instead of blocking the sale.
+    if provider != "stripe" or not creds:
         return {
             "provider":    "manual",
             "intent_id":   "",
@@ -5357,7 +5424,7 @@ def init_payment(data: PlaceOrderRequest, request: Request,
             "amount":      totals["total"],
             "currency":    totals["currency"],
             "needs_payment_intent": False,
-            "warning":     "Provider not connected; falling back to manual",
+            "warning":     "Card payments not connected; falling back to manual",
         }
 
     idemp_key = (request.headers.get("Idempotency-Key") or "").strip() or secrets.token_urlsafe(20)
@@ -5727,6 +5794,9 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
 
         # ── Payment validation (Strict mode) ──────────────────────────────
         provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id)
+        # Which enabled method did the customer pick? Cannot claim an offline
+        # method to bypass a required card (validated against the enabled set).
+        chosen, _methods = _resolve_chosen_method(project_id, data.payment_method)
         # Per-project default currency. Each order row snapshots the
         # currency it was placed in — even if the merchant later changes
         # the project's currency, historical orders stay immutable. For
@@ -5739,18 +5809,30 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             (project_id,)
         )
         project_currency  = (_proj_row or {}).get("currency", "USD")
-        pay_status        = "manual"
+        # 'other' = customer pays via an external gateway (Kaspi, bank, own link)
+        # we CANNOT verify → record the order but leave payment UNCONFIRMED
+        # ('pending'): it shows in the CRM Orders list but is NOT counted as paid
+        # revenue until the merchant confirms it (Mark as paid). 'manual' (cash /
+        # pay-on-delivery) stays settled — the merchant collects it directly.
+        pay_status        = "pending" if chosen == "other" else "manual"
         pay_intent_id     = ""
         pay_charge_id     = ""
         pay_amount_paid   = 0.0
         pay_currency      = project_currency
-        pay_provider      = provider
+        pay_provider      = chosen
 
-        if provider not in ("manual", "other") and creds:
+        # Strict mode applies ONLY when the customer chose the online card method
+        # AND the gateway is actually connected. Offline methods (manual/other),
+        # or card-chosen-but-not-connected, are record-only.
+        do_strict = (chosen == "stripe" and provider == "stripe" and bool(creds))
+        if chosen == "stripe" and not do_strict:
+            pay_provider = "manual"   # card chosen but gateway not connected
+
+        if do_strict:
             intent_id = (data.payment_intent_id or "").strip()
             if not intent_id:
                 raise HTTPException(402,
-                    f"Payment intent required for provider {provider}. "
+                    "Payment intent required for card payment. "
                     "Call POST /orders/init-payment first.")
             # Idempotency: refuse if an order already exists with this intent_id.
             cursor.execute(
@@ -5854,7 +5936,7 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             (project_id, user_id, round(float(total), 2),
              data.delivery_method, rn,
              sanitize(data.phone or ""), address_str,
-             sanitize(data.comment or ""), data.payment_method,
+             sanitize(data.comment or ""), pay_provider,
              pay_intent_id, pay_charge_id, pay_status, pay_provider,
              pay_currency, round(pay_amount_paid, 2), pay_status,
              fulfillment_type, pickup_wh_id,

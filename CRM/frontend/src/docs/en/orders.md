@@ -11,6 +11,7 @@ A live list — new orders stream in automatically (no refresh) and it scrolls i
 - **Change status** — every order has an inline status dropdown. Statuses are `new → confirmed → shipped → delivered`, with `cancelled` and `refunded` as off-ramps; you can move an order to any status.
 - **Print shipping labels** — the printer icon appears on **new / confirmed** orders. Select several with the checkboxes to print labels in bulk.
 - **Order details** — click an order for the full picture: customer (name, email, phone), delivery method and address, payment method, comment, line items (with variation / size / quantity) and total. You can change status from here too.
+- **Confirm payment** — order details show a payment badge (**Paid** / **Payment pending** / **Offline**). For **offline** orders (Other / cash) there's a **Mark as paid** button — use it once the money arrives. Card (Stripe) orders are confirmed automatically. An **Other** order (e.g. Kaspi) arrives as **pending** and isn't counted as revenue until you mark it paid. See [Payments](/docs/payments).
 
 ## Returns tab
 

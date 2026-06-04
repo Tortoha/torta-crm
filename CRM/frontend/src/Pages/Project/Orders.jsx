@@ -442,6 +442,22 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
       .finally(() => setLoading(false));
   }, [order.id]);
 
+  // Manually confirm/un-confirm payment for an OFFLINE order (other/cash).
+  // Card (Stripe) orders are verified automatically and have no button.
+  const setPay = async (payment_status) => {
+    try {
+      const r = await fetch(`${API_BASE}/api/orders/${order.id}/payment-status${pq}`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_status }),
+      });
+      if (r.ok) {
+        setDetail(d => (d ? { ...d, payment_status } : d));
+        onUpdated?.();
+      }
+    } catch { /* ignore */ }
+  };
+
   return (
     <Modal
       onClose={onClose}
@@ -479,9 +495,43 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
               {detail.delivery_method === 'courier' ? t('orders.modal.courier') : t('orders.modal.postal')}
               {detail.address ? ` — ${detail.address}` : ''}
             </div>
-            <div className="modal-section-sub">
-              {detail.payment_method === 'card' ? t('orders.modal.cardPayment') : t('orders.modal.payOnDelivery')}
-            </div>
+            {(() => {
+              // payment_method now stores the canonical provider (stripe/manual/other).
+              const prov = detail.payment_provider || detail.payment_method || 'manual';
+              const methodLabel = prov === 'stripe' ? t('orders.modal.cardPayment')
+                : prov === 'other' ? 'Other (offline)'
+                : t('orders.modal.payOnDelivery');
+              const ps = detail.payment_status || '';
+              const isOffline = prov === 'other' || prov === 'manual';
+              const psLabel = ps === 'paid' ? 'Paid'
+                : ps === 'pending' ? 'Payment pending'
+                : ps === 'manual' ? 'Offline' : ps;
+              return (
+                <div className="modal-section-sub"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                  <span>{methodLabel}</span>
+                  {ps && (
+                    <span style={{
+                      fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 999,
+                      background: ps === 'paid' ? 'var(--accent-tint)' : 'rgba(0,0,0,0.06)',
+                      color: ps === 'paid' ? 'var(--accent)' : 'var(--muted)',
+                    }}>{psLabel}</span>
+                  )}
+                  {isOffline && ps !== 'paid' && (
+                    <button type="button" onClick={() => setPay('paid')} style={{
+                      border: 'none', borderRadius: 999, padding: '6px 14px', fontSize: 13,
+                      cursor: 'pointer', background: 'var(--accent)', color: '#fff',
+                    }}>Mark as paid</button>
+                  )}
+                  {isOffline && ps === 'paid' && (
+                    <button type="button" onClick={() => setPay('pending')} style={{
+                      border: '1px solid rgba(0,0,0,0.12)', borderRadius: 999, padding: '6px 14px',
+                      fontSize: 13, cursor: 'pointer', background: 'transparent', color: 'var(--muted)',
+                    }}>Mark unpaid</button>
+                  )}
+                </div>
+              );
+            })()}
             {detail.comment && (
               <div className="modal-section-sub" style={{ fontStyle: 'italic' }}>"{detail.comment}"</div>
             )}

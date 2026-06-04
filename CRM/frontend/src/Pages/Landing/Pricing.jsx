@@ -23,6 +23,7 @@ import Header from '../../Elements/Header.jsx';
 import Footer from './Footer.jsx';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
 import { API_BASE } from '../../api.js';
+import { useSeo } from '../../Utils/useSeo.js';
 import '../../Style/Landing.css';
 import '../../Style/Products.css';   // po-set-table + po-set-row primitives
 
@@ -225,7 +226,12 @@ export default function Pricing() {
       .catch(() => {});
   }, []);
 
-  // (No document.title override — keep "Torta CRM" across navigation.)
+  // Per-page SEO — controlled title + description (Home resets it on the way back).
+  useSeo({
+    title: t('pricing.meta.title'),
+    description: t('pricing.meta.description'),
+    canonical: 'https://tortacrm.com/pricing',
+  });
 
   // Flatten compare groups into ordered chunks for rendering. Each group has
   // a label header + N rows; we render them as separate sub-tables so a tiny
