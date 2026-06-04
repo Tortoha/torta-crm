@@ -13,6 +13,8 @@ import { useTranslation } from 'react-i18next';
 import { TrendUp, Percent, Warning, Buildings } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { formatMoney } from '../../Utils/currency.js';
+import { useOrgPlan } from '../../Utils/useOrgPlan.js';
+import UpgradePlaque from '../../Elements/UpgradePlaque.jsx';
 // Reuse the project-Analytics primitives so the org page matches it 1:1:
 // per-section period shell, the pannable chart, the Day/Week/Month toggle,
 // and the chart-zoom math. setAnalyticsCurrency points the chart's Y-axis +
@@ -334,14 +336,22 @@ export default function OrgAnalytics() {
   const { t } = useTranslation();
   const { org } = useOutletContext();
   const orgId = org?.id;
+  // Cross-organization analytics is a paid feature — Free orgs see the plaque.
+  const { isFree, loading: planLoading } = useOrgPlan(orgId);
   return (
     <>
       <h1 className="crm-page-title">{t('org.analytics.title')}</h1>
-      <div className="an-page">
-        <OverviewSection orgId={orgId} />
-        <RevenueSection orgId={orgId} />
-        <ComparisonSection orgId={orgId} />
-      </div>
+      {orgId && !planLoading && isFree ? (
+        <UpgradePlaque
+          featureName={t('upgrade.crossOrg', { defaultValue: 'cross-organization analytics' })}
+          to={org?.slug ? `/org/${org.slug}/billing` : '/pricing'} />
+      ) : (
+        <div className="an-page">
+          <OverviewSection orgId={orgId} />
+          <RevenueSection orgId={orgId} />
+          <ComparisonSection orgId={orgId} />
+        </div>
+      )}
     </>
   );
 }

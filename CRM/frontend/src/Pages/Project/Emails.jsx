@@ -9,6 +9,8 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../../api.js';
 import EmailEditor from './EmailEditor.jsx';
+import { useOrgPlan } from '../../Utils/useOrgPlan.js';
+import UpgradePlaque from '../../Elements/UpgradePlaque.jsx';
 import '../../Style/Authentication.css';
 import '../../Style/Emails.css';
 
@@ -49,7 +51,7 @@ function findVars(subject, blocks) {
 
 export default function Emails() {
   const { t } = useTranslation();
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
   const [active, setActive] = useState('verification');
   const tabs = [...TYPE_TABS, ...EXTRA_TABS].map(tab => ({
     ...tab, label: t(`comms.emails.tab.${tab.key === '__broadcasts' ? 'broadcasts' : tab.key}`),
@@ -59,7 +61,7 @@ export default function Emails() {
       <TabSwitcher tabs={tabs} activeKey={active} onPick={setActive} />
       <h1 className="crm-page-title">{t(`comms.emails.title.${active === '__broadcasts' ? 'broadcasts' : active}`)}</h1>
       {active === '__broadcasts'
-        ? <BroadcastsTab projectId={projectId} />
+        ? <BroadcastsTab projectId={projectId} orgId={project?.org_id} />
         : <TemplateEditor key={active} projectId={projectId} type={active} />}
     </div>
   );
@@ -163,8 +165,9 @@ function TemplateEditor({ projectId, type }) {
 
 // ── Broadcasts tab ──
 
-function BroadcastsTab({ projectId }) {
+function BroadcastsTab({ projectId, orgId }) {
   const { t } = useTranslation();
+  const { isFree, loading: planLoading } = useOrgPlan(orgId);
   const pq = `?project_id=${projectId}`;
   const [list, setList] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -190,6 +193,9 @@ function BroadcastsTab({ projectId }) {
     if (r.ok) { await load(); openOne(d.id); }
   };
 
+  // Email broadcasts are a paid feature — Free orgs get the upgrade plaque.
+  if (orgId && !planLoading && isFree)
+    return <UpgradePlaque featureName={t('comms.emails.tab.broadcasts', { defaultValue: 'email broadcasts' })} />;
   if (editing) return <CampaignEditor projectId={projectId} campaign={editing} onClose={() => { setEditing(null); load(); }} toast={toast} toastNode={toastNode} />;
   if (!list) return <div className="em-loading">{t('common.loading')}</div>;
   return (
