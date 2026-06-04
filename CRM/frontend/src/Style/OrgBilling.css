@@ -228,7 +228,12 @@
 /* Shell tracks the viewport up to 1820px so 5 plan cards get ~340px each
  * on a wide screen (instead of being fixed-narrow). Never exceeds the
  * viewport (minus a 40px margin). */
-.cpm-modal--plans                         { width: min(1820px, calc(100vw - 40px)); }
+/* NOTE: combined selector (.auth-modal.cpm-modal--plans) on purpose — it raises
+ * specificity above the plain `.auth-modal { width: 960px }` rule so this 1820px
+ * width ALWAYS wins, regardless of how Vite orders the CSS in the production
+ * bundle. (With a single-class selector the two same-specificity rules fight
+ * and the bundle order decides — which differed dev vs build, making prod narrow.) */
+.auth-modal.cpm-modal--plans              { width: min(1820px, calc(100vw - 40px)); }
 
 /* Toggle row — center the BillingToggle horizontally with a touch of margin. */
 .cpm-toggle-row                           { display: flex; justify-content: center;
@@ -283,7 +288,7 @@
  * column-count breakpoints are needed — cards never squash. On phones the
  * modal just goes (nearly) full-width. */
 @media (max-width: 680px) {
-  .cpm-modal--plans                       { width: calc(100vw - 24px); }
+  .auth-modal.cpm-modal--plans            { width: calc(100vw - 24px); }
 }
 
 /* ── Responsive ──────────────────────────────────────────────────── */
