@@ -259,6 +259,32 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Order # + email share one sub-line under the customer name. The order
+   number is accent-coloured so it's easy to scan/reference. */
+.ord-prow-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ord-prow-orderno {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.ord-prow-dot { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+
+.ord-card-orderno {
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .ord-guest-badge {

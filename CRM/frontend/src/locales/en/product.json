@@ -1,0 +1,243 @@
+{
+  "product": {
+    "meta": {
+      "getStarted": "Start free",
+      "docs": "Read the docs",
+      "seePricing": "See pricing",
+      "featuresTitle": "Everything that's included",
+      "ctaEyebrow": "Get started",
+      "ctaTitle": "Run your whole store from one place",
+      "ctaSub": "Start free — no credit card. Upgrade as you grow.",
+      "exploreTitle": "Explore more of the platform"
+    },
+    "nav": {
+      "product": "Product",
+      "name": {
+        "database": "Database",
+        "auth": "Auth",
+        "storage": "Storage",
+        "automations": "Automations",
+        "email": "Email",
+        "realtime": "Realtime"
+      },
+      "tagline": {
+        "database": "Structured store data",
+        "auth": "Customer sign-in",
+        "storage": "Media & files",
+        "automations": "Webhooks & alerts",
+        "email": "Transactional & campaigns",
+        "realtime": "Live unified inbox"
+      }
+    },
+
+    "database": {
+      "hero": {
+        "eyebrow": "Database",
+        "title": "Every order, customer and product — structured and yours",
+        "lead": "Your store runs on a clean, relational database. Products, orders, customers, carts, reviews, bookings and stock all live as connected records you can read, filter and act on — no spreadsheets, no guesswork."
+      },
+      "stats": [
+        { "value": "1 store, 1 space", "label": "Your data is fully isolated from every other store" },
+        { "value": "Relational", "label": "Orders link to customers, items, payments and returns" },
+        { "value": "9+ record types", "label": "Products, orders, customers, bookings, reviews and more" },
+        { "value": "Live analytics", "label": "Revenue, funnel and inventory read straight from your data" }
+      ],
+      "cards": [
+        { "title": "Products", "desc": "Multi-option products with variations, sizes, per-item pricing and stock." },
+        { "title": "Orders", "desc": "Every order with its items, totals, payment and delivery — start to finish." },
+        { "title": "Customers", "desc": "A profile per buyer: contact details, order history and saved addresses." },
+        { "title": "Reviews", "desc": "Ratings, written reviews and photos tied to the right product." },
+        { "title": "Bookings", "desc": "Time-based appointments with services, staff and status." },
+        { "title": "Analytics", "desc": "Revenue, average order value, conversion and inventory, computed live." }
+      ],
+      "deep": {
+        "eyebrow": "Built in",
+        "title": "Records that already know how your store works",
+        "body": "You never design tables or write queries. Every part of the catalog and every sale is modeled for you, kept consistent, and ready to view, filter and act on from your dashboard.",
+        "points": [
+          "Each store's data is isolated — one store never sees another's",
+          "Inventory tracked per warehouse, with batches and low-stock signals",
+          "Returns and refunds recorded against the original order",
+          "Everything visible in the dashboard — search, filter and drill in"
+        ],
+        "chipsTitle": "Record types",
+        "chips": ["Products", "Variations", "Stock & batches", "Orders", "Returns", "Customers", "Addresses", "Carts", "Reviews", "Favorites", "Bookings", "Promo codes"]
+      }
+    },
+
+    "auth": {
+      "hero": {
+        "eyebrow": "Authentication",
+        "title": "Sign-in your customers actually trust",
+        "lead": "Let shoppers create an account and log in the way they prefer — a one-time email code, their phone number, or a social account — without you building any of it."
+      },
+      "stats": [
+        { "value": "17 providers", "label": "Google, Apple and 15 more social logins" },
+        { "value": "Email + SMS", "label": "One-time codes by email or text message" },
+        { "value": "Multi-device", "label": "Customers see and revoke their own sessions" },
+        { "value": "Guest checkout", "label": "Buy first, create the account later" }
+      ],
+      "cards": [
+        { "title": "Email code", "desc": "Passwordless one-time codes sent to the customer's inbox." },
+        { "title": "Phone code", "desc": "SMS one-time codes for phone-first audiences." },
+        { "title": "Social login", "desc": "Google, Apple, GitHub, Discord and more in one tap." },
+        { "title": "Password reset", "desc": "A secure, self-serve reset flow out of the box." },
+        { "title": "Sessions", "desc": "Active devices listed; sign out anywhere, anytime." },
+        { "title": "Guest checkout", "desc": "Shoppers buy as a guest and upgrade to an account later." }
+      ],
+      "deep": {
+        "eyebrow": "Secure by default",
+        "title": "All the hard parts are handled for you",
+        "body": "Tokens, refresh, multi-device sessions and provider callbacks are managed behind the scenes. You switch on the methods you want; your customers just sign in.",
+        "points": [
+          "One-time codes with a short expiry — no passwords to leak",
+          "Sessions refresh silently and can be revoked per device",
+          "Turn each provider on or off per store",
+          "One customer identity can work across all your store's locations"
+        ],
+        "chipsTitle": "Social providers",
+        "chips": ["Google", "Apple", "GitHub", "Discord", "LinkedIn", "Figma", "Twitch", "Spotify", "Slack", "Notion", "Zoom", "Bitbucket", "GitLab", "Facebook", "Kakao", "X", "Azure"]
+      }
+    },
+
+    "storage": {
+      "hero": {
+        "eyebrow": "Storage",
+        "title": "Store the images and files your store needs",
+        "lead": "Upload product photos, review images, and the digital files you sell — almost any file type — straight from the dashboard. Files upload directly and securely, and every store's media stays its own."
+      },
+      "stats": [
+        { "value": "100 MB – 2 TB", "label": "Media allowance scales with your plan" },
+        { "value": "Any file type", "label": "Images, PDFs and the digital downloads you sell" },
+        { "value": "Direct upload", "label": "Files go straight to storage from the browser" },
+        { "value": "Per-store", "label": "Your media is isolated from every other store" }
+      ],
+      "cards": [
+        { "title": "Product images", "desc": "Photo galleries per product and per variation." },
+        { "title": "Review photos", "desc": "Customers attach up to five photos per review." },
+        { "title": "Avatars", "desc": "Profile pictures for your customers." },
+        { "title": "Email media", "desc": "Images and PDFs you drop into email campaigns." },
+        { "title": "Digital downloads", "desc": "Sell digital products — ZIPs, audio, video, e-books, almost any file." },
+        { "title": "Usage tracking", "desc": "See exactly how much of your allowance you've used." }
+      ],
+      "deep": {
+        "eyebrow": "Simple and safe",
+        "title": "Upload once, use it anywhere",
+        "body": "Drop a file in and get a link back right away. Storage is metered per plan so you always know where you stand, and each store's files are kept separate.",
+        "points": [
+          "Upload directly from the browser — nothing to set up",
+          "Images optimized for fast loading on your storefront",
+          "Live usage shown against your plan's allowance",
+          "Deleting a store cleanly removes its files"
+        ],
+        "chipsTitle": "What you can store",
+        "chips": ["Product photos", "Variation images", "Review photos", "Avatars", "Email images", "PDF guides", "Digital downloads (any type)", "Brand logo"]
+      }
+    },
+
+    "automations": {
+      "hero": {
+        "eyebrow": "Webhooks & Automations",
+        "title": "Connect your store to everything else you run",
+        "lead": "When something happens in your store — a paid order, a new customer, a cancelled booking — send it anywhere: Slack, Discord, your own endpoint, or ready-made connectors. Plus alerts and campaigns that run on a schedule."
+      },
+      "stats": [
+        { "value": "14 events", "label": "Orders, bookings, customers, payments and products" },
+        { "value": "12 connectors", "label": "Slack, Discord, accounting and analytics tools" },
+        { "value": "Scheduled", "label": "Alerts and email campaigns that fire on their own" },
+        { "value": "Delivery logs", "label": "Every send recorded with its status and retries" }
+      ],
+      "cards": [
+        { "title": "Event webhooks", "desc": "POST a JSON payload to your endpoint when an event fires." },
+        { "title": "Slack & Discord", "desc": "Drop order and booking updates into a channel." },
+        { "title": "Connectors", "desc": "Ready-made links to accounting and analytics tools." },
+        { "title": "Scheduled alerts", "desc": "Revenue drops, low stock and daily summaries by email." },
+        { "title": "Email campaigns", "desc": "One-time or recurring sends that run automatically." },
+        { "title": "Delivery logs", "desc": "See every delivery, its response and automatic retries." }
+      ],
+      "deep": {
+        "eyebrow": "Nothing to host",
+        "title": "Pick an event, choose where it goes",
+        "body": "Subscribe to the events you care about and route them to the tools your team already uses. Failed deliveries retry on their own, and every attempt is logged.",
+        "points": [
+          "Fourteen event types across orders, bookings, customers and products",
+          "Send to a custom endpoint, Slack or Discord",
+          "Automatic retries on failure, with a full delivery log",
+          "Scheduled alerts and campaigns run without you lifting a finger"
+        ],
+        "chipsTitle": "Events you can subscribe to",
+        "chips": ["order.created", "order.paid", "order.shipped", "order.delivered", "order.cancelled", "order.returned", "booking.created", "booking.completed", "booking.cancelled", "booking.no_show", "customer.created", "payment.received", "product.created", "product.updated"]
+      }
+    },
+
+    "email": {
+      "hero": {
+        "eyebrow": "Email",
+        "title": "Email your customers actually receive",
+        "lead": "Send order confirmations, reminders and marketing campaigns from your own verified domain — written in plain HTML, delivered straight from our mail servers, and tuned to land in the inbox."
+      },
+      "stats": [
+        { "value": "Your domain", "label": "Send as you@yourbrand.com, fully verified" },
+        { "value": "In seconds", "label": "Messages typically arrive within a few seconds" },
+        { "value": "6 templates", "label": "Built-in transactional emails, all editable" },
+        { "value": "Campaigns", "label": "One-time or recurring broadcasts to your customers" }
+      ],
+      "cards": [
+        { "title": "Transactional", "desc": "Verification, reset, order, booking, cart and restock emails." },
+        { "title": "Campaigns", "desc": "Broadcast announcements and promos to your customers." },
+        { "title": "Your domain", "desc": "Verified sending with DKIM, SPF and DMARC." },
+        { "title": "HTML editor", "desc": "Write the exact email you want, with a live preview." },
+        { "title": "Scheduling", "desc": "Send now, at a set time, or on a weekly or yearly repeat." },
+        { "title": "Deliverability", "desc": "Authenticated sending tuned to reach the inbox." }
+      ],
+      "deep": {
+        "eyebrow": "Built to land",
+        "title": "From your domain to the inbox, in seconds",
+        "body": "Verify your domain once and every email goes out signed and authenticated. Messages leave our servers immediately and typically reach recipients within a few seconds, anywhere in the world.",
+        "points": [
+          "Your own verified domain with DKIM, SPF and DMARC",
+          "Six transactional templates, each editable as HTML",
+          "Schedule one-time, weekly or once-a-year campaigns",
+          "Daily volume scales with your plan"
+        ],
+        "chipsTitle": "Emails your store can send",
+        "chips": ["Verification code", "Password reset", "Order confirmation", "Booking reminder", "Abandoned cart", "Restock alert", "Marketing campaigns"]
+      }
+    },
+
+    "realtime": {
+      "hero": {
+        "eyebrow": "Realtime",
+        "title": "Every customer message, live in one inbox",
+        "lead": "Your team sees messages from every channel the moment they arrive — Telegram, WhatsApp, Instagram, your website chat and more — in a single shared inbox, with instant notifications."
+      },
+      "stats": [
+        { "value": "9 channels", "label": "All your customer conversations in one place" },
+        { "value": "Instant", "label": "New messages appear live, with no refresh" },
+        { "value": "Shared inbox", "label": "Your whole team works the same queue" },
+        { "value": "Notifications", "label": "Live alerts the moment something needs you" }
+      ],
+      "cards": [
+        { "title": "Unified inbox", "desc": "Web, Telegram, WhatsApp, Instagram, Facebook and more, merged." },
+        { "title": "Live messages", "desc": "New messages stream in instantly for every operator." },
+        { "title": "Notifications", "desc": "Order, stock and activity alerts the moment they happen." },
+        { "title": "One thread per customer", "desc": "All of a customer's channels in a single conversation." },
+        { "title": "Team-ready", "desc": "Everyone on your team works from the same live view." },
+        { "title": "Reply anywhere", "desc": "Answer from the CRM; it goes back on the right channel." }
+      ],
+      "deep": {
+        "eyebrow": "Always live",
+        "title": "Talk to customers the moment they reach out",
+        "body": "Messages from every connected channel land in your inbox live, and your team is notified instantly. Reply from one place and the customer gets it on the channel they used.",
+        "points": [
+          "Nine channels merged into one shared inbox",
+          "New messages and notifications arrive live — no refreshing",
+          "One conversation per customer, across all their channels",
+          "Built for a team — everyone sees the same live queue"
+        ],
+        "chipsTitle": "Connected channels",
+        "chips": ["Website chat", "Telegram", "WhatsApp", "Instagram", "Facebook", "Discord", "Viber", "X", "Email"]
+      }
+    }
+  }
+}

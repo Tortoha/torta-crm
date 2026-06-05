@@ -348,9 +348,15 @@ function OrderRow({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onCo
           {formatCustomerName(order)}
           {order.is_guest && <span className="ord-guest-badge">{t('orders.list.guest')}</span>}
         </span>
-        {order.customer_email && (
-          <span className="ord-prow-email">{order.customer_email}</span>
-        )}
+        <span className="ord-prow-sub">
+          <span className="ord-prow-orderno">#{order.id}</span>
+          {order.customer_email && (
+            <>
+              <span className="ord-prow-dot">·</span>
+              <span className="ord-prow-email">{order.customer_email}</span>
+            </>
+          )}
+        </span>
       </span>
 
       <span className="prow-cell">{t('orders.list.itemsCount', { count: order.items_count })}</span>
@@ -410,6 +416,8 @@ function OrderCard({ order, pq, onUpdated, onOpen, selected, onToggleSelect, onP
           <div className="ord-card-email">{order.customer_email}</div>
         )}
         <div className="ord-card-meta">
+          <span className="ord-card-orderno">#{order.id}</span>
+          <span className="ord-card-dot">·</span>
           <span className="ord-card-amount">{formatMoney(order.total_amount, order.payment_currency)}</span>
           <span className="ord-card-dot">·</span>
           <span>{t('orders.list.itemsCount', { count: order.items_count })}</span>

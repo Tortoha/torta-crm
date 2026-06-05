@@ -1,0 +1,121 @@
+/* ── Developers → API page (Pages/Landing/DevelopersPage.jsx) ──────────
+   Reuses .ln-* + .pf-* primitives; only the API-page-specific bits live
+   here, prefixed .dev-*. Syntax colours come from Landing.css (.ln-cd-*).
+   ──────────────────────────────────────────────────────────────────── */
+
+/* ── Code block (terminal-style dark card) ───────────────────────── */
+.dev-code {
+  width: 100%;
+  background: #0b0b0f;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .dev-code {
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.dev-code-bar { display: flex; gap: 7px; padding: 14px 16px 2px; }
+.dev-code-bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.14); }
+
+.dev-code-body {
+  padding: 12px 18px 18px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.85;
+  color: #e3e3e6;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.dev-code-line { min-height: 1.85em; }
+.dev-code--hero .dev-code-line { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dev-code--hero .dev-code-line { opacity: 1 !important; transform: none !important; }
+}
+
+/* ── Namespaces grid ("one client, every endpoint") ──────────────── */
+.dev-ns-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 880px) { .dev-ns-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 520px) { .dev-ns-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.dev-ns {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dev-ns-code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.dev-ns-label { font-size: 12px; color: var(--muted); }
+
+/* ── Framework pills ─────────────────────────────────────────────── */
+.dev-fw-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.dev-fw {
+  background: var(--card);
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* ── Quickstart steps ────────────────────────────────────────────── */
+.dev-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 880px) { .dev-steps { grid-template-columns: 1fr; } }
+
+.dev-step {
+  background: var(--card);
+  border-radius: 24px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dev-step-num {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.dev-step h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
+.dev-step p { margin: 0 0 8px; font-size: 14px; line-height: 1.55; color: var(--muted); }
+.dev-step .dev-code { margin-top: auto; }
+.dev-step .dev-code-body { font-size: 12px; padding: 10px 14px 14px; }
+.dev-step .dev-code-bar { padding: 12px 14px 0; }
