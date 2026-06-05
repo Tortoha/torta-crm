@@ -2447,9 +2447,11 @@ def run_migrations():
                     type        VARCHAR(40)  NOT NULL,
                     subject     VARCHAR(300) NOT NULL DEFAULT '',
                     blocks      JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    html        TEXT         NOT NULL DEFAULT '',
                     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
                 )
             """)
+            cur.execute("ALTER TABLE crm_email_templates ADD COLUMN IF NOT EXISTS html TEXT NOT NULL DEFAULT ''")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_email_tpl_global  ON crm_email_templates(type) WHERE project_id IS NULL")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_email_tpl_project ON crm_email_templates(project_id, type) WHERE project_id IS NOT NULL")
             cur.execute("""
@@ -2459,12 +2461,15 @@ def run_migrations():
                     name           VARCHAR(200) NOT NULL DEFAULT '',
                     subject        VARCHAR(300) NOT NULL DEFAULT '',
                     blocks         JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    html           TEXT         NOT NULL DEFAULT '',
                     status         VARCHAR(20)  NOT NULL DEFAULT 'draft',
                     schedule_type  VARCHAR(20)  NOT NULL DEFAULT 'now',
                     scheduled_at   TIMESTAMPTZ,
                     recur_dow      SMALLINT,
+                    recur_dows     JSONB        NOT NULL DEFAULT '[]'::jsonb,
                     recur_time     VARCHAR(5),
                     exclude_guests BOOLEAN      NOT NULL DEFAULT TRUE,
+                    repeat_annually BOOLEAN     NOT NULL DEFAULT FALSE,
                     next_run_at    TIMESTAMPTZ,
                     sent_count     INTEGER      NOT NULL DEFAULT 0,
                     total_count    INTEGER      NOT NULL DEFAULT 0,
@@ -2474,8 +2479,24 @@ def run_migrations():
                     updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
                 )
             """)
+            cur.execute("ALTER TABLE crm_email_campaigns ADD COLUMN IF NOT EXISTS html TEXT NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE crm_email_campaigns ADD COLUMN IF NOT EXISTS repeat_annually BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE crm_email_campaigns ADD COLUMN IF NOT EXISTS recur_dows JSONB NOT NULL DEFAULT '[]'::jsonb")
             cur.execute("CREATE INDEX IF NOT EXISTS ix_email_campaigns_project ON crm_email_campaigns(project_id, created_at DESC)")
             cur.execute("CREATE INDEX IF NOT EXISTS ix_email_campaigns_due ON crm_email_campaigns(next_run_at) WHERE status='scheduled'")
+            # Email media library — images/PDFs a merchant uploads to drop into email HTML.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_email_media (
+                    id          BIGSERIAL PRIMARY KEY,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    url         TEXT        NOT NULL,
+                    filename    VARCHAR(200) NOT NULL DEFAULT '',
+                    kind        VARCHAR(10) NOT NULL DEFAULT 'image',
+                    size        BIGINT      NOT NULL DEFAULT 0,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_email_media_project ON crm_email_media(project_id, created_at DESC)")
             conn.commit()
     except Exception as e:
         print(f"[migration] crm_email_* failed: {e}")
@@ -22553,6 +22574,7 @@ def document_settings_save(req: DocumentSettingsRequest,
 class EmailTemplateSave(BaseModel):
     subject: Optional[str] = None
     blocks:  Optional[List[dict]] = None
+    html:    Optional[str] = None
 
 class EmailBrandingSave(BaseModel):
     logo_url:     Optional[str] = None
@@ -22564,11 +22586,6 @@ class EmailBrandingSave(BaseModel):
     header_text:  Optional[str] = None
     footer_text:  Optional[str] = None
     social_links: Optional[List[dict]] = None
-
-class EmailPreviewRequest(BaseModel):
-    type:    str
-    subject: Optional[str] = ""
-    blocks:  List[dict] = []
 
 
 def _resolve_email_branding(project_id: int) -> dict:
@@ -22583,13 +22600,16 @@ def _resolve_email_branding(project_id: int) -> dict:
 
 
 def _resolve_email_template(project_id: int, etype: str):
-    """Per-project override row if present, else the code default. Returns (subject, blocks, is_customized)."""
-    row = db_one("SELECT subject, blocks FROM crm_email_templates WHERE project_id=%s AND type=%s",
+    """Per-project override row if present, else the code default.
+    Returns (subject, blocks, html, is_customized). `html` is the raw-HTML
+    template (new code editor); empty when the row predates HTML mode — callers
+    derive it via email_engine.blocks_to_html()."""
+    row = db_one("SELECT subject, blocks, html FROM crm_email_templates WHERE project_id=%s AND type=%s",
                  (project_id, etype))
     if row:
-        return row["subject"], row["blocks"], True
+        return row["subject"], row["blocks"], (row.get("html") or ""), True
     d = DEFAULT_EMAIL_TEMPLATES.get(etype, {})
-    return d.get("subject", ""), d.get("blocks", []), False
+    return d.get("subject", ""), d.get("blocks", []), "", False
 
 
 def _project_store_name(project_id) -> str:
@@ -22605,14 +22625,18 @@ def _send_template_email(project_id, etype, to, variables, *, from_name=None, fr
         fn, fe = get_project_email(project_id) if project_id else ("Torta Store", EMAIL_FROM)
         from_name = from_name or fn
         from_email = from_email or fe
-    subject_tpl, blocks, _ = _resolve_email_template(project_id, etype)
-    if not template_has_required(etype, blocks, subject_tpl):
+    subject_tpl, blocks, html_tpl, _ = _resolve_email_template(project_id, etype)
+    # Validate required vars; fall back to the code default (blocks) if missing.
+    ok = (email_engine.template_has_required_html(etype, html_tpl, subject_tpl)
+          if html_tpl else template_has_required(etype, blocks, subject_tpl))
+    if not ok:
         d = DEFAULT_EMAIL_TEMPLATES.get(etype, {})
-        subject_tpl, blocks = d.get("subject", ""), d.get("blocks", [])
+        subject_tpl, blocks, html_tpl = d.get("subject", ""), d.get("blocks", []), ""
     branding = _resolve_email_branding(project_id)
     subject = email_engine.render_subject(subject_tpl, variables) or EMAIL_TYPES.get(etype, {}).get("subject", "")
-    html = render_email(blocks, branding, variables, unsubscribe_url=unsubscribe_url)
-    return send_email(to, subject, html, from_name, from_email, project_id=project_id)
+    html = (email_engine.render_email_html(html_tpl, branding, variables, unsubscribe_url=unsubscribe_url)
+            if html_tpl else render_email(blocks, branding, variables, unsubscribe_url=unsubscribe_url))
+    return send_email(to, subject, html, from_email=from_email, from_name=from_name, project_id=project_id)
 
 
 @app.get("/api/email-templates")
@@ -22620,7 +22644,7 @@ def email_templates_list(project_id: int = Query(...), user: dict = Depends(get_
     require_page_auto(user, project_id)
     items = []
     for etype, meta in EMAIL_TYPES.items():
-        subject, blocks, custom = _resolve_email_template(project_id, etype)
+        subject, blocks, _html, custom = _resolve_email_template(project_id, etype)
         items.append({"type": etype, "label": meta["label"], "required_vars": meta["required_vars"],
                       "subject": subject, "blocks": blocks, "is_customized": custom})
     return {"items": items}
@@ -22631,80 +22655,40 @@ def email_template_get(etype: str, project_id: int = Query(...), user: dict = De
     require_page_auto(user, project_id)
     if etype not in EMAIL_TYPES:
         raise HTTPException(404, "Unknown email type")
-    subject, blocks, custom = _resolve_email_template(project_id, etype)
+    subject, blocks, html, custom = _resolve_email_template(project_id, etype)
+    if not html:   # legacy/default row → render its blocks to editable HTML once
+        html = email_engine.blocks_to_html(blocks, _resolve_email_branding(project_id))
     meta = EMAIL_TYPES[etype]
     return {"type": etype, "label": meta["label"], "required_vars": meta["required_vars"],
             "sample_vars": SAMPLE_VARS.get(etype, {}), "subject": subject,
-            "blocks": blocks, "is_customized": custom}
+            "html": html, "blocks": blocks, "is_customized": custom}
 
 
 @app.put("/api/email-templates/{etype}")
-def _collect_storage_urls(blocks) -> set:
-    """Recursively pull every URL inside an email blocks structure that points
-    at OUR object storage (R2 / CloudFront / S3). Used to garbage-collect
-    images dropped from a template on save."""
-    prefixes = tuple(p for p in (
-        R2_PUBLIC_URL.rstrip("/") if R2_PUBLIC_URL else "",
-        AWS_CLOUDFRONT_URL.rstrip("/") if AWS_CLOUDFRONT_URL else "",
-        f"https://{AWS_S3_BUCKET}.s3.{AWS_S3_REGION}.amazonaws.com",
-    ) if p)
-    out: set = set()
-    def walk(x):
-        if isinstance(x, str):
-            if prefixes and x.startswith(prefixes):
-                out.add(x)
-        elif isinstance(x, dict):
-            for v in x.values():
-                walk(v)
-        elif isinstance(x, list):
-            for v in x:
-                walk(v)
-    walk(blocks)
-    return out
-
-
-def _gc_email_images(old_blocks, new_blocks, project_id: int) -> None:
-    """Delete storage objects for images removed from an email template —
-    unless the same URL is still referenced by another email template in this
-    project (don't delete a shared image). Best-effort; never raises."""
-    try:
-        removed = _collect_storage_urls(old_blocks) - _collect_storage_urls(new_blocks)
-        for url in removed:
-            still = db_one(
-                "SELECT 1 FROM crm_email_templates "
-                "WHERE project_id=%s AND blocks::text LIKE %s LIMIT 1",
-                (project_id, f"%{url}%"))
-            if still:
-                continue  # still used elsewhere in this project's emails
-            key = s3_key_from_url(url)
-            if key:
-                s3_delete(key)
-    except Exception as e:
-        print(f"[email/gc] project={project_id} cleanup skipped: {e}")
-
-
 def email_template_save(etype: str, req: EmailTemplateSave,
                         project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
     if etype not in EMAIL_TYPES:
         raise HTTPException(404, "Unknown email type")
-    cur_subject, cur_blocks, _ = _resolve_email_template(project_id, etype)
+    cur_subject, _cur_blocks, cur_html, _ = _resolve_email_template(project_id, etype)
     subject = req.subject if req.subject is not None else cur_subject
-    blocks  = req.blocks  if req.blocks  is not None else cur_blocks
-    if not template_has_required(etype, blocks, subject):
-        missing = ", ".join("{{" + m + "}}" for m in EMAIL_TYPES[etype]["required_vars"])
+    html    = req.html    if req.html    is not None else cur_html
+    if not email_engine.template_has_required_html(etype, html, subject):
+        missing = ", ".join("<Verification_Code />" if m == "code" else "{{" + m + "}}"
+                            for m in EMAIL_TYPES[etype]["required_vars"])
         raise HTTPException(400, f"This email must include: {missing}")
+    # `html` stored raw — it's intentional HTML, rendered only in sandboxed
+    # contexts (the editor's sandbox iframe + email clients, which strip JS).
+    # Subject stays sanitized (shown as plain text in the CRM).
     with db_cursor() as (conn, cur):
         cur.execute(
-            "INSERT INTO crm_email_templates (project_id, type, subject, blocks) "
-            "VALUES (%s, %s, %s, %s::jsonb) "
+            "INSERT INTO crm_email_templates (project_id, type, subject, html, blocks) "
+            "VALUES (%s, %s, %s, %s, '[]'::jsonb) "
             "ON CONFLICT (project_id, type) WHERE project_id IS NOT NULL "
-            "DO UPDATE SET subject=EXCLUDED.subject, blocks=EXCLUDED.blocks, updated_at=NOW()",
-            (project_id, etype, sanitize(subject), json.dumps(blocks))
+            "DO UPDATE SET subject=EXCLUDED.subject, html=EXCLUDED.html, updated_at=NOW()",
+            (project_id, etype, sanitize(subject), html)
         )
         conn.commit()
-    # GC images that were removed from the template in this edit.
-    _gc_email_images(cur_blocks, blocks, project_id)
     return {"ok": True}
 
 
@@ -22716,8 +22700,10 @@ def email_template_reset(etype: str, project_id: int = Query(...), user: dict = 
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_email_templates WHERE project_id=%s AND type=%s", (project_id, etype))
         conn.commit()
-    subject, blocks, _ = _resolve_email_template(project_id, etype)
-    return {"ok": True, "subject": subject, "blocks": blocks}
+    subject, blocks, html, _ = _resolve_email_template(project_id, etype)
+    if not html:
+        html = email_engine.blocks_to_html(blocks, _resolve_email_branding(project_id))
+    return {"ok": True, "subject": subject, "html": html, "blocks": blocks}
 
 
 @app.get("/api/email-branding")
@@ -22755,27 +22741,21 @@ def email_branding_save(req: EmailBrandingSave,
     return {"ok": True}
 
 
-@app.post("/api/email-preview")
-def email_preview(req: EmailPreviewRequest,
-                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
-    require_page_auto(user, project_id)
-    br = _resolve_email_branding(project_id)
-    variables = dict(SAMPLE_VARS.get(req.type, {}))
-    html = render_email(req.blocks or [], br, variables, unsubscribe_url="#")
-    return {"html": html}
-
-
 # ── EMAIL CAMPAIGNS (broadcasts) ──
 
 class CampaignSave(BaseModel):
     name:           Optional[str] = None
     subject:        Optional[str] = None
     blocks:         Optional[List[dict]] = None
+    html:           Optional[str] = None
     schedule_type:  Optional[str] = None
     scheduled_at:   Optional[str] = None
     recur_dow:      Optional[int] = None
+    recur_dows:     Optional[List[int]] = None   # weekly: multiple days (0=Mon..6=Sun)
     recur_time:     Optional[str] = None
     exclude_guests: Optional[bool] = None
+    repeat_annually: Optional[bool] = None
+    as_draft:       Optional[bool] = None   # auto-save: persist fields but keep status='draft' (don't schedule)
 
 
 def _parse_iso(s):
@@ -22812,14 +22792,31 @@ def _next_weekly_run(dow, hhmm, now_utc, project_id):
     return cand.astimezone(timezone.utc)
 
 
-def _campaign_compute_schedule(project_id, schedule_type, scheduled_at, recur_dow, recur_time, now=None):
+def _next_weekly_run_multi(dows, hhmm, now_utc, project_id):
+    """Soonest next run among several weekdays (dows: list of 0=Mon..6=Sun at HH:MM)."""
+    cands = [_next_weekly_run(d, hhmm, now_utc, project_id) for d in (dows or []) if d is not None]
+    return min(cands) if cands else None
+
+
+def _weekly_days(recur_dows, recur_dow):
+    """Resolve the set of weekdays for a recurring campaign — new multi-day list,
+    falling back to the legacy single `recur_dow` for old rows."""
+    days = [int(d) for d in (recur_dows or []) if d is not None]
+    if not days and recur_dow is not None:
+        days = [int(recur_dow)]
+    return days
+
+
+def _campaign_compute_schedule(project_id, schedule_type, scheduled_at, recur_dow, recur_time, now=None, recur_dows=None):
     now = now or _utcnow()
     if schedule_type == "scheduled":
         dt = _parse_iso(scheduled_at)
         if dt:
             return "scheduled", dt
-    if schedule_type == "recurring" and recur_dow is not None and recur_time:
-        return "scheduled", _next_weekly_run(recur_dow, recur_time, now, project_id)
+    if schedule_type == "recurring" and recur_time:
+        nxt = _next_weekly_run_multi(_weekly_days(recur_dows, recur_dow), recur_time, now, project_id)
+        if nxt:
+            return "scheduled", nxt
     return "draft", None
 
 
@@ -22850,6 +22847,7 @@ def _send_campaign_to_recipients(campaign):
     pr = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,)) or {}
     api_key = pr.get("api_key") or ""
     blocks = campaign["blocks"]
+    html_tpl = campaign.get("html") or ""
     recipients = _campaign_recipients(project_id, bool(campaign.get("exclude_guests", True)))
     sent = 0
     for u in recipients:
@@ -22859,8 +22857,9 @@ def _send_campaign_to_recipients(campaign):
             cvars = {"customer_name": u.get("name") or "", "email": u.get("email") or "",
                      "store_name": _project_store_name(project_id)}
             subject = email_engine.render_subject(campaign["subject"], cvars)
-            html = render_email(blocks, branding, cvars, unsubscribe_url=unsub)
-            if send_email(u["email"], subject, html, from_name, from_email, project_id=project_id):
+            html = (email_engine.render_email_html(html_tpl, branding, cvars, unsubscribe_url=unsub)
+                    if html_tpl else render_email(blocks, branding, cvars, unsubscribe_url=unsub))
+            if send_email(u["email"], subject, html, from_email=from_email, from_name=from_name, project_id=project_id):
                 sent += 1
         except Exception as e:
             print(f"[campaign {campaign['id']}] send to {u.get('email')} failed: {e}")
@@ -22894,8 +22893,19 @@ def _run_campaign(campaign, now):
         cur.execute("UPDATE crm_email_campaigns SET status='sending', updated_at=NOW() WHERE id=%s", (cid,))
         conn.commit()
     sent, total = _send_campaign_to_recipients(campaign)
-    if campaign.get("schedule_type") == "recurring" and campaign.get("recur_dow") is not None:
-        nxt = _next_weekly_run(campaign["recur_dow"], campaign.get("recur_time"), now, campaign["project_id"])
+    _weekdays = _weekly_days(campaign.get("recur_dows"), campaign.get("recur_dow"))
+    if campaign.get("schedule_type") == "recurring" and _weekdays:
+        # Soonest of the selected weekdays (Mon/Wed/Fri etc.) strictly after now.
+        nxt = _next_weekly_run_multi(_weekdays, campaign.get("recur_time"), now, campaign["project_id"])
+        new_status = "scheduled"
+    elif campaign.get("schedule_type") == "scheduled" and campaign.get("repeat_annually"):
+        # Re-arm one year out (e.g. an annual Christmas promo). Advance from the
+        # run that just fired so it doesn't loop on a past date.
+        base = campaign.get("next_run_at") or campaign.get("scheduled_at") or now
+        try:
+            nxt = base.replace(year=base.year + 1)
+        except ValueError:           # Feb 29 → non-leap year
+            nxt = base + timedelta(days=365)
         new_status = "scheduled"
     else:
         nxt, new_status = None, "sent"
@@ -22958,15 +22968,18 @@ def email_campaigns_list(project_id: int = Query(...), user: dict = Depends(get_
 def email_campaign_create(req: CampaignSave, project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
     status, next_run = _campaign_compute_schedule(project_id, req.schedule_type or "now",
-                                                  req.scheduled_at, req.recur_dow, req.recur_time)
+                                                  req.scheduled_at, req.recur_dow, req.recur_time,
+                                                  recur_dows=req.recur_dows)
     with db_cursor() as (conn, cur):
         cur.execute(
             "INSERT INTO crm_email_campaigns"
-            " (project_id, name, subject, blocks, status, schedule_type, scheduled_at, recur_dow, recur_time, exclude_guests, next_run_at)"
-            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            " (project_id, name, subject, blocks, html, status, schedule_type, scheduled_at, recur_dow, recur_dows, recur_time, exclude_guests, repeat_annually, next_run_at)"
+            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s) RETURNING id",
             (project_id, sanitize(req.name or "Untitled campaign"), sanitize(req.subject or ""),
-             json.dumps(req.blocks or []), status, req.schedule_type or "now", _parse_iso(req.scheduled_at),
-             req.recur_dow, req.recur_time, req.exclude_guests if req.exclude_guests is not None else True, next_run)
+             json.dumps(req.blocks or []), req.html or "", status, req.schedule_type or "now", _parse_iso(req.scheduled_at),
+             req.recur_dow, json.dumps(req.recur_dows or []), req.recur_time,
+             req.exclude_guests if req.exclude_guests is not None else True,
+             bool(req.repeat_annually), next_run)
         )
         cid = cur.fetchone()["id"]
         conn.commit()
@@ -22979,7 +22992,13 @@ def email_campaign_get(cid: int, project_id: int = Query(...), user: dict = Depe
     row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
     if not row:
         raise HTTPException(404, "Campaign not found")
-    return _campaign_out(row)
+    out = _campaign_out(row)
+    # Legacy campaigns authored in the old block editor → migrate to editable HTML
+    # once so they open in the code editor. New campaigns have html='' and the
+    # editor seeds the default broadcast template.
+    if not out.get("html") and out.get("blocks"):
+        out["html"] = email_engine.blocks_to_html(out["blocks"], _resolve_email_branding(project_id))
+    return out
 
 
 @app.put("/api/email-campaigns/{cid}")
@@ -22992,20 +23011,29 @@ def email_campaign_update(cid: int, req: CampaignSave, project_id: int = Query(.
     name = sanitize(f["name"]) if "name" in f else existing["name"]
     subject = sanitize(f["subject"]) if "subject" in f else existing["subject"]
     blocks = f["blocks"] if "blocks" in f else existing["blocks"]
+    html = f["html"] if "html" in f else (existing.get("html") or "")
     schedule_type = f.get("schedule_type", existing["schedule_type"])
     scheduled_at = f["scheduled_at"] if "scheduled_at" in f else (
         existing["scheduled_at"].isoformat() if existing["scheduled_at"] else None)
     recur_dow = f.get("recur_dow", existing["recur_dow"])
+    recur_dows = f["recur_dows"] if "recur_dows" in f else (existing.get("recur_dows") or [])
     recur_time = f.get("recur_time", existing["recur_time"])
     exclude_guests = f.get("exclude_guests", existing["exclude_guests"])
-    status, next_run = _campaign_compute_schedule(project_id, schedule_type, scheduled_at, recur_dow, recur_time)
+    repeat_annually = f.get("repeat_annually", existing.get("repeat_annually", False))
+    # Auto-save persists the draft fields without activating the schedule — only the
+    # explicit Schedule/Send actions compute a live status.
+    if f.get("as_draft"):
+        status, next_run = "draft", None
+    else:
+        status, next_run = _campaign_compute_schedule(project_id, schedule_type, scheduled_at, recur_dow,
+                                                      recur_time, recur_dows=recur_dows)
     with db_cursor() as (conn, cur):
         cur.execute(
-            "UPDATE crm_email_campaigns SET name=%s, subject=%s, blocks=%s::jsonb, status=%s,"
-            " schedule_type=%s, scheduled_at=%s, recur_dow=%s, recur_time=%s, exclude_guests=%s,"
-            " next_run_at=%s, updated_at=NOW() WHERE id=%s AND project_id=%s",
-            (name, subject, json.dumps(blocks or []), status, schedule_type, _parse_iso(scheduled_at),
-             recur_dow, recur_time, exclude_guests, next_run, cid, project_id)
+            "UPDATE crm_email_campaigns SET name=%s, subject=%s, blocks=%s::jsonb, html=%s, status=%s,"
+            " schedule_type=%s, scheduled_at=%s, recur_dow=%s, recur_dows=%s::jsonb, recur_time=%s, exclude_guests=%s,"
+            " repeat_annually=%s, next_run_at=%s, updated_at=NOW() WHERE id=%s AND project_id=%s",
+            (name, subject, json.dumps(blocks or []), html, status, schedule_type, _parse_iso(scheduled_at),
+             recur_dow, json.dumps(recur_dows or []), recur_time, exclude_guests, bool(repeat_annually), next_run, cid, project_id)
         )
         conn.commit()
     return {"ok": True, "status": status}
@@ -23052,9 +23080,108 @@ def email_campaign_test(cid: int, project_id: int = Query(...),
     from_name, from_email = get_project_email(project_id)
     cvars = {"customer_name": "there", "email": email, "store_name": _project_store_name(project_id)}
     subject = email_engine.render_subject(row["subject"], cvars) or "Test campaign"
-    html = render_email(row["blocks"], branding, cvars, unsubscribe_url="#")
-    ok = send_email(email, subject, html, from_name, from_email)
+    html_tpl = (row.get("html") or "")
+    html = (email_engine.render_email_html(html_tpl, branding, cvars, unsubscribe_url="#")
+            if html_tpl else render_email(row["blocks"], branding, cvars, unsubscribe_url="#"))
+    ok = send_email(email, subject, html, from_email=from_email, from_name=from_name)
     return {"ok": ok}
+
+
+@app.post("/api/email-campaigns/{cid}/pause")
+def email_campaign_pause(cid: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Pause a scheduled/recurring campaign — status='paused', next_run cleared so
+    the scheduler skips it. Reversible via /resume."""
+    require_page_auto(user, project_id)
+    row = db_one("SELECT status FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
+    if not row:
+        raise HTTPException(404, "Campaign not found")
+    if row["status"] not in ("scheduled", "blocked"):
+        raise HTTPException(400, "Only a scheduled campaign can be paused")
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_email_campaigns SET status='paused', next_run_at=NULL, updated_at=NOW()"
+                    " WHERE id=%s AND project_id=%s", (cid, project_id))
+        conn.commit()
+    return {"ok": True, "status": "paused"}
+
+
+@app.post("/api/email-campaigns/{cid}/resume")
+def email_campaign_resume(cid: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Resume a paused campaign — recompute its schedule from schedule_type."""
+    require_page_auto(user, project_id)
+    row = db_one("SELECT * FROM crm_email_campaigns WHERE id=%s AND project_id=%s", (cid, project_id))
+    if not row:
+        raise HTTPException(404, "Campaign not found")
+    if row["status"] != "paused":
+        raise HTTPException(400, "Only a paused campaign can be resumed")
+    sched_at = row["scheduled_at"].isoformat() if row["scheduled_at"] else None
+    status, next_run = _campaign_compute_schedule(
+        project_id, row["schedule_type"], sched_at, row["recur_dow"], row["recur_time"],
+        recur_dows=row.get("recur_dows"))
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_email_campaigns SET status=%s, next_run_at=%s, updated_at=NOW()"
+                    " WHERE id=%s AND project_id=%s", (status, next_run, cid, project_id))
+        conn.commit()
+    return {"ok": True, "status": status}
+
+
+# ── EMAIL MEDIA LIBRARY (images / PDFs to drop into email HTML) ──
+
+class EmailMediaSave(BaseModel):
+    url:      str
+    filename: Optional[str] = ""
+    kind:     Optional[str] = "image"   # "image" | "pdf"
+    size:     Optional[int] = 0
+
+
+@app.get("/api/email-media")
+def email_media_list(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    rows = db_all("SELECT id, url, filename, kind, size, created_at FROM crm_email_media"
+                  " WHERE project_id=%s ORDER BY created_at DESC", (project_id,))
+    for r in rows:
+        if r.get("created_at"):
+            r["created_at"] = r["created_at"].isoformat()
+    return {"items": rows}
+
+
+@app.post("/api/email-media")
+def email_media_add(req: EmailMediaSave, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    url = (req.url or "").strip()
+    if not url:
+        raise HTTPException(400, "url required")
+    kind = "pdf" if (req.kind or "").lower() == "pdf" else "image"
+    with db_cursor() as (conn, cur):
+        cur.execute("INSERT INTO crm_email_media (project_id, url, filename, kind, size)"
+                    " VALUES (%s,%s,%s,%s,%s) RETURNING id, url, filename, kind, size, created_at",
+                    (project_id, url, sanitize(req.filename or "")[:200], kind, int(req.size or 0)))
+        row = cur.fetchone()
+        conn.commit()
+    if row.get("created_at"):
+        row["created_at"] = row["created_at"].isoformat()
+    return row
+
+
+@app.delete("/api/email-media/{mid}")
+def email_media_delete(mid: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    row = db_one("SELECT url, size FROM crm_email_media WHERE id=%s AND project_id=%s", (mid, project_id))
+    if not row:
+        raise HTTPException(404, "Not found")
+    # Best-effort: drop the R2 object + give the org its storage back.
+    try:
+        key = s3_key_from_url(row["url"])
+        if key:
+            s3_delete(key)
+            org_id = _project_org_id(project_id)
+            if org_id and row.get("size"):
+                _org_storage_inc(org_id, -int(row["size"]))
+    except Exception as e:
+        print(f"[email-media] delete cleanup skipped: {e}")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_email_media WHERE id=%s AND project_id=%s", (mid, project_id))
+        conn.commit()
+    return {"ok": True}
 
 
 # ── SHIPPING LABELS ──────────────────────────────────────

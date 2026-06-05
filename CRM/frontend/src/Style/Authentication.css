@@ -1990,10 +1990,10 @@
   /* The 960px design assumes a two-column layout (form left, preview right).
      Below sm, force single-column. Pages that need to keep a side-by-side
      layout can re-override with a more specific selector. */
-  .auth-modal-body {
+  /* .auth-modal-body { */
     /* common nested 2-col grids → 1-col */
     /* Pages using grid-template-columns lose the second column on mobile */
-  }
+  /* } */
 }
 
 /* ── xs 640-767 ── tighter ──────────────────────────────────────────────── */

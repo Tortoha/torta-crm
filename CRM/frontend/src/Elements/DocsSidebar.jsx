@@ -5,7 +5,7 @@ import {
   Rocket, Buildings, Lightning, UsersThree, Plugs, Compass,
   Lock, Storefront, ShoppingCart, Star, CalendarCheck, ChatCircle, ChartLine,
   House, Target, Tag, Package, Users, EnvelopeSimple, FileText, GearSix,
-  CreditCard, CaretDown,
+  CreditCard, CaretDown, MapTrifold,
 } from '@phosphor-icons/react';
 
 // Three groups: CRM navigation + API guides + API reference. Same collapsible-
@@ -44,6 +44,7 @@ function buildGroups(t) {
       id: 'apiGuides', label: t('docs.groups.apiGuides'),
       items: [
         { to: '/docs/quickstart', label: t('docs.pages.quickstart'), Icon: Lightning },
+        { to: '/docs/cheatsheet', label: t('docs.pages.cheatsheet'), Icon: MapTrifold },
         { to: '/docs/frameworks', label: t('docs.pages.frameworks'), Icon: Plugs },
         { to: '/docs/concepts',   label: t('docs.pages.concepts'),   Icon: Compass },
       ],

@@ -79,13 +79,15 @@
 }
 
 /* EmailPanel — row separators + show-all divider use the soft theme border. */
-[data-theme="dark"] .auth-dns-row + .auth-dns-row::before,
+[data-theme="dark"] .auth-dns-row+.auth-dns-row::before,
 [data-theme="dark"] .auth-dns-show-all {
   background: transparent;
 }
-[data-theme="dark"] .auth-dns-row + .auth-dns-row::before {
+
+[data-theme="dark"] .auth-dns-row+.auth-dns-row::before {
   background: var(--border-soft);
 }
+
 [data-theme="dark"] .auth-dns-show-all {
   border-top: 1px solid var(--border-soft);
 }
@@ -94,6 +96,7 @@
 [data-theme="dark"] .auth-dns-type {
   background: rgba(255, 255, 255, 0.06);
 }
+
 [data-theme="dark"] .auth-dns-dot--unknown {
   background: rgba(255, 255, 255, 0.22);
 }
@@ -111,7 +114,7 @@
 /* Inputs sit on cards — give the focus ring an accent edge instead of #000. */
 [data-theme="dark"] .crm-input:focus,
 [data-theme="dark"] .crm-input:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--card);
 }
 
 /* Segmented switch track is var(--card); on a card that blends — drop it to --bg. */
@@ -125,6 +128,7 @@
   background: #2C2C2F;
   color: var(--muted);
 }
+
 [data-theme="dark"] .crm-badge--dark {
   background: #2C2C2F;
   color: var(--text);
@@ -473,6 +477,12 @@ body {
   background: var(--bg);
   border-radius: 48px 0 0 0;
   padding: 0 24px;
+  /* Own stacking context so the rounded top-left corner clips cleanly — without
+     it Chromium can paint the cut-out corner black once a descendant promotes to
+     a 3D layer (InteractiveSection tilt) on some routes. `isolation` (not
+     `transform`/`will-change`) so we DON'T become the containing block for the
+     fixed `.auth-tab-wrapper` tab switcher rendered inside us. */
+  isolation: isolate;
 }
 
 /* No sidebar — no rounded corner */
@@ -572,23 +582,39 @@ body {
 
 /* ── lg: 1366-1919 ── tiny squeeze, nothing dramatic ─────────────────────── */
 @media (max-width: 1919px) {
-  .crm-content--wide { max-width: 1440px; }
+  .crm-content--wide {
+    max-width: 1440px;
+  }
 }
 
 @media (max-width: 1439px) {
-  .crm-content--wide { max-width: 1280px; }
-  .crm-main { padding: 0 20px; }
+  .crm-content--wide {
+    max-width: 1280px;
+  }
+
+  .crm-main {
+    padding: 0 20px;
+  }
 }
 
 /* ── md: 1024-1365 ── tablet landscape / small laptop ────────────────────── */
 @media (max-width: 1365px) {
-  .crm-content--wide { max-width: 100%; }
-  .crm-main { padding: 0 16px; }
-  .crm-page-title { padding-top: 96px; }
+  .crm-content--wide {
+    max-width: 100%;
+  }
+
+  .crm-main {
+    padding: 0 16px;
+  }
+
+  .crm-page-title {
+    padding-top: 96px;
+  }
 }
 
 /* ── sm: 768-1023 ── tablet portrait — sidebar becomes drawer overlay ────── */
 @media (max-width: 1023px) {
+
   /* Pull sidebar out of layout flow → overlay drawer */
   .sidebar {
     position: fixed;
@@ -646,12 +672,16 @@ body {
 
 /* ── xs: 640-767 ── large mobile / small tablet — same as sm ─────────────── */
 @media (max-width: 767px) {
+
   /* Smaller page padding */
-  .crm-main { padding: 0 var(--mobile-content-pad); }
+  .crm-main {
+    padding: 0 var(--mobile-content-pad);
+  }
 }
 
 /* ── xxs: <640 ── true mobile — bottom tab bar appears, leave room ───────── */
 @media (max-width: 639px) {
+
   /* The bottom tab bar (.mtb-root) is `position: fixed; bottom: 0` — it
      overlays the bottom of .crm-main's scrolled content. Padding on
      .crm-main alone is unreliable (the scroll container's padding-bottom
@@ -678,7 +708,16 @@ body {
 
 /* ── xxxs: <360 ── tightest, single-column anything left ─────────────────── */
 @media (max-width: 359px) {
-  .crm-main { padding: 0 var(--mobile-content-pad-xxs); }
-  .crm-card { padding: 14px; }
-  .crm-page-title { font-size: 19px; padding-top: 16px; }
+  .crm-main {
+    padding: 0 var(--mobile-content-pad-xxs);
+  }
+
+  .crm-card {
+    padding: 14px;
+  }
+
+  .crm-page-title {
+    font-size: 19px;
+    padding-top: 16px;
+  }
 }
