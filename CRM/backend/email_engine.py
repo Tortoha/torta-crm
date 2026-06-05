@@ -398,3 +398,115 @@ DEFAULT_EMAIL_TEMPLATES = {
         ],
     },
 }
+
+
+# ── HTML email mode (raw-HTML templates) ─────────────────────────────────────
+# The merchant writes email-safe HTML directly (code editor). We expand self-
+# closing tags for dynamic/structured content + {{vars}} at send time. The tags
+# REUSE the dynamic renderers above so codes / order summaries / downloads still
+# render. This replaces the block editor; blocks_to_html migrates legacy rows.
+#   <Verification_Code />  → the OTP (grouped)
+#   <Order_Summary />      → items + total table
+#   <Downloads />          → digital download links
+
+
+class _LiteralVars(dict):
+    """get(k) → '{{k}}' so block→HTML migration keeps {{vars}} editable
+    (html.escape doesn't touch braces, so they survive _interpolate).
+    __bool__ stays True so `variables or {}` guards don't swap in a plain
+    empty dict (an empty dict subclass is otherwise falsy)."""
+    def __bool__(self):
+        return True
+    def get(self, k, default=""):
+        return "{{" + str(k) + "}}"
+
+
+def _inner_of_cell(tr_html):
+    """Strip the outer <tr><td …>…</td></tr> a block renderer returns, leaving
+    just the inner HTML so a dynamic tag can sit mid-document."""
+    m = re.search(r"<td[^>]*>(.*)</td>\s*</tr>\s*$", tr_html or "", re.S)
+    return m.group(1) if m else (tr_html or "")
+
+
+def _expand_html_tags(body, br, v):
+    code = str((v or {}).get("code", ""))
+    code_disp = _esc(f"{code[:3]} {code[3:]}" if len(code) == 6 else code)
+    body = re.sub(r"<Verification_Code\s*/?>", lambda m: code_disp, body, flags=re.I)
+    body = re.sub(r"<Order_Summary\s*/?>",
+                  lambda m: _inner_of_cell(_render_order_summary({}, br, v)), body, flags=re.I)
+    body = re.sub(r"<Downloads\s*/?>",
+                  lambda m: _inner_of_cell(_render_downloads({"title": "Your downloads"}, br, v)),
+                  body, flags=re.I)
+    return body
+
+
+def render_email_html(html, branding=None, variables=None, *, unsubscribe_url=None):
+    """Render a raw-HTML email template → final email document. Expands dynamic
+    tags + {{vars}}, appends the unsubscribe footer, wraps in an email doc."""
+    br = {**DEFAULT_BRANDING, **(branding or {})}
+    v = variables or {}
+    body = _expand_html_tags(str(html or ""), br, v)
+    body = _interpolate(body, v)          # simple {{vars}} (HTML-escaped)
+    footer = ""
+    if unsubscribe_url:
+        footer = (f'<div style="font-family:{br["font_family"]};font-size:12px;color:#999;'
+                  f'text-align:center;padding:20px 12px;">'
+                  f'<a href="{_esc(unsubscribe_url)}" target="_blank" style="color:#999;">Unsubscribe</a></div>')
+    return (
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+        f'<body style="margin:0;padding:0;">{body}{footer}</body></html>'
+    )
+
+
+def template_has_required_html(email_type, html, subject=""):
+    """True when every required var/tag of this type is present in html/subject.
+    'code' is satisfied by {{code}} OR <Verification_Code />."""
+    req = EMAIL_TYPES.get(email_type, {}).get("required_vars", [])
+    if not req:
+        return True
+    hay = f"{subject}\n{html or ''}"
+
+    def present(var):
+        if re.search(r"\{\{\s*" + re.escape(var) + r"\s*\}\}", hay):
+            return True
+        if var == "code" and re.search(r"<Verification_Code\s*/?>", hay, re.I):
+            return True
+        return False
+
+    return all(present(r) for r in req)
+
+
+def blocks_to_html(blocks, branding=None):
+    """One-time migration: legacy block JSON → editable HTML. Dynamic blocks
+    become self-closing tags so they stay dynamic; {{vars}} stay literal."""
+    br = {**DEFAULT_BRANDING, **(branding or {})}
+    lit = _LiteralVars()
+    rows = []
+    for b in (blocks or []):
+        if b.get("hidden") or b.get("type") == "background":
+            continue
+        t = b.get("type")
+        if t == "code":
+            rows.append(
+                '<tr><td align="center" style="padding:8px 24px 24px;">'
+                '<div style="display:inline-block;background:#f4f5f7;border-radius:12px;'
+                'padding:14px 26px;font-size:32px;letter-spacing:9px;font-weight:bold;'
+                'color:#0071E3;">{{code}}</div></td></tr>')
+            continue
+        if t == "order_summary":
+            rows.append('<tr><td style="padding:4px 24px 16px;"><Order_Summary /></td></tr>')
+            continue
+        if t == "downloads":
+            rows.append('<tr><td style="padding:4px 24px 16px;"><Downloads /></td></tr>')
+            continue
+        fn = _RENDERERS.get(t)
+        if fn:
+            rows.append(fn(b.get("props", {}) or {}, br, lit))
+    content = "\n  ".join(rows)   # one <tr> per line so it reads cleanly in the code editor
+    return (
+        '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" '
+        'style="width:600px;max-width:100%;background:#ffffff;border-radius:16px;overflow:hidden;'
+        'font-family:Arial,Helvetica,sans-serif;">\n  '
+        f'{content}\n</table>'
+    )

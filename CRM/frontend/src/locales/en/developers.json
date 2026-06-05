@@ -1,0 +1,56 @@
+{
+  "developers": {
+    "nav": "Developers",
+    "meta": {
+      "getStarted": "Start free",
+      "docs": "Read the docs",
+      "reference": "API reference"
+    },
+    "hero": {
+      "eyebrow": "Developers",
+      "title": "Your storefront API, wired up in minutes",
+      "lead": "Products, cart, checkout, sign-in, live chat and analytics — all through one tiny JavaScript SDK. Secure by default, framework-agnostic, and live in just a few lines."
+    },
+    "one": {
+      "eyebrow": "One client",
+      "title": "Every part of your store, one call away",
+      "lead": "Create the client once and reach the whole storefront through clean, namespaced methods. No raw fetch, no boilerplate — and every call comes back in the same predictable shape."
+    },
+    "secure": {
+      "eyebrow": "Secure by default",
+      "title": "Safe to ship to every browser",
+      "lead": "The keys that live in the browser can't do anything dangerous — and the powerful one never leaves your server.",
+      "cards": [
+        { "title": "Two keys, not one", "desc": "A public key identifies the store; a publishable key is checked on every request. Copying your URL alone won't work." },
+        { "title": "Secret key stays server-side", "desc": "Trusted writes use a secret key you keep on your backend — never shipped to the browser." },
+        { "title": "Sessions refresh themselves", "desc": "Login is cookie-based; on a 401 the SDK silently refreshes and retries. You never touch tokens." },
+        { "title": "CSRF handled for you", "desc": "Every write is protected automatically — there's nothing to wire up." }
+      ]
+    },
+    "shape": {
+      "eyebrow": "Predictable",
+      "title": "The same response, every time",
+      "lead": "Each method resolves to the same object and never throws on an HTTP error. Check ok, show error (always a ready-to-display string), use data — no try/catch gymnastics."
+    },
+    "frameworks": {
+      "eyebrow": "Framework-agnostic",
+      "title": "Drop it into whatever you build with",
+      "lead": "It's plain JavaScript with zero dependencies, so it runs anywhere. The docs have a copy-paste setup for each framework."
+    },
+    "quickstart": {
+      "eyebrow": "Quickstart",
+      "title": "Live in under a minute",
+      "lead": "Three steps from npm install to your first call.",
+      "steps": [
+        { "title": "Install", "desc": "Add the SDK — or load it straight from a CDN, no bundler needed." },
+        { "title": "Create the client", "desc": "Two browser-safe keys, copied from your project overview." },
+        { "title": "Call anything", "desc": "Products, cart, checkout, auth — all there, with a uniform response." }
+      ]
+    },
+    "cta": {
+      "eyebrow": "Get building",
+      "title": "Build your storefront today",
+      "sub": "Grab your keys and make your first call in minutes. Free to start, no credit card."
+    }
+  }
+}

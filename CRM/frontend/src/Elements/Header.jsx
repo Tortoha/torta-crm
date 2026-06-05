@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen, Tag, List } from '@phosphor-icons/react';
+import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen, Tag, List, Stack, Code } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
 import CreateOrgForm from './CreateOrgForm.jsx';
@@ -10,6 +10,8 @@ import NotificationsBell from './NotificationsBell.jsx';
 import { encodeId } from '../Utils/hashids.js';
 import { DynamicBlock } from '../Utils/DynamicBlock.js';
 import '../Style/Header.css';
+import '../Style/ProductNav.css';
+import { PRODUCT_NAV } from '../Pages/Landing/product/data.js';
 
 /* ── Initials avatar ── */
 function InitialsAvatar({ name, size = 28 }) {
@@ -396,7 +398,7 @@ function UserMenu({ user, project }) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(null);
   const wrapRef = useRef(null);
-  // Sliding indicator across the Settings / Pricing rows (follows hover).
+  // Sliding indicator across the Pricing / Settings rows (follows hover).
   const { indRef, setItemRef } = DynamicBlock(hovered, open);
 
   useEffect(() => {
@@ -445,15 +447,15 @@ function UserMenu({ user, project }) {
           <div className="hdr-um-dyn" onMouseLeave={() => setHovered(null)}>
             <div ref={indRef}
                  className={`hdr-sw-indicator${hovered === 'logout' ? ' hdr-sw-indicator--danger' : ''}`} />
-            <button ref={setItemRef('settings')} className="hdr-drop-item"
-                    onMouseEnter={() => setHovered('settings')}
-                    onClick={() => { setOpen(false); navigate('/settings/account'); }} type="button">
-              <GearSix className="hdr-drop-icon" /> {t('header.userMenu.settings')}
-            </button>
             <button ref={setItemRef('pricing')} className="hdr-drop-item"
                     onMouseEnter={() => setHovered('pricing')}
                     onClick={() => { setOpen(false); navigate('/pricing'); }} type="button">
               <Tag className="hdr-drop-icon" /> {t('header.userMenu.pricing', { defaultValue: 'Pricing' })}
+            </button>
+            <button ref={setItemRef('settings')} className="hdr-drop-item"
+                    onMouseEnter={() => setHovered('settings')}
+                    onClick={() => { setOpen(false); navigate('/settings/account'); }} type="button">
+              <GearSix className="hdr-drop-icon" /> {t('header.userMenu.settings')}
             </button>
             <button ref={setItemRef('logout')} className="hdr-drop-item hdr-drop-item--danger"
                     onMouseEnter={() => setHovered('logout')}
@@ -611,12 +613,16 @@ function ProductSwitcherCrumb({ project, productContext }) {
   );
 }
 
-/* ── Landing nav tabs (Pricing + Docs) ──
-   Hover-tracking Dynamic Block — same pattern as .auth-tab-* in the CRM.
-   Indicator slides between tabs as the cursor moves; falls back to the
-   active tab when the cursor leaves. The Docs tab carries `?from=landing`
-   so the DocsLayout knows to render the landing-style Header (instead of
-   the in-app one) when the user arrives from this nav. */
+/* ── Landing nav — Product mega-dropdown + Pricing/Docs tabs ──
+   Two Dynamic Blocks:
+   (1) the nav indicator slides on X across Product / Pricing / Docs (tracks
+       hover, falls back to the active route — Product counts as active on
+       /features/* and stays lit while its dropdown is open);
+   (2) a 2-D indicator INSIDE the dropdown that follows the hovered item on
+       both X and Y (the menu is a 2-column grid), like the booking-calendar
+       block.
+   Docs carries `?from=landing` so the DocsLayout renders the landing-style
+   Header instead of the in-app one. ── */
 function HeaderLandingNav() {
   const { t }      = useTranslation();
   const navigate   = useNavigate();
@@ -625,23 +631,40 @@ function HeaderLandingNav() {
   const btnRefs    = useRef({});
   const [hovered, setHovered] = useState(null);
 
+  // Product dropdown open-state + its 2-D indicator refs.
+  const [prodOpen, setProdOpen]       = useState(false);
+  const [prodHovered, setProdHovered] = useState(null);
+  const prodIndRef   = useRef(null);
+  const prodItemRefs = useRef({});
+  const closeTimer   = useRef(null);
+  const openProd  = () => { clearTimeout(closeTimer.current); setProdOpen(true); };
+  const closeProd = () => { closeTimer.current = setTimeout(() => { setProdOpen(false); setProdHovered(null); }, 110); };
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
   const tabs = useMemo(() => [
+    { key: 'developers', label: t('developers.nav'), to: '/developers', Icon: Code },
     { key: 'pricing', label: t('header.nav.pricing'), to: '/pricing', Icon: Tag },
     // Query param routes Docs through DocsLayout's landing-header branch.
     { key: 'docs',    label: t('header.nav.docs'),    to: '/docs/getting-started?from=landing', Icon: BookOpen },
   ], [t]);
 
+  // Which feature page (if any) we're on — drives the "you are here" indicator.
+  const activeSlug = PRODUCT_NAV.find(p => location.pathname === `/${p.slug}`)?.slug ?? null;
   // Which tab is "active" — match by pathname prefix.
   const activeKey = (() => {
+    if (activeSlug) return 'product';
+    if (location.pathname.startsWith('/developers')) return 'developers';
     if (location.pathname.startsWith('/pricing')) return 'pricing';
     if (location.pathname.startsWith('/docs'))    return 'docs';
     return null;
   })();
-  const curTab = hovered ?? activeKey;
+  // Hover wins; while the dropdown is open keep the bar under Product.
+  const curTab = hovered ?? (prodOpen ? 'product' : activeKey);
+  // Inside the dropdown, rest the 2-D indicator on the current page's item
+  // (so you see "you are here"); hovering another item overrides it.
+  const curSlug = prodHovered ?? activeSlug;
 
-  // Slide the indicator. Direct DOM mutation inside rAF — keeps the
-  // sliding cheap and the indicator opacity at 0 until the first measure
-  // so there's no flicker on first paint.
+  // (1) Nav indicator — slides on X across Product / Pricing / Docs.
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
       const ind = indRef.current;
@@ -653,17 +676,82 @@ function HeaderLandingNav() {
       ind.style.width     = `${el.offsetWidth}px`;
     });
     return () => cancelAnimationFrame(raf);
-  }, [curTab, activeKey]);
+  }, [curTab, activeKey, prodOpen]);
+
+  // (2) On open, park the dropdown indicator on the active page's item (or the
+  // first), with no transition + still hidden, so the first hover slides from a
+  // sensible spot — never grows out of the corner.
+  useEffect(() => {
+    if (!prodOpen) return;
+    const raf = requestAnimationFrame(() => {
+      const ind = prodIndRef.current;
+      const el  = prodItemRefs.current[activeSlug ?? PRODUCT_NAV[0].slug];
+      if (!ind || !el) return;
+      ind.style.transition = 'none';
+      ind.style.transform  = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
+      ind.style.width      = `${el.offsetWidth}px`;
+      ind.style.height     = `${el.offsetHeight}px`;
+      requestAnimationFrame(() => { if (prodIndRef.current) prodIndRef.current.style.transition = ''; });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [prodOpen]);
+
+  // (2) Dropdown indicator — follows the current item (hovered, else the active
+  // page) on X AND Y.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = prodIndRef.current;
+      const el  = curSlug ? prodItemRefs.current[curSlug] : null;
+      if (!ind) return;
+      if (!el || !prodOpen) { ind.style.opacity = '0'; return; }
+      ind.style.opacity   = '1';
+      ind.style.transform = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+      ind.style.height    = `${el.offsetHeight}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [curSlug, prodOpen]);
 
   return (
     <nav className="hdr-landing-nav" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="hdr-landing-nav-ind" />
+
+      {/* Product mega-dropdown. The wrapper carries the nav-indicator ref —
+          its offsetParent is the nav (the inner button's would be .hdr-prod). */}
+      <div className={`hdr-prod${prodOpen ? ' hdr-prod--open' : ''}`}
+           ref={el => { btnRefs.current.product = el; }}
+           onMouseEnter={() => { openProd(); setHovered('product'); }}
+           onMouseLeave={() => { closeProd(); setHovered(null); }}>
+        <button type="button" aria-expanded={prodOpen}
+          className={`hdr-landing-nav-tab${curTab === 'product' ? ' hdr-landing-nav-tab--active' : ''}`}
+          onClick={() => setProdOpen(o => !o)}>
+          <Stack className="hdr-landing-nav-icon" weight="bold" />
+          {t('product.nav.product')}
+          <CaretDown className="hdr-prod-caret" weight="bold" />
+        </button>
+        <div className="hdr-prod-panel" onMouseLeave={() => setProdHovered(null)}>
+          <div ref={prodIndRef} className="hdr-prod-ind" />
+          {PRODUCT_NAV.map(({ slug, Icon }) => (
+            <button key={slug} type="button"
+              ref={el => { prodItemRefs.current[slug] = el; }}
+              className={`hdr-prod-item${curSlug === slug ? ' hdr-prod-item--current' : ''}`}
+              onMouseEnter={() => setProdHovered(slug)}
+              onClick={() => { setProdOpen(false); navigate(`/${slug}`); }}>
+              <span className="hdr-prod-item-ic"><Icon weight="bold" /></span>
+              <span className="hdr-prod-item-txt">
+                <span className="hdr-prod-item-name">{t(`product.nav.name.${slug}`)}</span>
+                <span className="hdr-prod-item-desc">{t(`product.nav.tagline.${slug}`)}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Pricing + Docs */}
       {tabs.map(({ key, label, to, Icon }) => (
         <button key={key}
           ref={el => { btnRefs.current[key] = el; }}
-          /* `curTab === key` (not `activeKey`) so hovering also flips the
-             text colour to accent — matches how .auth-tab in the CRM
-             tracks the indicator AND the text simultaneously. */
+          /* `curTab === key` flips text colour to accent on hover too. */
           className={`hdr-landing-nav-tab${curTab === key ? ' hdr-landing-nav-tab--active' : ''}`}
           onMouseEnter={() => setHovered(key)}
           onClick={() => navigate(to)}

@@ -88,18 +88,17 @@ export function Combobox({ value, options, placeholder, onChange, searchable = f
     const spaceAbove = r.top - margin;
     const flipUp = spaceBelow < 200 && spaceAbove > spaceBelow;
     const maxHeight = flipUp ? Math.min(MAX_H, spaceAbove) : Math.min(MAX_H, spaceBelow);
+    const left = Math.max(margin, r.left);
+    // The dropdown sizes to its CONTENT (snug), not the trigger width — a wide
+    // trigger with short options no longer leaves a big empty gap. `width` is
+    // kept only as a floor for searchable dropdowns (keeps the search box usable)
+    // and `maxWidth` stops a long-option list overflowing the viewport edge.
+    const maxWidth = window.innerWidth - margin - left;
+    const base = { left, width, maxWidth, maxHeight };
     if (flipUp) {
-      setPos({
-        bottom: window.innerHeight - r.top + 6,
-        left:   Math.max(margin, r.left),
-        width, maxHeight,
-      });
+      setPos({ ...base, bottom: window.innerHeight - r.top + 6 });
     } else {
-      setPos({
-        top:  r.bottom + 6,
-        left: Math.max(margin, r.left),
-        width, maxHeight,
-      });
+      setPos({ ...base, top: r.bottom + 6 });
     }
     const onKey = e => { if (e.key === 'Escape') setOpen(false); };
     const onPd  = e => {
@@ -140,7 +139,11 @@ export function Combobox({ value, options, placeholder, onChange, searchable = f
           style={{
             ...(pos.top    != null ? { top:    pos.top }    : null),
             ...(pos.bottom != null ? { bottom: pos.bottom } : null),
-            left: pos.left, width: pos.width, maxHeight: pos.maxHeight,
+            left: pos.left,
+            width: 'max-content',
+            minWidth: searchable ? pos.width : undefined,
+            maxWidth: pos.maxWidth,
+            maxHeight: pos.maxHeight,
           }}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}

@@ -217,12 +217,12 @@ def _resolve_email_branding(project_id) -> dict:
 
 
 def _resolve_email_template(project_id, etype):
-    row = db_one("SELECT subject, blocks FROM crm_email_templates WHERE project_id=%s AND type=%s",
+    row = db_one("SELECT subject, blocks, html FROM crm_email_templates WHERE project_id=%s AND type=%s",
                  (project_id, etype)) if project_id else None
     if row:
-        return row["subject"], row["blocks"]
+        return row["subject"], row["blocks"], (row.get("html") or "")
     d = email_engine.DEFAULT_EMAIL_TEMPLATES.get(etype, {})
-    return d.get("subject", ""), d.get("blocks", [])
+    return d.get("subject", ""), d.get("blocks", []), ""
 
 
 def _send_template_email(project_id, etype, to, variables, *, from_name=None, from_email=None, unsubscribe_url=None):
@@ -231,13 +231,16 @@ def _send_template_email(project_id, etype, to, variables, *, from_name=None, fr
         fn, fe = get_project_email(project_id) if project_id else ("Torta Store", EMAIL_FROM)
         from_name = from_name or fn
         from_email = from_email or fe
-    subject_tpl, blocks = _resolve_email_template(project_id, etype)
-    if not email_engine.template_has_required(etype, blocks, subject_tpl):
+    subject_tpl, blocks, html_tpl = _resolve_email_template(project_id, etype)
+    ok = (email_engine.template_has_required_html(etype, html_tpl, subject_tpl)
+          if html_tpl else email_engine.template_has_required(etype, blocks, subject_tpl))
+    if not ok:
         d = email_engine.DEFAULT_EMAIL_TEMPLATES.get(etype, {})
-        subject_tpl, blocks = d.get("subject", ""), d.get("blocks", [])
+        subject_tpl, blocks, html_tpl = d.get("subject", ""), d.get("blocks", []), ""
     branding = _resolve_email_branding(project_id)
     subject = email_engine.render_subject(subject_tpl, variables) or email_engine.EMAIL_TYPES.get(etype, {}).get("subject", "")
-    html = email_engine.render_email(blocks, branding, variables, unsubscribe_url=unsubscribe_url)
+    html = (email_engine.render_email_html(html_tpl, branding, variables, unsubscribe_url=unsubscribe_url)
+            if html_tpl else email_engine.render_email(blocks, branding, variables, unsubscribe_url=unsubscribe_url))
     return send_email(to, subject, html, from_name, from_email, project_id=project_id)
 
 

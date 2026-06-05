@@ -209,8 +209,8 @@
     "footer": {
       "tagline": "Единая CRM-платформа для онлайн-магазинов — для соло-фаундеров, небольших агентств и сетей магазинов.",
       "cols": {
-        "product": { "title": "Продукт",  "links": { "features": "Возможности", "tour": "Тур", "pricing": "Тарифы", "sdk": "SDK", "howItWorks": "Как начать", "docs": "Docs" } },
-        "company": { "title": "Компания", "links": { "about": "О нас", "blog": "Блог", "careers": "Вакансии", "contact": "Контакты" } },
+        "product": { "title": "Продукт",  "links": { "database": "База данных", "auth": "Авторизация", "storage": "Хранилище", "automations": "Автоматизации", "email": "Email", "realtime": "Реалтайм", "pricing": "Тарифы" } },
+        "developers": { "title": "Разработчикам", "links": { "api": "API", "docs": "Документация", "reference": "API-справочник", "quickstart": "Быстрый старт", "frameworks": "Фреймворки" } },
         "legal":   { "title": "Юридическое", "links": { "terms": "Условия использования", "privacy": "Политика конфиденциальности", "refund": "Политика возвратов", "security": "Безопасность" } }
       },
       "rights": "Все права защищены.",

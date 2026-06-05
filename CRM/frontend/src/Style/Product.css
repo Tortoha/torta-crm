@@ -1,0 +1,374 @@
+/* ── Product feature pages ────────────────────────────────────────────
+   Database · Auth · Storage · Automations · Email · Realtime.
+   One data-driven page (Pages/Landing/ProductPage.jsx) renders all six.
+   Reuses the .ln-* landing primitives (wrap, section, eyebrow, btn,
+   feature cards, cta, footer). Only page-specific layout + the animated
+   illustrations live here, prefixed .pf-*. GSAP drives the illustration
+   entrances; section reveals reuse the existing .ln-reveal system.
+   ──────────────────────────────────────────────────────────────────── */
+
+/* ── Hero: text left, animated illustration right ─────────────────── */
+.pf-hero {
+  padding: 176px 0 56px;
+  position: relative;
+  overflow: hidden;
+}
+
+.pf-hero-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.04fr);
+  gap: 64px;
+  align-items: center;
+}
+
+.pf-hero-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.pf-hero-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 22px;
+}
+
+.pf-hero-icon svg { width: 26px; height: 26px; }
+
+.pf-hero-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+@media (max-width: 980px) {
+  .pf-hero { padding-top: 120px; }
+  .pf-hero-inner { grid-template-columns: 1fr; gap: 40px; }
+}
+
+/* ── Alternating feature splits (text ↔ illustration) ─────────────── */
+.pf-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 56px;
+  align-items: center;
+}
+
+.pf-split + .pf-split { margin-top: 88px; }
+
+/* Reverse rows put the art on the left. */
+.pf-split--reverse .pf-split-art { order: -1; }
+
+.pf-split-title {
+  margin: 14px 0 12px;
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+  color: var(--text);
+}
+
+.pf-split-body {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.pf-points {
+  list-style: none;
+  padding: 0;
+  margin: 22px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pf-points li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.pf-points li svg {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+@media (max-width: 880px) {
+  .pf-split { grid-template-columns: 1fr; gap: 28px; }
+  .pf-split--reverse .pf-split-art { order: 0; }
+  .pf-split + .pf-split { margin-top: 56px; }
+}
+
+/* ── Illustration frame ───────────────────────────────────────────── */
+.pf-art {
+  position: relative;
+  background: var(--card);
+  border-radius: 24px;
+  padding: 22px;
+  min-height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.pf-art--hero { min-height: 380px; }
+
+/* Animated children start hidden; GSAP reveals them. Reduced-motion users
+   (and a no-JS fallback) see them immediately via the override below. */
+.pf-anim { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-anim { opacity: 1 !important; transform: none !important; }
+}
+
+/* Generic inner card used across illustrations. */
+.pf-card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: 0 14px 30px -18px rgba(0, 0, 0, 0.22);
+}
+
+[data-theme="dark"] .pf-card { box-shadow: 0 14px 30px -18px rgba(0, 0, 0, 0.55); }
+
+/* ── DATABASE illustration: a populating record table ─────────────── */
+.pf-db { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+
+.pf-db-row {
+  display: grid;
+  grid-template-columns: 26px 1.4fr 1fr 0.7fr;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.pf-db-row--head {
+  background: transparent;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 4px 14px;
+}
+
+.pf-db-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.pf-db-cell-strong { font-weight: 600; }
+.pf-db-pill {
+  justify-self: start;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-tint);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+/* ── AUTH illustration: sign-in card + provider chips ─────────────── */
+.pf-auth { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 14px; }
+.pf-auth-card { display: flex; flex-direction: column; gap: 10px; padding: 18px; }
+.pf-auth-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+.pf-auth-otp { display: flex; gap: 8px; }
+.pf-auth-otp i {
+  flex: 1; height: 40px; border-radius: 10px;
+  background: rgba(var(--fg-rgb), 0.05);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 700; font-style: normal; color: var(--text);
+}
+.pf-auth-otp i.is-on { background: var(--accent-tint); color: var(--accent); }
+.pf-auth-providers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+/* Fixed white tile (like a real sign-in button) so brand-coloured / dark logos
+   stay visible in both light and dark themes. Colour comes from an inline
+   per-provider brand colour on the tile (the icon uses currentColor). */
+.pf-auth-prov {
+  aspect-ratio: 1; border-radius: 12px; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 18px -12px rgba(0, 0, 0, 0.25);
+}
+.pf-auth-prov img { width: 30px; height: 30px; object-fit: contain; }
+
+/* ── STORAGE illustration: upload list with progress bars ─────────── */
+.pf-store { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 10px; }
+.pf-store-file { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.pf-store-ic {
+  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+  background: var(--accent-tint); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-store-ic svg { width: 18px; height: 18px; }
+.pf-store-meta { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pf-store-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.pf-store-track { height: 5px; border-radius: 999px; background: rgba(var(--fg-rgb), 0.08); overflow: hidden; }
+.pf-store-fill { height: 100%; width: 0; border-radius: 999px; background: var(--accent); }
+.pf-store-pct { font-size: 11px; color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+/* ── AUTOMATIONS illustration: event → connectors ────────────────── */
+.pf-flow { width: 100%; display: grid; grid-template-columns: 1fr 64px 1fr; gap: 0; align-items: center; }
+.pf-flow-node {
+  padding: 14px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+}
+.pf-flow-node b { font-size: 13px; color: var(--text); font-weight: 600; }
+.pf-flow-node span { font-size: 11px; color: var(--muted); }
+.pf-flow-badge {
+  font-size: 10px; font-weight: 600; color: var(--accent);
+  background: var(--accent-tint); padding: 3px 9px; border-radius: 999px;
+}
+.pf-flow-wire { position: relative; height: 100%; min-height: 120px; }
+.pf-flow-wire svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.pf-flow-line { fill: none; stroke: rgba(var(--fg-rgb), 0.14); stroke-width: 2; }
+.pf-flow-pulse { fill: var(--accent); }
+.pf-flow-dests { display: flex; flex-direction: column; gap: 10px; }
+.pf-flow-dest { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 12px; font-weight: 500; color: var(--text); }
+.pf-flow-dest svg { width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; }
+.pf-flow-dest img { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+
+/* ── EMAIL illustration: composed message + sent state ────────────── */
+.pf-mail { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 12px; }
+.pf-mail-card { display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden; }
+.pf-mail-line { display: flex; align-items: baseline; gap: 12px; padding: 12px 16px; font-size: 12px; }
+.pf-mail-line + .pf-mail-line { border-top: 1px solid rgba(var(--fg-rgb), 0.06); }
+.pf-mail-line span { width: 48px; flex-shrink: 0; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.pf-mail-line em { font-style: normal; color: var(--text); font-weight: 500; }
+.pf-mail-line--subj em { color: var(--accent); font-weight: 600; }
+.pf-mail-sent {
+  display: flex; align-items: center; gap: 10px; justify-content: center;
+  padding: 12px; border-radius: 999px; background: var(--accent-tint);
+  color: var(--accent); font-size: 13px; font-weight: 600;
+}
+.pf-mail-sent svg { width: 18px; height: 18px; }
+
+/* ── REALTIME illustration: live inbox bubbles ────────────────────── */
+.pf-rt { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 10px; }
+.pf-rt-msg { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; }
+.pf-rt-av {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  background: var(--accent-tint); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-rt-av svg { width: 15px; height: 15px; }
+.pf-rt-av--logo { background: #fff; }
+.pf-rt-av img { width: 18px; height: 18px; object-fit: contain; }
+.pf-rt-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pf-rt-from { font-size: 11px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.pf-rt-from i { font-style: normal; font-size: 10px; font-weight: 500; color: var(--accent); background: var(--accent-tint); padding: 1px 7px; border-radius: 999px; }
+.pf-rt-text { font-size: 12px; color: var(--muted); }
+.pf-rt-typing { display: inline-flex; gap: 3px; padding: 2px 0; }
+.pf-rt-typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0.5; }
+
+/* ── Big stat strip (reused across pages) ─────────────────────────── */
+.pf-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.pf-stat {
+  background: var(--card);
+  border-radius: 20px;
+  padding: 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pf-stat b {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.pf-stat span { font-size: 13px; color: var(--muted); line-height: 1.4; }
+@media (max-width: 880px) { .pf-stats { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 460px) { .pf-stats { grid-template-columns: 1fr; } }
+
+/* The Header "Product" dropdown styles live in Style/ProductNav.css, which is
+   imported by the Header so they load on every page that shows the landing
+   header (including "/", which doesn't import this file). */
+
+/* ── Deep-dive split text + concrete-list chips panel ─────────────── */
+.pf-split-text { display: flex; flex-direction: column; align-items: flex-start; }
+
+.pf-chips-panel { width: 100%; display: flex; flex-direction: column; gap: 14px; }
+
+.pf-chips-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.pf-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.pf-chip {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 7px 14px;
+  box-shadow: 0 6px 16px -12px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="dark"] .pf-chip { box-shadow: 0 6px 16px -12px rgba(0, 0, 0, 0.6); }
+
+/* ── Explore-other-products links (in the CTA) ────────────────────── */
+.pf-explore {
+  margin-top: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.pf-explore-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.pf-explore-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.pf-explore-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.pf-explore-link svg { width: 15px; height: 15px; color: var(--accent); }
+.pf-explore-link:hover { background: var(--accent-tint); color: var(--accent); }

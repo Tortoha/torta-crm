@@ -83,6 +83,8 @@ const Terms            = lazy(() => import('./Pages/Landing/Terms.jsx'));
 const Privacy          = lazy(() => import('./Pages/Landing/Privacy.jsx'));
 const Refund           = lazy(() => import('./Pages/Landing/Refund.jsx'));
 const SecurityPage     = lazy(() => import('./Pages/Landing/SecurityPage.jsx'));
+const ProductPage      = lazy(() => import('./Pages/Landing/ProductPage.jsx'));
+const DevelopersPage   = lazy(() => import('./Pages/Landing/DevelopersPage.jsx'));
 
 function PageLoader() {
   return (
@@ -107,6 +109,13 @@ function App() {
           <Route path="/privacy"                   element={<Privacy />} />
           <Route path="/refund"                    element={<Refund />} />
           <Route path="/security"                  element={<SecurityPage />} />
+          <Route path="/developers"                element={<DevelopersPage />} />
+          {/* Product feature pages at top-level slugs (Supabase-style: /database,
+              /auth, …). Mirrors PRODUCT_SLUGS in Pages/Landing/product/data.js —
+              inlined here so App's main bundle doesn't pull in that icon module. */}
+          {['database', 'auth', 'storage', 'automations', 'email', 'realtime'].map(s => (
+            <Route key={s} path={`/${s}`} element={<ProductPage slug={s} />} />
+          ))}
           <Route path="/login"                     element={<Login />} />
           <Route path="/login/verification"        element={<Verification />} />
           <Route path="/registration"              element={<Register />} />

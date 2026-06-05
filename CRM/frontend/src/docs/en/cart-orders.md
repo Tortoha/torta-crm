@@ -64,7 +64,7 @@ await client.addresses.remove(id);
 
 ```js
 const r = await client.orders.place({
-  recipient_name: "Aizhan",          // required
+  recipient_name: "Alex",          // required
   phone: "+77071234567",
   delivery_method: "courier",        // "courier" | "postal" (default courier)
   address_country: "KZ",

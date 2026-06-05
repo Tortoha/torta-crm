@@ -93,7 +93,7 @@ textarea {
 }
 
 .crm-input:focus {
-    border-color: #000;
+    border-color: var(--card);
 }
 
 .crm-input--sm {

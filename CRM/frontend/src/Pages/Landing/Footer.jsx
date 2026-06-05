@@ -8,21 +8,26 @@ export default function Footer() {
   const { t } = useTranslation();
   const year = new Date().getFullYear();
 
-  // `to` = real SPA route (rendered via <Link>). Anything else is a
-  // placeholder for the diploma scope and renders as `#`. Pricing + Docs
-  // + Terms/Privacy/Refund are the live public pages.
+  // Every link points to a REAL, live page (no `#` placeholders): the six
+  // product feature pages, the Developers/API page, the docs surfaces, and
+  // the legal pages. Dead links (About/Blog/Careers/Contact, Features/Tour)
+  // were removed.
   const cols = [
     { key: 'product', links: [
-      { id: 'features' },
-      { id: 'tour' },
-      { id: 'pricing', to: '/pricing' },
-      { id: 'docs',    to: '/docs/getting-started?from=landing' },
+      { id: 'database',    to: '/database' },
+      { id: 'auth',        to: '/auth' },
+      { id: 'storage',     to: '/storage' },
+      { id: 'automations', to: '/automations' },
+      { id: 'email',       to: '/email' },
+      { id: 'realtime',    to: '/realtime' },
+      { id: 'pricing',     to: '/pricing' },
     ]},
-    { key: 'company', links: [
-      { id: 'about' },
-      { id: 'blog' },
-      { id: 'careers' },
-      { id: 'contact' },
+    { key: 'developers', links: [
+      { id: 'api',        to: '/developers' },
+      { id: 'docs',       to: '/docs/getting-started?from=landing' },
+      { id: 'reference',  to: '/docs/cheatsheet?from=landing' },
+      { id: 'quickstart', to: '/docs/quickstart?from=landing' },
+      { id: 'frameworks', to: '/docs/frameworks?from=landing' },
     ]},
     { key: 'legal',   links: [
       { id: 'terms',    to: '/terms' },

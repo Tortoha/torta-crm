@@ -29,7 +29,7 @@ const r = await client.booking.bookings.create({
   service_id: 4,
   staff_id: 2,                       // optional
   starts_at: "2026-06-01T14:30",     // ISO local, "YYYY-MM-DDTHH:MM"
-  customer_name: "Aizhan",           // optional
+  customer_name: "Alex",           // optional
   customer_phone: "+77071234567",    // optional
   customer_email: "me@mail.com",     // optional
   notes: "First visit",              // optional

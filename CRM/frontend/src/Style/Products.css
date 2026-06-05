@@ -4854,7 +4854,7 @@ select.prod-field-input {
 }
 
 .po-set-input:focus {
-  border-color: transparent;
+  border-color: var(--card);
   /* override canonical .crm-input:focus { border-color: #000 } */
   box-shadow: var(--box-shadow);
 }
@@ -8476,7 +8476,6 @@ textarea.po-set-input,
   position: relative;
   flex: 1;
   overflow-y: auto;
-  padding: 0 4px 4px;
 }
 
 .bk-cb-empty {
