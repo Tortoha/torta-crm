@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useTabParam } from '../../Utils/useTabParam.js';
 import {
   Envelope, PhoneCall,
   CaretRight, X, CheckCircle, Globe, ShieldCheck, Trash,
@@ -359,7 +360,7 @@ function Authentication() {
     canView('auth_providers') && { key: 'providers', label: t('authConfig.tabs.providers'),    Icon: ShieldCheck },
     canView('url_config')     && { key: 'urls',      label: t('authConfig.tabs.urls'), Icon: Globe },
   ].filter(Boolean);
-  const [tab,             setTab]             = useState(authTabs[0]?.key || 'providers');
+  const [tab,             setTab]             = useTabParam(authTabs[0]?.key || 'providers');
   const [modal,           setModal]           = useState(null); // null | provider.id
   const [googleEnabled,   setGoogleEnabled]   = useState(false);
   const [phoneEnabled,    setPhoneEnabled]    = useState(false);

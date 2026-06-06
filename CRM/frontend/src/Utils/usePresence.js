@@ -140,7 +140,7 @@ function _open() {
   _ws.onopen = () => {
     _log('OPEN ✓ — sending hello', { route: _lastRoute });
     _backoffMs = 1000;
-    _send({ type: 'hello', route: _lastRoute });
+    _send({ type: 'hello', route: _lastRoute, product_name: _lastSentProductName });
     if (_hbTimer) clearInterval(_hbTimer);
     _hbTimer = setInterval(() => _send({ type: 'hb' }), 15_000);
   };
@@ -174,20 +174,72 @@ function _scheduleReconnect() {
   }, delay);
 }
 
+/** The route we report for presence = pathname + ONLY the ?tab param (if
+ *  any). Tabs identify sub-pages that share a pathname (Emails / Chat /
+ *  Authentication / Integrations / Orders / Bookings), so two people on
+ *  different tabs are on different "pages" for cursors / same-page chat.
+ *  Other query params (?open=, ?upgrade=) are intentionally ignored so a
+ *  modal/deep-link doesn't fragment presence. */
+export function presenceRoute(pathname, search) {
+  let tab = null;
+  try { tab = new URLSearchParams(search || '').get('tab'); } catch { /* ignore */ }
+  return pathname + (tab ? `?tab=${tab}` : '');
+}
+
+// Route reporting has a BASE (from the pathname, set by every Layout) and an
+// optional OVERRIDE (set by ProductLayout). The override wins — it lets a
+// product page report a synthetic `/project/<apiKey>/product/<hash>` route so
+// the project's reliable api_key resolver (not the product hashid decode)
+// drives scope, and route-string filters see the product peer as "in the
+// project". product_name rides alongside for the menu label.
+let _baseRoute = '';
+let _overrideRoute = null;
+let _overrideProductName = '';
+let _lastSentProductName = '';
+
+function _recomputeRoute() {
+  const eff = _overrideRoute || _baseRoute;
+  const pname = _overrideRoute ? _overrideProductName : '';
+  if (eff === _lastRoute && pname === _lastSentProductName) return;
+  _lastRoute = eff;
+  _lastSentProductName = pname;
+  _send({ type: 'route', route: eff, product_name: pname });
+  _emit();   // notify useMyRoute consumers (cursors / same-page chat) so they
+             // match peers against the SAME route I actually report.
+}
+
+/** My current effective presence route (synthetic on product pages). Cursors
+ *  and same-page chat must match peers against THIS, not presenceRoute(path),
+ *  otherwise a product page's synthetic route won't match the peers' routes. */
+export function getMyRoute() { return _lastRoute; }
+export function useMyRoute() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const cb = () => setTick(t => t + 1);
+    _subs.add(cb);
+    return () => { _subs.delete(cb); };
+  }, []);
+  return _lastRoute;
+}
+
 function _setRoute(route) {
-  // Backend resolves project/org scope ENTIRELY from the route string
-  // (it carries the api_key / slug), so route is the only thing we send.
-  // Dedup on route alone — no more project_id/org_id race.
-  if (route === _lastRoute) return;
-  _lastRoute = route;
-  _send({ type: 'route', route });
+  _baseRoute = route;
+  _recomputeRoute();
+}
+
+/** ProductLayout calls this with a synthetic project-scoped route + the
+ *  product name once it knows them; pass (null) on unmount to clear. */
+export function setPresenceOverride(route, productName) {
+  _overrideRoute = route || null;
+  _overrideProductName = productName || '';
+  _recomputeRoute();
 }
 
 /** Kept for call-site compatibility — Layouts still call this after their
- *  fetch resolves, but scope now comes from the route on the backend, so
- *  this just re-asserts the current pathname (a no-op if unchanged). */
+ *  fetch resolves; just re-asserts the current base route (no-op if same). */
 export function setPresenceContext() {
-  _setRoute(typeof window !== 'undefined' ? window.location.pathname : (_lastRoute || ''));
+  if (typeof window === 'undefined') { _setRoute(_lastRoute || ''); return; }
+  _setRoute(presenceRoute(window.location.pathname, window.location.search));
 }
 
 // ── Hooks ──────────────────────────────────────────────────────────────
@@ -205,11 +257,11 @@ export function usePresence() {
     // and we want presence to stay live. Browser tab close cleans up.
   }, []);
   useEffect(() => {
-    // Just report the pathname — the backend resolves project/org scope
-    // from it (the URL carries the api_key / slug). No window globals,
-    // no race between route and a separately-sent scope id.
-    _setRoute(loc.pathname);
-  }, [loc.pathname]);
+    // Report pathname + ?tab — the backend resolves project/org scope from
+    // the pathname (api_key / slug), and the ?tab distinguishes sub-page
+    // tabs so presence is tab-accurate.
+    _setRoute(presenceRoute(loc.pathname, loc.search));
+  }, [loc.pathname, loc.search]);
 }
 
 /** Reactive snapshot of the entire presence Map. Re-renders on every
@@ -273,7 +325,12 @@ export function useOnProjectKey(apiKey) {
     if (!snap.online) continue;
     if (_selfId && snap.user_id === _selfId) continue;
     const r = snap.route || '';
-    if (r === base || r.startsWith(base + '/')) out.push(snap);
+    // Project-page peers match by route prefix; product-page peers
+    // (/product/<hash> — no api_key in the route) match by the backend-
+    // resolved project_api_key, since product is below project.
+    if (r === base || r.startsWith(base + '/') || snap.project_api_key === apiKey) {
+      out.push(snap);
+    }
   }
   return out;
 }
@@ -294,6 +351,10 @@ export function useInOrgScope(orgSlug, apiKeySet) {
     if (orgBase && (r === orgBase || r.startsWith(orgBase + '/'))) { out.push(snap); continue; }
     const m = r.match(/^\/project\/([^/?]+)/);
     if (m && hasKeys && apiKeySet.has(m[1])) { out.push(snap); continue; }
+    // Product-page peers — match by backend-resolved project_api_key.
+    if (hasKeys && snap.project_api_key && apiKeySet.has(snap.project_api_key)) {
+      out.push(snap); continue;
+    }
   }
   return out;
 }

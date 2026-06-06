@@ -16,6 +16,7 @@ import { useLocation } from 'react-router-dom';
 import {
   useOnRoute,
   useChat,
+  useMyRoute,
   getMyMousePos,
   getSelfId,
   startCursorReporting,
@@ -179,7 +180,7 @@ export default function CursorOverlay() {
   usePresenceMap();
   const { myChat } = useChat();
 
-  const others = useOnRoute(loc.pathname);
+  const others = useOnRoute(useMyRoute());
   const cursors = others.filter(
     s => typeof s.cursor_x === 'number' && typeof s.cursor_y === 'number'
   );

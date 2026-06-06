@@ -8682,3 +8682,29 @@ textarea.po-set-input,
     padding: 12px !important;
   }
 }
+
+/* ── Live-mirror "X is editing…" indicator on the Product Overview ── */
+.po-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.po-typing-dots { display: inline-flex; gap: 3px; }
+.po-typing-dots i {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: currentColor;
+  animation: po-typing-bounce 1.1s infinite ease-in-out;
+}
+.po-typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.po-typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes po-typing-bounce {
+  0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+  40%           { opacity: 1;    transform: translateY(-3px); }
+}

@@ -9,7 +9,7 @@ import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
 import { decodeHash } from './Utils/hashids.js';
-import { usePresence, setPresenceContext } from './Utils/usePresence.js';
+import { usePresence, setPresenceContext, setPresenceOverride } from './Utils/usePresence.js';
 import CursorOverlay from './Elements/CursorOverlay.jsx';
 
 /**
@@ -39,6 +39,20 @@ function ProductLayout() {
   const [productContext, setProductContext] = useState(null);
   // Stable callback so children can pass it down without re-firing effects.
   const handleSetProductContext = useCallback((ctx) => setProductContext(ctx), []);
+
+  // Presence override: report a SYNTHETIC project-scoped route for this
+  // product page so teammates at the project / org level see the viewer as
+  // "in the project" (a product is below its project in the hierarchy). The
+  // project's api_key drives scope via the reliable project resolver — no
+  // dependency on decoding the product hash on the backend. The product name
+  // rides along for the menu label. Cleared when leaving the product page.
+  useEffect(() => {
+    if (project?.api_key) {
+      setPresenceOverride(`/project/${project.api_key}${location.pathname}`,
+                          productContext?.name || '');
+    }
+    return () => setPresenceOverride(null);
+  }, [project?.api_key, location.pathname, productContext?.name]);
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) return false;

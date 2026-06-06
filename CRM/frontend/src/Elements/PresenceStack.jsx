@@ -18,7 +18,7 @@ import { API_BASE } from '../api.js';
 import { InteractiveSection } from '../Utils/InteractiveSection.js';
 import { PoListRow } from '../Utils/PoListRow.jsx';
 import { useOnProjectKey, useInOrgScope, useAllOnline,
-         useOnRoute, useChat, sendChat } from '../Utils/usePresence.js';
+         useOnRoute, useChat, sendChat, useMyRoute } from '../Utils/usePresence.js';
 import { PaperPlaneTilt, ChatTeardropText } from '@phosphor-icons/react';
 import '../Style/Products.css';   // .po-set-table / .po-set-row / .po-set-strong
 import '../Style/Authentication.css';   // .auth-toast (bottom-pill notice)
@@ -113,6 +113,18 @@ function colourFor(seed) {
 // /project/abc/orders → "Orders" via the existing sidebar nav i18n keys.
 function pageLabelFromRoute(route, t) {
   if (!route) return '';
+  // Match /product/ anywhere — covers both the real /product/<hash> route and
+  // the synthetic /project/<apiKey>/product/<hash> presence route.
+  const prodM = route.match(/\/product\/[^/?]+\/?([^/?]*)/);
+  if (prodM) {
+    const key = prodM[1] || '';
+    const navKey = ({
+      '': 'productOverview', overview: 'productOverview',
+      reviews: 'reviews', settings: 'settings',
+      'edit-history': 'editHistory', 'api-preview': 'apiPreview',
+    })[key] || 'productOverview';
+    return t(`nav.${navKey}`, { defaultValue: key || 'Overview' });
+  }
   const projM = route.match(/^\/project\/[^/]+\/?([^/?]*)/);
   if (projM) {
     const key = projM[1] || 'overview';
@@ -146,6 +158,10 @@ function pageLabelFromRoute(route, t) {
 // opens THEIR project, not whatever :apiKey we're currently in.
 function targetRoute(snap) {
   if (!snap.route) return null;
+  // Synthetic product route (/project/<apiKey>/product/<hash>/…) → the REAL
+  // product URL, which lives at the top level (/product/<hash>/…).
+  const prod = snap.route.match(/(\/product\/.+)$/);
+  if (prod) return prod[1];
   if (snap.project_api_key && snap.route.startsWith('/project/')) {
     return snap.route.replace(/^\/project\/[^/]+/, `/project/${snap.project_api_key}`);
   }
@@ -183,12 +199,15 @@ function PresenceItem({ snap, onPick, showProject = false, projectName, Row = Pr
   const { t } = useTranslation();
   const proj  = projectName ?? (snap.project_name || '');
   const page  = pageLabelFromRoute(snap.route, t);
-  // On org-scoped lists we need to disambiguate "which project" — peers
-  // could be spread across several. On project-scoped lists the project
-  // is implicit (it's already in the Header), so the row stays compact.
-  const where = showProject
-    ? [proj, page].filter(Boolean).join(' · ')
-    : page;
+  const product = snap.product_name || '';   // set for peers on /product/<hash>
+  // Hierarchy label. Org-scoped lists prefix the project so you can tell which
+  // one a peer is in. Product pages insert the product between project & page:
+  //   org level    → "Tortoly · Polo Sweater · Product Overview"
+  //   project level → "Polo Sweater · Product Overview"
+  const where = (showProject
+    ? [proj, product, page]
+    : [product, page]
+  ).filter(Boolean).join(' · ');
   return (
     <Row className="notif-row notif-row--clickable pst-presence-row"
       onClick={() => onPick(snap)}>
@@ -393,7 +412,7 @@ export default function PresenceStack({ project, org }) {
   // page AND that page renders cursors (project / product pages, where
   // CursorOverlay is mounted). Otherwise the bubble would have no cursor to
   // ride and no audience.
-  const samePagePeers = useOnRoute(loc.pathname);
+  const samePagePeers = useOnRoute(useMyRoute());
   const cursorPage = /^\/(project|product)\//.test(loc.pathname);
   const canChat = cursorPage && samePagePeers.length > 0;
 

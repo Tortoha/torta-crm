@@ -11,6 +11,7 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../../api.js';
 import { useFieldMirror } from '../../Utils/usePresence.js';
+import { useTabParam } from '../../Utils/useTabParam.js';
 import HtmlEmailEditor from './HtmlEmailEditor.jsx';
 import { missingRequiredVars } from '../../Utils/emailTemplateDefaults.js';
 import { useOrgPlan } from '../../Utils/useOrgPlan.js';
@@ -47,7 +48,7 @@ function useToast() {
 export default function Emails() {
   const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
-  const [active, setActive] = useState('verification');
+  const [active, setActive] = useTabParam('verification');
   const tabs = [...TYPE_TABS, ...EXTRA_TABS].map(tab => ({
     ...tab, label: t(`comms.emails.tab.${tab.key === '__broadcasts' ? 'broadcasts' : tab.key}`),
   }));

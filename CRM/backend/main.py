@@ -26336,6 +26336,7 @@ class PresenceHub:
             'project_name':    snap.get('project_name') or '',
             'project_api_key': snap.get('project_api_key') or '',
             'org_id':          snap.get('org_id'),
+            'product_name':    snap.get('product_name') or '',
             'name':       snap.get('name') or '',
             'email':      snap.get('email') or '',
             'avatar_url': snap.get('avatar_url') or '',
@@ -26599,30 +26600,88 @@ def _resolve_org_id_by_slug(slug):
     return oid
 
 
+# Product hash (frontend Hashids) → project + product name. Lets a peer on
+# /product/<hash> resolve into their project / org so they show up in the
+# project- and org-level presence menus (product is below project).
+_PRODUCT_SCOPE_CACHE: dict = {}
+_PRODUCT_SCOPE_TTL = 300
+_PRODUCT_HASHIDS = None
+
+def _product_hashids():
+    global _PRODUCT_HASHIDS
+    if _PRODUCT_HASHIDS is None:
+        from hashids import Hashids
+        # Same salt + min_length as the frontend (Utils/hashids.js).
+        _PRODUCT_HASHIDS = Hashids(
+            'qpzmrld10vsljklfgdnsdsafjkhfl526742228666777mzpqnxowhgf', min_length=6)
+    return _PRODUCT_HASHIDS
+
+def _resolve_product_scope(hash_str):
+    """Decode a product hash → {product_name, project_id, project_name,
+    project_api_key, org_id}. Cached."""
+    if not hash_str:
+        return None
+    import time as _t
+    now = _t.time()
+    hit = _PRODUCT_SCOPE_CACHE.get(hash_str)
+    if hit and hit.get('ts', 0) + _PRODUCT_SCOPE_TTL > now:
+        return hit
+    try:
+        dec = _product_hashids().decode(hash_str)
+        if not dec:
+            return None
+        pid = int(dec[0])
+        row = db_one(
+            "SELECT p.title, pr.id AS project_id, pr.name AS project_name, "
+            "       pr.api_key, pr.org_id "
+            "FROM products p JOIN crm_projects pr ON pr.id = p.project_id "
+            "WHERE p.id = %s", (pid,))
+    except Exception:
+        row = None
+    if not row:
+        return None
+    info = {
+        'product_name':    row.get('title') or '',
+        'project_id':      int(row['project_id']),
+        'project_name':    row.get('project_name') or '',
+        'project_api_key': row.get('api_key') or '',
+        'org_id':          int(row['org_id']) if row.get('org_id') is not None else None,
+        'ts':              now,
+    }
+    _PRODUCT_SCOPE_CACHE[hash_str] = info
+    return info
+
+
 def _resolve_scope_from_route(route: str) -> dict:
     """Single source of truth for presence scope. Parses the pathname:
        /project/<api_key>/...  → project + its org
+       /product/<hash>/...     → the product's project + org (+ product name)
        /org/<slug>/...         → org only
        anything else           → no scope (dashboard / settings / docs)
-    Returns dict with project_id, project_name, project_api_key, org_id —
-    all None/'' when not applicable. Because route and scope come from the
-    SAME string, they can never disagree (the race that plagued the
-    separately-sent project_id/org_id fields)."""
-    out = {'project_id': None, 'project_name': '', 'project_api_key': '', 'org_id': None}
+    Because route and scope come from the SAME string, they can never
+    disagree (the race that plagued separately-sent project_id/org_id)."""
+    out = {'project_id': None, 'project_name': '', 'project_api_key': '',
+           'org_id': None, 'product_name': ''}
     if not route:
         return out
-    m = re.match(r"^/(?:project|product)/([^/?]+)", route)
+    m = re.match(r"^/project/([^/?]+)", route)
     if m:
-        # NB: /product/:hash carries a hashid, not an api_key — those frames
-        # just won't resolve a project here (rare; product pages still show
-        # the user as "online" via org inheritance below if we had it). The
-        # common console path /project/:apiKey resolves cleanly.
         meta = _resolve_project_by_apikey(m.group(1))
         if meta:
             out['project_id']      = meta['id']
             out['project_name']    = meta['name']
             out['project_api_key'] = meta['api_key']
             out['org_id']          = meta['org_id']
+        return out
+    m = re.match(r"^/product/([^/?]+)", route)
+    if m:
+        info = _resolve_product_scope(m.group(1))
+        if info:
+            out['project_id']      = info['project_id']
+            out['project_name']    = info['project_name']
+            out['project_api_key'] = info['project_api_key']
+            out['org_id']          = info['org_id']
+            out['product_name']    = info['product_name']
         return out
     m = re.match(r"^/org/([^/?]+)", route)
     if m:
@@ -27388,12 +27447,17 @@ async def presence_ws(ws: WebSocket):
             # Scope is resolved ENTIRELY from the route — one source of truth,
             # no race. Client-sent project_id/org_id are ignored on purpose.
             scope = _resolve_scope_from_route(route)
+            # Client may send product_name for a product page (the synthetic
+            # /project/<apiKey>/product/<hash> route resolves the project but
+            # not the product title). Trust it for the menu label only.
+            client_pname = str(m.get('product_name') or '')[:200]
             fields = {
                 'route':           route,
                 'project_id':      scope['project_id'],
                 'project_name':    scope['project_name'],
                 'project_api_key': scope['project_api_key'],
                 'org_id':          scope['org_id'],
+                'product_name':    client_pname or scope.get('product_name', ''),
                 # New route → drop stale cursor (no ghost on the new page).
                 'cursor_x': None, 'cursor_y': None,
                 'cursor_anchor': None, 'cursor_ox': None, 'cursor_oy': None,
