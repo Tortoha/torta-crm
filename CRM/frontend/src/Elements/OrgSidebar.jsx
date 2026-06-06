@@ -5,32 +5,31 @@ import { FolderSimple, ChartLine, ArrowLineLeft, ArrowLineRight,
          CreditCard, GearSix, UsersThree, Users,
          ShoppingBag, ChartBar } from '@phosphor-icons/react';
 
-function buildItems(orgSlug, isOwner, t) {
+function buildItems(orgSlug, isOwner, access, t) {
   const base = `/org/${orgSlug}`;
-  // Members only see the project list; the org-admin pages (Analytics / Team /
-  // Payments / Settings / Customers) are owner-only in the nav. Members who
-  // have the org_customers:view permission via a role can still reach the
-  // page through a direct URL (backend gates via require_org_page).
+  // Projects (the index) is always visible. Each org-admin page shows only when
+  // the user can open it: the owner sees all; a member sees a page when their
+  // org.access grants 'view'/'manage' on its permission key. Billing is never
+  // delegatable, so it stays owner-only in the nav.
+  const can = (key) => isOwner || ['view', 'manage'].includes(access?.[key]);
   const items = [{ to: base, label: t('nav.projects'), Icon: FolderSimple, exact: true }];
-  if (isOwner) items.push(
-    { to: `${base}/analytics`, label: t('nav.analytics'), Icon: ChartLine  },
-    { to: `${base}/customers`, label: t('nav.customers'), Icon: Users      },
-    { to: `${base}/team`,      label: t('nav.team'),      Icon: UsersThree },
-    { to: `${base}/payments`,  label: t('nav.payments'),  Icon: CreditCard },
-    { to: `${base}/billing`,   label: t('nav.billing'),   Icon: ShoppingBag},
-    { to: `${base}/usage`,     label: t('nav.usage'),     Icon: ChartBar   },
-    { to: `${base}/settings`,  label: t('nav.settings'),  Icon: GearSix    },
-  );
+  if (can('org_analytics')) items.push({ to: `${base}/analytics`, label: t('nav.analytics'), Icon: ChartLine  });
+  if (can('org_customers')) items.push({ to: `${base}/customers`, label: t('nav.customers'), Icon: Users      });
+  if (can('org_team'))      items.push({ to: `${base}/team`,      label: t('nav.team'),      Icon: UsersThree });
+  if (can('org_payments'))  items.push({ to: `${base}/payments`,  label: t('nav.payments'),  Icon: CreditCard });
+  if (isOwner)              items.push({ to: `${base}/billing`,   label: t('nav.billing'),   Icon: ShoppingBag});
+  if (can('org_usage'))     items.push({ to: `${base}/usage`,     label: t('nav.usage'),     Icon: ChartBar   });
+  if (can('org_settings'))  items.push({ to: `${base}/settings`,  label: t('nav.settings'),  Icon: GearSix    });
   return items;
 }
 
 const isActive = (pathname, to, exact) =>
   exact ? pathname === to : (pathname === to || pathname.startsWith(to + '/'));
 
-function OrgSidebar({ collapsed, onToggle, orgSlug, isOwner }) {
+function OrgSidebar({ collapsed, onToggle, orgSlug, isOwner, access }) {
   const location = useLocation();
   const { t }    = useTranslation();
-  const items    = buildItems(orgSlug, isOwner, t);
+  const items    = buildItems(orgSlug, isOwner, access, t);
 
   const itemsEl  = useRef(null);
   const itemEls  = useRef({});

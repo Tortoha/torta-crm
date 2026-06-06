@@ -169,13 +169,21 @@ function targetRoute(snap) {
 }
 
 // Single 28px avatar circle — image, initials, or User icon fallback.
+// referrerPolicy="no-referrer" is REQUIRED for Google photos: lh3.googleusercontent.com
+// returns 403 when a Referer is sent (hotlink protection, esp. from localhost),
+// so without it the image silently breaks. onError falls back to initials if the
+// photo still fails (rate-limit 429, expired URL).
 function PresenceAvatar({ snap, size = 28 }) {
   const seed  = snap.name || snap.email || '';
   const title = snap.name || snap.email || '';
   const inits = initialsOf(snap.name, snap.email);
-  if (snap.avatar_url) {
+  const [imgFailed, setImgFailed] = useState(false);
+  useEffect(() => { setImgFailed(false); }, [snap.avatar_url]);
+  if (snap.avatar_url && !imgFailed) {
     return <img className="pst-avatar pst-avatar--lg" src={snap.avatar_url} alt=""
-      title={title} style={{ width: size, height: size }} />;
+      title={title} referrerPolicy="no-referrer"
+      style={{ width: size, height: size }}
+      onError={() => setImgFailed(true)} />;
   }
   return (
     <span className="pst-avatar pst-avatar--lg pst-avatar--initials"
@@ -409,11 +417,12 @@ export default function PresenceStack({ project, org }) {
   const inOrg       = useInOrgScope(orgSlug, apiKeySet);
   const stackOthers = projectKey ? onProject : inOrg;
   // Cursor-chat is only meaningful when someone else is on the EXACT same
-  // page AND that page renders cursors (project / product pages, where
-  // CursorOverlay is mounted). Otherwise the bubble would have no cursor to
-  // ride and no audience.
+  // page AND that page renders cursors (project / product / org pages, where
+  // CursorOverlay is mounted). Keep this regex in sync with the Layouts that
+  // mount <CursorOverlay/> — otherwise cursors show but the chat row / Ctrl+M
+  // stay disabled (the bubble would have no cursor to ride and no audience).
   const samePagePeers = useOnRoute(useMyRoute());
-  const cursorPage = /^\/(project|product)\//.test(loc.pathname);
+  const cursorPage = /^\/(project|product|org)\//.test(loc.pathname);
   const canChat = cursorPage && samePagePeers.length > 0;
 
   // Ctrl+M opens the quick-message composer (only where chat is available).

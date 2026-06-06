@@ -49,6 +49,7 @@ function UserAvatar({ user, size = 28 }) {
       src={url}
       alt=""
       className="hdr-avatar-photo"
+      referrerPolicy="no-referrer"
       style={{ width: size, height: size }}
       onError={() => setImgFailed(true)}
     />

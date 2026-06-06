@@ -1,8 +1,10 @@
-// Organization Team — org-level RBAC management (owner only).
-// Three tabs (Members / Roles / Invites) with a Products-style TabSwitcher and
-// Targets-style tabular lists (po-set-table + PoListRow tilt rows + portal
-// 3-dot menus). The backend (require_org_owner) is the source of truth; this
-// page just drives it.
+// Organization Team — org-level RBAC management.
+// The owner and any member with org_team:manage get full controls; a member
+// with org_team:view can browse members/roles read-only (no Add employee, no
+// New role, no row menus — see canManage). Two tabs (Members / Roles) with a
+// Products-style TabSwitcher and Targets-style tabular lists (po-set-table +
+// PoListRow tilt rows + portal 3-dot menus). The backend (require_org_page) is
+// the source of truth; this page just drives it.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -14,6 +16,7 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
+import { useTabParam } from '../../Utils/useTabParam.js';
 import { usePresenceMap } from '../../Utils/usePresence.js';
 import { SearchableCombobox, SegmentSwitch } from '../Project/ProjectSettings.jsx';
 import '../../Style/Authentication.css';   // auth-tab-* switcher + auth-modal
@@ -30,9 +33,12 @@ const pageLabel = (t, pg) => t(`org.pages.${pg}`, { defaultValue: pg });
 // list). Each group renders a small sub-header; only keys the backend actually
 // ships in `pages` are shown, so a future catalog change doesn't break this.
 const PAGE_GROUPS = [
+  // Organization-level pages (the /org/:slug/* console). "Projects" is always
+  // granted (not listed) and "Billing" can never be delegated (absent).
+  { key: 'organization', keys: ['org_analytics', 'org_customers', 'org_team', 'org_payments', 'org_usage', 'org_settings'] },
   { key: 'general',       keys: ['overview'] },
   { key: 'products',      keys: ['products', 'inventory', 'batches', 'promo_codes', 'discounts', 'tier_pricing', 'warehouses', 'archive', 'product_settings'] },
-  { key: 'sales',         keys: ['orders', 'returns', 'customers', 'org_customers'] },
+  { key: 'sales',         keys: ['orders', 'returns', 'customers'] },
   { key: 'booking',       keys: ['booking', 'booking_services', 'booking_staff', 'booking_settings'] },
   { key: 'engagement',    keys: ['chat', 'channels', 'emails', 'analytics', 'alerts', 'goals'] },
   { key: 'configuration', keys: ['auth_providers', 'url_config', 'integrations', 'documents', 'settings', 'api'] },
@@ -48,7 +54,13 @@ function Avatar({ name, email, url, size = 30 }) {
   const initials = seed.split(/[\s@.]+/).filter(Boolean).map(w => w[0].toUpperCase()).slice(0, 2).join('');
   const palette = ['#0071E3', '#8b5cf6', '#06b6d4', '#f97316', '#f43f5e', '#d946ef', '#10b981'];
   const bg = palette[(seed.charCodeAt(0) || 0) % palette.length];
-  if (url) return <img className="ot-avatar" src={url} alt="" style={{ width: size, height: size }} />;
+  const [failed, setFailed] = useState(false);
+  // referrerPolicy="no-referrer" — Google photos 403 when a Referer is sent;
+  // onError falls back to the initials circle if the photo still fails.
+  if (url && !failed) {
+    return <img className="ot-avatar" src={url} alt="" referrerPolicy="no-referrer"
+      style={{ width: size, height: size }} onError={() => setFailed(true)} />;
+  }
   return <div className="ot-avatar ot-avatar--initials" style={{ width: size, height: size, background: bg }}>{initials}</div>;
 }
 
@@ -142,7 +154,7 @@ function RowMenu({ btnRef, onClose, items }) {
 }
 
 // ── Table rows ─────────────────────────────────────────────────────────
-function MemberRow({ m, presence, onManage, onRemove }) {
+function MemberRow({ m, presence, canManage, onManage, onRemove }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const btnRef = useRef(null);
@@ -172,7 +184,7 @@ function MemberRow({ m, presence, onManage, onRemove }) {
               {assigns.map(a => <span className="ot-chip" key={a.project_id}>{a.project_name}: <b>{a.role_name || '—'}</b></span>)}
             </span>}
       </span>
-      {m.is_owner ? <span /> : (
+      {(m.is_owner || !canManage) ? <span /> : (
         <button ref={btnRef} type="button" className="org-list-menu-btn" aria-label={t('org.team.options')}
           onClick={() => setMenuOpen(v => !v)}>
           <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
@@ -189,7 +201,7 @@ function MemberRow({ m, presence, onManage, onRemove }) {
   );
 }
 
-function RoleRow({ r, pagesCount, onEdit, onDelete }) {
+function RoleRow({ r, pagesCount, canManage, onEdit, onDelete }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const btnRef = useRef(null);
@@ -204,10 +216,12 @@ function RoleRow({ r, pagesCount, onEdit, onDelete }) {
           ? <span className="crm-badge crm-badge--gray">{t('org.team.roles.preset')}</span>
           : <span className="crm-badge crm-badge--light">{t('org.team.roles.custom')}</span>}
       </span>
-      <button ref={btnRef} type="button" className="org-list-menu-btn" aria-label={t('org.team.options')}
-        onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
-        <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
-      </button>
+      {canManage ? (
+        <button ref={btnRef} type="button" className="org-list-menu-btn" aria-label={t('org.team.options')}
+          onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
+          <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
+        </button>
+      ) : <span />}
       {menuOpen && (
         <RowMenu btnRef={btnRef} onClose={() => setMenuOpen(false)} items={[
           { Icon: PencilSimple, label: t('org.team.roles.edit'), onClick: onEdit },
@@ -219,7 +233,7 @@ function RoleRow({ r, pagesCount, onEdit, onDelete }) {
 }
 
 // ── Role create/edit modal — name + permission matrix ──
-function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
+function RoleEditorModal({ orgId, pages, role, readOnly, onClose, onSaved, showToast }) {
   const { t } = useTranslation();
   const editing = !!role;
   const [name, setName] = useState(role?.name || '');
@@ -271,10 +285,11 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
 
   const firstRun = useRef(true);
   useEffect(() => {
+    if (readOnly) return;                          // view-only — never autosave
     if (firstRun.current) { firstRun.current = false; return; }
     const timer = setTimeout(() => persist(name, perms), 500);
     return () => clearTimeout(timer);
-  }, [name, perms, persist]);
+  }, [name, perms, persist, readOnly]);
 
   return createPortal(
     <div className="auth-modal-overlay"
@@ -283,12 +298,14 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">{editing ? t('org.team.roleEditor.editTitle') : t('org.team.roleEditor.newTitle')}</div>
+              <div className="auth-modal-title">{readOnly ? t('org.team.roleEditor.viewTitle') : editing ? t('org.team.roleEditor.editTitle') : t('org.team.roleEditor.newTitle')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  {editing
-                    ? t('org.team.roleEditor.editSubtitle', { name: role.name })
-                    : t('org.team.roleEditor.newSubtitle')}
+                  {readOnly
+                    ? t('org.team.roleEditor.viewSubtitle', { name: role?.name })
+                    : editing
+                      ? t('org.team.roleEditor.editSubtitle', { name: role.name })
+                      : t('org.team.roleEditor.newSubtitle')}
                 </span>
               </div>
             </div>
@@ -301,20 +318,22 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
           <form className="cpm-form" onSubmit={(e) => e.preventDefault()} autoComplete="off">
             <div className="cpm-section">
               <label className="po-field-label">{t('org.team.roleEditor.nameLabel')}</label>
-              <input className="crm-input" autoFocus maxLength={60}
+              <input className="crm-input" autoFocus={!readOnly} maxLength={60} disabled={readOnly}
                 placeholder={t('org.team.roleEditor.namePlaceholder')}
                 value={name} onChange={e => setName(e.target.value)} />
             </div>
             <div className="cpm-section">
               <div className="ot-matrix-head">
                 <label className="po-field-label" style={{ padding: 0 }}>{t('org.team.roleEditor.pageAccess')}</label>
-                <div className="ot-matrix-bulk">
-                  <button type="button" onClick={() => setAll('none')}>{t('org.team.roleEditor.clearAll')}</button>
-                  <button type="button" onClick={() => setAll('view')}>{t('org.team.roleEditor.allView')}</button>
-                  <button type="button" onClick={() => setAll('manage')}>{t('org.team.roleEditor.allManage')}</button>
-                </div>
+                {!readOnly && (
+                  <div className="ot-matrix-bulk">
+                    <button type="button" onClick={() => setAll('none')}>{t('org.team.roleEditor.clearAll')}</button>
+                    <button type="button" onClick={() => setAll('view')}>{t('org.team.roleEditor.allView')}</button>
+                    <button type="button" onClick={() => setAll('manage')}>{t('org.team.roleEditor.allManage')}</button>
+                  </div>
+                )}
               </div>
-              <div className="ot-matrix">
+              <div className="ot-matrix" style={readOnly ? { pointerEvents: 'none', opacity: 0.85 } : undefined}>
                 {PAGE_GROUPS.map(group => {
                   const keys = group.keys.filter(k => pages.includes(k));
                   if (keys.length === 0) return null;
@@ -338,7 +357,7 @@ function RoleEditorModal({ orgId, pages, role, onClose, onSaved, showToast }) {
                 ))}
               </div>
             </div>
-            <p className="cpm-section-hint">{t('org.team.roleEditor.autosaveHint')}</p>
+            <p className="cpm-section-hint">{readOnly ? t('org.team.roleEditor.viewHint') : t('org.team.roleEditor.autosaveHint')}</p>
             {err && <p className="auth-msg auth-msg--err">{err}</p>}
             <div className="auth-actions">
               <button className="crm-submit-btn" type="button" onClick={onClose}>
@@ -497,8 +516,16 @@ export default function OrgTeam() {
   const { t } = useTranslation();
   const { org } = useOutletContext();
   const orgId = org?.id;
+  // A view-only delegate (org_team:view) can browse the team and inspect roles
+  // but must not see any mutation control — no Add employee, no New role, no
+  // row menus, and role rows open read-only. The owner and an org_team:manage
+  // delegate get the full controls. Backend (require_org_page …, "manage") is
+  // the real gate; this just hides UI the user can't action.
+  const canManage = !!org?.is_owner || org?.access?.org_team === 'manage';
 
-  const [tab, setTab] = useState('members');
+  // URL-backed (?tab=) so presence distinguishes Members vs Roles — same fix as
+  // the project console tabs (cursors / same-page chat / jump-to-teammate).
+  const [tab, setTab] = useTabParam('members');
   const [members, setMembers] = useState([]);
   const [roles, setRoles]     = useState([]);
   const [pages, setPages]     = useState([]);
@@ -612,16 +639,18 @@ export default function OrgTeam() {
               </p>
               <div className="ot-toolbar">
                 <span className="ot-count">{t('org.team.members.count', { count: members.length })}</span>
-                <button className="org-new-btn" type="button" onClick={() => setAddOpen(true)}>
-                  <Plus className="org-new-icon" /> {t('org.team.members.add')}
-                </button>
+                {canManage && (
+                  <button className="org-new-btn" type="button" onClick={() => setAddOpen(true)}>
+                    <Plus className="org-new-icon" /> {t('org.team.members.add')}
+                  </button>
+                )}
               </div>
               <div className="po-set-table">
                 <div className="po-set-row po-set-row--head po-set-row--otm">
                   <span>{t('org.team.members.colMember')}</span><span>{t('org.team.members.colEmail')}</span><span>{t('org.team.members.colAccess')}</span><span />
                 </div>
                 {members.map(m => (
-                  <MemberRow key={m.id} m={m} presence={presence.get(m.id)}
+                  <MemberRow key={m.id} m={m} presence={presence.get(m.id)} canManage={canManage}
                     onManage={() => setAssignFor(m)} onRemove={() => removeMember(m)} />
                 ))}
               </div>
@@ -636,16 +665,18 @@ export default function OrgTeam() {
               </p>
               <div className="ot-toolbar">
                 <span className="ot-count">{t('org.team.roles.count', { count: roles.length })}</span>
-                <button className="org-new-btn" type="button" onClick={() => setRoleModal({})}>
-                  <Plus className="org-new-icon" /> {t('org.team.roles.new')}
-                </button>
+                {canManage && (
+                  <button className="org-new-btn" type="button" onClick={() => setRoleModal({})}>
+                    <Plus className="org-new-icon" /> {t('org.team.roles.new')}
+                  </button>
+                )}
               </div>
               <div className="po-set-table">
                 <div className="po-set-row po-set-row--head po-set-row--otr">
                   <span>{t('org.team.roles.colRole')}</span><span>{t('org.team.roles.colPagesGranted')}</span><span>{t('org.team.roles.colType')}</span><span />
                 </div>
                 {roles.map(r => (
-                  <RoleRow key={r.id} r={r} pagesCount={pages.length}
+                  <RoleRow key={r.id} r={r} pagesCount={pages.length} canManage={canManage}
                     onEdit={() => setRoleModal({ role: r })} onDelete={() => deleteRole(r)} />
                 ))}
               </div>
@@ -657,7 +688,7 @@ export default function OrgTeam() {
 
       {addOpen && <AddMemberModal orgId={orgId} onClose={() => setAddOpen(false)}
         showToast={showToast} />}
-      {roleModal && <RoleEditorModal orgId={orgId} pages={pages} role={roleModal.role}
+      {roleModal && <RoleEditorModal orgId={orgId} pages={pages} role={roleModal.role} readOnly={!canManage}
         onClose={() => setRoleModal(null)} onSaved={load} showToast={showToast} />}
       {assignFor && <AssignmentModal orgId={orgId} member={assignFor} projects={projects} roles={roles}
         onClose={() => setAssignFor(null)} onSaved={load} showToast={showToast} />}

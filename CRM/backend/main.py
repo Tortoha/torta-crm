@@ -5522,6 +5522,29 @@ def require_org_page(user: dict, org_id: int, page: str, level: str = "view"):
             return
     raise HTTPException(403, "You don't have access to this page")
 
+def _org_member_pages(user: dict, org_id) -> dict:
+    """Org-page access map for the user: {org_page: 'view'|'manage'}. Owner gets
+    every org page at 'manage'; a member gets the HIGHEST level granted across
+    their roles in this org. Powers the frontend OrgLayout/Sidebar gating."""
+    if not org_id:
+        return {}
+    if db_one("SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+              (org_id, user["id"])):
+        return {p: "manage" for p in _ORG_PAGES}
+    rows = db_all(
+        "SELECT r.permissions FROM crm_team_members tm "
+        "JOIN crm_roles r ON r.id = tm.crm_role_id "
+        "WHERE tm.org_id=%s AND tm.crm_user_id=%s", (org_id, user["id"]))
+    out: dict = {}
+    for r in rows:
+        perms = r.get("permissions") or {}
+        for p in _ORG_PAGES:
+            lvl = perms.get(p)
+            if lvl in ("view", "manage") and \
+               _PERM_ORDER.get(lvl, 0) > _PERM_ORDER.get(out.get(p, "none"), 0):
+                out[p] = lvl
+    return out
+
 def _org_customers_shared(org_id) -> bool:
     """Whether this org shares customer identity + Auth Providers across its
     projects (branches). Default TRUE. Drives auth-config fan-out and the
@@ -6383,6 +6406,22 @@ _PROJECT_PAGES = [
     "auth_providers", "url_config",
     "integrations", "alerts", "goals", "documents", "settings", "api",
 ]
+
+# Org-level pages (the /org/:slug/* console). Delegatable via roles like the
+# project pages, but checked with require_org_page (not require_page) since
+# they're not scoped to a single project. `org_projects` (the projects list)
+# is ALWAYS granted to any member — not delegatable, so it's not in the
+# catalog. Billing is INTENTIONALLY absent — it can never be delegated
+# (owner-only forever). org_customers already lives in _PROJECT_PAGES (legacy
+# placement); the rest are new here.
+_ORG_EXTRA_PAGES = [
+    "org_analytics", "org_team", "org_payments", "org_usage", "org_settings",
+]
+# Full catalog shown in the role matrix + accepted by role validation.
+_ROLE_PAGES = _PROJECT_PAGES + _ORG_EXTRA_PAGES
+# Every org-level page key (for require_org_page checks / access resolver).
+_ORG_PAGES = ["org_customers"] + _ORG_EXTRA_PAGES
+
 _PERM_ORDER = {"none": 0, "view": 1, "manage": 2}
 
 def _level_ge(have: str, need: str) -> bool:
@@ -6391,7 +6430,11 @@ def _level_ge(have: str, need: str) -> bool:
 # Preset roles seeded per org (UPSERTed on startup so they always reflect this
 # catalog). Owner crafts custom roles on top of these.
 _PRESET_ROLES = {
-    "Admin":   {p: "manage" for p in _PROJECT_PAGES},
+    # Admin = full access to EVERYTHING in the catalog (project + org pages),
+    # always at manage. Computed off _ROLE_PAGES so any future page is included
+    # automatically — Admin is never missing a page. (Billing is never in the
+    # catalog, so it stays owner-only even for Admin.)
+    "Admin":   {p: "manage" for p in _ROLE_PAGES},
     "Manager": {**{p: "manage" for p in [
                     "overview", "products", "inventory", "batches", "promo_codes",
                     "discounts", "tier_pricing", "warehouses", "archive", "product_settings",
@@ -6404,7 +6447,10 @@ _PRESET_ROLES = {
                 **{p: "view" for p in [
                     "overview", "products", "inventory", "analytics", "goals", "documents",
                     "booking_services", "booking_staff"]}},
-    "Viewer":  {p: "view" for p in _PROJECT_PAGES},
+    # Viewer = read-only on EVERYTHING (project + org pages), via _ROLE_PAGES so
+    # new pages auto-appear at view. Manager/Staff stay project-operations roles
+    # (no org-admin pages) — only Admin/Viewer span the org level.
+    "Viewer":  {p: "view" for p in _ROLE_PAGES},
 }
 
 def _seed_preset_roles(cur, org_id: int):
@@ -7126,6 +7172,9 @@ def get_org_by_slug(slug: str, user: dict = Depends(get_current_user)):
     org["currency"]         = (org.get("currency") or "USD").upper()
     org["is_owner"]         = bool(org["is_owner"])
     org["customers_shared"] = bool(org["customers_shared"])
+    # Org-page access map so the frontend can gate the /org/:slug/* console
+    # (owner → all 'manage'; member → max level across their roles).
+    org["access"]           = _org_member_pages(user, org["id"])
     return org
 
 
@@ -7152,7 +7201,7 @@ def rename_org(org_id: int, request: RenameOrgRequest, user: dict = Depends(get_
     name = request.name.strip()
     if not name:        raise HTTPException(400, "Name is required")
     if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_settings", "manage")
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_organizations SET name=%s WHERE id=%s", (sanitize(name), org_id))
         conn.commit()
@@ -7188,7 +7237,7 @@ def _customer_merge_conflicts(org_id: int) -> list[dict]:
 def get_customers_sharing_conflicts(org_id: int, user: dict = Depends(get_current_user)):
     """Lets the UI preview blocking conflicts before the owner tries to turn
     sharing ON (so it can show 'resolve these first' instead of a hard error)."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_settings", "view")
     return {"conflicts": _customer_merge_conflicts(org_id)}
 
 
@@ -7198,7 +7247,7 @@ def set_customers_sharing(org_id: int, request: CustomersSharingRequest,
     """Toggle org-level customer identity. ON requires no credential conflicts;
     OFF (the irreversible-if-accounts-diverge direction) requires the org name
     typed back, mirroring the UI's two-step confirmation."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_settings", "manage")
     org = db_one("SELECT name, customers_shared FROM crm_organizations WHERE id=%s", (org_id,))
     if not org:
         raise HTTPException(404, "Organization not found")
@@ -7255,7 +7304,7 @@ def update_org_currency(org_id: int, body: dict = Body(...),
     currency; org analytics FX-converts every project's revenue into THIS code
     before summing. Numbers aren't re-priced; only the org-level rollup symbol
     changes."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_settings", "manage")
     cur_clean = (body.get("currency") or "").strip().upper()
     if len(cur_clean) != 3 or not cur_clean.isalpha():
         raise HTTPException(400, "Currency must be a 3-letter ISO code (e.g. USD, EUR, KZT)")
@@ -7281,22 +7330,22 @@ def _clean_permissions(perms):
     out = {}
     if isinstance(perms, dict):
         for k, v in perms.items():
-            if k in _PROJECT_PAGES and v in ("view", "manage"):
+            if k in _ROLE_PAGES and v in ("view", "manage"):
                 out[k] = v
     return out
 
 
 @app.get("/api/orgs/{org_id}/roles")
 def list_org_roles(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "view")
     rows = db_all("SELECT id, name, permissions, is_preset, is_system FROM crm_roles "
                   "WHERE org_id=%s AND is_system=FALSE ORDER BY is_preset DESC, name ASC", (org_id,))
-    return {"pages": _PROJECT_PAGES, "roles": [_role_out(r) for r in rows]}
+    return {"pages": _ROLE_PAGES, "roles": [_role_out(r) for r in rows]}
 
 
 @app.post("/api/orgs/{org_id}/roles")
 def create_org_role(org_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     name = (body.get("name") or "").strip()
     if not name:        raise HTTPException(400, "Role name is required")
     if len(name) > 60:  raise HTTPException(400, "Role name too long (max 60)")
@@ -7312,7 +7361,7 @@ def create_org_role(org_id: int, body: dict = Body(...), user: dict = Depends(ge
 
 @app.put("/api/orgs/{org_id}/roles/{role_id}")
 def update_org_role(org_id: int, role_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     if not db_one("SELECT id FROM crm_roles WHERE id=%s AND org_id=%s", (role_id, org_id)):
         raise HTTPException(404, "Role not found")
     sets, params = [], []
@@ -7333,7 +7382,7 @@ def update_org_role(org_id: int, role_id: int, body: dict = Body(...), user: dic
 
 @app.delete("/api/orgs/{org_id}/roles/{role_id}")
 def delete_org_role(org_id: int, role_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     if not db_one("SELECT id FROM crm_roles WHERE id=%s AND org_id=%s", (role_id, org_id)):
         raise HTTPException(404, "Role not found")
     if db_one("SELECT 1 FROM crm_team_members WHERE crm_role_id=%s LIMIT 1", (role_id,)):
@@ -7346,7 +7395,7 @@ def delete_org_role(org_id: int, role_id: int, user: dict = Depends(get_current_
 
 @app.get("/api/orgs/{org_id}/members")
 def list_org_members(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "view")
     org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
     if not org: raise HTTPException(404, "Organization not found")
     owner = db_one("SELECT id, name, email, avatar_url FROM crm_users WHERE id=%s", (org["owner_id"],))
@@ -7383,7 +7432,7 @@ def list_org_members(org_id: int, user: dict = Depends(get_current_user)):
 
 @app.post("/api/orgs/{org_id}/members")
 def add_org_member(org_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     email = (body.get("email") or "").strip().lower()
     if not email or "@" not in email: raise HTTPException(400, "A valid email is required")
     org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
@@ -7412,7 +7461,7 @@ def add_org_member(org_id: int, body: dict = Body(...), user: dict = Depends(get
 
 @app.delete("/api/orgs/{org_id}/members/{member_user_id}")
 def remove_org_member(org_id: int, member_user_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
     if org and org["owner_id"] == member_user_id:
         raise HTTPException(400, "Cannot remove the organization owner")
@@ -7427,7 +7476,7 @@ def remove_org_member(org_id: int, member_user_id: int, user: dict = Depends(get
 def set_member_assignment(org_id: int, member_user_id: int, body: dict = Body(...),
                           user: dict = Depends(get_current_user)):
     """Assign a role to a member on one project (role_id null → unassign)."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     project_id = body.get("project_id")
     role_id    = body.get("role_id")
     if not project_id: raise HTTPException(400, "project_id is required")
@@ -8134,7 +8183,7 @@ def list_org_customers(org_id: int,
 
 @app.get("/api/orgs/{org_id}/invites")
 def list_org_invites(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "view")
     rows = db_all("SELECT id, email, token, status, created_at FROM crm_invites "
                   "WHERE org_id=%s AND status='pending' ORDER BY created_at DESC", (org_id,))
     for r in rows:
@@ -8145,7 +8194,7 @@ def list_org_invites(org_id: int, user: dict = Depends(get_current_user)):
 
 @app.delete("/api/orgs/{org_id}/invites/{invite_id}")
 def revoke_org_invite(org_id: int, invite_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_invites WHERE id=%s AND org_id=%s", (invite_id, org_id))
         conn.commit()
@@ -8160,7 +8209,7 @@ def _org_invite_link_url(token: str) -> str:
 def get_org_invite_link(org_id: int, user: dict = Depends(get_current_user)):
     """The org's reusable share link. Anyone who opens it + signs in joins the
     org with NO role (zero access) until the owner assigns one. Lazily minted."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     org = db_one("SELECT invite_token FROM crm_organizations WHERE id=%s", (org_id,))
     if not org: raise HTTPException(404, "Organization not found")
     token = org.get("invite_token")
@@ -8175,7 +8224,7 @@ def get_org_invite_link(org_id: int, user: dict = Depends(get_current_user)):
 @app.post("/api/orgs/{org_id}/invite-link/reset")
 def reset_org_invite_link(org_id: int, user: dict = Depends(get_current_user)):
     """Rotate the share link — the previous link stops working immediately."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     if not db_one("SELECT id FROM crm_organizations WHERE id=%s", (org_id,)):
         raise HTTPException(404, "Organization not found")
     token = secrets.token_hex(24)
@@ -8375,7 +8424,7 @@ PAYMENT_PROVIDERS = ("stripe", "manual", "other")
 
 @app.get("/api/orgs/{org_id}/payment-settings")
 def get_org_payment_settings(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
     row = db_one(
         "SELECT payment_provider, payment_account_label, payment_dashboard_url"
         " FROM crm_organizations WHERE id=%s",
@@ -8392,7 +8441,7 @@ def get_org_payment_settings(org_id: int, user: dict = Depends(get_current_user)
 @app.put("/api/orgs/{org_id}/payment-settings")
 def update_org_payment_settings(org_id: int, body: dict = Body(...),
                                   user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     provider = (body.get("provider") or "manual").strip().lower()
     if provider not in PAYMENT_PROVIDERS:
         raise HTTPException(400, f"Invalid provider. Allowed: {PAYMENT_PROVIDERS}")
@@ -8856,7 +8905,7 @@ def _org_stripe_connected(org_id: int) -> bool:
 def get_org_payment_methods(org_id: int, user: dict = Depends(get_current_user)):
     """List the org's payment methods (enabled/label/instructions) + whether the
     Stripe online gateway is connected (gates enabling the 'stripe' method)."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
     _ensure_payment_methods(org_id)
     rows = db_all(
         "SELECT method, is_enabled, display_label, instructions, sort_order"
@@ -8889,7 +8938,7 @@ def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMetho
     """Toggle a method on/off and/or set its display label + customer instructions.
     Guards: enabling 'stripe' requires connected credentials; never leave the org
     with zero enabled methods (re-enables 'manual' as the universal fallback)."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     method = (method or "").strip().lower()
     if method not in ALLOWED_PAY_METHODS:
         raise HTTPException(400, f"Unknown method. Allowed: {ALLOWED_PAY_METHODS}")
@@ -8935,7 +8984,7 @@ def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMetho
 def get_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
     """Returns provider catalog (which fields are needed for each) + current state.
     Secret values are masked (`••••••••<last4>`) — full plaintext is never exposed."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
 
     row = db_one(
         "SELECT provider, credentials_encrypted, is_test_mode, is_connected,"
@@ -8999,7 +9048,7 @@ def put_org_payment_credentials(org_id: int, body: dict = Body(...),
     Does NOT auto-verify with provider — that requires a separate POST .../test call
     so the merchant gets explicit "Connected ✓" feedback.
     """
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     if not is_encryption_configured():
         raise HTTPException(500, "Payment encryption is not configured on the server. "
                                   "Set PAYMENT_ENCRYPTION_KEY in .env.")
@@ -9075,7 +9124,7 @@ def put_org_payment_credentials(org_id: int, body: dict = Body(...),
 
 @app.post("/api/orgs/{org_id}/payment-credentials/test")
 def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     row = db_one(
         "SELECT provider, credentials_encrypted, is_test_mode, stripe_account_id"
         "  FROM crm_payment_credentials WHERE org_id=%s",
@@ -9126,7 +9175,7 @@ def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_u
 def delete_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
     """Disconnect: clears stored credentials but keeps the provider selection.
     Existing orders + returns retain their snapshot of which provider was used."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s", (org_id,))
         # Card payments can't run without the gateway → disable the 'stripe'
@@ -9150,7 +9199,7 @@ import hashlib as _hashlib_oa
 @app.get("/api/orgs/{org_id}/payment-credentials/oauth/stripe/start")
 def stripe_connect_oauth_start(org_id: int, request: Request,
                                 user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
     client_id    = os.getenv("STRIPE_CONNECT_CLIENT_ID", "").strip()
     redirect_uri = os.getenv("STRIPE_CONNECT_REDIRECT_URI", "").strip()
     if not client_id or not redirect_uri:
@@ -9192,7 +9241,7 @@ def stripe_connect_oauth_callback(request: Request,
     except (ValueError, AttributeError):
         raise HTTPException(400, "Invalid OAuth state token")
 
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
 
     # This endpoint is a BROWSER landing (Stripe redirects the user here), so on
     # any failure we bounce back to the Payments page with a ?connect_error=…
@@ -25593,7 +25642,7 @@ def org_analytics(org_id: int, period: str = Query("30d"),
     period), a per-project breakdown (for the leaderboard / top-earner /
     top-margin / revenue-by-project / margin-by-project blocks), and a daily
     revenue series."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_analytics", "view")
     org = db_one("SELECT id, currency FROM crm_organizations WHERE id=%s", (org_id,))
     if not org:
         raise HTTPException(404, "Organization not found")
@@ -25762,7 +25811,7 @@ def org_revenue_over_time(
     frontend stops paging at the first order). Each project keeps its own
     currency, so per-(project, bucket) revenue is FX-converted into the org's
     display currency before being summed into the org-wide bucket."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_analytics", "view")
     if granularity not in ("day", "week", "month"):
         granularity = "day"
     org = db_one("SELECT id, currency FROM crm_organizations WHERE id=%s", (org_id,))

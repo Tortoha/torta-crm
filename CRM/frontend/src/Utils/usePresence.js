@@ -524,7 +524,7 @@ export function useFieldMirror(fieldId, onRemote) {
 }
 
 // ── Cursor reporting ──────────────────────────────────────────────────
-// Active only on pages that mount <CursorOverlay/> (project + product).
+// Active only on pages that mount <CursorOverlay/> (project + product + org).
 // 20Hz cap, only sends when the mouse actually moved since the last tick.
 //
 // Two coord systems per frame:
