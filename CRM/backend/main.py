@@ -26379,6 +26379,27 @@ class PresenceHub:
         for w in dead:
             await self.detach(w)
 
+    async def broadcast_raw(self, user_id: int, msg: dict):
+        """Fan an arbitrary frame (e.g. ephemeral cursor-chat) out to every WS
+        in the sender's orgs. Same routing as broadcast_user but with a caller-
+        supplied payload instead of a presence snapshot."""
+        snap = self._presence.get(user_id) or {}
+        org_ids = snap.get('org_ids') or []
+        targets = set()
+        for oid in org_ids:
+            targets |= set(self._org_subs.get(int(oid), ()))
+        if not targets:
+            return
+        payload = json.dumps(msg, default=str)
+        dead = []
+        for ws in targets:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        for w in dead:
+            await self.detach(w)
+
     def get_org_snapshot(self, org_id: int, viewer_id=None,
                          fresh_seconds: int = 45) -> list[dict]:
         """All users currently online in `org_id`. Online = heartbeat within
@@ -27305,6 +27326,54 @@ async def presence_ws(ws: WebSocket):
                     cursor_anchor=None, cursor_ox=None, cursor_oy=None,
                 )
                 await presence_hub.broadcast_user(user_id, online=True)
+                continue
+            if mt == 'chat':
+                # Ephemeral cursor-chat: relay a short message to same-org
+                # peers. Not stored anywhere — pure fan-out. The frontend
+                # attaches it to the sender's cursor for 5s, then drops it.
+                text = str(m.get('text') or '').strip()[:120]
+                if not text:
+                    continue
+                # Light server-side spam guard (the 5s client cooldown is the
+                # primary gate; this stops a hand-rolled client flooding).
+                snap = presence_hub._presence.get(user_id, {})
+                now_ts = _utcnow().timestamp()
+                if now_ts - float(snap.get('last_chat_at') or 0) < 4.0:
+                    continue
+                presence_hub.update(user_id, last_chat_at=now_ts)
+                msg = {
+                    'type':       'chat',
+                    'user_id':    user_id,
+                    'name':       snap.get('name') or '',
+                    'avatar_url': snap.get('avatar_url') or '',
+                    'text':       sanitize(text),
+                    'route':      snap.get('route') or '',
+                    'ts':         now_ts,
+                }
+                await presence_hub.broadcast_raw(user_id, msg)
+                continue
+            if mt == 'field':
+                # Live-mirror a form field's value to same-org peers (LWW).
+                # Ephemeral relay — not stored, not sanitized (it's raw editor
+                # content, e.g. email HTML; the preview iframe is sandboxed).
+                field_id = str(m.get('field_id') or '')[:200]
+                if not field_id:
+                    continue
+                value = m.get('value')
+                try:
+                    if len(json.dumps(value, default=str)) > 80000:
+                        continue   # oversized — drop (cap broadcast cost)
+                except Exception:
+                    continue
+                snap = presence_hub._presence.get(user_id, {})
+                await presence_hub.broadcast_raw(user_id, {
+                    'type':     'field',
+                    'user_id':  user_id,
+                    'name':     snap.get('name') or '',
+                    'field_id': field_id,
+                    'value':    value,
+                    'ts':       _utcnow().timestamp(),
+                })
                 continue
             if mt == 'hb':
                 # Heartbeat = lifeline only. Bump last_seen so the snapshot

@@ -10,6 +10,7 @@ import {
   DotsThreeOutline, Pencil, PauseCircle, PlayCircle, ArrowLeft,
 } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../../api.js';
+import { useFieldMirror } from '../../Utils/usePresence.js';
 import HtmlEmailEditor from './HtmlEmailEditor.jsx';
 import { missingRequiredVars } from '../../Utils/emailTemplateDefaults.js';
 import { useOrgPlan } from '../../Utils/useOrgPlan.js';
@@ -102,6 +103,26 @@ function TemplateEditor({ projectId, type }) {
   const [toast, toastNode] = useToast();
   const savedRef = useRef('');
 
+  // ── Live-mirror (LWW): other editors on this same template see my typing,
+  // and I see theirs. Field id is per project + email type so each tab syncs
+  // independently. valRef keeps the latest value for broadcasting outside the
+  // setState updater. Remote frames update state without re-broadcasting. ──
+  const valRef = useRef(val);
+  valRef.current = val;
+  const fieldId = `email:${projectId}:${type}`;
+  const { typingBy, pushLocal } = useFieldMirror(fieldId, (remote) => {
+    if (!remote || typeof remote !== 'object') return;
+    const v = { subject: remote.subject || '', html: remote.html || '' };
+    valRef.current = v;
+    setVal(v);
+  });
+  const onLocalChange = (next) => {
+    const merged = { ...valRef.current, ...next };
+    valRef.current = merged;
+    setVal(merged);
+    pushLocal(merged);
+  };
+
   useEffect(() => {
     let alive = true;
     fetch(`${API_BASE}/api/email-templates/${type}${pq}`, { credentials: 'include' })
@@ -109,7 +130,7 @@ function TemplateEditor({ projectId, type }) {
         if (!alive) return;
         setData(d);
         const v = { subject: d.subject || '', html: d.html || '' };
-        setVal(v); savedRef.current = JSON.stringify(v);
+        setVal(v); valRef.current = v; savedRef.current = JSON.stringify(v);
       }).catch(() => {});
     return () => { alive = false; };
   }, [type, projectId]);
@@ -146,12 +167,22 @@ function TemplateEditor({ projectId, type }) {
   return (
     <div className="em-tab">
       <HtmlEmailEditor emailType={type} subject={val.subject} html={val.html} projectId={projectId}
-        onChange={(next) => setVal(v => ({ ...v, ...next }))}
-        headerRight={data.is_customized
-          ? <button type="button" className="em-btn-ghost em-btn-danger" onClick={reset}>
-              <ArrowCounterClockwise /> {t('comms.emails.resetToDefault')}
-            </button>
-          : null} />
+        onChange={onLocalChange}
+        headerRight={
+          <>
+            {typingBy && (
+              <span className="em-typing">
+                <span className="em-typing-dots"><i /><i /><i /></span>
+                {t('comms.emails.typing', { name: typingBy, defaultValue: '{{name}} is editing…' })}
+              </span>
+            )}
+            {data.is_customized
+              ? <button type="button" className="em-btn-ghost em-btn-danger" onClick={reset}>
+                  <ArrowCounterClockwise /> {t('comms.emails.resetToDefault')}
+                </button>
+              : null}
+          </>
+        } />
       {toastNode}
     </div>
   );

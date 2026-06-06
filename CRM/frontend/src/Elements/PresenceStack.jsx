@@ -17,7 +17,9 @@ import { User, X, CaretRight } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import { InteractiveSection } from '../Utils/InteractiveSection.js';
 import { PoListRow } from '../Utils/PoListRow.jsx';
-import { useOnProjectKey, useInOrgScope, useAllOnline } from '../Utils/usePresence.js';
+import { useOnProjectKey, useInOrgScope, useAllOnline,
+         useOnRoute, useChat, sendChat } from '../Utils/usePresence.js';
+import { PaperPlaneTilt, ChatTeardropText } from '@phosphor-icons/react';
 import '../Style/Products.css';   // .po-set-table / .po-set-row / .po-set-strong
 import '../Style/Authentication.css';   // .auth-toast (bottom-pill notice)
 import '../Style/PresenceStack.css';
@@ -260,6 +262,76 @@ function AllPresenceModal({ onClose, onPick, showProject = false }) {
   );
 }
 
+// ── Cursor-chat composer — small modal to type an ephemeral message ──
+function ChatComposer({ onClose }) {
+  const { t } = useTranslation();
+  const { cooldownMs, canSend } = useChat();
+  const [text, setText] = useState('');
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const submit = () => {
+    if (!canSend) return;
+    if (sendChat(text)) onClose();
+  };
+  const onKey = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    if (e.key === 'Escape') onClose();
+  };
+  const secs = Math.ceil(cooldownMs / 1000);
+
+  return createPortal(
+    <div className="auth-modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="auth-modal cpm-modal pst-chat-modal" onClick={e => e.stopPropagation()}>
+        <div className="auth-modal-head">
+          <div className="auth-modal-title-row">
+            <div>
+              <div className="auth-modal-title">
+                {t('header.presence.chatTitle', { defaultValue: 'Quick message' })}
+              </div>
+              <div className="auth-modal-subtitle-row">
+                <span className="auth-modal-subtitle">
+                  {t('header.presence.chatSubtitle', {
+                    defaultValue: 'Shows by your cursor to everyone on this page for 5 seconds.',
+                  })}
+                </span>
+              </div>
+            </div>
+          </div>
+          <button className="auth-modal-close" onClick={onClose} type="button">
+            <X className="auth-modal-close-icon" />
+          </button>
+        </div>
+        <div className="auth-modal-body pst-chat-body">
+          <input
+            ref={inputRef}
+            className="crm-input pst-chat-input"
+            maxLength={120}
+            placeholder={canSend
+              ? t('header.presence.chatPlaceholder', { defaultValue: 'Type a message…' })
+              : t('header.presence.chatCooldown', { defaultValue: 'Wait {{secs}}s…', secs })}
+            value={text}
+            disabled={!canSend}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={onKey}
+          />
+          <button
+            className="crm-submit-btn pst-chat-send"
+            type="button"
+            disabled={!canSend || !text.trim()}
+            onClick={submit}>
+            <PaperPlaneTilt weight="fill" />
+            {canSend
+              ? t('header.presence.chatSend', { defaultValue: 'Send' })
+              : `${secs}s`}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // ── Header pill + popover (copy of NotificationsBell pattern) ───────
 export default function PresenceStack({ project, org }) {
   const { t }    = useTranslation();
@@ -267,6 +339,7 @@ export default function PresenceStack({ project, org }) {
   const btnRef   = useRef(null);
   const [open,    setOpen]    = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [pos,     setPos]     = useState(null);
   const [toast,   setToast]   = useState('');
   const toastRef = useRef(null);
@@ -316,6 +389,32 @@ export default function PresenceStack({ project, org }) {
   const onProject   = useOnProjectKey(projectKey);
   const inOrg       = useInOrgScope(orgSlug, apiKeySet);
   const stackOthers = projectKey ? onProject : inOrg;
+  // Cursor-chat is only meaningful when someone else is on the EXACT same
+  // page AND that page renders cursors (project / product pages, where
+  // CursorOverlay is mounted). Otherwise the bubble would have no cursor to
+  // ride and no audience.
+  const samePagePeers = useOnRoute(loc.pathname);
+  const cursorPage = /^\/(project|product)\//.test(loc.pathname);
+  const canChat = cursorPage && samePagePeers.length > 0;
+
+  // Ctrl+M opens the quick-message composer (only where chat is available).
+  // Ctrl (not Cmd) on all platforms — Cmd+M minimises the window on macOS.
+  // Match by e.code ('KeyM') — the PHYSICAL key — so it works regardless of
+  // keyboard layout (a Cyrillic layout makes e.key 'ь', not 'm'). Fall back
+  // to e.key for the rare case code is unavailable.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      const isM = e.code === 'KeyM' || (e.key || '').toLowerCase() === 'm';
+      if (!isM) return;
+      if (!canChat || chatOpen) return;
+      e.preventDefault();
+      setOpen(false);
+      setChatOpen(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canChat, chatOpen]);
   // Org scope → rows say "Tortoly · Analytics" so you know which project
   // each peer is in. Project scope → just "Analytics" (project is implicit).
   const showProject = !projectKey && !!orgId;
@@ -424,12 +523,26 @@ export default function PresenceStack({ project, org }) {
                     </span>
                   </PresenceTiltRow>
                 )}
+                {/* Cursor-chat trigger — an IS row in the list (only when
+                    someone else is on this exact page). */}
+                {canChat && (
+                  <PresenceTiltRow className="notif-row notif-viewall-row pst-chat-row"
+                    onClick={() => { setChatOpen(true); setOpen(false); }}>
+                    <span className="notif-viewall-inner">
+                      <ChatTeardropText weight="bold" />
+                      {t('header.presence.write', { defaultValue: 'Send a quick message' })}
+                      <kbd className="pst-kbd">Ctrl+M</kbd>
+                    </span>
+                  </PresenceTiltRow>
+                )}
               </div>
             )}
           </div>
         </div>,
         document.body,
       )}
+
+      {chatOpen && <ChatComposer onClose={() => setChatOpen(false)} />}
 
       {showAll && (
         <AllPresenceModal

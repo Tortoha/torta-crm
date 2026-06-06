@@ -67,12 +67,17 @@ button.pst-stack {
   cursor: pointer;
 }
 
-/* Bigger avatar variant — used inside dropdown / modal rows where the
-   neighbour overlap pull doesn't apply. */
+/* Bigger avatar variant — used inside dropdown / modal rows AND the Header
+   stack. Only the row context cancels the overlap pull (below); the stack
+   keeps the base -10px margin so avatars overlap. */
 .pst-avatar.pst-avatar--lg {
-  margin-left: 0;
   border-radius: 50%;
   overflow: hidden;
+}
+
+/* Row avatars sit alone in a flex cell — cancel the stack overlap margin. */
+.pst-row-icon .pst-avatar {
+  margin-left: 0;
 }
 
 /* The presence row sits in the .notif-row layout, but the icon column is
@@ -108,3 +113,58 @@ button.pst-stack {
 .notif-popover .po-set-table > .pst-presence-row.po-set-row.notif-row:only-child {
   border-radius: 24px;
 }
+
+/* ── Cursor-chat trigger row (an IS row in the popover list) — the
+   notif-viewall-inner already renders centered accent text + icon. ── */
+.pst-chat-row .notif-viewall-inner svg { width: 16px; height: 16px; }
+
+/* Small shortcut hint pill on the chat row. */
+.pst-kbd {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* ── Composer modal — input + send on ONE row, equal height, input grows ── */
+.pst-chat-modal { width: 440px; max-width: calc(100vw - 32px); }
+.pst-chat-body {
+  display: flex;
+  flex-direction: row;     /* auth-modal-body defaults to column — override */
+  align-items: center;
+  gap: 8px;
+}
+/* Force a compact 38px height: border-box + zero vertical padding so the
+   crm-input's own padding can't inflate it. !important beats the base rules. */
+.pst-chat-input.crm-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px !important;
+  box-sizing: border-box !important;
+  padding: 0 14px !important;
+  line-height: 38px;
+  border: none !important;
+  box-shadow: none !important;
+  background: var(--bg);
+}
+.pst-chat-input.crm-input:focus {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.pst-chat-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 38px !important;
+  box-sizing: border-box;
+  padding: 0 16px !important;
+}
+.pst-chat-send svg { width: 15px; height: 15px; }
+.pst-chat-send:disabled { opacity: 0.5; cursor: default; }

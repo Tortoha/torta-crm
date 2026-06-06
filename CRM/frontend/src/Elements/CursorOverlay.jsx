@@ -10,20 +10,34 @@
 // drifts; full element-locked tracking would need a DOM-selector exchange
 // (Figma-style) which we skip for now.
 
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import {
   useOnRoute,
+  useChat,
+  getMyMousePos,
+  getSelfId,
   startCursorReporting,
   stopCursorReporting,
 } from '../Utils/usePresence.js';
+import { usePresenceMap } from '../Utils/usePresence.js';
 import '../Style/CursorOverlay.css';
 
 function colourFor(seed) {
   const palette = ['#0071E3', '#8b5cf6', '#06b6d4', '#f97316', '#f43f5e', '#d946ef', '#10b981'];
   const code = (String(seed) || 'a').charCodeAt(0) || 0;
   return palette[code % palette.length];
+}
+
+// Ephemeral chat bubble that hangs off the top-right of a cursor. Auto-fades
+// after CHAT_TTL (5s) — the visible cooldown timer lives in the composer.
+function ChatBubble({ text, colour }) {
+  return (
+    <div className="cur-chat" style={{ background: colour }}>
+      <span className="cur-chat-text">{text}</span>
+    </div>
+  );
 }
 
 // Read the receiver-side .crm-main offset + scroll. Used to project a
@@ -70,8 +84,11 @@ function Cursor({ snap, frame }) {
   }
   const colour = colourFor(snap.email || snap.name || String(snap.user_id));
   const label  = snap.name || snap.email || '';
+  const chat   = snap.chat && snap.chat.expiresAt > Date.now() ? snap.chat : null;
   return (
     <div className="cur-pointer" style={{ transform: `translate3d(${x}px, ${y}px, 0)` }}>
+      {/* Chat bubble top-right of the arrow (message), name stays bottom-right. */}
+      {chat && <ChatBubble key={chat.expiresAt} text={chat.text} colour={colour} />}
       <svg className="cur-arrow" viewBox="0 0 18 18" width="18" height="18">
         {/* Figma-style pointer — each corner of the path itself is rounded
             with a quadratic curve (Q) instead of the previous sharp L
@@ -99,6 +116,29 @@ function Cursor({ snap, frame }) {
           {label}
         </span>
       )}
+    </div>
+  );
+}
+
+// My OWN chat bubble — I don't see my own cursor in the overlay, so this
+// follows my real mouse via a direct ref update (no React re-render on move).
+function MyChatBubble({ text, colour }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const onMove = (e) => {
+      if (ref.current) {
+        ref.current.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`;
+      }
+    };
+    // Seed at the last known position so it appears immediately, not on first move.
+    const { x, y } = getMyMousePos();
+    if (ref.current) ref.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    window.addEventListener('mousemove', onMove, { passive: true });
+    return () => window.removeEventListener('mousemove', onMove);
+  }, []);
+  return (
+    <div ref={ref} className="cur-pointer cur-pointer--me">
+      <ChatBubble key={text} text={text} colour={colour} />
     </div>
   );
 }
@@ -134,15 +174,22 @@ export default function CursorOverlay() {
     return stopCursorReporting;
   }, []);
 
+  // Subscribe to presence changes so chat bubbles (which ride on snaps)
+  // re-render as they arrive / expire even when the mouse is still.
+  usePresenceMap();
+  const { myChat } = useChat();
+
   const others = useOnRoute(loc.pathname);
   const cursors = others.filter(
     s => typeof s.cursor_x === 'number' && typeof s.cursor_y === 'number'
   );
-  if (cursors.length === 0) return null;
+  const myColour = colourFor(getSelfId() || 'me');
+  if (cursors.length === 0 && !myChat) return null;
   const frame = readContentFrame();
   return createPortal(
     <div className="cur-layer">
       {cursors.map(s => <Cursor key={s.user_id} snap={s} frame={frame} />)}
+      {myChat && <MyChatBubble text={myChat.text} colour={myColour} />}
     </div>,
     document.body,
   );

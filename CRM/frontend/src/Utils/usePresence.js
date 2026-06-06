@@ -20,7 +20,7 @@
 //   useOnRoute(routeMatch): hook returning [snap…] of OTHER users currently
 //                           on the same route as me (or a custom matcher).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { API_BASE } from '../api.js';
 
@@ -38,6 +38,15 @@ const _subs = new Set();       // change subscribers
 // Set to true to log [presence] WS activity to the console while debugging.
 const _DEBUG = false;
 function _log(...args) { if (_DEBUG) console.log('[presence]', ...args); }
+
+// Ephemeral cursor-chat: a sent message lives this long, then fades. Same
+// value gates the sender's cooldown (can't send again until it expires).
+const CHAT_TTL_MS = 5000;
+let _myChat = null;            // { text, expiresAt } — my own in-flight message
+let _chatCooldownUntil = 0;    // epoch ms — can't send again until then
+
+// Live-mirror field sync: fieldId → Set<callback(frame)>.
+const _fieldSubs = new Map();
 
 function _wsUrl() {
   // ws:// for localhost, wss:// for production HTTPS
@@ -75,9 +84,34 @@ function _applyFrame(frame) {
     _emit();
     return;
   }
+  if (frame.type === 'field' && frame.field_id) {
+    // Live-mirror — hand off to whoever's subscribed to this field id.
+    const subs = _fieldSubs.get(frame.field_id);
+    if (subs) {
+      for (const cb of subs) {
+        try { cb(frame); } catch { /* one bad subscriber shouldn't kill others */ }
+      }
+    }
+    return;
+  }
+  if (frame.type === 'chat' && frame.user_id) {
+    // Ephemeral cursor-chat — attach to the sender's presence entry with a
+    // 5s expiry. CursorOverlay renders it next to their cursor; it auto-
+    // clears when expired (pruned by the tick interval below).
+    const prev = _presence.get(frame.user_id) || {};
+    _presence.set(frame.user_id, {
+      ...prev,
+      chat: { text: frame.text || '', expiresAt: Date.now() + CHAT_TTL_MS },
+    });
+    _emit();
+    return;
+  }
   if (frame.type === 'presence' && frame.user_id) {
     if (frame.online) {
-      _presence.set(frame.user_id, { ...frame, online: true });
+      // Preserve an in-flight chat bubble across presence updates (a cursor
+      // move shouldn't wipe the message the peer just sent).
+      const prev = _presence.get(frame.user_id) || {};
+      _presence.set(frame.user_id, { ...frame, online: true, chat: prev.chat });
     } else {
       // Mark offline but keep last_seen so Team can say "online 5 min ago"
       const prev = _presence.get(frame.user_id) || {};
@@ -313,6 +347,121 @@ export function getSelfId() {
   return _selfId;
 }
 
+// ── Ephemeral cursor-chat ─────────────────────────────────────────────
+// Prune expired chat bubbles (peers' + my own) once a second so they fade
+// after CHAT_TTL_MS and the cooldown releases. Cheap; runs only in a browser.
+if (typeof window !== 'undefined') {
+  setInterval(() => {
+    const now = Date.now();
+    let changed = false;
+    for (const [uid, snap] of _presence.entries()) {
+      if (snap.chat && snap.chat.expiresAt <= now) {
+        _presence.set(uid, { ...snap, chat: null });
+        changed = true;
+      }
+    }
+    if (_myChat && _myChat.expiresAt <= now) { _myChat = null; changed = true; }
+    if (changed) _emit();
+  }, 1000);
+}
+
+/** Send an ephemeral cursor-chat message to same-page peers. Guarded by the
+ *  5s cooldown. Returns true if sent, false if still cooling down / empty. */
+export function sendChat(text) {
+  const t = (text || '').trim().slice(0, 120);
+  if (!t) return false;
+  if (Date.now() < _chatCooldownUntil) return false;
+  _send({ type: 'chat', text: t });
+  const expiresAt = Date.now() + CHAT_TTL_MS;
+  _myChat = { text: t, expiresAt };
+  _chatCooldownUntil = expiresAt;
+  _emit();
+  return true;
+}
+
+/** Reactive hook for the chat composer + my own bubble. Returns:
+ *   { myChat, cooldownMs, canSend } — re-renders as the cooldown ticks. */
+export function useChat() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const cb = () => setTick(t => t + 1);
+    _subs.add(cb);
+    // Tick every 250ms so the cooldown countdown stays smooth.
+    const id = setInterval(cb, 250);
+    return () => { _subs.delete(cb); clearInterval(id); };
+  }, []);
+  const now = Date.now();
+  const cooldownMs = Math.max(0, _chatCooldownUntil - now);
+  const myChat = _myChat && _myChat.expiresAt > now ? _myChat : null;
+  return { myChat, cooldownMs, canSend: cooldownMs === 0 };
+}
+
+// ── Live-mirror field sync (last-write-wins) ──────────────────────────
+const FIELD_THROTTLE_MS = 180;   // max one broadcast per field per ~5/sec
+const FIELD_TYPING_MS   = 1500;  // "X is typing" lingers this long after last frame
+
+/** Broadcast a field's value to same-org peers. Throttled per field. */
+export function sendField(fieldId, value) {
+  if (!fieldId) return;
+  const slot = sendField._t || (sendField._t = new Map());
+  const now = Date.now();
+  const last = slot.get(fieldId) || { at: 0, timer: null, pending: null };
+  const fire = (v) => { slot.set(fieldId, { at: Date.now(), timer: null, pending: null });
+                        _send({ type: 'field', field_id: fieldId, value: v }); };
+  if (now - last.at >= FIELD_THROTTLE_MS) {
+    if (last.timer) clearTimeout(last.timer);
+    fire(value);
+  } else {
+    // Coalesce — schedule the trailing edit so the final value always lands.
+    if (last.timer) clearTimeout(last.timer);
+    const wait = FIELD_THROTTLE_MS - (now - last.at);
+    const timer = setTimeout(() => fire(slot.get(fieldId)?.pending), wait);
+    slot.set(fieldId, { at: last.at, timer, pending: value });
+  }
+}
+
+/** Live-mirror a controlled field. While I'm actively typing (local edit in
+ *  the last second) incoming remote frames are ignored so my caret doesn't
+ *  jump — last-write-wins still holds once I pause. Returns the name of the
+ *  peer currently editing this field (or null) for an "X is typing" hint.
+ *
+ *  Usage: call useFieldMirror(fieldId, onRemote). On every LOCAL edit, call
+ *  the returned `pushLocal(value)`. */
+export function useFieldMirror(fieldId, onRemote) {
+  const [typingBy, setTypingBy] = useState(null);
+  const lastLocalAt = useRef(0);
+  const onRemoteRef = useRef(onRemote);
+  onRemoteRef.current = onRemote;
+
+  useEffect(() => {
+    if (!fieldId) return;
+    let clearTimer = null;
+    const cb = (frame) => {
+      // Don't clobber my own in-progress typing.
+      if (Date.now() - lastLocalAt.current < 1000) return;
+      onRemoteRef.current?.(frame.value);
+      setTypingBy(frame.name || '');
+      if (clearTimer) clearTimeout(clearTimer);
+      clearTimer = setTimeout(() => setTypingBy(null), FIELD_TYPING_MS);
+    };
+    let set = _fieldSubs.get(fieldId);
+    if (!set) { set = new Set(); _fieldSubs.set(fieldId, set); }
+    set.add(cb);
+    return () => {
+      set.delete(cb);
+      if (set.size === 0) _fieldSubs.delete(fieldId);
+      if (clearTimer) clearTimeout(clearTimer);
+    };
+  }, [fieldId]);
+
+  const pushLocal = useCallback((value) => {
+    lastLocalAt.current = Date.now();
+    sendField(fieldId, value);
+  }, [fieldId]);
+
+  return { typingBy, pushLocal };
+}
+
 // ── Cursor reporting ──────────────────────────────────────────────────
 // Active only on pages that mount <CursorOverlay/> (project + product).
 // 20Hz cap, only sends when the mouse actually moved since the last tick.
@@ -337,6 +486,10 @@ let _lastCursorAnchor = '';
 let _lastCursorOx   = 0;
 let _lastCursorOy   = 0;
 let _cursorCount    = 0;   // ref-count — multiple Layouts → one listener
+let _myMouseX = 0, _myMouseY = 0;   // raw viewport coords — for my own chat bubble
+/** My current mouse position in viewport pixels. Used to render my OWN
+ *  cursor-chat bubble (I don't see my own cursor in the overlay). */
+export function getMyMousePos() { return { x: _myMouseX, y: _myMouseY }; }
 // Idle-fade — after this many ms without mouse movement we send `cursor_clear`
 // so peers drop our cursor. Resumes on the next mousemove. Keeps stale
 // pointers from getting parked on a random spot when someone walks away.
@@ -387,6 +540,9 @@ function _cssPath(el) {
 }
 
 function _onMouseMove(e) {
+  // Raw viewport coords — used to anchor my OWN chat bubble.
+  _myMouseX = e.clientX;
+  _myMouseY = e.clientY;
   // (b) Content-relative coords inside .crm-main — fallback channel.
   const main = document.querySelector('.crm-main');
   if (main) {
