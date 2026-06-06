@@ -9,6 +9,8 @@ import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
 import { decodeHash } from './Utils/hashids.js';
+import { usePresence, setPresenceContext } from './Utils/usePresence.js';
+import CursorOverlay from './Elements/CursorOverlay.jsx';
 
 /**
  * Top-level layout for the product detail pages (`/product/:productHash`).
@@ -31,6 +33,8 @@ function ProductLayout() {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+
+  usePresence();
 
   const [productContext, setProductContext] = useState(null);
   // Stable callback so children can pass it down without re-firing effects.
@@ -73,14 +77,17 @@ function ProductLayout() {
     ])
     .then(([userData, ctx]) => {
       setUser(userData);
-      setProject({
+      const proj = {
         id:       ctx.project_id,
         name:     ctx.project_name,
         api_key:  ctx.api_key,
         org_id:   ctx.org_id,
         org_name: ctx.org_name,
         org_slug: ctx.org_slug,
-      });
+      };
+      setProject(proj);
+      try { window.__torta_project = proj; } catch { /* no-op */ }
+      if (proj?.id) setPresenceContext({ projectId: proj.id, orgId: proj.org_id || null });
     })
     .catch(() => navigate('/dashboard'))
     .finally(() => setLoading(false));
@@ -130,6 +137,8 @@ function ProductLayout() {
       </div>
       {/* No "More" — the 5 tabs ARE the entire sidebar */}
       <MobileTabBar items={tabItems} />
+      {/* Live cursors of other teammates on this same product page. */}
+      <CursorOverlay />
     </div>
   );
 }

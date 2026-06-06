@@ -183,6 +183,8 @@
         "colMember": "Member",
         "colEmail": "Email",
         "colAccess": "Access",
+        "online": "Online",
+        "offline": "Offline",
         "manageAccess": "Manage access",
         "remove": "Remove",
         "removeConfirm": "Remove {{name}} from the organization?",

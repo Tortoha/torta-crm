@@ -1,0 +1,47 @@
+/* Live cursor layer — fixed overlay above everything, but click-through so
+   it never blocks UI interaction. Updates 20 Hz from WS; transform-only
+   animation = GPU compositor, no layout/paint. */
+
+.cur-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.cur-pointer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Smooth tween between 20 Hz frames so the motion isn't choppy.
+     50 ms = exactly one frame interval, so the cursor finishes one
+     transition right as the next frame arrives. */
+  transition: transform 0.05s linear;
+  will-change: transform;
+}
+
+.cur-arrow {
+  display: block;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.22));
+}
+
+/* Label is positioned ABSOLUTELY against the cur-pointer (which itself is
+   pinned at the tip of the arrow). Figma-style: chip hangs off the tail —
+   slightly to the right of and below-aligned with the arrow's "elbow".
+   This way the chip never overlaps the tip and reads as a tag attached
+   to where the cursor is dragging. */
+.cur-label {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 14px;
+  color: #fff;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}

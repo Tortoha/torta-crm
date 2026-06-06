@@ -26265,6 +26265,351 @@ class NotifHub:
 notif_hub = NotifHub()
 
 
+# ── PRESENCE HUB — live "who's online + where" tracking ──────────────────
+#
+# State (per-instance, eventually consistent across instances via pg_notify
+# on the `crm_presence` channel):
+#   _presence[user_id] = {
+#       'route': '/project/abc/orders',
+#       'project_id': int|None,
+#       'org_ids': [1, 2],
+#       'last_seen': datetime utc,
+#       'name', 'email', 'avatar_url': str,
+#       'online': True,
+#   }
+#
+# Each WebSocket subscribes to one or more org_ids on the `hello` message;
+# presence updates for users in any of those orgs are pushed to it. The
+# client sends a 15s heartbeat + route changes on navigation. A connection
+# drop with no other tabs for the same user → broadcast offline + drop
+# from local map.
+class PresenceHub:
+    def __init__(self):
+        self._presence: dict[int, dict] = {}
+        self._user_conns: dict[int, set] = {}
+        self._org_subs:   dict[int, set] = {}
+        self._ws_orgs:    dict = {}
+        self._ws_user:    dict = {}
+        self._lock = asyncio.Lock()
+
+    async def attach(self, ws, user_id: int, org_ids):
+        async with self._lock:
+            self._ws_user[ws] = user_id
+            self._user_conns.setdefault(user_id, set()).add(ws)
+            self._ws_orgs[ws] = set(int(o) for o in (org_ids or []))
+            for oid in self._ws_orgs[ws]:
+                self._org_subs.setdefault(oid, set()).add(ws)
+
+    async def detach(self, ws):
+        async with self._lock:
+            uid = self._ws_user.pop(ws, None)
+            for oid in self._ws_orgs.pop(ws, ()):
+                s = self._org_subs.get(oid)
+                if s:
+                    s.discard(ws)
+                    if not s:
+                        self._org_subs.pop(oid, None)
+            if uid is not None:
+                cs = self._user_conns.get(uid)
+                if cs:
+                    cs.discard(ws)
+                    if not cs:
+                        self._user_conns.pop(uid, None)
+            return uid
+
+    def is_user_connected(self, user_id: int) -> bool:
+        return bool(self._user_conns.get(user_id))
+
+    def update(self, user_id: int, **fields):
+        cur = self._presence.get(user_id, {})
+        cur.update(fields)
+        cur['last_seen'] = _utcnow()
+        cur.setdefault('online', True)
+        self._presence[user_id] = cur
+
+    def _snap_msg(self, user_id: int, snap: dict, online: bool = True) -> dict:
+        return {
+            'type':       'presence',
+            'user_id':    int(user_id),
+            'route':      snap.get('route') or '',
+            'project_id':      snap.get('project_id'),
+            'project_name':    snap.get('project_name') or '',
+            'project_api_key': snap.get('project_api_key') or '',
+            'org_id':          snap.get('org_id'),
+            'name':       snap.get('name') or '',
+            'email':      snap.get('email') or '',
+            'avatar_url': snap.get('avatar_url') or '',
+            'last_seen':  snap['last_seen'].isoformat() if snap.get('last_seen') else None,
+            'online':     bool(online),
+            # Cursor — pixels in .crm-main content frame (scroll-corrected).
+            # Used as fallback when element-lock anchor doesn't resolve.
+            'cursor_x':   snap.get('cursor_x'),
+            'cursor_y':   snap.get('cursor_y'),
+            # Element-lock cursor (Figma-style): CSS path of the DOM node the
+            # peer was over + offsetX/offsetY normalized inside that node.
+            # When the receiver finds the same selector, the cursor lands on
+            # the exact same DOM element regardless of grid reflow.
+            'cursor_anchor': snap.get('cursor_anchor'),
+            'cursor_ox':     snap.get('cursor_ox'),
+            'cursor_oy':     snap.get('cursor_oy'),
+        }
+
+    async def broadcast_user(self, user_id: int, online: bool = True):
+        snap = self._presence.get(user_id)
+        if not snap and online:
+            return
+        msg = self._snap_msg(user_id, snap or {}, online=online)
+        org_ids = (snap or {}).get('org_ids') or []
+        targets = set()
+        for oid in org_ids:
+            targets |= set(self._org_subs.get(int(oid), ()))
+        if not targets:
+            return
+        # Presence visibility is open within shared orgs — peers can see
+        # WHERE someone is. RBAC is enforced on the click path instead
+        # (frontend looks up its own access, backend layout-bundle gate
+        # rejects unauthorized navigation).
+        payload = json.dumps(msg, default=str)
+        dead = []
+        for ws in targets:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        for w in dead:
+            await self.detach(w)
+
+    def get_org_snapshot(self, org_id: int, viewer_id=None,
+                         fresh_seconds: int = 45) -> list[dict]:
+        """All users currently online in `org_id`. Online = heartbeat within
+        the last `fresh_seconds` (cushion above the 15s client heartbeat to
+        absorb network jitter and Cloud Run instance switches).
+        `viewer_id` is accepted for API parity but unused — presence
+        visibility is open inside a shared org; click-through is what
+        actually enforces RBAC."""
+        try:
+            cutoff = _utcnow() - timedelta(seconds=fresh_seconds)
+        except Exception:
+            return []
+        org_id = int(org_id)
+        out = []
+        for uid, snap in self._presence.items():
+            if not snap.get('online'):
+                continue
+            ls = snap.get('last_seen')
+            if not ls or ls < cutoff:
+                continue
+            if org_id not in (snap.get('org_ids') or []):
+                continue
+            out.append(self._snap_msg(uid, snap, online=True))
+        return out
+
+
+presence_hub = PresenceHub()
+
+
+def _push_presence_notify(user_id: int, snap: dict, online: bool = True):
+    """Fan a presence update out across every backend instance via
+    pg_notify on `crm_presence`. The LISTEN background task on each
+    instance picks it up, updates its local _presence map, and re-
+    broadcasts to its local WS subscribers (so a user pinned to one
+    Cloud Run instance still sees presence from users on another)."""
+    try:
+        msg = {
+            'user_id':    int(user_id),
+            'route':      (snap.get('route') or '')[:200],
+            'project_id': snap.get('project_id'),
+            'org_ids':    [int(o) for o in (snap.get('org_ids') or [])],
+            'last_seen':  snap['last_seen'].isoformat() if snap.get('last_seen') else None,
+            'name':       snap.get('name') or '',
+            'email':      snap.get('email') or '',
+            'avatar_url': snap.get('avatar_url') or '',
+            'online':     bool(online),
+        }
+        with db_cursor() as (conn, cur):
+            cur.execute("SELECT pg_notify(%s, %s)", ("crm_presence", json.dumps(msg, default=str)))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _user_org_ids(user_id: int) -> list[int]:
+    """Org ids this user is part of — both owned orgs and member orgs."""
+    try:
+        own = db_all("SELECT id FROM crm_organizations WHERE owner_id = %s", (user_id,)) or []
+        mem = db_all("SELECT org_id FROM crm_org_members WHERE crm_user_id = %s", (user_id,)) or []
+        return sorted({int(r['id']) for r in own} | {int(r['org_id']) for r in mem if r.get('org_id')})
+    except Exception:
+        return []
+
+
+# RBAC visibility cache for presence — (viewer_id, project_id) → perms,
+# where perms is 'full' for owners, dict for members, or None for no access.
+_PRESENCE_RBAC_CACHE: dict = {}
+_PRESENCE_RBAC_TTL = 60
+
+def _viewer_project_perms(viewer_id: int, project_id):
+    """Return what viewer can do on this project. 'full' = owner / org-owner,
+    dict = role permissions, None = no access at all."""
+    if not project_id:
+        return 'full'   # no project = org-level page; share with anyone
+    try:
+        viewer_id = int(viewer_id); project_id = int(project_id)
+    except Exception:
+        return None
+    key = (viewer_id, project_id)
+    import time as _t
+    now = _t.time()
+    hit = _PRESENCE_RBAC_CACHE.get(key)
+    if hit and hit[1] > now:
+        return hit[0]
+    try:
+        # Project owner?
+        if db_one("SELECT 1 FROM crm_projects WHERE id=%s AND crm_user_id=%s",
+                  (project_id, viewer_id)):
+            _PRESENCE_RBAC_CACHE[key] = ('full', now + _PRESENCE_RBAC_TTL)
+            return 'full'
+        # Org owner?
+        if db_one("SELECT 1 FROM crm_projects p"
+                  "  JOIN crm_organizations o ON o.id = p.org_id"
+                  " WHERE p.id=%s AND o.owner_id=%s",
+                  (project_id, viewer_id)):
+            _PRESENCE_RBAC_CACHE[key] = ('full', now + _PRESENCE_RBAC_TTL)
+            return 'full'
+        # Team member with a role?
+        row = db_one("SELECT r.permissions FROM crm_team_members tm"
+                     "  JOIN crm_roles r ON r.id = tm.crm_role_id"
+                     " WHERE tm.project_id=%s AND tm.crm_user_id=%s",
+                     (project_id, viewer_id))
+    except Exception:
+        row = None
+    perms = (row or {}).get('permissions') if isinstance(row, dict) else None
+    perms = perms if isinstance(perms, dict) else None
+    _PRESENCE_RBAC_CACHE[key] = (perms, now + _PRESENCE_RBAC_TTL)
+    return perms
+
+
+def _page_from_route(route: str) -> str:
+    """Map a pathname to the permission page key used in role JSONB."""
+    if not route:
+        return ''
+    m = re.match(r"^/project/[^/]+/?([^/?]*)", route)
+    if m:
+        seg = m.group(1) or ''
+        return {
+            '': 'overview',
+            'products': 'products', 'orders': 'orders', 'customers': 'customers',
+            'booking': 'booking', 'bookings': 'booking', 'chat': 'chat',
+            'analytics': 'analytics', 'alerts': 'alerts', 'targets': 'goals',
+            'goals': 'goals', 'emails': 'emails',
+            'authentication': 'auth_providers', 'integrations': 'integrations',
+            'documents': 'documents', 'settings': 'settings', 'api': 'api',
+        }.get(seg, seg)
+    return ''
+
+
+def _can_view_presence(viewer_id, project_id, page):
+    """Whether viewer should receive the sender's presence frame at all.
+    Sender is on (project_id, page); if viewer can't see that location the
+    frame is dropped silently — they shouldn't even know the project exists."""
+    perms = _viewer_project_perms(viewer_id, project_id)
+    if perms is None:
+        return False
+    if perms == 'full':
+        return True
+    # Role dict — page-level gate. Empty page means "project root", which
+    # any team member with at least one permission sees.
+    if not page:
+        return bool(perms)
+    return _level_ge(perms.get(page), 'view')
+
+
+# api_key → {id, name, org_id, ts}. Lets presence frames resolve project
+# context straight from the URL (which carries the api_key) so there's no
+# race between the route and a separately-sent project_id. 5 min TTL.
+_PROJECT_META_CACHE: dict = {}
+_PROJECT_META_TTL = 300
+# slug → {id, ts}
+_ORG_SLUG_CACHE: dict = {}
+_ORG_SLUG_TTL = 300
+
+
+def _resolve_project_by_apikey(api_key):
+    """Resolve a project from its URL api_key → {id, name, org_id}. Cached."""
+    if not api_key:
+        return None
+    import time as _t
+    now = _t.time()
+    hit = _PROJECT_META_CACHE.get(api_key)
+    if hit and hit.get('ts', 0) + _PROJECT_META_TTL > now:
+        return hit
+    try:
+        row = db_one("SELECT id, name, org_id FROM crm_projects WHERE api_key = %s", (api_key,))
+    except Exception:
+        row = None
+    if row:
+        info = {
+            'id':      int(row['id']),
+            'name':    row.get('name') or '',
+            'api_key': api_key,
+            'org_id':  int(row['org_id']) if row.get('org_id') is not None else None,
+            'ts':      now,
+        }
+        _PROJECT_META_CACHE[api_key] = info
+        return info
+    return None
+
+
+def _resolve_org_id_by_slug(slug):
+    """Resolve an org id from its URL slug. Cached."""
+    if not slug:
+        return None
+    import time as _t
+    now = _t.time()
+    hit = _ORG_SLUG_CACHE.get(slug)
+    if hit and hit.get('ts', 0) + _ORG_SLUG_TTL > now:
+        return hit.get('id')
+    try:
+        row = db_one("SELECT id FROM crm_organizations WHERE slug = %s", (slug,))
+    except Exception:
+        row = None
+    oid = int(row['id']) if row and row.get('id') is not None else None
+    _ORG_SLUG_CACHE[slug] = {'id': oid, 'ts': now}
+    return oid
+
+
+def _resolve_scope_from_route(route: str) -> dict:
+    """Single source of truth for presence scope. Parses the pathname:
+       /project/<api_key>/...  → project + its org
+       /org/<slug>/...         → org only
+       anything else           → no scope (dashboard / settings / docs)
+    Returns dict with project_id, project_name, project_api_key, org_id —
+    all None/'' when not applicable. Because route and scope come from the
+    SAME string, they can never disagree (the race that plagued the
+    separately-sent project_id/org_id fields)."""
+    out = {'project_id': None, 'project_name': '', 'project_api_key': '', 'org_id': None}
+    if not route:
+        return out
+    m = re.match(r"^/(?:project|product)/([^/?]+)", route)
+    if m:
+        # NB: /product/:hash carries a hashid, not an api_key — those frames
+        # just won't resolve a project here (rare; product pages still show
+        # the user as "online" via org inheritance below if we had it). The
+        # common console path /project/:apiKey resolves cleanly.
+        meta = _resolve_project_by_apikey(m.group(1))
+        if meta:
+            out['project_id']      = meta['id']
+            out['project_name']    = meta['name']
+            out['project_api_key'] = meta['api_key']
+            out['org_id']          = meta['org_id']
+        return out
+    m = re.match(r"^/org/([^/?]+)", route)
+    if m:
+        out['org_id'] = _resolve_org_id_by_slug(m.group(1))
+        return out
+    return out
+
+
 @app.websocket("/api/projects/{project_id}/events/ws")
 async def project_events_ws(ws: WebSocket, project_id: int):
     """Live project event stream — orders, bookings, status changes.
@@ -26336,6 +26681,10 @@ def _start_pg_event_listener():
                     # Live chat (Chat with Customers) — push_chat_event NOTIFYs
                     # here so every instance's chat_hub gets the frame.
                     cur.execute("LISTEN crm_chat_events")
+                    # Live presence (who's online / what page) — every WS
+                    # heartbeat NOTIFYs here so every instance's presence_hub
+                    # mirrors the same state.
+                    cur.execute("LISTEN crm_presence")
                 global _health_listener_last_ok
                 _health_listener_last_ok = _utcnow()
                 while True:
@@ -26370,6 +26719,40 @@ def _start_pg_event_listener():
                                 if pid and inner:
                                     asyncio.run_coroutine_threadsafe(
                                         chat_hub.broadcast(pid, inner), main_loop)
+                            elif notify.channel == "crm_presence":
+                                # Cross-instance presence sync: update LOCAL
+                                # map then broadcast to local subscribers.
+                                try:
+                                    uid    = int(event.get('user_id') or 0)
+                                    online = bool(event.get('online', True))
+                                    if not uid:
+                                        raise ValueError
+                                    snap = {
+                                        'route':      event.get('route') or '',
+                                        'project_id': event.get('project_id'),
+                                        'org_ids':    [int(o) for o in (event.get('org_ids') or [])],
+                                        'name':       event.get('name') or '',
+                                        'email':      event.get('email') or '',
+                                        'avatar_url': event.get('avatar_url') or '',
+                                        'online':     online,
+                                    }
+                                    ls = event.get('last_seen')
+                                    if ls:
+                                        try:
+                                            from datetime import datetime as _dt
+                                            snap['last_seen'] = _dt.fromisoformat(str(ls).replace('Z', '+00:00'))
+                                        except Exception:
+                                            snap['last_seen'] = _utcnow()
+                                    else:
+                                        snap['last_seen'] = _utcnow()
+                                    if online:
+                                        presence_hub._presence[uid] = snap
+                                    else:
+                                        presence_hub._presence.pop(uid, None)
+                                    asyncio.run_coroutine_threadsafe(
+                                        presence_hub.broadcast_user(uid, online=online), main_loop)
+                                except Exception:
+                                    pass
                             else:
                                 pid = int(event.get("project_id") or 0)
                                 if pid:
@@ -26802,6 +27185,212 @@ async def notifications_ws(ws: WebSocket):
         pass
     finally:
         await notif_hub.unsubscribe(user_id, ws)
+
+
+@app.websocket("/api/presence/ws")
+async def presence_ws(ws: WebSocket):
+    """Live presence channel.
+
+    Client → server JSON:
+      {type:'hello'}                                          (sent on connect)
+      {type:'route', route:'/project/abc/orders', project_id:5}  (on navigation)
+      {type:'hb'}                                             (every 15s)
+    Server → client JSON:
+      {type:'snapshot', users:[…]}                            (sent once on connect)
+      {type:'presence', user_id, route, project_id, name, email, avatar_url,
+                        online, last_seen}                    (live frames)
+    """
+    await ws.accept()
+    cookie = ws.cookies.get("crm_token")
+    if not cookie:
+        await ws.close(code=4401); return
+    try:
+        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub"))
+    except Exception:
+        await ws.close(code=4401); return
+    # User identity for snapshot — pulled once at connect to keep frames
+    # cheap. _lookup_user_cached doesn't return avatar_url so we re-query
+    # crm_users directly; runs once per WS connect (not per heartbeat).
+    name = email = avatar_url = ''
+    try:
+        u = db_one(
+            "SELECT name, email, avatar_url FROM crm_users WHERE id = %s",
+            (user_id,)
+        ) or {}
+        name = (u.get('name') or u.get('email') or '')[:120]
+        email = (u.get('email') or '')[:160]
+        avatar_url = (u.get('avatar_url') or '')[:600]
+    except Exception:
+        pass
+    org_ids = _user_org_ids(user_id)
+    await presence_hub.attach(ws, user_id, org_ids)
+    presence_hub.update(user_id, name=name, email=email, avatar_url=avatar_url,
+                        org_ids=org_ids, route='', project_id=None, online=True)
+    # First frame: tell the client who they are. Frontend uses this to
+    # exclude self from "who else is on this page" stacks.
+    try:
+        await ws.send_json({'type': 'me', 'user_id': user_id})
+    except Exception:
+        pass
+    # Tell this connection about everyone currently online in its orgs.
+    try:
+        seen = set()
+        users = []
+        for oid in org_ids:
+            for snap in presence_hub.get_org_snapshot(oid, viewer_id=user_id):
+                uid = snap['user_id']
+                if uid in seen or uid == user_id:
+                    continue
+                seen.add(uid)
+                users.append(snap)
+        await ws.send_json({'type': 'snapshot', 'users': users})
+    except Exception:
+        pass
+    # Broadcast our own appearance to the orgs.
+    await presence_hub.broadcast_user(user_id, online=True)
+    _push_presence_notify(user_id, presence_hub._presence.get(user_id, {}), online=True)
+    try:
+        while True:
+            try:
+                raw = await ws.receive_text()
+            except WebSocketDisconnect:
+                break
+            try:
+                m = json.loads(raw)
+            except Exception:
+                continue
+            mt = m.get('type')
+            # Cursor frames are the hot path (~20Hz per active mouse); handle
+            # them separately so we don't pg_notify on every move (would flood
+            # Neon). Local-only broadcast — on multi-instance Cloud Run, cursors
+            # from a peer on another instance wouldn't show. Acceptable for
+            # phase 3; if true cross-instance cursors are needed, throttle
+            # the NOTIFY to every Nth frame.
+            if mt == 'cursor':
+                try:
+                    x = float(m.get('x') or 0)
+                    y = float(m.get('y') or 0)
+                except Exception:
+                    continue
+                # Content-relative pixels (scroll-corrected client-side).
+                x = max(-100000.0, min(100000.0, x))
+                y = max(-100000.0, min(100000.0, y))
+                # Element-lock anchor — clamp string length so a hostile
+                # client can't blow memory. Path > 600 chars almost never
+                # resolves anyway.
+                anchor = m.get('anchor')
+                if isinstance(anchor, str):
+                    anchor = anchor[:600]
+                else:
+                    anchor = None
+                try:
+                    ox = float(m.get('ox') or 0)
+                    oy = float(m.get('oy') or 0)
+                    ox = max(0.0, min(1.0, ox))
+                    oy = max(0.0, min(1.0, oy))
+                except Exception:
+                    ox = oy = None
+                presence_hub.update(
+                    user_id,
+                    cursor_x=x, cursor_y=y,
+                    cursor_anchor=anchor, cursor_ox=ox, cursor_oy=oy,
+                )
+                await presence_hub.broadcast_user(user_id, online=True)
+                continue
+            if mt == 'cursor_clear':
+                presence_hub.update(
+                    user_id,
+                    cursor_x=None, cursor_y=None,
+                    cursor_anchor=None, cursor_ox=None, cursor_oy=None,
+                )
+                await presence_hub.broadcast_user(user_id, online=True)
+                continue
+            if mt == 'hb':
+                # Heartbeat = lifeline only. Bump last_seen so the snapshot
+                # endpoint keeps reporting us as online, but DON'T broadcast
+                # or pg_notify — peers don't need a frame every 15 s per user;
+                # that's pure noise. Real changes ride hello/route/cursor.
+                presence_hub.update(user_id, online=True)
+                continue
+            if mt not in ('hello', 'route'):
+                continue
+            route = str(m.get('route') or '')[:200]
+            # Scope is resolved ENTIRELY from the route — one source of truth,
+            # no race. Client-sent project_id/org_id are ignored on purpose.
+            scope = _resolve_scope_from_route(route)
+            fields = {
+                'route':           route,
+                'project_id':      scope['project_id'],
+                'project_name':    scope['project_name'],
+                'project_api_key': scope['project_api_key'],
+                'org_id':          scope['org_id'],
+                # New route → drop stale cursor (no ghost on the new page).
+                'cursor_x': None, 'cursor_y': None,
+                'cursor_anchor': None, 'cursor_ox': None, 'cursor_oy': None,
+            }
+            presence_hub.update(user_id, **fields)
+            await presence_hub.broadcast_user(user_id, online=True)
+            _push_presence_notify(user_id, presence_hub._presence.get(user_id, {}), online=True)
+    finally:
+        uid = await presence_hub.detach(ws)
+        # Mark offline only when the LAST tab/connection for this user drops.
+        if uid is not None and not presence_hub.is_user_connected(uid):
+            # Re-stash the snapshot so broadcast_user() can serialize it,
+            # then drop it after we've fanned out.
+            snap = presence_hub._presence.get(uid) or {}
+            snap['online'] = False
+            snap['last_seen'] = _utcnow()
+            presence_hub._presence[uid] = snap
+            try:
+                await presence_hub.broadcast_user(uid, online=False)
+            except Exception:
+                pass
+            _push_presence_notify(uid, snap, online=False)
+            presence_hub._presence.pop(uid, None)
+
+
+@app.get("/api/orgs/{org_id}/presence")
+def get_org_presence(org_id: int, user: dict = Depends(get_current_user)):
+    """Snapshot of who's currently online in this org. Any org member (owner
+    or invited member) can read. Used by Team page polling + as the seed for
+    the in-Header avatar-stack on first paint."""
+    # Auth: org owner OR org member
+    is_owner = bool(db_one(
+        "SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+        (org_id, user["id"])
+    ))
+    if not is_owner:
+        is_member = bool(db_one(
+            "SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s",
+            (org_id, user["id"])
+        ))
+        if not is_member:
+            raise HTTPException(403, "Not a member of this organization")
+    return {'users': presence_hub.get_org_snapshot(int(org_id))}
+
+
+@app.get("/api/presence/me")
+def get_my_presence(user: dict = Depends(get_current_user)):
+    """Snapshot of everyone currently online in ANY org the current user
+    belongs to. Used by the frontend as a periodic poll (8s) so a passive
+    tab catches presence changes even when a WS broadcast frame is lost or
+    the user joined the page before the peer did. Self is excluded — the
+    frontend never needs to render their own avatar/cursor."""
+    org_ids = _user_org_ids(user["id"])
+    if not org_ids:
+        return {'users': []}
+    seen = set()
+    users = []
+    me = user["id"]
+    for oid in org_ids:
+        for snap in presence_hub.get_org_snapshot(int(oid)):
+            uid = snap['user_id']
+            if uid == me or uid in seen:
+                continue
+            seen.add(uid)
+            users.append(snap)
+    return {'users': users}
 
 
 def _notify_recipients(project_id: int, page: str) -> list[int]:

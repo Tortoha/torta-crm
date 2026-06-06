@@ -6,12 +6,15 @@ import './Style/Layout.css';
 import './Style/Load.css';
 import './Style/Docs.css';
 import { API_BASE } from './api.js';
+import { usePresence } from './Utils/usePresence.js';
 
 function DocsLayout() {
   const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
+
+  usePresence();
 
   // ?from=landing → the user clicked the Docs tab from the landing nav,
   // so we render Docs with the LANDING Header (Pricing + Docs tabs,

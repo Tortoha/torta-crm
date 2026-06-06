@@ -14,6 +14,7 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
+import { usePresenceMap } from '../../Utils/usePresence.js';
 import { SearchableCombobox, SegmentSwitch } from '../Project/ProjectSettings.jsx';
 import '../../Style/Authentication.css';   // auth-tab-* switcher + auth-modal
 import '../../Style/Organization.css';      // org-toolbar / org-new-btn / org-card-dropdown
@@ -141,15 +142,25 @@ function RowMenu({ btnRef, onClose, items }) {
 }
 
 // ── Table rows ─────────────────────────────────────────────────────────
-function MemberRow({ m, onManage, onRemove }) {
+function MemberRow({ m, presence, onManage, onRemove }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const btnRef = useRef(null);
   const assigns = m.assignments || [];
+  // Only render the dot when the member is online. Offline state shows
+  // nothing — no greyed-out indicator (visual noise on every row).
+  const online = !!presence?.online;
+  const dotTitle = t('org.team.members.online', { defaultValue: 'Online' });
   return (
     <PoListRow className="po-set-row--otm" frozen={menuOpen}>
       <span className="ot-id-cell">
-        <Avatar name={m.name} email={m.email} url={m.avatar_url} size={30} />
+        <span className="ot-avatar-wrap">
+          <Avatar name={m.name} email={m.email} url={m.avatar_url} size={30} />
+          {online && (
+            <span className="ot-online-dot ot-online-dot--on"
+              title={dotTitle} aria-label={dotTitle} />
+          )}
+        </span>
         <span className="po-set-strong ot-ellipsis">{m.name || m.email}</span>
         {m.is_me && <span className="crm-badge crm-badge--light ot-you-badge">{t('org.team.members.you')}</span>}
       </span>
@@ -494,6 +505,9 @@ export default function OrgTeam() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
+  // Live online/offline map — re-renders on every presence WS frame so the
+  // dot next to each member updates without polling.
+  const presence = usePresenceMap();
 
   const [addOpen, setAddOpen]     = useState(false);
   const [roleModal, setRoleModal] = useState(null);
@@ -607,7 +621,7 @@ export default function OrgTeam() {
                   <span>{t('org.team.members.colMember')}</span><span>{t('org.team.members.colEmail')}</span><span>{t('org.team.members.colAccess')}</span><span />
                 </div>
                 {members.map(m => (
-                  <MemberRow key={m.id} m={m}
+                  <MemberRow key={m.id} m={m} presence={presence.get(m.id)}
                     onManage={() => setAssignFor(m)} onRemove={() => removeMember(m)} />
                 ))}
               </div>

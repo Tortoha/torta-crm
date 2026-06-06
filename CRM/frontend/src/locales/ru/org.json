@@ -186,6 +186,8 @@
         "colMember": "Участник",
         "colEmail": "Эл. почта",
         "colAccess": "Доступ",
+        "online": "В сети",
+        "offline": "Не в сети",
         "manageAccess": "Управление доступом",
         "remove": "Удалить",
         "removeConfirm": "Удалить {{name}} из организации?",

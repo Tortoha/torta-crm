@@ -11,6 +11,7 @@ import MobileTabBar from './Elements/MobileTabBar.jsx';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
+import { usePresence, setPresenceContext } from './Utils/usePresence.js';
 
 function OrgLayout() {
   const { orgSlug } = useParams();
@@ -20,6 +21,9 @@ function OrgLayout() {
   const [org,     setOrg]     = useState(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+
+  // Live presence — same singleton WS as Layout / SettingsLayout / etc.
+  usePresence();
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) return false;
@@ -59,6 +63,13 @@ function OrgLayout() {
       // Hard ToS gate — Google-OAuth users bounce to /accept-terms.
       if (!userData?.terms_accepted_at) { navigate('/accept-terms', { replace: true }); return; }
       setUser(userData); setOrg(orgData);
+      // Publish org context so usePresence() can pin org_id to its frame,
+      // mirroring what Layout does with window.__torta_project.
+      try { window.__torta_org = orgData; } catch { /* no-op */ }
+      // Imperative — the pathname effect already ran before this fetch
+      // resolved, so the previous frame had org_id=null. Push the real
+      // scope now that we have it.
+      if (orgData?.id) setPresenceContext({ orgId: orgData.id });
     })
     .catch(() => navigate('/dashboard'))
     .finally(() => setLoading(false));
