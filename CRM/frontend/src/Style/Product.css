@@ -257,23 +257,55 @@
 }
 .pf-mail-sent svg { width: 18px; height: 18px; }
 
-/* ── REALTIME illustration: live inbox bubbles ────────────────────── */
-.pf-rt { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 10px; }
-.pf-rt-msg { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; }
-.pf-rt-av {
-  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
-  background: var(--accent-tint); color: var(--accent);
+/* ── REALTIME illustration: multiplayer presence (cursors + live edit) ── */
+.pf-rt { position: relative; width: 100%; max-width: 380px; }
+.pf-rt-canvas { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+.pf-rt-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pf-rt-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.pf-rt-stack { display: flex; align-items: center; }
+.pf-rt-ava {
+  width: 26px; height: 26px; border-radius: 50%; margin-left: -8px; box-sizing: border-box;
   display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #fff; border: 2px solid var(--card);
 }
-.pf-rt-av svg { width: 15px; height: 15px; }
-.pf-rt-av--logo { background: #fff; }
-.pf-rt-av img { width: 18px; height: 18px; object-fit: contain; }
-.pf-rt-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.pf-rt-from { font-size: 11px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
-.pf-rt-from i { font-style: normal; font-size: 10px; font-weight: 500; color: var(--accent); background: var(--accent-tint); padding: 1px 7px; border-radius: 999px; }
-.pf-rt-text { font-size: 12px; color: var(--muted); }
-.pf-rt-typing { display: inline-flex; gap: 3px; padding: 2px 0; }
-.pf-rt-typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0.5; }
+.pf-rt-ava:first-child { margin-left: 0; }
+.pf-rt-ava--more { background: var(--accent-tint); color: var(--accent); }
+
+.pf-rt-field {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  border-radius: 10px; background: var(--bg); border: 1px solid var(--accent);
+}
+.pf-rt-field-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); flex-shrink: 0;
+}
+.pf-rt-typed-wrap { flex: 1; min-width: 0; display: inline-flex; align-items: center; }
+.pf-rt-typed { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.pf-rt-caret {
+  width: 2px; height: 13px; background: var(--accent); margin-left: 1px; flex-shrink: 0;
+  animation: pf-rt-blink 1.05s steps(1) infinite;
+}
+@keyframes pf-rt-blink { 50% { opacity: 0; } }
+.pf-rt-editing {
+  flex-shrink: 0; font-size: 9px; font-weight: 600; color: #fff;
+  background: var(--accent); padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+
+.pf-rt-skel { display: flex; align-items: center; }
+.pf-rt-skel i { display: block; height: 8px; border-radius: 999px; background: var(--accent-tint); }
+
+/* Floating live cursors over the canvas — same Figma arrow as the real app. */
+.pf-rt-cur { position: absolute; z-index: 4; pointer-events: none; }
+.pf-rt-cur svg { display: block; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.28)); }
+.pf-rt-cur-tag {
+  position: absolute; top: 13px; left: 11px;
+  font-size: 9px; font-weight: 600; color: #fff;
+  padding: 1px 6px; border-radius: 6px; white-space: nowrap;
+}
+.pf-rt-cur--a { top: 33%; left: 25%; }
+.pf-rt-cur--b { top: 57%; left: 55%; }
+
+@media (prefers-reduced-motion: reduce) { .pf-rt-caret { animation: none; } }
 
 /* ── Big stat strip (reused across pages) ─────────────────────────── */
 .pf-stats {
@@ -372,3 +404,195 @@
 
 .pf-explore-link svg { width: 15px; height: 15px; color: var(--accent); }
 .pf-explore-link:hover { background: var(--accent-tint); color: var(--accent); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Interactive capability cards (Supabase-style hover panels) — opt-in via
+   .ln-feature--art (ProductPage adds it only for slugs in CARD_ART).
+   Cursor-following glow + border highlight (--mx/--my) and parallax art
+   layers (--rx/--ry). See product/illustrations.jsx.
+   ══════════════════════════════════════════════════════════════════════ */
+.ln-feature--art { overflow: hidden; }
+
+/* Small white icon inline with the title (Supabase-style) — no boxed tint, no
+   separate icon row. The title keeps the global .ln-feature h3 style. */
+.ln-feat-head { display: flex; align-items: center; gap: 9px; }
+.ln-feat-ico { width: 19px; height: 19px; color: #fff; flex-shrink: 0; }
+
+/* The illustration lives on the SAME card surface — no inner panel/border. */
+.ln-feature-art { margin-top: auto; position: relative; height: 122px; overflow: hidden; }
+
+/* Palette: every scene is MONOCHROME (grey) at rest and shifts to the single
+   accent on card hover. Tokens live on the wrapper so children inherit them. */
+.rt-card-art {
+  position: absolute; inset: 0;
+  --rt-ink: rgba(var(--fg-rgb), 0.42);   /* fills / cursors at rest */
+  --rt-soft: rgba(var(--fg-rgb), 0.12);  /* subtle fills / bubble bg */
+  --rt-line: rgba(var(--fg-rgb), 0.16);  /* wires / borders */
+}
+.rt-card-art * {
+  transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease,
+              box-shadow 0.3s ease, fill 0.3s ease, stroke 0.3s ease;
+}
+
+/* Absolutely-positioned scene layer. */
+.rt-l {
+  position: absolute;
+  transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease,
+              box-shadow 0.3s ease, fill 0.3s ease, stroke 0.3s ease;
+}
+/* Cursor parallax — ONLY on the cursor-driven cards (the others animate on
+   hover / light up from the cursor instead). Layers drift by their --d depth. */
+.rt-card-art--cursors .rt-l,
+.rt-card-art--chat .rt-l,
+.rt-card-art--edit .rt-l {
+  transform: translate(calc(var(--rx, 0) * var(--d, 6px)), calc(var(--ry, 0) * var(--d, 6px)));
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), color 0.3s ease,
+              background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease,
+              fill 0.3s ease, stroke 0.3s ease;
+}
+
+/* Avatars + cursors — solid grey at rest, no ring/border. */
+.rt-ava {
+  width: 26px; height: 26px; border-radius: 50%; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: var(--card); background: var(--muted);
+}
+.rt-ava--more { background: var(--rt-soft); color: var(--muted); }
+.rt-cur { display: inline-flex; align-items: flex-start; color: var(--rt-ink); }
+.rt-cur svg { display: block; }
+.rt-cur em {
+  align-self: flex-end; font-style: normal; font-size: 9px; font-weight: 600; color: var(--text);
+  background: var(--rt-soft); padding: 1px 6px; border-radius: 6px; margin-left: -2px; white-space: nowrap;
+}
+
+/* 1 — Live presence */
+.rt-stack { top: 45px; left: 50%; margin-left: -49px; display: flex; }
+.rt-stack .rt-ava { margin-left: -8px; }
+.rt-stack .rt-ava:first-child { margin-left: 0; }
+.rt-bgdot { width: 8px; height: 8px; border-radius: 50%; background: var(--rt-soft); }
+.rt-bgdot--1 { top: 22px; left: 30px; }
+.rt-bgdot--2 { top: 78px; right: 36px; }
+
+/* 2 — Live cursors */
+.rt-card-art--cursors .rt-cur--a { top: 26px; left: 40px; }
+.rt-card-art--cursors .rt-cur--b { top: 56px; right: 48px; }
+
+/* 3 — Cursor chat */
+.rt-card-art--chat .rt-cur--c { top: 56px; left: 50%; margin-left: -10px; }
+.rt-cur-bubble {
+  position: absolute; left: 13px; top: -20px;
+  font-size: 10px; font-weight: 600; color: var(--text); background: var(--rt-soft);
+  padding: 4px 9px; border-radius: 10px 10px 10px 2px; white-space: nowrap;
+}
+.rt-kbd { top: 84px; left: 50%; margin-left: -26px; display: inline-flex; gap: 4px; align-items: center; }
+.rt-kbd i {
+  font-style: normal; font-size: 9px; font-weight: 700; color: var(--muted); line-height: 1;
+  background: var(--bg); border: 1px solid var(--rt-line); border-radius: 5px; padding: 3px 5px;
+}
+
+/* 4 — Shared editing */
+.rt-card-art--edit .rt-field {
+  top: 42px; left: 50%; margin-left: -84px; width: 168px; box-sizing: border-box;
+  display: flex; align-items: center; gap: 7px; padding: 8px 10px;
+  background: var(--bg); border: 1px solid var(--rt-line); border-radius: 9px;
+}
+.rt-field-txt { font-size: 11px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.rt-field-caret { width: 2px; height: 12px; background: var(--rt-ink); animation: pf-rt-blink 1.05s steps(1) infinite; }
+.rt-field-tag {
+  margin-left: auto; font-size: 8px; font-weight: 600; color: var(--muted);
+  background: var(--rt-soft); padding: 1px 6px; border-radius: 999px;
+}
+.rt-card-art--edit .rt-cur--d { top: 66px; left: 128px; }
+
+/* 5 — Jump to a teammate */
+.rt-jump {
+  top: 44px; left: 50%; width: 172px; margin-left: -86px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.rt-jump-line { flex: 1; height: 44px; margin: 0 2px; }
+.rt-jump-line path { fill: none; stroke: var(--rt-line); stroke-width: 1.5; stroke-dasharray: 4 5; }
+
+/* 6 — Built to scale — layout only (colour comes from the base/glow layers). */
+.rt-scale { position: absolute; top: 8px; left: 50%; width: 180px; height: 100px; margin-left: -90px; }
+.rt-scale .rt-wires { position: absolute; top: 0; left: 0; width: 180px; height: 100px; }
+.rt-scale .rt-wires path { fill: none; stroke-width: 1.5; }
+.rt-node { position: absolute; width: 12px; height: 12px; border-radius: 50%; }
+.rt-node--hub { left: 16px; top: 42px; width: 16px; height: 16px; }
+.rt-node--a { left: 150px; top: 14px; }
+.rt-node--b { left: 150px; top: 44px; }
+.rt-node--c { left: 150px; top: 74px; }
+
+/* ── Hover: the one accent comes alive (grey → accent) ── */
+.ln-feature--art:hover .rt-cur { color: var(--accent); }
+.ln-feature--art:hover .rt-cur em { background: var(--accent); color: #fff; }
+.ln-feature--art:hover .rt-ava { background: var(--accent); color: #fff; }
+.ln-feature--art:hover .rt-ava--more { background: var(--accent-tint); color: var(--accent); }
+.ln-feature--art:hover .rt-bgdot { background: var(--accent-tint); }
+.ln-feature--art:hover .rt-cur-bubble { background: var(--accent); color: #fff; }
+.ln-feature--art:hover .rt-field { border-color: var(--accent); }
+.ln-feature--art:hover .rt-field-caret { background: var(--accent); }
+.ln-feature--art:hover .rt-field-tag { background: var(--accent); color: #fff; }
+.ln-feature--art:hover .rt-jump-line path { stroke: var(--accent); }
+
+/* ── Per-card motion: hover-loops + the two pointer effects ── */
+
+/* 1 — Live presence: on hover, teammates keep leaving (up) and new ones
+   joining (from below) — staggered every 2s for constant churn over 10s. */
+.ln-feature--art:hover .rt-stack .rt-ava { animation: rt-churn 10s ease-in-out infinite; }
+.rt-stack .rt-ava:nth-child(1) { animation-delay: 0s; }
+.rt-stack .rt-ava:nth-child(2) { animation-delay: -2s; }
+.rt-stack .rt-ava:nth-child(3) { animation-delay: -4s; }
+.rt-stack .rt-ava:nth-child(4) { animation-delay: -6s; }
+.rt-stack .rt-ava:nth-child(5) { animation-delay: -8s; }
+@keyframes rt-churn {
+  0%, 40% { transform: translateY(0) scale(1); opacity: 1; }
+  48% { transform: translateY(-9px) scale(0.4); opacity: 0; }
+  52% { transform: translateY(9px) scale(0.4); opacity: 0; }
+  60%, 100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+/* 5 — Jump: ONLY the dashed line marches toward the teammate on hover; the
+   cursor and avatar stay put. */
+.ln-feature--art:hover .rt-jump-line path { animation: rt-march 0.5s linear infinite; }
+@keyframes rt-march { to { stroke-dashoffset: -18; } }
+
+/* 6 — Built to scale: the ILLUSTRATION (not the card) lights up under the
+   cursor, Supabase Postgres-style. Two stacked copies — grey base + an accent
+   copy revealed by a radial mask centred on the cursor (--gx/--gy, relative to
+   the art region). Away from the pointer the lines stay grey. */
+.rt-scale-layer { position: absolute; inset: 0; }
+.rt-scale-base .rt-wires path { stroke: var(--rt-line); }
+.rt-scale-base .rt-node { background: var(--rt-ink); }
+.rt-scale-base .rt-node--hub { box-shadow: 0 0 0 4px var(--rt-soft); }
+.rt-scale-glow {
+  opacity: 0; transition: opacity 0.3s ease;
+  -webkit-mask: radial-gradient(120px circle at var(--gx, 50%) var(--gy, 50%), #000 0%, #000 16%, transparent 62%);
+  mask: radial-gradient(120px circle at var(--gx, 50%) var(--gy, 50%), #000 0%, #000 16%, transparent 62%);
+}
+.ln-feature--art:hover .rt-scale-glow { opacity: 1; }
+.rt-scale-glow .rt-wires path { stroke: var(--accent); }
+.rt-scale-glow .rt-node { background: var(--accent); }
+.rt-scale-glow .rt-node--hub { box-shadow: 0 0 0 4px var(--accent-tint); }
+
+/* The "…" chat bubble that rides the REAL cursor on hover (cursor-chat echo). */
+.rt-live {
+  position: absolute; left: var(--cx, 50%); top: var(--cy, 50%);
+  transform: translate(14px, -6px);
+  display: inline-flex; gap: 3px; align-items: center;
+  padding: 5px 8px; background: var(--accent); border-radius: 10px 10px 10px 2px;
+  opacity: 0; pointer-events: none; z-index: 6; transition: opacity 0.2s ease;
+}
+.ln-feature--art:hover .rt-live { opacity: 1; }
+.rt-live i {
+  width: 4px; height: 4px; border-radius: 50%; background: rgba(255, 255, 255, 0.92);
+  animation: rt-live-dot 1.2s ease-in-out infinite;
+}
+.rt-live i:nth-child(2) { animation-delay: 0.18s; }
+.rt-live i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes rt-live-dot { 0%, 60%, 100% { opacity: 0.4; } 30% { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .rt-field-caret, .rt-live i,
+  .ln-feature--art:hover .rt-stack .rt-ava,
+  .ln-feature--art:hover .rt-jump-line path { animation: none; }
+}

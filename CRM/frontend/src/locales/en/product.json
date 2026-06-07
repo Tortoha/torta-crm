@@ -26,7 +26,7 @@
         "storage": "Media & files",
         "automations": "Webhooks & alerts",
         "email": "Transactional & campaigns",
-        "realtime": "Live unified inbox"
+        "realtime": "Live cursors & presence"
       }
     },
 
@@ -208,35 +208,35 @@
     "realtime": {
       "hero": {
         "eyebrow": "Realtime",
-        "title": "Every customer message, live in one inbox",
-        "lead": "Your team sees messages from every channel the moment they arrive — Telegram, WhatsApp, Instagram, your website chat and more — in a single shared inbox, with instant notifications."
+        "title": "Your team, live on the same page",
+        "lead": "Live presence, cursors and shared editing across your whole CRM. See who's online and where, watch a teammate's cursor move with their name on it, and drop a message right on your pointer — on every project, product and org page."
       },
       "stats": [
-        { "value": "9 channels", "label": "All your customer conversations in one place" },
-        { "value": "Instant", "label": "New messages appear live, with no refresh" },
-        { "value": "Shared inbox", "label": "Your whole team works the same queue" },
-        { "value": "Notifications", "label": "Live alerts the moment something needs you" }
+        { "value": "Every page", "label": "Presence and cursors on every project, product and org screen" },
+        { "value": "Live cursors", "label": "See each teammate's pointer, labelled with their name" },
+        { "value": "Shared typing", "label": "Watch edits land in a field as they're typed" },
+        { "value": "One socket", "label": "A single WebSocket per session powers all of it" }
       ],
       "cards": [
-        { "title": "Unified inbox", "desc": "Web, Telegram, WhatsApp, Instagram, Facebook and more, merged." },
-        { "title": "Live messages", "desc": "New messages stream in instantly for every operator." },
-        { "title": "Notifications", "desc": "Order, stock and activity alerts the moment they happen." },
-        { "title": "One thread per customer", "desc": "All of a customer's channels in a single conversation." },
-        { "title": "Team-ready", "desc": "Everyone on your team works from the same live view." },
-        { "title": "Reply anywhere", "desc": "Answer from the CRM; it goes back on the right channel." }
+        { "title": "Live presence", "desc": "An avatar stack in the header and online dots show who's here, in real time." },
+        { "title": "Live cursors", "desc": "Every teammate's cursor moves live, labelled with their name and pixel-accurate across screens." },
+        { "title": "Cursor chat", "desc": "Press Ctrl+M to pin a quick message to your cursor — a word in the moment, no thread." },
+        { "title": "Shared editing", "desc": "Watch a teammate type into an email or product field, mirrored keystroke by keystroke." },
+        { "title": "Jump to a teammate", "desc": "Open the presence menu and click anyone to land exactly where they're working." },
+        { "title": "Built to scale", "desc": "One authenticated WebSocket per session, fanned out across instances with Postgres LISTEN/NOTIFY." }
       ],
       "deep": {
-        "eyebrow": "Always live",
-        "title": "Talk to customers the moment they reach out",
-        "body": "Messages from every connected channel land in your inbox live, and your team is notified instantly. Reply from one place and the customer gets it on the channel they used.",
+        "eyebrow": "Multiplayer",
+        "title": "Your CRM, with everyone in the room",
+        "body": "Open any page and you can see who else is on it, where their cursor is and what they're editing — the moment it happens. No refresh, no plugin, on every screen from a single project to the whole organization.",
         "points": [
-          "Nine channels merged into one shared inbox",
-          "New messages and notifications arrive live — no refreshing",
-          "One conversation per customer, across all their channels",
-          "Built for a team — everyone sees the same live queue"
+          "Live presence, cursors and cursor-chat on every project, product and org page",
+          "Shared live editing in the email composer and product overview",
+          "Element-locked cursors stay pixel-accurate even on different monitors",
+          "One authenticated WebSocket, scaled across instances via Postgres LISTEN/NOTIFY"
         ],
-        "chipsTitle": "Connected channels",
-        "chips": ["Website chat", "Telegram", "WhatsApp", "Instagram", "Facebook", "Discord", "Viber", "X", "Email"]
+        "chipsTitle": "What's live",
+        "chips": ["Live cursors", "Presence stack", "Online status", "Cursor chat", "Shared typing", "Jump to teammate", "Project pages", "Product pages", "Org console"]
       }
     }
   }

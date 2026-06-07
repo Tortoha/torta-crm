@@ -7,7 +7,7 @@
 import { useEffect } from 'react';
 import gsap from 'gsap';
 import {
-  ImageSquare, FilePdf, PaperPlaneTilt, ChatCircle, Globe,
+  ImageSquare, FilePdf, PaperPlaneTilt, Globe,
 } from '@phosphor-icons/react';
 import { useInView } from '../../../Utils/useInView.js';
 
@@ -178,36 +178,78 @@ function EmailIllus() {
   );
 }
 
-/* ── Realtime: messages arriving live into one inbox ─────────────── */
+/* ── Realtime: multiplayer presence — live cursors, an avatar presence
+      stack and a field being edited live, mirroring the real in-app
+      experience (the arrow path is the SAME one CursorOverlay draws). ──── */
+const RT_ARROW = 'M 3 2.5 L 14 9 Q 14.6 9.3 14 9.8 L 9.6 10.1 Q 8.8 10.3 8.5 11 L 6.8 15.2 Q 6.1 16.2 5.6 15.1 Z';
+
+function RtCursor({ cls, name, colour }) {
+  return (
+    <div className={`pf-rt-cur pf-anim ${cls}`}>
+      <svg viewBox="0 0 18 18" width="17" height="17">
+        <path d={RT_ARROW} fill={colour} stroke="#fff" strokeWidth="1"
+          strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+      <span className="pf-rt-cur-tag" style={{ background: colour }}>{name}</span>
+    </div>
+  );
+}
+
 function RealtimeIllus() {
   const ref = useGsapInView(() => {
-    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
-    tl.fromTo('.pf-rt-msg', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.18 });
-    // Looping typing dots on the last bubble.
-    gsap.to('.pf-rt-typing i', { y: -3, opacity: 1, duration: 0.4, stagger: 0.14, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    tl.fromTo('.pf-rt-canvas', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5 });
+    tl.fromTo('.pf-rt-ava', { scale: 0 },
+      { scale: 1, duration: 0.34, stagger: 0.07, ease: 'back.out(2.2)' }, '-=0.2');
+    tl.fromTo('.pf-rt-row', { opacity: 0, x: -10 },
+      { opacity: 1, x: 0, duration: 0.32, stagger: 0.09 }, '-=0.15');
+    tl.fromTo('.pf-rt-cur', { opacity: 0, scale: 0.4 },
+      { opacity: 1, scale: 1, duration: 0.4, stagger: 0.14, ease: 'back.out(2)' }, '-=0.05');
+
+    // Type the title in, char by char (no TextPlugin dependency). The <b> is
+    // pre-filled in JSX so reduced-motion (GSAP never runs) still shows text.
+    const typed = ref.current?.querySelector('.pf-rt-typed');
+    const full = 'Polo Sweater';
+    const o = { n: 0 };
+    tl.to(o, { n: full.length, duration: 1.0, ease: 'none', snap: { n: 1 },
+      onUpdate: () => { if (typed) typed.textContent = full.slice(0, Math.round(o.n)); } }, '-=0.1');
+
+    // The one looping accent: gentle, desynced cursor drift. Small amplitude so
+    // it reads as "alive", never busy — best animation is the unnoticed one.
+    gsap.to('.pf-rt-cur--a', { x: 24, y: 16, duration: 2.6, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+    gsap.to('.pf-rt-cur--b', { x: -20, y: 22, duration: 3.2, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 0.35 });
   });
-  const msgs = [
-    { logo: 'telegram', from: 'Daniel', ch: 'Telegram', text: 'Is the jacket back in stock?' },
-    { logo: 'whatsapp', from: 'Mia', ch: 'WhatsApp', text: 'Thanks, order received! 🙌' },
+
+  const avatars = [
+    { i: 'M', c: '#0071E3' }, { i: 'D', c: '#8b5cf6' }, { i: 'S', c: '#06b6d4' },
   ];
   return (
     <div className="pf-rt" ref={ref}>
-      {msgs.map(({ logo, from, ch, text }, i) => (
-        <div className="pf-rt-msg pf-card pf-anim" key={i}>
-          <div className="pf-rt-av pf-rt-av--logo"><img src={`/brand-logos/${logo}.svg`} alt="" /></div>
-          <div className="pf-rt-body">
-            <div className="pf-rt-from">{from} <i>{ch}</i></div>
-            <div className="pf-rt-text">{text}</div>
+      <div className="pf-rt-canvas pf-card pf-anim">
+        <div className="pf-rt-top">
+          <span className="pf-rt-title">Product overview</span>
+          <div className="pf-rt-stack">
+            {avatars.map((a, i) => (
+              <span className="pf-rt-ava" key={i} style={{ background: a.c }}>{a.i}</span>
+            ))}
+            <span className="pf-rt-ava pf-rt-ava--more">+2</span>
           </div>
         </div>
-      ))}
-      <div className="pf-rt-msg pf-card pf-anim">
-        <div className="pf-rt-av"><ChatCircle weight="fill" /></div>
-        <div className="pf-rt-body">
-          <div className="pf-rt-from">Web chat <i>Live</i></div>
-          <div className="pf-rt-typing"><i /><i /><i /></div>
+
+        <div className="pf-rt-row pf-rt-field">
+          <span className="pf-rt-field-label">Title</span>
+          <span className="pf-rt-typed-wrap">
+            <b className="pf-rt-typed">Polo Sweater</b><i className="pf-rt-caret" />
+          </span>
+          <span className="pf-rt-editing">Mia</span>
         </div>
+
+        <div className="pf-rt-row pf-rt-skel"><i style={{ width: '72%' }} /></div>
+        <div className="pf-rt-row pf-rt-skel"><i style={{ width: '54%' }} /></div>
       </div>
+
+      <RtCursor cls="pf-rt-cur--a" name="Mia" colour="#0071E3" />
+      <RtCursor cls="pf-rt-cur--b" name="Daniel" colour="#8b5cf6" />
     </div>
   );
 }
@@ -219,4 +261,139 @@ export const ILLUSTRATIONS = {
   automations: AutomationsIllus,
   email: EmailIllus,
   realtime: RealtimeIllus,
+};
+
+/* ════════════════════════════════════════════════════════════════════
+   Interactive capability-card art (Supabase-style hover panels).
+
+   Each card writes the cursor position into CSS vars (--mx/--my for the
+   spotlight glow + border highlight, --rx/--ry = normalized -1..1 offset
+   from centre for parallax — see ProductPage's pointer handlers). The
+   layers below read those vars purely in CSS (.rt-l → translate by --d),
+   so movement is driven by hover + cursor position, with no JS per frame
+   and no autonomous loop. Reduced-motion users get the static scene.
+   ════════════════════════════════════════════════════════════════════ */
+const RtArrow = ({ size = 16 }) => (
+  <svg viewBox="0 0 18 18" width={size} height={size}>
+    <path d={RT_ARROW} fill="currentColor" />
+  </svg>
+);
+
+// All scenes are MONOCHROME (grey) at rest and shift to the single accent on
+// card hover — no inline colours anywhere, so the palette stays one accent.
+
+// 1 — Live presence: an avatar stack + scattered depth dots.
+function ArtPresence() {
+  return (
+    <div className="rt-card-art rt-card-art--presence">
+      <i className="rt-l rt-bgdot rt-bgdot--1" style={{ '--d': '-7px' }} />
+      <i className="rt-l rt-bgdot rt-bgdot--2" style={{ '--d': '13px' }} />
+      <div className="rt-l rt-stack" style={{ '--d': '10px' }}>
+        <span className="rt-ava">M</span>
+        <span className="rt-ava">D</span>
+        <span className="rt-ava">S</span>
+        <span className="rt-ava">A</span>
+        <span className="rt-ava rt-ava--more">+3</span>
+      </div>
+    </div>
+  );
+}
+
+// 2 — Live cursors: two named pointers at different parallax depths.
+function ArtCursors() {
+  return (
+    <div className="rt-card-art rt-card-art--cursors">
+      <span className="rt-l rt-cur rt-cur--a" style={{ '--d': '13px' }}>
+        <RtArrow /><em>Mia</em>
+      </span>
+      <span className="rt-l rt-cur rt-cur--b" style={{ '--d': '-9px' }}>
+        <RtArrow /><em>Daniel</em>
+      </span>
+    </div>
+  );
+}
+
+// 3 — Cursor chat: a pointer carrying a bubble, with the Ctrl+M hint.
+function ArtChat() {
+  return (
+    <div className="rt-card-art rt-card-art--chat">
+      <span className="rt-l rt-cur rt-cur--c" style={{ '--d': '13px' }}>
+        <RtArrow />
+        <span className="rt-cur-bubble">back in 5 ✦</span>
+      </span>
+      <span className="rt-l rt-kbd" style={{ '--d': '-7px' }}><i>Ctrl</i><i>M</i></span>
+    </div>
+  );
+}
+
+// 4 — Shared editing: a field being typed into, a teammate's pointer on it.
+function ArtEdit() {
+  return (
+    <div className="rt-card-art rt-card-art--edit">
+      <div className="rt-l rt-field" style={{ '--d': '7px' }}>
+        <span className="rt-field-txt">Polo Sweater</span>
+        <i className="rt-field-caret" />
+        <span className="rt-field-tag">Mia</span>
+      </div>
+      <span className="rt-l rt-cur rt-cur--d" style={{ '--d': '16px' }}>
+        <RtArrow size={14} />
+      </span>
+    </div>
+  );
+}
+
+// 5 — Jump to a teammate: a pointer arcing toward a teammate avatar.
+// Self-contained centred row so cursor → arc → avatar always stay connected.
+function ArtJump() {
+  return (
+    <div className="rt-card-art rt-card-art--jump">
+      <div className="rt-l rt-jump" style={{ '--d': '10px' }}>
+        <span className="rt-cur"><RtArrow /></span>
+        <svg className="rt-jump-line" viewBox="0 0 80 44" preserveAspectRatio="none">
+          <path d="M4,34 Q40,-4 76,20" />
+        </svg>
+        <span className="rt-target"><span className="rt-ava">D</span></span>
+      </div>
+    </div>
+  );
+}
+
+// 6 — Built to scale: one socket fanning out to many clients. Rendered TWICE —
+// a grey base + an accent copy revealed by a radial mask that follows the
+// cursor, so the ILLUSTRATION's own lines light up under the pointer (Supabase
+// Postgres-style), not the card frame.
+const ScaleScene = () => (
+  <div className="rt-scale">
+    <svg className="rt-wires" viewBox="0 0 180 100" preserveAspectRatio="none">
+      <path d="M24,50 C76,50 92,20 156,20" />
+      <path d="M24,50 L156,50" />
+      <path d="M24,50 C76,50 92,80 156,80" />
+    </svg>
+    <span className="rt-node rt-node--hub" />
+    <span className="rt-node rt-node--a" />
+    <span className="rt-node rt-node--b" />
+    <span className="rt-node rt-node--c" />
+  </div>
+);
+function ArtScale() {
+  return (
+    <div className="rt-card-art rt-card-art--scale">
+      <div className="rt-scale-layer rt-scale-base"><ScaleScene /></div>
+      <div className="rt-scale-layer rt-scale-glow" aria-hidden="true"><ScaleScene /></div>
+    </div>
+  );
+}
+
+// Per-card interaction flags read by ProductPage.
+ArtCursors.hasLiveCursor = true;   // the "…" bubble rides the REAL cursor — only here
+ArtCursors.pointer = true;         // scene layers parallax with the cursor
+ArtChat.pointer = true;
+ArtEdit.pointer = true;
+ArtScale.illusGlow = true;         // the ILLUSTRATION (not the card) lights up under the cursor
+
+// Per-slug capability-card art. Order matches `cards` in product.json.
+// Only slugs listed here get the interactive hover panels; the rest keep
+// the plain static cards.
+export const CARD_ART = {
+  realtime: [ArtPresence, ArtCursors, ArtChat, ArtEdit, ArtJump, ArtScale],
 };
