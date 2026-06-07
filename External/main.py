@@ -1562,6 +1562,88 @@ app.add_middleware(CSRFMiddleware)
 app.add_middleware(DynamicCORSMiddleware)
 
 
+# ── Security headers — clickjacking / MIME-sniff / referrer / HSTS ────
+# Same set as the CRM backend. HSTS only in production (HTTPS). This API
+# serves JSON, so frame-ancestors 'none' + the standard headers are what
+# matter; the storefront's full CSP lives on its own edge.
+class _SecurityHeadersMiddleware:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send); return
+        async def _send(event):
+            if event.get("type") == "http.response.start":
+                headers = event.setdefault("headers", [])
+                have = {k.lower() for k, _ in headers}
+                add = [
+                    (b"x-content-type-options", b"nosniff"),
+                    (b"x-frame-options", b"DENY"),
+                    (b"referrer-policy", b"strict-origin-when-cross-origin"),
+                    (b"x-xss-protection", b"0"),
+                    (b"content-security-policy", b"frame-ancestors 'none'"),
+                    (b"permissions-policy", b"geolocation=(), microphone=(), camera=()"),
+                ]
+                if IS_PRODUCTION:
+                    add.append((b"strict-transport-security",
+                                b"max-age=31536000; includeSubDomains"))
+                for k, v in add:
+                    if k not in have:
+                        headers.append((k, v))
+            await send(event)
+        await self.app(scope, receive, _send)
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+# ── Crash alerts — email unhandled 500s to the operator (prod only) ───
+ALERT_EMAIL       = os.getenv("ALERT_EMAIL", "iskandersuleiemenov@gmail.com")
+_alert_last: dict = {}
+_ALERT_THROTTLE_S = 600
+
+def _email_alert(subject: str, body_html: str):
+    if not IS_PRODUCTION or not ALERT_EMAIL:
+        return
+    import time as _t
+    if _t.time() - _alert_last.get(subject[:140], 0) < _ALERT_THROTTLE_S:
+        return
+    _alert_last[subject[:140]] = _t.time()
+    try:
+        send_email(ALERT_EMAIL, subject, body_html, from_name="Torta Alerts")
+    except Exception:
+        pass
+
+@app.exception_handler(Exception)
+async def _alert_on_unhandled(request: Request, exc: Exception):
+    import traceback, threading
+    # ALWAYS log the traceback to stdout (dev console + Cloud Run logs) — handling
+    # the exception here stops uvicorn from logging it, so we must do it ourselves.
+    raw_tb = traceback.format_exc()
+    print(f"[500] {request.method} {request.url.path}\n{raw_tb}", flush=True)
+    esc = lambda s: str(s).replace("<", "&lt;").replace(">", "&gt;")
+    tb = esc(raw_tb)[-4000:]
+    subject = f"[API 500] {type(exc).__name__} @ {request.url.path}"
+    body = (f"<p><b>{esc(type(exc).__name__)}</b>: {esc(str(exc))[:300]}</p>"
+            f"<p>{esc(request.method)} {esc(request.url.path)}</p>"
+            f"<pre style='font-size:12px;white-space:pre-wrap'>{tb}</pre>")
+    try:
+        threading.Thread(target=_email_alert, args=(subject, body), daemon=True).start()
+    except Exception:
+        pass
+    return _JSON({"detail": "Internal server error"}, status_code=500)
+
+
+@app.get("/health")
+def _healthcheck():
+    """Unauthenticated liveness + DB probe for uptime monitors and load
+    balancers (no api_key needed). 503 only when the DB is unreachable."""
+    try:
+        row = db_one("SELECT 1 AS one")
+        ok = bool(row and row.get("one") == 1)
+    except Exception as e:
+        return _JSON({"ok": False, "db": False, "error": str(e)[:200]}, status_code=503)
+    return {"ok": ok, "db": ok}
+
+
 # ── HTTP cache headers for safe-to-cache GETs ─────────────────────
 _CACHEABLE_PATH_SUFFIXES = (
     "/config",          # currency / timezone / project name — rare changes
