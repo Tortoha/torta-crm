@@ -23,9 +23,10 @@ passlib==1.7.4
 cryptography==46.0.3
 google-auth==2.49.1
 
-# ── Rate limiting (slowapi + limits) ──
+# ── Rate limiting (slowapi + limits) + Redis KV for shared counters/OTP ──
 slowapi==0.1.9
 limits==5.8.0
+redis==5.2.1
 
 # ── Images / S3 ──
 pillow==12.1.1
