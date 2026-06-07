@@ -5522,6 +5522,29 @@ def require_org_page(user: dict, org_id: int, page: str, level: str = "view"):
             return
     raise HTTPException(403, "You don't have access to this page")
 
+def _org_member_pages(user: dict, org_id) -> dict:
+    """Org-page access map for the user: {org_page: 'view'|'manage'}. Owner gets
+    every org page at 'manage'; a member gets the HIGHEST level granted across
+    their roles in this org. Powers the frontend OrgLayout/Sidebar gating."""
+    if not org_id:
+        return {}
+    if db_one("SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+              (org_id, user["id"])):
+        return {p: "manage" for p in _ORG_PAGES}
+    rows = db_all(
+        "SELECT r.permissions FROM crm_team_members tm "
+        "JOIN crm_roles r ON r.id = tm.crm_role_id "
+        "WHERE tm.org_id=%s AND tm.crm_user_id=%s", (org_id, user["id"]))
+    out: dict = {}
+    for r in rows:
+        perms = r.get("permissions") or {}
+        for p in _ORG_PAGES:
+            lvl = perms.get(p)
+            if lvl in ("view", "manage") and \
+               _PERM_ORDER.get(lvl, 0) > _PERM_ORDER.get(out.get(p, "none"), 0):
+                out[p] = lvl
+    return out
+
 def _org_customers_shared(org_id) -> bool:
     """Whether this org shares customer identity + Auth Providers across its
     projects (branches). Default TRUE. Drives auth-config fan-out and the
@@ -6383,6 +6406,22 @@ _PROJECT_PAGES = [
     "auth_providers", "url_config",
     "integrations", "alerts", "goals", "documents", "settings", "api",
 ]
+
+# Org-level pages (the /org/:slug/* console). Delegatable via roles like the
+# project pages, but checked with require_org_page (not require_page) since
+# they're not scoped to a single project. `org_projects` (the projects list)
+# is ALWAYS granted to any member — not delegatable, so it's not in the
+# catalog. Billing is INTENTIONALLY absent — it can never be delegated
+# (owner-only forever). org_customers already lives in _PROJECT_PAGES (legacy
+# placement); the rest are new here.
+_ORG_EXTRA_PAGES = [
+    "org_analytics", "org_team", "org_payments", "org_usage", "org_settings",
+]
+# Full catalog shown in the role matrix + accepted by role validation.
+_ROLE_PAGES = _PROJECT_PAGES + _ORG_EXTRA_PAGES
+# Every org-level page key (for require_org_page checks / access resolver).
+_ORG_PAGES = ["org_customers"] + _ORG_EXTRA_PAGES
+
 _PERM_ORDER = {"none": 0, "view": 1, "manage": 2}
 
 def _level_ge(have: str, need: str) -> bool:
@@ -6391,7 +6430,11 @@ def _level_ge(have: str, need: str) -> bool:
 # Preset roles seeded per org (UPSERTed on startup so they always reflect this
 # catalog). Owner crafts custom roles on top of these.
 _PRESET_ROLES = {
-    "Admin":   {p: "manage" for p in _PROJECT_PAGES},
+    # Admin = full access to EVERYTHING in the catalog (project + org pages),
+    # always at manage. Computed off _ROLE_PAGES so any future page is included
+    # automatically — Admin is never missing a page. (Billing is never in the
+    # catalog, so it stays owner-only even for Admin.)
+    "Admin":   {p: "manage" for p in _ROLE_PAGES},
     "Manager": {**{p: "manage" for p in [
                     "overview", "products", "inventory", "batches", "promo_codes",
                     "discounts", "tier_pricing", "warehouses", "archive", "product_settings",
@@ -6404,7 +6447,10 @@ _PRESET_ROLES = {
                 **{p: "view" for p in [
                     "overview", "products", "inventory", "analytics", "goals", "documents",
                     "booking_services", "booking_staff"]}},
-    "Viewer":  {p: "view" for p in _PROJECT_PAGES},
+    # Viewer = read-only on EVERYTHING (project + org pages), via _ROLE_PAGES so
+    # new pages auto-appear at view. Manager/Staff stay project-operations roles
+    # (no org-admin pages) — only Admin/Viewer span the org level.
+    "Viewer":  {p: "view" for p in _ROLE_PAGES},
 }
 
 def _seed_preset_roles(cur, org_id: int):
@@ -7126,6 +7172,9 @@ def get_org_by_slug(slug: str, user: dict = Depends(get_current_user)):
     org["currency"]         = (org.get("currency") or "USD").upper()
     org["is_owner"]         = bool(org["is_owner"])
     org["customers_shared"] = bool(org["customers_shared"])
+    # Org-page access map so the frontend can gate the /org/:slug/* console
+    # (owner → all 'manage'; member → max level across their roles).
+    org["access"]           = _org_member_pages(user, org["id"])
     return org
 
 
@@ -7152,7 +7201,7 @@ def rename_org(org_id: int, request: RenameOrgRequest, user: dict = Depends(get_
     name = request.name.strip()
     if not name:        raise HTTPException(400, "Name is required")
     if len(name) > 100: raise HTTPException(400, "Name too long (max 100)")
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_settings", "manage")
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_organizations SET name=%s WHERE id=%s", (sanitize(name), org_id))
         conn.commit()
@@ -7188,7 +7237,7 @@ def _customer_merge_conflicts(org_id: int) -> list[dict]:
 def get_customers_sharing_conflicts(org_id: int, user: dict = Depends(get_current_user)):
     """Lets the UI preview blocking conflicts before the owner tries to turn
     sharing ON (so it can show 'resolve these first' instead of a hard error)."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_settings", "view")
     return {"conflicts": _customer_merge_conflicts(org_id)}
 
 
@@ -7198,7 +7247,7 @@ def set_customers_sharing(org_id: int, request: CustomersSharingRequest,
     """Toggle org-level customer identity. ON requires no credential conflicts;
     OFF (the irreversible-if-accounts-diverge direction) requires the org name
     typed back, mirroring the UI's two-step confirmation."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_settings", "manage")
     org = db_one("SELECT name, customers_shared FROM crm_organizations WHERE id=%s", (org_id,))
     if not org:
         raise HTTPException(404, "Organization not found")
@@ -7255,7 +7304,7 @@ def update_org_currency(org_id: int, body: dict = Body(...),
     currency; org analytics FX-converts every project's revenue into THIS code
     before summing. Numbers aren't re-priced; only the org-level rollup symbol
     changes."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_settings", "manage")
     cur_clean = (body.get("currency") or "").strip().upper()
     if len(cur_clean) != 3 or not cur_clean.isalpha():
         raise HTTPException(400, "Currency must be a 3-letter ISO code (e.g. USD, EUR, KZT)")
@@ -7281,22 +7330,22 @@ def _clean_permissions(perms):
     out = {}
     if isinstance(perms, dict):
         for k, v in perms.items():
-            if k in _PROJECT_PAGES and v in ("view", "manage"):
+            if k in _ROLE_PAGES and v in ("view", "manage"):
                 out[k] = v
     return out
 
 
 @app.get("/api/orgs/{org_id}/roles")
 def list_org_roles(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "view")
     rows = db_all("SELECT id, name, permissions, is_preset, is_system FROM crm_roles "
                   "WHERE org_id=%s AND is_system=FALSE ORDER BY is_preset DESC, name ASC", (org_id,))
-    return {"pages": _PROJECT_PAGES, "roles": [_role_out(r) for r in rows]}
+    return {"pages": _ROLE_PAGES, "roles": [_role_out(r) for r in rows]}
 
 
 @app.post("/api/orgs/{org_id}/roles")
 def create_org_role(org_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     name = (body.get("name") or "").strip()
     if not name:        raise HTTPException(400, "Role name is required")
     if len(name) > 60:  raise HTTPException(400, "Role name too long (max 60)")
@@ -7312,7 +7361,7 @@ def create_org_role(org_id: int, body: dict = Body(...), user: dict = Depends(ge
 
 @app.put("/api/orgs/{org_id}/roles/{role_id}")
 def update_org_role(org_id: int, role_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     if not db_one("SELECT id FROM crm_roles WHERE id=%s AND org_id=%s", (role_id, org_id)):
         raise HTTPException(404, "Role not found")
     sets, params = [], []
@@ -7333,7 +7382,7 @@ def update_org_role(org_id: int, role_id: int, body: dict = Body(...), user: dic
 
 @app.delete("/api/orgs/{org_id}/roles/{role_id}")
 def delete_org_role(org_id: int, role_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     if not db_one("SELECT id FROM crm_roles WHERE id=%s AND org_id=%s", (role_id, org_id)):
         raise HTTPException(404, "Role not found")
     if db_one("SELECT 1 FROM crm_team_members WHERE crm_role_id=%s LIMIT 1", (role_id,)):
@@ -7346,7 +7395,7 @@ def delete_org_role(org_id: int, role_id: int, user: dict = Depends(get_current_
 
 @app.get("/api/orgs/{org_id}/members")
 def list_org_members(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "view")
     org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
     if not org: raise HTTPException(404, "Organization not found")
     owner = db_one("SELECT id, name, email, avatar_url FROM crm_users WHERE id=%s", (org["owner_id"],))
@@ -7383,7 +7432,7 @@ def list_org_members(org_id: int, user: dict = Depends(get_current_user)):
 
 @app.post("/api/orgs/{org_id}/members")
 def add_org_member(org_id: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     email = (body.get("email") or "").strip().lower()
     if not email or "@" not in email: raise HTTPException(400, "A valid email is required")
     org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
@@ -7412,7 +7461,7 @@ def add_org_member(org_id: int, body: dict = Body(...), user: dict = Depends(get
 
 @app.delete("/api/orgs/{org_id}/members/{member_user_id}")
 def remove_org_member(org_id: int, member_user_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     org = db_one("SELECT owner_id FROM crm_organizations WHERE id=%s", (org_id,))
     if org and org["owner_id"] == member_user_id:
         raise HTTPException(400, "Cannot remove the organization owner")
@@ -7427,7 +7476,7 @@ def remove_org_member(org_id: int, member_user_id: int, user: dict = Depends(get
 def set_member_assignment(org_id: int, member_user_id: int, body: dict = Body(...),
                           user: dict = Depends(get_current_user)):
     """Assign a role to a member on one project (role_id null → unassign)."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     project_id = body.get("project_id")
     role_id    = body.get("role_id")
     if not project_id: raise HTTPException(400, "project_id is required")
@@ -8134,7 +8183,7 @@ def list_org_customers(org_id: int,
 
 @app.get("/api/orgs/{org_id}/invites")
 def list_org_invites(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "view")
     rows = db_all("SELECT id, email, token, status, created_at FROM crm_invites "
                   "WHERE org_id=%s AND status='pending' ORDER BY created_at DESC", (org_id,))
     for r in rows:
@@ -8145,7 +8194,7 @@ def list_org_invites(org_id: int, user: dict = Depends(get_current_user)):
 
 @app.delete("/api/orgs/{org_id}/invites/{invite_id}")
 def revoke_org_invite(org_id: int, invite_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_invites WHERE id=%s AND org_id=%s", (invite_id, org_id))
         conn.commit()
@@ -8160,7 +8209,7 @@ def _org_invite_link_url(token: str) -> str:
 def get_org_invite_link(org_id: int, user: dict = Depends(get_current_user)):
     """The org's reusable share link. Anyone who opens it + signs in joins the
     org with NO role (zero access) until the owner assigns one. Lazily minted."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     org = db_one("SELECT invite_token FROM crm_organizations WHERE id=%s", (org_id,))
     if not org: raise HTTPException(404, "Organization not found")
     token = org.get("invite_token")
@@ -8175,7 +8224,7 @@ def get_org_invite_link(org_id: int, user: dict = Depends(get_current_user)):
 @app.post("/api/orgs/{org_id}/invite-link/reset")
 def reset_org_invite_link(org_id: int, user: dict = Depends(get_current_user)):
     """Rotate the share link — the previous link stops working immediately."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_team", "manage")
     if not db_one("SELECT id FROM crm_organizations WHERE id=%s", (org_id,)):
         raise HTTPException(404, "Organization not found")
     token = secrets.token_hex(24)
@@ -8375,7 +8424,7 @@ PAYMENT_PROVIDERS = ("stripe", "manual", "other")
 
 @app.get("/api/orgs/{org_id}/payment-settings")
 def get_org_payment_settings(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
     row = db_one(
         "SELECT payment_provider, payment_account_label, payment_dashboard_url"
         " FROM crm_organizations WHERE id=%s",
@@ -8392,7 +8441,7 @@ def get_org_payment_settings(org_id: int, user: dict = Depends(get_current_user)
 @app.put("/api/orgs/{org_id}/payment-settings")
 def update_org_payment_settings(org_id: int, body: dict = Body(...),
                                   user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     provider = (body.get("provider") or "manual").strip().lower()
     if provider not in PAYMENT_PROVIDERS:
         raise HTTPException(400, f"Invalid provider. Allowed: {PAYMENT_PROVIDERS}")
@@ -8856,7 +8905,7 @@ def _org_stripe_connected(org_id: int) -> bool:
 def get_org_payment_methods(org_id: int, user: dict = Depends(get_current_user)):
     """List the org's payment methods (enabled/label/instructions) + whether the
     Stripe online gateway is connected (gates enabling the 'stripe' method)."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
     _ensure_payment_methods(org_id)
     rows = db_all(
         "SELECT method, is_enabled, display_label, instructions, sort_order"
@@ -8889,7 +8938,7 @@ def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMetho
     """Toggle a method on/off and/or set its display label + customer instructions.
     Guards: enabling 'stripe' requires connected credentials; never leave the org
     with zero enabled methods (re-enables 'manual' as the universal fallback)."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     method = (method or "").strip().lower()
     if method not in ALLOWED_PAY_METHODS:
         raise HTTPException(400, f"Unknown method. Allowed: {ALLOWED_PAY_METHODS}")
@@ -8935,7 +8984,7 @@ def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMetho
 def get_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
     """Returns provider catalog (which fields are needed for each) + current state.
     Secret values are masked (`••••••••<last4>`) — full plaintext is never exposed."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
 
     row = db_one(
         "SELECT provider, credentials_encrypted, is_test_mode, is_connected,"
@@ -8999,7 +9048,7 @@ def put_org_payment_credentials(org_id: int, body: dict = Body(...),
     Does NOT auto-verify with provider — that requires a separate POST .../test call
     so the merchant gets explicit "Connected ✓" feedback.
     """
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     if not is_encryption_configured():
         raise HTTPException(500, "Payment encryption is not configured on the server. "
                                   "Set PAYMENT_ENCRYPTION_KEY in .env.")
@@ -9075,7 +9124,7 @@ def put_org_payment_credentials(org_id: int, body: dict = Body(...),
 
 @app.post("/api/orgs/{org_id}/payment-credentials/test")
 def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     row = db_one(
         "SELECT provider, credentials_encrypted, is_test_mode, stripe_account_id"
         "  FROM crm_payment_credentials WHERE org_id=%s",
@@ -9126,7 +9175,7 @@ def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_u
 def delete_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
     """Disconnect: clears stored credentials but keeps the provider selection.
     Existing orders + returns retain their snapshot of which provider was used."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "manage")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s", (org_id,))
         # Card payments can't run without the gateway → disable the 'stripe'
@@ -9150,7 +9199,7 @@ import hashlib as _hashlib_oa
 @app.get("/api/orgs/{org_id}/payment-credentials/oauth/stripe/start")
 def stripe_connect_oauth_start(org_id: int, request: Request,
                                 user: dict = Depends(get_current_user)):
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
     client_id    = os.getenv("STRIPE_CONNECT_CLIENT_ID", "").strip()
     redirect_uri = os.getenv("STRIPE_CONNECT_REDIRECT_URI", "").strip()
     if not client_id or not redirect_uri:
@@ -9192,7 +9241,7 @@ def stripe_connect_oauth_callback(request: Request,
     except (ValueError, AttributeError):
         raise HTTPException(400, "Invalid OAuth state token")
 
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_payments", "view")
 
     # This endpoint is a BROWSER landing (Stripe redirects the user here), so on
     # any failure we bounce back to the Payments page with a ?connect_error=…
@@ -25593,7 +25642,7 @@ def org_analytics(org_id: int, period: str = Query("30d"),
     period), a per-project breakdown (for the leaderboard / top-earner /
     top-margin / revenue-by-project / margin-by-project blocks), and a daily
     revenue series."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_analytics", "view")
     org = db_one("SELECT id, currency FROM crm_organizations WHERE id=%s", (org_id,))
     if not org:
         raise HTTPException(404, "Organization not found")
@@ -25762,7 +25811,7 @@ def org_revenue_over_time(
     frontend stops paging at the first order). Each project keeps its own
     currency, so per-(project, bucket) revenue is FX-converted into the org's
     display currency before being summed into the org-wide bucket."""
-    require_org_owner(user, org_id)
+    require_org_page(user, org_id, "org_analytics", "view")
     if granularity not in ("day", "week", "month"):
         granularity = "day"
     org = db_one("SELECT id, currency FROM crm_organizations WHERE id=%s", (org_id,))
@@ -26265,6 +26314,431 @@ class NotifHub:
 notif_hub = NotifHub()
 
 
+# ── PRESENCE HUB — live "who's online + where" tracking ──────────────────
+#
+# State (per-instance, eventually consistent across instances via pg_notify
+# on the `crm_presence` channel):
+#   _presence[user_id] = {
+#       'route': '/project/abc/orders',
+#       'project_id': int|None,
+#       'org_ids': [1, 2],
+#       'last_seen': datetime utc,
+#       'name', 'email', 'avatar_url': str,
+#       'online': True,
+#   }
+#
+# Each WebSocket subscribes to one or more org_ids on the `hello` message;
+# presence updates for users in any of those orgs are pushed to it. The
+# client sends a 15s heartbeat + route changes on navigation. A connection
+# drop with no other tabs for the same user → broadcast offline + drop
+# from local map.
+class PresenceHub:
+    def __init__(self):
+        self._presence: dict[int, dict] = {}
+        self._user_conns: dict[int, set] = {}
+        self._org_subs:   dict[int, set] = {}
+        self._ws_orgs:    dict = {}
+        self._ws_user:    dict = {}
+        self._lock = asyncio.Lock()
+
+    async def attach(self, ws, user_id: int, org_ids):
+        async with self._lock:
+            self._ws_user[ws] = user_id
+            self._user_conns.setdefault(user_id, set()).add(ws)
+            self._ws_orgs[ws] = set(int(o) for o in (org_ids or []))
+            for oid in self._ws_orgs[ws]:
+                self._org_subs.setdefault(oid, set()).add(ws)
+
+    async def detach(self, ws):
+        async with self._lock:
+            uid = self._ws_user.pop(ws, None)
+            for oid in self._ws_orgs.pop(ws, ()):
+                s = self._org_subs.get(oid)
+                if s:
+                    s.discard(ws)
+                    if not s:
+                        self._org_subs.pop(oid, None)
+            if uid is not None:
+                cs = self._user_conns.get(uid)
+                if cs:
+                    cs.discard(ws)
+                    if not cs:
+                        self._user_conns.pop(uid, None)
+            return uid
+
+    def is_user_connected(self, user_id: int) -> bool:
+        return bool(self._user_conns.get(user_id))
+
+    def update(self, user_id: int, **fields):
+        cur = self._presence.get(user_id, {})
+        cur.update(fields)
+        cur['last_seen'] = _utcnow()
+        cur.setdefault('online', True)
+        self._presence[user_id] = cur
+
+    def _snap_msg(self, user_id: int, snap: dict, online: bool = True) -> dict:
+        return {
+            'type':       'presence',
+            'user_id':    int(user_id),
+            'route':      snap.get('route') or '',
+            'project_id':      snap.get('project_id'),
+            'project_name':    snap.get('project_name') or '',
+            'project_api_key': snap.get('project_api_key') or '',
+            'org_id':          snap.get('org_id'),
+            'product_name':    snap.get('product_name') or '',
+            'name':       snap.get('name') or '',
+            'email':      snap.get('email') or '',
+            'avatar_url': snap.get('avatar_url') or '',
+            'last_seen':  snap['last_seen'].isoformat() if snap.get('last_seen') else None,
+            'online':     bool(online),
+            # Cursor — pixels in .crm-main content frame (scroll-corrected).
+            # Used as fallback when element-lock anchor doesn't resolve.
+            'cursor_x':   snap.get('cursor_x'),
+            'cursor_y':   snap.get('cursor_y'),
+            # Element-lock cursor (Figma-style): CSS path of the DOM node the
+            # peer was over + offsetX/offsetY normalized inside that node.
+            # When the receiver finds the same selector, the cursor lands on
+            # the exact same DOM element regardless of grid reflow.
+            'cursor_anchor': snap.get('cursor_anchor'),
+            'cursor_ox':     snap.get('cursor_ox'),
+            'cursor_oy':     snap.get('cursor_oy'),
+        }
+
+    async def broadcast_user(self, user_id: int, online: bool = True):
+        snap = self._presence.get(user_id)
+        if not snap and online:
+            return
+        msg = self._snap_msg(user_id, snap or {}, online=online)
+        org_ids = (snap or {}).get('org_ids') or []
+        targets = set()
+        for oid in org_ids:
+            targets |= set(self._org_subs.get(int(oid), ()))
+        if not targets:
+            return
+        # Presence visibility is open within shared orgs — peers can see
+        # WHERE someone is. RBAC is enforced on the click path instead
+        # (frontend looks up its own access, backend layout-bundle gate
+        # rejects unauthorized navigation).
+        payload = json.dumps(msg, default=str)
+        dead = []
+        for ws in targets:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        for w in dead:
+            await self.detach(w)
+
+    async def broadcast_raw(self, user_id: int, msg: dict):
+        """Fan an arbitrary frame (e.g. ephemeral cursor-chat) out to every WS
+        in the sender's orgs. Same routing as broadcast_user but with a caller-
+        supplied payload instead of a presence snapshot."""
+        snap = self._presence.get(user_id) or {}
+        org_ids = snap.get('org_ids') or []
+        targets = set()
+        for oid in org_ids:
+            targets |= set(self._org_subs.get(int(oid), ()))
+        if not targets:
+            return
+        payload = json.dumps(msg, default=str)
+        dead = []
+        for ws in targets:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        for w in dead:
+            await self.detach(w)
+
+    def get_org_snapshot(self, org_id: int, viewer_id=None,
+                         fresh_seconds: int = 45) -> list[dict]:
+        """All users currently online in `org_id`. Online = heartbeat within
+        the last `fresh_seconds` (cushion above the 15s client heartbeat to
+        absorb network jitter and Cloud Run instance switches).
+        `viewer_id` is accepted for API parity but unused — presence
+        visibility is open inside a shared org; click-through is what
+        actually enforces RBAC."""
+        try:
+            cutoff = _utcnow() - timedelta(seconds=fresh_seconds)
+        except Exception:
+            return []
+        org_id = int(org_id)
+        out = []
+        for uid, snap in self._presence.items():
+            if not snap.get('online'):
+                continue
+            ls = snap.get('last_seen')
+            if not ls or ls < cutoff:
+                continue
+            if org_id not in (snap.get('org_ids') or []):
+                continue
+            out.append(self._snap_msg(uid, snap, online=True))
+        return out
+
+
+presence_hub = PresenceHub()
+
+
+def _push_presence_notify(user_id: int, snap: dict, online: bool = True):
+    """Fan a presence update out across every backend instance via
+    pg_notify on `crm_presence`. The LISTEN background task on each
+    instance picks it up, updates its local _presence map, and re-
+    broadcasts to its local WS subscribers (so a user pinned to one
+    Cloud Run instance still sees presence from users on another)."""
+    try:
+        msg = {
+            'user_id':    int(user_id),
+            'route':      (snap.get('route') or '')[:200],
+            'project_id': snap.get('project_id'),
+            'org_ids':    [int(o) for o in (snap.get('org_ids') or [])],
+            'last_seen':  snap['last_seen'].isoformat() if snap.get('last_seen') else None,
+            'name':       snap.get('name') or '',
+            'email':      snap.get('email') or '',
+            'avatar_url': snap.get('avatar_url') or '',
+            'online':     bool(online),
+        }
+        with db_cursor() as (conn, cur):
+            cur.execute("SELECT pg_notify(%s, %s)", ("crm_presence", json.dumps(msg, default=str)))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _user_org_ids(user_id: int) -> list[int]:
+    """Org ids this user is part of — both owned orgs and member orgs."""
+    try:
+        own = db_all("SELECT id FROM crm_organizations WHERE owner_id = %s", (user_id,)) or []
+        mem = db_all("SELECT org_id FROM crm_org_members WHERE crm_user_id = %s", (user_id,)) or []
+        return sorted({int(r['id']) for r in own} | {int(r['org_id']) for r in mem if r.get('org_id')})
+    except Exception:
+        return []
+
+
+# RBAC visibility cache for presence — (viewer_id, project_id) → perms,
+# where perms is 'full' for owners, dict for members, or None for no access.
+_PRESENCE_RBAC_CACHE: dict = {}
+_PRESENCE_RBAC_TTL = 60
+
+def _viewer_project_perms(viewer_id: int, project_id):
+    """Return what viewer can do on this project. 'full' = owner / org-owner,
+    dict = role permissions, None = no access at all."""
+    if not project_id:
+        return 'full'   # no project = org-level page; share with anyone
+    try:
+        viewer_id = int(viewer_id); project_id = int(project_id)
+    except Exception:
+        return None
+    key = (viewer_id, project_id)
+    import time as _t
+    now = _t.time()
+    hit = _PRESENCE_RBAC_CACHE.get(key)
+    if hit and hit[1] > now:
+        return hit[0]
+    try:
+        # Project owner?
+        if db_one("SELECT 1 FROM crm_projects WHERE id=%s AND crm_user_id=%s",
+                  (project_id, viewer_id)):
+            _PRESENCE_RBAC_CACHE[key] = ('full', now + _PRESENCE_RBAC_TTL)
+            return 'full'
+        # Org owner?
+        if db_one("SELECT 1 FROM crm_projects p"
+                  "  JOIN crm_organizations o ON o.id = p.org_id"
+                  " WHERE p.id=%s AND o.owner_id=%s",
+                  (project_id, viewer_id)):
+            _PRESENCE_RBAC_CACHE[key] = ('full', now + _PRESENCE_RBAC_TTL)
+            return 'full'
+        # Team member with a role?
+        row = db_one("SELECT r.permissions FROM crm_team_members tm"
+                     "  JOIN crm_roles r ON r.id = tm.crm_role_id"
+                     " WHERE tm.project_id=%s AND tm.crm_user_id=%s",
+                     (project_id, viewer_id))
+    except Exception:
+        row = None
+    perms = (row or {}).get('permissions') if isinstance(row, dict) else None
+    perms = perms if isinstance(perms, dict) else None
+    _PRESENCE_RBAC_CACHE[key] = (perms, now + _PRESENCE_RBAC_TTL)
+    return perms
+
+
+def _page_from_route(route: str) -> str:
+    """Map a pathname to the permission page key used in role JSONB."""
+    if not route:
+        return ''
+    m = re.match(r"^/project/[^/]+/?([^/?]*)", route)
+    if m:
+        seg = m.group(1) or ''
+        return {
+            '': 'overview',
+            'products': 'products', 'orders': 'orders', 'customers': 'customers',
+            'booking': 'booking', 'bookings': 'booking', 'chat': 'chat',
+            'analytics': 'analytics', 'alerts': 'alerts', 'targets': 'goals',
+            'goals': 'goals', 'emails': 'emails',
+            'authentication': 'auth_providers', 'integrations': 'integrations',
+            'documents': 'documents', 'settings': 'settings', 'api': 'api',
+        }.get(seg, seg)
+    return ''
+
+
+def _can_view_presence(viewer_id, project_id, page):
+    """Whether viewer should receive the sender's presence frame at all.
+    Sender is on (project_id, page); if viewer can't see that location the
+    frame is dropped silently — they shouldn't even know the project exists."""
+    perms = _viewer_project_perms(viewer_id, project_id)
+    if perms is None:
+        return False
+    if perms == 'full':
+        return True
+    # Role dict — page-level gate. Empty page means "project root", which
+    # any team member with at least one permission sees.
+    if not page:
+        return bool(perms)
+    return _level_ge(perms.get(page), 'view')
+
+
+# api_key → {id, name, org_id, ts}. Lets presence frames resolve project
+# context straight from the URL (which carries the api_key) so there's no
+# race between the route and a separately-sent project_id. 5 min TTL.
+_PROJECT_META_CACHE: dict = {}
+_PROJECT_META_TTL = 300
+# slug → {id, ts}
+_ORG_SLUG_CACHE: dict = {}
+_ORG_SLUG_TTL = 300
+
+
+def _resolve_project_by_apikey(api_key):
+    """Resolve a project from its URL api_key → {id, name, org_id}. Cached."""
+    if not api_key:
+        return None
+    import time as _t
+    now = _t.time()
+    hit = _PROJECT_META_CACHE.get(api_key)
+    if hit and hit.get('ts', 0) + _PROJECT_META_TTL > now:
+        return hit
+    try:
+        row = db_one("SELECT id, name, org_id FROM crm_projects WHERE api_key = %s", (api_key,))
+    except Exception:
+        row = None
+    if row:
+        info = {
+            'id':      int(row['id']),
+            'name':    row.get('name') or '',
+            'api_key': api_key,
+            'org_id':  int(row['org_id']) if row.get('org_id') is not None else None,
+            'ts':      now,
+        }
+        _PROJECT_META_CACHE[api_key] = info
+        return info
+    return None
+
+
+def _resolve_org_id_by_slug(slug):
+    """Resolve an org id from its URL slug. Cached."""
+    if not slug:
+        return None
+    import time as _t
+    now = _t.time()
+    hit = _ORG_SLUG_CACHE.get(slug)
+    if hit and hit.get('ts', 0) + _ORG_SLUG_TTL > now:
+        return hit.get('id')
+    try:
+        row = db_one("SELECT id FROM crm_organizations WHERE slug = %s", (slug,))
+    except Exception:
+        row = None
+    oid = int(row['id']) if row and row.get('id') is not None else None
+    _ORG_SLUG_CACHE[slug] = {'id': oid, 'ts': now}
+    return oid
+
+
+# Product hash (frontend Hashids) → project + product name. Lets a peer on
+# /product/<hash> resolve into their project / org so they show up in the
+# project- and org-level presence menus (product is below project).
+_PRODUCT_SCOPE_CACHE: dict = {}
+_PRODUCT_SCOPE_TTL = 300
+_PRODUCT_HASHIDS = None
+
+def _product_hashids():
+    global _PRODUCT_HASHIDS
+    if _PRODUCT_HASHIDS is None:
+        from hashids import Hashids
+        # Same salt + min_length as the frontend (Utils/hashids.js).
+        _PRODUCT_HASHIDS = Hashids(
+            'qpzmrld10vsljklfgdnsdsafjkhfl526742228666777mzpqnxowhgf', min_length=6)
+    return _PRODUCT_HASHIDS
+
+def _resolve_product_scope(hash_str):
+    """Decode a product hash → {product_name, project_id, project_name,
+    project_api_key, org_id}. Cached."""
+    if not hash_str:
+        return None
+    import time as _t
+    now = _t.time()
+    hit = _PRODUCT_SCOPE_CACHE.get(hash_str)
+    if hit and hit.get('ts', 0) + _PRODUCT_SCOPE_TTL > now:
+        return hit
+    try:
+        dec = _product_hashids().decode(hash_str)
+        if not dec:
+            return None
+        pid = int(dec[0])
+        row = db_one(
+            "SELECT p.title, pr.id AS project_id, pr.name AS project_name, "
+            "       pr.api_key, pr.org_id "
+            "FROM products p JOIN crm_projects pr ON pr.id = p.project_id "
+            "WHERE p.id = %s", (pid,))
+    except Exception:
+        row = None
+    if not row:
+        return None
+    info = {
+        'product_name':    row.get('title') or '',
+        'project_id':      int(row['project_id']),
+        'project_name':    row.get('project_name') or '',
+        'project_api_key': row.get('api_key') or '',
+        'org_id':          int(row['org_id']) if row.get('org_id') is not None else None,
+        'ts':              now,
+    }
+    _PRODUCT_SCOPE_CACHE[hash_str] = info
+    return info
+
+
+def _resolve_scope_from_route(route: str) -> dict:
+    """Single source of truth for presence scope. Parses the pathname:
+       /project/<api_key>/...  → project + its org
+       /product/<hash>/...     → the product's project + org (+ product name)
+       /org/<slug>/...         → org only
+       anything else           → no scope (dashboard / settings / docs)
+    Because route and scope come from the SAME string, they can never
+    disagree (the race that plagued separately-sent project_id/org_id)."""
+    out = {'project_id': None, 'project_name': '', 'project_api_key': '',
+           'org_id': None, 'product_name': ''}
+    if not route:
+        return out
+    m = re.match(r"^/project/([^/?]+)", route)
+    if m:
+        meta = _resolve_project_by_apikey(m.group(1))
+        if meta:
+            out['project_id']      = meta['id']
+            out['project_name']    = meta['name']
+            out['project_api_key'] = meta['api_key']
+            out['org_id']          = meta['org_id']
+        return out
+    m = re.match(r"^/product/([^/?]+)", route)
+    if m:
+        info = _resolve_product_scope(m.group(1))
+        if info:
+            out['project_id']      = info['project_id']
+            out['project_name']    = info['project_name']
+            out['project_api_key'] = info['project_api_key']
+            out['org_id']          = info['org_id']
+            out['product_name']    = info['product_name']
+        return out
+    m = re.match(r"^/org/([^/?]+)", route)
+    if m:
+        out['org_id'] = _resolve_org_id_by_slug(m.group(1))
+        return out
+    return out
+
+
 @app.websocket("/api/projects/{project_id}/events/ws")
 async def project_events_ws(ws: WebSocket, project_id: int):
     """Live project event stream — orders, bookings, status changes.
@@ -26336,6 +26810,10 @@ def _start_pg_event_listener():
                     # Live chat (Chat with Customers) — push_chat_event NOTIFYs
                     # here so every instance's chat_hub gets the frame.
                     cur.execute("LISTEN crm_chat_events")
+                    # Live presence (who's online / what page) — every WS
+                    # heartbeat NOTIFYs here so every instance's presence_hub
+                    # mirrors the same state.
+                    cur.execute("LISTEN crm_presence")
                 global _health_listener_last_ok
                 _health_listener_last_ok = _utcnow()
                 while True:
@@ -26370,6 +26848,40 @@ def _start_pg_event_listener():
                                 if pid and inner:
                                     asyncio.run_coroutine_threadsafe(
                                         chat_hub.broadcast(pid, inner), main_loop)
+                            elif notify.channel == "crm_presence":
+                                # Cross-instance presence sync: update LOCAL
+                                # map then broadcast to local subscribers.
+                                try:
+                                    uid    = int(event.get('user_id') or 0)
+                                    online = bool(event.get('online', True))
+                                    if not uid:
+                                        raise ValueError
+                                    snap = {
+                                        'route':      event.get('route') or '',
+                                        'project_id': event.get('project_id'),
+                                        'org_ids':    [int(o) for o in (event.get('org_ids') or [])],
+                                        'name':       event.get('name') or '',
+                                        'email':      event.get('email') or '',
+                                        'avatar_url': event.get('avatar_url') or '',
+                                        'online':     online,
+                                    }
+                                    ls = event.get('last_seen')
+                                    if ls:
+                                        try:
+                                            from datetime import datetime as _dt
+                                            snap['last_seen'] = _dt.fromisoformat(str(ls).replace('Z', '+00:00'))
+                                        except Exception:
+                                            snap['last_seen'] = _utcnow()
+                                    else:
+                                        snap['last_seen'] = _utcnow()
+                                    if online:
+                                        presence_hub._presence[uid] = snap
+                                    else:
+                                        presence_hub._presence.pop(uid, None)
+                                    asyncio.run_coroutine_threadsafe(
+                                        presence_hub.broadcast_user(uid, online=online), main_loop)
+                                except Exception:
+                                    pass
                             else:
                                 pid = int(event.get("project_id") or 0)
                                 if pid:
@@ -26802,6 +27314,265 @@ async def notifications_ws(ws: WebSocket):
         pass
     finally:
         await notif_hub.unsubscribe(user_id, ws)
+
+
+@app.websocket("/api/presence/ws")
+async def presence_ws(ws: WebSocket):
+    """Live presence channel.
+
+    Client → server JSON:
+      {type:'hello'}                                          (sent on connect)
+      {type:'route', route:'/project/abc/orders', project_id:5}  (on navigation)
+      {type:'hb'}                                             (every 15s)
+    Server → client JSON:
+      {type:'snapshot', users:[…]}                            (sent once on connect)
+      {type:'presence', user_id, route, project_id, name, email, avatar_url,
+                        online, last_seen}                    (live frames)
+    """
+    await ws.accept()
+    cookie = ws.cookies.get("crm_token")
+    if not cookie:
+        await ws.close(code=4401); return
+    try:
+        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub"))
+    except Exception:
+        await ws.close(code=4401); return
+    # User identity for snapshot — pulled once at connect to keep frames
+    # cheap. _lookup_user_cached doesn't return avatar_url so we re-query
+    # crm_users directly; runs once per WS connect (not per heartbeat).
+    name = email = avatar_url = ''
+    try:
+        u = db_one(
+            "SELECT name, email, avatar_url FROM crm_users WHERE id = %s",
+            (user_id,)
+        ) or {}
+        name = (u.get('name') or u.get('email') or '')[:120]
+        email = (u.get('email') or '')[:160]
+        avatar_url = (u.get('avatar_url') or '')[:600]
+    except Exception:
+        pass
+    org_ids = _user_org_ids(user_id)
+    await presence_hub.attach(ws, user_id, org_ids)
+    presence_hub.update(user_id, name=name, email=email, avatar_url=avatar_url,
+                        org_ids=org_ids, route='', project_id=None, online=True)
+    # First frame: tell the client who they are. Frontend uses this to
+    # exclude self from "who else is on this page" stacks.
+    try:
+        await ws.send_json({'type': 'me', 'user_id': user_id})
+    except Exception:
+        pass
+    # Tell this connection about everyone currently online in its orgs.
+    try:
+        seen = set()
+        users = []
+        for oid in org_ids:
+            for snap in presence_hub.get_org_snapshot(oid, viewer_id=user_id):
+                uid = snap['user_id']
+                if uid in seen or uid == user_id:
+                    continue
+                seen.add(uid)
+                users.append(snap)
+        await ws.send_json({'type': 'snapshot', 'users': users})
+    except Exception:
+        pass
+    # Broadcast our own appearance to the orgs.
+    await presence_hub.broadcast_user(user_id, online=True)
+    _push_presence_notify(user_id, presence_hub._presence.get(user_id, {}), online=True)
+    try:
+        while True:
+            try:
+                raw = await ws.receive_text()
+            except WebSocketDisconnect:
+                break
+            try:
+                m = json.loads(raw)
+            except Exception:
+                continue
+            mt = m.get('type')
+            # Cursor frames are the hot path (~20Hz per active mouse); handle
+            # them separately so we don't pg_notify on every move (would flood
+            # Neon). Local-only broadcast — on multi-instance Cloud Run, cursors
+            # from a peer on another instance wouldn't show. Acceptable for
+            # phase 3; if true cross-instance cursors are needed, throttle
+            # the NOTIFY to every Nth frame.
+            if mt == 'cursor':
+                try:
+                    x = float(m.get('x') or 0)
+                    y = float(m.get('y') or 0)
+                except Exception:
+                    continue
+                # Content-relative pixels (scroll-corrected client-side).
+                x = max(-100000.0, min(100000.0, x))
+                y = max(-100000.0, min(100000.0, y))
+                # Element-lock anchor — clamp string length so a hostile
+                # client can't blow memory. Path > 600 chars almost never
+                # resolves anyway.
+                anchor = m.get('anchor')
+                if isinstance(anchor, str):
+                    anchor = anchor[:600]
+                else:
+                    anchor = None
+                try:
+                    ox = float(m.get('ox') or 0)
+                    oy = float(m.get('oy') or 0)
+                    ox = max(0.0, min(1.0, ox))
+                    oy = max(0.0, min(1.0, oy))
+                except Exception:
+                    ox = oy = None
+                presence_hub.update(
+                    user_id,
+                    cursor_x=x, cursor_y=y,
+                    cursor_anchor=anchor, cursor_ox=ox, cursor_oy=oy,
+                )
+                await presence_hub.broadcast_user(user_id, online=True)
+                continue
+            if mt == 'cursor_clear':
+                presence_hub.update(
+                    user_id,
+                    cursor_x=None, cursor_y=None,
+                    cursor_anchor=None, cursor_ox=None, cursor_oy=None,
+                )
+                await presence_hub.broadcast_user(user_id, online=True)
+                continue
+            if mt == 'chat':
+                # Ephemeral cursor-chat: relay a short message to same-org
+                # peers. Not stored anywhere — pure fan-out. The frontend
+                # attaches it to the sender's cursor for 5s, then drops it.
+                text = str(m.get('text') or '').strip()[:120]
+                if not text:
+                    continue
+                # Light server-side spam guard (the 5s client cooldown is the
+                # primary gate; this stops a hand-rolled client flooding).
+                snap = presence_hub._presence.get(user_id, {})
+                now_ts = _utcnow().timestamp()
+                if now_ts - float(snap.get('last_chat_at') or 0) < 4.0:
+                    continue
+                presence_hub.update(user_id, last_chat_at=now_ts)
+                msg = {
+                    'type':       'chat',
+                    'user_id':    user_id,
+                    'name':       snap.get('name') or '',
+                    'avatar_url': snap.get('avatar_url') or '',
+                    'text':       sanitize(text),
+                    'route':      snap.get('route') or '',
+                    'ts':         now_ts,
+                }
+                await presence_hub.broadcast_raw(user_id, msg)
+                continue
+            if mt == 'field':
+                # Live-mirror a form field's value to same-org peers (LWW).
+                # Ephemeral relay — not stored, not sanitized (it's raw editor
+                # content, e.g. email HTML; the preview iframe is sandboxed).
+                field_id = str(m.get('field_id') or '')[:200]
+                if not field_id:
+                    continue
+                value = m.get('value')
+                try:
+                    if len(json.dumps(value, default=str)) > 80000:
+                        continue   # oversized — drop (cap broadcast cost)
+                except Exception:
+                    continue
+                snap = presence_hub._presence.get(user_id, {})
+                await presence_hub.broadcast_raw(user_id, {
+                    'type':     'field',
+                    'user_id':  user_id,
+                    'name':     snap.get('name') or '',
+                    'field_id': field_id,
+                    'value':    value,
+                    'ts':       _utcnow().timestamp(),
+                })
+                continue
+            if mt == 'hb':
+                # Heartbeat = lifeline only. Bump last_seen so the snapshot
+                # endpoint keeps reporting us as online, but DON'T broadcast
+                # or pg_notify — peers don't need a frame every 15 s per user;
+                # that's pure noise. Real changes ride hello/route/cursor.
+                presence_hub.update(user_id, online=True)
+                continue
+            if mt not in ('hello', 'route'):
+                continue
+            route = str(m.get('route') or '')[:200]
+            # Scope is resolved ENTIRELY from the route — one source of truth,
+            # no race. Client-sent project_id/org_id are ignored on purpose.
+            scope = _resolve_scope_from_route(route)
+            # Client may send product_name for a product page (the synthetic
+            # /project/<apiKey>/product/<hash> route resolves the project but
+            # not the product title). Trust it for the menu label only.
+            client_pname = str(m.get('product_name') or '')[:200]
+            fields = {
+                'route':           route,
+                'project_id':      scope['project_id'],
+                'project_name':    scope['project_name'],
+                'project_api_key': scope['project_api_key'],
+                'org_id':          scope['org_id'],
+                'product_name':    client_pname or scope.get('product_name', ''),
+                # New route → drop stale cursor (no ghost on the new page).
+                'cursor_x': None, 'cursor_y': None,
+                'cursor_anchor': None, 'cursor_ox': None, 'cursor_oy': None,
+            }
+            presence_hub.update(user_id, **fields)
+            await presence_hub.broadcast_user(user_id, online=True)
+            _push_presence_notify(user_id, presence_hub._presence.get(user_id, {}), online=True)
+    finally:
+        uid = await presence_hub.detach(ws)
+        # Mark offline only when the LAST tab/connection for this user drops.
+        if uid is not None and not presence_hub.is_user_connected(uid):
+            # Re-stash the snapshot so broadcast_user() can serialize it,
+            # then drop it after we've fanned out.
+            snap = presence_hub._presence.get(uid) or {}
+            snap['online'] = False
+            snap['last_seen'] = _utcnow()
+            presence_hub._presence[uid] = snap
+            try:
+                await presence_hub.broadcast_user(uid, online=False)
+            except Exception:
+                pass
+            _push_presence_notify(uid, snap, online=False)
+            presence_hub._presence.pop(uid, None)
+
+
+@app.get("/api/orgs/{org_id}/presence")
+def get_org_presence(org_id: int, user: dict = Depends(get_current_user)):
+    """Snapshot of who's currently online in this org. Any org member (owner
+    or invited member) can read. Used by Team page polling + as the seed for
+    the in-Header avatar-stack on first paint."""
+    # Auth: org owner OR org member
+    is_owner = bool(db_one(
+        "SELECT 1 FROM crm_organizations WHERE id=%s AND owner_id=%s",
+        (org_id, user["id"])
+    ))
+    if not is_owner:
+        is_member = bool(db_one(
+            "SELECT 1 FROM crm_org_members WHERE org_id=%s AND crm_user_id=%s",
+            (org_id, user["id"])
+        ))
+        if not is_member:
+            raise HTTPException(403, "Not a member of this organization")
+    return {'users': presence_hub.get_org_snapshot(int(org_id))}
+
+
+@app.get("/api/presence/me")
+def get_my_presence(user: dict = Depends(get_current_user)):
+    """Snapshot of everyone currently online in ANY org the current user
+    belongs to. Used by the frontend as a periodic poll (8s) so a passive
+    tab catches presence changes even when a WS broadcast frame is lost or
+    the user joined the page before the peer did. Self is excluded — the
+    frontend never needs to render their own avatar/cursor."""
+    org_ids = _user_org_ids(user["id"])
+    if not org_ids:
+        return {'users': []}
+    seen = set()
+    users = []
+    me = user["id"]
+    for oid in org_ids:
+        for snap in presence_hub.get_org_snapshot(int(oid)):
+            uid = snap['user_id']
+            if uid == me or uid in seen:
+                continue
+            seen.add(uid)
+            users.append(snap)
+    return {'users': users}
 
 
 def _notify_recipients(project_id: int, page: str) -> list[int]:

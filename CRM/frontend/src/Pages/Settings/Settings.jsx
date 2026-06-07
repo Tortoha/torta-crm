@@ -130,7 +130,7 @@ export default function Settings() {
           <FieldCard label={t('settings.profile.photo')} hint={t('settings.profile.photoHint')}>
             <div className="sett-photo-row">
               {data?.avatar_url && !avatarImgFailed
-                ? <img src={data.avatar_url} alt="" className="sett-avatar-img2" onError={() => setAvatarImgFailed(true)} />
+                ? <img src={data.avatar_url} alt="" className="sett-avatar-img2" referrerPolicy="no-referrer" onError={() => setAvatarImgFailed(true)} />
                 : <InitialsAvatar name={data?.name} size={56} />}
               <button type="button" className="auth-btn-check" disabled={avatarUploading}
                 onClick={() => avatarInputRef.current?.click()}>

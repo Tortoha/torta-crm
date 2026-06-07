@@ -17,7 +17,7 @@ import { API_BASE } from '../../api.js';
 import { useSeo } from '../../Utils/useSeo.js';
 import { useInView } from '../../Utils/useInView.js';
 import { PRODUCTS, PRODUCT_SLUGS } from './product/data.js';
-import { ILLUSTRATIONS } from './product/illustrations.jsx';
+import { ILLUSTRATIONS, CARD_ART } from './product/illustrations.jsx';
 import '../../Style/Landing.css';
 import '../../Style/Product.css';
 
@@ -30,6 +30,33 @@ function Reveal({ as: Tag = 'div', className = '', delay, children, ...rest }) {
       {children}
     </Tag>
   );
+}
+
+// Cursor-driven cards (Live cursors / Cursor chat / Shared editing): write the
+// pointer offset from centre (--rx/--ry) so the scene layers parallax, plus its
+// px position (--cx/--cy) for the live "…" bubble. e.currentTarget — no refs.
+function cardMove(e) {
+  const el = e.currentTarget;
+  const r = el.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  el.style.setProperty('--cx', `${x}px`);
+  el.style.setProperty('--cy', `${y}px`);
+  el.style.setProperty('--rx', ((x / r.width - 0.5) * 2).toFixed(3));
+  el.style.setProperty('--ry', ((y / r.height - 0.5) * 2).toFixed(3));
+}
+function cardLeave(e) {
+  e.currentTarget.style.setProperty('--rx', '0');
+  e.currentTarget.style.setProperty('--ry', '0');
+}
+// Built to scale: track the cursor relative to the ILLUSTRATION region so the
+// accent overlay's radial mask (--gx/--gy) lights up the lines under the pointer.
+function scaleMove(e) {
+  const card = e.currentTarget;
+  const art = card.querySelector('.ln-feature-art');
+  if (!art) return;
+  const r = art.getBoundingClientRect();
+  card.style.setProperty('--gx', `${e.clientX - r.left}px`);
+  card.style.setProperty('--gy', `${e.clientY - r.top}px`);
 }
 
 export default function ProductPage({ slug: slugProp }) {
@@ -55,6 +82,7 @@ export default function ProductPage({ slug: slugProp }) {
   if (!cfg) return <Navigate to="/" replace />;
 
   const Illus = ILLUSTRATIONS[slug];
+  const cardArt = CARD_ART[slug];   // interactive hover-panel art (realtime only)
   const stats = tp('stats', { returnObjects: true }) || [];
   const cards = tp('cards', { returnObjects: true }) || [];
   const points = tp('deep.points', { returnObjects: true }) || [];
@@ -112,6 +140,26 @@ export default function ProductPage({ slug: slugProp }) {
             <div className="ln-features-grid">
               {cards.map((c, i) => {
                 const Ic = cfg.cardIcons[i];
+                const Art = cardArt?.[i];
+                // Art cards (realtime): Supabase-style — small white icon inline
+                // with the title, illustration on the SAME card surface (no inner
+                // panel), parallax on hover. Plain cards keep the boxed icon.
+                if (Art) {
+                  const onMove = Art.illusGlow ? scaleMove : (Art.pointer ? cardMove : undefined);
+                  const onLeave = Art.pointer ? cardLeave : undefined;
+                  return (
+                    <Reveal className="ln-feature ln-feature--art" key={i} delay={(i % 3) + 1}
+                      onMouseMove={onMove} onMouseLeave={onLeave}>
+                      <div className="ln-feat-head">
+                        {Ic && <Ic weight="bold" className="ln-feat-ico" />}
+                        <h3>{c.title}</h3>
+                      </div>
+                      <p>{c.desc}</p>
+                      <div className="ln-feature-art"><Art /></div>
+                      {Art.hasLiveCursor && <span className="rt-live" aria-hidden="true"><i /><i /><i /></span>}
+                    </Reveal>
+                  );
+                }
                 return (
                   <Reveal className="ln-feature" key={i} delay={(i % 3) + 1}>
                     <div className="ln-feature-icon">{Ic && <Ic weight="bold" />}</div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useTabParam } from '../../../Utils/useTabParam.js';
 import {
   Storefront, ListBullets, MagnifyingGlass,
   CaretRight, CaretDown, CaretUp, ArrowClockwise, CheckCircle, Bell,
@@ -365,7 +366,7 @@ export default function Integrations() {
   const { t } = useTranslation();
   const { projectId } = useOutletContext();
   const pq = `?project_id=${projectId}`;
-  const [tab,           setTab]           = useState('browse');
+  const [tab,           setTab]           = useTabParam('browse');
   const [subscriptions, setSubscriptions] = useState([]);
   // Modal routing: at most one of these is non-null at a time.
   // { kind: 'webhook' | 'accounting' | 'request', connector, existing }

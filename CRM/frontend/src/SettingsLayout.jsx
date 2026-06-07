@@ -8,6 +8,7 @@ import MobileTabBar from './Elements/MobileTabBar.jsx';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
+import { usePresence } from './Utils/usePresence.js';
 
 function SettingsLayout() {
   const [user,    setUser]    = useState(null);
@@ -15,6 +16,8 @@ function SettingsLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t }    = useTranslation();
+
+  usePresence();
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) return false;

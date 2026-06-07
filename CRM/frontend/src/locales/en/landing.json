@@ -177,7 +177,7 @@
       "title": "Boring, predictable, well-isolated",
       "subtitle": "Security defaults nobody should have to think about — wired in from the first store you create.",
       "items": {
-        "isolated": { "title": "Your data, isolated",     "desc": "Every store sits in its own scope. Customers, orders, products — never visible to other merchants on the platform." },
+        "twoKey": { "title": "Two-key API access",     "desc": "Every storefront request needs a public key in the URL and a secret publishable key in the header — copying the link alone gets you nothing." },
         "dkim":     { "title": "DKIM-signed email",      "desc": "Every email you send is signed with your domain's key. SPF and DMARC records are guided through a built-in checker." },
         "rbac":     { "title": "Page-level RBAC",        "desc": "Permissions live on pages, not on tables. A custom role can grant view-only on Revenue and full edit on Products at the same time." },
         "audit":    { "title": "Full audit log",         "desc": "Every change in your console — who, what, when, from where. Roll back wrong edits or hand the log to your auditor." }

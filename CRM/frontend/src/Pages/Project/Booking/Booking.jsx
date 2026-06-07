@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { encodeId } from '../../../Utils/hashids.js';
+import { useTabParam } from '../../../Utils/useTabParam.js';
 import {
   CalendarBlank, GearSix, MagnifyingGlass, List, SquaresFour, CalendarCheck,
   Plus, CaretDown, ArrowDown, Trash, Pencil, Clock, User, Users, Briefcase, DotsThreeOutline, X,
@@ -976,7 +977,7 @@ function Booking() {
   };
   const pq = `?project_id=${projectId}`;
 
-  const [tab,       setTab]       = useState(bookingTabs[0]?.key || 'bookings');
+  const [tab,       setTab]       = useTabParam(bookingTabs[0]?.key || 'bookings');
   const [bookings,  setBookings]  = useState([]);
   const [services,  setServices]  = useState([]);
   const [staff,     setStaff]     = useState([]);

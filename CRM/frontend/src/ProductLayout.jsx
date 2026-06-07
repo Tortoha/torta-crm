@@ -9,6 +9,8 @@ import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
 import { decodeHash } from './Utils/hashids.js';
+import { usePresence, setPresenceContext, setPresenceOverride } from './Utils/usePresence.js';
+import CursorOverlay from './Elements/CursorOverlay.jsx';
 
 /**
  * Top-level layout for the product detail pages (`/product/:productHash`).
@@ -32,9 +34,25 @@ function ProductLayout() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
+  usePresence();
+
   const [productContext, setProductContext] = useState(null);
   // Stable callback so children can pass it down without re-firing effects.
   const handleSetProductContext = useCallback((ctx) => setProductContext(ctx), []);
+
+  // Presence override: report a SYNTHETIC project-scoped route for this
+  // product page so teammates at the project / org level see the viewer as
+  // "in the project" (a product is below its project in the hierarchy). The
+  // project's api_key drives scope via the reliable project resolver — no
+  // dependency on decoding the product hash on the backend. The product name
+  // rides along for the menu label. Cleared when leaving the product page.
+  useEffect(() => {
+    if (project?.api_key) {
+      setPresenceOverride(`/project/${project.api_key}${location.pathname}`,
+                          productContext?.name || '');
+    }
+    return () => setPresenceOverride(null);
+  }, [project?.api_key, location.pathname, productContext?.name]);
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) return false;
@@ -73,14 +91,17 @@ function ProductLayout() {
     ])
     .then(([userData, ctx]) => {
       setUser(userData);
-      setProject({
+      const proj = {
         id:       ctx.project_id,
         name:     ctx.project_name,
         api_key:  ctx.api_key,
         org_id:   ctx.org_id,
         org_name: ctx.org_name,
         org_slug: ctx.org_slug,
-      });
+      };
+      setProject(proj);
+      try { window.__torta_project = proj; } catch { /* no-op */ }
+      if (proj?.id) setPresenceContext({ projectId: proj.id, orgId: proj.org_id || null });
     })
     .catch(() => navigate('/dashboard'))
     .finally(() => setLoading(false));
@@ -130,6 +151,8 @@ function ProductLayout() {
       </div>
       {/* No "More" — the 5 tabs ARE the entire sidebar */}
       <MobileTabBar items={tabItems} />
+      {/* Live cursors of other teammates on this same product page. */}
+      <CursorOverlay />
     </div>
   );
 }

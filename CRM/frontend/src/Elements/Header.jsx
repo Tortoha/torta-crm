@@ -7,6 +7,7 @@ import Modal from './Modal.jsx';
 import CreateOrgForm from './CreateOrgForm.jsx';
 import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
 import NotificationsBell from './NotificationsBell.jsx';
+import PresenceStack from './PresenceStack.jsx';
 import { encodeId } from '../Utils/hashids.js';
 import { DynamicBlock } from '../Utils/DynamicBlock.js';
 import '../Style/Header.css';
@@ -48,6 +49,7 @@ function UserAvatar({ user, size = 28 }) {
       src={url}
       alt=""
       className="hdr-avatar-photo"
+      referrerPolicy="no-referrer"
       style={{ width: size, height: size }}
       onError={() => setImgFailed(true)}
     />
@@ -866,6 +868,10 @@ function Header({ user, project, org, productContext, settingsMode, docsMode, la
           </>
         ) : (
           <>
+            {/* Presence stack first → "who's here" reads left-to-right before
+                the secondary actions (Docs / Bell / user). Scoped to the
+                current project on project pages, or the org on org pages. */}
+            {user && <PresenceStack project={project} org={org} />}
             {user && !docsMode && (
               <button className="hdr-docs-btn" onClick={() => navigate('/docs')} type="button">
                 <BookOpen className="hdr-docs-icon" weight="bold" />

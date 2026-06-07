@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next';
 import './Style/Layout.css';
 import './Style/Load.css';
 import { API_BASE } from './api.js';
+import { usePresence, setPresenceContext } from './Utils/usePresence.js';
+import CursorOverlay from './Elements/CursorOverlay.jsx';
 
 // ── Layout-bundle in-memory cache ──────────────────────────────────
 // Project pages re-mount <Layout> on every navigation (Project Overview →
@@ -59,6 +61,11 @@ function Layout() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
+  // Live presence (online + current route) — opens the singleton WebSocket
+  // once and reports navigation on every route change. Other Layouts call
+  // the same hook so presence is active across the whole authenticated app.
+  usePresence();
+
   const [productContext, setProductContext] = useState(null);
 
   const handleSetProductContext = useCallback((ctx) => setProductContext(ctx), []);
@@ -105,6 +112,8 @@ function Layout() {
       const { user: u, project: p, access: a } = cached.data;
       if (!u?.terms_accepted_at) { navigate('/accept-terms', { replace: true }); return; }
       setUser(u); setProject(p); setAccess(a);
+      try { window.__torta_project = p; } catch { /* no-op */ }
+      if (p?.id) setPresenceContext({ projectId: p.id, orgId: p.org_id || null });
       setLoading(false);
       return;
     }
@@ -119,6 +128,12 @@ function Layout() {
           return;
         }
         setUser(u); setProject(p); setAccess(a);
+        // Expose the active project on window so usePresence() can pin
+        // project_id to the WebSocket frame without prop-drilling.
+        try { window.__torta_project = p; } catch { /* no-op */ }
+        // Race fix — push the project scope imperatively because the
+        // pathname effect already ran before this fetch resolved.
+        if (p?.id) setPresenceContext({ projectId: p.id, orgId: p.org_id || null });
         // Cache for repeat navigations in the same project. 60s TTL is short
         // enough that profile/role mutations propagate quickly; long enough
         // to cover a normal "click-around" session without re-fetching.
@@ -247,6 +262,9 @@ function Layout() {
       </div>
       {/* Bottom tab bar — visible only on <640px via CSS */}
       <MobileTabBar items={tabItems} onMore={() => setSidebarOpen(true)} />
+      {/* Live cursors of other teammates on this same page. Mounting the
+          overlay also starts reporting our own cursor over the presence WS. */}
+      <CursorOverlay />
     </div>
   );
 }

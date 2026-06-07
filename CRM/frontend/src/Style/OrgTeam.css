@@ -87,6 +87,29 @@
   font-weight: 600;
 }
 
+/* Wrap around <Avatar> so the online-dot can sit at the bottom-right. */
+.ot-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+/* Presence indicator — only rendered when the member is currently online.
+   Bottom-right of the avatar, blue (var(--accent)) with a white outline so
+   it pops off any avatar colour. Offline members show nothing. */
+.ot-online-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--card);
+  box-sizing: content-box;
+}
+
+.ot-online-dot--on { background: var(--accent); }
+
 .ot-access-full {
   color: var(--accent);
   font-weight: 500;

@@ -55,7 +55,10 @@ export function fmtShort(iso) {
 export function Avatar({ url, name, email }) {
   const [failed, setFailed] = useState(false);
   if (url && !failed) {
-    return <img className="cust-avatar" src={url} alt="" onError={() => setFailed(true)} />;
+    // referrerPolicy="no-referrer" — Google photos (googleusercontent.com) 403
+    // when a Referer is sent; without it the image breaks → onError → initials.
+    return <img className="cust-avatar" src={url} alt="" referrerPolicy="no-referrer"
+      onError={() => setFailed(true)} />;
   }
   return <span className="cust-avatar cust-avatar--initials">{initials(name, email)}</span>;
 }

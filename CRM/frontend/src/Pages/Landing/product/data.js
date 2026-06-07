@@ -10,7 +10,7 @@ import {
   ImageSquare, FileArrowDown, Gauge,
   ChatsCircle, Plugs, Bell, ListChecks,
   Receipt, SealCheck, Code, ClockCountdown, ChartLineUp,
-  ChatCircle, PaperPlaneTilt,
+  ChatCircle, Cursor, PencilSimple, NavigationArrow,
 } from '@phosphor-icons/react';
 
 export const PRODUCTS = {
@@ -36,7 +36,7 @@ export const PRODUCTS = {
   },
   realtime: {
     Icon: Broadcast, docsTo: '/docs/chat',
-    cardIcons: [ChatCircle, Lightning, Bell, UserCircle, UsersThree, PaperPlaneTilt],
+    cardIcons: [UsersThree, Cursor, ChatCircle, PencilSimple, NavigationArrow, Lightning],
   },
 };
 

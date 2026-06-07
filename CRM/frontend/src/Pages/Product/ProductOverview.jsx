@@ -9,6 +9,7 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from 
 import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { API_BASE } from '../../api.js';
+import { useFieldMirror } from '../../Utils/usePresence.js';
 import { presignedUpload } from '../../Utils/upload.js';
 import { decodeHash } from '../../Utils/hashids.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
@@ -395,6 +396,20 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
   const [ptype,    setPtype]    = useState(product.product_type || 'physical');
   const [categories, setCategories] = useState([]);
 
+  // ── Live-mirror (LWW): teammates editing this same product see my typing
+  // in the General fields live, and I see theirs. One field id per product. ──
+  const genRef = useRef(null);
+  genRef.current = { title, subtitle, description: desc };
+  const { typingBy, pushLocal } = useFieldMirror(`product:${productHash}:general`, (r) => {
+    if (!r || typeof r !== 'object') return;
+    if (typeof r.title === 'string')       setTitle(r.title);
+    if (typeof r.subtitle === 'string')    setSubtitle(r.subtitle);
+    if (typeof r.description === 'string')  setDesc(r.description);
+  });
+  const onTitle    = (v) => { setTitle(v);    pushLocal({ ...genRef.current, title: v }); };
+  const onSubtitle = (v) => { setSubtitle(v); pushLocal({ ...genRef.current, subtitle: v }); };
+  const onDesc     = (v) => { setDesc(v);     pushLocal({ ...genRef.current, description: v }); };
+
   useEffect(() => {
     fetch(`${API_BASE}/api/categories${pq}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : [])
@@ -455,20 +470,26 @@ function GeneralBlock({ product, pq, setProduct, setProductContext, productHash,
 
   return (
     <section className="po-block">
+      {typingBy && (
+        <div className="po-typing">
+          <span className="po-typing-dots"><i /><i /><i /></span>
+          {t('productDetail.overview.typing', { name: typingBy, defaultValue: '{{name}} is editing…' })}
+        </div>
+      )}
       <div className="po-form">
         <Field label={t('productDetail.overview.title.title')} required error={titleEmpty ? t('productDetail.overview.titleRequired') : null}>
           <input className={`crm-input po-input${titleEmpty ? ' po-input--invalid' : ''}`} value={title}
-            onChange={e => setTitle(e.target.value)}
+            onChange={e => onTitle(e.target.value)}
             placeholder={t('productDetail.overview.titlePlaceholder')} maxLength={200} />
         </Field>
         <Field label={t('productDetail.overview.title.subtitle')}>
           <input className="crm-input po-input" value={subtitle}
-            onChange={e => setSubtitle(e.target.value)}
+            onChange={e => onSubtitle(e.target.value)}
             placeholder={t('productDetail.overview.subtitlePlaceholder')} maxLength={300} />
         </Field>
         <Field label={t('productDetail.overview.title.description')}>
           <textarea className="crm-input po-textarea" value={desc} rows={5}
-            onChange={e => setDesc(e.target.value)}
+            onChange={e => onDesc(e.target.value)}
             placeholder={t('productDetail.overview.descriptionPlaceholder')} />
         </Field>
         {ptype !== 'service' && (

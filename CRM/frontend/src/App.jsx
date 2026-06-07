@@ -17,6 +17,12 @@ import PlanLimitModal from './Elements/PlanLimitModal.jsx';
 import { installPlanLimitInterceptor } from './Utils/planLimit.js';
 installPlanLimitInterceptor();
 
+// Global presence bootstrapper — opens the singleton WebSocket on EVERY
+// authenticated page (Dashboard / Invite / AcceptTerms included), not just
+// pages wrapped in a Layout. Otherwise a user sitting on /dashboard would
+// be invisible to others on the Team page.
+import PresenceBoot from './Elements/PresenceBoot.jsx';
+
 // ── Страницы — lazy (каждая в отдельном chunk) ──
 const Home          = lazy(() => import('./Home.jsx'));
 const Login         = lazy(() => import('./Login.jsx'));
@@ -101,6 +107,9 @@ function App() {
           response reaches the fetch interceptor. Mounted outside Routes
           so it works on every page. */}
       <PlanLimitModal />
+      {/* Opens the presence WebSocket once /api/me confirms a logged-in user.
+          Lives outside Routes so Dashboard / Invite / etc. also report online. */}
+      <PresenceBoot />
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/"                          element={<Home />} />

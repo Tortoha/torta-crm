@@ -10,6 +10,7 @@ import {
   PencilSimple, Envelope, Warning,
 } from '@phosphor-icons/react';
 import { Icon as IconifyIcon } from '@iconify/react';
+import { useTabParam } from '../../Utils/useTabParam.js';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import '../../Style/Authentication.css';
@@ -1380,7 +1381,7 @@ export default function Chat() {
     canView('chat')     && { key: 'chats',    label: t('comms.chat.tabChats'),    Icon: ChatsCircle },
     canView('channels') && { key: 'channels', label: t('comms.chat.tabChannels'), Icon: Plug },
   ].filter(Boolean);
-  const [tab, setTab] = useState(chatTabs[0]?.key || 'chats');
+  const [tab, setTab] = useTabParam(chatTabs[0]?.key || 'chats');
 
   return (
     <>
