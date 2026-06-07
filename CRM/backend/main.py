@@ -4740,6 +4740,82 @@ class _RequestContextMiddleware:
 app.add_middleware(_RequestContextMiddleware)
 
 
+# ── Security headers — clickjacking / MIME-sniff / referrer / HSTS ────
+# Set on EVERY response. HSTS only in production (HTTPS) so local HTTP isn't
+# pinned. The HTML app's full CSP belongs on the frontend edge (nginx /
+# Cloudflare); this backend ships JSON, so the API-safe headers + an
+# anti-clickjacking CSP (frame-ancestors 'none') are what matter here.
+class _SecurityHeadersMiddleware:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send); return
+        async def _send(event):
+            if event.get("type") == "http.response.start":
+                headers = event.setdefault("headers", [])
+                have = {k.lower() for k, _ in headers}
+                add = [
+                    (b"x-content-type-options", b"nosniff"),
+                    (b"x-frame-options", b"DENY"),
+                    (b"referrer-policy", b"strict-origin-when-cross-origin"),
+                    (b"x-xss-protection", b"0"),
+                    (b"content-security-policy", b"frame-ancestors 'none'"),
+                    (b"permissions-policy", b"geolocation=(), microphone=(), camera=()"),
+                ]
+                if IS_PRODUCTION:
+                    add.append((b"strict-transport-security",
+                                b"max-age=31536000; includeSubDomains"))
+                for k, v in add:
+                    if k not in have:
+                        headers.append((k, v))
+            await send(event)
+        await self.app(scope, receive, _send)
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+# ── Crash alerts — email unhandled 500s to the operator (prod only) ───
+# systemd / Cloud Run restart a crashed process but never TELL you it broke,
+# and don't surface handled-but-wrong 500s. This emails the operator on any
+# unhandled exception via our own SES, throttled to one message per error
+# signature per 10 min so a storm can't flood the inbox / SES quota. Dev is
+# silent. Sent off-thread so it never blocks the response.
+ALERT_EMAIL       = os.getenv("ALERT_EMAIL", "iskandersuleiemenov@gmail.com")
+_alert_last: dict = {}
+_ALERT_THROTTLE_S = 600
+
+def _email_alert(subject: str, body_html: str):
+    if not IS_PRODUCTION or not ALERT_EMAIL:
+        return
+    import time as _t
+    if _t.time() - _alert_last.get(subject[:140], 0) < _ALERT_THROTTLE_S:
+        return
+    _alert_last[subject[:140]] = _t.time()
+    try:
+        send_email(ALERT_EMAIL, subject, body_html, from_name="Torta Alerts")
+    except Exception:
+        pass
+
+@app.exception_handler(Exception)
+async def _alert_on_unhandled(request: Request, exc: Exception):
+    import traceback, threading
+    # ALWAYS log the traceback to stdout (dev console + Cloud Run logs) — handling
+    # the exception here stops uvicorn from logging it, so we must do it ourselves.
+    raw_tb = traceback.format_exc()
+    print(f"[500] {request.method} {request.url.path}\n{raw_tb}", flush=True)
+    esc = lambda s: str(s).replace("<", "&lt;").replace(">", "&gt;")
+    tb = esc(raw_tb)[-4000:]
+    subject = f"[CRM 500] {type(exc).__name__} @ {request.url.path}"
+    body = (f"<p><b>{esc(type(exc).__name__)}</b>: {esc(str(exc))[:300]}</p>"
+            f"<p>{esc(request.method)} {esc(request.url.path)}</p>"
+            f"<pre style='font-size:12px;white-space:pre-wrap'>{tb}</pre>")
+    try:
+        threading.Thread(target=_email_alert, args=(subject, body), daemon=True).start()
+    except Exception:
+        pass
+    return _J({"detail": "Internal server error"}, status_code=500)
+
+
 # ── HTTP cache headers for safe-to-cache GETs ─────────────────────
 # EXACT-path matching only — a `startswith("/api/projects")` prefix used to
 # also catch dynamic per-project endpoints (`/api/projects/by-key/…`,
@@ -26404,7 +26480,7 @@ class PresenceHub:
             'cursor_oy':     snap.get('cursor_oy'),
         }
 
-    async def broadcast_user(self, user_id: int, online: bool = True):
+    async def broadcast_user(self, user_id: int, online: bool = True, same_route_only: bool = False):
         snap = self._presence.get(user_id)
         if not snap and online:
             return
@@ -26415,6 +26491,22 @@ class PresenceHub:
             targets |= set(self._org_subs.get(int(oid), ()))
         if not targets:
             return
+        # Cursor frames (the ~20Hz hot path) only matter to peers on the EXACT
+        # same route — they're the only ones who render them (the client filters
+        # via useOnRoute: an exact snap.route === myRoute match). Pre-filter the
+        # fan-out to that set so a moving cursor reaches same-page peers, not the
+        # whole org. Presence/route/join frames stay org-wide (everyone needs to
+        # know WHERE each person is for the avatar stack + jump-to-teammate).
+        if same_route_only:
+            route = (snap or {}).get('route') or ''
+            if not route:
+                return
+            targets = {
+                ws for ws in targets
+                if ((self._presence.get(self._ws_user.get(ws)) or {}).get('route') == route)
+            }
+            if not targets:
+                return
         # Presence visibility is open within shared orgs — peers can see
         # WHERE someone is. RBAC is enforced on the click path instead
         # (frontend looks up its own access, backend layout-bundle gate
@@ -27425,7 +27517,7 @@ async def presence_ws(ws: WebSocket):
                     cursor_x=x, cursor_y=y,
                     cursor_anchor=anchor, cursor_ox=ox, cursor_oy=oy,
                 )
-                await presence_hub.broadcast_user(user_id, online=True)
+                await presence_hub.broadcast_user(user_id, online=True, same_route_only=True)
                 continue
             if mt == 'cursor_clear':
                 presence_hub.update(
@@ -27433,7 +27525,7 @@ async def presence_ws(ws: WebSocket):
                     cursor_x=None, cursor_y=None,
                     cursor_anchor=None, cursor_ox=None, cursor_oy=None,
                 )
-                await presence_hub.broadcast_user(user_id, online=True)
+                await presence_hub.broadcast_user(user_id, online=True, same_route_only=True)
                 continue
             if mt == 'chat':
                 # Ephemeral cursor-chat: relay a short message to same-org
