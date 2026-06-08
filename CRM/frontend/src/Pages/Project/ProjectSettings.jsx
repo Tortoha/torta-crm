@@ -255,8 +255,11 @@ export function SearchableCombobox({
               }} />
           </div>
 
-          {/* Filtered list — scrolls; dynamic indicator follows hover */}
-          <div style={{ overflowY: 'auto', flex: 1, position: 'relative' }}
+          {/* Filtered list — scrolls; dynamic indicator follows hover. .bk-cb-list
+              (position:relative; flex:1; overflow-y:auto) also carries the indicator
+              left/right:0 override so the DynamicBlock pill keeps a 6px frame on the
+              sides too, not the doubled 12px. */}
+          <div className="bk-cb-list"
             onMouseLeave={() => setHovered(null)}>
             <div ref={indRef} className="cat-filter-indicator" />
             {filtered.length === 0 && (

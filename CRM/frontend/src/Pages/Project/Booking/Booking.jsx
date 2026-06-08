@@ -712,10 +712,14 @@ function HoursEditor({ projectId, showToast, onSaved }) {
       {rows.map((r, i) => (
         <div key={i}
           className={`cat-prod-row bk-hours-row${r.enabled ? ' cat-prod-row--checked' : ''}`}>
-          <input type="checkbox" className="cat-prod-checkbox"
-            checked={r.enabled}
-            onChange={e => updateRow(i, 'enabled', e.target.checked)} />
-          <span className="bk-hours-day-name">{t(`booking.days.${DAY_KEYS[i]}`)}</span>
+          {/* checkbox + day name share ONE grid cell (same as BookingStaffModal) so
+              the shared .bk-hours-row 4-column grid lines up: [day] [open] [–] [close]. */}
+          <label className="bk-hours-day">
+            <input type="checkbox" className="cat-prod-checkbox"
+              checked={r.enabled}
+              onChange={e => updateRow(i, 'enabled', e.target.checked)} />
+            <span>{t(`booking.days.${DAY_KEYS[i]}`)}</span>
+          </label>
           <div className="bk-hours-time-wrap" data-disabled={r.enabled ? undefined : 'true'}>
             <TimePicker value={r.open_time || '10:00'}
               onChange={v => updateRow(i, 'open_time', v)}

@@ -338,7 +338,9 @@
     "reviews": {
       "title": "Reviews",
       "empty": "No reviews yet.",
-      "author": "User #{{id}}"
+      "author": "User #{{id}}",
+      "delete": "Delete review",
+      "deleteConfirm": "Delete this review? This can't be undone."
     },
     "settings": {
       "title": "Settings",

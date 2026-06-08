@@ -89,7 +89,7 @@ Depending on the product type, the detail page also has:
 | **Overview** | everything above — the configuration and content |
 | **Settings** | per-product & per-SKU options: barcodes/brand/HS code, dimensions, **scheduled sale price (start/end)**, shipping class & lead time, backorders, pre-order, B2B (MOQ, net terms, purchase orders), social image |
 | **Edit history** | read-only **stock log** (every change, who, why, which batch) + the **restock waitlist** (shoppers who asked to be notified) |
-| **Reviews** | storefront reviews for this product (read-only) |
+| **Reviews** | storefront reviews for this product — read them, or **delete** any to moderate |
 | **API preview** | the exact JSON the public API returns for this product — a developer aid ([Catalog](/docs/catalog)) |
 
 ---

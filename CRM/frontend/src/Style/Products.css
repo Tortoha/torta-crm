@@ -2674,6 +2674,11 @@
 .cat-filter-dropdown {
   position: fixed;
   z-index: 1000;
+  /* Without this the panel is content-box, so its own 6px padding + 1px border
+     (14px total) get ADDED on top of the JS-set width/minWidth (the trigger width) —
+     pushing the right edge ~14px past the trigger. border-box folds them in so the
+     panel matches the trigger exactly and never overflows the viewport edge. */
+  box-sizing: border-box;
   background: var(--card);
   border-radius: 16px;
   padding: 6px;
@@ -8716,6 +8721,16 @@ textarea.po-set-input,
   position: relative;
   flex: 1;
   overflow-y: auto;
+}
+
+/* The Combobox nests the DynamicBlock indicator inside .bk-cb-list, which already
+   sits inside the dropdown's 6px padding. The base .cat-filter-indicator uses
+   left/right:6px (correct when it's a DIRECT child of the padded panel) — here that
+   DOUBLES the inset → 12px on the sides vs 6px top/bottom. Reset to 0 so the
+   indicator hugs the list edges, matching the items and the 6px frame all around. */
+.bk-cb-list .cat-filter-indicator {
+  left: 0;
+  right: 0;
 }
 
 .bk-cb-empty {

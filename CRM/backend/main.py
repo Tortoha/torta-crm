@@ -10569,8 +10569,16 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
         cur.execute("DELETE FROM favorites          WHERE product_id=%s AND project_id=%s", (product_id, project_id))
         cur.execute("DELETE FROM cart_items         WHERE product_id=%s", (product_id,))
         cur.execute("DELETE FROM product_page_views WHERE product_id=%s AND project_id=%s", (product_id, project_id))
+        # Funnel-analytics audit log + low-stock alert log reference the product / its SKUs
+        # but have NO ON DELETE CASCADE FK to them (only to the project) — wipe by hand so
+        # they don't outlive the product as orphans.
+        cur.execute("DELETE FROM cart_events WHERE product_id=%s AND project_id=%s", (product_id, project_id))
+        if l2_ids:
+            cur.execute("DELETE FROM crm_low_stock_alerts WHERE sku_id = ANY(%s)", (l2_ids,))
 
-        # order_items intentionally NOT touched — past orders display the checkout-snapshot fields (product_title / configuration_name).
+        # order_items goes too: its product_id / variation_id / configuration_id FKs are all
+        # ON DELETE CASCADE, and the row carries no title snapshot (the order view JOINs live
+        # to the product), so the line is removed from past orders along with the product.
 
         cur.execute("DELETE FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
         conn.commit()
@@ -15460,6 +15468,23 @@ def reply_to_review(product_id: int, review_id: int, req: ReviewReplyRequest,
                 "UPDATE product_reviews SET merchant_reply=NULL, merchant_reply_at=NULL WHERE id=%s",
                 (review_id,)
             )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/reviews/{review_id}")
+def delete_review(product_id: int, review_id: int,
+                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Merchant-side moderation: delete a storefront review for one of their products.
+    Photos + helpful-votes cascade via FK ON DELETE CASCADE."""
+    require_page_auto(user, project_id)
+    if not db_one(
+        "SELECT id FROM product_reviews WHERE id=%s AND product_id=%s AND project_id=%s",
+        (review_id, product_id, project_id)
+    ):
+        raise HTTPException(404, "Review not found")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM product_reviews WHERE id=%s", (review_id,))
         conn.commit()
     return {"ok": True}
 
