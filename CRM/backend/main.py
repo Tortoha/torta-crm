@@ -695,6 +695,65 @@ def run_migrations():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON crm_admin_audit (created_at DESC)")
+            # User feedback — the CRM Header "Feedback" widget (Issue / Idea) writes
+            # here; the Admin panel → Feedback page lists + replies (via SES).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_feedback (
+                    id          BIGSERIAL PRIMARY KEY,
+                    user_id     INTEGER,
+                    name        VARCHAR(200) NOT NULL DEFAULT '',
+                    email       VARCHAR(255) NOT NULL DEFAULT '',
+                    kind        VARCHAR(10)  NOT NULL DEFAULT 'issue',
+                    subject     VARCHAR(300) NOT NULL DEFAULT '',
+                    message     TEXT NOT NULL DEFAULT '',
+                    status      VARCHAR(12)  NOT NULL DEFAULT 'new',
+                    reply_text  TEXT,
+                    replied_at  TIMESTAMPTZ,
+                    replied_by  VARCHAR(255),
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_created ON crm_feedback (created_at DESC)")
+            # Admin Inbox — inbound mail to legal@/support@tortacrm.com (platform
+            # addresses, owned by no project). Threaded per (mailbox, sender); the
+            # operator replies officially via SES. Like Chat with Customers, internal.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_admin_inbox_threads (
+                    id              BIGSERIAL PRIMARY KEY,
+                    mailbox         VARCHAR(12)  NOT NULL,
+                    sender_email    VARCHAR(320) NOT NULL,
+                    sender_name     VARCHAR(255) NOT NULL DEFAULT '',
+                    subject         VARCHAR(500) NOT NULL DEFAULT '',
+                    status          VARCHAR(12)  NOT NULL DEFAULT 'open',
+                    unread_count    INTEGER      NOT NULL DEFAULT 0,
+                    last_message_at TIMESTAMPTZ,
+                    last_preview    TEXT         NOT NULL DEFAULT '',
+                    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    UNIQUE (mailbox, sender_email)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inbox_threads ON crm_admin_inbox_threads (mailbox, last_message_at DESC)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_admin_inbox_messages (
+                    id           BIGSERIAL PRIMARY KEY,
+                    thread_id    BIGINT NOT NULL REFERENCES crm_admin_inbox_threads(id) ON DELETE CASCADE,
+                    direction    VARCHAR(4)   NOT NULL,
+                    subject      VARCHAR(500) NOT NULL DEFAULT '',
+                    body_text    TEXT         NOT NULL DEFAULT '',
+                    body_html    TEXT,
+                    message_id   TEXT,
+                    in_reply_to  TEXT,
+                    "references" TEXT,
+                    from_email   VARCHAR(320) NOT NULL DEFAULT '',
+                    to_email     VARCHAR(320) NOT NULL DEFAULT '',
+                    admin_email  VARCHAR(255),
+                    spf_pass     BOOLEAN,
+                    dkim_pass    BOOLEAN,
+                    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inbox_messages ON crm_admin_inbox_messages (thread_id, id)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_inbox_msg_mid ON crm_admin_inbox_messages (message_id) WHERE message_id IS NOT NULL")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS crm_error_log (
                     id         BIGSERIAL PRIMARY KEY,
@@ -20061,6 +20120,13 @@ async def email_inbound(req: EmailInboundRequest, request: Request):
     if not message_id or not to_email or not from_email or "@" not in from_email:
         raise HTTPException(400, "message_id, from_email, to_email required")
 
+    # Platform inboxes (legal@ / support@tortacrm.com) belong to no project — peel
+    # them off into the Admin → Inbox tables instead of the per-store chat.
+    _mbx = _ADMIN_INBOX.get(to_email)
+    if _mbx:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: _store_admin_inbox(_mbx, req))
+
     loop = asyncio.get_event_loop()
     proj = await loop.run_in_executor(None, lambda: _resolve_email_project(to_email))
     if not proj:
@@ -28874,3 +28940,289 @@ def admin_logs_errors(page: int = 1, per_page: int = 50, user: dict = Depends(ge
          LIMIT %s OFFSET %s
     """, (per_page, offset))
     return {"items": rows, "page": page, "per_page": per_page}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# User feedback — the CRM Header "Feedback" widget (Issue / Idea) submits here;
+# the Admin panel → Feedback page lists, opens, and replies officially via SES
+# (from support@tortacrm.com). name/email are snapshotted at submit time so the
+# operator can answer even if the user later changes their email.
+# ─────────────────────────────────────────────────────────────────────────
+
+class FeedbackRequest(BaseModel):
+    kind:    str   # 'issue' | 'idea'
+    subject: str
+    message: str
+
+
+@app.post("/api/feedback")
+def submit_feedback(req: FeedbackRequest, user: dict = Depends(get_current_user)):
+    kind = (req.kind or "").strip().lower()
+    if kind not in ("issue", "idea"):
+        raise HTTPException(400, "kind must be 'issue' or 'idea'")
+    subject = sanitize((req.subject or "").strip())[:300]
+    message = sanitize((req.message or "").strip())[:5000]
+    if not subject: raise HTTPException(400, "Subject is required")
+    if not message: raise HTTPException(400, "Description is required")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_feedback (user_id, name, email, kind, subject, message)"
+            " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (user["id"], (user.get("name") or "")[:200], (user.get("email") or "")[:255],
+             kind, subject, message)
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "id": new_id}
+
+
+@app.get("/api/admin/feedback")
+def admin_list_feedback(kind: Optional[str] = Query(None), q: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    require_admin(user)
+    where, params = ["TRUE"], []
+    if kind in ("issue", "idea"):
+        where.append("kind = %s"); params.append(kind)
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        where.append("(LOWER(subject) LIKE %s OR LOWER(message) LIKE %s"
+                     " OR LOWER(email) LIKE %s OR LOWER(name) LIKE %s)")
+        params += [like, like, like, like]
+    rows = db_all(
+        "SELECT id, user_id, name, email, kind, subject, message, status,"
+        "       reply_text, replied_at, replied_by, created_at"
+        "  FROM crm_feedback WHERE " + " AND ".join(where) +
+        " ORDER BY created_at DESC LIMIT 500", tuple(params))
+    for r in rows:
+        r["created_at"] = r["created_at"].isoformat() if r.get("created_at") else None
+        r["replied_at"] = r["replied_at"].isoformat() if r.get("replied_at") else None
+    return rows
+
+
+class FeedbackReplyRequest(BaseModel):
+    reply: str
+
+
+def _feedback_reply_html(fb: dict, reply: str) -> str:
+    """Torta-branded reply body. Reply text is HTML-escaped + newline→<br>."""
+    safe = (reply or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    name = (fb.get("name") or "").strip() or "there"
+    return (
+        "<div style='font-family:-apple-system,Inter,Arial,sans-serif;color:#1a1a1a;"
+        "line-height:1.6;font-size:15px;max-width:560px'>"
+        f"<p>Hi {name},</p>"
+        f"<p>{safe}</p>"
+        "<p style='color:#888;font-size:13px;margin-top:28px'>— Torta Support · "
+        "<a href='https://tortacrm.com' style='color:#0071E3;text-decoration:none'>tortacrm.com</a></p>"
+        "</div>"
+    )
+
+
+@app.post("/api/admin/feedback/{fid}/reply")
+def admin_reply_feedback(fid: int, body: FeedbackReplyRequest,
+                         user: dict = Depends(get_current_user)):
+    require_admin(user)
+    fb = db_one("SELECT id, email, name, subject FROM crm_feedback WHERE id=%s", (fid,))
+    if not fb:
+        raise HTTPException(404, "Feedback not found")
+    reply = (body.reply or "").strip()
+    if not reply:
+        raise HTTPException(400, "Reply text is required")
+    if not (fb.get("email") or "").strip():
+        raise HTTPException(400, "This feedback has no email to reply to")
+    subj = fb.get("subject") or ""
+    ok = send_email(
+        fb["email"],
+        f"Re: {subj}" if subj else "Re: your feedback to Torta",
+        _feedback_reply_html(fb, reply),
+        from_email="support@tortacrm.com", from_name="Torta",
+    )
+    if not ok:
+        raise HTTPException(502, "Failed to send the email — try again")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_feedback SET status='replied', reply_text=%s, replied_at=NOW(),"
+            " replied_by=%s WHERE id=%s",
+            (sanitize(reply)[:5000], (user.get("email") or "")[:255], fid))
+        conn.commit()
+    _admin_audit(user, "feedback_reply", target_email=fb.get("email"), detail=f"feedback #{fid}")
+    return {"ok": True}
+
+
+@app.delete("/api/admin/feedback/{fid}")
+def admin_delete_feedback(fid: int, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_feedback WHERE id=%s", (fid,))
+        conn.commit()
+    _admin_audit(user, "feedback_delete", detail=f"feedback #{fid}")
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Admin Inbox — inbound mail to the PLATFORM addresses legal@ / support@tortacrm.com.
+# These belong to no project, so email_inbound() peels them off here (above) into
+# dedicated tables. Threaded per (mailbox, sender_email); the operator replies
+# officially via SES from the same address. Like Chat with Customers, internal.
+# ─────────────────────────────────────────────────────────────────────────
+
+_ADMIN_INBOX = {"legal@tortacrm.com": "legal", "support@tortacrm.com": "support"}
+_ADMIN_INBOX_FROM_NAME = {"legal": "Torta Legal", "support": "Torta Support"}
+
+
+def _store_admin_inbox(mailbox: str, req: "EmailInboundRequest") -> dict:
+    """Persist an inbound platform email into the admin inbox (thread + message).
+    Idempotent on the email Message-Id. Runs in a threadpool (sync DB)."""
+    message_id = (req.message_id or "").strip()
+    from_email = (req.from_email or "").strip().lower()
+    from_name  = (req.from_name or "").strip()[:255]
+    to_email   = (req.to_email or "").strip().lower()
+    subject    = (req.subject or "").strip()[:500]
+    body_text  = (req.body_text or "").strip()
+    if not body_text and req.body_html:
+        body_text = _strip_html_to_text(req.body_html)
+    preview = (body_text or subject or "").replace("\n", " ").strip()[:200]
+
+    # Global dedup on Message-Id (Postfix may retry delivery).
+    if message_id and db_one("SELECT id FROM crm_admin_inbox_messages WHERE message_id=%s", (message_id,)):
+        return {"ok": True, "duplicate": True}
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_admin_inbox_threads"
+            "  (mailbox, sender_email, sender_name, subject, status, unread_count, last_message_at, last_preview)"
+            " VALUES (%s, %s, %s, %s, 'open', 1, NOW(), %s)"
+            " ON CONFLICT (mailbox, sender_email) DO UPDATE SET"
+            "   unread_count    = crm_admin_inbox_threads.unread_count + 1,"
+            "   last_message_at = NOW(),"
+            "   last_preview    = EXCLUDED.last_preview,"
+            "   status          = 'open',"
+            "   sender_name     = CASE WHEN EXCLUDED.sender_name <> '' THEN EXCLUDED.sender_name"
+            "                          ELSE crm_admin_inbox_threads.sender_name END,"
+            "   subject         = CASE WHEN crm_admin_inbox_threads.subject = '' THEN EXCLUDED.subject"
+            "                          ELSE crm_admin_inbox_threads.subject END"
+            " RETURNING id",
+            (mailbox, from_email, from_name, subject, preview)
+        )
+        thread_id = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO crm_admin_inbox_messages"
+            "  (thread_id, direction, subject, body_text, body_html, message_id, in_reply_to,"
+            "   \"references\", from_email, to_email, spf_pass, dkim_pass)"
+            " VALUES (%s, 'in', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (thread_id, subject, body_text[:50000], (req.body_html or "")[:200000] or None,
+             message_id or None, (req.in_reply_to or "").strip() or None,
+             (req.references or "").strip() or None, from_email, to_email,
+             req.spf_pass, req.dkim_pass)
+        )
+        new_msg_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "routed": True, "thread_id": thread_id, "message_id": new_msg_id}
+
+
+@app.get("/api/admin/inbox/threads")
+def admin_inbox_threads(mailbox: Optional[str] = Query(None), q: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    require_admin(user)
+    where, params = ["TRUE"], []
+    if mailbox in ("legal", "support"):
+        where.append("mailbox = %s"); params.append(mailbox)
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        where.append("(LOWER(sender_email) LIKE %s OR LOWER(sender_name) LIKE %s"
+                     " OR LOWER(subject) LIKE %s OR LOWER(last_preview) LIKE %s)")
+        params += [like, like, like, like]
+    rows = db_all(
+        "SELECT id, mailbox, sender_email, sender_name, subject, status, unread_count,"
+        "       last_message_at, last_preview, created_at"
+        "  FROM crm_admin_inbox_threads WHERE " + " AND ".join(where) +
+        " ORDER BY last_message_at DESC NULLS LAST, id DESC LIMIT 500", tuple(params))
+    for r in rows:
+        r["last_message_at"] = r["last_message_at"].isoformat() if r.get("last_message_at") else None
+        r["created_at"]      = r["created_at"].isoformat() if r.get("created_at") else None
+    return rows
+
+
+@app.get("/api/admin/inbox/threads/{tid}/messages")
+def admin_inbox_thread_messages(tid: int, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    th = db_one(
+        "SELECT id, mailbox, sender_email, sender_name, subject, status, unread_count, created_at"
+        "  FROM crm_admin_inbox_threads WHERE id=%s", (tid,))
+    if not th:
+        raise HTTPException(404, "Thread not found")
+    msgs = db_all(
+        "SELECT id, direction, subject, body_text, body_html, from_email, to_email, admin_email, created_at"
+        "  FROM crm_admin_inbox_messages WHERE thread_id=%s ORDER BY id ASC", (tid,))
+    for m in msgs:
+        m["created_at"] = m["created_at"].isoformat() if m.get("created_at") else None
+    # Opening a thread clears its unread badge.
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_admin_inbox_threads SET unread_count=0 WHERE id=%s", (tid,))
+        conn.commit()
+    th["created_at"]   = th["created_at"].isoformat() if th.get("created_at") else None
+    th["unread_count"] = 0
+    return {"thread": th, "messages": msgs}
+
+
+class InboxReplyRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/admin/inbox/threads/{tid}/reply")
+def admin_inbox_reply(tid: int, body: InboxReplyRequest, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    th = db_one("SELECT id, mailbox, sender_email, subject FROM crm_admin_inbox_threads WHERE id=%s", (tid,))
+    if not th:
+        raise HTTPException(404, "Thread not found")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Reply text is required")
+    mailbox    = th["mailbox"]
+    from_email = f"{mailbox}@tortacrm.com"
+    from_name  = _ADMIN_INBOX_FROM_NAME.get(mailbox, "Torta")
+    to_email   = th["sender_email"]
+    # Thread off the last inbound message so the customer's client groups it.
+    last_in = db_one("SELECT message_id, \"references\" FROM crm_admin_inbox_messages"
+                     " WHERE thread_id=%s AND direction='in' ORDER BY id DESC LIMIT 1", (tid,))
+    in_reply_to = (last_in or {}).get("message_id") or ""
+    refs        = (last_in or {}).get("references") or ""
+    subj = th.get("subject") or "your message"
+    if not subj.lower().startswith(("re:", "fw:", "fwd:")):
+        subj = f"Re: {subj}"
+    out_mid = f"<reply.{secrets.token_hex(8)}.{int(time.time())}@tortacrm.com>"
+    html = ("<div style='font-family:-apple-system,Inter,Segoe UI,sans-serif;font-size:14px;"
+            "color:#1d1d1f;line-height:1.6'>" + sanitize(text).replace("\n", "<br>") + "</div>")
+    payload = {
+        "to": to_email, "subject": subj[:500], "html": html,
+        "from_email": from_email, "from_name": from_name,
+        "extra_headers": {
+            "Message-Id": out_mid,
+            **({"In-Reply-To": in_reply_to} if in_reply_to else {}),
+            **({"References": (refs + " " + in_reply_to).strip()} if (refs or in_reply_to) else {}),
+        },
+    }
+    _ses("POST", "/send", payload)
+    preview = text.replace("\n", " ").strip()[:200]
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_admin_inbox_messages"
+            "  (thread_id, direction, subject, body_text, message_id, from_email, to_email, admin_email)"
+            " VALUES (%s, 'out', %s, %s, %s, %s, %s, %s)",
+            (tid, subj[:500], sanitize(text)[:50000], out_mid, from_email, to_email,
+             (user.get("email") or "")[:255]))
+        cur.execute("UPDATE crm_admin_inbox_threads SET last_message_at=NOW(), last_preview=%s,"
+                    " status='open' WHERE id=%s", ("↩ " + preview, tid))
+        conn.commit()
+    _admin_audit(user, "inbox_reply", target_email=to_email, detail=f"inbox #{tid} ({mailbox})")
+    return {"ok": True}
+
+
+@app.delete("/api/admin/inbox/threads/{tid}")
+def admin_inbox_delete(tid: int, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_admin_inbox_threads WHERE id=%s", (tid,))
+        conn.commit()
+    _admin_audit(user, "inbox_delete", detail=f"inbox #{tid}")
+    return {"ok": True}

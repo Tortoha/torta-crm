@@ -9,6 +9,7 @@ import CreateOrgForm from './CreateOrgForm.jsx';
 import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
 import NotificationsBell from './NotificationsBell.jsx';
 import PresenceStack from './PresenceStack.jsx';
+import FeedbackWidget from './FeedbackWidget.jsx';
 import { encodeId } from '../Utils/hashids.js';
 import { DynamicBlock } from '../Utils/DynamicBlock.js';
 import '../Style/Header.css';
@@ -956,6 +957,7 @@ function Header({ user, project, org, productContext, settingsMode, docsMode, la
                 <span className="hdr-docs-label">{t('docs.title')}</span>
               </button>
             )}
+            {user && <FeedbackWidget />}
             {user && <NotificationsBell />}
             {user && <UserMenu user={user} project={project} />}
           </>

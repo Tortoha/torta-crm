@@ -1,0 +1,82 @@
+/* Feedback widget — Header trigger + Issue/Idea popover + submit modal.
+   Design system: accent #0071E3, pill controls (999px), theme-aware surfaces via
+   var(--card)/var(--bg) contrast, no borders, no green. */
+
+/* The Header trigger reuses .hdr-docs-btn (the Docs button) for identical chrome.
+   The popover IS the notifications dropdown — same .notif-popover + .notif-list +
+   .po-set-table.notif-table + .notif-row (InteractiveSection) markup, copied from
+   NotificationsBell, so it inherits the exact surface / tilt. We only narrow the
+   width and drop the unused "time" column. */
+.fb-popover.notif-popover {
+  width: 320px;
+  max-height: none;
+  animation: fb-pop-in 0.16s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes fb-pop-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* No "time" column → single-column rows. */
+.fb-popover .notif-row { grid-template-columns: 1fr !important; }
+
+/* ── Submit modal body ── */
+.fb-form { display: flex; flex-direction: column; gap: 12px; }
+.fb-input,
+.fb-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1.5px solid transparent;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  transition: border-color 0.15s ease;
+}
+.fb-input { border-radius: 999px; padding: 11px 16px; }
+.fb-textarea { border-radius: 16px; padding: 12px 16px; resize: vertical; min-height: 96px; line-height: 1.5; }
+.fb-input:focus,
+.fb-textarea:focus { outline: none; border-color: var(--accent); }
+.fb-input::placeholder,
+.fb-textarea::placeholder { color: var(--muted); }
+
+.fb-err { color: #dc2626; font-size: 13px; }
+
+.fb-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.fb-cancel {
+  border: none; background: none; color: var(--muted);
+  border-radius: 999px; padding: 9px 16px; font-size: 13px; cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.fb-cancel:hover { background: rgba(var(--fg-rgb), 0.06); color: var(--text); }
+.fb-submit {
+  border: none; background: var(--accent); color: #fff;
+  border-radius: 999px; padding: 9px 20px; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.fb-submit:hover:not(:disabled) { background: #005fbb; }
+.fb-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Success toast (replicates the .auth-toast pill, self-contained) ── */
+.fb-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  padding: 10px 22px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--box-shadow);
+  animation: fb-toast-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes fb-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@media (max-width: 640px) {
+  .fb-input, .fb-textarea { font-size: 16px; } /* prevent iOS zoom */
+}

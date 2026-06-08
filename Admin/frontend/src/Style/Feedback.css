@@ -1,0 +1,69 @@
+/* Admin Feedback page — row grid + kind/status badges + detail-modal bits.
+   Reuses CRM design tokens already loaded via Organization/Products/Targets CSS. */
+
+/* Doubled selectors out-specify the base .po-set-row:not(.po-set-row--head)
+   template (same trick as Customers.css) — without this the body rows fall back
+   to the default po-set-table grid while the header uses ours, so columns don't
+   line up. */
+.po-set-row--head.po-set-row--fb,
+.po-set-row.po-set-row--fb:not(.po-set-row--head) {
+  display: grid;
+  grid-template-columns: 92px minmax(160px, 2.2fr) minmax(160px, 1.5fr) 150px 84px;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Clickable row — PoListRow provides the po-set-row surface + IS tilt/gloss; we
+   only add the pointer cursor. */
+.fb-row { cursor: pointer; }
+
+.fb-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-from { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fb-from-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-from-mail { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-date { font-size: 12px; color: var(--muted); }
+
+/* Kind badge — red Issue / amber Idea (semantic, like Targets statuses). */
+.fb-kind {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+}
+.fb-kind svg { width: 14px; height: 14px; }
+.fb-kind--issue { background: rgba(220, 38, 38, 0.12); color: #dc2626; }
+.fb-kind--idea  { background: rgba(196, 106, 0, 0.14); color: #c46a00; }
+
+/* Status pill. */
+.fb-status {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.fb-status--new     { background: var(--accent-tint); color: var(--accent); }
+.fb-status--replied { background: rgba(var(--fg-rgb), 0.06); color: var(--muted); }
+
+/* Detail modal — message body + previous reply. */
+.fb-message {
+  background: var(--bg);
+  border-radius: 14px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.fb-prev-reply {
+  background: var(--accent-tint);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .po-set-row--fb { grid-template-columns: 1fr; gap: 6px; }
+  .po-set-row--fb.po-set-row--head { display: none; }
+}
