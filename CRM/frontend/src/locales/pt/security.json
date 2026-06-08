@@ -1,0 +1,115 @@
+{
+  "security": {
+    "title": "Segurança",
+
+    "meta": {
+      "title": "Segurança — Torta CRM",
+      "description": "Como mantemos seus dados, seus clientes e sua equipe em segurança."
+    },
+    "hero": {
+      "eyebrow": "Segurança",
+      "title": "Feito para manter seus dados sob seu controle",
+      "subtitle": "Levamos a proteção de dados tão a sério quanto os nossos clientes. Veja exatamente o que está implementado — para cada conta, a partir do plano Free."
+    },
+    "pillars": {
+      "title": "O básico, bem-feito",
+      "subtitle": "Configurações padrão com as quais você não precisa se preocupar — elas estão ativas em todas as contas.",
+      "items": {
+        "encryption": {
+          "title": "Criptografia em tudo",
+          "desc": "Todo o tráfego para a Torta usa TLS 1.2 ou mais recente. Os dados em repouso em nosso banco de dados e no armazenamento de arquivos são criptografados com AES-256. Os backups são criptografados antes de saírem do servidor."
+        },
+        "isolation": {
+          "title": "Isolamento multi-tenant",
+          "desc": "Cada projeto fica em seu próprio escopo. Uma consulta restrita ao projeto A não pode ler nem gravar dados do projeto B — algo garantido na camada do banco de dados, e não apenas no código da aplicação."
+        },
+        "passwords": {
+          "title": "Senhas com hash",
+          "desc": "As senhas recebem hash com bcrypt usando um salt exclusivo por usuário. Nunca conseguimos ver sua senha nem as senhas dos seus clientes, e um vazamento do banco de dados não as exporia."
+        },
+        "rbac": {
+          "title": "Funções e permissões",
+          "desc": "O RBAC em nível de página significa que você decide exatamente o que cada colega de equipe pode ver e alterar. Uma função de equipe pode gerenciar Pedidos sem nunca ver a Receita ou os Perfis de Cliente."
+        }
+      }
+    },
+    "infra": {
+      "title": "Infraestrutura",
+      "subtitle": "Onde seus dados ficam e quem tem acesso a eles.",
+      "items": {
+        "hosting": {
+          "title": "Data centers na UE",
+          "desc": "Os servidores são hospedados na IONOS SE, na Alemanha — um provedor de infraestrutura em conformidade com o GDPR. Os dados não saem da UE, exceto quando você usa explicitamente uma integração de terceiros que os transfere para fora."
+        },
+        "email": {
+          "title": "E-mail auto-hospedado",
+          "desc": "O e-mail de saída passa pelo nosso próprio servidor de correio assinado com DKIM. Não retransmitimos por terceiros para e-mails transacionais ou de campanha — os endereços dos seus clientes não vão parar no banco de dados de um parceiro de marketing."
+        },
+        "access": {
+          "title": "Acesso administrativo restrito",
+          "desc": "Apenas um pequeno número de operadores nomeados tem acesso ao shell da infraestrutura de produção. Todo acesso é registrado e revisado."
+        },
+        "backups": {
+          "title": "Backups diários criptografados",
+          "desc": "O banco de dados recebe backup diário com retenção contínua de 30 dias. Os backups são criptografados em repouso e testados quanto à restauração de forma periódica."
+        }
+      }
+    },
+    "compliance": {
+      "title": "Conformidade e privacidade",
+      "subtitle": "O que prometemos e onde ler a versão jurídica.",
+      "items": {
+        "gdpr": {
+          "title": "Alinhado ao GDPR",
+          "desc": "Seguimos os princípios do GDPR para qualquer usuário na UE/EEE: base legal, minimização de dados, direito de acesso, correção, exclusão e portabilidade."
+        },
+        "kzPdpa": {
+          "title": "Lei ЗоПД do Cazaquistão",
+          "desc": "Em conformidade com a Lei de Proteção de Dados Pessoais da República do Cazaquistão. O armazenamento e o processamento seguem as regras locais para transferência de dados transfronteiriça."
+        },
+        "audit": {
+          "title": "Registro de auditoria",
+          "desc": "Cada ação administrativa sobre seus dados é registrada com quem, o quê e quando. Útil para sua própria conformidade interna e disponível caso um auditor ou regulador solicite."
+        },
+        "subprocessors": {
+          "title": "Subprocessadores limitados",
+          "desc": "Usamos uma lista pequena e nomeada de subprocessadores (Paddle para pagamentos, Google para OAuth opcional, IONOS para infraestrutura). Cada um está vinculado por contrato — sem compartilhamento de dados inesperado."
+        }
+      }
+    },
+    "incident": {
+      "title": "Se algo der errado",
+      "body": "Nenhum sistema é inviolável. Nosso compromisso é com a transparência: se descobrirmos um incidente de segurança que afete seus dados, notificaremos você em até 72 horas após a confirmação, explicando o que aconteceu, quais dados foram envolvidos e o que estamos fazendo a respeito.",
+      "report": "Encontrou uma vulnerabilidade? Por favor, relate-a de forma responsável para {{email}}. Confirmamos o recebimento de cada relato em até 5 dias úteis."
+    },
+    "cta": {
+      "title": "Pronto para administrar sua loja em um terreno mais seguro?",
+      "subtitle": "Comece de graça e confira você mesmo. Faça upgrade apenas quando precisar de mais.",
+      "button": "Começar",
+      "linkPrivacy": "Ler a Política de Privacidade completa"
+    },
+
+    "sessions": {
+      "title": "Sessões ativas",
+      "subtitle": "Todos os dispositivos em que você está conectado. Revogar encerra essa sessão imediatamente.",
+      "logoutEverywhere": "Sair de todos",
+      "loading": "Carregando sessões…",
+      "empty": "Nenhuma sessão ativa encontrada.",
+      "thisDevice": "Este dispositivo",
+      "revoke": "Revogar sessão",
+      "lastUsed": "último uso {{time}}",
+      "signedIn": "conectado {{time}}"
+    },
+    "about": {
+      "title": "Sobre as sessões",
+      "subtitle": "Como funciona permanecer conectado.",
+      "text": "Uma sessão é criada toda vez que você faz login (código por e-mail, Google etc.). Cada uma consiste em um token de acesso de curta duração (15 min) mais um token de atualização de longa duração (30 dias) — seu navegador troca silenciosamente um token de acesso expirado por um novo, então você permanece conectado de forma transparente. Se você suspeitar que alguém tem acesso à sua conta, saia de todos os dispositivos e altere sua senha."
+    },
+    "time": {
+      "justNow": "agora mesmo",
+      "minAgo": "há {{n}} min",
+      "hAgo": "há {{n}} h",
+      "dAgo": "há {{n}} d"
+    }
+  }
+}

@@ -1,0 +1,184 @@
+{
+  "integrations": {
+    "title": "Integraciones",
+    "subtitle": "Conecte herramientas externas para recibir eventos de su tienda, o exporte archivos listos para contabilidad (1C / Kompra / QuickBooks / Xero / DATEV) bajo demanda o de forma programada.",
+    "tabs": {
+      "browse": "Explorar",
+      "logs": "Registros"
+    },
+    "row": {
+      "installed": "Instalado",
+      "installedTimes": "Instalado ×{{count}}",
+      "notInstalled": "No instalado",
+      "comingSoon": "Próximamente",
+      "plannedFeatures": "Funciones planificadas",
+      "notifyMe": "Avisarme cuando esté listo"
+    },
+    "browse": {
+      "searchPlaceholder": "Buscar integraciones…",
+      "noMatch": "Ninguna integración coincide con sus filtros."
+    },
+    "logs": {
+      "allStatuses": "Todos los estados",
+      "successOnly": "Solo exitosas",
+      "failedOnly": "Solo fallidas",
+      "eventFilterPlaceholder": "Filtrar por evento (p. ej. order.paid)…",
+      "refresh": "Actualizar",
+      "colTime": "Hora",
+      "colEvent": "Evento",
+      "colConnector": "Conector",
+      "colStatus": "Estado",
+      "colHttp": "HTTP",
+      "colDuration": "Duración",
+      "loading": "Cargando…",
+      "empty": "Aún no hay entregas. Active un evento (p. ej. realice un pedido de prueba) o haga clic en «Envío de prueba» en una integración.",
+      "payload": "Carga útil",
+      "responseBody": "Cuerpo de la respuesta",
+      "emptyValue": "(vacío)",
+      "retry": "Reintentar",
+      "ago": {
+        "seconds": "hace {{n}} s",
+        "minutes": "hace {{n}} min",
+        "hours": "hace {{n}} h"
+      }
+    },
+    "toast": {
+      "saved": "Guardado",
+      "installed": "Instalado",
+      "deleted": "Eliminado",
+      "requestSent": "Solicitud enviada",
+      "couldNotInstall": "No se pudo instalar"
+    },
+    "connector": {
+      "events": {
+        "groupOrders": "Pedidos",
+        "groupBookings": "Reservas",
+        "groupOther": "Otros"
+      },
+      "defaults": {
+        "webhook": {
+          "label": "URL del endpoint",
+          "placeholder": "https://your-server.com/torta-webhook",
+          "help": "Su servidor debe aceptar POST y verificar X-Torta-Signature."
+        },
+        "slack": {
+          "label": "URL del Webhook",
+          "placeholder": "https://hooks.slack.com/services/T0…/B0…/…",
+          "help": "Obténgalo en api.slack.com/messaging/webhooks"
+        },
+        "discord": {
+          "label": "URL del Webhook",
+          "placeholder": "https://discord.com/api/webhooks/…/…",
+          "help": "Server Settings → Integrations → Webhooks → New Webhook"
+        },
+        "fallbackLabel": "URL del Webhook",
+        "fallbackPlaceholder": "https://your-endpoint.com/hook"
+      },
+      "nameLabel": "Nombre (interno)",
+      "primaryRequired": "{{label}} es obligatorio",
+      "primaryHttp": "{{label}} debe comenzar con http:// o https://",
+      "saveFailed": "Error al guardar",
+      "saveFirstThenTest": "Guarde primero la integración y luego pruébela",
+      "confirmDelete": "¿Eliminar esta integración? Los registros se conservan.",
+      "signingSecret": "Secreto de firma",
+      "copied": "Copiado",
+      "copy": "Copiar",
+      "signingHint": "Verifique <0>X-Torta-Signature: sha256=&lt;hex&gt;</0> en cada solicitud: <1>HMAC-SHA256(body, secret)</1>.",
+      "subscribeAll": "Suscribirse a todos los eventos",
+      "subscribeAllHintMailchimp": "Mailchimp solo escucha customer.created — los demás eventos se omiten silenciosamente en el servidor.",
+      "subscribeAllHintGa4": "GA4 asigna order.paid → purchase, order.created → begin_checkout. Los demás eventos se omiten.",
+      "subscribeAllHintDefault": "Cuando está activado, cada evento de este proyecto activa esta integración.",
+      "active": "Activo",
+      "activeHint": "Pause la entrega sin perder la configuración.",
+      "saving": "Guardando…",
+      "saveChanges": "Guardar cambios",
+      "install": "Instalar",
+      "testSend": "Envío de prueba",
+      "docs": "Documentación",
+      "delete": "Eliminar",
+      "hide": "Ocultar",
+      "show": "Mostrar"
+    },
+    "request": {
+      "comingSoon": "Próximamente",
+      "comingSoonSub": "Díganos que la quiere — le enviaremos un correo electrónico el día de su lanzamiento y damos prioridad a las más solicitadas.",
+      "plannedFeatures": "Funciones planificadas",
+      "notifyMe": "Avisarme",
+      "yourEmail": "Su correo electrónico",
+      "emailPlaceholder": "you@example.com",
+      "anythingSpecific": "¿Algo en concreto? (opcional)",
+      "notePlaceholder": "¿Cuál es su caso de uso? ¿Qué campos son los más importantes?",
+      "requestFailed": "Error al enviar la solicitud",
+      "sending": " Enviando…",
+      "sendRequest": " Enviar solicitud",
+      "close": "Cerrar",
+      "thanksTitle": "Gracias — le avisaremos.",
+      "thanksBody": "Su solicitud ha sido registrada. Le enviaremos un correo electrónico cuando {{name}} esté disponible.",
+      "done": "Listo"
+    },
+    "accounting": {
+      "period": {
+        "today": "Hoy",
+        "yesterday": "Ayer",
+        "last7d": "Últimos 7 días",
+        "last30d": "Últimos 30 días",
+        "thisMonth": "Este mes",
+        "lastMonth": "Mes pasado",
+        "thisQuarter": "Este trimestre",
+        "custom": "Rango personalizado…"
+      },
+      "schedule": {
+        "off": "Desactivado — solo descargas manuales",
+        "daily": "Diario — pedidos de ayer",
+        "weekly": "Semanal — últimos 7 días",
+        "monthly": "Mensual — mes anterior"
+      },
+      "hourLabel": "{{h}}:00 UTC",
+      "fileFormat": "Formato de archivo",
+      "periodLabel": "Período",
+      "includeUnpaid": "Incluir no pagados / pendientes",
+      "pickBothDates": "Elija las fechas de inicio y fin para un rango personalizado.",
+      "start": "Inicio",
+      "end": "Fin",
+      "preview": "Vista previa",
+      "refresh": "Actualizar",
+      "orders": "Pedidos",
+      "revenue": "Ingresos",
+      "window": "Ventana",
+      "loading": "Cargando…",
+      "loadingPreview": "Cargando vista previa…",
+      "previewFailed": "Error en la vista previa",
+      "colOrder": "Pedido",
+      "colDate": "Fecha",
+      "colCustomer": "Cliente",
+      "colItems": "Artículos",
+      "colAmount": "Importe",
+      "showingOf": "Mostrando {{shown}} de {{total}} pedidos. Descargue para obtener el archivo completo.",
+      "noMatchingOrders": "No hay pedidos que coincidan en este período.",
+      "emailSchedule": "Programación de correo electrónico",
+      "cadence": "Frecuencia",
+      "cadenceHint": "Cuando se configura, le enviamos un enlace de descarga firmado según su frecuencia — los propios archivos permanecen en el CRM y el enlace es válido durante 30 días.",
+      "hourUtc": "Hora (UTC)",
+      "recipientEmail": "Correo electrónico del destinatario",
+      "recipientPlaceholder": "accountant@example.com",
+      "recipientHint": "Obligatorio solo cuando la programación está activada. Déjelo en blanco para solo descarga.",
+      "active": "Activo",
+      "activeHint": "Las integraciones desactivadas dejan de recibir exportaciones programadas hasta que se reactiven.",
+      "howToImport": "Cómo importar en {{name}}",
+      "setEmailOrOff": "Indique un correo electrónico de destinatario o cambie la programación a Desactivado.",
+      "saveFailed": "Error al guardar",
+      "saved": "Guardado",
+      "setRecipientFirst": "Indique primero un correo electrónico de destinatario.",
+      "testSendFailed": "Error en el envío de prueba",
+      "emailSentTo": "Correo electrónico enviado a {{email}}",
+      "confirmDelete": "¿Eliminar esta integración de contabilidad? Las descargas anteriores no se ven afectadas.",
+      "download": "Descargar",
+      "downloadOrders": "Descargar · {{count}} pedido",
+      "downloadOrders_other": "Descargar · {{count}} pedidos",
+      "saving": "Guardando…",
+      "saveSchedule": "Guardar programación",
+      "testSend": "Envío de prueba",
+      "delete": "Eliminar"
+    }
+  }
+}

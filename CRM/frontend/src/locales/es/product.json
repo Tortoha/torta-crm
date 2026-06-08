@@ -1,0 +1,243 @@
+{
+  "product": {
+    "meta": {
+      "getStarted": "Comenzar gratis",
+      "docs": "Leer la documentación",
+      "seePricing": "Ver precios",
+      "featuresTitle": "Todo lo que está incluido",
+      "ctaEyebrow": "Comenzar",
+      "ctaTitle": "Gestione toda su tienda desde un solo lugar",
+      "ctaSub": "Comience gratis — sin tarjeta de crédito. Mejore su plan a medida que crece.",
+      "exploreTitle": "Explore más de la plataforma"
+    },
+    "nav": {
+      "product": "Producto",
+      "name": {
+        "database": "Base de datos",
+        "auth": "Autenticación",
+        "storage": "Almacenamiento",
+        "automations": "Automatizaciones",
+        "email": "Correo electrónico",
+        "realtime": "Tiempo real"
+      },
+      "tagline": {
+        "database": "Datos estructurados de la tienda",
+        "auth": "Inicio de sesión de clientes",
+        "storage": "Multimedia y archivos",
+        "automations": "Webhooks y alertas",
+        "email": "Transaccionales y campañas",
+        "realtime": "Cursores y presencia en vivo"
+      }
+    },
+
+    "database": {
+      "hero": {
+        "eyebrow": "Base de datos",
+        "title": "Cada pedido, cliente y producto — estructurado y suyo",
+        "lead": "Su tienda funciona sobre una base de datos relacional y limpia. Productos, pedidos, clientes, carritos, reseñas, reservas y existencias viven como registros conectados que puede leer, filtrar y utilizar — sin hojas de cálculo ni conjeturas."
+      },
+      "stats": [
+        { "value": "1 tienda, 1 espacio", "label": "Sus datos están totalmente aislados de cualquier otra tienda" },
+        { "value": "Relacional", "label": "Los pedidos se vinculan con clientes, artículos, pagos y devoluciones" },
+        { "value": "9+ tipos de registro", "label": "Productos, pedidos, clientes, reservas, reseñas y más" },
+        { "value": "Analítica en vivo", "label": "Ingresos, embudo e inventario calculados directamente desde sus datos" }
+      ],
+      "cards": [
+        { "title": "Productos", "desc": "Productos con múltiples opciones, con variaciones, tallas, precio por artículo y existencias." },
+        { "title": "Pedidos", "desc": "Cada pedido con sus artículos, totales, pago y entrega — de principio a fin." },
+        { "title": "Clientes", "desc": "Un perfil por comprador: datos de contacto, historial de pedidos y direcciones guardadas." },
+        { "title": "Reseñas", "desc": "Calificaciones, reseñas escritas y fotos vinculadas al producto correcto." },
+        { "title": "Reservas", "desc": "Citas con horario, con servicios, personal y estado." },
+        { "title": "Analítica", "desc": "Ingresos, valor promedio del pedido, conversión e inventario, calculados en vivo." }
+      ],
+      "deep": {
+        "eyebrow": "Integrado",
+        "title": "Registros que ya saben cómo funciona su tienda",
+        "body": "Nunca diseña tablas ni escribe consultas. Cada parte del catálogo y cada venta están modeladas por usted, se mantienen coherentes y están listas para ver, filtrar y utilizar desde su panel.",
+        "points": [
+          "Los datos de cada tienda están aislados — una tienda nunca ve los de otra",
+          "Inventario controlado por almacén, con lotes y avisos de existencias bajas",
+          "Devoluciones y reembolsos registrados frente al pedido original",
+          "Todo visible en el panel — busque, filtre y profundice"
+        ],
+        "chipsTitle": "Tipos de registro",
+        "chips": ["Productos", "Variaciones", "Existencias y lotes", "Pedidos", "Devoluciones", "Clientes", "Direcciones", "Carritos", "Reseñas", "Favoritos", "Reservas", "Códigos promocionales"]
+      }
+    },
+
+    "auth": {
+      "hero": {
+        "eyebrow": "Autenticación",
+        "title": "Un inicio de sesión en el que sus clientes confían de verdad",
+        "lead": "Permita que los compradores creen una cuenta e inicien sesión como prefieran — con un código de un solo uso por correo electrónico, su número de teléfono o una cuenta social — sin que usted tenga que desarrollar nada de eso."
+      },
+      "stats": [
+        { "value": "17 proveedores", "label": "Google, Apple y 15 inicios de sesión sociales más" },
+        { "value": "Correo electrónico + SMS", "label": "Códigos de un solo uso por correo electrónico o mensaje de texto" },
+        { "value": "Multidispositivo", "label": "Los clientes ven y revocan sus propias sesiones" },
+        { "value": "Compra como invitado", "label": "Compre primero, cree la cuenta después" }
+      ],
+      "cards": [
+        { "title": "Código por correo", "desc": "Códigos de un solo uso sin contraseña enviados a la bandeja de entrada del cliente." },
+        { "title": "Código por teléfono", "desc": "Códigos de un solo uso por SMS para audiencias que priorizan el teléfono." },
+        { "title": "Inicio de sesión social", "desc": "Google, Apple, GitHub, Discord y más con un solo toque." },
+        { "title": "Restablecer contraseña", "desc": "Un flujo de restablecimiento seguro y autoservicio listo para usar." },
+        { "title": "Sesiones", "desc": "Dispositivos activos en lista; cierre sesión en cualquier lugar, en cualquier momento." },
+        { "title": "Compra como invitado", "desc": "Los compradores compran como invitados y pasan a una cuenta más tarde." }
+      ],
+      "deep": {
+        "eyebrow": "Seguro de forma predeterminada",
+        "title": "Nos encargamos de todas las partes difíciles por usted",
+        "body": "Los tokens, la renovación, las sesiones multidispositivo y las devoluciones de llamada de los proveedores se gestionan entre bastidores. Usted activa los métodos que quiere; sus clientes solo inician sesión.",
+        "points": [
+          "Códigos de un solo uso con expiración corta — sin contraseñas que filtrar",
+          "Las sesiones se renuevan en silencio y se pueden revocar por dispositivo",
+          "Active o desactive cada proveedor por tienda",
+          "Una sola identidad de cliente puede funcionar en todas las ubicaciones de su tienda"
+        ],
+        "chipsTitle": "Proveedores sociales",
+        "chips": ["Google", "Apple", "GitHub", "Discord", "LinkedIn", "Figma", "Twitch", "Spotify", "Slack", "Notion", "Zoom", "Bitbucket", "GitLab", "Facebook", "Kakao", "X", "Azure"]
+      }
+    },
+
+    "storage": {
+      "hero": {
+        "eyebrow": "Almacenamiento",
+        "title": "Almacene las imágenes y los archivos que su tienda necesita",
+        "lead": "Suba fotos de productos, imágenes de reseñas y los archivos digitales que vende — casi cualquier tipo de archivo — directamente desde el panel. Los archivos se suben de forma directa y segura, y los multimedia de cada tienda siguen siendo suyos."
+      },
+      "stats": [
+        { "value": "100 MB – 2 TB", "label": "La capacidad de multimedia escala con su plan" },
+        { "value": "Cualquier tipo de archivo", "label": "Imágenes, PDF y las descargas digitales que vende" },
+        { "value": "Subida directa", "label": "Los archivos van directamente al almacenamiento desde el navegador" },
+        { "value": "Por tienda", "label": "Sus multimedia están aislados de cualquier otra tienda" }
+      ],
+      "cards": [
+        { "title": "Imágenes de productos", "desc": "Galerías de fotos por producto y por variación." },
+        { "title": "Fotos de reseñas", "desc": "Los clientes adjuntan hasta cinco fotos por reseña." },
+        { "title": "Avatares", "desc": "Fotos de perfil para sus clientes." },
+        { "title": "Multimedia de correo", "desc": "Imágenes y PDF que incluye en sus campañas de correo electrónico." },
+        { "title": "Descargas digitales", "desc": "Venda productos digitales — ZIP, audio, vídeo, libros electrónicos, casi cualquier archivo." },
+        { "title": "Seguimiento de uso", "desc": "Vea exactamente cuánto de su capacidad ha utilizado." }
+      ],
+      "deep": {
+        "eyebrow": "Simple y seguro",
+        "title": "Suba una vez, úselo en cualquier lugar",
+        "body": "Coloque un archivo y obtenga un enlace de vuelta al instante. El almacenamiento se mide por plan, así que siempre sabe en qué punto está, y los archivos de cada tienda se mantienen separados.",
+        "points": [
+          "Suba directamente desde el navegador — nada que configurar",
+          "Imágenes optimizadas para una carga rápida en su escaparate",
+          "Uso en vivo mostrado frente a la capacidad de su plan",
+          "Eliminar una tienda borra sus archivos por completo"
+        ],
+        "chipsTitle": "Lo que puede almacenar",
+        "chips": ["Fotos de productos", "Imágenes de variaciones", "Fotos de reseñas", "Avatares", "Imágenes de correo", "Guías en PDF", "Descargas digitales (cualquier tipo)", "Logotipo de marca"]
+      }
+    },
+
+    "automations": {
+      "hero": {
+        "eyebrow": "Webhooks y automatizaciones",
+        "title": "Conecte su tienda con todo lo demás que utiliza",
+        "lead": "Cuando algo ocurre en su tienda — un pedido pagado, un nuevo cliente, una reserva cancelada — envíelo a cualquier lugar: Slack, Discord, su propio endpoint o conectores listos para usar. Además de alertas y campañas que se ejecutan según un calendario."
+      },
+      "stats": [
+        { "value": "14 eventos", "label": "Pedidos, reservas, clientes, pagos y productos" },
+        { "value": "12 conectores", "label": "Slack, Discord, herramientas de contabilidad y analítica" },
+        { "value": "Programado", "label": "Alertas y campañas de correo que se activan solas" },
+        { "value": "Registros de entrega", "label": "Cada envío registrado con su estado y reintentos" }
+      ],
+      "cards": [
+        { "title": "Webhooks de eventos", "desc": "Envíe un payload JSON por POST a su endpoint cuando se dispara un evento." },
+        { "title": "Slack y Discord", "desc": "Coloque actualizaciones de pedidos y reservas en un canal." },
+        { "title": "Conectores", "desc": "Enlaces listos para usar con herramientas de contabilidad y analítica." },
+        { "title": "Alertas programadas", "desc": "Caídas de ingresos, existencias bajas y resúmenes diarios por correo electrónico." },
+        { "title": "Campañas de correo", "desc": "Envíos únicos o recurrentes que se ejecutan automáticamente." },
+        { "title": "Registros de entrega", "desc": "Vea cada entrega, su respuesta y los reintentos automáticos." }
+      ],
+      "deep": {
+        "eyebrow": "Nada que alojar",
+        "title": "Elija un evento, escoja a dónde va",
+        "body": "Suscríbase a los eventos que le importan y diríjalos a las herramientas que su equipo ya utiliza. Las entregas fallidas se reintentan solas, y cada intento queda registrado.",
+        "points": [
+          "Catorce tipos de evento en pedidos, reservas, clientes y productos",
+          "Envíe a un endpoint personalizado, Slack o Discord",
+          "Reintentos automáticos ante fallos, con un registro de entrega completo",
+          "Las alertas y campañas programadas se ejecutan sin que usted mueva un dedo"
+        ],
+        "chipsTitle": "Eventos a los que puede suscribirse",
+        "chips": ["order.created", "order.paid", "order.shipped", "order.delivered", "order.cancelled", "order.returned", "booking.created", "booking.completed", "booking.cancelled", "booking.no_show", "customer.created", "payment.received", "product.created", "product.updated"]
+      }
+    },
+
+    "email": {
+      "hero": {
+        "eyebrow": "Correo electrónico",
+        "title": "Correos que sus clientes realmente reciben",
+        "lead": "Envíe confirmaciones de pedidos, recordatorios y campañas de marketing desde su propio dominio verificado — escritos en HTML simple, entregados directamente desde nuestros servidores de correo y ajustados para llegar a la bandeja de entrada."
+      },
+      "stats": [
+        { "value": "Su dominio", "label": "Envíe como usted@sumarca.com, totalmente verificado" },
+        { "value": "En segundos", "label": "Los mensajes suelen llegar en unos pocos segundos" },
+        { "value": "6 plantillas", "label": "Correos transaccionales integrados, todos editables" },
+        { "value": "Campañas", "label": "Difusiones únicas o recurrentes a sus clientes" }
+      ],
+      "cards": [
+        { "title": "Transaccionales", "desc": "Correos de verificación, restablecimiento, pedido, reserva, carrito y reposición." },
+        { "title": "Campañas", "desc": "Difunda anuncios y promociones a sus clientes." },
+        { "title": "Su dominio", "desc": "Envío verificado con DKIM, SPF y DMARC." },
+        { "title": "Editor HTML", "desc": "Escriba exactamente el correo que quiere, con una vista previa en vivo." },
+        { "title": "Programación", "desc": "Envíe ahora, a una hora fija o con repetición semanal o anual." },
+        { "title": "Entregabilidad", "desc": "Envío autenticado y ajustado para llegar a la bandeja de entrada." }
+      ],
+      "deep": {
+        "eyebrow": "Hecho para llegar",
+        "title": "De su dominio a la bandeja de entrada, en segundos",
+        "body": "Verifique su dominio una vez y cada correo sale firmado y autenticado. Los mensajes salen de nuestros servidores de inmediato y suelen llegar a los destinatarios en unos pocos segundos, en cualquier parte del mundo.",
+        "points": [
+          "Su propio dominio verificado con DKIM, SPF y DMARC",
+          "Seis plantillas transaccionales, cada una editable como HTML",
+          "Programe campañas únicas, semanales o anuales",
+          "El volumen diario escala con su plan"
+        ],
+        "chipsTitle": "Correos que su tienda puede enviar",
+        "chips": ["Código de verificación", "Restablecimiento de contraseña", "Confirmación de pedido", "Recordatorio de reserva", "Carrito abandonado", "Alerta de reposición", "Campañas de marketing"]
+      }
+    },
+
+    "realtime": {
+      "hero": {
+        "eyebrow": "Tiempo real",
+        "title": "Su equipo, en vivo en la misma página",
+        "lead": "Presencia en vivo, cursores y edición compartida en todo su CRM. Vea quién está en línea y dónde, observe el cursor de un compañero moverse con su nombre, y deje un mensaje justo sobre su puntero — en cada página de proyecto, producto y organización."
+      },
+      "stats": [
+        { "value": "Cada página", "label": "Presencia y cursores en cada pantalla de proyecto, producto y organización" },
+        { "value": "Cursores en vivo", "label": "Vea el puntero de cada compañero, etiquetado con su nombre" },
+        { "value": "Escritura compartida", "label": "Observe las ediciones aparecer en un campo a medida que se escriben" },
+        { "value": "Un socket", "label": "Un único WebSocket por sesión impulsa todo" }
+      ],
+      "cards": [
+        { "title": "Presencia en vivo", "desc": "Una pila de avatares en el encabezado y puntos de en línea muestran quién está aquí, en tiempo real." },
+        { "title": "Cursores en vivo", "desc": "El cursor de cada compañero se mueve en vivo, etiquetado con su nombre y con precisión de píxeles en todas las pantallas." },
+        { "title": "Chat de cursor", "desc": "Pulse Ctrl+M para fijar un mensaje rápido a su cursor — una palabra en el momento, sin hilo." },
+        { "title": "Edición compartida", "desc": "Observe a un compañero escribir en un campo de correo o de producto, reflejado pulsación a pulsación." },
+        { "title": "Saltar a un compañero", "desc": "Abra el menú de presencia y haga clic en cualquiera para llegar exactamente donde está trabajando." },
+        { "title": "Hecho para escalar", "desc": "Un WebSocket autenticado por sesión, distribuido entre instancias con Postgres LISTEN/NOTIFY." }
+      ],
+      "deep": {
+        "eyebrow": "Multijugador",
+        "title": "Su CRM, con todos en la sala",
+        "body": "Abra cualquier página y podrá ver quién más está en ella, dónde está su cursor y qué está editando — en el momento en que ocurre. Sin recargar, sin complementos, en cada pantalla, desde un solo proyecto hasta toda la organización.",
+        "points": [
+          "Presencia en vivo, cursores y chat de cursor en cada página de proyecto, producto y organización",
+          "Edición en vivo compartida en el editor de correo y la vista general del producto",
+          "Los cursores anclados a elementos se mantienen con precisión de píxeles incluso en monitores distintos",
+          "Un WebSocket autenticado, escalado entre instancias mediante Postgres LISTEN/NOTIFY"
+        ],
+        "chipsTitle": "Lo que está en vivo",
+        "chips": ["Cursores en vivo", "Pila de presencia", "Estado en línea", "Chat de cursor", "Escritura compartida", "Saltar a compañero", "Páginas de proyecto", "Páginas de producto", "Consola de organización"]
+      }
+    }
+  }
+}

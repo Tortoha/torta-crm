@@ -1,0 +1,31 @@
+{
+  "settings": {
+    "title": "Configuración",
+    "profile": {
+      "title": "Perfil",
+      "subtitle": "Su foto, nombre visible y correo electrónico de inicio de sesión.",
+      "photo": "Foto",
+      "photoHint": "Suba una imagen cuadrada — se recorta en círculo.",
+      "changePhoto": "Cambiar foto",
+      "uploading": "Subiendo…",
+      "photoUpdated": "Foto actualizada",
+      "uploadFailed": "Error al subir",
+      "displayName": "Nombre visible",
+      "displayNameHint": "Se muestra en el panel de control y a su equipo.",
+      "namePlaceholder": "Su nombre",
+      "email": "Correo electrónico",
+      "emailHint": "Se usa para iniciar sesión — no se puede cambiar."
+    },
+    "preferences": {
+      "title": "Preferencias",
+      "subtitle": "Opciones personales de la interfaz para su cuenta.",
+      "language": "Idioma",
+      "languageHint": "Idioma de la interfaz para su cuenta.",
+      "theme": "Tema",
+      "themeHint": "Elija su apariencia preferida.",
+      "light": "Claro",
+      "dark": "Oscuro",
+      "system": "Sistema"
+    }
+  }
+}

@@ -1,0 +1,184 @@
+{
+  "integrations": {
+    "title": "Интеграциялар",
+    "subtitle": "Дүкеніңізден оқиғаларды алу үшін сыртқы құралдарды қосыңыз немесе бухгалтерлік есепке дайын файлдарды (1C / Kompra / QuickBooks / Xero / DATEV) сұрау бойынша немесе кесте бойынша экспорттаңыз.",
+    "tabs": {
+      "browse": "Шолу",
+      "logs": "Журнал"
+    },
+    "row": {
+      "installed": "Орнатылған",
+      "installedTimes": "Орнатылған ×{{count}}",
+      "notInstalled": "Орнатылмаған",
+      "comingSoon": "Жақында",
+      "plannedFeatures": "Жоспарланған мүмкіндіктер",
+      "notifyMe": "Дайын болғанда хабарлаңыз"
+    },
+    "browse": {
+      "searchPlaceholder": "Интеграцияларды іздеу…",
+      "noMatch": "Сүзгілеріңізге сәйкес интеграциялар жоқ."
+    },
+    "logs": {
+      "allStatuses": "Барлық күйлер",
+      "successOnly": "Тек сәтті",
+      "failedOnly": "Тек сәтсіз",
+      "eventFilterPlaceholder": "Оқиға бойынша сүзу (мыс. order.paid)…",
+      "refresh": "Жаңарту",
+      "colTime": "Уақыт",
+      "colEvent": "Оқиға",
+      "colConnector": "Коннектор",
+      "colStatus": "Күй",
+      "colHttp": "HTTP",
+      "colDuration": "Ұзақтығы",
+      "loading": "Жүктелуде…",
+      "empty": "Әзірге жеткізілімдер жоқ. Оқиғаны іске қосыңыз (мыс. сынақ тапсырысын жасаңыз) немесе интеграцияда «Сынақ жіберу» түймесін басыңыз.",
+      "payload": "Пайдалы жүктеме",
+      "responseBody": "Жауап денесі",
+      "emptyValue": "(бос)",
+      "retry": "Қайталау",
+      "ago": {
+        "seconds": "{{n}} с бұрын",
+        "minutes": "{{n}} мин бұрын",
+        "hours": "{{n}} сағ бұрын"
+      }
+    },
+    "toast": {
+      "saved": "Сақталды",
+      "installed": "Орнатылды",
+      "deleted": "Жойылды",
+      "requestSent": "Сұраныс жіберілді",
+      "couldNotInstall": "Орнату мүмкін болмады"
+    },
+    "connector": {
+      "events": {
+        "groupOrders": "Тапсырыстар",
+        "groupBookings": "Жазылулар",
+        "groupOther": "Басқа"
+      },
+      "defaults": {
+        "webhook": {
+          "label": "Endpoint URL",
+          "placeholder": "https://your-server.com/torta-webhook",
+          "help": "Сіздің серверіңіз POST қабылдап, X-Torta-Signature тексеруі тиіс."
+        },
+        "slack": {
+          "label": "Webhook URL",
+          "placeholder": "https://hooks.slack.com/services/T0…/B0…/…",
+          "help": "Мұны api.slack.com/messaging/webhooks сайтынан алыңыз"
+        },
+        "discord": {
+          "label": "Webhook URL",
+          "placeholder": "https://discord.com/api/webhooks/…/…",
+          "help": "Server Settings → Integrations → Webhooks → New Webhook"
+        },
+        "fallbackLabel": "Webhook URL",
+        "fallbackPlaceholder": "https://your-endpoint.com/hook"
+      },
+      "nameLabel": "Атауы (ішкі)",
+      "primaryRequired": "«{{label}}» өрісі міндетті",
+      "primaryHttp": "«{{label}}» http:// немесе https:// деп басталуы тиіс",
+      "saveFailed": "Сақтау мүмкін болмады",
+      "saveFirstThenTest": "Алдымен интеграцияны сақтаңыз, содан кейін сынаңыз",
+      "confirmDelete": "Осы интеграцияны жою керек пе? Журналдар сақталады.",
+      "signingSecret": "Қол қою құпиясы",
+      "copied": "Көшірілді",
+      "copy": "Көшіру",
+      "signingHint": "Әрбір сұраныста <0>X-Torta-Signature: sha256=&lt;hex&gt;</0> тексеріңіз: <1>HMAC-SHA256(body, secret)</1>.",
+      "subscribeAll": "Барлық оқиғаларға жазылу",
+      "subscribeAllHintMailchimp": "Mailchimp тек customer.created оқиғасын тыңдайды — қалған оқиғалар сервер жағында үнсіз өткізіп жіберіледі.",
+      "subscribeAllHintGa4": "GA4 келесідей сәйкестендіреді: order.paid → purchase, order.created → begin_checkout. Қалған оқиғалар өткізіп жіберіледі.",
+      "subscribeAllHintDefault": "Қосулы кезде осы жобаның әрбір оқиғасы осы интеграцияны іске қосады.",
+      "active": "Белсенді",
+      "activeHint": "Баптауларды жоғалтпай жеткізуді кідірту.",
+      "saving": "Сақталуда…",
+      "saveChanges": "Өзгерістерді сақтау",
+      "install": "Орнату",
+      "testSend": "Сынақ жіберу",
+      "docs": "Құжаттама",
+      "delete": "Жою",
+      "hide": "Жасыру",
+      "show": "Көрсету"
+    },
+    "request": {
+      "comingSoon": "Жақында",
+      "comingSoonSub": "Бұл сізге қажет екенін айтыңыз — біз іске қосылған күні хат жазамыз және ең көп сұралғандарды бірінші кезекте қосамыз.",
+      "plannedFeatures": "Жоспарланған мүмкіндіктер",
+      "notifyMe": "Маған хабарлаңыз",
+      "yourEmail": "Сіздің электрондық поштаңыз",
+      "emailPlaceholder": "you@example.com",
+      "anythingSpecific": "Нақты бір нәрсе бар ма? (міндетті емес)",
+      "notePlaceholder": "Қолдану сценарийіңіз қандай? Қай өрістер маңыздырақ?",
+      "requestFailed": "Сұранысты жіберу мүмкін болмады",
+      "sending": " Жіберілуде…",
+      "sendRequest": " Сұраныс жіберу",
+      "close": "Жабу",
+      "thanksTitle": "Рахмет — біз хабарлаймыз.",
+      "thanksBody": "Сұранысыңыз тіркелді. {{name}} қолжетімді болғанда хат жазамыз.",
+      "done": "Дайын"
+    },
+    "accounting": {
+      "period": {
+        "today": "Бүгін",
+        "yesterday": "Кеше",
+        "last7d": "Соңғы 7 күн",
+        "last30d": "Соңғы 30 күн",
+        "thisMonth": "Осы ай",
+        "lastMonth": "Өткен ай",
+        "thisQuarter": "Осы тоқсан",
+        "custom": "Өз ауқымы…"
+      },
+      "schedule": {
+        "off": "Өшірулі — тек қолмен жүктеу",
+        "daily": "Күн сайын — кешегі тапсырыстар",
+        "weekly": "Апта сайын — соңғы 7 күн",
+        "monthly": "Ай сайын — өткен ай"
+      },
+      "hourLabel": "{{h}}:00 UTC",
+      "fileFormat": "Файл пішімі",
+      "periodLabel": "Кезең",
+      "includeUnpaid": "Төленбегендерді / күтудегілерді қосу",
+      "pickBothDates": "Өз ауқымыңыз үшін басталу және аяқталу күндерін таңдаңыз.",
+      "start": "Басталуы",
+      "end": "Аяқталуы",
+      "preview": "Алдын ала қарау",
+      "refresh": "Жаңарту",
+      "orders": "Тапсырыстар",
+      "revenue": "Кіріс",
+      "window": "Терезе",
+      "loading": "Жүктелуде…",
+      "loadingPreview": "Алдын ала қарау жүктелуде…",
+      "previewFailed": "Алдын ала қарау сәтсіз аяқталды",
+      "colOrder": "Тапсырыс",
+      "colDate": "Күні",
+      "colCustomer": "Клиент",
+      "colItems": "Позициялар",
+      "colAmount": "Сома",
+      "showingOf": "{{total}} тапсырыстың {{shown}} көрсетілуде. Толық файл үшін жүктеп алыңыз.",
+      "noMatchingOrders": "Осы кезеңде сәйкес тапсырыстар жоқ.",
+      "emailSchedule": "Электрондық пошта кестесі",
+      "cadence": "Жиілік",
+      "cadenceHint": "Орнатылған кезде біз сіздің кестеңіз бойынша қол қойылған жүктеу сілтемесін жібереміз — файл байттарының өзі CRM-да қалады, ал сілтеме 30 күн жарамды.",
+      "hourUtc": "Сағат (UTC)",
+      "recipientEmail": "Алушының электрондық поштасы",
+      "recipientPlaceholder": "accountant@example.com",
+      "recipientHint": "Тек кесте қосулы болғанда қажет. Тек жүктеу үшін бос қалдырыңыз.",
+      "active": "Белсенді",
+      "activeHint": "Өшірілген интеграциялар қайта қосылғанша жоспарланған экспорттарды алуды тоқтатады.",
+      "howToImport": "{{name}} ішінде қалай импорттау керек",
+      "setEmailOrOff": "Алушының электрондық поштасын орнатыңыз немесе кестені «Өшірулі» күйіне ауыстырыңыз.",
+      "saveFailed": "Сақтау мүмкін болмады",
+      "saved": "Сақталды",
+      "setRecipientFirst": "Алдымен алушының электрондық поштасын орнатыңыз.",
+      "testSendFailed": "Сынақ жіберу сәтсіз аяқталды",
+      "emailSentTo": "Хат {{email}} мекенжайына жіберілді",
+      "confirmDelete": "Осы бухгалтерлік интеграцияны жою керек пе? Бұрынғы жүктеулерге әсер етпейді.",
+      "download": "Жүктеп алу",
+      "downloadOrders": "Жүктеп алу · {{count}} тапсырыс",
+      "downloadOrders_other": "Жүктеп алу · {{count}} тапсырыс",
+      "saving": "Сақталуда…",
+      "saveSchedule": "Кестені сақтау",
+      "testSend": "Сынақ жіберу",
+      "delete": "Жою"
+    }
+  }
+}

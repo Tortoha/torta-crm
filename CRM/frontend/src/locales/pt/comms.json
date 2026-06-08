@@ -1,0 +1,221 @@
+{
+  "comms": {
+    "chat": {
+      "pageTitle": "Chat com Clientes",
+      "tabChats": "Chats",
+      "tabChannels": "Canais",
+      "channels": "Canais",
+      "channelsSubtitle": "Conecte canais de mensagens para receber mensagens dos clientes diretamente no seu CRM.",
+      "searchConversations": "Pesquisar conversas…",
+      "active": "Ativos",
+      "inactive": "Inativos",
+      "noActiveChats": "Ainda não há chats ativos",
+      "closedChatsAppear": "Os chats encerrados aparecem aqui",
+      "selectConversation": "Selecione uma conversa",
+      "selectConversationDesc": "Escolha um chat na lista para ver as mensagens.",
+      "noMessages": "Ainda não há mensagens.",
+      "typeMessage": "Digite uma mensagem…",
+      "send": "Enviar",
+      "chatClosed": "Este chat está encerrado. Reabra-o para responder.",
+      "closeChat": "Encerrar chat",
+      "reopen": "Reabrir",
+      "via": "via {{channel}}",
+      "copyId": "Copiar ID",
+      "idCopied": "ID copiado",
+      "markAsRead": "Marcar como lido",
+      "reopenChat": "Reabrir chat",
+      "copyText": "Copiar texto",
+      "copied": "Copiado",
+      "downloadPng": "Baixar como PNG",
+      "openOriginal": "Abrir original",
+      "image": "imagem",
+      "attachment": "anexo",
+      "play": "Reproduzir",
+      "pause": "Pausar",
+      "zoomIn": "Ampliar",
+      "zoomOut": "Reduzir",
+      "close": "Fechar",
+      "failedLoad": "Falha ao carregar mensagens",
+      "failedSend": "Falha ao enviar",
+      "failedDelete": "Falha ao excluir",
+      "downloadFailed": "Falha ao baixar",
+      "deleteMsgConfirm": "Excluir esta mensagem? Isso a remove apenas do seu CRM, não do mensageiro.",
+      "chatClosedToast": "Chat encerrado",
+      "chatReopenedToast": "Chat reaberto",
+      "failed": "Falha",
+      "connected": "Conectado",
+      "connectedAs": "Conectado como",
+      "connectedAsName": "Conectado como {{name}}",
+      "realtime": "Em tempo real",
+      "webhook": "Webhook",
+      "webhookUrl": "URL do Webhook",
+      "webhookHint": "Cole isto nas configurações de webhook da plataforma. Requer HTTPS público — funciona em produção, não no localhost.",
+      "checkingDomain": "Verificando domínio de e-mail confirmado…",
+      "noVerifiedDomain": "Nenhum domínio de e-mail confirmado",
+      "noVerifiedDomainBody1": "O canal de e-mail reutiliza o domínio que você já confirmou para o envio de códigos OTP. Abra",
+      "noVerifiedDomainBody2": "e conclua a verificação DKIM/SPF/DMARC, depois volte aqui.",
+      "authEmailLink": "Autenticação → E-mail",
+      "dnsMxTitle": "DNS — registro MX",
+      "dnsMxHint1": "Adicione este registro MX ao seu domínio para que os e-mails recebidos cheguem aos nossos servidores. Qualquer endereço neste domínio",
+      "dnsMxHint2": "chegará a este chat.",
+      "noSetup": "Nenhuma configuração necessária",
+      "noSetupDesc": "O Web Chat usa as credenciais de API existentes do seu projeto. Clique em Conectar e o widget de suporte aparecerá em todas as páginas da sua loja.",
+      "lockedToDomain": "Vinculado ao seu domínio de e-mail confirmado",
+      "lockedHint1": "Vinculado ao seu domínio de e-mail confirmado. Para alterá-lo, atualize primeiro o domínio em",
+      "lockedHint2": ".",
+      "customerWillSee": "O cliente verá na caixa de entrada",
+      "connectedToast": "Conectado.",
+      "failedSave": "Falha ao salvar",
+      "update": "Atualizar",
+      "connect": "Conectar",
+      "removing": "Removendo…",
+      "disconnect": "Desconectar",
+      "channel": {
+        "webchat": { "desc": "Incorpore um widget de suporte no seu site. Os clientes conversam anonimamente." },
+        "telegram": {
+          "desc": "Conecte um bot do Telegram para receber mensagens diretas dos clientes.",
+          "field": { "bot_token": { "label": "Token do bot", "hint": "Fale com o @BotFather no Telegram, crie um bot e cole o token aqui." } }
+        },
+        "discord": {
+          "desc": "Conecte um bot do Discord para receber mensagens diretas dos usuários.",
+          "field": { "bot_token": { "label": "Token do bot", "hint": "Discord Developer Portal → Applications → New App → Bot → Reset Token. Ative o Privileged Gateway Intent: MESSAGE CONTENT." } }
+        },
+        "whatsapp": {
+          "desc": "Receba mensagens dos clientes via WhatsApp Cloud API.",
+          "field": {
+            "phone_number_id": { "label": "ID do número de telefone", "hint": "De Meta for Developers → WhatsApp → API Setup." },
+            "access_token": { "label": "Token de acesso permanente", "hint": "Token de System User com o escopo whatsapp_business_messaging." },
+            "verify_token": { "label": "Token de verificação do webhook", "hint": "Crie qualquer string. Cole a mesma string na Meta ao assinar o webhook." },
+            "app_secret": { "label": "Segredo do aplicativo", "hint": "Do seu Meta App → Settings → Basic. Usado para verificar X-Hub-Signature-256." }
+          }
+        },
+        "instagram": {
+          "desc": "Receba mensagens do Instagram Direct do seu perfil comercial.",
+          "field": {
+            "page_id": { "label": "ID da página do Instagram", "hint": "O ID da conta comercial do IG vinculada a uma página do Facebook." },
+            "access_token": { "label": "Token de acesso da página", "hint": "Token de página de longa duração com o escopo instagram_manage_messages." },
+            "verify_token": { "label": "Token de verificação do webhook", "hint": "Usado durante a confirmação da assinatura da Meta." },
+            "app_secret": { "label": "Segredo do aplicativo", "hint": "Do seu Meta App → Settings → Basic." }
+          }
+        },
+        "facebook": {
+          "desc": "Receba conversas do Facebook Messenger da sua página.",
+          "field": {
+            "page_id": { "label": "ID da página do Facebook", "hint": "ID numérico da sua página." },
+            "access_token": { "label": "Token de acesso da página", "hint": "Token de página de longa duração com o escopo pages_messaging." },
+            "verify_token": { "label": "Token de verificação do webhook", "hint": "Usado durante a confirmação da assinatura da Meta." },
+            "app_secret": { "label": "Segredo do aplicativo", "hint": "Do seu Meta App → Settings → Basic." }
+          }
+        },
+        "viber": {
+          "desc": "Receba mensagens dos clientes do seu bot do Viber.",
+          "field": { "auth_token": { "label": "Token de autenticação", "hint": "Viber Admin Panel → Account info → Authentication token. A URL do webhook é registrada automaticamente quando você tem HTTPS." } }
+        },
+        "x": {
+          "desc": "Receba mensagens diretas da sua conta do X.",
+          "field": {
+            "bearer_token": { "label": "Token Bearer do OAuth 2.0", "hint": "X Developer Portal → Project → Keys and Tokens → Bearer Token. Requer acesso Elevated para os endpoints de DM." },
+            "handle": { "label": "Identificador da conta", "hint": "Apenas para exibição — usado para rotular esta integração." },
+            "app_secret": { "label": "Segredo do aplicativo", "hint": "Consumer secret usado para verificar as assinaturas dos webhooks." }
+          }
+        },
+        "email": {
+          "desc": "Receba e-mails de clientes enviados para qualquer endereço @seu-domínio-confirmado. As respostas são agrupadas em tópicos.",
+          "field": {
+            "domain": { "label": "Domínio de e-mail confirmado", "hint": "Deve ser um domínio que você já confirmou em Autenticação → E-mail (DKIM/SPF/DMARC). Qualquer endereço neste domínio será encaminhado a este chat." },
+            "reply_local": { "label": "Endereço de resposta", "hint": "Apenas a parte local. As respostas do cliente chegarão ao mesmo chat independentemente disto — isto controla apenas o que ele vê no campo De." },
+            "reply_name": { "label": "Nome de exibição do remetente da resposta", "hint": "Exibido como o nome do remetente na caixa de entrada do cliente. Deixe em branco para reutilizar o nome de exibição dos Provedores de Autenticação." }
+          }
+        }
+      }
+    },
+    "emails": {
+      "tab": {
+        "verification": "Verificação",
+        "password_reset": "Redefinição de senha",
+        "order_confirmation": "Pedido",
+        "booking_reminder": "Agendamento",
+        "abandoned_cart": "Carrinho abandonado",
+        "restock": "Reposição",
+        "broadcasts": "Disparos"
+      },
+      "title": {
+        "verification": "Código de verificação",
+        "password_reset": "Redefinição de senha",
+        "order_confirmation": "Confirmação do pedido",
+        "booking_reminder": "Lembrete de agendamento",
+        "abandoned_cart": "Carrinho abandonado",
+        "restock": "Reposição de estoque",
+        "broadcasts": "Disparos"
+      },
+      "status": {
+        "draft": "rascunho",
+        "scheduled": "agendado",
+        "recurring": "recorrente",
+        "sending": "enviando",
+        "sent": "enviado",
+        "paused": "pausado"
+      },
+      "dow": {
+        "mon": "Seg", "tue": "Ter", "wed": "Qua", "thu": "Qui", "fri": "Sex", "sat": "Sáb", "sun": "Dom"
+      },
+      "resetConfirm": "Redefinir este e-mail para o design padrão?",
+      "resetDone": "Redefinido para o padrão",
+      "resetToDefault": "Redefinir para o padrão",
+      "requiredWarn": "Este e-mail deve incluir {{vars}} — as alterações não serão salvas até você adicioná-lo novamente.",
+      "htmlInsert": "Inserir:",
+      "htmlSubject": "Assunto",
+      "htmlPreview": "Pré-visualização",
+      "htmlRequired": "Adicione {{vars}} — obrigatório para este e-mail; não será salvo sem isso.",
+      "broadcastsHint": "Envie uma campanha para todos os seus clientes — agora ou de forma agendada.",
+      "colName": "Nome",
+      "colSubject": "Assunto",
+      "colSchedule": "Agendamento",
+      "colSent": "Enviado",
+      "colStatus": "Status",
+      "options": "Opções",
+      "edit": "Editar",
+      "pause": "Pausar",
+      "resume": "Retomar",
+      "searchPlaceholder": "Pesquisar campanhas…",
+      "gridView": "Visualização em grade",
+      "listView": "Visualização em lista",
+      "newCampaign": "Nova campanha",
+      "noCampaigns": "Ainda não há campanhas. Crie seu primeiro disparo.",
+      "noCampaignsFound": "Nenhuma campanha corresponde à sua pesquisa.",
+      "media": {
+        "title": "Biblioteca de mídia",
+        "subtitle": "Faça upload de imagens e PDFs, depois copie um link para inserir no HTML do seu e-mail.",
+        "upload": "Enviar",
+        "uploading": "Enviando…",
+        "hint": "Imagens e PDFs",
+        "empty": "Nada enviado ainda.",
+        "copyLink": "Copiar link",
+        "copied": "Copiado",
+        "deleteConfirm": "Excluir este arquivo?"
+      },
+      "untitled": "Sem título",
+      "noSubject": "Sem assunto",
+      "sentCount": "{{sent}}/{{total}} enviados",
+      "campaignName": "Nome da campanha",
+      "back": "Voltar",
+      "draftSendNow": "Rascunho / enviar agora",
+      "oneTime": "Única vez",
+      "weekly": "Semanal",
+      "modeIndividual": "Individual",
+      "modeEveryone": "Todos",
+      "repeatYearly": "Repetir todos os anos",
+      "recipientPlaceholder": "destinatario@email.com",
+      "send": "Enviar",
+      "excludeGuests": "Excluir convidados",
+      "schedule": "Agendar",
+      "sendToAll": "Enviar para todos",
+      "testPlaceholder": "Enviar um teste para voce@exemplo.com",
+      "sendTest": "Enviar teste",
+      "scheduled": "Agendado",
+      "sendingToAll": "Enviando para todos os clientes…",
+      "testSent": "Teste enviado",
+      "deleteConfirm": "Excluir esta campanha?"
+    }
+  }
+}

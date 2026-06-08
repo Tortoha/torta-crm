@@ -1,0 +1,115 @@
+{
+  "security": {
+    "title": "Sécurité",
+
+    "meta": {
+      "title": "Sécurité — Torta CRM",
+      "description": "Comment nous protégeons vos données, vos clients et votre équipe."
+    },
+    "hero": {
+      "eyebrow": "Sécurité",
+      "title": "Conçu pour que vos données restent les vôtres",
+      "subtitle": "Nous prenons la protection des données aussi au sérieux que nos clients. Voici exactement ce qui est en place — pour chaque compte, dès la formule Free."
+    },
+    "pillars": {
+      "title": "Les bases, bien faites",
+      "subtitle": "Des réglages par défaut auxquels vous n'avez pas à penser — ils sont activés sur chaque compte.",
+      "items": {
+        "encryption": {
+          "title": "Chiffrement partout",
+          "desc": "Tout le trafic vers Torta utilise TLS 1.2 ou une version plus récente. Les données au repos dans notre base de données et notre stockage de fichiers sont chiffrées en AES-256. Les sauvegardes sont chiffrées avant de quitter le serveur."
+        },
+        "isolation": {
+          "title": "Isolation multi-tenant",
+          "desc": "Chaque projet évolue dans son propre périmètre. Une requête limitée au projet A ne peut ni lire ni écrire les données du projet B — c'est appliqué au niveau de la base de données, et pas seulement dans le code applicatif."
+        },
+        "passwords": {
+          "title": "Mots de passe hachés",
+          "desc": "Les mots de passe sont hachés avec bcrypt à l'aide d'un sel propre à chaque utilisateur. Nous ne pouvons jamais voir votre mot de passe ni ceux de vos clients, et une fuite de la base de données ne les exposerait pas."
+        },
+        "rbac": {
+          "title": "Rôles et permissions",
+          "desc": "Le RBAC au niveau des pages signifie que vous décidez précisément ce que chaque membre de l'équipe peut voir et modifier. Un rôle de personnel peut gérer les Commandes sans jamais voir les Revenus ni les Profils clients."
+        }
+      }
+    },
+    "infra": {
+      "title": "Infrastructure",
+      "subtitle": "Où vivent vos données et qui y a accès.",
+      "items": {
+        "hosting": {
+          "title": "Centres de données dans l'UE",
+          "desc": "Les serveurs sont hébergés chez IONOS SE en Allemagne — un fournisseur d'infrastructure conforme au RGPD. Les données ne quittent pas l'UE, sauf lorsque vous utilisez explicitement une intégration tierce qui les en fait sortir."
+        },
+        "email": {
+          "title": "E-mail auto-hébergé",
+          "desc": "Les e-mails sortants passent par notre propre serveur de messagerie signé DKIM. Nous ne relayons pas les e-mails transactionnels ou de campagne via un tiers — les adresses de vos clients ne finissent pas dans la base de données d'un partenaire marketing."
+        },
+        "access": {
+          "title": "Accès administrateur strict",
+          "desc": "Seul un petit nombre d'opérateurs nommés disposent d'un accès shell à l'infrastructure de production. Tous les accès sont journalisés et contrôlés."
+        },
+        "backups": {
+          "title": "Sauvegardes chiffrées quotidiennes",
+          "desc": "La base de données est sauvegardée quotidiennement avec une rétention glissante de 30 jours. Les sauvegardes sont chiffrées au repos et leur restaurabilité est testée à intervalles réguliers."
+        }
+      }
+    },
+    "compliance": {
+      "title": "Conformité et confidentialité",
+      "subtitle": "Ce que nous promettons et où lire la version juridique.",
+      "items": {
+        "gdpr": {
+          "title": "Aligné sur le RGPD",
+          "desc": "Nous suivons les principes du RGPD pour tout utilisateur de l'UE/EEE : base légale, minimisation des données, droit d'accès, de rectification, d'effacement et de portabilité."
+        },
+        "kzPdpa": {
+          "title": "Loi ЗоПД du Kazakhstan",
+          "desc": "Conforme à la loi de la République du Kazakhstan sur la protection des données personnelles. Le stockage et le traitement suivent les règles locales relatives au transfert transfrontalier de données."
+        },
+        "audit": {
+          "title": "Journal d'audit",
+          "desc": "Chaque action administrative sur vos données est journalisée avec qui, quoi et quand. Utile pour votre propre conformité interne, et disponible si un auditeur ou un régulateur le demande."
+        },
+        "subprocessors": {
+          "title": "Sous-traitants limités",
+          "desc": "Nous faisons appel à une liste restreinte et nommée de sous-traitants (Paddle pour les paiements, Google pour l'OAuth optionnel, IONOS pour l'infrastructure). Chacun est lié par contrat — aucun partage de données surprise."
+        }
+      }
+    },
+    "incident": {
+      "title": "Si quelque chose tourne mal",
+      "body": "Aucun système n'est inviolable. Notre engagement est la transparence : si nous découvrons un incident de sécurité affectant vos données, nous vous en informerons dans les 72 heures suivant sa confirmation, en expliquant ce qui s'est passé, quelles données étaient concernées et ce que nous faisons à ce sujet.",
+      "report": "Vous avez trouvé une vulnérabilité ? Veuillez la signaler de manière responsable à {{email}}. Nous accusons réception de chaque signalement sous 5 jours ouvrés."
+    },
+    "cta": {
+      "title": "Prêt à exploiter votre boutique sur un terrain plus sûr ?",
+      "subtitle": "Commencez gratuitement et constatez-le par vous-même. Passez à une formule supérieure uniquement lorsque vous avez besoin de plus.",
+      "button": "Commencer",
+      "linkPrivacy": "Lire la Politique de confidentialité complète"
+    },
+
+    "sessions": {
+      "title": "Sessions actives",
+      "subtitle": "Chaque appareil sur lequel vous êtes connecté. Révoquer met fin à cette session immédiatement.",
+      "logoutEverywhere": "Se déconnecter partout",
+      "loading": "Chargement des sessions…",
+      "empty": "Aucune session active trouvée.",
+      "thisDevice": "Cet appareil",
+      "revoke": "Révoquer la session",
+      "lastUsed": "dernière activité {{time}}",
+      "signedIn": "connexion {{time}}"
+    },
+    "about": {
+      "title": "À propos des sessions",
+      "subtitle": "Comment fonctionne le maintien de la connexion.",
+      "text": "Une session est créée à chaque connexion (code par e-mail, Google, etc.). Chacune est constituée d'un jeton d'accès à courte durée de vie (15 min) et d'un jeton de rafraîchissement à longue durée de vie (30 jours) — votre navigateur échange silencieusement un jeton d'accès expiré contre un nouveau, vous restez donc connecté de façon transparente. Si vous soupçonnez que quelqu'un a accès à votre compte, déconnectez-vous de tous les appareils et changez votre mot de passe."
+    },
+    "time": {
+      "justNow": "à l'instant",
+      "minAgo": "il y a {{n}} min",
+      "hAgo": "il y a {{n}} h",
+      "dAgo": "il y a {{n}} j"
+    }
+  }
+}

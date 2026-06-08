@@ -1,0 +1,243 @@
+{
+  "product": {
+    "meta": {
+      "getStarted": "Commencer gratuitement",
+      "docs": "Lire la documentation",
+      "seePricing": "Voir les tarifs",
+      "featuresTitle": "Tout ce qui est inclus",
+      "ctaEyebrow": "Commencer",
+      "ctaTitle": "Gérez toute votre boutique depuis un seul endroit",
+      "ctaSub": "Commencez gratuitement — sans carte bancaire. Évoluez à mesure que vous grandissez.",
+      "exploreTitle": "Découvrez plus de la plateforme"
+    },
+    "nav": {
+      "product": "Produit",
+      "name": {
+        "database": "Base de données",
+        "auth": "Authentification",
+        "storage": "Stockage",
+        "automations": "Automatisations",
+        "email": "E-mail",
+        "realtime": "Temps réel"
+      },
+      "tagline": {
+        "database": "Données de boutique structurées",
+        "auth": "Connexion des clients",
+        "storage": "Médias et fichiers",
+        "automations": "Webhooks et alertes",
+        "email": "Transactionnel et campagnes",
+        "realtime": "Curseurs et présence en direct"
+      }
+    },
+
+    "database": {
+      "hero": {
+        "eyebrow": "Base de données",
+        "title": "Chaque commande, client et produit — structuré et vous appartenant",
+        "lead": "Votre boutique repose sur une base de données relationnelle et propre. Produits, commandes, clients, paniers, avis, réservations et stocks existent tous sous forme d'enregistrements liés que vous pouvez consulter, filtrer et exploiter — sans tableurs, sans approximations."
+      },
+      "stats": [
+        { "value": "1 boutique, 1 espace", "label": "Vos données sont entièrement isolées de toutes les autres boutiques" },
+        { "value": "Relationnelle", "label": "Les commandes sont liées aux clients, articles, paiements et retours" },
+        { "value": "9+ types d'enregistrements", "label": "Produits, commandes, clients, réservations, avis et plus encore" },
+        { "value": "Analyses en direct", "label": "Chiffre d'affaires, entonnoir et stock lus directement depuis vos données" }
+      ],
+      "cards": [
+        { "title": "Produits", "desc": "Produits à options multiples avec variations, tailles, prix par article et stock." },
+        { "title": "Commandes", "desc": "Chaque commande avec ses articles, totaux, paiement et livraison — du début à la fin." },
+        { "title": "Clients", "desc": "Un profil par acheteur : coordonnées, historique des commandes et adresses enregistrées." },
+        { "title": "Avis", "desc": "Notes, avis écrits et photos rattachés au bon produit." },
+        { "title": "Réservations", "desc": "Rendez-vous planifiés avec services, personnel et statut." },
+        { "title": "Analyses", "desc": "Chiffre d'affaires, panier moyen, conversion et stock, calculés en direct." }
+      ],
+      "deep": {
+        "eyebrow": "Intégré",
+        "title": "Des enregistrements qui savent déjà comment fonctionne votre boutique",
+        "body": "Vous ne concevez jamais de tables ni n'écrivez de requêtes. Chaque partie du catalogue et chaque vente est modélisée pour vous, maintenue cohérente et prête à être consultée, filtrée et exploitée depuis votre tableau de bord.",
+        "points": [
+          "Les données de chaque boutique sont isolées — une boutique ne voit jamais celles d'une autre",
+          "Stock suivi par entrepôt, avec lots et signaux de stock faible",
+          "Retours et remboursements enregistrés sur la commande d'origine",
+          "Tout est visible dans le tableau de bord — recherche, filtrage et exploration"
+        ],
+        "chipsTitle": "Types d'enregistrements",
+        "chips": ["Produits", "Variations", "Stock et lots", "Commandes", "Retours", "Clients", "Adresses", "Paniers", "Avis", "Favoris", "Réservations", "Codes promo"]
+      }
+    },
+
+    "auth": {
+      "hero": {
+        "eyebrow": "Authentification",
+        "title": "Une connexion en laquelle vos clients ont vraiment confiance",
+        "lead": "Laissez les acheteurs créer un compte et se connecter comme ils le préfèrent — par un code e-mail à usage unique, leur numéro de téléphone ou un compte de réseau social — sans rien avoir à développer vous-même."
+      },
+      "stats": [
+        { "value": "17 fournisseurs", "label": "Google, Apple et 15 autres connexions sociales" },
+        { "value": "E-mail + SMS", "label": "Codes à usage unique par e-mail ou par SMS" },
+        { "value": "Multi-appareil", "label": "Les clients voient et révoquent leurs propres sessions" },
+        { "value": "Paiement invité", "label": "Achetez d'abord, créez le compte plus tard" }
+      ],
+      "cards": [
+        { "title": "Code e-mail", "desc": "Codes à usage unique sans mot de passe envoyés dans la boîte de réception du client." },
+        { "title": "Code par téléphone", "desc": "Codes SMS à usage unique pour les audiences orientées mobile." },
+        { "title": "Connexion sociale", "desc": "Google, Apple, GitHub, Discord et plus encore en un seul geste." },
+        { "title": "Réinitialisation du mot de passe", "desc": "Un parcours de réinitialisation sécurisé et en libre-service, prêt à l'emploi." },
+        { "title": "Sessions", "desc": "Appareils actifs répertoriés ; déconnexion partout, à tout moment." },
+        { "title": "Paiement invité", "desc": "Les acheteurs achètent en tant qu'invité et créent un compte plus tard." }
+      ],
+      "deep": {
+        "eyebrow": "Sécurisé par défaut",
+        "title": "Toutes les parties difficiles sont gérées pour vous",
+        "body": "Les jetons, le rafraîchissement, les sessions multi-appareils et les rappels des fournisseurs sont gérés en coulisses. Vous activez les méthodes souhaitées ; vos clients n'ont qu'à se connecter.",
+        "points": [
+          "Codes à usage unique à expiration courte — aucun mot de passe à divulguer",
+          "Les sessions se rafraîchissent en silence et peuvent être révoquées par appareil",
+          "Activez ou désactivez chaque fournisseur par boutique",
+          "Une même identité client peut fonctionner sur tous les emplacements de votre boutique"
+        ],
+        "chipsTitle": "Fournisseurs sociaux",
+        "chips": ["Google", "Apple", "GitHub", "Discord", "LinkedIn", "Figma", "Twitch", "Spotify", "Slack", "Notion", "Zoom", "Bitbucket", "GitLab", "Facebook", "Kakao", "X", "Azure"]
+      }
+    },
+
+    "storage": {
+      "hero": {
+        "eyebrow": "Stockage",
+        "title": "Stockez les images et fichiers dont votre boutique a besoin",
+        "lead": "Téléversez des photos de produits, des images d'avis et les fichiers numériques que vous vendez — presque tous les types de fichiers — directement depuis le tableau de bord. Les fichiers sont téléversés directement et en toute sécurité, et les médias de chaque boutique lui restent propres."
+      },
+      "stats": [
+        { "value": "100 Mo – 2 To", "label": "Le quota de médias évolue avec votre forfait" },
+        { "value": "Tout type de fichier", "label": "Images, PDF et téléchargements numériques que vous vendez" },
+        { "value": "Téléversement direct", "label": "Les fichiers vont droit au stockage depuis le navigateur" },
+        { "value": "Par boutique", "label": "Vos médias sont isolés de toutes les autres boutiques" }
+      ],
+      "cards": [
+        { "title": "Images de produits", "desc": "Galeries de photos par produit et par variation." },
+        { "title": "Photos d'avis", "desc": "Les clients joignent jusqu'à cinq photos par avis." },
+        { "title": "Avatars", "desc": "Photos de profil pour vos clients." },
+        { "title": "Médias e-mail", "desc": "Images et PDF que vous insérez dans vos campagnes e-mail." },
+        { "title": "Téléchargements numériques", "desc": "Vendez des produits numériques — ZIP, audio, vidéo, e-books, presque tous les fichiers." },
+        { "title": "Suivi de l'utilisation", "desc": "Voyez exactement quelle part de votre quota vous avez utilisée." }
+      ],
+      "deep": {
+        "eyebrow": "Simple et sûr",
+        "title": "Téléversez une fois, utilisez partout",
+        "body": "Déposez un fichier et recevez un lien aussitôt. Le stockage est mesuré par forfait pour que vous sachiez toujours où vous en êtes, et les fichiers de chaque boutique sont gardés séparés.",
+        "points": [
+          "Téléversement direct depuis le navigateur — rien à configurer",
+          "Images optimisées pour un chargement rapide sur votre vitrine",
+          "Utilisation en direct affichée par rapport au quota de votre forfait",
+          "La suppression d'une boutique retire proprement ses fichiers"
+        ],
+        "chipsTitle": "Ce que vous pouvez stocker",
+        "chips": ["Photos de produits", "Images de variations", "Photos d'avis", "Avatars", "Images d'e-mail", "Guides PDF", "Téléchargements numériques (tout type)", "Logo de marque"]
+      }
+    },
+
+    "automations": {
+      "hero": {
+        "eyebrow": "Webhooks et automatisations",
+        "title": "Connectez votre boutique à tout le reste de vos outils",
+        "lead": "Quand un événement survient dans votre boutique — une commande payée, un nouveau client, une réservation annulée — envoyez-le n'importe où : Slack, Discord, votre propre endpoint ou des connecteurs prêts à l'emploi. Plus des alertes et des campagnes qui s'exécutent selon un calendrier."
+      },
+      "stats": [
+        { "value": "14 événements", "label": "Commandes, réservations, clients, paiements et produits" },
+        { "value": "12 connecteurs", "label": "Slack, Discord, outils de comptabilité et d'analyse" },
+        { "value": "Planifié", "label": "Alertes et campagnes e-mail qui se déclenchent d'elles-mêmes" },
+        { "value": "Journaux de livraison", "label": "Chaque envoi enregistré avec son statut et ses relances" }
+      ],
+      "cards": [
+        { "title": "Webhooks d'événements", "desc": "Envoyez une charge utile JSON par POST à votre endpoint lorsqu'un événement se déclenche." },
+        { "title": "Slack et Discord", "desc": "Diffusez les mises à jour de commandes et de réservations dans un canal." },
+        { "title": "Connecteurs", "desc": "Liens prêts à l'emploi vers les outils de comptabilité et d'analyse." },
+        { "title": "Alertes planifiées", "desc": "Baisses de chiffre d'affaires, stock faible et résumés quotidiens par e-mail." },
+        { "title": "Campagnes e-mail", "desc": "Envois ponctuels ou récurrents qui s'exécutent automatiquement." },
+        { "title": "Journaux de livraison", "desc": "Voyez chaque livraison, sa réponse et les relances automatiques." }
+      ],
+      "deep": {
+        "eyebrow": "Rien à héberger",
+        "title": "Choisissez un événement, indiquez où il va",
+        "body": "Abonnez-vous aux événements qui vous intéressent et acheminez-les vers les outils que votre équipe utilise déjà. Les livraisons en échec sont relancées d'elles-mêmes, et chaque tentative est journalisée.",
+        "points": [
+          "Quatorze types d'événements pour les commandes, réservations, clients et produits",
+          "Envoi vers un endpoint personnalisé, Slack ou Discord",
+          "Relances automatiques en cas d'échec, avec un journal de livraison complet",
+          "Les alertes et campagnes planifiées s'exécutent sans que vous ne leviez le petit doigt"
+        ],
+        "chipsTitle": "Événements auxquels vous pouvez vous abonner",
+        "chips": ["order.created", "order.paid", "order.shipped", "order.delivered", "order.cancelled", "order.returned", "booking.created", "booking.completed", "booking.cancelled", "booking.no_show", "customer.created", "payment.received", "product.created", "product.updated"]
+      }
+    },
+
+    "email": {
+      "hero": {
+        "eyebrow": "E-mail",
+        "title": "Des e-mails que vos clients reçoivent réellement",
+        "lead": "Envoyez confirmations de commande, rappels et campagnes marketing depuis votre propre domaine vérifié — rédigés en HTML pur, livrés directement depuis nos serveurs de messagerie et optimisés pour atterrir dans la boîte de réception."
+      },
+      "stats": [
+        { "value": "Votre domaine", "label": "Envoyez en tant que vous@votremarque.com, entièrement vérifié" },
+        { "value": "En quelques secondes", "label": "Les messages arrivent généralement en quelques secondes" },
+        { "value": "6 modèles", "label": "E-mails transactionnels intégrés, tous modifiables" },
+        { "value": "Campagnes", "label": "Diffusions ponctuelles ou récurrentes à vos clients" }
+      ],
+      "cards": [
+        { "title": "Transactionnels", "desc": "E-mails de vérification, réinitialisation, commande, réservation, panier et réapprovisionnement." },
+        { "title": "Campagnes", "desc": "Diffusez annonces et promotions à vos clients." },
+        { "title": "Votre domaine", "desc": "Envoi vérifié avec DKIM, SPF et DMARC." },
+        { "title": "Éditeur HTML", "desc": "Rédigez l'e-mail exact que vous voulez, avec un aperçu en direct." },
+        { "title": "Planification", "desc": "Envoyez maintenant, à une heure définie, ou en répétition hebdomadaire ou annuelle." },
+        { "title": "Délivrabilité", "desc": "Envoi authentifié optimisé pour atteindre la boîte de réception." }
+      ],
+      "deep": {
+        "eyebrow": "Conçu pour arriver à destination",
+        "title": "De votre domaine à la boîte de réception, en quelques secondes",
+        "body": "Vérifiez votre domaine une fois et chaque e-mail part signé et authentifié. Les messages quittent nos serveurs immédiatement et atteignent généralement les destinataires en quelques secondes, partout dans le monde.",
+        "points": [
+          "Votre propre domaine vérifié avec DKIM, SPF et DMARC",
+          "Six modèles transactionnels, chacun modifiable en HTML",
+          "Planifiez des campagnes ponctuelles, hebdomadaires ou annuelles",
+          "Le volume quotidien évolue avec votre forfait"
+        ],
+        "chipsTitle": "E-mails que votre boutique peut envoyer",
+        "chips": ["Code de vérification", "Réinitialisation du mot de passe", "Confirmation de commande", "Rappel de réservation", "Panier abandonné", "Alerte de réapprovisionnement", "Campagnes marketing"]
+      }
+    },
+
+    "realtime": {
+      "hero": {
+        "eyebrow": "Temps réel",
+        "title": "Votre équipe, en direct sur la même page",
+        "lead": "Présence en direct, curseurs et édition partagée dans tout votre CRM. Voyez qui est en ligne et où, suivez le curseur d'un coéquipier avec son nom dessus, et déposez un message juste sur votre pointeur — sur chaque page de projet, de produit et d'organisation."
+      },
+      "stats": [
+        { "value": "Chaque page", "label": "Présence et curseurs sur chaque écran de projet, de produit et d'organisation" },
+        { "value": "Curseurs en direct", "label": "Voyez le pointeur de chaque coéquipier, étiqueté à son nom" },
+        { "value": "Saisie partagée", "label": "Regardez les modifications apparaître dans un champ à mesure qu'elles sont saisies" },
+        { "value": "Un seul socket", "label": "Un unique WebSocket par session alimente le tout" }
+      ],
+      "cards": [
+        { "title": "Présence en direct", "desc": "Une pile d'avatars dans l'en-tête et des points en ligne montrent qui est présent, en temps réel." },
+        { "title": "Curseurs en direct", "desc": "Le curseur de chaque coéquipier bouge en direct, étiqueté à son nom et précis au pixel près sur tous les écrans." },
+        { "title": "Chat sur curseur", "desc": "Appuyez sur Ctrl+M pour épingler un message rapide à votre curseur — un mot sur le moment, sans fil de discussion." },
+        { "title": "Édition partagée", "desc": "Regardez un coéquipier taper dans un e-mail ou un champ produit, reflété frappe par frappe." },
+        { "title": "Rejoindre un coéquipier", "desc": "Ouvrez le menu de présence et cliquez sur n'importe qui pour arriver exactement là où il travaille." },
+        { "title": "Conçu pour évoluer", "desc": "Un seul WebSocket authentifié par session, réparti entre les instances via Postgres LISTEN/NOTIFY." }
+      ],
+      "deep": {
+        "eyebrow": "Multijoueur",
+        "title": "Votre CRM, avec tout le monde dans la pièce",
+        "body": "Ouvrez n'importe quelle page et vous voyez qui d'autre s'y trouve, où est son curseur et ce qu'il modifie — au moment même où cela se produit. Sans rafraîchissement, sans extension, sur chaque écran, d'un simple projet jusqu'à l'organisation entière.",
+        "points": [
+          "Présence en direct, curseurs et chat sur curseur sur chaque page de projet, de produit et d'organisation",
+          "Édition partagée en direct dans l'éditeur d'e-mails et l'aperçu produit",
+          "Les curseurs verrouillés sur un élément restent précis au pixel près, même sur des écrans différents",
+          "Un seul WebSocket authentifié, réparti entre les instances via Postgres LISTEN/NOTIFY"
+        ],
+        "chipsTitle": "Ce qui est en direct",
+        "chips": ["Curseurs en direct", "Pile de présence", "Statut en ligne", "Chat sur curseur", "Saisie partagée", "Rejoindre un coéquipier", "Pages de projet", "Pages de produit", "Console d'organisation"]
+      }
+    }
+  }
+}

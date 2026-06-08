@@ -1,0 +1,34 @@
+{
+  "nav": {
+    "sections": {
+      "overview": "Шолу",
+      "business": "Бизнес",
+      "account": "Аккаунт"
+    },
+    "projectOverview": "Жоба шолуы",
+    "analytics": "Аналитика",
+    "alerts": "Хабарламалар",
+    "targets": "Мақсаттар",
+    "products": "Тауарлар",
+    "orders": "Тапсырыстар",
+    "bookings": "Брондаулар",
+    "customers": "Клиенттер",
+    "emails": "Хаттар",
+    "chat": "Клиенттермен чат",
+    "authentication": "Аутентификация",
+    "integrations": "Интеграциялар",
+    "documents": "Құжаттар",
+    "settings": "Баптаулар",
+    "productOverview": "Тауар шолуы",
+    "editHistory": "Өзгерістер тарихы",
+    "reviews": "Пікірлер",
+    "apiPreview": "API алдын ала қарау",
+    "projects": "Жобалар",
+    "team": "Команда",
+    "payments": "Төлемдер",
+    "billing": "Жазылым",
+    "usage": "Лимиттер",
+    "more": "Тағы",
+    "mobile": "Мобильді навигация"
+  }
+}

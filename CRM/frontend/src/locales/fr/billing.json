@@ -1,0 +1,94 @@
+{
+  "billing": {
+    "title": "Facturation",
+    "free": "Gratuit",
+    "month": "mois",
+
+    "currentPlan": "Forfait actuel",
+    "currentPlanSub": "Gérez votre abonnement, changez de forfait ou résiliez.",
+    "upgrade": "Choisir un forfait",
+    "changePlan": "Changer de forfait",
+    "renewsOn": "Renouvellement le {{date}}",
+    "endsOn": "Se termine le {{date}}",
+
+    "paymentMethod": "Moyen de paiement",
+    "paymentMethodSub": "Carte enregistrée pour les prochains prélèvements.",
+    "updateCard": "Mettre à jour",
+    "expires": "Expire le {{date}}",
+    "noCard": "Aucune carte enregistrée pour le moment.",
+    "noCardFree": "Aucune carte enregistrée — le forfait Gratuit n'en nécessite pas.",
+    "cardUpdated": "Moyen de paiement mis à jour",
+    "cardUpdateFailed": "Impossible de lancer la mise à jour de la carte",
+
+    "invoices": "Factures",
+    "invoicesSub": "Reçus et historique des paiements de Paddle.",
+    "noInvoices": "Aucune facture pour le moment.",
+    "openPdf": "Ouvrir la facture PDF",
+    "pdfFailed": "Impossible d'ouvrir la facture",
+    "col": {
+      "date":   "Date",
+      "amount": "Montant",
+      "method": "Payé avec",
+      "status": "Statut"
+    },
+
+    "cancellation": "Résiliation",
+    "cancellationSub": "Résiliez à tout moment. Vous conservez l'accès jusqu'à la fin de la période en cours.",
+    "cancelLabel": "Résilier le forfait",
+    "cancelLabelHint": "L'accès se poursuit jusqu'au {{date}}",
+    "cancel": {
+      "btn":     "Résilier",
+      "title":   "Résilier l'abonnement ?",
+      "body":    "Votre forfait {{plan}} reste actif jusqu'au {{date}}. Après cette date, l'organisation repasse au forfait Gratuit.",
+      "b1":      "Aucun remboursement pour la période en cours",
+      "b2":      "Vos données sont conservées — projets et clients restent intacts",
+      "b3":      "Vous pouvez vous réabonner à tout moment",
+      "confirm": "Résilier l'abonnement",
+      "keep":    "Conserver l'abonnement"
+    },
+    "cancelOk":     "Abonnement résilié — actif jusqu'à la fin de la période",
+    "cancelFailed": "Échec de la résiliation — veuillez réessayer",
+
+    "updated": "Abonnement mis à jour",
+
+    "modal": {
+      "title":           "Changer de forfait",
+      "sub":             "Choisissez un forfait pour passer à un niveau supérieur ou inférieur. Les modifications sont calculées au prorata par Paddle.",
+      "currentPlan":     "Forfait actuel",
+      "subscribe":       "S'abonner",
+      "downgrade":       "Passer au forfait Gratuit",
+      "notConfigured":   "Forfait pas encore configuré",
+      "failed":          "Impossible de lancer le paiement — veuillez réessayer",
+      "seeFullPricing":  "Voir la comparaison complète des forfaits"
+    },
+
+    "status": {
+      "active":     "Actif",
+      "trialing":   "Essai",
+      "past_due":   "En retard",
+      "paused":     "En pause",
+      "canceled":   "Résilié",
+      "expired":    "Expiré",
+      "billed":     "Facturé",
+      "paid":       "Payé",
+      "completed":  "Terminé",
+      "cancelling": "Bientôt terminé"
+    }
+  },
+  "checkout": {
+    "back":          "Retour à la facturation",
+    "titlePlan":     "S'abonner à {{plan}}",
+    "titleCard":     "Mettre à jour le moyen de paiement",
+    "priceMonthly":  "{{m}} $/mois",
+    "priceYearly":   "{{m}} $/mois · facturé {{y}} $/an",
+    "summaryPlan":   "Récapitulatif de la commande",
+    "summaryCard":   "Nouvelle carte enregistrée",
+    "cardNote":      "Votre abonnement et votre forfait restent exactement les mêmes — seule la carte enregistrée change.",
+    "secure":        "Paiement sécurisé",
+    "byPaddle":      "Paiements par Paddle",
+    "preparing":     "Préparation du paiement sécurisé…",
+    "error":         "Impossible de lancer le paiement. Veuillez réessayer.",
+    "notConfigured": "Ce forfait n'est pas encore disponible.",
+    "done":          "C'est fait ! Retour en cours…"
+  }
+}

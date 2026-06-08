@@ -1,0 +1,34 @@
+{
+  "nav": {
+    "sections": {
+      "overview": "Resumen",
+      "business": "Negocio",
+      "account": "Cuenta"
+    },
+    "projectOverview": "Resumen del proyecto",
+    "analytics": "Analíticas",
+    "alerts": "Alertas",
+    "targets": "Objetivos",
+    "products": "Productos",
+    "orders": "Pedidos",
+    "bookings": "Reservas",
+    "customers": "Clientes",
+    "emails": "Correos electrónicos",
+    "chat": "Chat con clientes",
+    "authentication": "Autenticación",
+    "integrations": "Integraciones",
+    "documents": "Documentos",
+    "settings": "Configuración",
+    "productOverview": "Resumen del producto",
+    "editHistory": "Historial de cambios",
+    "reviews": "Reseñas",
+    "apiPreview": "Vista previa de API",
+    "projects": "Proyectos",
+    "team": "Equipo",
+    "payments": "Pagos",
+    "billing": "Facturación",
+    "usage": "Uso",
+    "more": "Más",
+    "mobile": "Navegación móvil"
+  }
+}

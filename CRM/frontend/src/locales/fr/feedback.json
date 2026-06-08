@@ -1,0 +1,21 @@
+{
+  "feedback": {
+    "button": "Commentaires",
+    "whatShare": "Que souhaitez-vous partager ?",
+    "issue": "Problème",
+    "issueSub": "avec mon projet",
+    "idea": "Idée",
+    "ideaSub": "pour améliorer Torta",
+    "issueTitle": "Signaler un problème",
+    "ideaTitle": "Partager une idée",
+    "subjectPh": "Titre",
+    "messagePh": "Décrivez-le en quelques mots…",
+    "send": "Envoyer",
+    "sending": "Envoi…",
+    "cancel": "Annuler",
+    "sent": "Merci ! Votre commentaire a été envoyé",
+    "failed": "Échec de l'envoi — réessayez",
+    "errSubject": "Veuillez ajouter un titre",
+    "errMessage": "Veuillez ajouter une description"
+  }
+}

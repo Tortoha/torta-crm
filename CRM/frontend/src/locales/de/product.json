@@ -1,0 +1,243 @@
+{
+  "product": {
+    "meta": {
+      "getStarted": "Kostenlos starten",
+      "docs": "Dokumentation lesen",
+      "seePricing": "Preise ansehen",
+      "featuresTitle": "Alles, was enthalten ist",
+      "ctaEyebrow": "Loslegen",
+      "ctaTitle": "Führen Sie Ihren gesamten Shop von einem Ort aus",
+      "ctaSub": "Kostenlos starten — keine Kreditkarte. Upgraden Sie, während Sie wachsen.",
+      "exploreTitle": "Entdecken Sie mehr von der Plattform"
+    },
+    "nav": {
+      "product": "Produkt",
+      "name": {
+        "database": "Datenbank",
+        "auth": "Auth",
+        "storage": "Speicher",
+        "automations": "Automatisierungen",
+        "email": "E-Mail",
+        "realtime": "Realtime"
+      },
+      "tagline": {
+        "database": "Strukturierte Shop-Daten",
+        "auth": "Kunden-Anmeldung",
+        "storage": "Medien & Dateien",
+        "automations": "Webhooks & Benachrichtigungen",
+        "email": "Transaktional & Kampagnen",
+        "realtime": "Live-Cursor & Präsenz"
+      }
+    },
+
+    "database": {
+      "hero": {
+        "eyebrow": "Datenbank",
+        "title": "Jede Bestellung, jeder Kunde und jedes Produkt — strukturiert und Ihr Eigentum",
+        "lead": "Ihr Shop läuft auf einer sauberen, relationalen Datenbank. Produkte, Bestellungen, Kunden, Warenkörbe, Bewertungen, Buchungen und Bestände leben alle als verbundene Datensätze, die Sie lesen, filtern und nutzen können — keine Tabellenkalkulationen, kein Raten."
+      },
+      "stats": [
+        { "value": "1 Shop, 1 Bereich", "label": "Ihre Daten sind vollständig von jedem anderen Shop isoliert" },
+        { "value": "Relational", "label": "Bestellungen sind mit Kunden, Positionen, Zahlungen und Retouren verknüpft" },
+        { "value": "9+ Datensatztypen", "label": "Produkte, Bestellungen, Kunden, Buchungen, Bewertungen und mehr" },
+        { "value": "Live-Analytik", "label": "Umsatz, Funnel und Bestand direkt aus Ihren Daten gelesen" }
+      ],
+      "cards": [
+        { "title": "Produkte", "desc": "Produkte mit mehreren Optionen, Varianten, Größen, Preisen pro Position und Bestand." },
+        { "title": "Bestellungen", "desc": "Jede Bestellung mit ihren Positionen, Summen, Zahlung und Lieferung — von Anfang bis Ende." },
+        { "title": "Kunden", "desc": "Ein Profil pro Käufer: Kontaktdaten, Bestellverlauf und gespeicherte Adressen." },
+        { "title": "Bewertungen", "desc": "Bewertungen, Rezensionen und Fotos, dem richtigen Produkt zugeordnet." },
+        { "title": "Buchungen", "desc": "Zeitbasierte Termine mit Dienstleistungen, Mitarbeitern und Status." },
+        { "title": "Analytik", "desc": "Umsatz, durchschnittlicher Bestellwert, Konversion und Bestand, live berechnet." }
+      ],
+      "deep": {
+        "eyebrow": "Eingebaut",
+        "title": "Datensätze, die bereits wissen, wie Ihr Shop funktioniert",
+        "body": "Sie entwerfen nie Tabellen oder schreiben Abfragen. Jeder Teil des Katalogs und jeder Verkauf ist für Sie modelliert, konsistent gehalten und bereit, direkt aus Ihrem Dashboard angesehen, gefiltert und genutzt zu werden.",
+        "points": [
+          "Die Daten jedes Shops sind isoliert — ein Shop sieht niemals die eines anderen",
+          "Bestand pro Lager erfasst, mit Chargen und Signalen bei niedrigem Bestand",
+          "Retouren und Rückerstattungen zur ursprünglichen Bestellung erfasst",
+          "Alles im Dashboard sichtbar — suchen, filtern und ins Detail gehen"
+        ],
+        "chipsTitle": "Datensatztypen",
+        "chips": ["Produkte", "Varianten", "Bestand & Chargen", "Bestellungen", "Retouren", "Kunden", "Adressen", "Warenkörbe", "Bewertungen", "Favoriten", "Buchungen", "Promo-Codes"]
+      }
+    },
+
+    "auth": {
+      "hero": {
+        "eyebrow": "Authentifizierung",
+        "title": "Eine Anmeldung, der Ihre Kunden wirklich vertrauen",
+        "lead": "Lassen Sie Käufer ein Konto erstellen und sich so anmelden, wie sie es bevorzugen — mit einem einmaligen E-Mail-Code, ihrer Telefonnummer oder einem Social-Konto — ohne dass Sie davon etwas bauen müssen."
+      },
+      "stats": [
+        { "value": "17 Anbieter", "label": "Google, Apple und 15 weitere Social-Logins" },
+        { "value": "E-Mail + SMS", "label": "Einmalcodes per E-Mail oder Textnachricht" },
+        { "value": "Mehrere Geräte", "label": "Kunden sehen und widerrufen ihre eigenen Sitzungen" },
+        { "value": "Gast-Checkout", "label": "Zuerst kaufen, das Konto später erstellen" }
+      ],
+      "cards": [
+        { "title": "E-Mail-Code", "desc": "Passwortlose Einmalcodes, an das Postfach des Kunden gesendet." },
+        { "title": "Telefon-Code", "desc": "SMS-Einmalcodes für telefonorientierte Zielgruppen." },
+        { "title": "Social-Login", "desc": "Google, Apple, GitHub, Discord und mehr mit einem Tippen." },
+        { "title": "Passwort-Reset", "desc": "Ein sicherer Self-Service-Reset von Haus aus." },
+        { "title": "Sitzungen", "desc": "Aktive Geräte aufgelistet; jederzeit und überall abmelden." },
+        { "title": "Gast-Checkout", "desc": "Käufer kaufen als Gast und steigen später auf ein Konto um." }
+      ],
+      "deep": {
+        "eyebrow": "Standardmäßig sicher",
+        "title": "Alle schwierigen Teile werden für Sie erledigt",
+        "body": "Tokens, Erneuerung, Sitzungen über mehrere Geräte und Anbieter-Callbacks werden im Hintergrund verwaltet. Sie schalten die gewünschten Methoden ein; Ihre Kunden melden sich einfach an.",
+        "points": [
+          "Einmalcodes mit kurzer Gültigkeit — keine Passwörter, die durchsickern können",
+          "Sitzungen werden stillschweigend erneuert und können pro Gerät widerrufen werden",
+          "Schalten Sie jeden Anbieter pro Shop ein oder aus",
+          "Eine Kundenidentität kann an allen Standorten Ihres Shops funktionieren"
+        ],
+        "chipsTitle": "Social-Anbieter",
+        "chips": ["Google", "Apple", "GitHub", "Discord", "LinkedIn", "Figma", "Twitch", "Spotify", "Slack", "Notion", "Zoom", "Bitbucket", "GitLab", "Facebook", "Kakao", "X", "Azure"]
+      }
+    },
+
+    "storage": {
+      "hero": {
+        "eyebrow": "Speicher",
+        "title": "Speichern Sie die Bilder und Dateien, die Ihr Shop braucht",
+        "lead": "Laden Sie Produktfotos, Bewertungsbilder und die digitalen Dateien, die Sie verkaufen — fast jeden Dateityp — direkt aus dem Dashboard hoch. Dateien werden direkt und sicher hochgeladen, und die Medien jedes Shops bleiben seine eigenen."
+      },
+      "stats": [
+        { "value": "100 MB – 2 TB", "label": "Das Medienkontingent skaliert mit Ihrem Tarif" },
+        { "value": "Jeder Dateityp", "label": "Bilder, PDFs und die digitalen Downloads, die Sie verkaufen" },
+        { "value": "Direkt-Upload", "label": "Dateien gehen direkt aus dem Browser in den Speicher" },
+        { "value": "Pro Shop", "label": "Ihre Medien sind von jedem anderen Shop isoliert" }
+      ],
+      "cards": [
+        { "title": "Produktbilder", "desc": "Fotogalerien pro Produkt und pro Variante." },
+        { "title": "Bewertungsfotos", "desc": "Kunden hängen bis zu fünf Fotos pro Bewertung an." },
+        { "title": "Avatare", "desc": "Profilbilder für Ihre Kunden." },
+        { "title": "E-Mail-Medien", "desc": "Bilder und PDFs, die Sie in E-Mail-Kampagnen einfügen." },
+        { "title": "Digitale Downloads", "desc": "Verkaufen Sie digitale Produkte — ZIPs, Audio, Video, E-Books, fast jede Datei." },
+        { "title": "Verbrauchsverfolgung", "desc": "Sehen Sie genau, wie viel von Ihrem Kontingent Sie verbraucht haben." }
+      ],
+      "deep": {
+        "eyebrow": "Einfach und sicher",
+        "title": "Einmal hochladen, überall verwenden",
+        "body": "Legen Sie eine Datei ab und erhalten Sie sofort einen Link zurück. Der Speicher wird pro Tarif gemessen, sodass Sie immer wissen, wo Sie stehen, und die Dateien jedes Shops werden getrennt aufbewahrt.",
+        "points": [
+          "Laden Sie direkt aus dem Browser hoch — nichts einzurichten",
+          "Bilder für schnelles Laden in Ihrem Schaufenster optimiert",
+          "Live-Verbrauch im Verhältnis zum Kontingent Ihres Tarifs angezeigt",
+          "Das Löschen eines Shops entfernt seine Dateien sauber"
+        ],
+        "chipsTitle": "Was Sie speichern können",
+        "chips": ["Produktfotos", "Variantenbilder", "Bewertungsfotos", "Avatare", "E-Mail-Bilder", "PDF-Anleitungen", "Digitale Downloads (jeder Typ)", "Markenlogo"]
+      }
+    },
+
+    "automations": {
+      "hero": {
+        "eyebrow": "Webhooks & Automatisierungen",
+        "title": "Verbinden Sie Ihren Shop mit allem anderen, was Sie betreiben",
+        "lead": "Wenn in Ihrem Shop etwas passiert — eine bezahlte Bestellung, ein neuer Kunde, eine stornierte Buchung — senden Sie es überallhin: Slack, Discord, Ihren eigenen Endpunkt oder fertige Konnektoren. Dazu Benachrichtigungen und Kampagnen, die nach Zeitplan laufen."
+      },
+      "stats": [
+        { "value": "14 Ereignisse", "label": "Bestellungen, Buchungen, Kunden, Zahlungen und Produkte" },
+        { "value": "12 Konnektoren", "label": "Slack, Discord, Buchhaltungs- und Analysetools" },
+        { "value": "Geplant", "label": "Benachrichtigungen und E-Mail-Kampagnen, die von selbst auslösen" },
+        { "value": "Zustellprotokolle", "label": "Jeder Versand mit Status und Wiederholungen erfasst" }
+      ],
+      "cards": [
+        { "title": "Ereignis-Webhooks", "desc": "Senden Sie ein JSON-Payload per POST an Ihren Endpunkt, wenn ein Ereignis auslöst." },
+        { "title": "Slack & Discord", "desc": "Bestell- und Buchungsupdates in einen Kanal einspielen." },
+        { "title": "Konnektoren", "desc": "Fertige Verknüpfungen zu Buchhaltungs- und Analysetools." },
+        { "title": "Geplante Benachrichtigungen", "desc": "Umsatzeinbrüche, niedriger Bestand und Tageszusammenfassungen per E-Mail." },
+        { "title": "E-Mail-Kampagnen", "desc": "Einmalige oder wiederkehrende Versände, die automatisch laufen." },
+        { "title": "Zustellprotokolle", "desc": "Sehen Sie jede Zustellung, ihre Antwort und automatische Wiederholungen." }
+      ],
+      "deep": {
+        "eyebrow": "Nichts zu hosten",
+        "title": "Wählen Sie ein Ereignis, bestimmen Sie, wohin es geht",
+        "body": "Abonnieren Sie die Ereignisse, die Sie interessieren, und leiten Sie sie an die Tools weiter, die Ihr Team bereits nutzt. Fehlgeschlagene Zustellungen wiederholen sich von selbst, und jeder Versuch wird protokolliert.",
+        "points": [
+          "Vierzehn Ereignistypen über Bestellungen, Buchungen, Kunden und Produkte",
+          "An einen benutzerdefinierten Endpunkt, Slack oder Discord senden",
+          "Automatische Wiederholungen bei Fehlern, mit vollständigem Zustellprotokoll",
+          "Geplante Benachrichtigungen und Kampagnen laufen, ohne dass Sie einen Finger rühren"
+        ],
+        "chipsTitle": "Ereignisse, die Sie abonnieren können",
+        "chips": ["order.created", "order.paid", "order.shipped", "order.delivered", "order.cancelled", "order.returned", "booking.created", "booking.completed", "booking.cancelled", "booking.no_show", "customer.created", "payment.received", "product.created", "product.updated"]
+      }
+    },
+
+    "email": {
+      "hero": {
+        "eyebrow": "E-Mail",
+        "title": "E-Mails, die Ihre Kunden wirklich erhalten",
+        "lead": "Senden Sie Bestellbestätigungen, Erinnerungen und Marketing-Kampagnen von Ihrer eigenen verifizierten Domain — in reinem HTML geschrieben, direkt von unseren Mailservern zugestellt und darauf abgestimmt, im Posteingang zu landen."
+      },
+      "stats": [
+        { "value": "Ihre Domain", "label": "Senden als sie@ihremarke.com, vollständig verifiziert" },
+        { "value": "In Sekunden", "label": "Nachrichten treffen typischerweise innerhalb weniger Sekunden ein" },
+        { "value": "6 Vorlagen", "label": "Eingebaute Transaktions-E-Mails, alle bearbeitbar" },
+        { "value": "Kampagnen", "label": "Einmalige oder wiederkehrende Aussendungen an Ihre Kunden" }
+      ],
+      "cards": [
+        { "title": "Transaktional", "desc": "E-Mails für Verifizierung, Reset, Bestellung, Buchung, Warenkorb und Wiederverfügbarkeit." },
+        { "title": "Kampagnen", "desc": "Ankündigungen und Aktionen an Ihre Kunden senden." },
+        { "title": "Ihre Domain", "desc": "Verifizierter Versand mit DKIM, SPF und DMARC." },
+        { "title": "HTML-Editor", "desc": "Schreiben Sie genau die E-Mail, die Sie möchten, mit Live-Vorschau." },
+        { "title": "Planung", "desc": "Jetzt senden, zu einer festgelegten Zeit oder mit wöchentlicher oder jährlicher Wiederholung." },
+        { "title": "Zustellbarkeit", "desc": "Authentifizierter Versand, abgestimmt darauf, den Posteingang zu erreichen." }
+      ],
+      "deep": {
+        "eyebrow": "Gebaut, um anzukommen",
+        "title": "Von Ihrer Domain in den Posteingang, in Sekunden",
+        "body": "Verifizieren Sie Ihre Domain einmal, und jede E-Mail geht signiert und authentifiziert hinaus. Nachrichten verlassen unsere Server sofort und erreichen Empfänger typischerweise innerhalb weniger Sekunden, überall auf der Welt.",
+        "points": [
+          "Ihre eigene verifizierte Domain mit DKIM, SPF und DMARC",
+          "Sechs Transaktionsvorlagen, jede als HTML bearbeitbar",
+          "Planen Sie einmalige, wöchentliche oder jährliche Kampagnen",
+          "Das tägliche Volumen skaliert mit Ihrem Tarif"
+        ],
+        "chipsTitle": "E-Mails, die Ihr Shop senden kann",
+        "chips": ["Verifizierungscode", "Passwort-Reset", "Bestellbestätigung", "Buchungserinnerung", "Abgebrochener Warenkorb", "Wiederverfügbarkeits-Hinweis", "Marketing-Kampagnen"]
+      }
+    },
+
+    "realtime": {
+      "hero": {
+        "eyebrow": "Realtime",
+        "title": "Ihr Team, live auf derselben Seite",
+        "lead": "Live-Präsenz, Cursor und gemeinsames Bearbeiten über Ihr gesamtes CRM. Sehen Sie, wer online ist und wo, beobachten Sie, wie sich der Cursor eines Teamkollegen mit seinem Namen darauf bewegt, und legen Sie eine Nachricht direkt auf Ihren Zeiger — auf jeder Projekt-, Produkt- und Organisationsseite."
+      },
+      "stats": [
+        { "value": "Jede Seite", "label": "Präsenz und Cursor auf jedem Projekt-, Produkt- und Organisationsbildschirm" },
+        { "value": "Live-Cursor", "label": "Sehen Sie den Zeiger jedes Teamkollegen, beschriftet mit seinem Namen" },
+        { "value": "Gemeinsames Tippen", "label": "Sehen Sie zu, wie Änderungen in einem Feld landen, während sie getippt werden" },
+        { "value": "Ein Socket", "label": "Ein einziger WebSocket pro Sitzung treibt alles an" }
+      ],
+      "cards": [
+        { "title": "Live-Präsenz", "desc": "Ein Avatar-Stapel im Header und Online-Punkte zeigen in Echtzeit, wer da ist." },
+        { "title": "Live-Cursor", "desc": "Der Cursor jedes Teamkollegen bewegt sich live, beschriftet mit seinem Namen und pixelgenau über alle Bildschirme." },
+        { "title": "Cursor-Chat", "desc": "Drücken Sie Strg+M, um eine schnelle Nachricht an Ihren Cursor zu heften — ein Wort im Moment, kein Thread." },
+        { "title": "Gemeinsames Bearbeiten", "desc": "Sehen Sie zu, wie ein Teamkollege in ein E-Mail- oder Produktfeld tippt, Tastenanschlag für Tastenanschlag gespiegelt." },
+        { "title": "Zu einem Teamkollegen springen", "desc": "Öffnen Sie das Präsenz-Menü und klicken Sie auf eine Person, um genau dort zu landen, wo sie arbeitet." },
+        { "title": "Auf Skalierung ausgelegt", "desc": "Ein authentifizierter WebSocket pro Sitzung, über Instanzen hinweg mit Postgres LISTEN/NOTIFY verteilt." }
+      ],
+      "deep": {
+        "eyebrow": "Multiplayer",
+        "title": "Ihr CRM, mit allen im Raum",
+        "body": "Öffnen Sie eine beliebige Seite, und Sie sehen, wer sonst noch darauf ist, wo sich sein Cursor befindet und was er bearbeitet — in dem Moment, in dem es passiert. Kein Neuladen, kein Plugin, auf jedem Bildschirm von einem einzelnen Projekt bis zur gesamten Organisation.",
+        "points": [
+          "Live-Präsenz, Cursor und Cursor-Chat auf jeder Projekt-, Produkt- und Organisationsseite",
+          "Gemeinsames Live-Bearbeiten im E-Mail-Editor und in der Produktübersicht",
+          "Elementgebundene Cursor bleiben pixelgenau, sogar auf verschiedenen Monitoren",
+          "Ein authentifizierter WebSocket, über Instanzen hinweg via Postgres LISTEN/NOTIFY skaliert"
+        ],
+        "chipsTitle": "Was live ist",
+        "chips": ["Live-Cursor", "Präsenz-Stapel", "Online-Status", "Cursor-Chat", "Gemeinsames Tippen", "Zu Teamkollegen springen", "Projektseiten", "Produktseiten", "Organisations-Konsole"]
+      }
+    }
+  }
+}
