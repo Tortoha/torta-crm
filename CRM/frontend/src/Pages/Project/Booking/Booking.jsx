@@ -9,6 +9,7 @@ import {
   Plus, CaretDown, ArrowDown, Trash, Pencil, Clock, User, Users, Briefcase, DotsThreeOutline, X,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { formatMoney } from '../../../Utils/currency.js';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import BookingServiceModal from './BookingServiceModal.jsx';
@@ -1160,6 +1161,22 @@ function Booking() {
 
   useEffect(() => { reload(); }, [reload]);
 
+  // ── Live collaboration ──────────────────────────────────────────────
+  // Refetch bookings whenever a teammate (or a storefront customer) creates /
+  // moves / reschedules / deletes one, so everyone on this Booking page sees the
+  // same data without a manual reload. Modals stay local (only the underlying
+  // data syncs) — one person can be mid-create while another moves a tile and a
+  // third reads a booking's details. Calendar-week navigation syncs separately
+  // (BookingCalendar, via the presence live-mirror).
+  const reloadBookings = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/booking/bookings?project_id=${projectId}`, { credentials: 'include' });
+      if (r.ok) setBookings(await r.json());
+    } catch { /* will catch up on the next event */ }
+  }, [projectId]);
+  useLiveReload(projectId, 'booking_changed', reloadBookings);   // appointments (calendar/list)
+  useLiveReload(projectId, 'booking_meta_changed', reload);       // services / staff / hours / settings tabs
+
   // Fetch per-staff analytics for the chosen period. Re-runs whenever the
   // staff list changes (e.g. user adds someone) or the period switches.
   useEffect(() => {
@@ -1387,6 +1404,7 @@ function Booking() {
             {/* Calendar view */}
             {view === 'calendar' && (
               <BookingCalendar
+                projectId={projectId}
                 bookings={sorted}
                 workingHours={hours}
                 businessTz={businessTz}

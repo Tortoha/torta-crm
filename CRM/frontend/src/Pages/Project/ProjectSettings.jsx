@@ -21,6 +21,7 @@ import {
   Globe, Stack, Barcode, Warning, CaretDown, MagnifyingGlass,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { useLiveReload } from '../../Utils/useLiveReload.js';
 import { CURRENCIES, formatMoney, getCurrencyMeta } from '../../Utils/currency.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import '../../Style/Authentication.css';
@@ -393,6 +394,7 @@ export default function ProjectSettings() {
   // Source of truth lives on `crm_projects` row — same PATCH endpoint
   // handles both fields. Currency change opens a warning modal first;
   // timezone changes commit immediately (no ambiguity about behaviour).
+  const [settingsBump, setSettingsBump] = useState(0);   // bump → re-fetch settings on live change
   const [tz, setTz]         = useState('UTC');
   const [tzAuto, setTzAuto] = useState(true);
   const [currency, setCurrency] = useState('USD');
@@ -411,7 +413,8 @@ export default function ProjectSettings() {
         setLoadedGen(true);
       })
       .catch(() => setLoadedGen(true));
-  }, [projectId]);
+  }, [projectId, settingsBump]);
+  useLiveReload(projectId, 'project_settings_changed', () => setSettingsBump(b => b + 1));   // live: teammate changes tz/currency/inventory
 
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -473,7 +476,7 @@ export default function ProjectSettings() {
         setLoadedBc(true);
       })
       .catch(() => { setLoadedInv(true); setLoadedBc(true); });
-  }, [projectId]);
+  }, [projectId, settingsBump]);
 
   const saveBatchSetting = async (patch) => {
     const r = await fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, {

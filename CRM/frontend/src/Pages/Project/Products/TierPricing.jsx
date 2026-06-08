@@ -9,6 +9,7 @@ import {
   Folder, Cube, PencilSimple, X, ArrowDown, FolderSimple, Trash, Plus,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { formatMoney } from '../../../Utils/currency.js';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
@@ -76,6 +77,8 @@ export default function TierPricing() {
   }, [pq, categoryFilter]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
+  // Live collaboration: tier-pricing + product changes refetch here.
+  useLiveReload(projectId, ['tier_changed', 'products_changed'], loadProducts);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/categories${pq}`, { credentials: 'include' })

@@ -9,6 +9,7 @@ import {
   ArrowDown, SquaresFour, List, Star, X,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { Combobox } from '../Booking/BookingCreateModal.jsx';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
 import { CountryCombo } from '../../../Utils/CountryCombo.jsx';
@@ -81,6 +82,8 @@ export default function Warehouses() {
   }, [pq]);
 
   useEffect(() => { load(); }, [load]);
+  // Live collaboration: teammates' warehouse create / edit / delete refetch here.
+  useLiveReload(projectId, ['warehouse_changed', 'inventory_changed'], load);
 
   // Single create/update path — POST when id is null, PUT otherwise.
   const persist = async (body, id) => {

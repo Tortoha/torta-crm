@@ -8,6 +8,7 @@ import {
   ArrowDown, FolderSimple,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { formatMoney } from '../../../Utils/currency.js';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
 import { DateTimePicker } from '../../../Utils/DateTimePicker.jsx';
@@ -164,6 +165,8 @@ export default function Discounts() {
   }, [pq, categoryFilter]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
+  // Live collaboration: a teammate setting a product discount refetches here.
+  useLiveReload(projectId, 'products_changed', loadProducts);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/categories${pq}`, { credentials: 'include' })

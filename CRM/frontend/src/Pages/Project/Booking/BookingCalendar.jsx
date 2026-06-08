@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { CaretLeft, CaretRight, CaretDown, User, UserGear, Phone, ChatText, Users } from '@phosphor-icons/react';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
+import { useFieldMirror } from '../../../Utils/usePresence.js';
 import { formatMoney } from '../../../Utils/currency.js';
 import { Combobox } from './BookingCreateModal.jsx';
 
@@ -348,7 +349,7 @@ function CalendarCell({ top, busy, height, past }) {
 // Pass `workingHours` to size the hour gutter dynamically.
 // Pass `businessTz` (IANA name) so booking blocks render in business clock,
 // not browser clock.
-function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, onStatusChange, workingHours = [], businessTz, slotInterval = 30, staff = [], services = [], currency = 'USD' }) {
+function BookingCalendar({ projectId, bookings, onOpenBooking, onCreateAt, onMoveBooking, onStatusChange, workingHours = [], businessTz, slotInterval = 30, staff = [], services = [], currency = 'USD' }) {
   const { t } = useTranslation();
   const tz = businessTz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const [anchor, setAnchor] = useState(() => startOfWeekInTz(tz));
@@ -728,10 +729,26 @@ function BookingCalendar({ bookings, onOpenBooking, onCreateAt, onMoveBooking, o
   // automatically when the animation finishes (onAnimationEnd) so subsequent
   // mounts don't accidentally re-trigger an animation.
   const [slideDir, setSlideDir] = useState(null);  // 'from-left' | 'from-right' | null
+
+  // Live calendar-nav sync — when a teammate pages the week, everyone on this
+  // project's Booking page follows, so the team stays on the same view (modals
+  // stay local; only the week anchor syncs). Reuses the presence live-mirror
+  // channel, scoped per project via the field id.
+  const applyRemoteAnchor = (iso) => {
+    if (!iso) return;
+    const d = new Date(iso);
+    if (isNaN(d.getTime()) || d.getTime() === anchor.getTime()) return;
+    setSlideDir(d.getTime() < anchor.getTime() ? 'from-left' : 'from-right');
+    setAnchor(d);
+  };
+  const { pushLocal: pushAnchor } = useFieldMirror(
+    projectId ? `bk-cal-anchor:${projectId}` : null, applyRemoteAnchor);
+
   const _switchToAnchor = (newAnchor) => {
     if (newAnchor.getTime() === anchor.getTime()) return;
     setSlideDir(newAnchor.getTime() < anchor.getTime() ? 'from-left' : 'from-right');
     setAnchor(newAnchor);
+    pushAnchor(newAnchor.toISOString());   // broadcast the week change to teammates
   };
   const goPrev  = () => { const d = new Date(anchor); d.setUTCDate(d.getUTCDate() - 7); _switchToAnchor(d); };
   const goNext  = () => { const d = new Date(anchor); d.setUTCDate(d.getUTCDate() + 7); _switchToAnchor(d); };

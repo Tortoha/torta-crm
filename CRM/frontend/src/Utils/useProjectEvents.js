@@ -24,8 +24,26 @@ import { API_BASE } from '../api.js';
 // per origin (Firefox: ~200), and a busy Analytics page with 15+
 // sections each subscribing would burn through that fast.
 
-// Per-projectId registry: { ws, listeners: Set<fn>, retryDelay, alive }
+// Per-projectId registry: { ws, listeners: Map<fn, Set<string>|null>, retryDelay, alive }
 const registry = new Map();
+
+// Compute + push this connection's topic subscription to the server. The server
+// then delivers an event only if its type is in the union of all active listeners'
+// topics — so a Booking viewer never receives Orders / alert / product events fired
+// by teammates elsewhere (no wasted network or parsing). If ANY listener wants
+// everything (topics=null), subscribe to all (the full-stream / Analytics case).
+function pushSubscription(rec) {
+  if (!rec?.ws || rec.ws.readyState !== 1) return;
+  const union = new Set();
+  let wantsAll = false;
+  for (const topics of rec.listeners.values()) {
+    if (!topics) { wantsAll = true; break; }
+    for (const t of topics) union.add(t);
+  }
+  try {
+    rec.ws.send(JSON.stringify({ type: 'subscribe', topics: wantsAll ? null : [...union] }));
+  } catch { /* socket died mid-send — onopen resends after reconnect */ }
+}
 
 function open(projectId) {
   const entry = registry.get(projectId);
@@ -35,7 +53,7 @@ function open(projectId) {
   const ws = new WebSocket(`${proto}//${host}/api/projects/${projectId}/events/ws`);
   const rec = {
     ws,
-    listeners: entry?.listeners || new Set(),
+    listeners: entry?.listeners || new Map(),
     retryDelay: entry?.retryDelay || 1000,
     alive: true,
   };
@@ -43,11 +61,11 @@ function open(projectId) {
   ws.onmessage = (e) => {
     let event = null;
     try { event = JSON.parse(e.data); } catch { return; }
-    for (const fn of rec.listeners) {
+    for (const fn of rec.listeners.keys()) {
       try { fn(event); } catch (err) { console.error('[useProjectEvents] listener error', err); }
     }
   };
-  ws.onopen = () => { rec.retryDelay = 1000; };
+  ws.onopen = () => { rec.retryDelay = 1000; pushSubscription(rec); };
   ws.onclose = (ev) => {
     rec.alive = false;
     // Don't reconnect on auth failure (4401 / 4403) — pointless, will
@@ -75,21 +93,28 @@ function open(projectId) {
   return rec;
 }
 
-export function useProjectEvents(projectId, handler) {
+export function useProjectEvents(projectId, handler, topics) {
   // Stable handler ref so callers don't have to memoise their callback.
   const ref = useRef(handler);
   useEffect(() => { ref.current = handler; }, [handler]);
+  // Stable topic key — re-subscribe only when the topic set actually changes.
+  // `null`/undefined topics = subscribe to the full stream (back-compat).
+  const topicKey = topics == null ? ''
+    : (Array.isArray(topics) ? [...topics].sort().join('|') : String(topics));
   useEffect(() => {
     if (!projectId) return;
     const rec = open(projectId);
     const fn = (event) => { ref.current?.(event); };
-    rec.listeners.add(fn);
+    rec.listeners.set(fn, topicKey ? new Set(topicKey.split('|')) : null);
+    pushSubscription(rec);   // advertise this page's topics so the server filters
     return () => {
       rec.listeners.delete(fn);
       if (rec.listeners.size === 0) {
         try { rec.ws.close(); } catch { /* noop */ }
         registry.delete(projectId);
+      } else {
+        pushSubscription(rec);   // a listener left → narrow the server-side filter
       }
     };
-  }, [projectId]);
+  }, [projectId, topicKey]);
 }

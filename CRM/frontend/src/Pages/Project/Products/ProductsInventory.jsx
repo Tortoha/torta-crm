@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'rea
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { MagnifyingGlass, CaretRight, CaretDown, Folder, Cube, PencilSimple, X, ArrowDown, FolderSimple, Warehouse, Tag } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { formatMoney } from '../../../Utils/currency.js';
@@ -192,6 +193,8 @@ function ProductsInventory() {
   }, [pq, categoryFilter, projectId]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
+  // Live collaboration: stock / receive / transfer / warehouse changes refetch the inventory grid.
+  useLiveReload(projectId, ['inventory_changed', 'products_changed', 'warehouse_changed'], loadProducts);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/categories${pq}`, { credentials: 'include' })

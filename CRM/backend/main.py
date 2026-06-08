@@ -9745,6 +9745,7 @@ def rename_project(project_id: int, request: RenameProjectRequest, user: dict = 
     with db_cursor() as (conn, cur):
         cur.execute(f"UPDATE crm_projects SET {', '.join(sets)} WHERE id=%s", tuple(params))
         conn.commit()
+    push_project_event(project_id, "project_settings_changed", {"kind": "general"})
     return {"ok": True}
 
 
@@ -9864,6 +9865,7 @@ def create_category(req: CreateCategoryRequest, project_id: int = Query(...), us
         )
         row = cur.fetchone()
         conn.commit()
+    push_project_event(project_id, "categories_changed", {"action": "created"})
     return {"id": row["id"], "name": row["name"], "slug": row["slug"],
             "created_at": str(row["created_at"]), "products_count": 0}
 
@@ -9884,6 +9886,7 @@ def rename_category(cat_id: int, req: UpdateCategoryRequest,
         # Slug stays the same — keeps storefront URLs stable across rename.
         cur.execute("UPDATE product_categories SET name=%s WHERE id=%s", (name, cat_id))
         conn.commit()
+    push_project_event(project_id, "categories_changed", {"action": "renamed", "id": cat_id})
     return {"ok": True}
 
 
@@ -9918,6 +9921,8 @@ def set_category_products(
             cur.execute("UPDATE products SET category_id=%s "
                         "WHERE id = ANY(%s) AND project_id=%s", (cat_id, pids, project_id))
         conn.commit()
+    push_project_event(project_id, "categories_changed", {"action": "products_set", "id": cat_id})
+    push_project_event(project_id, "products_changed", {"action": "category_assigned"})
     return {"ok": True}
 
 
@@ -9988,6 +9993,8 @@ def delete_category(
         # keep_products: ON DELETE SET NULL on products.category_id handles it on the next line
         cur.execute("DELETE FROM product_categories WHERE id=%s", (cat_id,))
         conn.commit()
+    push_project_event(project_id, "categories_changed", {"action": "deleted", "id": cat_id})
+    push_project_event(project_id, "products_changed", {"action": "category_deleted"})
     return {"ok": True}
 
 
@@ -10182,6 +10189,7 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
                 (new_id, _dig_l1)
             )
         conn.commit()
+        push_project_event(project_id, "products_changed", {"action": "created", "id": new_id})
         return {"id": new_id, "title": name, "product_type": ptype}
 
 
@@ -10524,6 +10532,7 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
     # Flipping the ZIP toggle (on → build from current files, off → drop the bundle).
     if request.digital_zip is not None:
         _rebuild_digital_zip(project_id, product_id)
+    push_project_event(project_id, "products_changed", {"action": "updated", "id": product_id})
     return {"ok": True}
 
 
@@ -10591,6 +10600,7 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
     # Digital products: files + their generated .zip bundle live under a per-product
     # folder — wipe the whole prefix (no-op for products without any).
     s3_delete_prefix(f"projects/{project_id}/files/{product_id}/")
+    push_project_event(project_id, "products_changed", {"action": "deleted", "id": product_id})
     return {"ok": True}
 
 
@@ -10754,6 +10764,7 @@ def duplicate_product(product_id: int, project_id: int = Query(...), user: dict 
                             (item_map[d], group_map[g["id"]]))
 
         conn.commit()
+    push_project_event(project_id, "products_changed", {"action": "duplicated", "id": new_pid})
     return {"id": new_pid, "title": new_title}
 
 
@@ -10863,6 +10874,9 @@ def bulk_action(project_id: int, request: BulkActionRequest, user: dict = Depend
         else:
             raise HTTPException(400, f"Unknown action: {action}")
         conn.commit()
+    push_project_event(project_id, "products_changed", {"action": "bulk", "op": action, "count": len(valid_ids)})
+    if action == "set_stock":
+        push_project_event(project_id, "inventory_changed", {"action": "bulk_set_stock"})
     return {"ok": True, "affected": len(valid_ids), "action": action}
 
 
@@ -11975,6 +11989,8 @@ def import_products_csv(project_id: int, request: CsvImportRequest,
                 counters["errors"].append({"row": i + 1, "error": str(e)[:200]})
         conn.commit()
 
+    push_project_event(project_id, "products_changed", {"action": "import"})
+    push_project_event(project_id, "inventory_changed", {"action": "import"})
     counters["ok"] = True
     return counters
 
@@ -13702,7 +13718,7 @@ def list_promo_codes(project_id: int = Query(...),
 @app.post("/api/promo-codes")
 def create_promo_code(req: PromoCodeRequest, project_id: int = Query(...),
                       user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     _ensure_promo_codes_table()
     code = sanitize((req.code or '').strip().upper())[:40]
     if not code: raise HTTPException(400, "Code is required")
@@ -13749,13 +13765,14 @@ def create_promo_code(req: PromoCodeRequest, project_id: int = Query(...),
             raise HTTPException(400, f"Code '{code}' already exists for this project")
         new_id = cur.fetchone()["id"]
         conn.commit()
+    push_project_event(project_id, "promo_changed", {"action": "created", "id": new_id})
     return {"id": new_id}
 
 
 @app.put("/api/promo-codes/{pcid}")
 def update_promo_code(pcid: int, req: PromoCodeRequest, project_id: int = Query(...),
                       user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM promo_codes WHERE id=%s AND project_id=%s",
                   (pcid, project_id)):
         raise HTTPException(404, "Promo code not found")
@@ -13801,19 +13818,21 @@ def update_promo_code(pcid: int, req: PromoCodeRequest, project_id: int = Query(
     with db_cursor() as (conn, cur):
         cur.execute(f"UPDATE promo_codes SET {', '.join(fields)} WHERE id=%s", vals)
         conn.commit()
+    push_project_event(project_id, "promo_changed", {"action": "updated", "id": pcid})
     return {"ok": True}
 
 
 @app.delete("/api/promo-codes/{pcid}")
 def delete_promo_code(pcid: int, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM promo_codes WHERE id=%s AND project_id=%s",
                   (pcid, project_id)):
         raise HTTPException(404, "Promo code not found")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM promo_codes WHERE id=%s", (pcid,))
         conn.commit()
+    push_project_event(project_id, "promo_changed", {"action": "deleted", "id": pcid})
     return {"ok": True}
 
 
@@ -13834,7 +13853,7 @@ def list_tax_categories(project_id: int = Query(...), user: dict = Depends(get_c
 @app.post("/api/tax-categories")
 def create_tax_category(req: TaxCategoryRequest, project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     name = sanitize((req.name or '').strip())[:120]
     if not name: raise HTTPException(400, "Name is required")
     rate = float(req.rate or 0)
@@ -13857,7 +13876,7 @@ def create_tax_category(req: TaxCategoryRequest, project_id: int = Query(...),
 @app.put("/api/tax-categories/{tcid}")
 def update_tax_category(tcid: int, req: TaxCategoryRequest, project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM product_tax_categories WHERE id=%s AND project_id=%s",
                   (tcid, project_id)):
         raise HTTPException(404, "Tax category not found")
@@ -13887,7 +13906,7 @@ def update_tax_category(tcid: int, req: TaxCategoryRequest, project_id: int = Qu
 @app.delete("/api/tax-categories/{tcid}")
 def delete_tax_category(tcid: int, project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM product_tax_categories WHERE id=%s AND project_id=%s",
                   (tcid, project_id)):
         raise HTTPException(404, "Tax category not found")
@@ -13943,6 +13962,7 @@ def create_tier_pricing(product_id: int, req: TierPricingRequest,
             conn.commit()
         except psycopg2.errors.UniqueViolation:
             raise HTTPException(400, f"Tier pricing already exists for sku {req.sku_id}, qty {req.min_qty}")
+    push_project_event(project_id, "tier_changed", {"action": "created", "id": new_id})
     return {"id": new_id, "sku_id": req.sku_id, "min_qty": req.min_qty, "price": req.price}
 
 
@@ -13963,6 +13983,7 @@ def delete_tier_pricing(product_id: int, tier_id: int,
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_tier_pricing WHERE id=%s", (tier_id,))
         conn.commit()
+    push_project_event(project_id, "tier_changed", {"action": "deleted", "id": tier_id})
     return {"ok": True}
 
 
@@ -14118,6 +14139,8 @@ def receive_batch(project_id: int, req: ReceiveBatchRequest,
         )
         _sync_l2_stock(cur, req.sku_id)
         conn.commit()
+    push_project_event(project_id, "inventory_changed", {"action": "receive", "sku_id": req.sku_id})
+    push_project_event(project_id, "batch_changed", {"action": "received", "id": new_row["id"]})
     return {"ok": True, "batch_id": new_row["id"], "batch_name": name}
 
 
@@ -14333,6 +14356,8 @@ def bulk_receive(project_id: int, req: BulkReceiveRequest,
 
         conn.commit()
 
+    push_project_event(project_id, "inventory_changed", {"action": "bulk_receive"})
+    push_project_event(project_id, "batch_changed", {"action": "bulk_received"})
     return {
         "ok": True,
         "batches_created": batches_created,
@@ -14488,6 +14513,8 @@ def update_batch(project_id: int, batch_id: int, req: BatchUpdateRequest,
             )
             _sync_l2_stock(cur, cur_row['sku_id'])
         conn.commit()
+    push_project_event(project_id, "batch_changed", {"action": "updated", "id": batch_id})
+    push_project_event(project_id, "inventory_changed", {"action": "batch_update"})
     return {"ok": True}
 
 
@@ -14520,6 +14547,8 @@ def delete_batch(project_id: int, batch_id: int, user: dict = Depends(get_curren
              'Batch deleted — never consumed')
         )
         conn.commit()
+    push_project_event(project_id, "batch_changed", {"action": "deleted", "id": batch_id})
+    push_project_event(project_id, "inventory_changed", {"action": "batch_delete"})
     return {"ok": True}
 
 
@@ -14623,6 +14652,7 @@ def update_project_batch_settings(project_id: int, req: ProjectBatchSettingsRequ
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_projects SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
+    push_project_event(project_id, "project_settings_changed", {"kind": "batch"})
     return {"ok": True}
 
 
@@ -14697,6 +14727,7 @@ def update_shipping_settings(project_id: int, req: ProjectShippingSettingsReques
                   updated_at              = NOW()
         """, (project_id, final_cost, final_thr))
         conn.commit()
+    push_project_event(project_id, "project_settings_changed", {"kind": "shipping"})
     return {"ok": True, "shipping_cost": final_cost, "free_shipping_threshold": final_thr}
 
 
@@ -14871,6 +14902,7 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
         }
         for _, email in notify_emails:
             background_tasks.add_task(_send_template_email, project_id, "restock", email, rvars)
+    push_project_event(project_id, "inventory_changed", {"action": "adjust", "sku_id": req.sku_id})
     return {"ok": True, "new_quantity": new_qty, "notified": len(notify_emails)}
 
 
@@ -15161,6 +15193,8 @@ def bulk_transfer_stock(project_id: int, body: dict = Body(...),
         for sid in affected_skus:
             _sync_l2_stock(cur, sid)
         conn.commit()
+    push_project_event(project_id, "inventory_changed", {"action": "transfer", "skus": len(affected_skus)})
+    push_project_event(project_id, "batch_changed", {"action": "transfer"})
     return {"ok": True, "transfers_applied": len(parsed), "skus_affected": len(affected_skus)}
 
 
@@ -15169,7 +15203,7 @@ def bulk_transfer_stock(project_id: int, body: dict = Body(...),
 @app.post("/api/projects/{project_id}/products/bulk-apply-defaults")
 def bulk_apply_product_defaults(project_id: int, body: dict = Body(...),
                                   user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     fields_in = body.get("fields") if isinstance(body, dict) else None
     if not isinstance(fields_in, dict) or not fields_in:
         raise HTTPException(400, "No fields provided")
@@ -15203,6 +15237,7 @@ def bulk_apply_product_defaults(project_id: int, body: dict = Body(...),
         cur.execute(f"UPDATE products SET {', '.join(set_clauses)} WHERE project_id=%s", vals)
         affected = cur.rowcount
         conn.commit()
+    push_project_event(project_id, "products_changed", {"action": "bulk_defaults", "count": affected})
     return {"ok": True, "affected": affected}
 
 
@@ -15309,7 +15344,7 @@ def list_warehouses(project_id: int = Query(...), user: dict = Depends(get_curre
 @app.post("/api/warehouses")
 def create_warehouse(req: WarehouseRequest, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     name = sanitize((req.name or '').strip())[:120]
     if not name: raise HTTPException(400, "Name is required")
     code     = sanitize((req.code or '').strip())[:40]
@@ -15333,13 +15368,14 @@ def create_warehouse(req: WarehouseRequest, project_id: int = Query(...),
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
+    push_project_event(project_id, "warehouse_changed", {"action": "created", "id": new_id})
     return {"id": new_id}
 
 
 @app.put("/api/warehouses/{wid}")
 def update_warehouse(wid: int, req: WarehouseRequest, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM warehouses WHERE id=%s AND project_id=%s", (wid, project_id)):
         raise HTTPException(404, "Warehouse not found")
     fields, vals = [], []
@@ -15395,13 +15431,14 @@ def update_warehouse(wid: int, req: WarehouseRequest, project_id: int = Query(..
                         (project_id, wid))
         cur.execute(f"UPDATE warehouses SET {', '.join(fields)} WHERE id=%s", vals)
         conn.commit()
+    push_project_event(project_id, "warehouse_changed", {"action": "updated", "id": wid})
     return {"ok": True}
 
 
 @app.delete("/api/warehouses/{wid}")
 def delete_warehouse(wid: int, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT id, is_default FROM warehouses WHERE id=%s AND project_id=%s",
                  (wid, project_id))
     if not row: raise HTTPException(404, "Warehouse not found")
@@ -15419,6 +15456,7 @@ def delete_warehouse(wid: int, project_id: int = Query(...),
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM warehouses WHERE id=%s", (wid,))
         conn.commit()
+    push_project_event(project_id, "warehouse_changed", {"action": "deleted", "id": wid})
     return {"ok": True}
 
 
@@ -16007,6 +16045,7 @@ def save_email_domain(req: EmailDomainRequest, project_id: int = Query(...), use
         conn.commit()
 
     _fanout_auth_config("crm_email_domains", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "email"})
     return get_email_domain(project_id=project_id, user=user)
 
 
@@ -16042,6 +16081,7 @@ def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
         conn.commit()
 
     _fanout_auth_config("crm_email_domains", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "email", "action": "verify"})
     return {"dkim_ok": dkim_ok, "spf_ok": spf_ok, "dmarc_ok": dmarc_ok, "all_ok": all_ok}
 
 
@@ -16058,6 +16098,7 @@ def delete_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
         cur.execute("DELETE FROM crm_email_domains WHERE project_id=%s", (project_id,))
         conn.commit()
     _fanout_auth_delete("crm_email_domains", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "email", "action": "deleted"})
     return {"success": True}
 
 
@@ -16109,6 +16150,7 @@ def save_oauth_settings(req: OAuthSettingsRequest, project_id: int = Query(...),
             )
         conn.commit()
     _fanout_auth_config("crm_oauth_settings", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "google"})
     return {"ok": True}
 
 
@@ -16119,6 +16161,7 @@ def delete_oauth_settings(project_id: int = Query(...), user: dict = Depends(get
         cur.execute("DELETE FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
         conn.commit()
     _fanout_auth_delete("crm_oauth_settings", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "google", "action": "deleted"})
     return {"ok": True}
 
 
@@ -16193,6 +16236,7 @@ def save_auth_provider(provider: str, req: AuthProviderRequest,
             )
         conn.commit()
     _fanout_auth_config("crm_auth_providers", project_id, ("project_id", "provider"))
+    push_project_event(project_id, "auth_changed", {"kind": "provider", "provider": provider})
     return {"ok": True}
 
 
@@ -16206,6 +16250,7 @@ def delete_auth_provider(provider: str, project_id: int = Query(...), user: dict
         )
         conn.commit()
     _fanout_auth_delete("crm_auth_providers", project_id, " AND provider=%s", (provider,))
+    push_project_event(project_id, "auth_changed", {"kind": "provider", "provider": provider, "action": "deleted"})
     return {"ok": True}
 
 
@@ -16404,6 +16449,7 @@ def save_sms_settings(req: SmsSettingsRequest,
             )
         conn.commit()
     _fanout_auth_config("crm_sms_settings", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "sms"})
     return {"ok": True}
 
 
@@ -16414,6 +16460,7 @@ def delete_sms_settings(project_id: int = Query(...), user: dict = Depends(get_c
         cur.execute("DELETE FROM crm_sms_settings WHERE project_id=%s", (project_id,))
         conn.commit()
     _fanout_auth_delete("crm_sms_settings", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "sms", "action": "deleted"})
     return {"ok": True}
 
 
@@ -16439,6 +16486,7 @@ def save_url_config(req: UrlConfigRequest, project_id: int = Query(...), user: d
         else:
             cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (project_id, url or None))
         conn.commit()
+    push_project_event(project_id, "url_config_changed", {"action": "site_url"})
     return {"ok": True}
 
 
@@ -16464,6 +16512,7 @@ def add_redirect_url(req: AddRedirectUrlRequest, project_id: int = Query(...), u
         cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s) RETURNING id", (project_id, url))
         new_id = cur.fetchone()["id"]
         conn.commit()
+        push_project_event(project_id, "url_config_changed", {"action": "redirect_added"})
         return {"ok": True, "id": new_id, "url": url}
 
 
@@ -16475,6 +16524,7 @@ def delete_redirect_url(url_id: int, project_id: int = Query(...), user: dict = 
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_redirect_urls WHERE id=%s", (url_id,))
         conn.commit()
+    push_project_event(project_id, "url_config_changed", {"action": "redirect_deleted"})
     return {"ok": True}
 
 
@@ -18148,30 +18198,51 @@ chat_hub = ChatHub()
 
 # ── Project-level events hub (orders / bookings / analytics) ──────────────
 class ProjectEventsHub:
+    """Per-project WebSocket fan-out for live data events (orders / bookings /
+    products / settings…). Each connection advertises which event topics its
+    CURRENT page cares about via a {type:'subscribe', topics:[...]} frame, and
+    broadcast() delivers an event only to connections whose topic set contains its
+    type. So a teammate on the Orders page never receives a booking / alert /
+    product event fired elsewhere — no wasted network or client-side parsing.
+    topics=None (the default until a frame arrives, and the explicit 'all' case)
+    means "deliver everything" — keeps full-stream consumers (e.g. Analytics)
+    working unchanged."""
     def __init__(self):
-        self._subs: dict[int, set[WebSocket]] = {}
+        # project_id → { ws: set(topics) | None }
+        self._subs: "dict[int, dict[WebSocket, set | None]]" = {}
         self._lock = asyncio.Lock()
 
     async def connect(self, project_id: int, ws: WebSocket):
         await ws.accept()
         async with self._lock:
-            self._subs.setdefault(project_id, set()).add(ws)
+            self._subs.setdefault(project_id, {})[ws] = None
 
     async def disconnect(self, project_id: int, ws: WebSocket):
         async with self._lock:
-            subs = self._subs.get(project_id)
-            if subs:
-                subs.discard(ws)
-                if not subs:
+            conns = self._subs.get(project_id)
+            if conns is not None:
+                conns.pop(ws, None)
+                if not conns:
                     self._subs.pop(project_id, None)
 
+    async def set_topics(self, project_id: int, ws: WebSocket, topics):
+        """Narrow (or widen, with None) which event types this connection receives."""
+        async with self._lock:
+            conns = self._subs.get(project_id)
+            if conns is not None and ws in conns:
+                conns[ws] = topics
+
     async def broadcast(self, project_id: int, event: dict):
-        subs = list(self._subs.get(project_id, ()))
-        if not subs:
+        # Snapshot first so set_topics/disconnect during an await can't mutate mid-loop.
+        conns = list(self._subs.get(project_id, {}).items())
+        if not conns:
             return
+        etype   = event.get("type")
         payload = json.dumps(event)
         dead = []
-        for ws in subs:
+        for ws, topics in conns:
+            if topics is not None and etype not in topics:
+                continue   # this connection's page doesn't care about this event type
             try:
                 await ws.send_text(payload)
             except Exception:
@@ -18181,7 +18252,7 @@ class ProjectEventsHub:
                 cur = self._subs.get(project_id)
                 if cur:
                     for w in dead:
-                        cur.discard(w)
+                        cur.pop(w, None)
 
 
 events_hub = ProjectEventsHub()
@@ -20037,6 +20108,7 @@ def booking_create_service(req: BookingServiceRequest,
                     (st_id, sid)
                 )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "service", "action": "created"})
     return {"id": sid}
 
 @app.put("/api/booking/services/{sid}")
@@ -20076,6 +20148,7 @@ def booking_update_service(sid: int, req: BookingServiceRequest,
                     (st_id, sid)
                 )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "service", "action": "updated"})
     return {"ok": True}
 
 @app.delete("/api/booking/services/{sid}")
@@ -20106,6 +20179,7 @@ def booking_delete_service(sid: int, project_id: int = Query(...),
         cur.execute("DELETE FROM booking_services WHERE id=%s AND project_id=%s",
                     (sid, project_id))
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "service", "action": "deleted"})
     return {"ok": True}
 
 # ── Staff ─────────────────────────────────────────────────────────────────────
@@ -20152,6 +20226,7 @@ def booking_create_staff(req: BookingStaffRequest,
                     (st_id, s_id)
                 )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "staff", "action": "created"})
     return {"id": st_id}
 
 @app.put("/api/booking/staff/{st_id}")
@@ -20181,6 +20256,7 @@ def booking_update_staff(st_id: int, req: BookingStaffRequest,
                     (st_id, s_id)
                 )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "staff", "action": "updated"})
     return {"ok": True}
 
 @app.delete("/api/booking/staff/{st_id}")
@@ -20207,6 +20283,7 @@ def booking_delete_staff(st_id: int, project_id: int = Query(...),
         cur.execute("DELETE FROM booking_staff WHERE id=%s AND project_id=%s",
                     (st_id, project_id))
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "staff", "action": "deleted"})
     return {"ok": True}
 
 
@@ -20339,6 +20416,7 @@ def booking_set_hours(req: BookingHoursRequest,
                 (project_id, req.staff_id, r.day_of_week, r.open_time, r.close_time)
             )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "hours", "action": "updated"})
     return {"ok": True}
 
 # ── Booking-level settings ────────────────────────────────────────────────────
@@ -20396,6 +20474,7 @@ def booking_save_settings(req: BookingSettingsRequest,
                 vals + (project_id,)
             )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "settings", "action": "updated"})
     return {"ok": True}
 
 # ── Bookings (the actual appointments) ────────────────────────────────────────
@@ -20639,6 +20718,8 @@ def booking_create_admin(req: CreateBookingRequest,
         )
         bid = cur.fetchone()["id"]
         conn.commit()
+    # Live-sync: every teammate viewing this project's Booking page refetches.
+    push_project_event(project_id, "booking_changed", {"id": bid, "action": "created"})
     return {"id": bid}
 
 @app.patch("/api/booking/bookings/{bid}")
@@ -20667,6 +20748,7 @@ def booking_update_status(bid: int, req: UpdateBookingStatusRequest,
         cur.execute("UPDATE bookings SET status=%s WHERE id=%s AND project_id=%s",
                     (req.status, bid, project_id))
         conn.commit()
+    push_project_event(project_id, "booking_changed", {"id": bid, "action": "status", "status": req.status})
     return {"ok": True}
 
 @app.put("/api/booking/bookings/{bid}/move")
@@ -20697,6 +20779,7 @@ def booking_move(bid: int,
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE bookings SET starts_at=%s, ends_at=%s WHERE id=%s", (starts, ends, bid))
         conn.commit()
+    push_project_event(project_id, "booking_changed", {"id": bid, "action": "moved"})
     return {"ok": True, "starts_at": starts.isoformat(), "ends_at": ends.isoformat()}
 
 
@@ -20708,6 +20791,7 @@ def booking_delete(bid: int, project_id: int = Query(...),
         cur.execute("DELETE FROM bookings WHERE id=%s AND project_id=%s",
                     (bid, project_id))
         conn.commit()
+    push_project_event(project_id, "booking_changed", {"id": bid, "action": "deleted"})
     return {"ok": True}
 
 
@@ -26533,6 +26617,7 @@ def goals_create(req: GoalRequest, project_id: int = Query(...),
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
+    push_project_event(project_id, "target_changed", {"id": new_id, "action": "created"})
     return {"id": new_id}
 
 
@@ -26572,6 +26657,7 @@ def goals_update(goal_id: int, req: GoalRequest, project_id: int = Query(...),
     with db_cursor() as (conn, cur):
         cur.execute(f"UPDATE crm_goals SET {', '.join(fields)} WHERE id=%s", vals)
         conn.commit()
+    push_project_event(project_id, "target_changed", {"id": goal_id, "action": "updated"})
     return {"ok": True}
 
 
@@ -26583,6 +26669,7 @@ def goals_delete(goal_id: int, project_id: int = Query(...),
         cur.execute("DELETE FROM crm_goals WHERE id=%s AND project_id=%s",
                     (goal_id, project_id))
         conn.commit()
+    push_project_event(project_id, "target_changed", {"id": goal_id, "action": "deleted"})
     return {"ok": True}
 
 
@@ -27130,9 +27217,19 @@ async def project_events_ws(ws: WebSocket, project_id: int):
     await events_hub.connect(project_id, ws)
     try:
         while True:
-            # Client doesn't need to send anything — receive_text just
-            # keeps the connection alive and detects disconnects.
-            await ws.receive_text()
+            # The only client→server frame is a topic subscription so the server
+            # can filter delivery per page (don't ship Orders events to a Booking
+            # viewer). Any other frame just keeps the socket alive / detects close.
+            raw = await ws.receive_text()
+            try:
+                msg = json.loads(raw)
+                if isinstance(msg, dict) and msg.get("type") == "subscribe":
+                    topics = msg.get("topics")
+                    await events_hub.set_topics(
+                        project_id, ws,
+                        set(topics) if isinstance(topics, list) else None)
+            except Exception:
+                pass
     except WebSocketDisconnect:
         pass
     finally:
@@ -27382,6 +27479,7 @@ def create_alert(project_id: int, body: AlertCreateBody,
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
+    push_project_event(project_id, "alert_changed", {"id": new_id, "action": "created"})
     return {"ok": True, "id": new_id}
 
 
@@ -27400,6 +27498,7 @@ def update_alert(project_id: int, alert_id: int, body: AlertCreateBody,
         if cur.rowcount == 0:
             raise HTTPException(404, "Alert not found")
         conn.commit()
+    push_project_event(project_id, "alert_changed", {"id": alert_id, "action": "updated"})
     return {"ok": True}
 
 
@@ -27413,6 +27512,7 @@ def delete_alert(project_id: int, alert_id: int,
             (alert_id, project_id)
         )
         conn.commit()
+    push_project_event(project_id, "alert_changed", {"id": alert_id, "action": "deleted"})
     return {"ok": True}
 
 

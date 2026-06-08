@@ -19,6 +19,7 @@ import {
   DotsThreeOutline, MagnifyingGlass, ArrowDown, SquaresFour, List,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { useLiveReload } from '../../Utils/useLiveReload.js';
 import { formatMoney } from '../../Utils/currency.js';
 import { Combobox } from './Booking/BookingCreateModal.jsx';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
@@ -544,6 +545,7 @@ export default function Targets() {
       .finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, [projectId]);
+  useLiveReload(projectId, 'target_changed', load);   // live: teammate adds/edits/deletes a target
 
   const onDelete = async (target) => {
     if (!confirm(t('project.targets.confirmDelete', { name: target.name }))) return;

@@ -11,6 +11,7 @@ import { API_BASE } from '../../../api.js';
 import { formatMoney } from '../../../Utils/currency.js';
 import MediaThumb from '../../../Utils/MediaThumb.jsx';
 import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
 import { encodeId } from '../../../Utils/hashids.js';
@@ -665,6 +666,10 @@ export default function Products({ archived = false }) {
   const load = reload;                  // local alias — keeps existing call-sites unchanged
 
   useEffect(() => { loadCategories(); }, [loadCategories]);
+
+  // Live collaboration: a teammate's product / stock / category change refetches here too.
+  useLiveReload(projectId, ['products_changed', 'inventory_changed'], reload);
+  useLiveReload(projectId, 'categories_changed', loadCategories);
 
   // Quick toggle helpers — reuse PUT /api/products/{id} with a single boolean field.
   const patchProduct = useCallback(async (id, body) => {

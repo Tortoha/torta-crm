@@ -7,6 +7,7 @@ import {
   MagnifyingGlass, ArrowDown, SquaresFour, List,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { useLiveReload } from '../../Utils/useLiveReload.js';
 import { Combobox } from './Booking/BookingCreateModal.jsx';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
 import '../../Style/Authentication.css';
@@ -142,6 +143,7 @@ function Alerts() {
   }, [projectId]);
 
   useEffect(() => { reload(); }, [reload]);
+  useLiveReload(projectId, 'alert_changed', reload);   // live: teammate adds/edits/deletes an alert
 
   const handleDelete = async (id) => {
     if (!confirm(t('project.alerts.confirmDelete'))) return;

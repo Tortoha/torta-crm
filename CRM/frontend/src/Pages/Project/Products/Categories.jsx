@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useOutletContext } from 'react-router-dom';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import {
   Plus, Trash, PencilSimple, DotsThreeOutline, MagnifyingGlass, X,
   ArrowDown, ArrowsLeftRight, Warning,
@@ -641,6 +642,8 @@ export default function Categories() {
     setLoading(false);
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
+  // Live collaboration: teammates' category / product-assignment changes refetch here.
+  useLiveReload(projectId, ['categories_changed', 'products_changed'], load);
 
   const filtered = cats.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()));
   const sorted = [...filtered].sort((a, b) => {

@@ -7,6 +7,7 @@ import {
   ArrowDown, SquaresFour, List, X,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { todayLocalIsoDay } from '../../../Utils/date.js';
 import { formatMoney } from '../../../Utils/currency.js';
 import { Combobox, DatePicker, TimePicker } from '../Booking/BookingCreateModal.jsx';
@@ -73,6 +74,8 @@ export default function PromoCodes() {
     pageSize: 100,
   });
   const sentinelRef = useInfiniteScroll(loadMore);
+  // Live collaboration: teammates' promo create / edit / delete refetch here.
+  useLiveReload(projectId, 'promo_changed', load);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/categories${pq}`, { credentials: 'include' })
