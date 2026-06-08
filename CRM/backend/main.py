@@ -6337,6 +6337,28 @@ def _paddle_find_customer_by_email(email: str) -> "str | None":
     return None
 
 
+def _demote_org_subscription_to_free(org_id: int) -> None:
+    """Reset an org's subscription pointer to Free, keeping its Paddle customer
+    link. Used when no Paddle subscription actually belongs to this org — e.g. a
+    row leaked here by the old sync-by-customer bug, where another org's sub got
+    written onto this org. Only ever clears the *wrong* org's row; the real
+    owner's row is matched by custom_data.org_id and left untouched."""
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                UPDATE crm_subscriptions
+                   SET plan_slug='free', status='active',
+                       current_period_start=NULL, current_period_end=NULL,
+                       cancelled_at=NULL, paddle_subscription_id=NULL, updated_at=NOW()
+                 WHERE org_id=%s
+            """, (org_id,))
+            cur.execute("UPDATE crm_organizations SET plan_slug='free' WHERE id=%s", (org_id,))
+            conn.commit()
+            print(f"[paddle/sync] org={org_id}: cleared leaked subscription → free")
+    except Exception as e:
+        print(f"[paddle/sync] demote-to-free failed for org={org_id}: {e}")
+
+
 def _paddle_sync_org_subscription(org_id: int, owner_email: str) -> bool:
     """Pull fresh subscription state from Paddle and UPSERT crm_subscriptions.
     Returns True if a sub was found and written, False otherwise. Idempotent —
@@ -6379,11 +6401,40 @@ def _paddle_sync_org_subscription(org_id: int, owner_email: str) -> bool:
     if not subs:
         return False
 
+    # A Paddle customer is keyed by EMAIL, so ONE Paddle customer owns the
+    # subscriptions of EVERY org this user created. Adopt ONLY the subscription
+    # that belongs to THIS org — identified by the custom_data.org_id we stamp at
+    # checkout. Picking "the first active sub" leaks one org's plan onto another
+    # and corrupts the sub→org mapping (this was a real prod bug). The claim
+    # endpoint already does this precisely for the new-org flow.
+    def _sub_org(s):
+        try:
+            return int(((s.get("custom_data") or {}).get("org_id")) or 0) or None
+        except (TypeError, ValueError):
+            return None
+
+    mine = [s for s in subs if _sub_org(s) == org_id]
+    if not mine:
+        # No sub is tagged for this org. Fall back to the exact sub our DB maps
+        # here (claim/webhook write it precisely, for new-org subs that predate
+        # org tagging) — but if that sub is tagged for a DIFFERENT org, it was
+        # leaked onto this org by the old bug, so clear it instead of showing it.
+        _, my_sub_id = _org_paddle_ids(org_id)
+        owned = [s for s in subs if (s.get("id") or "") == my_sub_id] if my_sub_id else []
+        if owned and _sub_org(owned[0]) not in (None, org_id):
+            _demote_org_subscription_to_free(org_id)
+            return False
+        mine = owned
+    if not mine:
+        # Nothing belongs to this org → it stays on Free. Never adopt another
+        # org's subscription here. (A brand-new org legitimately lands here.)
+        return False
+
     # Prefer active > trialing > past_due > paused > canceled > expired so a
     # newly upgraded org doesn't get stuck showing a stale canceled sub.
     PRIORITY = {"active": 0, "trialing": 1, "past_due": 2,
                 "paused": 3, "canceled": 4, "expired": 5}
-    target = sorted(subs, key=lambda s: PRIORITY.get(s.get("status") or "", 6))[0]
+    target = sorted(mine, key=lambda s: PRIORITY.get(s.get("status") or "", 6))[0]
 
     sub_id   = (target.get("id") or "").strip()
     status   = (target.get("status") or "active").strip()
