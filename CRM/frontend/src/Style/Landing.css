@@ -27,6 +27,20 @@
   box-sizing: border-box;
 }
 
+/* Side gutters once the 1400px column stops being centred by margin (i.e. below
+   ~1440px it's full-width). Without these, hero text, cards and tables sit flush
+   against the screen edge on laptops down to phones. Desktop ≥1920 untouched —
+   it relies on the centring margin for its breathing room. */
+@media (max-width: 1439px) {
+  .ln-wrap { padding-left: 32px; padding-right: 32px; }
+}
+@media (max-width: 1023px) {
+  .ln-wrap { padding-left: 24px; padding-right: 24px; }
+}
+@media (max-width: 639px) {
+  .ln-wrap { padding-left: 20px; padding-right: 20px; }
+}
+
 /* 48px top + 48px bottom = uniform 96px visible gap between any two
    consecutive .ln-section blocks. Other sections (hero / marquee / cta /
    footer) match the 48px on the sides that face another section so the

@@ -2450,7 +2450,7 @@ CREATE TABLE "public"."product_custom_fields" (
     "updated_at" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "is_global" boolean DEFAULT false NOT NULL,
     "position" integer DEFAULT 0 NOT NULL,
-    CONSTRAINT "product_custom_fields_field_type_check" CHECK ((("field_type")::"text" = ANY (ARRAY[('string'::character varying)::"text", ('number'::character varying)::"text", ('boolean'::character varying)::"text", ('json'::character varying)::"text"])))
+    CONSTRAINT "product_custom_fields_field_type_check" CHECK ((("field_type")::"text" = ANY (ARRAY[('string'::character varying)::"text", ('number'::character varying)::"text", ('boolean'::character varying)::"text", ('json'::character varying)::"text", ('file'::character varying)::"text"])))
 );
 
 

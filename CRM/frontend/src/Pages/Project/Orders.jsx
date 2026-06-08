@@ -6,6 +6,7 @@ import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown,
          Receipt, ArrowUUpLeft, Printer } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { formatMoney } from '../../Utils/currency.js';
+import MediaThumb from '../../Utils/MediaThumb.jsx';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import { useInfiniteList } from '../../Utils/useInfiniteList.js';
 import { useInfiniteScroll } from '../../Utils/useInfiniteScroll.js';
@@ -553,7 +554,7 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
                 {detail.items.map((item, i) => (
                   <div key={i} className="ord-modal-item">
                     {item.image_url && (
-                      <img src={item.image_url} alt={item.title} className="ord-modal-img" />
+                      <MediaThumb url={item.image_url} alt={item.title} className="ord-modal-img" />
                     )}
                     <div className="ord-modal-item-info">
                       <span className="ord-modal-item-name">{item.title}</span>

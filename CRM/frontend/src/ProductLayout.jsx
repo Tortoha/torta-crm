@@ -98,6 +98,7 @@ function ProductLayout() {
         org_id:   ctx.org_id,
         org_name: ctx.org_name,
         org_slug: ctx.org_slug,
+        plan_slug: ctx.plan_slug,
       };
       setProject(proj);
       try { window.__torta_project = proj; } catch { /* no-op */ }

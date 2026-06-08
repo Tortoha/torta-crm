@@ -8,6 +8,7 @@ import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import { useUndoableSave } from '../../Utils/useUndoableSave.js';
 import { RowContextMenu } from '../../Utils/RowContextMenu.jsx';
+import MediaThumb from '../../Utils/MediaThumb.jsx';
 import VariationGalleryPopover from './VariationGallery.jsx';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, useSortable, arrayMove, rectSortingStrategy, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -413,7 +414,7 @@ function Layer1Card({ v, productId, pq, reloadProduct, registerUndo, selected, o
           className={`layer1-img-wrap pimg-hover${galleryOpen ? ' layer1-img-wrap--open' : ''}`}
           onClick={e => { e.stopPropagation(); setGalleryOpen(true); }}>
           {cover ? (
-            <img className="layer1-img" src={cover} alt={v.variation_name} />
+            <MediaThumb className="layer1-img" url={cover} alt={v.variation_name} live3d />
           ) : (
             <div className="layer1-img-empty">
               <ImageIcon weight="duotone" className="layer1-img-empty-icon" />

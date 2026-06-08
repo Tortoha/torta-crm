@@ -5,7 +5,7 @@
 Every product is one of three **types**:
 
 - **Physical** — has variations, stock, warehouses, batches, shipping. The full system.
-- **Digital** — a downloadable file; no stock or shipping.
+- **Digital** — downloadable file(s); no stock or shipping (its own section below).
 - **Service** — a bookable service, linked to the [Booking](/docs/booking-page) page.
 
 Prices everywhere use your project's currency (set in [Settings](/docs/settings)).
@@ -80,7 +80,7 @@ Depending on the product type, the detail page also has:
 - **Custom fields** — your own typed fields (text, number, boolean, date, file, JSON). A field can be **global** (shared by every product).
 - **SEO** — SEO title, meta description, keywords.
 - **Service details** (service type) — duration, capacity, "requires staff", price — wired to Booking.
-- **Digital files** (digital type) — the file(s) delivered in the order email.
+- **Preview & pricing** + **Files** (digital type) — showcase media, the price, a single-ZIP delivery toggle, and the downloadable file(s); see **Digital products** below.
 
 ### Product detail tabs
 
@@ -91,6 +91,19 @@ Depending on the product type, the detail page also has:
 | **Edit history** | read-only **stock log** (every change, who, why, which batch) + the **restock waitlist** (shoppers who asked to be notified) |
 | **Reviews** | storefront reviews for this product (read-only) |
 | **API preview** | the exact JSON the public API returns for this product — a developer aid ([Catalog](/docs/catalog)) |
+
+---
+
+## Digital products
+
+A **digital** product is sold as a single downloadable item — no variations, no stock, no shipping. Pick **Digital** as the type when you create it. Its detail page drops the layer/inventory machinery and shows two focused blocks instead:
+
+- **Preview & pricing** — the showcase media shown on the storefront (photo, video or 3D model; the **first item is the cover**) and the **price** the buyer pays. The **"Deliver all files as a single ZIP archive"** checkbox sets how the files reach the buyer: on → one `.zip` with everything; off → a separate link per file.
+- **Files** — the actual file(s) the customer downloads. Drop in any type (PDF, image, video, archive, 3D source…), several at once, up to 4 GB each; every file shows a live preview. These are the "contents" of the archive.
+
+There's **no stock** and **no shipping** — a digital product is always available. It still uses categories, custom fields, SEO, discounts and promo codes like any other product.
+
+**How the customer gets the files.** After payment the download link(s) appear in three places — the **order confirmation email**, the **Order Placed** page, and the customer's **My Orders** (permanent access, re-downloadable anytime). With the ZIP toggle on it's a single archive link; off, one link per file. The archive is rebuilt automatically whenever you add or remove files.
 
 ---
 

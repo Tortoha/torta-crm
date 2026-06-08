@@ -2,7 +2,7 @@ import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, Trash, CaretDown, ArrowCounterClockwise, DotsSixVertical, ArrowsOut, X, MagicWand } from '@phosphor-icons/react';
+import { Plus, Trash, CaretDown, ArrowCounterClockwise, DotsSixVertical, ArrowsOut, X, MagicWand, CloudArrowUp, Image as ImageIcon } from '@phosphor-icons/react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json as cmJson } from '@codemirror/lang-json';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -11,12 +11,16 @@ import { CSS } from '@dnd-kit/utilities';
 import { API_BASE } from '../../api.js';
 import { useFieldMirror } from '../../Utils/usePresence.js';
 import { presignedUpload } from '../../Utils/upload.js';
+import { onUploadProgress } from '../../Utils/uploadProgress.js';
 import { decodeHash } from '../../Utils/hashids.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import { useUndoStack } from '../../Utils/UndoStack.js';
 import { useUndoableSave } from '../../Utils/useUndoableSave.js';
 import { RowContextMenu } from '../../Utils/RowContextMenu.jsx';
 import { safeHttpUrl } from '../../Utils/safeUrl.js';
+import FilePreview from '../../Utils/FilePreview.jsx';
+import MediaThumb from '../../Utils/MediaThumb.jsx';
+import VariationGalleryPopover from './VariationGallery.jsx';
 import LayerBlock, { snapshotLayerNode } from './LayerBlock.jsx';
 import SpecificationsBlock from './SpecificationsBlock.jsx';
 import PrintBarcodesModal from '../Project/Products/PrintBarcodesModal.jsx';
@@ -44,6 +48,9 @@ export default function ProductOverview() {
   // How many layers are visible. Min = max(1, backend max_layer); user expands via "Create new layer".
   const [shownLayers, setShownLayers] = useState(1);
   const toastRef = useRef(null);
+  // Live upload progress (driven by presignedUpload through the global channel) — shown in the bottom pill.
+  const [upload, setUpload] = useState({ active: false, percent: 0, name: '' });
+  useEffect(() => onUploadProgress(setUpload), []);
   const { register: registerUndo, undo: performUndo, toast: undoToast, dismissToast: dismissUndo } = useUndoStack();
 
   // Bulk-select: single source of truth; switching scope auto-clears the previous one.
@@ -244,6 +251,12 @@ export default function ProductOverview() {
       )}
 
 
+      {/* Digital: preview media gallery + price + file-delivery — sits above Files. */}
+      {product.product_type === 'digital' && (
+        <DigitalPreviewBlock product={product} productId={productId} pq={pq}
+          showToast={showToast} />
+      )}
+
       {/* Digital files — primary block for type=digital. */}
       {product.product_type === 'digital' && (
         <DigitalFilesBlock product={product} productId={productId} pq={pq}
@@ -311,7 +324,22 @@ export default function ProductOverview() {
         <SeoBlock product={product} pq={pq} setProduct={setProduct} showToast={showToast} registerUndo={registerUndo} />
       )}
 
-      {toast && createPortal(
+      {upload.active && createPortal(
+        <div className="auth-toast auth-toast--progress" role="status" aria-live="polite">
+          <div className="auth-toast-prog-row">
+            <span className="auth-toast-prog-name">
+              {t('productDetail.upload.uploading', 'Uploading…')}{upload.name ? ` · ${upload.name}` : ''}
+            </span>
+            <span className="auth-toast-prog-pct">{upload.percent}%</span>
+          </div>
+          <div className="auth-toast-prog-track">
+            <div className="auth-toast-prog-fill" style={{ width: `${upload.percent}%` }} />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {!upload.active && toast && createPortal(
         <div className="auth-toast">{toast}</div>,
         document.body
       )}
@@ -1486,36 +1514,167 @@ function ServiceDetailsBlock({ product, pq, registerUndo, showToast }) {
 // Direct upload UI for digital products. Each file becomes a Custom Field of
 // type=file with `field_key = file_<n>`. Customers see download links in
 // their order confirmation email (via the digital_html block in External).
+// ─── Preview & pricing (type=digital) ─────────────────────────────
+// A digital product carries its showcase media + price on a single hidden L1
+// config row (the storefront/External read image/images/price straight off L1, so
+// a digital product just needs one L1 row to render like any other). This block
+// edits that row: a cover that opens the shared VariationGalleryPopover (photo /
+// video / 3D, drag to reorder, slot 0 = cover), a price input, and a delivery
+// toggle (one ZIP vs. separate downloads, persisted on the product itself).
+function DigitalPreviewBlock({ product, productId, pq, showToast }) {
+  const { t } = useTranslation();
+  const [cfg, setCfg]     = useState(null);   // { variation_id, price, images, digital_zip }
+  const [price, setPrice] = useState('');
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const coverRef = useRef(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE}/api/products/${productId}/digital-config${pq}`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive && d) { setCfg(d); setPrice(d.price ?? ''); } })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [productId, pq]);
+
+  const images = cfg?.images || [];
+  const cover  = images[0] || null;
+
+  // Price + images both ride the existing PUT /layers/1/{var_id} endpoint.
+  const savePrice = async () => {
+    if (!cfg) return;
+    const num = price === '' ? 0 : Math.max(0, Number(price) || 0);
+    setPrice(String(num));
+    const r = await fetch(`${API_BASE}/api/products/${productId}/layers/1/${cfg.variation_id}${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ price: num }),
+    }).catch(() => null);
+    if (!r || !r.ok) showToast?.(t('productDetail.digital.saveFailed'));
+  };
+
+  const saveZip = async (checked) => {
+    setCfg(c => (c ? { ...c, digital_zip: checked } : c));
+    const r = await fetch(`${API_BASE}/api/products/${productId}${pq}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ digital_zip: checked }),
+    }).catch(() => null);
+    if (!r || !r.ok) showToast?.(t('productDetail.digital.saveFailed'));
+  };
+
+  return (
+    <section className="po-block">
+      <h2 className="po-block-title">{t('productDetail.preview.title')}</h2>
+      <p className="po-block-hint">{t('productDetail.preview.hint')}</p>
+
+      <div className="po-dp-grid">
+        {/* Showcase media — cover thumbnail opens the shared gallery popover. */}
+        <div className="po-dp-media">
+          <button type="button" ref={coverRef} className="po-dp-cover"
+            onClick={() => cfg && setGalleryOpen(true)}>
+            {cover ? (
+              <MediaThumb className="po-dp-cover-media" url={cover} alt={product.title} live3d />
+            ) : (
+              <span className="po-dp-cover-empty">
+                <ImageIcon weight="duotone" />
+                <span>{t('productDetail.preview.addMedia')}</span>
+              </span>
+            )}
+            {images.length > 1 && <span className="po-dp-count">{images.length}</span>}
+          </button>
+          <p className="po-dp-media-hint">{t('productDetail.preview.mediaHint')}</p>
+          {galleryOpen && cfg && (
+            <VariationGalleryPopover
+              anchorRef={coverRef}
+              productId={productId}
+              variationId={cfg.variation_id}
+              pq={pq}
+              initialImages={images}
+              onChange={(next) => setCfg(c => (c ? { ...c, images: next } : c))}
+              onClose={() => setGalleryOpen(false)} />
+          )}
+        </div>
+
+        {/* Price + file delivery. */}
+        <div className="po-dp-fields">
+          <div className="po-dp-field">
+            <label className="po-dp-label" htmlFor="po-dp-price">{t('productDetail.preview.price')}</label>
+            {/* .po-form ancestor → the input inherits the exact light/dark "box" of
+                the General fields (Title/Subtitle), incl. the [data-theme=dark] rule. */}
+            <div className="po-form">
+              <input id="po-dp-price" className="crm-input po-input"
+                type="number" min="0" step="0.01" inputMode="decimal"
+                value={price} disabled={!cfg}
+                onChange={e => setPrice(e.target.value)}
+                onBlur={savePrice}
+                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+            </div>
+            <p className="po-dp-hint">{t('productDetail.preview.priceHint')}</p>
+          </div>
+
+          <div className="po-dp-field">
+            <span className="po-dp-label">{t('productDetail.preview.delivery')}</span>
+            <label className="po-dp-check">
+              <input type="checkbox" className="cat-prod-checkbox"
+                checked={!!cfg?.digital_zip} disabled={!cfg}
+                onChange={e => saveZip(e.target.checked)} />
+              <span className="po-dp-check-text">{t('productDetail.preview.zip')}</span>
+            </label>
+            <p className="po-dp-hint">{t('productDetail.preview.zipHint')}</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
   const { t } = useTranslation();
   const inputRef = useRef(null);
   const fileFields = (product.custom_fields || [])
     .filter(f => !f.is_placeholder && f.field_type === 'file' && f.field_value);
 
-  const upload = async (file) => {
-    if (!file) return;
-    const fd = new FormData(); fd.append('file', file);
-    const upRes = await fetch(`${API_BASE}/api/upload/file${pq}`, {
-      method: 'POST', credentials: 'include', body: fd,
-    });
-    const upData = await upRes.json();
-    if (!upRes.ok || !upData.url) { showToast?.(t('productDetail.digital.uploadFailed')); return; }
-    // Pick a unique file_<n> key.
+  const [dragging, setDragging] = useState(false);
+
+  // After any file change, ask the backend to repack the .zip bundle. No-op unless
+  // the merchant turned on one-ZIP delivery; fire-and-forget so the UI never waits.
+  const rebuildZip = () => {
+    fetch(`${API_BASE}/api/products/${productId}/digital-zip/rebuild${pq}`, {
+      method: 'POST', credentials: 'include',
+    }).catch(() => {});
+  };
+
+  // Multi-file upload via presigned direct-to-R2 — ANY file type, up to 4 GB (the old
+  // /api/upload/file proxy capped uploads at ~32 MB). Drives the bottom progress pill.
+  const uploadMany = async (files) => {
+    const list = Array.from(files || []).filter(Boolean);
+    if (!list.length) return;
+    // Reserve unique file_<n> keys up front so the sequential state updates don't collide.
     const taken = new Set(fileFields.map(f => f.field_key));
     let n = 1;
-    while (taken.has(`file_${n}`)) n++;
-    const key = `file_${n}`;
-    const cfRes = await fetch(`${API_BASE}/api/products/${productId}/custom-fields${pq}`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ field_key: key, field_value: upData.url, field_type: 'file', is_global: false }),
-    });
-    if (!cfRes.ok) { showToast?.(t('productDetail.digital.saveFailed')); return; }
-    setProduct(p => ({ ...p,
-      custom_fields: [...(p.custom_fields || []),
-        { field_key: key, field_value: upData.url, field_type: 'file', is_global: false, is_placeholder: false }],
-    }));
-    showToast?.(t('productDetail.digital.fileAdded'));
+    const nextKey = () => { while (taken.has(`file_${n}`)) n++; const k = `file_${n}`; taken.add(k); return k; };
+    let added = 0;
+    for (const file of list) {
+      try {
+        const { url } = await presignedUpload(file, { pq, kind: 'file', productId });
+        const key = nextKey();
+        const cfRes = await fetch(`${API_BASE}/api/products/${productId}/custom-fields${pq}`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field_key: key, field_value: url, field_type: 'file', is_global: false }),
+        });
+        if (!cfRes.ok) { showToast?.(t('productDetail.digital.saveFailed')); continue; }
+        setProduct(p => ({ ...p,
+          custom_fields: [...(p.custom_fields || []),
+            { field_key: key, field_value: url, field_type: 'file', is_global: false, is_placeholder: false }],
+        }));
+        added++;
+      } catch (e) {
+        if (!e.planLimit) showToast?.(e.message || t('productDetail.digital.uploadFailed'));
+      }
+    }
+    if (added) { showToast?.(t('productDetail.digital.fileAdded')); rebuildZip(); }
   };
 
   const remove = async (key) => {
@@ -1525,6 +1684,7 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
     });
     if (!res.ok) return;
     setProduct(p => ({ ...p, custom_fields: (p.custom_fields || []).filter(f => f.field_key !== key) }));
+    rebuildZip();
   };
 
   return (
@@ -1533,33 +1693,44 @@ function DigitalFilesBlock({ product, productId, pq, setProduct, showToast }) {
       <p className="po-block-hint">
         {t('productDetail.digital.hint')}
       </p>
-      <div className="po-files-list">
-        {fileFields.length === 0 && (
-          <p className="po-files-empty">{t('productDetail.digital.empty')}</p>
+      <div className={`po-files-dropzone${dragging ? ' po-files-dropzone--over' : ''}`}
+        onDragOver={e => { e.preventDefault(); if (!dragging) setDragging(true); }}
+        onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
+        onDrop={e => { e.preventDefault(); setDragging(false); uploadMany(e.dataTransfer.files); }}>
+        {fileFields.length > 0 && (
+          <div className="po-files-list">
+            {fileFields.map(f => {
+              const fname = decodeURIComponent(f.field_value.split('/').pop().replace(/^[a-f0-9]{24}_/, ''));
+              return (
+                <div key={f.field_key} className="po-files-row">
+                  <span className="po-files-thumb">
+                    <FilePreview url={f.field_value} alt={fname} className="po-files-thumb-media" />
+                  </span>
+                  {/* Scheme-validate the file URL — see safeUrl note above. */}
+                  <a className="po-files-link" href={safeHttpUrl(f.field_value, '#')}
+                    target="_blank" rel="noopener noreferrer" title={f.field_value}>
+                    {fname || f.field_key}
+                  </a>
+                  <button type="button" className="po-files-remove" onClick={() => remove(f.field_key)}>
+                    <Trash />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         )}
-        {fileFields.map(f => {
-          const fname = decodeURIComponent(f.field_value.split('/').pop().replace(/^[a-f0-9]{24}_/, ''));
-          return (
-            <div key={f.field_key} className="po-files-row">
-              <span className="po-files-icon">📄</span>
-              {/* Scheme-validate the file URL — see safeUrl note above. */}
-              <a className="po-files-link" href={safeHttpUrl(f.field_value, '#')}
-                target="_blank" rel="noopener noreferrer" title={f.field_value}>
-                {fname || f.field_key}
-              </a>
-              <button type="button" className="po-files-remove" onClick={() => remove(f.field_key)}>
-                <Trash />
-              </button>
-            </div>
-          );
-        })}
+        <input ref={inputRef} type="file" multiple className="hidden-input"
+          onChange={e => { uploadMany(e.target.files); e.target.value = ''; }} />
+        <div className="po-files-cta">
+          <span className="po-files-cta-icon"><CloudArrowUp weight="duotone" /></span>
+          <p className="po-files-cta-main">{t('productDetail.digital.dropMain', 'Drag & drop files here')}</p>
+          <button type="button" className="po-add-pill po-files-add"
+            onClick={() => inputRef.current?.click()}>
+            <Plus weight="bold" /> {t('productDetail.digital.uploadFile')}
+          </button>
+          <p className="po-files-cta-hint">{t('productDetail.digital.dropHint', 'PDF, image, video, archive — any type, multiple at once')}</p>
+        </div>
       </div>
-      <input ref={inputRef} type="file" className="hidden-input"
-        onChange={e => { upload(e.target.files?.[0]); e.target.value = ''; }} />
-      <button type="button" className="po-add-pill po-files-add"
-        onClick={() => inputRef.current?.click()}>
-        <Plus weight="bold" /> {t('productDetail.digital.uploadFile')}
-      </button>
     </section>
   );
 }

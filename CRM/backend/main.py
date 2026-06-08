@@ -31,7 +31,7 @@ import sys, os
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
-import hashlib, secrets, jwt, random, io, json, re, time
+import hashlib, secrets, jwt, random, io, json, re, time, zipfile
 import urllib.request, urllib.error, urllib.parse
 import hmac
 from dotenv import load_dotenv
@@ -1471,6 +1471,42 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] drop event product_type failed: {e}")
 
+    # Digital products: per-product delivery preference. digital_zip = bundle every
+    # downloadable file into one .zip on delivery vs. let the buyer grab each file
+    # separately. The preview gallery + price ride on a single hidden L1 config row
+    # (seeded in create_product / lazily in get_digital_config) so the storefront and
+    # External serve image/images/price off L1 exactly like any other product.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS digital_zip BOOLEAN NOT NULL DEFAULT FALSE")
+            # Pre-built bundle URL — the CRM file list is the archive's "contents";
+            # the backend packs them into one .zip in R2 and stores its URL here,
+            # rebuilt whenever the files change (see _rebuild_digital_zip).
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS digital_zip_url VARCHAR(1000)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] products.digital_zip failed: {e}")
+
+    # Digital products need one hidden sellable L2 SKU so the storefront commerce
+    # pipeline (cart / checkout / order — all keyed on L2) treats them as a normal
+    # single-SKU item: price inherits L1 (NULL), stock effectively unlimited (digital
+    # has no real stock; it's hidden in the UI). Backfill digital products with an L1
+    # but no L2. Idempotent via NOT EXISTS.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                INSERT INTO product_configurations_l2
+                    (product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position)
+                SELECT l1.product_id, l1.id, 'Digital', NULL, 1000000, 0, 0
+                  FROM product_configurations_l1 l1
+                  JOIN products p ON p.id = l1.product_id
+                 WHERE p.product_type = 'digital'
+                   AND NOT EXISTS (SELECT 1 FROM product_configurations_l2 l2 WHERE l2.variation_id = l1.id)
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] digital L2 backfill failed: {e}")
+
     # Phase 1: SaaS-grade physical product fields (catalog ID, shipping flags, inventory, B2B, OG).
     try:
         with db_cursor() as (conn, cur):
@@ -2192,6 +2228,13 @@ def run_migrations():
                 ) sub
                 WHERE cf.id = sub.id AND cf.position = 0
             """)
+
+            # Allow field_type='file' (digital-product downloads). The original CHECK
+            # only permitted string/number/boolean/json, so saving a digital file
+            # 500'd with a constraint violation. Drop + re-add with 'file' (idempotent).
+            cur.execute("ALTER TABLE product_custom_fields DROP CONSTRAINT IF EXISTS product_custom_fields_field_type_check")
+            cur.execute("ALTER TABLE product_custom_fields ADD CONSTRAINT product_custom_fields_field_type_check "
+                        "CHECK (field_type IN ('string','number','boolean','json','file'))")
 
             conn.commit()
     except Exception as e:
@@ -4951,6 +4994,8 @@ class UpdateProductRequest(BaseModel):
     sale_value:      Optional[float] = None
     sale_starts_at:  Optional[str]   = None  # ISO; null = effective immediately
     sale_ends_at:    Optional[str]   = None  # ISO; null = no end
+    # ── Digital delivery ──
+    digital_zip:     Optional[bool]  = None  # True = bundle download files into one .zip
 
 class TaxCategoryRequest(BaseModel):
     name: Optional[str] = None
@@ -10117,6 +10162,25 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
                 " VALUES (%s, %s, %s, %s, 30, 0, TRUE)",
                 (project_id, new_id, sanitize(name), sanitize(request.description or ""))
             )
+        # type=digital → seed the single hidden L1 config row that carries the
+        # preview gallery + price (storefront/External read image/images/price from
+        # L1). High stock so the unlimited single-SKU download is always purchasable.
+        if ptype == "digital":
+            cur.execute(
+                "INSERT INTO product_configurations_l1 (product_id, variation_name, images, price, stock_quantity, sold_quantity, position)"
+                " VALUES (%s, '', '{}', 0, 1000000, 0, 0) RETURNING id",
+                (new_id,)
+            )
+            _dig_l1 = cur.fetchone()["id"]
+            # One hidden sellable SKU (L2) so the storefront's L2-based commerce
+            # pipeline (cart / checkout / order) treats the digital product as a normal
+            # single-SKU item. price=NULL → inherits the L1 price; stock effectively
+            # unlimited (digital has no stock — it's hidden everywhere in the UI).
+            cur.execute(
+                "INSERT INTO product_configurations_l2 (product_id, variation_id, configuration_name, price, stock_quantity, position)"
+                " VALUES (%s, %s, 'Digital', NULL, 1000000, 0)",
+                (new_id, _dig_l1)
+            )
         conn.commit()
         return {"id": new_id, "title": name, "product_type": ptype}
 
@@ -10125,7 +10189,7 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
 def get_product_project_context(product_id: int, user: dict = Depends(get_current_user)):
     row = db_one(
         "SELECT p.project_id, pr.name AS project_name, pr.api_key, pr.org_id,"
-        " o.name AS org_name, o.slug AS org_slug"
+        " o.name AS org_name, o.slug AS org_slug, COALESCE(o.plan_slug, 'free') AS plan_slug"
         " FROM products p"
         " JOIN crm_projects pr ON p.project_id = pr.id"
         " JOIN crm_organizations o ON pr.org_id = o.id"
@@ -10141,6 +10205,7 @@ def get_product_project_context(product_id: int, user: dict = Depends(get_curren
         "org_id":       row["org_id"],
         "org_name":     row["org_name"],
         "org_slug":     row["org_slug"],
+        "plan_slug":    row["plan_slug"],
     }
 
 
@@ -10373,6 +10438,8 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
         fields.append("is_archived=%s"); vals.append(bool(request.is_archived))
     if request.is_paused is not None:
         fields.append("is_paused=%s"); vals.append(bool(request.is_paused))
+    if request.digital_zip is not None:
+        fields.append("digital_zip=%s"); vals.append(bool(request.digital_zip))
     # ── Phase 1: SaaS-grade physical fields ──
     for fld in ("sku", "barcode", "brand", "manufacturer", "vendor",
                 "country_of_origin", "hs_code"):
@@ -10454,6 +10521,9 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
                 sync_vals
             )
         conn.commit()
+    # Flipping the ZIP toggle (on → build from current files, off → drop the bundle).
+    if request.digital_zip is not None:
+        _rebuild_digital_zip(project_id, product_id)
     return {"ok": True}
 
 
@@ -10510,6 +10580,9 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
         url = (r or {}).get("image_url")
         if url:
             s3_delete_url(url, prefix)
+    # Digital products: files + their generated .zip bundle live under a per-product
+    # folder — wipe the whole prefix (no-op for products without any).
+    s3_delete_prefix(f"projects/{project_id}/files/{product_id}/")
     return {"ok": True}
 
 
@@ -12070,6 +12143,148 @@ def delete_variation(product_id: int, var_id: int, project_id: int = Query(...),
     return {"ok": True}
 
 
+# ── Digital-product ZIP bundling ──────────────────────────────────
+# When a merchant turns on "deliver as one ZIP", the CRM file list becomes the
+# *contents* of an archive: the backend packs every downloadable file into a single
+# .zip stored in R2, rebuilt whenever the files (or the toggle) change. External's
+# order-paid email then hands out that one URL instead of N per-file links.
+_DIGITAL_ZIP_MAX_BYTES = 200 * 1024 * 1024   # 200 MB total — above this we skip auto-bundling
+                                             # (keeps the in-RAM zip within Cloud Run limits)
+
+def _digital_zip_key(project_id: int, product_id: int) -> str:
+    # Stable key (overwritten each rebuild), parked alongside the product's files.
+    return f"projects/{project_id}/files/{product_id}/_bundle.zip"
+
+def _clear_digital_zip(project_id: int, product_id: int) -> None:
+    s3_delete(_digital_zip_key(project_id, product_id))
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE products SET digital_zip_url=NULL WHERE id=%s AND project_id=%s",
+                    (product_id, project_id))
+        conn.commit()
+
+def _rebuild_digital_zip(project_id: int, product_id: int) -> None:
+    """Rebuild (or clear) a digital product's downloadable .zip and store its URL on
+    products.digital_zip_url. Best-effort: any failure is logged and leaves the prior
+    state intact, so the calling write still succeeds (delivery falls back to per-file
+    links). No-op unless the product is digital AND digital_zip is on."""
+    if not STORAGE_ENABLED:
+        return
+    prod = db_one("SELECT product_type, digital_zip, digital_zip_url FROM products "
+                  "WHERE id=%s AND project_id=%s", (product_id, project_id))
+    if not prod:
+        return
+    # Off (or not digital) → drop any stale bundle and bail.
+    if prod.get("product_type") != "digital" or not prod.get("digital_zip"):
+        if prod.get("digital_zip_url"):
+            _clear_digital_zip(project_id, product_id)
+        return
+    rows = db_all(
+        "SELECT field_value FROM product_custom_fields "
+        "WHERE project_id=%s AND product_id=%s AND field_type='file' AND field_value <> ''",
+        (project_id, product_id)
+    )
+    keys = [k for k in (s3_key_from_url(r["field_value"]) for r in rows) if k]
+    if not keys:
+        if prod.get("digital_zip_url"):
+            _clear_digital_zip(project_id, product_id)
+        return
+    try:
+        total = sum(s3_head_size(k) for k in keys)
+        if total > _DIGITAL_ZIP_MAX_BYTES:
+            print(f"[digital_zip] product {product_id}: {total} B over cap — left as per-file")
+            return
+        s3 = _s3_client()
+        buf = io.BytesIO()
+        used = set()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for k in keys:
+                name = urllib.parse.unquote(os.path.basename(k)) or "file"
+                stem, dot, ext = name.rpartition(".")
+                n = 2
+                while name in used:                       # de-dupe identical filenames
+                    name = f"{stem} ({n}).{ext}" if dot else f"{name} ({n})"
+                    n += 1
+                used.add(name)
+                # Stream each object into the zip entry in 1 MB chunks — the source
+                # file is never held whole in RAM (only the growing zip is, bounded
+                # by the size cap above).
+                body = s3.get_object(Bucket=STORAGE_BUCKET, Key=k)["Body"]
+                with zf.open(name, "w") as dest:
+                    while True:
+                        chunk = body.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        dest.write(chunk)
+        buf.seek(0)
+        title = (db_one("SELECT title FROM products WHERE id=%s", (product_id,)) or {}).get("title") or "download"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", title).strip("_") or "download"
+        url = s3_upload(buf, _digital_zip_key(project_id, product_id),
+                        content_type="application/zip", cache_control="no-cache",
+                        content_disposition=f'attachment; filename="{safe}.zip"')
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE products SET digital_zip_url=%s WHERE id=%s", (url, product_id))
+            conn.commit()
+        print(f"[digital_zip] product {product_id}: bundled {len(keys)} file(s)")
+    except Exception as e:
+        print(f"[digital_zip] product {product_id} rebuild failed: {e}")
+
+
+@app.get("/api/products/{product_id}/digital-config")
+def get_digital_config(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Single source of truth for a digital product's preview gallery + price.
+
+    Lazily materialises the one L1 config row a digital product needs (products
+    created before this was seeded in create_product get it on first open). The
+    frontend manages images through the existing PUT /layers/1/{var_id} machinery
+    (VariationGalleryPopover) and price through the same endpoint — this just hands
+    back the variation_id to target plus the current values."""
+    require_page_auto(user, project_id)
+    prod = db_one("SELECT id, digital_zip, digital_zip_url FROM products WHERE id=%s AND project_id=%s",
+                  (product_id, project_id))
+    if not prod:
+        raise HTTPException(404, "Product not found")
+    row = db_one("SELECT id, price, images FROM product_configurations_l1 "
+                 "WHERE product_id=%s ORDER BY id ASC LIMIT 1", (product_id,))
+    if not row:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO product_configurations_l1 (product_id, variation_name, images, price, stock_quantity, sold_quantity, position)"
+                " VALUES (%s, '', '{}', 0, 1000000, 0, 0) RETURNING id, price, images",
+                (product_id,)
+            )
+            row = cur.fetchone()
+            conn.commit()
+    # Ensure the hidden sellable L2 SKU exists (storefront cart/checkout pipeline is
+    # built around L2 — without it the product shows $0 / out-of-stock / can't be bought).
+    if not db_one("SELECT 1 FROM product_configurations_l2 WHERE variation_id=%s", (row["id"],)):
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO product_configurations_l2 (product_id, variation_id, configuration_name, price, stock_quantity, position)"
+                " VALUES (%s, %s, 'Digital', NULL, 1000000, 0)",
+                (product_id, row["id"])
+            )
+            conn.commit()
+    return {
+        "variation_id":   row["id"],
+        "price":          float(row["price"]) if row.get("price") is not None else None,
+        "images":         list(row.get("images") or []),
+        "digital_zip":    bool(prod.get("digital_zip")),
+        "digital_zip_url": prod.get("digital_zip_url"),
+    }
+
+
+@app.post("/api/products/{product_id}/digital-zip/rebuild")
+def rebuild_digital_zip_endpoint(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Re-pack the digital product's files into its R2 .zip. The CRM fires this after
+    files are added/removed; it no-ops unless digital_zip is on, so the frontend can
+    call it blindly after any file change."""
+    require_page_auto(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    _rebuild_digital_zip(project_id, product_id)
+    return {"ok": True}
+
+
 # ── CONFIGURATIONS (priced options of a variation: sizes / portions / capacity / etc.) ──
 
 @app.post("/api/products/{product_id}/variations/{var_id}/configurations")
@@ -13004,6 +13219,12 @@ def delete_custom_field(product_id: int, field_key: str, project_id: int = Query
         else:
             cur.execute("DELETE FROM product_custom_fields WHERE id=%s", (row["id"],))
         conn.commit()
+    # Also remove the backing object from R2 for file-type fields (digital products) —
+    # otherwise deleting a file in the CRM leaves an orphan in storage. Best-effort +
+    # project-prefixed so it can never touch another tenant's keys.
+    for r in removed:
+        if r.get("field_type") == "file" and r.get("field_value"):
+            s3_delete_url(r["field_value"], f"projects/{project_id}/")
     return {"ok": True, "cascaded": bool(row["is_global"]), "removed": removed}
 
 
@@ -15392,6 +15613,7 @@ class PresignRequest(BaseModel):
     content_type: Optional[str] = ""
     size: int
     kind: Optional[str] = "file"             # "image" | "media" | "file"
+    product_id: Optional[int] = None         # digital files: groups them in one per-product folder
 
 class ConfirmUploadRequest(BaseModel):
     key: str
@@ -15418,9 +15640,22 @@ def presign_upload(body: PresignRequest, project_id: int = Query(...),
     safe = (_re_local.sub(r"[^a-zA-Z0-9._-]", "_", body.filename or "file")[:120] or "file")
     ext  = safe.rsplit(".", 1)[-1].lower() if "." in safe else ""
     kind = (body.kind or "file").lower()
-    folder = (f"projects/{project_id}/products" if kind in ("image", "media")
-              else f"projects/{project_id}/files")
-    key   = f"{folder}/{secrets.token_hex(16)}" + (f".{ext}" if ext else "")
+    # Digital files get a HUMAN-READABLE key — projects/{id}/files/{product}/{filename}
+    # — so the bucket is browsable and the original name survives. The product
+    # subfolder namespaces collisions between products. Other kinds keep a random hex.
+    if kind == "file" and body.product_id:
+        # All of a digital product's files live in ONE folder keyed by the product id
+        # (stable — survives renames, keeps the files grouped). Filename preserved;
+        # uploading the same name twice replaces it, which is the expected behaviour.
+        key = f"projects/{project_id}/files/{int(body.product_id)}/{safe}"
+    elif kind == "file":
+        # No product context (e.g. a custom-field file) → per-upload hash subfolder +
+        # original name so unrelated files never collide.
+        key = f"projects/{project_id}/files/{secrets.token_hex(8)}/{safe}"
+    else:
+        folder = (f"projects/{project_id}/products" if kind in ("image", "media")
+                  else f"projects/{project_id}/files")
+        key = f"{folder}/{secrets.token_hex(16)}" + (f".{ext}" if ext else "")
     ctype = body.content_type or "application/octet-stream"
     # Digital downloads: ANY file type is allowed, but forced as `attachment` so
     # it can never render/execute — it's a download from the R2 (cdn) domain,
@@ -18868,7 +19103,14 @@ MEDIA_SIG_SECRET = os.getenv("MEDIA_SIG_SECRET") or secrets.token_hex(32)
 
 # 24h signed URL — long enough that an opened conversation keeps working all day, short enough to limit scrape windows if leaked.
 def _sign_chat_media_url(msg_id: int, idx: int, project_id: int, ttl_seconds: int = 86400) -> str:
-    exp = int(time.time()) + ttl_seconds
+    # Bucket the expiry to a fixed window so re-signing the SAME attachment yields a
+    # byte-identical URL within that window. Otherwise every message re-fetch mints a
+    # fresh exp/sig → the <img src> string changes → the browser re-downloads every
+    # attachment on every poll (and each Telegram/WhatsApp proxy hit re-calls the
+    # external API). Day-aligned bucket → each client fetches a given attachment at
+    # most once per window; everything else is a browser HTTP-cache hit (max-age=86400).
+    window = max(ttl_seconds, 1)
+    exp = (int(time.time()) // window + 2) * window   # 1–2 windows ahead, stable within the window
     payload  = f"{msg_id}.{idx}.{project_id}.{exp}"
     sig      = hmac.new(MEDIA_SIG_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
     return f"{CRM_BACKEND_URL}/api/chat/media/{msg_id}/{idx}?pid={project_id}&exp={exp}&sig={sig}"
@@ -27005,7 +27247,7 @@ _health_mv_last_refresh    = None   # type: Optional[datetime]
 _health_alerts_last_loop   = None   # type: Optional[datetime]
 
 
-@app.get("/api/ready")
+@app.api_route("/api/ready", methods=["GET", "HEAD"])
 def healthcheck_ready():
     """Shallow probe — does the process answer HTTP and has the DB pool
     been initialised? Cheap; Docker/K8s hits this every few seconds."""
@@ -27014,7 +27256,7 @@ def healthcheck_ready():
     return {"ready": True}
 
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def healthcheck_full():
     """Deep probe — every critical subsystem. Returns HTTP 200 with
     per-component status object even when degraded, so ops can see the

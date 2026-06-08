@@ -129,40 +129,70 @@
 /* ════════════════════════════════════════════════════════════════════════
    DOCS — RESPONSIVE (desktop ≥1920 untouched)
 
-   Docs sidebar becomes a drawer on tablet/mobile (handled in Layout.css).
-   Main content tightens padding, code blocks scroll horizontally cleanly.
+   The docs sidebar becomes a left-slide drawer on tablet/mobile (driven by
+   DocsLayout state + the global .sidebar--collapsed rules in Layout.css).
+   Here we adapt the ARTICLE: the desktop 128px top / 32px side padding and
+   the big headings are far too large on a phone.
+
+   NOTE: these rules previously targeted a non-existent `.doc-content` class
+   (the real markup is `.doc-article`), so NONE of them applied — the docs
+   body rendered at full desktop size on phones. Corrected to `.doc-article`.
    ════════════════════════════════════════════════════════════════════════ */
 
+@media (max-width: 1023px) {
+  .doc-article { padding: 72px 24px 80px; }
+  .doc-empty   { padding: 56px 24px; }
+}
+
 @media (max-width: 767px) {
-  /* Tighter content padding */
-  .doc-content {
-    padding: 16px 0 48px;
+  /* .crm-main already supplies ~16px side padding on mobile — keep the article
+     sides flush so content isn't double-inset on a narrow phone. */
+  .doc-article {
+    padding: 40px 0 64px;
+    font-size: 15px;
+  }
+  .doc-article h1 { font-size: 24px; margin-bottom: 16px; }
+  .doc-article h2 { font-size: 19px; margin-top: 32px; }
+  .doc-article h3 { font-size: 16px; }
+
+  /* Wide reference tables scroll within themselves instead of blowing out the
+     page width (no awkward sideways scroll of the whole article). */
+  .doc-article table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
-  /* Reduce H1/H2 size on phones */
-  .doc-content h1 { font-size: 24px; }
-  .doc-content h2 { font-size: 19px; margin-top: 32px; }
-  .doc-content h3 { font-size: 16px; }
+  .doc-article blockquote { padding: 10px 14px; }
 
-  /* Code blocks: keep horizontal scroll (already there) but tighter padding */
-  .doc-code pre {
-    padding: 14px 14px;
-    font-size: 12px;
-  }
+  .doc-code pre { padding: 14px; font-size: 12px; }
+  /* Copy button is hover-revealed on desktop — pin it visible on touch. */
+  .doc-code-copy { opacity: 1; }
 
-  .doc-code-copy {
-    /* Always visible on touch (hover doesn't trigger reliably) */
-    opacity: 1;
-  }
+  /* Framework picker — full width on phones. */
+  .doc-fw-picker { max-width: 100%; }
 
-  /* Framework picker — full width on phones */
-  .doc-fw-picker {
-    max-width: 100%;
-  }
+  /* Long inline code / URLs / unbreakable tokens must wrap — otherwise they set
+     the line's min-content width wider than the viewport, and .crm-main's
+     overflow-x:hidden then clips the whole line (the surrounding prose too,
+     which is exactly the "text spills off the right edge" symptom). */
+  .doc-article { overflow-wrap: break-word; }
+  .doc-article :not(pre) > code { overflow-wrap: anywhere; word-break: break-word; }
+
+  /* ROOT FIX (confirmed via getBoundingClientRect on a 390px phone): a long code
+     line sized the whole .doc-article to ~712px, and .crm-main's overflow-x:hidden
+     then clipped EVERY line. Wrap code on phones so it can never stretch its
+     container, and pin the article + code wrapper to the available width. */
+  .doc-article,
+  .doc-code,
+  .doc-code pre { max-width: 100%; min-width: 0; }
+  .doc-code pre,
+  .doc-code pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 
 @media (max-width: 479px) {
-  .doc-content h1 { font-size: 22px; }
-  .doc-content h2 { font-size: 17px; }
-  .doc-code pre  { font-size: 11px; padding: 12px; }
+  .doc-article { padding: 32px 0 56px; }
+  .doc-article h1 { font-size: 22px; }
+  .doc-article h2 { font-size: 17px; }
+  .doc-code pre   { font-size: 11px; padding: 12px; }
 }

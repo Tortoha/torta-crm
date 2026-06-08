@@ -12,6 +12,15 @@ import CartButton from "./CartButton";
 import { client } from "./api.js"
 import { fmtMoney } from "./currency.js"
 
+// Mirror External's _media_type() so the gallery picks <video>/<img> correctly even
+// when the backend's typed media[] is absent (older data) — classify by extension.
+function guessMediaType(url) {
+    const u = (url || '').toLowerCase().split('?')[0];
+    if (/\.(mp4|webm|mov|m4v)$/.test(u)) return 'video';
+    if (/\.(glb|usdz|gltf)$/.test(u))    return 'model';
+    return 'image';
+}
+
 function Product() {
     const { id } = useParams();
 
@@ -179,6 +188,10 @@ function Product() {
         }
     }, [hoveredConfiguration, activeConfiguration?.id, activeVariation, page]);
 
+    // Product media gallery — active slot index; -1 means "auto" (show the cover).
+    const [activeMedia, setActiveMedia] = useState(-1);
+    useEffect(() => { setActiveMedia(-1); }, [activeVariation]);
+
     // LOADING / NOT FOUND
     if (loading) return (
         <div id="mask" className="mask">
@@ -197,6 +210,19 @@ function Product() {
 
     // VISUAL DERIVED DATA
     const currentVariation = page.conf_layer_1?.[activeVariation] || null;
+    // Typed media gallery for the active variation — prefer the backend's typed
+    // media[]; fall back to raw images[] (typed by extension) or the single cover.
+    const galleryMedia = (
+        currentVariation?.media?.length ? currentVariation.media
+        : currentVariation?.images?.length ? currentVariation.images.map(u => ({ url: u, type: guessMediaType(u) }))
+        : currentVariation?.image ? [{ url: currentVariation.image, type: guessMediaType(currentVariation.image) }]
+        : []
+    );
+    // Default view = the cover (first real image), else the first slot. activeMedia < 0 = "auto".
+    // Default to the FIRST media in gallery order (respect the merchant's ordering —
+    // if a video is first, the gallery opens on the video).
+    const activeMediaIdx = activeMedia < 0 ? 0 : Math.min(activeMedia, galleryMedia.length - 1);
+    const activeMediaItem = galleryMedia[activeMediaIdx] || null;
     const currentConfiguration = currentVariation?.conf_layer_2?.find(c => c.id === activeConfiguration?.id) || null;
     const isInCart = !!currentConfiguration?.cart_item_id;
     const cartQuantity = currentConfiguration?.cart_quantity || 1;
@@ -237,8 +263,37 @@ function Product() {
             <Header />
             <main className="product-page">
                 <div className="product-image-wrapper">
-                    {currentVariation && (
-                        <img src={currentVariation.image} alt={page.title} className="product-main-image" />
+                    {activeMediaItem && (
+                        activeMediaItem.type === 'video' ? (
+                            <video key={activeMediaItem.url} src={activeMediaItem.url}
+                                   className="product-main-image" controls playsInline preload="metadata" />
+                        ) : (
+                            <img src={activeMediaItem.url} alt={page.title} className="product-main-image" />
+                        )
+                    )}
+                    {galleryMedia.length > 1 && (
+                        <>
+                            <button type="button" aria-label="Previous"
+                                className="product-gallery-arrow product-gallery-arrow--prev"
+                                onClick={() => setActiveMedia((activeMediaIdx - 1 + galleryMedia.length) % galleryMedia.length)}>‹</button>
+                            <button type="button" aria-label="Next"
+                                className="product-gallery-arrow product-gallery-arrow--next"
+                                onClick={() => setActiveMedia((activeMediaIdx + 1) % galleryMedia.length)}>›</button>
+                        </>
+                    )}
+                    {galleryMedia.length > 1 && (
+                        <div className="product-gallery-thumbs">
+                            {galleryMedia.map((m, i) => (
+                                <button key={m.url + i} type="button"
+                                        className={`product-gallery-thumb${i === activeMediaIdx ? ' is-active' : ''}`}
+                                        onClick={() => setActiveMedia(i)}
+                                        aria-label={`Media ${i + 1}`}>
+                                    {m.type === 'image'
+                                        ? <img src={m.url} alt="" loading="lazy" />
+                                        : <span className="product-gallery-thumb-icon">{m.type === 'video' ? '▶' : '◰'}</span>}
+                                </button>
+                            ))}
+                        </div>
                     )}
                 </div>
 
@@ -267,19 +322,22 @@ function Product() {
                         <RestockButton page={page} skuId={currentConfiguration?.id} />
                     )}
 
-                    <ProductVariations
-                        variations={page.conf_layer_1}
-                        activeIndex={activeVariation}
-                        hoveredIndex={hoveredVariation}
-                        onVariationClick={handleVariationClick}
-                        onVariationHover={setHoveredVariation}
-                        isVariationInCart={(variationId) =>
-                            page.conf_layer_1.some(v => v.id === variationId && v.is_in_cart)
-                        }
-                    />
+                    {/* Digital products are a single hidden SKU — no variation/size to pick. */}
+                    {page.product_type !== 'digital' && (
+                        <ProductVariations
+                            variations={page.conf_layer_1}
+                            activeIndex={activeVariation}
+                            hoveredIndex={hoveredVariation}
+                            onVariationClick={handleVariationClick}
+                            onVariationHover={setHoveredVariation}
+                            isVariationInCart={(variationId) =>
+                                page.conf_layer_1.some(v => v.id === variationId && v.is_in_cart)
+                            }
+                        />
+                    )}
 
                     {/* ── Configurations picker (S / M / L · 30cm / 40cm · …) ── */}
-                    {currentVariation?.conf_layer_2?.length > 0 && (
+                    {page.product_type !== 'digital' && currentVariation?.conf_layer_2?.length > 0 && (
                         <div className="product-sizes">
                             <div className="sizes-wrapper">
                                 <div className="size-indicator" style={cfgIndicatorStyle} />

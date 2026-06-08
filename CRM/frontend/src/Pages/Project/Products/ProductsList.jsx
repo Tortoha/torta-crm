@@ -9,6 +9,7 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { formatMoney } from '../../../Utils/currency.js';
+import MediaThumb from '../../../Utils/MediaThumb.jsx';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
@@ -401,7 +402,7 @@ function VariationsPopover({ variations, anchorRef, onClose }) {
       onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
       {allImages.map((url, i) => (
         <div key={url} className="pvar-photo" style={{ animationDelay: `${i * 28}ms` }}>
-          <img src={url} alt="" className="pvar-thumb" />
+          <MediaThumb url={url} alt="" className="pvar-thumb" />
         </div>
       ))}
     </div>,
@@ -431,7 +432,7 @@ function ProductImage({ p, size = 'card', onPopChange }) {
     <div ref={wrapRef} className={wrapCls}
       onClick={e => { if (hasVariations) { e.stopPropagation(); toggle(); } }}>
       {p.first_image
-        ? <img src={p.first_image} alt={p.title} className={imgCls} />
+        ? <MediaThumb url={p.first_image} alt={p.title} className={imgCls} live3d={size !== 'row'} />
         : <div className={emptyCls}><Image size={iconSize} /></div>}
 
       {/* Transparent full-screen overlay — sits below the popover, intercepts all
@@ -499,7 +500,7 @@ function ProductCard({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onR
           <div className="pcard-title">{p.title}</div>
           <div className="pcard-row1">
             <span className="pcard-price">{priceLabel(p)}</span>
-            {p.total_stock > 0 && <><span className="pcard-pipe">|</span><span className="pcard-stock">{t('products.list.stock', { count: p.total_stock })}</span></>}
+            {(p.product_type || 'physical') !== 'digital' && p.total_stock > 0 && <><span className="pcard-pipe">|</span><span className="pcard-stock">{t('products.list.stock', { count: p.total_stock })}</span></>}
           </div>
           {p.reviews_count > 0 && <StarRating value={p.avg_rating} />}
         </div>
@@ -580,7 +581,7 @@ function ProdListRow({ p, onOpen, onDelete, onArchive, onUnarchive, onPause, onR
       <span className="prow-name">{p.title}</span>
       <span className="prow-cell">{p.category_name || <span className="prow-empty">—</span>}</span>
       <span className="prow-cell">{priceLabel(p)}</span>
-      <span className="prow-cell">{p.total_stock > 0 ? t('products.list.stock', { count: p.total_stock }) : '—'}</span>
+      <span className="prow-cell">{(p.product_type || 'physical') === 'digital' ? '—' : (p.total_stock > 0 ? t('products.list.stock', { count: p.total_stock }) : '—')}</span>
       <span className="prow-cell">
         {p.reviews_count > 0
           ? <StarRating value={p.avg_rating} />

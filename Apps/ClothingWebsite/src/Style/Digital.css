@@ -1,0 +1,66 @@
+/* Digital goods page — list of digital products + a "test the download" affordance.
+   Styling mirrors the storefront's clean black-accent card aesthetic. */
+
+.dg-state {
+  text-align: center;
+  color: #888;
+  margin: 56px 0;
+  font-size: 16px;
+}
+
+.dg-card {
+  align-items: stretch;
+}
+
+.dg-cover {
+  display: block;
+}
+
+/* Primary action — reveal the buyer's download links for this product. */
+.dg-dl-btn {
+  margin-top: 8px;
+  padding: 11px 18px;
+  border: none;
+  border-radius: 999px;
+  background: #111;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.dg-dl-btn:hover { opacity: 0.85; }
+
+.dg-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Each actual download — opens / saves the file or the bundle. */
+.dg-dl-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: 1px solid #111;
+  border-radius: 999px;
+  background: #fff;
+  color: #111;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  word-break: break-all;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dg-dl-link:hover {
+  background: #111;
+  color: #fff;
+}
+
+.dg-hint {
+  margin-top: 8px;
+  color: #888;
+  font-size: 13px;
+}

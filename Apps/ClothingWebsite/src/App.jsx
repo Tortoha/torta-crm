@@ -14,6 +14,7 @@ import Cart from './Cart';
 import Checkout from './Checkout';
 import OrderSuccess from './OrderSuccess';
 import Orders from './Orders';
+import DigitalProducts from './DigitalProducts';
 import Booking from './Booking';
 import BookingSuccess from './BookingSuccess';
 import { client } from "./api.js"
@@ -69,6 +70,7 @@ function App() {
           <Route path='/checkout' element={<Checkout />} />
           <Route path='/order-success' element={<OrderSuccess />} />
           <Route path='/orders' element={<Orders />} />
+          <Route path='/digital' element={<DigitalProducts />} />
           <Route path='/booking' element={<Booking />} />
           <Route path='/booking/success' element={<BookingSuccess />} />
         </Routes>

@@ -136,6 +136,108 @@
   .hdr-landing-nav { display: none; }
 }
 
+/* ── Landing mobile menu (hamburger → full-screen sheet) ──
+   Replaces the hidden .hdr-landing-nav on phones so Product / Developers /
+   Pricing / Docs stay reachable. Burger is mobile-only; sheet is full-screen. */
+.hdr-landing-burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-right: 4px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.hdr-landing-burger:hover,
+.hdr-landing-burger:active { background: var(--accent-tint); }
+@media (max-width: 640px) {
+  .hdr-landing-burger { display: inline-flex; }
+}
+
+.hdr-lm-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  animation: hdr-lm-in 0.22s var(--ease-smooth) both;
+}
+@keyframes hdr-lm-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hdr-lm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.hdr-lm-title { font-size: 17px; font-weight: 600; color: var(--text); }
+.hdr-lm-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.hdr-lm-close:hover { background: var(--accent-tint); color: var(--text); }
+.hdr-lm-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  overflow-y: auto;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+.hdr-lm-group {
+  padding: 14px 12px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hdr-lm-divider {
+  height: 1px;
+  margin: 10px 12px;
+  background: var(--border-soft);
+}
+.hdr-lm-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hdr-lm-item:hover,
+.hdr-lm-item:active { background: var(--accent-tint); }
+.hdr-lm-ic {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
 .hdr-landing-nav-ind {
   position: absolute;
   top: 2px;
@@ -411,7 +513,9 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  max-height: 220px;
+  /* Cap at ~7 rows — long lists (10+ orgs/projects/products) made the dropdown a
+     wall of text. The rest stay reachable via scroll, search, or the "All …" link. */
+  max-height: 158px;
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -463,6 +567,7 @@
 
 .hdr-switcher-item {
   width: 100%;
+  flex-shrink: 0;   /* never squash rows to fit max-height — let .hdr-sw-items scroll */
   padding: 8px 12px;
   background: none;
   border: none;

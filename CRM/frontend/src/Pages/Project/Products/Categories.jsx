@@ -9,6 +9,7 @@ import {
 import { API_BASE } from '../../../api.js';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
+import MediaThumb from '../../../Utils/MediaThumb.jsx';
 import '../../../Style/Organization.css';
 import '../../../Style/Products.css';
 import '../../../Style/Authentication.css';
@@ -393,7 +394,7 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
                         checked={checked} onChange={() => toggle(p.id)} />
                       <div className="cat-prod-thumb-wrap">
                         {p.first_image
-                          ? <img className="cat-prod-thumb" src={p.first_image} alt="" />
+                          ? <MediaThumb className="cat-prod-thumb" url={p.first_image} alt="" />
                           : <div className="cat-prod-thumb-empty" />}
                       </div>
                       <span className="cat-prod-title">{p.title || t('products.categories.editModal.untitled')}</span>

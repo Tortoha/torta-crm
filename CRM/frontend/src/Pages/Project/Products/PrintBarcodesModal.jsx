@@ -6,6 +6,7 @@ import {
   Printer, DownloadSimple, X, CaretRight, CaretDown, Folder, Cube,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import MediaThumb from '../../../Utils/MediaThumb.jsx';
 import { Combobox, DatePicker } from '../Booking/BookingCreateModal.jsx';
 import '../../../Style/Authentication.css';   // .auth-modal-* base chrome
 import '../../../Style/Products.css';         // .print-bc-* layout + tree
@@ -748,7 +749,7 @@ function ItemTreeRow({ item, items, selected, setSelected, collapsed, onToggle, 
           {/* Depth 0 (product) + depth 1 (variation) get cover images, just
               like the Inventory tree. Fall back to Folder/spacer when missing. */}
           {item.imageUrl
-            ? <img src={item.imageUrl} alt="" className="print-bc-tree-img" />
+            ? <MediaThumb url={item.imageUrl} alt="" className="print-bc-tree-img" />
             : item.depth === 0
               ? <Folder weight="duotone" className="po-disc-cell--strong" />
               : <span className="po-tree-chevron-spacer" />}
