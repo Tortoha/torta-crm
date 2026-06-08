@@ -6279,7 +6279,7 @@ def _paddle_apply_subscription(event_type: str, data: dict) -> None:
     #   • everything else (active / past_due / paused / created / activated / updated):
     #     mirror Paddle's status as-is, keep the paid plan_slug.
     if event_type == "subscription.expired" or (status == "canceled" and not ends):
-        _demote_org_subscription_to_free(org_id)
+        _demote_org_subscription_to_free(org_id, keep_sub_id=True)
         print(f"[paddle/webhook] {event_type}: org={org_id} → free (canceled/expired, no remaining period)")
         return
     new_plan = plan_slug
@@ -6340,26 +6340,39 @@ def _paddle_find_customer_by_email(email: str) -> "str | None":
     return None
 
 
-def _demote_org_subscription_to_free(org_id: int) -> None:
-    """Reset an org's subscription pointer to Free, keeping its Paddle customer
-    link. Used when no Paddle subscription actually belongs to this org — e.g. a
-    row leaked here by the old sync-by-customer bug, where another org's sub got
-    written onto this org. Only ever clears the *wrong* org's row; the real
-    owner's row is matched by custom_data.org_id and left untouched."""
+def _demote_org_subscription_to_free(org_id: int, keep_sub_id: bool = False) -> None:
+    """Reset an org's subscription pointer to Free (keeps the Paddle customer link).
+
+    keep_sub_id=False (default) — also clears paddle_subscription_id. Use when the
+    sub does NOT belong to this org (a row leaked here by the old sync-by-customer
+    bug): we must forget the foreign sub entirely so its invoices/plan don't show.
+
+    keep_sub_id=True — keeps paddle_subscription_id so the org's PAST invoices stay
+    visible. Use when the org's OWN subscription was canceled/expired: the plan is
+    gone (→ Free), but the payment history is still theirs to see."""
     try:
         with db_cursor() as (conn, cur):
-            cur.execute("""
-                UPDATE crm_subscriptions
-                   SET plan_slug='free', status='active',
-                       current_period_start=NULL, current_period_end=NULL,
-                       cancelled_at=NULL, paddle_subscription_id=NULL, updated_at=NOW()
-                 WHERE org_id=%s
-            """, (org_id,))
+            if keep_sub_id:
+                cur.execute("""
+                    UPDATE crm_subscriptions
+                       SET plan_slug='free', status='active',
+                           current_period_start=NULL, current_period_end=NULL,
+                           cancelled_at=NULL, updated_at=NOW()
+                     WHERE org_id=%s
+                """, (org_id,))
+            else:
+                cur.execute("""
+                    UPDATE crm_subscriptions
+                       SET plan_slug='free', status='active',
+                           current_period_start=NULL, current_period_end=NULL,
+                           cancelled_at=NULL, paddle_subscription_id=NULL, updated_at=NOW()
+                     WHERE org_id=%s
+                """, (org_id,))
             cur.execute("UPDATE crm_organizations SET plan_slug='free' WHERE id=%s", (org_id,))
             conn.commit()
-            print(f"[paddle/sync] org={org_id}: cleared leaked subscription → free")
+            print(f"[paddle] org={org_id} → free (keep_sub_id={keep_sub_id})")
     except Exception as e:
-        print(f"[paddle/sync] demote-to-free failed for org={org_id}: {e}")
+        print(f"[paddle] demote-to-free failed for org={org_id}: {e}")
 
 
 def _paddle_sync_org_subscription(org_id: int, owner_email: str) -> bool:
@@ -6460,7 +6473,7 @@ def _paddle_sync_org_subscription(org_id: int, owner_email: str) -> bool:
     # emit a later .expired for an immediate cancel, so the org would otherwise be
     # stuck on the paid plan with an "Ending soon" badge and no end date.
     if status == "expired" or (status == "canceled" and not ends):
-        _demote_org_subscription_to_free(org_id)
+        _demote_org_subscription_to_free(org_id, keep_sub_id=True)
         print(f"[paddle/sync] org={org_id} → free (sub {sub_id} canceled/expired)")
         return True
     new_plan = plan_slug
