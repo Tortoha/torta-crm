@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown,
-         Receipt, ArrowUUpLeft, Printer } from '@phosphor-icons/react';
+         Receipt, ArrowUUpLeft, Printer, ShoppingCart } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { formatMoney } from '../../Utils/currency.js';
 import MediaThumb from '../../Utils/MediaThumb.jsx';
@@ -12,6 +12,7 @@ import { useInfiniteList } from '../../Utils/useInfiniteList.js';
 import { useInfiniteScroll } from '../../Utils/useInfiniteScroll.js';
 import PrintShippingLabelModal from './Products/PrintShippingLabelModal.jsx';
 import Modal from '../../Elements/Modal.jsx';
+import PosSaleModal from './PosSaleModal.jsx';
 import Returns from './Returns.jsx';
 import '../../Style/Organization.css';
 import '../../Style/Products.css';
@@ -693,7 +694,7 @@ function Orders() {
 
 function OrdersTab() {
   const { t } = useTranslation();
-  const { projectId } = useOutletContext();
+  const { projectId, project } = useOutletContext();
   const pq = `?project_id=${projectId}`;
 
   const [tab,       setTab]       = useState('all');
@@ -702,6 +703,9 @@ function OrdersTab() {
   const [viewHover, setViewHover] = useState(null);
   const [sort,      setSort]      = useState({ field: 'date', dir: 'desc' });
   const [openOrder, setOpenOrder] = useState(null);
+  const [posOpen,   setPosOpen]   = useState(false);
+  const [posToast,  setPosToast]  = useState('');
+  const posToastTimer = useRef(null);
   // Bulk selection + shipping label modal state. selectedIds is a Set
   // (kept lightweight; one Set survives across infinite-scroll loads).
   // labelOrderIds drives the shipping-label modal: a single int array
@@ -745,6 +749,15 @@ function OrdersTab() {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     setOpenOrder(prev => prev?.id === orderId ? { ...prev, status: newStatus } : prev);
   }, []);
+
+  // POS sale completed → refetch the list (the new delivered+paid order) and
+  // flash a bottom toast. SSE would catch it too, but the explicit reload is snappier.
+  const handlePosDone = useCallback((orderId) => {
+    fetchOrders();
+    setPosToast(t('orders.pos.done', { id: orderId }));
+    if (posToastTimer.current) clearTimeout(posToastTimer.current);
+    posToastTimer.current = setTimeout(() => setPosToast(''), 3200);
+  }, [fetchOrders, t]);
 
   // Counts
   const counts = { all: orders.length };
@@ -827,6 +840,10 @@ function OrdersTab() {
               <SquaresFour className="org-view-icon" />
             </button>
           </div>
+
+          <button className="org-new-btn" onClick={() => setPosOpen(true)} type="button">
+            <ShoppingCart className="org-new-icon" /> {t('orders.pos.newSale')}
+          </button>
         </div>
       </div>
 
@@ -954,6 +971,18 @@ function OrdersTab() {
           onUpdated={handleUpdated}
         />
       )}
+
+      {posOpen && (
+        <PosSaleModal
+          projectId={projectId}
+          currency={project?.currency || 'USD'}
+          onClose={() => setPosOpen(false)}
+          onDone={handlePosDone}
+        />
+      )}
+
+      {posToast && createPortal(
+        <div className="auth-toast">{posToast}</div>, document.body)}
     </>
   );
 }

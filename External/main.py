@@ -6013,6 +6013,14 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             address_str = composed
         else:
             address_str = sanitize(data.address or "")
+        # Digital-only orders have nothing to ship — the buyer gets the download
+        # link the moment they pay (see _digital_downloads / OrderSuccess / My
+        # Orders), so the order is born "delivered" instead of sitting in the
+        # New → Confirmed → Shipped pipeline. Any physical/service item in the cart
+        # keeps the normal 'new' flow (that part still needs fulfillment).
+        is_digital_only = bool(items) and all(
+            it.get("product_type") == "digital" for it in items)
+        order_status = "delivered" if is_digital_only else "new"
         # Создаём заказ
         cursor.execute(
             """INSERT INTO order_history
@@ -6026,7 +6034,7 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                 address_entrance, address_intercom,
                 recipient_first_name, recipient_last_name, recipient_middle_name,
                 customer_email)
-               VALUES (%s,%s,%s,'new',%s,%s,%s,%s,%s,%s,
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                        %s,%s,%s,%s,%s,%s, CASE WHEN %s='paid' THEN NOW() ELSE NULL END,
                        %s,%s,
                        %s,%s,%s,%s,%s,%s,
@@ -6034,7 +6042,7 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                        %s,%s,%s,
                        %s)
                RETURNING id""",
-            (project_id, user_id, round(float(total), 2),
+            (project_id, user_id, round(float(total), 2), order_status,
              data.delivery_method, rn,
              sanitize(data.phone or ""), address_str,
              sanitize(data.comment or ""), pay_provider,

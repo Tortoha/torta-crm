@@ -1507,6 +1507,32 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] digital L2 backfill failed: {e}")
 
+    # Digital-only orders are "delivered" the moment they're placed — the buyer gets
+    # the download link immediately, there's nothing to ship. New orders are born
+    # 'delivered' in External checkout; this backfills LEGACY all-digital orders that
+    # predate that and are stuck in 'new'/'confirmed'/'shipped'. Touches only orders
+    # whose EVERY line is a digital product; terminal states (cancelled/refunded) and
+    # already-delivered are left alone. Idempotent (delivered rows fall out of the WHERE).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                UPDATE order_history o
+                   SET status = 'delivered', updated_at = NOW()
+                 WHERE o.status NOT IN ('delivered', 'cancelled', 'refunded')
+                   AND EXISTS (
+                         SELECT 1 FROM order_items oi
+                           JOIN products p ON p.id = oi.product_id
+                          WHERE oi.order_id = o.id AND p.product_type = 'digital')
+                   AND NOT EXISTS (
+                         SELECT 1 FROM order_items oi
+                           JOIN products p ON p.id = oi.product_id
+                          WHERE oi.order_id = o.id
+                            AND COALESCE(p.product_type, 'physical') <> 'digital')
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] digital order auto-deliver backfill failed: {e}")
+
     # Phase 1: SaaS-grade physical product fields (catalog ID, shipping flags, inventory, B2B, OG).
     try:
         with db_cursor() as (conn, cur):
@@ -1781,6 +1807,17 @@ def run_migrations():
                 ALTER TABLE order_history ADD CONSTRAINT order_history_fulfillment_type_check
                   CHECK (fulfillment_type IN ('courier','pickup'));
               END IF;
+            END $$;""")
+            # POS / in-store sales (2026-06): a counter sale rung up from CRM Orders
+            # is neither courier nor pickup-from-warehouse — extend the CHECK so
+            # order_history.fulfillment_type can be 'pos'. Drop+recreate (block above
+            # only allows courier/pickup); idempotent.
+            cur.execute("""DO $$ BEGIN
+              IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='order_history_fulfillment_type_check') THEN
+                ALTER TABLE order_history DROP CONSTRAINT order_history_fulfillment_type_check;
+              END IF;
+              ALTER TABLE order_history ADD CONSTRAINT order_history_fulfillment_type_check
+                CHECK (fulfillment_type IN ('courier','pickup','pos'));
             END $$;""")
             cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS pickup_warehouse_id INTEGER REFERENCES warehouses(id) ON DELETE SET NULL")
             cur.execute("""
@@ -4842,6 +4879,7 @@ def _email_alert(subject: str, body_html: str):
 @app.exception_handler(Exception)
 async def _alert_on_unhandled(request: Request, exc: Exception):
     import traceback, threading
+    from starlette.responses import JSONResponse as _J
     # ALWAYS log the traceback to stdout (dev console + Cloud Run logs) — handling
     # the exception here stops uvicorn from logging it, so we must do it ourselves.
     raw_tb = traceback.format_exc()
@@ -11533,7 +11571,7 @@ def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
         "  LEFT JOIN product_configurations_l1 l1 ON l1.product_id = p.id"
         "  LEFT JOIN product_configurations_l2 l2 ON l2.variation_id = l1.id"
         " WHERE p.project_id = %s" + where_extra +
-        " ORDER BY p.id, l1.position, l2.position",
+        " ORDER BY p.id, l1.position, l1.id, l2.position, l2.id",
         tuple(params)
     )
 
@@ -14953,7 +14991,7 @@ def get_per_warehouse_stock(product_id: int, project_id: int = Query(...),
         "  FROM product_configurations_l2 c"
         "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
         " WHERE v.product_id = %s"
-        " ORDER BY v.position ASC, c.position ASC, c.id ASC",
+        " ORDER BY v.position ASC, v.id ASC, c.position ASC, c.id ASC",
         (product_id,)
     )
     if not skus: return []
@@ -15027,7 +15065,7 @@ def get_project_stock_summary(project_id: int,
         "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
         "  JOIN products p ON v.product_id = p.id"
         " WHERE w.project_id=%s AND w.is_active"
-        " ORDER BY w.is_default DESC, w.name ASC, p.title ASC, v.position ASC, c.position ASC",
+        " ORDER BY w.is_default DESC, w.name ASC, p.title ASC, v.position ASC, v.id ASC, c.position ASC, c.id ASC",
         (project_id,)
     )
     return rows
@@ -17368,6 +17406,273 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
         "new_status": new_status,
     })
     return {"ok": True, "status": new_status}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# POS / in-store sales — the merchant rings up a counter sale from CRM Orders.
+# Unlike storefront checkout (External, reservation model), a POS sale is handed
+# over on the spot: the order is born status='delivered' + paid, stock is deducted
+# immediately, optionally off a specific batch (FEFO default). The catalog + scan
+# endpoints feed the cashier modal; hardware barcode scanners just "type" the code
+# then Enter, so /pos/scan is a plain barcode→SKU lookup (no device API needed).
+# ─────────────────────────────────────────────────────────────────────────
+
+# SELECT prefix shared by catalog + scan — one sellable PHYSICAL SKU with its
+# product/variation context, price (SKU price or inherited L1), and aggregate stock.
+_POS_SKU_SELECT = (
+    "SELECT c.id AS sku_id, c.configuration_name, c.sku_code, c.barcode,"
+    "       COALESCE(c.price, v.price) AS price,"
+    "       COALESCE(c.stock_quantity, 0) AS stock,"
+    "       v.id AS variation_id, v.variation_name, (v.images)[1] AS image_url,"
+    "       p.id AS product_id, p.title AS product_title"
+    "  FROM product_configurations_l2 c"
+    "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+    "  JOIN products p                  ON v.product_id   = p.id"
+)
+
+def _pos_clean(rows):
+    for r in rows:
+        r["price"] = float(r["price"] or 0)
+        r["stock"] = int(r["stock"] or 0)
+    return rows
+
+
+@app.get("/api/projects/{project_id}/pos/catalog")
+def pos_catalog(project_id: int, search: Optional[str] = Query(None),
+                category_id: Optional[int] = Query(None),
+                user: dict = Depends(get_current_user)):
+    """Sellable PHYSICAL SKUs for the POS cashier modal — browse by category or
+    search. No filters → the whole physical catalog (cashier browses freely)."""
+    require_page(user, project_id, "orders", "manage")
+    q = (search or "").strip().lower()
+    params: list = [project_id]
+    extra = ""
+    if category_id is not None:
+        extra += " AND p.category_id = %s"
+        params.append(category_id)
+    if q:
+        like = f"%{q}%"
+        extra += (" AND (LOWER(p.title) LIKE %s OR LOWER(COALESCE(c.configuration_name,'')) LIKE %s"
+                  " OR LOWER(COALESCE(c.sku_code,'')) LIKE %s OR COALESCE(c.barcode,'') LIKE %s"
+                  " OR LOWER(COALESCE(v.variation_name,'')) LIKE %s OR COALESCE(p.barcode,'') LIKE %s)")
+        params += [like, like, like, like, like, like]
+    rows = db_all(
+        _POS_SKU_SELECT +
+        " WHERE p.project_id=%s AND p.product_type='physical'"
+        "   AND COALESCE(p.is_archived, FALSE)=FALSE" + extra +
+        " ORDER BY p.title ASC, v.position ASC, v.id ASC, c.position ASC, c.id ASC LIMIT 400",
+        tuple(params)
+    )
+    return _pos_clean(rows)
+
+
+@app.get("/api/projects/{project_id}/pos/scan")
+def pos_scan(project_id: int, code: str = Query(...),
+             user: dict = Depends(get_current_user)):
+    """Resolve a scanned/typed barcode to ONE sellable SKU. Tries, in order:
+    SKU barcode → SKU code → product-level barcode (its first sellable SKU)."""
+    require_page(user, project_id, "orders", "manage")
+    code = (code or "").strip()
+    if not code:
+        raise HTTPException(400, "code is required")
+    where = (" WHERE p.project_id=%s AND p.product_type='physical'"
+             "   AND COALESCE(p.is_archived, FALSE)=FALSE AND ")
+    row = (db_one(_POS_SKU_SELECT + where + "c.barcode=%s LIMIT 1", (project_id, code))
+           or db_one(_POS_SKU_SELECT + where + "c.sku_code=%s LIMIT 1", (project_id, code))
+           or db_one(_POS_SKU_SELECT + where + "p.barcode=%s"
+                     " ORDER BY v.position ASC, v.id ASC, c.position ASC, c.id ASC LIMIT 1", (project_id, code)))
+    if not row:
+        raise HTTPException(404, "No product matches this barcode")
+    return _pos_clean([row])[0]
+
+
+@app.get("/api/projects/{project_id}/pos/sku-batches")
+def pos_sku_batches(project_id: int, sku_id: int = Query(...),
+                    user: dict = Depends(get_current_user)):
+    """Non-empty, non-frozen batches for a SKU, FEFO-ordered (earliest expiry
+    first) so the cashier modal can default to the batch that should sell next."""
+    require_page(user, project_id, "orders", "manage")
+    if not db_one(
+        "SELECT c.id FROM product_configurations_l2 c"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "  JOIN products p ON v.product_id = p.id"
+        " WHERE c.id=%s AND p.project_id=%s", (sku_id, project_id)):
+        raise HTTPException(404, "SKU not found in this project")
+    rows = db_all(
+        "SELECT b.id, b.batch_name, b.warehouse_id, w.name AS warehouse_name,"
+        "       b.quantity_remaining, b.production_date, b.expiry_date"
+        "  FROM inventory_batches b"
+        "  JOIN warehouses w ON b.warehouse_id = w.id"
+        " WHERE b.project_id=%s AND b.sku_id=%s"
+        "   AND COALESCE(b.is_frozen, FALSE)=FALSE AND b.quantity_remaining > 0"
+        " ORDER BY b.expiry_date ASC NULLS LAST, b.received_at ASC",
+        (project_id, sku_id)
+    )
+    for r in rows:
+        r["quantity_remaining"] = int(r["quantity_remaining"] or 0)
+        r["production_date"] = r["production_date"].isoformat() if r.get("production_date") else None
+        r["expiry_date"]     = r["expiry_date"].isoformat() if r.get("expiry_date") else None
+    return rows
+
+
+class POSSaleItem(BaseModel):
+    sku_id:       int
+    quantity:     int
+    batch_id:     Optional[int]   = None
+    warehouse_id: Optional[int]   = None
+    price:        Optional[float] = None   # unit-price override; else SKU price
+
+
+class POSSaleRequest(BaseModel):
+    items:          List[POSSaleItem]
+    customer_name:  Optional[str] = None
+    customer_email: Optional[str] = None
+    phone:          Optional[str] = None
+    payment_method: Optional[str] = "cash"   # cash | card | other
+    comment:        Optional[str] = None
+
+
+_POS_PAYMENT_METHODS = {"cash", "card", "other"}
+
+
+@app.post("/api/projects/{project_id}/pos/sale")
+def pos_sale(project_id: int, req: POSSaleRequest,
+             user: dict = Depends(get_current_user)):
+    """Ring up an in-store sale: create a delivered + paid order and deduct stock
+    immediately (batch-aware). Mirrors a storefront order that's been handed over,
+    so later refund/cancel restock via the same _apply_stock_transition path."""
+    require_page(user, project_id, "orders", "manage")
+    if not req.items:
+        raise HTTPException(400, "items must be non-empty")
+    if len(req.items) > 200:
+        raise HTTPException(400, "Too many lines (max 200)")
+    pay_method = (req.payment_method or "cash").strip().lower()
+    if pay_method not in _POS_PAYMENT_METHODS:
+        pay_method = "other"
+    currency = (db_one("SELECT currency FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("currency") or "USD"
+
+    with db_cursor() as (conn, cur):
+        # 1) Resolve + validate every line (SKU ∈ project, batch/warehouse, stock).
+        lines, total = [], 0.0
+        for idx, it in enumerate(req.items):
+            qty = int(it.quantity or 0)
+            if qty <= 0:
+                raise HTTPException(400, f"line {idx+1}: quantity must be > 0")
+            cur.execute(
+                "SELECT c.id AS sku_id, COALESCE(c.price, v.price) AS price, c.cost_price,"
+                "       v.id AS variation_id, p.id AS product_id"
+                "  FROM product_configurations_l2 c"
+                "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+                "  JOIN products p                  ON v.product_id   = p.id"
+                " WHERE c.id=%s AND p.project_id=%s",
+                (it.sku_id, project_id)
+            )
+            sku = cur.fetchone()
+            if not sku:
+                raise HTTPException(404, f"line {idx+1}: SKU not found in this project")
+
+            # A chosen batch (locked) fixes the warehouse; else pick a WH with stock.
+            batch_id = None
+            if it.batch_id is not None:
+                cur.execute(
+                    "SELECT id, warehouse_id, quantity_remaining, batch_name"
+                    "  FROM inventory_batches"
+                    " WHERE id=%s AND project_id=%s AND sku_id=%s FOR UPDATE",
+                    (it.batch_id, project_id, it.sku_id)
+                )
+                b = cur.fetchone()
+                if not b:
+                    raise HTTPException(400, f"line {idx+1}: batch not found for this SKU")
+                if int(b["quantity_remaining"]) < qty:
+                    raise HTTPException(400, f"line {idx+1}: batch \"{b['batch_name']}\" has only {b['quantity_remaining']} left")
+                batch_id, wh_id = b["id"], b["warehouse_id"]
+            elif it.warehouse_id:
+                wh_id = it.warehouse_id
+                _verify_warehouse_in_project(cur, wh_id, project_id)
+            else:
+                cur.execute("SELECT warehouse_id FROM product_stock"
+                            " WHERE sku_id=%s AND quantity > 0 ORDER BY quantity DESC LIMIT 1",
+                            (it.sku_id,))
+                wrow = cur.fetchone()
+                wh_id = wrow["warehouse_id"] if wrow else _default_warehouse_id(cur, project_id)
+
+            # Stock guard at the chosen warehouse (lock the row).
+            cur.execute("SELECT quantity FROM product_stock WHERE sku_id=%s AND warehouse_id=%s FOR UPDATE",
+                        (it.sku_id, wh_id))
+            srow = cur.fetchone()
+            avail = int((srow or {}).get("quantity") or 0)
+            if avail < qty:
+                raise HTTPException(400, f"line {idx+1}: only {avail} in stock at the selected warehouse")
+
+            unit_price = float(it.price) if it.price is not None else float(sku["price"] or 0)
+            if unit_price < 0:
+                raise HTTPException(400, f"line {idx+1}: price must be ≥ 0")
+            total += unit_price * qty
+            lines.append({"sku_id": it.sku_id, "product_id": sku["product_id"],
+                          "variation_id": sku["variation_id"], "qty": qty,
+                          "unit_price": unit_price, "cost_price": sku.get("cost_price"),
+                          "wh_id": wh_id, "batch_id": batch_id})
+
+        total = round(total, 2)
+        rn      = sanitize((req.customer_name or "").strip())[:200] or "Walk-in customer"
+        c_email = sanitize((req.customer_email or "").strip())[:200] or None
+        phone   = sanitize((req.phone or "").strip())[:60] or None
+        comment = sanitize((req.comment or "").strip())[:1000] or None
+
+        # 2) Order — delivered + paid the moment it's rung up. user_id NULL = walk-in.
+        cur.execute(
+            "INSERT INTO order_history"
+            "  (project_id, user_id, total_amount, status, delivery_method,"
+            "   recipient_name, phone, comment, payment_method, payment_status,"
+            "   payment_provider, payment_currency, payment_amount_paid, payment_paid_at,"
+            "   fulfillment_type, stock_deducted, customer_email, shipped_at, delivered_at)"
+            " VALUES (%s, NULL, %s, 'delivered', 'pickup',"
+            "         %s, %s, %s, %s, 'paid',"
+            "         'pos', %s, %s, NOW(),"
+            "         'pos', TRUE, %s, NOW(), NOW())"
+            " RETURNING id",
+            (project_id, total, rn, phone, comment, pay_method, currency, total, c_email)
+        )
+        order_id = cur.fetchone()["id"]
+
+        # 3) Line items + immediate, batch-aware stock deduction + audit log.
+        cur.execute("SET LOCAL torta.skip_audit = 'on'")
+        for ln in lines:
+            cur.execute(
+                "INSERT INTO order_items"
+                "  (order_id, product_id, variation_id, configuration_id, quantity, price,"
+                "   cost_per_unit, selected_modifier_item_ids)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (order_id, ln["product_id"], ln["variation_id"], ln["sku_id"],
+                 ln["qty"], round(ln["unit_price"], 2), ln["cost_price"], [])
+            )
+            cur.execute(
+                "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity, reserved_quantity)"
+                " VALUES (%s, %s, 0, 0, 0) ON CONFLICT (sku_id, warehouse_id) DO NOTHING",
+                (ln["sku_id"], ln["wh_id"])
+            )
+            cur.execute(
+                "UPDATE product_stock SET quantity = quantity - %s, sold_quantity = sold_quantity + %s"
+                " WHERE sku_id=%s AND warehouse_id=%s",
+                (ln["qty"], ln["qty"], ln["sku_id"], ln["wh_id"])
+            )
+            if ln["batch_id"]:
+                cur.execute("UPDATE inventory_batches SET quantity_remaining = quantity_remaining - %s WHERE id=%s",
+                            (ln["qty"], ln["batch_id"]))
+            _sync_l2_stock(cur, ln["sku_id"])
+            cur.execute(
+                "INSERT INTO product_stock_log"
+                "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, user_id, note)"
+                " VALUES (%s, %s, %s, %s, 'sale', %s, %s, %s)",
+                (project_id, ln["sku_id"], ln["wh_id"], -ln["qty"], order_id, user["id"],
+                 f"POS sale · order #{order_id}")
+            )
+        conn.commit()
+
+    # 4) Realtime — the Orders SSE poll picks up the new id; also fire the project
+    #    event (Analytics live-updates + parity with storefront's order_created).
+    push_project_event(project_id, "order_created", {"order_id": order_id, "total": total, "source": "pos"})
+    return {"ok": True, "order_id": order_id, "total": total}
 
 
 class UpdatePaymentStatus(BaseModel):
