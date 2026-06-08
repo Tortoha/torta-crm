@@ -21,6 +21,7 @@ import {
   Globe, Stack, Barcode, Warning, CaretDown, MagnifyingGlass,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
+import { useLiveReload } from '../../Utils/useLiveReload.js';
 import { CURRENCIES, formatMoney, getCurrencyMeta } from '../../Utils/currency.js';
 import { DynamicBlock } from '../../Utils/DynamicBlock.js';
 import '../../Style/Authentication.css';
@@ -255,8 +256,11 @@ export function SearchableCombobox({
               }} />
           </div>
 
-          {/* Filtered list — scrolls; dynamic indicator follows hover */}
-          <div style={{ overflowY: 'auto', flex: 1, position: 'relative' }}
+          {/* Filtered list — scrolls; dynamic indicator follows hover. .bk-cb-list
+              (position:relative; flex:1; overflow-y:auto) also carries the indicator
+              left/right:0 override so the DynamicBlock pill keeps a 6px frame on the
+              sides too, not the doubled 12px. */}
+          <div className="bk-cb-list"
             onMouseLeave={() => setHovered(null)}>
             <div ref={indRef} className="cat-filter-indicator" />
             {filtered.length === 0 && (
@@ -390,6 +394,7 @@ export default function ProjectSettings() {
   // Source of truth lives on `crm_projects` row — same PATCH endpoint
   // handles both fields. Currency change opens a warning modal first;
   // timezone changes commit immediately (no ambiguity about behaviour).
+  const [settingsBump, setSettingsBump] = useState(0);   // bump → re-fetch settings on live change
   const [tz, setTz]         = useState('UTC');
   const [tzAuto, setTzAuto] = useState(true);
   const [currency, setCurrency] = useState('USD');
@@ -408,7 +413,8 @@ export default function ProjectSettings() {
         setLoadedGen(true);
       })
       .catch(() => setLoadedGen(true));
-  }, [projectId]);
+  }, [projectId, settingsBump]);
+  useLiveReload(projectId, 'project_settings_changed', () => setSettingsBump(b => b + 1));   // live: teammate changes tz/currency/inventory
 
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -470,7 +476,7 @@ export default function ProjectSettings() {
         setLoadedBc(true);
       })
       .catch(() => { setLoadedInv(true); setLoadedBc(true); });
-  }, [projectId]);
+  }, [projectId, settingsBump]);
 
   const saveBatchSetting = async (patch) => {
     const r = await fetch(`${API_BASE}/api/projects/${projectId}/batch-settings`, {

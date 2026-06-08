@@ -1,0 +1,181 @@
+{
+  "pricing": {
+    "meta": {
+      "title": "Precios — Torta CRM",
+      "description": "Precios simples y transparentes. Empiece gratis y escale cuando lo necesite."
+    },
+    "hero": {
+      "eyebrow": "Precios",
+      "title": "Precios que crecen con su tienda",
+      "subtitle": "Empiece gratis y mejore el plan solo cuando lo supere. Sin cuotas de instalación, sin tarjeta registrada. Cancele cuando quiera."
+    },
+
+    "billing": {
+      "monthly": "Mensual",
+      "yearly": "Anual",
+      "saveBadge": "Ahorre 8%",
+      "perMonth": "al mes",
+      "perYear": "al año",
+      "forever": "para siempre",
+      "billedAs": "facturado como ${{amount}}/año",
+      "oneMonthFree": "1 mes gratis"
+    },
+
+    "plans": {
+      "free": {
+        "name": "Free",
+        "tagline": "Para probar Torta en una sola tienda.",
+        "priceMonthly": "$0",
+        "priceYearly": "$0",
+        "cta": "Empezar gratis",
+        "features": [
+          "1 proyecto (tienda)",
+          "5 miembros del equipo",
+          "Hasta 1000 usuarios de la tienda",
+          "100 MB de almacenamiento de archivos",
+          "20 MB de base de datos",
+          "100 correos electrónicos / día",
+          "Sin campañas de correo electrónico",
+          "60 solicitudes API / min",
+          "Acceso completo al SDK"
+        ]
+      },
+      "standard": {
+        "name": "Standard",
+        "tagline": "Para tiendas en crecimiento con una base de clientes real.",
+        "priceMonthly": "$10",
+        "priceYearly": "$110",
+        "cta": "Suscribirse",
+        "features": [
+          "Hasta 3 proyectos",
+          "Hasta 15 miembros del equipo",
+          "Hasta 5000 usuarios de la tienda",
+          "15 GB de almacenamiento de archivos",
+          "3 GB de base de datos",
+          "1000 correos electrónicos / día",
+          "Campañas de correo electrónico incluidas",
+          "500 solicitudes API / min",
+          "Webhooks e integraciones",
+          "Todas las funciones de Free"
+        ]
+      },
+      "plus": {
+        "name": "Plus",
+        "tagline": "Para tiendas que necesitan un poco más de margen.",
+        "priceMonthly": "$25",
+        "priceYearly": "$275",
+        "cta": "Suscribirse",
+        "features": [
+          "Hasta 10 proyectos",
+          "Hasta 40 miembros del equipo",
+          "Hasta 12 500 usuarios de la tienda",
+          "40 GB de almacenamiento de archivos",
+          "8 GB de base de datos",
+          "2000 correos electrónicos / día",
+          "1500 solicitudes API / min",
+          "Webhooks e integraciones",
+          "Todas las funciones de Standard"
+        ]
+      },
+      "pro": {
+        "name": "Pro",
+        "tagline": "Para operadores de varias tiendas y agencias serias.",
+        "priceMonthly": "$30",
+        "priceYearly": "$330",
+        "cta": "Suscribirse",
+        "badge": "Más popular",
+        "features": [
+          "Hasta 150 proyectos",
+          "Hasta 250 miembros del equipo",
+          "Hasta 100 000 usuarios de la tienda",
+          "100 GB de almacenamiento de archivos",
+          "20 GB de base de datos",
+          "10 000 correos electrónicos / día",
+          "3000 solicitudes API / min",
+          "Analítica entre organizaciones",
+          "Todas las funciones de Plus"
+        ]
+      },
+      "max": {
+        "name": "Max",
+        "tagline": "Escala, soporte y cumplimiento empresarial.",
+        "priceMonthly": "$599",
+        "priceYearly": "$6,589",
+        "cta": "Suscribirse",
+        "features": [
+          "Hasta 1000 proyectos",
+          "Hasta 5000 miembros del equipo",
+          "Hasta 1 000 000 usuarios de la tienda",
+          "2 TB de almacenamiento de archivos",
+          "256 GB de base de datos",
+          "30 000 correos electrónicos / día",
+          "10 000 solicitudes API / min",
+          "Todas las funciones de Pro"
+        ]
+      }
+    },
+
+    "compare": {
+      "title": "Comparar planes",
+      "subtitle": "Todos los límites que le importan, uno al lado del otro.",
+      "headers": {
+        "feature": "Función",
+        "free": "Free",
+        "standard": "Standard",
+        "plus": "Plus",
+        "pro": "Pro",
+        "max": "Max"
+      },
+      "groups": {
+        "limits": {
+          "title": "Límites",
+          "rows": {
+            "projects":   { "label": "Proyectos (tiendas)", "values": ["1", "3", "10", "150", "1000"] },
+            "team":       { "label": "Miembros del equipo", "values": ["5", "15", "40", "250", "5000"] },
+            "shoppers":   { "label": "Usuarios de la tienda", "values": ["1000", "5000", "12 500", "100 000", "1 000 000"] },
+            "storage":    { "label": "Almacenamiento de archivos", "values": ["100 MB", "15 GB", "40 GB", "100 GB", "2 TB"] },
+            "database":   { "label": "Tamaño de la base de datos", "values": ["20 MB", "3 GB", "8 GB", "20 GB", "256 GB"] },
+            "emails":     { "label": "Correos electrónicos por día", "values": ["100", "1000", "2000", "10 000", "30 000"] },
+            "api":        { "label": "Límite de tasa API (sol/min)", "values": ["60", "500", "1500", "3000", "10 000"] }
+          }
+        },
+        "features": {
+          "title": "Funciones",
+          "rows": {
+            "sdk":          { "label": "Torta JS SDK", "values": [true, true, true, true, true] },
+            "auth":         { "label": "Autenticación de clientes (OTP + Google)", "values": [true, true, true, true, true] },
+            "catalog":      { "label": "Catálogo de productos y variantes", "values": [true, true, true, true, true] },
+            "orders":       { "label": "Pedidos, devoluciones y reembolsos", "values": [true, true, true, true, true] },
+            "booking":      { "label": "Calendario de reservas", "values": [true, true, true, true, true] },
+            "broadcasts":   { "label": "Campañas de correo electrónico", "values": [false, true, true, true, true] },
+            "chat":         { "label": "Chat web en vivo", "values": [true, true, true, true, true] },
+            "webhooks":     { "label": "Webhooks e integraciones", "values": ["Básico", true, true, true, true] },
+            "rbac":         { "label": "Roles y permisos", "values": [true, true, true, true, true] },
+            "orgAnalytics": { "label": "Analítica entre organizaciones", "values": [false, true, true, true, true] }
+          }
+        }
+      }
+    },
+
+    "faq": {
+      "title": "Preguntas sobre los precios",
+      "items": {
+        "free":    { "q": "¿Free es realmente gratis?", "a": "Sí, Free es un plan permanente, no una prueba. Puede operar una tienda real con él durante todo el tiempo que quiera, siempre que se mantenga dentro de los límites. Sin tarjeta, sin vencimiento." },
+        "noTrial": { "q": "¿Hay una prueba gratuita en los planes de pago?", "a": "No, los planes de pago cobran de inmediato al suscribirse. Si desea probar Torta primero, use el plan Free (no es una prueba, nunca vence). Si un plan de pago no le resulta adecuado, puede obtener un reembolso completo dentro de los 14 días, sin preguntas." },
+        "billing": { "q": "¿Cómo funciona la facturación?", "a": "La facturación es a nivel de organización: una suscripción cubre todos los proyectos dentro de esa organización. El propietario de la organización es la única persona que puede cambiar el plan." },
+        "currency":{ "q": "¿En qué moneda son los cargos?", "a": "Todos los cargos son en USD y se procesan mediante Paddle (nuestro procesador de pagos). Paddle convierte automáticamente a su moneda local en la factura." },
+        "vat":     { "q": "¿Los impuestos están incluidos?", "a": "El IVA, el GST y el impuesto sobre las ventas de EE. UU. se calculan al finalizar la compra según su país de facturación. Paddle se encarga de toda la remesa de impuestos, usted no tiene que ocuparse de ello." },
+        "upgrade": { "q": "¿Puedo cambiar de plan?", "a": "En cualquier momento. Las mejoras de plan se aplican de inmediato y se prorratean. Las reducciones de plan se aplican en su próximo ciclo de facturación." },
+        "cancel":  { "q": "¿Qué ocurre si cancelo?", "a": "Su suscripción permanece activa hasta el final del período pagado. Después de eso, su organización pasa al nivel Free: sus datos no se eliminan, pero las funciones que superan el límite de Free se pausan hasta que vuelva a activarla." },
+        "refund":  { "q": "¿Y los reembolsos?", "a": "Ofrecemos una garantía de devolución de dinero de 14 días en las primeras suscripciones. Consulte la Política de Reembolsos completa para más detalles." }
+      }
+    },
+
+    "cta": {
+      "title": "¿Listo para gestionar su tienda desde un solo lugar?",
+      "subtitle": "Cree una organización en menos de un minuto. Agregue su primera tienda, invite a su equipo y publique.",
+      "button": "Empezar gratis",
+      "fineprint": "No se requiere tarjeta de crédito."
+    }
+  }
+}

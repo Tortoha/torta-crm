@@ -7,6 +7,7 @@ import {
   ArrowDown, X, CaretRight, CaretDown, Folder, Cube,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { Combobox, DatePicker } from '../Booking/BookingCreateModal.jsx';
 import '../../../Style/Booking.css';   // .bk-date-pop / calendar grid styles for DatePicker
 
@@ -134,6 +135,8 @@ export default function Batches() {
   });
   const sentinelRef = useInfiniteScroll(loadMore);
   const load = reload;     // alias for receive/edit/freeze callbacks
+  // Live collaboration: batch receive / edit / freeze / delete + stock changes refetch here.
+  useLiveReload(projectId, ['batch_changed', 'inventory_changed'], reload);
 
   // SKUs + warehouses are loaded once (small lists, used by the Receive modal).
   useEffect(() => {

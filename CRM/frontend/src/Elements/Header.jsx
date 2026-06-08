@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen, Tag, List, Stack, Code } from '@phosphor-icons/react';
+import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen, Tag, List, Stack, Code, X } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
 import CreateOrgForm from './CreateOrgForm.jsx';
 import CreateProductModal from '../Pages/Project/Products/CreateProductModal.jsx';
 import NotificationsBell from './NotificationsBell.jsx';
 import PresenceStack from './PresenceStack.jsx';
+import FeedbackWidget from './FeedbackWidget.jsx';
 import { encodeId } from '../Utils/hashids.js';
 import { DynamicBlock } from '../Utils/DynamicBlock.js';
 import '../Style/Header.css';
@@ -347,6 +349,13 @@ function ProjectSwitcher({ project }) {
                 ))
               }
             </div>
+
+            <div className="hdr-switcher-sep" />
+
+            <button className="hdr-switcher-new" type="button"
+              onClick={() => { setOpen(false); navigate(`/org/${project.org_slug}`); }}>
+              {t('header.project.allProjects', 'All Projects')}
+            </button>
 
             <div className="hdr-switcher-sep" />
 
@@ -766,6 +775,69 @@ function HeaderLandingNav() {
   );
 }
 
+/* ── Landing mobile menu — the desktop .hdr-landing-nav is display:none below
+   640px, so phones get this instead: a hamburger that opens a full-screen sheet
+   with the Product features + Developers / Pricing / Docs. ── */
+function HeaderLandingMobile() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    document.body.classList.add('rsp-drawer-locked');
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.classList.remove('rsp-drawer-locked');
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const go = (to) => { setOpen(false); navigate(to); };
+
+  return (
+    <>
+      <button type="button" className="hdr-landing-burger"
+        aria-label={t('header.openMenu', 'Open menu')} aria-expanded={open}
+        onClick={() => setOpen(true)}>
+        <List className="hdr-hamburger-icon" weight="bold" />
+      </button>
+      {open && createPortal(
+        <div className="hdr-lm-sheet" role="dialog" aria-modal="true">
+          <div className="hdr-lm-head">
+            <span className="hdr-lm-title">{t('header.menu', 'Menu')}</span>
+            <button type="button" className="hdr-lm-close" onClick={() => setOpen(false)}
+              aria-label={t('common.close', 'Close')}>
+              <X weight="bold" />
+            </button>
+          </div>
+          <nav className="hdr-lm-nav">
+            <span className="hdr-lm-group">{t('product.nav.product')}</span>
+            {PRODUCT_NAV.map(({ slug, Icon }) => (
+              <button key={slug} type="button" className="hdr-lm-item" onClick={() => go(`/${slug}`)}>
+                <Icon className="hdr-lm-ic" weight="bold" />
+                <span>{t(`product.nav.name.${slug}`)}</span>
+              </button>
+            ))}
+            <div className="hdr-lm-divider" />
+            <button type="button" className="hdr-lm-item" onClick={() => go('/developers')}>
+              <Code className="hdr-lm-ic" weight="bold" /><span>{t('developers.nav')}</span>
+            </button>
+            <button type="button" className="hdr-lm-item" onClick={() => go('/pricing')}>
+              <Tag className="hdr-lm-ic" weight="bold" /><span>{t('header.nav.pricing')}</span>
+            </button>
+            <button type="button" className="hdr-lm-item" onClick={() => go('/docs/getting-started?from=landing')}>
+              <BookOpen className="hdr-lm-ic" weight="bold" /><span>{t('header.nav.docs')}</span>
+            </button>
+          </nav>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 /* ── Settings gear → navigates to the /preferences page ── */
 function HeaderSettingsButton() {
   const navigate = useNavigate();
@@ -790,9 +862,12 @@ function Header({ user, project, org, productContext, settingsMode, docsMode, la
   // logo ends up misaligned with the sidebar's left edge. So on docs we
   // skip the modifier even when the landing prop is on.
   const landingWide = landing && !location.pathname.startsWith('/docs');
-  // Hamburger button visible only on tablet/mobile (<1024px via CSS) — and
-  // only inside layouts that have a sidebar to open. Landing has no sidebar.
-  const showHamburger = !!onMobileNavToggle && !landing;
+  // Hamburger button visible only on tablet/mobile (<1024px via CSS) — shown
+  // whenever the layout passes a nav toggle. The marketing landing page has no
+  // sidebar and never passes one; Docs (rendered with the landing header via
+  // ?from=landing) DOES have a sidebar drawer and passes the toggle, so it must
+  // show there — the old `&& !landing` wrongly hid it on the Docs pages.
+  const showHamburger = !!onMobileNavToggle;
   return (
     <header className={`crm-header${landingWide ? ' crm-header--landing' : ''}`}>
       <div className="hdr-left">
@@ -802,6 +877,10 @@ function Header({ user, project, org, productContext, settingsMode, docsMode, la
             <List className="hdr-hamburger-icon" weight="bold" />
           </button>
         )}
+        {/* Landing pages have no sidebar (no onMobileNavToggle) → show the landing
+            menu burger. Docs uses the landing header BUT passes a toggle for its
+            own sidebar drawer, so skip the landing burger there to avoid two. */}
+        {landing && !onMobileNavToggle && <HeaderLandingMobile />}
         <button className="hdr-brand" onClick={() => navigate(landing ? '/' : (user ? '/dashboard' : '/'))} type="button">
           <svg className="hdr-brand-logo" viewBox="0 0 3070 3070" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M3061.91 1516.01C3065.95 1523.01 3067.97 1526.51 3068.76 1530.22C3069.46 1533.51 3069.46 1536.91 3068.76 1540.2C3067.97 1543.92 3065.95 1547.42 3061.91 1554.41L2316.09 2846.23C2312.05 2853.22 2310.03 2856.72 2307.2 2859.27C2304.7 2861.52 2301.76 2863.22 2298.56 2864.26C2294.94 2865.43 2290.91 2865.43 2282.83 2865.43H769.002C769.001 2865.43 768.999 2865.43 768.999 2865.43C768.998 2865.43 768.997 2865.42 768.998 2865.42L1503.75 1592.81C1514.66 1573.91 1520.12 1564.46 1519.3 1556.7C1518.59 1549.94 1515.04 1543.79 1509.54 1539.8C1503.23 1535.21 1492.32 1535.21 1470.49 1535.21H1.00289C1.00227 1535.21 1.00179 1535.21 1.00179 1535.21V1535.21C1.00179 1535.22 1.00064 1535.22 1.00015 1535.22C0.999961 1535.22 0.99995 1535.21 1.00012 1535.21L757.915 224.2C761.953 217.205 763.972 213.708 766.797 211.165C769.297 208.914 772.241 207.214 775.44 206.175C779.055 205 783.093 205 791.17 205H2282.83C2290.91 205 2294.94 205 2298.56 206.175C2301.76 207.214 2304.7 208.914 2307.2 211.165C2310.03 213.708 2312.05 217.205 2316.08 224.2L3061.91 1516.01Z" fill="currentColor"/>
@@ -878,6 +957,7 @@ function Header({ user, project, org, productContext, settingsMode, docsMode, la
                 <span className="hdr-docs-label">{t('docs.title')}</span>
               </button>
             )}
+            {user && <FeedbackWidget />}
             {user && <NotificationsBell />}
             {user && <UserMenu user={user} project={project} />}
           </>

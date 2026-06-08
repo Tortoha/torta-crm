@@ -8,6 +8,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
+import MediaThumb from '../../Utils/MediaThumb.jsx';
 import {
   X, MagnifyingGlass, ArrowUUpLeft, CheckCircle, ArrowRight, Warning,
 } from '@phosphor-icons/react';
@@ -223,7 +224,7 @@ function InspectItem({ item, value, onChange, warehouses, batchesBySku }) {
   return (
     <div className="ret-inspect-item">
       {item.image_url && (
-        <img src={item.image_url} alt={item.title} className="ret-inspect-img" />
+        <MediaThumb url={item.image_url} alt={item.title} className="ret-inspect-img" />
       )}
       <div className="ret-inspect-info">
         <div className="ret-inspect-title">{item.title}</div>
@@ -569,7 +570,7 @@ function ReturnDetailModal({ returnId, projectId, currency, onClose, onChanged }
                       {detail.items.map(item => (
                         <div key={item.id} className="ret-item-row">
                           {item.image_url && (
-                            <img src={item.image_url} alt={item.title} className="ret-item-img" />
+                            <MediaThumb url={item.image_url} alt={item.title} className="ret-item-img" />
                           )}
                           <div className="ret-item-info">
                             <span className="ret-item-name">{item.title}</span>

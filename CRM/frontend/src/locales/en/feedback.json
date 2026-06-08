@@ -1,0 +1,21 @@
+{
+  "feedback": {
+    "button": "Feedback",
+    "whatShare": "What would you like to share?",
+    "issue": "Issue",
+    "issueSub": "with my project",
+    "idea": "Idea",
+    "ideaSub": "to improve Torta",
+    "issueTitle": "Report an issue",
+    "ideaTitle": "Share an idea",
+    "subjectPh": "Title",
+    "messagePh": "Describe it in a few words…",
+    "send": "Send",
+    "sending": "Sending…",
+    "cancel": "Cancel",
+    "sent": "Thanks! Your feedback was sent",
+    "failed": "Couldn't send — try again",
+    "errSubject": "Please add a title",
+    "errMessage": "Please add a description"
+  }
+}

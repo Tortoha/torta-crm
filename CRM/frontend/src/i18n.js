@@ -1,21 +1,25 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { SUPPORTED_LANGS } from './locales/languages.js';
 
-export const SUPPORTED_LANGS = ['en', 'ru', 'kk'];
+export { SUPPORTED_LANGS };
 const LS_KEY = 'crm_lang';
 
 // Each feature area owns one fragment file per language (locales/{lang}/{area}.json),
 // each keyed under a distinct top-level namespace ({ nav: {...} }, { products: {...} }).
-// Vite eagerly bundles them all; we shallow-merge into one resource per language so
-// `t('area.key')` works everywhere. No central file to edit when adding an area.
-function loadResources(glob) {
-  const out = {};
-  for (const mod of Object.values(glob)) Object.assign(out, mod.default || mod);
-  return out;
+// Vite eagerly bundles every locales/*/*.json; we group fragments by language folder
+// and shallow-merge each language into one resource. Adding a language = drop a
+// locales/{lang}/ folder + one line in locales/languages.js — no edit needed here.
+const modules = import.meta.glob('./locales/*/*.json', { eager: true });
+const byLang = {};
+for (const [path, mod] of Object.entries(modules)) {
+  const lang = path.split('/')[2];            // ./locales/<lang>/<area>.json
+  if (!byLang[lang]) byLang[lang] = {};
+  Object.assign(byLang[lang], mod.default || mod);
 }
-
-const en = loadResources(import.meta.glob('./locales/en/*.json', { eager: true }));
-const ru = loadResources(import.meta.glob('./locales/ru/*.json', { eager: true }));
+const resources = Object.fromEntries(
+  Object.entries(byLang).map(([lang, dict]) => [lang, { translation: dict }]),
+);
 
 const stored = localStorage.getItem(LS_KEY);
 const initial = SUPPORTED_LANGS.includes(stored) ? stored : 'en';
@@ -23,7 +27,7 @@ const initial = SUPPORTED_LANGS.includes(stored) ? stored : 'en';
 i18n
   .use(initReactI18next)
   .init({
-    resources: { en: { translation: en }, ru: { translation: ru } },
+    resources,
     lng: initial,
     fallbackLng: 'en',
     interpolation: { escapeValue: false },

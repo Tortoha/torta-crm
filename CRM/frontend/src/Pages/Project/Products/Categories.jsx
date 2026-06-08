@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useOutletContext } from 'react-router-dom';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import {
   Plus, Trash, PencilSimple, DotsThreeOutline, MagnifyingGlass, X,
   ArrowDown, ArrowsLeftRight, Warning,
@@ -9,6 +10,7 @@ import {
 import { API_BASE } from '../../../api.js';
 import { InteractiveSection } from '../../../Utils/InteractiveSection.js';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
+import MediaThumb from '../../../Utils/MediaThumb.jsx';
 import '../../../Style/Organization.css';
 import '../../../Style/Products.css';
 import '../../../Style/Authentication.css';
@@ -393,7 +395,7 @@ function CategoryEditModal({ open, initial, pq, onClose, onSaved }) {
                         checked={checked} onChange={() => toggle(p.id)} />
                       <div className="cat-prod-thumb-wrap">
                         {p.first_image
-                          ? <img className="cat-prod-thumb" src={p.first_image} alt="" />
+                          ? <MediaThumb className="cat-prod-thumb" url={p.first_image} alt="" />
                           : <div className="cat-prod-thumb-empty" />}
                       </div>
                       <span className="cat-prod-title">{p.title || t('products.categories.editModal.untitled')}</span>
@@ -640,6 +642,8 @@ export default function Categories() {
     setLoading(false);
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
+  // Live collaboration: teammates' category / product-assignment changes refetch here.
+  useLiveReload(projectId, ['categories_changed', 'products_changed'], load);
 
   const filtered = cats.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()));
   const sorted = [...filtered].sort((a, b) => {

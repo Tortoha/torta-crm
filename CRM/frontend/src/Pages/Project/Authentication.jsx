@@ -9,6 +9,7 @@ import {
 } from '@phosphor-icons/react';
 import { Icon } from '@iconify/react';
 import { API_BASE } from '../../api.js';
+import { useLiveReload } from '../../Utils/useLiveReload.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import EmailPanel from './EmailPanel.jsx';
 import GooglePanel from './GooglePanel.jsx';
@@ -230,6 +231,7 @@ function UrlConfigPanel({ projectId }) {
   };
 
   useEffect(() => { loadSite(); loadRedirects(); }, [projectId]);
+  useLiveReload(projectId, 'url_config_changed', () => { loadSite(); loadRedirects(); });   // live: teammate edits site URL / redirects
 
   const saveSite = async () => {
     setSaving(true); setSiteErr('');
@@ -368,6 +370,7 @@ function Authentication() {
   const [emailVerified,   setEmailVerified]   = useState(false);
   // Map of generic provider.id → bool (is_enabled)
   const [providerEnabled, setProviderEnabled] = useState({});
+  const [authBump,        setAuthBump]        = useState(0);   // bump → re-run the badge fetches on live change
 
   const reloadProviders = () => {
     fetch(`${API_BASE}/api/auth-providers?project_id=${projectId}`, { credentials: 'include' })
@@ -402,7 +405,8 @@ function Authentication() {
       .catch(() => {});
 
     reloadProviders();
-  }, [projectId]);
+  }, [projectId, authBump]);
+  useLiveReload(projectId, 'auth_changed', () => setAuthBump(b => b + 1));   // live: teammate changes a provider / email / SMS
 
   const configurable = PROVIDERS.filter(p => p.configurable);
   const disabled     = PROVIDERS.filter(p => !p.configurable);

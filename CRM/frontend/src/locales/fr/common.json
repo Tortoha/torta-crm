@@ -1,0 +1,32 @@
+{
+  "common": {
+    "save": "Enregistrer",
+    "saved": "Enregistré",
+    "saveFailed": "Échec de l'enregistrement",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "confirm": "Confirmer",
+    "loading": "Chargement…",
+    "search": "Rechercher…",
+    "networkError": "Erreur réseau",
+    "collapse": "Réduire",
+    "createOrg": {
+      "needName": "Saisissez un nom d'organisation ci-dessus pour passer au paiement.",
+      "preparing": "Préparation du paiement sécurisé…",
+      "error": "Impossible de démarrer le paiement. Veuillez réessayer.",
+      "notConfigured": "Cette formule n'est pas encore disponible.",
+      "retry": "Réessayer",
+      "finalizing": "Paiement reçu — configuration de votre organisation…",
+      "finalizeError": "Le paiement a abouti, mais la configuration ne s'est pas terminée. Appuyez sur Réessayer.",
+      "done": "Tout est prêt ! Ouverture de votre organisation…",
+      "perMonth": "/mois"
+    }
+  },
+  "upgrade": {
+    "title": "Disponible à partir de Standard",
+    "sub": "Faites évoluer votre formule pour débloquer cette fonctionnalité.",
+    "subFeature": "Passez à Standard ou supérieur pour débloquer {{feature}}.",
+    "cta": "Mettre à niveau",
+    "crossOrg": "les analyses inter-organisations"
+  }
+}

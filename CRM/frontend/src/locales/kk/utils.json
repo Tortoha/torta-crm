@@ -1,0 +1,17 @@
+{
+  "utils": {
+    "country": {
+      "placeholder": "Елді таңдаңыз",
+      "searchPlaceholder": "Елдерді іздеу…",
+      "noMatches": "Сәйкестік табылмады"
+    },
+    "searchCombo": {
+      "placeholder": "Таңдаңыз…",
+      "searchPlaceholder": "Іздеу…",
+      "noMatches": "Сәйкестік табылмады"
+    },
+    "rowMenu": {
+      "select": "Таңдау"
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "developers": {
+    "nav": "Desarrolladores",
+    "meta": {
+      "getStarted": "Empezar gratis",
+      "docs": "Leer la documentación",
+      "reference": "Referencia de la API"
+    },
+    "hero": {
+      "eyebrow": "Desarrolladores",
+      "title": "La API de su tienda, lista en minutos",
+      "lead": "Productos, carrito, pago, inicio de sesión, chat en vivo y analíticas, todo a través de un diminuto SDK de JavaScript. Seguro por defecto, sin atarse a ningún framework y operativo en unas pocas líneas."
+    },
+    "one": {
+      "eyebrow": "Un solo cliente",
+      "title": "Cualquier parte de su tienda, a un solo llamado",
+      "lead": "Cree el cliente una vez y acceda a toda la tienda mediante métodos limpios y organizados por espacios de nombres. Sin fetch en crudo ni código repetitivo, y cada llamado devuelve siempre el mismo formato predecible."
+    },
+    "secure": {
+      "eyebrow": "Seguro por defecto",
+      "title": "Listo para enviar a cualquier navegador",
+      "lead": "Las claves que residen en el navegador no pueden hacer nada peligroso, y la más poderosa nunca sale de su servidor.",
+      "cards": [
+        { "title": "Dos claves, no una", "desc": "Una clave pública identifica la tienda; una clave publicable se verifica en cada solicitud. Copiar solo su URL no funcionará." },
+        { "title": "La clave secreta permanece en el servidor", "desc": "Las escrituras de confianza usan una clave secreta que usted conserva en su backend, nunca enviada al navegador." },
+        { "title": "Las sesiones se renuevan solas", "desc": "El inicio de sesión se basa en cookies; ante un 401, el SDK la renueva en silencio y reintenta. Usted nunca manipula tokens." },
+        { "title": "CSRF gestionado por usted", "desc": "Cada escritura se protege automáticamente: no hay nada que configurar." }
+      ]
+    },
+    "shape": {
+      "eyebrow": "Predecible",
+      "title": "La misma respuesta, siempre",
+      "lead": "Cada método se resuelve en el mismo objeto y nunca lanza una excepción ante un error HTTP. Verifique ok, muestre error (siempre una cadena lista para mostrar), use data: sin malabares con try/catch."
+    },
+    "frameworks": {
+      "eyebrow": "Sin atarse a un framework",
+      "title": "Intégrelo con lo que sea que use para construir",
+      "lead": "Es JavaScript puro y sin dependencias, así que funciona en cualquier lugar. La documentación incluye una configuración lista para copiar y pegar para cada framework."
+    },
+    "quickstart": {
+      "eyebrow": "Inicio rápido",
+      "title": "Operativo en menos de un minuto",
+      "lead": "Tres pasos desde npm install hasta su primer llamado.",
+      "steps": [
+        { "title": "Instalar", "desc": "Agregue el SDK, o cárguelo directamente desde un CDN, sin necesidad de un empaquetador." },
+        { "title": "Crear el cliente", "desc": "Dos claves seguras para el navegador, copiadas desde el resumen de su proyecto." },
+        { "title": "Llamar cualquier cosa", "desc": "Productos, carrito, pago, autenticación: todo ahí, con una respuesta uniforme." }
+      ]
+    },
+    "cta": {
+      "eyebrow": "Manos a la obra",
+      "title": "Construya su tienda hoy",
+      "sub": "Tome sus claves y haga su primer llamado en minutos. Gratis para empezar, sin tarjeta de crédito."
+    }
+  }
+}

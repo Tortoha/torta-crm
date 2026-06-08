@@ -1,0 +1,86 @@
+{
+  "header": {
+    "nav": {
+      "pricing": "Бағалар",
+      "docs":    "Құжаттама"
+    },
+    "userMenu": {
+      "ariaLabel": "Пайдаланушы мәзірі",
+      "settings": "Параметрлер",
+      "pricing": "Тарифтер",
+      "logout": "Шығу"
+    },
+    "org": {
+      "showOrganizations": "Ұйымдарды көрсету",
+      "searchPlaceholder": "Ұйымдарды іздеу…",
+      "allOrganizations": "Барлық ұйымдар",
+      "newOrganization": "Жаңа ұйым",
+      "modalTitle": "Жаңа ұйым",
+      "nameLabel": "Атауы",
+      "namePlaceholder": "Ұйым атауы"
+    },
+    "project": {
+      "showProjects": "Жобаларды көрсету",
+      "searchPlaceholder": "Жобаларды іздеу…",
+      "newProject": "Жаңа жоба",
+      "allProjects": "Барлық жобалар",
+      "modalTitle": "Жаңа жоба",
+      "nameLabel": "Атауы",
+      "namePlaceholder": "Жоба атауы",
+      "urlLabel": "URL",
+      "urlPlaceholder": "Сайтыңыздың URL мекенжайы, мысалы https://shop.com"
+    },
+    "product": {
+      "fallbackName": "Тауар",
+      "showProducts": "Тауарларды көрсету",
+      "searchPlaceholder": "Тауарларды іздеу…",
+      "allProducts": "Барлық тауарлар",
+      "newProduct": "Жаңа тауар"
+    },
+    "switcher": {
+      "noResults": "Нәтиже табылмады"
+    },
+    "form": {
+      "nameRequired": "Атауын көрсетіңіз",
+      "frontendUrlRequired": "Сайт URL мекенжайын көрсетіңіз",
+      "invalidUrl": "Жарамды URL енгізіңіз: http://... немесе https://...",
+      "error": "Қате",
+      "creating": "Жасалуда…",
+      "create": "Жасау"
+    },
+    "notifications": {
+      "title": "Хабарландырулар",
+      "markAllRead": "Барлығын оқылды деп белгілеу",
+      "viewAll": "Барлық хабарландыруларды көру",
+      "empty": "Әзірге хабарландырулар жоқ",
+      "loadingMore": "Жүктелуде…",
+      "allTitle": "Барлық хабарландырулар",
+      "allSubtitle": "Сіз алған барлық нәрсе, күні бойынша топтастырылған.",
+      "buckets": {
+        "today": "Бүгін",
+        "yesterday": "Кеше",
+        "thisWeek": "Осы аптада",
+        "thisMonth": "Осы айда",
+        "earlier": "Бұрынырақ"
+      },
+      "time": {
+        "justNow": "жаңа ғана",
+        "minutesAgo": "{{count}} мин бұрын",
+        "hoursAgo": "{{count}} сағ бұрын",
+        "daysAgo": "{{count}} күн бұрын"
+      }
+    },
+    "crop": {
+      "title": "Фотосуретті өңдеу",
+      "close": "Жабу",
+      "zoom": "Масштаб",
+      "rotate": "Бұру",
+      "zoomOut": "Кішірейту",
+      "zoomIn": "Үлкейту",
+      "rotateLeft": "Солға бұру",
+      "rotateRight": "Оңға бұру",
+      "saving": "Сақталуда…",
+      "savePhoto": "Фотосуретті сақтау"
+    }
+  }
+}

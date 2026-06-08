@@ -4,6 +4,10 @@
       "notFound": "Product not found.",
       "untitled": "Untitled"
     },
+    "upload": {
+      "uploading": "Uploading…",
+      "done": "Upload complete"
+    },
     "overview": {
       "title": {
         "title": "Title",
@@ -223,6 +227,20 @@
       "saveFailed": "Save failed",
       "uploadFailed": "Upload failed"
     },
+    "preview": {
+      "title": "Preview & pricing",
+      "hint": "Showcase media shown on the storefront and the price buyers pay. The first item is the cover image.",
+      "manageMedia": "Manage media",
+      "addMedia": "Add preview media",
+      "mediaHint": "Photo, video or 3D model — the first one becomes the cover.",
+      "mediaCount": "{{count}} item",
+      "mediaCount_plural": "{{count}} items",
+      "price": "Price",
+      "priceHint": "What the customer pays for the download.",
+      "delivery": "File delivery",
+      "zip": "Deliver all files as a single ZIP archive",
+      "zipHint": "When off, the customer downloads each file separately."
+    },
     "digital": {
       "title": "Files",
       "hint": "Files customers receive after purchase. URLs are signed and emailed automatically when the order is paid.",
@@ -231,7 +249,9 @@
       "removeConfirm": "Remove \"{{key}}\"?",
       "uploadFailed": "Upload failed",
       "saveFailed": "Save failed",
-      "fileAdded": "File added"
+      "fileAdded": "File added",
+      "dropMain": "Drag & drop files here",
+      "dropHint": "PDF, image, video, archive — any type, multiple at once"
     },
     "modifiers": {
       "title": "Modifiers",
@@ -318,7 +338,9 @@
     "reviews": {
       "title": "Reviews",
       "empty": "No reviews yet.",
-      "author": "User #{{id}}"
+      "author": "User #{{id}}",
+      "delete": "Delete review",
+      "deleteConfirm": "Delete this review? This can't be undone."
     },
     "settings": {
       "title": "Settings",

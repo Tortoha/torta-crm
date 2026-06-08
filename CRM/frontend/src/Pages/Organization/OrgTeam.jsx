@@ -17,7 +17,7 @@ import {
 import { API_BASE } from '../../api.js';
 import { PoListRow } from '../../Utils/PoListRow.jsx';
 import { useTabParam } from '../../Utils/useTabParam.js';
-import { usePresenceMap } from '../../Utils/usePresence.js';
+import { usePresenceMap, useFieldMirror } from '../../Utils/usePresence.js';
 import { SearchableCombobox, SegmentSwitch } from '../Project/ProjectSettings.jsx';
 import '../../Style/Authentication.css';   // auth-tab-* switcher + auth-modal
 import '../../Style/Organization.css';      // org-toolbar / org-new-btn / org-card-dropdown
@@ -575,6 +575,14 @@ export default function OrgTeam() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Live collaboration (org-scoped): Team has no project-events channel, so we
+  // ride the presence WS — when a teammate changes membership / roles / access,
+  // they ping a shared field and every same-org viewer refetches. The ping value
+  // is just a changing token (ignored — the signal is what matters). pushLocal's
+  // own 1 s guard means the actor won't refetch off its own echo.
+  const { pushLocal: pingTeam } = useFieldMirror(orgId ? `team-changed:${orgId}` : null, () => load());
+  const reloadAndPing = useCallback(() => { load(); pingTeam(Date.now()); }, [load, pingTeam]);
+
   // Live updates without WebSocket — listen for `visibilitychange` + `focus`
   // and refetch when the tab becomes visible again. This mirrors how
   // WhatsApp / Slack / Linear keep team pages fresh: another admin removes
@@ -607,12 +615,12 @@ export default function OrgTeam() {
   const removeMember = async (m) => {
     if (!window.confirm(t('org.team.members.removeConfirm', { name: m.name || m.email }))) return;
     const r = await fetch(`${API_BASE}/api/orgs/${orgId}/members/${m.id}`, { method: 'DELETE', credentials: 'include' });
-    if (r.ok) { showToast(t('org.team.members.removed')); load(); } else showToast(t('org.team.members.failed'));
+    if (r.ok) { showToast(t('org.team.members.removed')); reloadAndPing(); } else showToast(t('org.team.members.failed'));
   };
   const deleteRole = async (role) => {
     if (!window.confirm(t('org.team.roles.deleteConfirm', { name: role.name }))) return;
     const r = await fetch(`${API_BASE}/api/orgs/${orgId}/roles/${role.id}`, { method: 'DELETE', credentials: 'include' });
-    if (r.ok) { showToast(t('org.team.roles.deleted')); load(); }
+    if (r.ok) { showToast(t('org.team.roles.deleted')); reloadAndPing(); }
     else { const j = await r.json().catch(() => ({})); showToast(j.detail || t('org.team.roles.failed')); }
   };
   const TABS = [
@@ -689,9 +697,9 @@ export default function OrgTeam() {
       {addOpen && <AddMemberModal orgId={orgId} onClose={() => setAddOpen(false)}
         showToast={showToast} />}
       {roleModal && <RoleEditorModal orgId={orgId} pages={pages} role={roleModal.role} readOnly={!canManage}
-        onClose={() => setRoleModal(null)} onSaved={load} showToast={showToast} />}
+        onClose={() => setRoleModal(null)} onSaved={reloadAndPing} showToast={showToast} />}
       {assignFor && <AssignmentModal orgId={orgId} member={assignFor} projects={projects} roles={roles}
-        onClose={() => setAssignFor(null)} onSaved={load} showToast={showToast} />}
+        onClose={() => setAssignFor(null)} onSaved={reloadAndPing} showToast={showToast} />}
 
       {toast && createPortal(<div className="auth-toast">{toast}</div>, document.body)}
     </div>

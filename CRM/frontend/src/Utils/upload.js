@@ -1,4 +1,5 @@
 import { API_BASE } from '../api.js';
+import { startUpload, updateUpload, endUpload } from './uploadProgress.js';
 
 // Presigned direct-to-R2 upload — the browser PUTs the file STRAIGHT to R2,
 // bypassing the backend (Cloud Run caps request bodies at ~32 MB and can't hold
@@ -12,7 +13,7 @@ import { API_BASE } from '../api.js';
 // (Utils/planLimit.js) already turns into the PlanLimitModal — so we add NO new
 // UI, just stop. A per-file-cap overflow (>4 GB) throws with a .message the
 // caller can alert().
-export async function presignedUpload(file, { pq = '', kind = 'file' } = {}) {
+export async function presignedUpload(file, { pq = '', kind = 'file', productId = null } = {}) {
   // 1. presign (+ pre-flight quota check)
   const pres = await fetch(`${API_BASE}/api/upload/presign${pq}`, {
     method: 'POST', credentials: 'include',
@@ -22,6 +23,7 @@ export async function presignedUpload(file, { pq = '', kind = 'file' } = {}) {
       content_type: file.type || 'application/octet-stream',
       size:         file.size,
       kind,
+      product_id:   productId,
     }),
   });
   if (!pres.ok) {
@@ -37,10 +39,28 @@ export async function presignedUpload(file, { pq = '', kind = 'file' } = {}) {
   const { upload_url, public_url, key, content_type, content_disposition } = await pres.json();
 
   // 2. PUT straight to R2 — NO credentials (cross-origin), echo signed headers.
+  //    XMLHttpRequest (not fetch) because fetch() can't report upload progress.
+  //    We push live byte counts to the global channel → the page's status pill
+  //    renders a progress bar + percentage. Quota/abort paths still throw cleanly.
   const headers = { 'Content-Type': content_type || file.type || 'application/octet-stream' };
   if (content_disposition) headers['Content-Disposition'] = content_disposition;
-  const put = await fetch(upload_url, { method: 'PUT', headers, body: file });
-  if (!put.ok) throw new Error('Upload to storage failed.');
+  const upId = startUpload(file.name || 'file', file.size || 0);
+  try {
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', upload_url, true);
+      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) updateUpload(upId, e.loaded, e.total); };
+      xhr.onload  = () => (xhr.status >= 200 && xhr.status < 300)
+        ? resolve()
+        : reject(new Error('Upload to storage failed.'));
+      xhr.onerror = () => reject(new Error('Upload to storage failed.'));
+      xhr.onabort = () => reject(new Error('Upload aborted.'));
+      xhr.send(file);
+    });
+  } finally {
+    endUpload(upId);
+  }
 
   // 3. confirm — verify it landed + bill the real size.
   await fetch(`${API_BASE}/api/upload/confirm${pq}`, {

@@ -8,6 +8,15 @@ import { client } from "./api.js";
 import { fmtMoney } from "./currency.js";
 import "./Style/Orders.css";
 import "./Style/Load.css";
+import "./Style/Digital.css";
+
+// Human filename from a download URL (the digital bundle lands as "_bundle.zip").
+function dlLabel(url) {
+  try {
+    const name = decodeURIComponent(new URL(url).pathname).split("/").pop() || "download";
+    return name === "_bundle.zip" ? "Download ZIP" : name;
+  } catch { return "download"; }
+}
 
 const RETURN_WINDOW_DAYS = 14;
 // Customer can cancel only while the order hasn't been delivered yet. After
@@ -236,6 +245,24 @@ function Orders() {
                         <span className="os-info-row"><ChatCircle weight="bold" /> {order.comment}</span>
                       )}
                     </div>
+
+                    {/* Digital downloads — persistent access to the purchased files. */}
+                    {Array.isArray(order.downloads) && order.downloads.length > 0 && (
+                      <div style={{ margin: "0 0 14px", padding: 14, borderRadius: 12,
+                                    background: "rgba(0,113,227,0.06)" }}>
+                        <span style={{ fontWeight: 600, fontSize: 13, display: "block", marginBottom: 8 }}>
+                          Downloads
+                        </span>
+                        <div className="dg-links">
+                          {order.downloads.map((f, i) => (
+                            <a key={i} className="dg-dl-link" href={f.url}
+                              target="_blank" rel="noopener noreferrer" download>
+                              ⬇ {dlLabel(f.url)}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="os-items">
                       {order.items.map((item, i) => (

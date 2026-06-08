@@ -1575,6 +1575,46 @@
               0 2px 8px rgba(0, 0, 0, 0.10);
 }
 
+/* Live upload-progress variant of the bottom pill — label row + progress bar.
+   Same accent pill / shape as the success toast; the white bar fills 0→100%. */
+.auth-toast--progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 240px;
+  max-width: min(420px, 90vw);
+  padding: 11px 18px;
+  white-space: normal;
+}
+.auth-toast-prog-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+}
+.auth-toast-prog-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auth-toast-prog-pct {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.auth-toast-prog-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  overflow: hidden;
+}
+.auth-toast-prog-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #fff;
+  transition: width 0.15s linear;
+}
+
 /* ══════════════════════════════════════════════════════
    PHONE / SMS PROVIDER PANEL
    ══════════════════════════════════════════════════════ */

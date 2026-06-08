@@ -1,0 +1,221 @@
+{
+  "comms": {
+    "chat": {
+      "pageTitle": "Клиенттермен чат",
+      "tabChats": "Чаттар",
+      "tabChannels": "Арналар",
+      "channels": "Арналар",
+      "channelsSubtitle": "Клиенттердің хабарламаларын тікелей CRM ішінде алу үшін хабарлама арналарын қосыңыз.",
+      "searchConversations": "Диалогтарды іздеу…",
+      "active": "Белсенді",
+      "inactive": "Белсенді емес",
+      "noActiveChats": "Әзірге белсенді чаттар жоқ",
+      "closedChatsAppear": "Жабылған чаттар осында пайда болады",
+      "selectConversation": "Диалогты таңдаңыз",
+      "selectConversationDesc": "Хабарламаларды көру үшін тізімнен чатты таңдаңыз.",
+      "noMessages": "Әзірге хабарламалар жоқ.",
+      "typeMessage": "Хабарлама теріңіз…",
+      "send": "Жіберу",
+      "chatClosed": "Бұл чат жабық. Жауап беру үшін оны қайта ашыңыз.",
+      "closeChat": "Чатты жабу",
+      "reopen": "Қайта ашу",
+      "via": "{{channel}} арқылы",
+      "copyId": "ID көшіру",
+      "idCopied": "ID көшірілді",
+      "markAsRead": "Оқылды деп белгілеу",
+      "reopenChat": "Чатты қайта ашу",
+      "copyText": "Мәтінді көшіру",
+      "copied": "Көшірілді",
+      "downloadPng": "PNG ретінде жүктеп алу",
+      "openOriginal": "Түпнұсқаны ашу",
+      "image": "сурет",
+      "attachment": "тіркеме",
+      "play": "Ойнату",
+      "pause": "Кідірту",
+      "zoomIn": "Үлкейту",
+      "zoomOut": "Кішірейту",
+      "close": "Жабу",
+      "failedLoad": "Хабарламаларды жүктеу мүмкін болмады",
+      "failedSend": "Жіберу мүмкін болмады",
+      "failedDelete": "Жою мүмкін болмады",
+      "downloadFailed": "Жүктеп алу мүмкін болмады",
+      "deleteMsgConfirm": "Бұл хабарламаны жою керек пе? Ол тек CRM ішінен жойылады, мессенджерден емес.",
+      "chatClosedToast": "Чат жабылды",
+      "chatReopenedToast": "Чат қайта ашылды",
+      "failed": "Қате",
+      "connected": "Қосылды",
+      "connectedAs": "Қосылды:",
+      "connectedAsName": "{{name}} ретінде қосылды",
+      "realtime": "Нақты уақытта",
+      "webhook": "Webhook",
+      "webhookUrl": "Webhook URL",
+      "webhookHint": "Мұны платформаның webhook параметрлеріне қойыңыз. Жалпыға қолжетімді HTTPS қажет — өндірісте жұмыс істейді, localhost-та емес.",
+      "checkingDomain": "Расталған электрондық пошта домені тексерілуде…",
+      "noVerifiedDomain": "Расталған электрондық пошта домені жоқ",
+      "noVerifiedDomainBody1": "Электрондық пошта арнасы OTP кодтарын жіберу үшін бұрын растаған доменіңізді қайта пайдаланады. Ашыңыз:",
+      "noVerifiedDomainBody2": "және DKIM/SPF/DMARC растауын аяқтаңыз, содан кейін осында оралыңыз.",
+      "authEmailLink": "Аутентификация → Электрондық пошта",
+      "dnsMxTitle": "DNS — MX жазбасы",
+      "dnsMxHint1": "Кіріс пошта серверлерімізге жету үшін осы MX жазбасын доменіңізге қосыңыз. Осы доменнің кез келген мекенжайы",
+      "dnsMxHint2": "осы чатқа түседі.",
+      "noSetup": "Орнату қажет емес",
+      "noSetupDesc": "Web Chat жобаңыздың бар API тіркелгі деректерін пайдаланады. «Қосу» түймесін басыңыз, сонда қолдау виджеті дүкеніңіздің әр бетінде пайда болады.",
+      "lockedToDomain": "Расталған электрондық пошта доменіңізге бекітілген",
+      "lockedHint1": "Расталған электрондық пошта доменіңізге бекітілген. Оны өзгерту үшін алдымен мына бөлімде доменді жаңартыңыз:",
+      "lockedHint2": ".",
+      "customerWillSee": "Клиент өз кіріс жәшігінде көреді",
+      "connectedToast": "Қосылды.",
+      "failedSave": "Сақтау мүмкін болмады",
+      "update": "Жаңарту",
+      "connect": "Қосу",
+      "removing": "Жойылуда…",
+      "disconnect": "Ажырату",
+      "channel": {
+        "webchat": { "desc": "Веб-сайтыңызға қолдау виджетін орнатыңыз. Клиенттер анонимді түрде жазады." },
+        "telegram": {
+          "desc": "Клиенттерден тікелей хабарламалар алу үшін Telegram ботын қосыңыз.",
+          "field": { "bot_token": { "label": "Бот токені", "hint": "Telegram-да @BotFather-ге жазып, бот жасаңыз, содан кейін токенді осында қойыңыз." } }
+        },
+        "discord": {
+          "desc": "Пайдаланушылардан тікелей хабарламалар алу үшін Discord ботын қосыңыз.",
+          "field": { "bot_token": { "label": "Бот токені", "hint": "Discord Developer Portal → Applications → New App → Bot → Reset Token. Privileged Gateway Intent қосыңыз: MESSAGE CONTENT." } }
+        },
+        "whatsapp": {
+          "desc": "Клиенттердің хабарламаларын WhatsApp Cloud API арқылы алыңыз.",
+          "field": {
+            "phone_number_id": { "label": "Телефон нөмірінің ID-і", "hint": "Meta for Developers → WhatsApp → API Setup ішінен." },
+            "access_token": { "label": "Тұрақты қол жеткізу токені", "hint": "whatsapp_business_messaging аясы бар System User токені." },
+            "verify_token": { "label": "Webhook растау токені", "hint": "Кез келген жолды ойлап табыңыз. Webhook-қа жазылу кезінде сол жолды Meta-ға қойыңыз." },
+            "app_secret": { "label": "Қолданба құпиясы", "hint": "Meta App → Settings → Basic ішінен. X-Hub-Signature-256 растау үшін пайдаланылады." }
+          }
+        },
+        "instagram": {
+          "desc": "Бизнес-профиліңізден Instagram Direct хабарламаларын алыңыз.",
+          "field": {
+            "page_id": { "label": "Instagram бетінің ID-і", "hint": "Facebook бетіне байланыстырылған IG бизнес-аккаунтының ID-і." },
+            "access_token": { "label": "Бет қол жеткізу токені", "hint": "instagram_manage_messages аясы бар ұзақ мерзімді бет токені." },
+            "verify_token": { "label": "Webhook растау токені", "hint": "Meta жазылымын растау кезінде пайдаланылады." },
+            "app_secret": { "label": "Қолданба құпиясы", "hint": "Meta App → Settings → Basic ішінен." }
+          }
+        },
+        "facebook": {
+          "desc": "Бетіңізден Facebook Messenger диалогтарын алыңыз.",
+          "field": {
+            "page_id": { "label": "Facebook бетінің ID-і", "hint": "Бетіңіздің сандық ID-і." },
+            "access_token": { "label": "Бет қол жеткізу токені", "hint": "pages_messaging аясы бар ұзақ мерзімді бет токені." },
+            "verify_token": { "label": "Webhook растау токені", "hint": "Meta жазылымын растау кезінде пайдаланылады." },
+            "app_secret": { "label": "Қолданба құпиясы", "hint": "Meta App → Settings → Basic ішінен." }
+          }
+        },
+        "viber": {
+          "desc": "Клиенттердің хабарламаларын Viber ботыңыздан алыңыз.",
+          "field": { "auth_token": { "label": "Авторизация токені", "hint": "Viber Admin Panel → Account info → Authentication token. HTTPS болғанда webhook URL автоматты түрде тіркеледі." } }
+        },
+        "x": {
+          "desc": "X аккаунтыңыздан тікелей хабарламалар алыңыз.",
+          "field": {
+            "bearer_token": { "label": "OAuth 2.0 Bearer токені", "hint": "X Developer Portal → Project → Keys and Tokens → Bearer Token. DM эндпоинттері үшін Elevated рұқсаты қажет." },
+            "handle": { "label": "Аккаунт атауы", "hint": "Тек көрсету үшін — осы интеграцияны белгілеу үшін пайдаланылады." },
+            "app_secret": { "label": "Қолданба құпиясы", "hint": "Webhook қолтаңбаларын растауға арналған Consumer secret." }
+          }
+        },
+        "email": {
+          "desc": "@расталған-доменіңіздегі кез келген мекенжайға жіберілген клиент хаттарын алыңыз. Жауаптар тізбекке топтастырылады.",
+          "field": {
+            "domain": { "label": "Расталған электрондық пошта домені", "hint": "Аутентификация → Электрондық пошта (DKIM/SPF/DMARC) бөлімінде бұрын растаған доменіңіз болуы керек. Осы доменнің кез келген мекенжайы осы чатқа бағытталады." },
+            "reply_local": { "label": "Жауап жіберетін мекенжай", "hint": "Тек жергілікті бөлік. Клиенттің жауаптары осыған қарамастан сол чатқа түседі — бұл тек олардың «Кімнен» өрісінде көретінін басқарады." },
+            "reply_name": { "label": "Жауап жіберушінің көрсетілетін аты", "hint": "Клиенттің кіріс жәшігінде жіберуші аты ретінде көрсетіледі. Аутентификация провайдерлерінің көрсетілетін атын қайта пайдалану үшін бос қалдырыңыз." }
+          }
+        }
+      }
+    },
+    "emails": {
+      "tab": {
+        "verification": "Растау",
+        "password_reset": "Құпиясөзді қалпына келтіру",
+        "order_confirmation": "Тапсырыс",
+        "booking_reminder": "Брондау",
+        "abandoned_cart": "Тасталған себет",
+        "restock": "Толықтыру",
+        "broadcasts": "Таратылымдар"
+      },
+      "title": {
+        "verification": "Растау коды",
+        "password_reset": "Құпиясөзді қалпына келтіру",
+        "order_confirmation": "Тапсырысты растау",
+        "booking_reminder": "Брондау туралы еске салу",
+        "abandoned_cart": "Тасталған себет",
+        "restock": "Тауардың толықтырылуы",
+        "broadcasts": "Таратылымдар"
+      },
+      "status": {
+        "draft": "жоба",
+        "scheduled": "жоспарланған",
+        "recurring": "қайталанатын",
+        "sending": "жіберілуде",
+        "sent": "жіберілді",
+        "paused": "кідіртілген"
+      },
+      "dow": {
+        "mon": "Дс", "tue": "Сс", "wed": "Ср", "thu": "Бс", "fri": "Жм", "sat": "Сб", "sun": "Жс"
+      },
+      "resetConfirm": "Бұл хатты әдепкі дизайнға қайтару керек пе?",
+      "resetDone": "Әдепкіге қайтарылды",
+      "resetToDefault": "Әдепкіге қайтару",
+      "requiredWarn": "Бұл хатта {{vars}} болуы керек — оны қайтармайынша өзгерістер сақталмайды.",
+      "htmlInsert": "Кірістіру:",
+      "htmlSubject": "Тақырып",
+      "htmlPreview": "Алдын ала қарау",
+      "htmlRequired": "{{vars}} қосыңыз — бұл хат үшін міндетті; онсыз сақталмайды.",
+      "broadcastsHint": "Барлық клиенттеріңізге науқан жіберіңіз — қазір немесе кесте бойынша.",
+      "colName": "Атауы",
+      "colSubject": "Тақырып",
+      "colSchedule": "Кесте",
+      "colSent": "Жіберілді",
+      "colStatus": "Күйі",
+      "options": "Опциялар",
+      "edit": "Өңдеу",
+      "pause": "Кідірту",
+      "resume": "Жалғастыру",
+      "searchPlaceholder": "Науқандарды іздеу…",
+      "gridView": "Тор",
+      "listView": "Тізім",
+      "newCampaign": "Жаңа науқан",
+      "noCampaigns": "Әзірге науқандар жоқ. Алғашқы таратылымыңызды жасаңыз.",
+      "noCampaignsFound": "Сұрауыңызға сәйкес науқандар жоқ.",
+      "media": {
+        "title": "Медиа кітапханасы",
+        "subtitle": "Суреттер мен PDF файлдарын жүктеп, содан кейін хат HTML-іне қою үшін сілтемені көшіріңіз.",
+        "upload": "Жүктеп салу",
+        "uploading": "Жүктелуде…",
+        "hint": "Суреттер және PDF",
+        "empty": "Әзірге ештеңе жүктелмеген.",
+        "copyLink": "Сілтемені көшіру",
+        "copied": "Көшірілді",
+        "deleteConfirm": "Бұл файлды жою керек пе?"
+      },
+      "untitled": "Атаусыз",
+      "noSubject": "Тақырыпсыз",
+      "sentCount": "{{sent}}/{{total}} жіберілді",
+      "campaignName": "Науқан атауы",
+      "back": "Артқа",
+      "draftSendNow": "Жоба / қазір жіберу",
+      "oneTime": "Бір реттік",
+      "weekly": "Апта сайын",
+      "modeIndividual": "Жеке",
+      "modeEveryone": "Барлығына",
+      "repeatYearly": "Жыл сайын қайталау",
+      "recipientPlaceholder": "recipient@email.com",
+      "send": "Жіберу",
+      "excludeGuests": "Қонақтарды қоспау",
+      "schedule": "Жоспарлау",
+      "sendToAll": "Барлығына жіберу",
+      "testPlaceholder": "you@example.com мекенжайына тест жіберу",
+      "sendTest": "Тест жіберу",
+      "scheduled": "Жоспарланған",
+      "sendingToAll": "Барлық клиенттерге жіберілуде…",
+      "testSent": "Тест жіберілді",
+      "deleteConfirm": "Бұл науқанды жою керек пе?"
+    }
+  }
+}

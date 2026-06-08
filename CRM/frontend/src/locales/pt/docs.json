@@ -1,0 +1,57 @@
+{
+  "docs": {
+    "title": "Documentação",
+    "groups": {
+      "crm": "Guia do CRM",
+      "console": "Console",
+      "apiGuides": "API · Guias",
+      "apiRef": "API · Referência"
+    },
+    "pages": {
+      "gettingStarted": "Primeiros passos",
+      "organizationsProjects": "Organizações e projetos",
+      "team": "Equipe e funções",
+      "realtime": "Tempo real e presença",
+      "overview": "Visão geral do projeto",
+      "analytics": "Análises",
+      "targetsAlerts": "Metas e alertas",
+      "products": "Produtos",
+      "orders": "Pedidos",
+      "bookingPage": "Agendamento",
+      "customersPage": "Clientes",
+      "emails": "E-mails",
+      "chatPage": "Chat",
+      "authentication": "Autenticação",
+      "integrations": "Integrações",
+      "documents": "Documentos",
+      "settings": "Configurações",
+      "payments": "Pagamentos",
+      "paymentsApi": "Pagamentos",
+      "quickstart": "Início rápido",
+      "frameworks": "Frameworks",
+      "concepts": "Conceitos",
+      "cheatsheet": "Folha de consulta",
+      "auth": "Autenticação",
+      "catalog": "Catálogo",
+      "cartOrders": "Carrinho e pedidos",
+      "reviewsFavorites": "Avaliações e favoritos",
+      "booking": "Agendamento",
+      "chat": "Chat na web",
+      "tracking": "Rastreamento",
+      "customers": "Envio de clientes"
+    },
+    "frameworks": {
+      "title": "Conecte seu framework",
+      "intro": "torta-js é JavaScript puro, sem dependências de framework, então funciona em qualquer lugar onde você possa executar JS. Escolha seu framework para ver a configuração exata — a ideia é sempre a mesma: criar um único cliente em um módulo compartilhado e importá-lo em todos os lugares.",
+      "pick": "Selecione o framework",
+      "install": "1. Instale",
+      "cdnNote": "Sem bundler? Importe-o diretamente de um CDN com import { createClient } from 'https://cdn.jsdelivr.net/npm/torta-js/+esm'.",
+      "create": "2. Crie o cliente ({{fw}})",
+      "use": "3. Use em qualquer lugar",
+      "next": "Cada método retorna { ok, status, data, error }. Saiba mais sobre o formato da resposta e o modelo de chaves em"
+    },
+    "notFound": "Esta página de documentação ainda não está disponível.",
+    "copy": "Copiar",
+    "copied": "Copiado"
+  }
+}

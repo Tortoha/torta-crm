@@ -1246,7 +1246,7 @@ def _assemble_product_payload(
             "id": v["id"], "name": v["variation_name"],
             "images": images,                    # full per-variation gallery
             "media":  media_typed,               # typed — { url, type, alt } per slot
-            "image":  images[0] if images else None,   # cover (back-compat alias for clients using `image`)
+            "image":  images[0] if images else None,   # cover (back-compat alias for clients using `image`) — first media in gallery order
             "price": float(v["price"]) if v.get("price") is not None else None,
             "effective_price": var_eff,
             "stock_quantity": v.get("stock_quantity") or 0,
@@ -1632,7 +1632,7 @@ async def _alert_on_unhandled(request: Request, exc: Exception):
     return _JSON({"detail": "Internal server error"}, status_code=500)
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def _healthcheck():
     """Unauthenticated liveness + DB probe for uptime monitors and load
     balancers (no api_key needed). 503 only when the DB is unreachable."""
@@ -1872,6 +1872,9 @@ class ProductPageResponse(BaseModel):
     on_sale: bool = False
     discount_percent: Optional[int] = None     # for storefront badges
     modifier_groups: List[dict] = []    # checkbox/radio add-on groups with items
+    downloads: List[dict] = []          # digital only: buyer download links [{label, url}]
+                                        # (one ZIP when digital_zip is on, else one per file).
+                                        # MUST be declared here or response_model strips it.
     # Phase 1: SaaS-grade physical fields exposed to storefront.
     sku: str = ""
     barcode: str = ""
@@ -4102,7 +4105,7 @@ def get_product_page(product_hash: str, request: Request,
     modifier_groups = _fetch_modifier_groups_for_products([product_id]).get(product_id, [])
     tier_pricing_by_sku = _fetch_tier_pricing([c["id"] for c in configurations])
 
-    return _assemble_product_payload(
+    payload = _assemble_product_payload(
         product,
         variations=variations,
         cfg_by_variation_id=cfg_by_variation_id,
@@ -4118,6 +4121,19 @@ def get_product_page(product_hash: str, request: Request,
         tier_pricing_by_sku=tier_pricing_by_sku,
         spec_groups_by_node=spec_groups_by_node,
     )
+    # Digital products expose their buyer download links (one ZIP when digital_zip is
+    # on, else a link per file) so the storefront's digital page can surface / test the
+    # download. NOTE: files live in a public R2 bucket, so this is not a hard paywall —
+    # production would gate behind a verified purchase or signed private URLs.
+    if payload.get("product_type") == "digital":
+        payload["downloads"] = [
+            {"label": d["label"], "url": d["url"]}
+            for d in _digital_downloads(
+                project_id,
+                [{"product_id": product["id"], "title": product["title"], "product_type": "digital"}],
+            )
+        ]
+    return payload
 
 
 # ── КОРЗИНА ──────────────────────────────────────────────
@@ -5997,6 +6013,14 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             address_str = composed
         else:
             address_str = sanitize(data.address or "")
+        # Digital-only orders have nothing to ship — the buyer gets the download
+        # link the moment they pay (see _digital_downloads / OrderSuccess / My
+        # Orders), so the order is born "delivered" instead of sitting in the
+        # New → Confirmed → Shipped pipeline. Any physical/service item in the cart
+        # keeps the normal 'new' flow (that part still needs fulfillment).
+        is_digital_only = bool(items) and all(
+            it.get("product_type") == "digital" for it in items)
+        order_status = "delivered" if is_digital_only else "new"
         # Создаём заказ
         cursor.execute(
             """INSERT INTO order_history
@@ -6010,7 +6034,7 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                 address_entrance, address_intercom,
                 recipient_first_name, recipient_last_name, recipient_middle_name,
                 customer_email)
-               VALUES (%s,%s,%s,'new',%s,%s,%s,%s,%s,%s,
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                        %s,%s,%s,%s,%s,%s, CASE WHEN %s='paid' THEN NOW() ELSE NULL END,
                        %s,%s,
                        %s,%s,%s,%s,%s,%s,
@@ -6018,7 +6042,7 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                        %s,%s,%s,
                        %s)
                RETURNING id""",
-            (project_id, user_id, round(float(total), 2),
+            (project_id, user_id, round(float(total), 2), order_status,
              data.delivery_method, rn,
              sanitize(data.phone or ""), address_str,
              sanitize(data.comment or ""), pay_provider,
@@ -6265,19 +6289,40 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
 
 
 def _digital_downloads(project_id: int, items: list) -> list:
-    """Download links for digital products in an order — [{title, label, url}] (engine escapes at render)."""
-    digital_ids = [it["product_id"] for it in items if it.get("product_type") == "digital"]
+    """Download links for digital products in an order — [{title, label, url}] (engine escapes at render).
+
+    When a product opts into one-ZIP delivery (products.digital_zip) and the CRM has
+    built its bundle (products.digital_zip_url), hand out that single archive instead
+    of N per-file links. Products without bundling (or whose zip isn't built yet) fall
+    back to the per-file links."""
+    digital_ids = list(dict.fromkeys(
+        it["product_id"] for it in items if it.get("product_type") == "digital"))
     if not digital_ids:
         return []
-    fmt = ",".join(["%s"] * len(digital_ids))
-    rows = db_all(
-        f"SELECT product_id, field_key, field_value FROM product_custom_fields "
-        f"WHERE project_id=%s AND product_id IN ({fmt}) AND field_type='file' AND field_value <> ''",
-        tuple([project_id] + digital_ids)
-    )
     titles = {it["product_id"]: it["title"] for it in items}
-    return [{"title": titles.get(r["product_id"]) or "", "label": r["field_key"], "url": r["field_value"]}
-            for r in rows]
+    fmt = ",".join(["%s"] * len(digital_ids))
+    try:
+        prods = db_all(f"SELECT id, digital_zip, digital_zip_url FROM products WHERE id IN ({fmt})",
+                       tuple(digital_ids))
+    except Exception:
+        prods = []   # columns not present yet → everyone gets per-file links
+    out, per_file_ids = [], []
+    for pid in digital_ids:
+        p = next((x for x in prods if x["id"] == pid), None) or {}
+        if p.get("digital_zip") and p.get("digital_zip_url"):
+            out.append({"title": titles.get(pid) or "", "label": "ZIP archive", "url": p["digital_zip_url"]})
+        else:
+            per_file_ids.append(pid)
+    if per_file_ids:
+        fmt2 = ",".join(["%s"] * len(per_file_ids))
+        rows = db_all(
+            f"SELECT product_id, field_key, field_value FROM product_custom_fields "
+            f"WHERE project_id=%s AND product_id IN ({fmt2}) AND field_type='file' AND field_value <> ''",
+            tuple([project_id] + per_file_ids)
+        )
+        out += [{"title": titles.get(r["product_id"]) or "", "label": r["field_key"], "url": r["field_value"]}
+                for r in rows]
+    return out
 
 
 @app.get("/{api_key}/orders")
@@ -6322,7 +6367,7 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
         tracking_url = tpl.replace("{tracking}", track) if (tpl and track) else None
         items = db_all(
             """SELECT oi.id AS order_item_id, oi.quantity, oi.price, oi.selected_modifier_item_ids,
-                      p.title, pv.variation_name, (pv.images)[1] AS image_url, pc.configuration_name
+                      oi.product_id, p.title, p.product_type, pv.variation_name, (pv.images)[1] AS image_url, pc.configuration_name
                FROM order_items oi
                JOIN products p ON oi.product_id=p.id
                JOIN product_configurations_l1 pv ON oi.variation_id=pv.id
@@ -6349,10 +6394,17 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
                     "price_delta": float(m["price_delta"] or 0),
                     "group_name":  m["group_name"],
                 }
+        # Digital download links for this order (one ZIP when bundled, else per file).
+        # Lets the storefront show "your files are here" on the order page + success page.
+        order_downloads = _digital_downloads(project_id, [
+            {"product_id": it["product_id"], "title": it["title"], "product_type": it.get("product_type")}
+            for it in items
+        ])
         result.append({
             "id":              o["id"],
             "total_amount":    o["total_amount"],
             "status":          o["status"],
+            "downloads":       order_downloads,
             "delivery_method": o["delivery_method"],
             "recipient_name":  o["recipient_name"],
             "address":         o["address"],
@@ -9799,20 +9851,11 @@ def order_receipt_pdf(order_id: int, request: Request,
            WHERE oi.order_id=%s""",
         (order_id,)
     )
-    digital_ids = [i["product_id"] for i in items if i.get("product_type") == "digital"]
-    downloads = []
-    if digital_ids:
-        fmt = ",".join(["%s"] * len(digital_ids))
-        files = db_all(
-            f"SELECT product_id, field_key, field_value FROM product_custom_fields"
-            f" WHERE project_id=%s AND product_id IN ({fmt}) AND field_type='file'"
-            f" AND field_value <> ''",
-            tuple([project_id] + digital_ids)
-        )
-        titles = {i["product_id"]: i["title"] for i in items}
-        for f in files:
-            downloads.append({"label": titles.get(f["product_id"]) or f["field_key"],
-                              "url":   f["field_value"]})
+    # Honor the same bundling rule as the order-confirmation email: one ZIP link per
+    # product when digital_zip is on, else a link per file. Label with the product
+    # title (falls back to the file key / "ZIP archive").
+    downloads = [{"label": d["title"] or d["label"], "url": d["url"]}
+                 for d in _digital_downloads(project_id, items)]
 
     branding = _get_branding(project_id)
     branding["style"] = style or branding.get("style") or "modern"

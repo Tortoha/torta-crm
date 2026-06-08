@@ -1,0 +1,32 @@
+{
+  "common": {
+    "save": "Guardar",
+    "saved": "Guardado",
+    "saveFailed": "No se pudo guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "confirm": "Confirmar",
+    "loading": "Cargando…",
+    "search": "Buscar…",
+    "networkError": "Error de red",
+    "collapse": "Contraer",
+    "createOrg": {
+      "needName": "Ingrese un nombre de organización arriba para continuar al pago.",
+      "preparing": "Preparando el pago seguro…",
+      "error": "No se pudo iniciar el pago. Inténtelo de nuevo.",
+      "notConfigured": "Este plan aún no está disponible.",
+      "retry": "Inténtelo de nuevo",
+      "finalizing": "Pago recibido: configurando su organización…",
+      "finalizeError": "El pago se realizó, pero la configuración no finalizó. Toque reintentar.",
+      "done": "¡Todo listo! Abriendo su organización…",
+      "perMonth": "/mes"
+    }
+  },
+  "upgrade": {
+    "title": "Disponible en Standard y superiores",
+    "sub": "Mejore su plan para desbloquear esta función.",
+    "subFeature": "Mejore a Standard o superior para desbloquear {{feature}}.",
+    "cta": "Mejorar plan",
+    "crossOrg": "analíticas entre organizaciones"
+  }
+}

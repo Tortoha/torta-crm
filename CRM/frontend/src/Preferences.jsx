@@ -6,14 +6,8 @@ import { API_BASE } from './api.js';
 import { syncLang } from './i18n.js';
 import { syncTheme } from './theme.js';
 import { Section, FieldCard, SearchableCombobox, SegmentSwitch } from './Pages/Project/ProjectSettings.jsx';
+import { LANGUAGES } from './locales/languages.js';
 import './Style/App.css';
-
-// Language names are shown in their own language (not translated).
-const LANGUAGES = [
-  { value: 'en', label: 'English' },
-  { value: 'ru', label: 'Русский' },
-  { value: 'kk', label: 'Қазақша' },
-];
 
 // Public preferences page (reachable from the landing gear, no auth required).
 // Same bulk-style as Settings → Profile, but only Language + Theme.

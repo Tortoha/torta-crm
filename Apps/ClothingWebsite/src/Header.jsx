@@ -84,6 +84,7 @@ function Header() {
                 <Link to={"/cart"}>Cart</Link>
                 <Link to={"/favorites"}>Favorites</Link>
                 <Link to={"/orders"}>My Orders</Link>
+                <Link to={"/digital"}>Digital Goods</Link>
                 {supportEnabled && (
                   <button className="support-menu-btn" onClick={handleSupportClick} type="button">
                     Support

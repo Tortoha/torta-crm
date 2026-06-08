@@ -1,0 +1,184 @@
+{
+  "integrations": {
+    "title": "Integrationen",
+    "subtitle": "Verbinden Sie externe Tools, um Ereignisse aus Ihrem Shop zu empfangen, oder exportieren Sie buchhaltungsfertige Dateien (1C / Kompra / QuickBooks / Xero / DATEV) auf Anfrage oder nach Zeitplan.",
+    "tabs": {
+      "browse": "Durchsuchen",
+      "logs": "Protokolle"
+    },
+    "row": {
+      "installed": "Installiert",
+      "installedTimes": "Installiert ×{{count}}",
+      "notInstalled": "Nicht installiert",
+      "comingSoon": "Demnächst",
+      "plannedFeatures": "Geplante Funktionen",
+      "notifyMe": "Benachrichtigen, wenn verfügbar"
+    },
+    "browse": {
+      "searchPlaceholder": "Integrationen suchen…",
+      "noMatch": "Keine Integrationen entsprechen Ihren Filtern."
+    },
+    "logs": {
+      "allStatuses": "Alle Status",
+      "successOnly": "Nur erfolgreiche",
+      "failedOnly": "Nur fehlgeschlagene",
+      "eventFilterPlaceholder": "Nach Ereignis filtern (z. B. order.paid)…",
+      "refresh": "Aktualisieren",
+      "colTime": "Zeit",
+      "colEvent": "Ereignis",
+      "colConnector": "Connector",
+      "colStatus": "Status",
+      "colHttp": "HTTP",
+      "colDuration": "Dauer",
+      "loading": "Wird geladen…",
+      "empty": "Noch keine Zustellungen. Lösen Sie ein Ereignis aus (z. B. geben Sie eine Testbestellung auf) oder klicken Sie bei einer Integration auf „Testversand“.",
+      "payload": "Payload",
+      "responseBody": "Antwortinhalt",
+      "emptyValue": "(leer)",
+      "retry": "Wiederholen",
+      "ago": {
+        "seconds": "vor {{n}} s",
+        "minutes": "vor {{n}} Min.",
+        "hours": "vor {{n}} Std."
+      }
+    },
+    "toast": {
+      "saved": "Gespeichert",
+      "installed": "Installiert",
+      "deleted": "Gelöscht",
+      "requestSent": "Anfrage gesendet",
+      "couldNotInstall": "Installation fehlgeschlagen"
+    },
+    "connector": {
+      "events": {
+        "groupOrders": "Bestellungen",
+        "groupBookings": "Buchungen",
+        "groupOther": "Sonstige"
+      },
+      "defaults": {
+        "webhook": {
+          "label": "Endpunkt-URL",
+          "placeholder": "https://your-server.com/torta-webhook",
+          "help": "Ihr Server sollte POST akzeptieren und X-Torta-Signature überprüfen."
+        },
+        "slack": {
+          "label": "Webhook-URL",
+          "placeholder": "https://hooks.slack.com/services/T0…/B0…/…",
+          "help": "Erhalten Sie diese unter api.slack.com/messaging/webhooks"
+        },
+        "discord": {
+          "label": "Webhook-URL",
+          "placeholder": "https://discord.com/api/webhooks/…/…",
+          "help": "Server Settings → Integrations → Webhooks → New Webhook"
+        },
+        "fallbackLabel": "Webhook-URL",
+        "fallbackPlaceholder": "https://your-endpoint.com/hook"
+      },
+      "nameLabel": "Name (intern)",
+      "primaryRequired": "{{label}} ist erforderlich",
+      "primaryHttp": "{{label}} muss mit http:// oder https:// beginnen",
+      "saveFailed": "Speichern fehlgeschlagen",
+      "saveFirstThenTest": "Speichern Sie zuerst die Integration, dann testen Sie",
+      "confirmDelete": "Diese Integration löschen? Protokolle bleiben erhalten.",
+      "signingSecret": "Signatur-Secret",
+      "copied": "Kopiert",
+      "copy": "Kopieren",
+      "signingHint": "Überprüfen Sie <0>X-Torta-Signature: sha256=&lt;hex&gt;</0> bei jeder Anfrage: <1>HMAC-SHA256(body, secret)</1>.",
+      "subscribeAll": "Alle Ereignisse abonnieren",
+      "subscribeAllHintMailchimp": "Mailchimp reagiert nur auf customer.created — andere Ereignisse werden serverseitig stillschweigend übersprungen.",
+      "subscribeAllHintGa4": "GA4 ordnet order.paid → purchase, order.created → begin_checkout zu. Andere Ereignisse werden übersprungen.",
+      "subscribeAllHintDefault": "Wenn aktiviert, löst jedes Ereignis dieses Projekts diese Integration aus.",
+      "active": "Aktiv",
+      "activeHint": "Zustellung pausieren, ohne die Konfiguration zu verlieren.",
+      "saving": "Wird gespeichert…",
+      "saveChanges": "Änderungen speichern",
+      "install": "Installieren",
+      "testSend": "Testversand",
+      "docs": "Dokumentation",
+      "delete": "Löschen",
+      "hide": "Ausblenden",
+      "show": "Anzeigen"
+    },
+    "request": {
+      "comingSoon": "Demnächst",
+      "comingSoonSub": "Sagen Sie uns, dass Sie es möchten — wir benachrichtigen Sie per E-Mail am Tag der Veröffentlichung und priorisieren die am häufigsten gewünschten.",
+      "plannedFeatures": "Geplante Funktionen",
+      "notifyMe": "Mich benachrichtigen",
+      "yourEmail": "Ihre E-Mail",
+      "emailPlaceholder": "you@example.com",
+      "anythingSpecific": "Etwas Bestimmtes? (optional)",
+      "notePlaceholder": "Was ist Ihr Anwendungsfall? Welche Felder sind am wichtigsten?",
+      "requestFailed": "Anfrage fehlgeschlagen",
+      "sending": " Wird gesendet…",
+      "sendRequest": " Anfrage senden",
+      "close": "Schließen",
+      "thanksTitle": "Danke — wir melden uns bei Ihnen.",
+      "thanksBody": "Ihre Anfrage wurde erfasst. Wir benachrichtigen Sie per E-Mail, sobald {{name}} verfügbar ist.",
+      "done": "Fertig"
+    },
+    "accounting": {
+      "period": {
+        "today": "Heute",
+        "yesterday": "Gestern",
+        "last7d": "Letzte 7 Tage",
+        "last30d": "Letzte 30 Tage",
+        "thisMonth": "Dieser Monat",
+        "lastMonth": "Letzter Monat",
+        "thisQuarter": "Dieses Quartal",
+        "custom": "Benutzerdefinierter Zeitraum…"
+      },
+      "schedule": {
+        "off": "Aus — nur manuelle Downloads",
+        "daily": "Täglich — gestrige Bestellungen",
+        "weekly": "Wöchentlich — letzte 7 Tage",
+        "monthly": "Monatlich — Vormonat"
+      },
+      "hourLabel": "{{h}}:00 UTC",
+      "fileFormat": "Dateiformat",
+      "periodLabel": "Zeitraum",
+      "includeUnpaid": "Unbezahlte / ausstehende einbeziehen",
+      "pickBothDates": "Wählen Sie Start- und Enddatum für einen benutzerdefinierten Zeitraum.",
+      "start": "Start",
+      "end": "Ende",
+      "preview": "Vorschau",
+      "refresh": "Aktualisieren",
+      "orders": "Bestellungen",
+      "revenue": "Umsatz",
+      "window": "Zeitfenster",
+      "loading": "Wird geladen…",
+      "loadingPreview": "Vorschau wird geladen…",
+      "previewFailed": "Vorschau fehlgeschlagen",
+      "colOrder": "Bestellung",
+      "colDate": "Datum",
+      "colCustomer": "Kunde",
+      "colItems": "Positionen",
+      "colAmount": "Betrag",
+      "showingOf": "{{shown}} von {{total}} Bestellungen werden angezeigt. Laden Sie die vollständige Datei herunter.",
+      "noMatchingOrders": "Keine passenden Bestellungen in diesem Zeitraum.",
+      "emailSchedule": "E-Mail-Zeitplan",
+      "cadence": "Häufigkeit",
+      "cadenceHint": "Wenn festgelegt, senden wir einen signierten Download-Link gemäß Ihrer Häufigkeit per E-Mail — die Dateien selbst verbleiben im CRM und der Link ist 30 Tage gültig.",
+      "hourUtc": "Stunde (UTC)",
+      "recipientEmail": "E-Mail des Empfängers",
+      "recipientPlaceholder": "accountant@example.com",
+      "recipientHint": "Nur erforderlich, wenn der Zeitplan aktiv ist. Für reinen Download leer lassen.",
+      "active": "Aktiv",
+      "activeHint": "Deaktivierte Integrationen erhalten keine geplanten Exporte mehr, bis sie wieder aktiviert werden.",
+      "howToImport": "So importieren Sie in {{name}}",
+      "setEmailOrOff": "Legen Sie eine E-Mail des Empfängers fest oder stellen Sie den Zeitplan auf Aus.",
+      "saveFailed": "Speichern fehlgeschlagen",
+      "saved": "Gespeichert",
+      "setRecipientFirst": "Legen Sie zuerst eine E-Mail des Empfängers fest.",
+      "testSendFailed": "Testversand fehlgeschlagen",
+      "emailSentTo": "E-Mail gesendet an {{email}}",
+      "confirmDelete": "Diese Buchhaltungsintegration löschen? Vergangene Downloads sind nicht betroffen.",
+      "download": "Herunterladen",
+      "downloadOrders": "Herunterladen · {{count}} Bestellung",
+      "downloadOrders_other": "Herunterladen · {{count}} Bestellungen",
+      "saving": "Wird gespeichert…",
+      "saveSchedule": "Zeitplan speichern",
+      "testSend": "Testversand",
+      "delete": "Löschen"
+    }
+  }
+}

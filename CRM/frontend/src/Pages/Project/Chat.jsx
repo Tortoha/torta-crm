@@ -517,21 +517,43 @@ function ImageLightbox({ src, alt, filename, onClose }) {
 }
 
 // Backend always sets att.url — either direct CDN (Discord/Meta/Viber) or a signed CRM proxy URL (Telegram/WhatsApp/Email).
+
+// Session-wide cache of media URLs that failed to load. The realtime poller re-renders
+// the message list every few seconds; failed responses are NOT HTTP-cached, so without
+// this every broken attachment would re-hit the backend on every render (and each
+// Telegram/WhatsApp proxy miss re-calls the external API — brutal at scale). Once a URL
+// lands here we render a static placeholder and never request it again this session.
+const _failedMedia = new Set();
+
 function AttachmentItem({ msg, idx, att, onImageClick }) {
   const { t } = useTranslation();
   const src = att.url;
+  const [failed, setFailed] = useState(() => !!src && _failedMedia.has(src));
   if (!src) return null;
+
+  const markFailed = () => { _failedMedia.add(src); setFailed(true); };
+
+  if (failed) {
+    // Broken/unavailable media — render a static placeholder, issue no further requests.
+    return (
+      <div className="chat-att chat-att--file" style={{ opacity: 0.55 }} title={att.filename || ''}>
+        <FileText size={20} weight="duotone" />
+        <span className="chat-att-name">{att.filename || t('comms.chat.attachment')}</span>
+      </div>
+    );
+  }
+
   if (att.type === 'image') {
     return (
       <button type="button" className="chat-att chat-att--image"
         onClick={() => onImageClick?.(src, att.filename)}>
-        <img src={src} alt={att.filename || t('comms.chat.image')} loading="lazy" />
+        <img src={src} alt={att.filename || t('comms.chat.image')} loading="lazy" onError={markFailed} />
       </button>
     );
   }
   if (att.type === 'video') {
     return <video controls preload="metadata" className="chat-att chat-att--video"
-                  poster={att.thumb || undefined} src={src} />;
+                  poster={att.thumb || undefined} src={src} onError={markFailed} />;
   }
   if (att.type === 'voice' || att.type === 'audio') {
     return <VoicePlayer src={src} duration={att.duration} msgId={msg.id} idx={idx} />;

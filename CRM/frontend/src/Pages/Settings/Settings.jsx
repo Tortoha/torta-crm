@@ -13,16 +13,10 @@ import { syncLang } from '../../i18n.js';
 import { syncTheme } from '../../theme.js';
 import AvatarCropModal from '../../Elements/AvatarCropModal.jsx';
 import { Section, FieldCard, SegmentSwitch, SearchableCombobox } from '../Project/ProjectSettings.jsx';
+import { LANGUAGES } from '../../locales/languages.js';
 import '../../Style/Authentication.css';   // auth-toast / auth-btn-check
 import '../../Style/Products.css';           // bulk-* / cpm-* / crm-input
 import '../../Style/Settings.css';
-
-// Language names are shown in their own language — not translated.
-const LANGUAGES = [
-  { value: 'en', label: 'English'  },
-  { value: 'ru', label: 'Русский'  },
-  { value: 'kk', label: 'Қазақша'  },
-];
 
 function InitialsAvatar({ name, size = 56 }) {
   const initials = (name || '?').split(' ').filter(Boolean).map(w => w[0].toUpperCase()).slice(0, 2).join('');

@@ -31,7 +31,7 @@ import sys, os
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
-import hashlib, secrets, jwt, random, io, json, re, time
+import hashlib, secrets, jwt, random, io, json, re, time, zipfile
 import urllib.request, urllib.error, urllib.parse
 import hmac
 from dotenv import load_dotenv
@@ -695,6 +695,65 @@ def run_migrations():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON crm_admin_audit (created_at DESC)")
+            # User feedback — the CRM Header "Feedback" widget (Issue / Idea) writes
+            # here; the Admin panel → Feedback page lists + replies (via SES).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_feedback (
+                    id          BIGSERIAL PRIMARY KEY,
+                    user_id     INTEGER,
+                    name        VARCHAR(200) NOT NULL DEFAULT '',
+                    email       VARCHAR(255) NOT NULL DEFAULT '',
+                    kind        VARCHAR(10)  NOT NULL DEFAULT 'issue',
+                    subject     VARCHAR(300) NOT NULL DEFAULT '',
+                    message     TEXT NOT NULL DEFAULT '',
+                    status      VARCHAR(12)  NOT NULL DEFAULT 'new',
+                    reply_text  TEXT,
+                    replied_at  TIMESTAMPTZ,
+                    replied_by  VARCHAR(255),
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_created ON crm_feedback (created_at DESC)")
+            # Admin Inbox — inbound mail to legal@/support@tortacrm.com (platform
+            # addresses, owned by no project). Threaded per (mailbox, sender); the
+            # operator replies officially via SES. Like Chat with Customers, internal.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_admin_inbox_threads (
+                    id              BIGSERIAL PRIMARY KEY,
+                    mailbox         VARCHAR(12)  NOT NULL,
+                    sender_email    VARCHAR(320) NOT NULL,
+                    sender_name     VARCHAR(255) NOT NULL DEFAULT '',
+                    subject         VARCHAR(500) NOT NULL DEFAULT '',
+                    status          VARCHAR(12)  NOT NULL DEFAULT 'open',
+                    unread_count    INTEGER      NOT NULL DEFAULT 0,
+                    last_message_at TIMESTAMPTZ,
+                    last_preview    TEXT         NOT NULL DEFAULT '',
+                    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    UNIQUE (mailbox, sender_email)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inbox_threads ON crm_admin_inbox_threads (mailbox, last_message_at DESC)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_admin_inbox_messages (
+                    id           BIGSERIAL PRIMARY KEY,
+                    thread_id    BIGINT NOT NULL REFERENCES crm_admin_inbox_threads(id) ON DELETE CASCADE,
+                    direction    VARCHAR(4)   NOT NULL,
+                    subject      VARCHAR(500) NOT NULL DEFAULT '',
+                    body_text    TEXT         NOT NULL DEFAULT '',
+                    body_html    TEXT,
+                    message_id   TEXT,
+                    in_reply_to  TEXT,
+                    "references" TEXT,
+                    from_email   VARCHAR(320) NOT NULL DEFAULT '',
+                    to_email     VARCHAR(320) NOT NULL DEFAULT '',
+                    admin_email  VARCHAR(255),
+                    spf_pass     BOOLEAN,
+                    dkim_pass    BOOLEAN,
+                    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_inbox_messages ON crm_admin_inbox_messages (thread_id, id)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_inbox_msg_mid ON crm_admin_inbox_messages (message_id) WHERE message_id IS NOT NULL")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS crm_error_log (
                     id         BIGSERIAL PRIMARY KEY,
@@ -1471,6 +1530,68 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] drop event product_type failed: {e}")
 
+    # Digital products: per-product delivery preference. digital_zip = bundle every
+    # downloadable file into one .zip on delivery vs. let the buyer grab each file
+    # separately. The preview gallery + price ride on a single hidden L1 config row
+    # (seeded in create_product / lazily in get_digital_config) so the storefront and
+    # External serve image/images/price off L1 exactly like any other product.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS digital_zip BOOLEAN NOT NULL DEFAULT FALSE")
+            # Pre-built bundle URL — the CRM file list is the archive's "contents";
+            # the backend packs them into one .zip in R2 and stores its URL here,
+            # rebuilt whenever the files change (see _rebuild_digital_zip).
+            cur.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS digital_zip_url VARCHAR(1000)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] products.digital_zip failed: {e}")
+
+    # Digital products need one hidden sellable L2 SKU so the storefront commerce
+    # pipeline (cart / checkout / order — all keyed on L2) treats them as a normal
+    # single-SKU item: price inherits L1 (NULL), stock effectively unlimited (digital
+    # has no real stock; it's hidden in the UI). Backfill digital products with an L1
+    # but no L2. Idempotent via NOT EXISTS.
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                INSERT INTO product_configurations_l2
+                    (product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position)
+                SELECT l1.product_id, l1.id, 'Digital', NULL, 1000000, 0, 0
+                  FROM product_configurations_l1 l1
+                  JOIN products p ON p.id = l1.product_id
+                 WHERE p.product_type = 'digital'
+                   AND NOT EXISTS (SELECT 1 FROM product_configurations_l2 l2 WHERE l2.variation_id = l1.id)
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] digital L2 backfill failed: {e}")
+
+    # Digital-only orders are "delivered" the moment they're placed — the buyer gets
+    # the download link immediately, there's nothing to ship. New orders are born
+    # 'delivered' in External checkout; this backfills LEGACY all-digital orders that
+    # predate that and are stuck in 'new'/'confirmed'/'shipped'. Touches only orders
+    # whose EVERY line is a digital product; terminal states (cancelled/refunded) and
+    # already-delivered are left alone. Idempotent (delivered rows fall out of the WHERE).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                UPDATE order_history o
+                   SET status = 'delivered', updated_at = NOW()
+                 WHERE o.status NOT IN ('delivered', 'cancelled', 'refunded')
+                   AND EXISTS (
+                         SELECT 1 FROM order_items oi
+                           JOIN products p ON p.id = oi.product_id
+                          WHERE oi.order_id = o.id AND p.product_type = 'digital')
+                   AND NOT EXISTS (
+                         SELECT 1 FROM order_items oi
+                           JOIN products p ON p.id = oi.product_id
+                          WHERE oi.order_id = o.id
+                            AND COALESCE(p.product_type, 'physical') <> 'digital')
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] digital order auto-deliver backfill failed: {e}")
+
     # Phase 1: SaaS-grade physical product fields (catalog ID, shipping flags, inventory, B2B, OG).
     try:
         with db_cursor() as (conn, cur):
@@ -1745,6 +1866,17 @@ def run_migrations():
                 ALTER TABLE order_history ADD CONSTRAINT order_history_fulfillment_type_check
                   CHECK (fulfillment_type IN ('courier','pickup'));
               END IF;
+            END $$;""")
+            # POS / in-store sales (2026-06): a counter sale rung up from CRM Orders
+            # is neither courier nor pickup-from-warehouse — extend the CHECK so
+            # order_history.fulfillment_type can be 'pos'. Drop+recreate (block above
+            # only allows courier/pickup); idempotent.
+            cur.execute("""DO $$ BEGIN
+              IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='order_history_fulfillment_type_check') THEN
+                ALTER TABLE order_history DROP CONSTRAINT order_history_fulfillment_type_check;
+              END IF;
+              ALTER TABLE order_history ADD CONSTRAINT order_history_fulfillment_type_check
+                CHECK (fulfillment_type IN ('courier','pickup','pos'));
             END $$;""")
             cur.execute("ALTER TABLE order_history ADD COLUMN IF NOT EXISTS pickup_warehouse_id INTEGER REFERENCES warehouses(id) ON DELETE SET NULL")
             cur.execute("""
@@ -2192,6 +2324,13 @@ def run_migrations():
                 ) sub
                 WHERE cf.id = sub.id AND cf.position = 0
             """)
+
+            # Allow field_type='file' (digital-product downloads). The original CHECK
+            # only permitted string/number/boolean/json, so saving a digital file
+            # 500'd with a constraint violation. Drop + re-add with 'file' (idempotent).
+            cur.execute("ALTER TABLE product_custom_fields DROP CONSTRAINT IF EXISTS product_custom_fields_field_type_check")
+            cur.execute("ALTER TABLE product_custom_fields ADD CONSTRAINT product_custom_fields_field_type_check "
+                        "CHECK (field_type IN ('string','number','boolean','json','file'))")
 
             conn.commit()
     except Exception as e:
@@ -4799,6 +4938,7 @@ def _email_alert(subject: str, body_html: str):
 @app.exception_handler(Exception)
 async def _alert_on_unhandled(request: Request, exc: Exception):
     import traceback, threading
+    from starlette.responses import JSONResponse as _J
     # ALWAYS log the traceback to stdout (dev console + Cloud Run logs) — handling
     # the exception here stops uvicorn from logging it, so we must do it ourselves.
     raw_tb = traceback.format_exc()
@@ -4951,6 +5091,8 @@ class UpdateProductRequest(BaseModel):
     sale_value:      Optional[float] = None
     sale_starts_at:  Optional[str]   = None  # ISO; null = effective immediately
     sale_ends_at:    Optional[str]   = None  # ISO; null = no end
+    # ── Digital delivery ──
+    digital_zip:     Optional[bool]  = None  # True = bundle download files into one .zip
 
 class TaxCategoryRequest(BaseModel):
     name: Optional[str] = None
@@ -9700,6 +9842,7 @@ def rename_project(project_id: int, request: RenameProjectRequest, user: dict = 
     with db_cursor() as (conn, cur):
         cur.execute(f"UPDATE crm_projects SET {', '.join(sets)} WHERE id=%s", tuple(params))
         conn.commit()
+    push_project_event(project_id, "project_settings_changed", {"kind": "general"})
     return {"ok": True}
 
 
@@ -9819,6 +9962,7 @@ def create_category(req: CreateCategoryRequest, project_id: int = Query(...), us
         )
         row = cur.fetchone()
         conn.commit()
+    push_project_event(project_id, "categories_changed", {"action": "created"})
     return {"id": row["id"], "name": row["name"], "slug": row["slug"],
             "created_at": str(row["created_at"]), "products_count": 0}
 
@@ -9839,6 +9983,7 @@ def rename_category(cat_id: int, req: UpdateCategoryRequest,
         # Slug stays the same — keeps storefront URLs stable across rename.
         cur.execute("UPDATE product_categories SET name=%s WHERE id=%s", (name, cat_id))
         conn.commit()
+    push_project_event(project_id, "categories_changed", {"action": "renamed", "id": cat_id})
     return {"ok": True}
 
 
@@ -9873,6 +10018,8 @@ def set_category_products(
             cur.execute("UPDATE products SET category_id=%s "
                         "WHERE id = ANY(%s) AND project_id=%s", (cat_id, pids, project_id))
         conn.commit()
+    push_project_event(project_id, "categories_changed", {"action": "products_set", "id": cat_id})
+    push_project_event(project_id, "products_changed", {"action": "category_assigned"})
     return {"ok": True}
 
 
@@ -9943,6 +10090,8 @@ def delete_category(
         # keep_products: ON DELETE SET NULL on products.category_id handles it on the next line
         cur.execute("DELETE FROM product_categories WHERE id=%s", (cat_id,))
         conn.commit()
+    push_project_event(project_id, "categories_changed", {"action": "deleted", "id": cat_id})
+    push_project_event(project_id, "products_changed", {"action": "category_deleted"})
     return {"ok": True}
 
 
@@ -10117,7 +10266,27 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
                 " VALUES (%s, %s, %s, %s, 30, 0, TRUE)",
                 (project_id, new_id, sanitize(name), sanitize(request.description or ""))
             )
+        # type=digital → seed the single hidden L1 config row that carries the
+        # preview gallery + price (storefront/External read image/images/price from
+        # L1). High stock so the unlimited single-SKU download is always purchasable.
+        if ptype == "digital":
+            cur.execute(
+                "INSERT INTO product_configurations_l1 (product_id, variation_name, images, price, stock_quantity, sold_quantity, position)"
+                " VALUES (%s, '', '{}', 0, 1000000, 0, 0) RETURNING id",
+                (new_id,)
+            )
+            _dig_l1 = cur.fetchone()["id"]
+            # One hidden sellable SKU (L2) so the storefront's L2-based commerce
+            # pipeline (cart / checkout / order) treats the digital product as a normal
+            # single-SKU item. price=NULL → inherits the L1 price; stock effectively
+            # unlimited (digital has no stock — it's hidden everywhere in the UI).
+            cur.execute(
+                "INSERT INTO product_configurations_l2 (product_id, variation_id, configuration_name, price, stock_quantity, position)"
+                " VALUES (%s, %s, 'Digital', NULL, 1000000, 0)",
+                (new_id, _dig_l1)
+            )
         conn.commit()
+        push_project_event(project_id, "products_changed", {"action": "created", "id": new_id})
         return {"id": new_id, "title": name, "product_type": ptype}
 
 
@@ -10125,7 +10294,7 @@ def create_product(request: CreateProductRequest, project_id: int = Query(...), 
 def get_product_project_context(product_id: int, user: dict = Depends(get_current_user)):
     row = db_one(
         "SELECT p.project_id, pr.name AS project_name, pr.api_key, pr.org_id,"
-        " o.name AS org_name, o.slug AS org_slug"
+        " o.name AS org_name, o.slug AS org_slug, COALESCE(o.plan_slug, 'free') AS plan_slug"
         " FROM products p"
         " JOIN crm_projects pr ON p.project_id = pr.id"
         " JOIN crm_organizations o ON pr.org_id = o.id"
@@ -10141,6 +10310,7 @@ def get_product_project_context(product_id: int, user: dict = Depends(get_curren
         "org_id":       row["org_id"],
         "org_name":     row["org_name"],
         "org_slug":     row["org_slug"],
+        "plan_slug":    row["plan_slug"],
     }
 
 
@@ -10373,6 +10543,8 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
         fields.append("is_archived=%s"); vals.append(bool(request.is_archived))
     if request.is_paused is not None:
         fields.append("is_paused=%s"); vals.append(bool(request.is_paused))
+    if request.digital_zip is not None:
+        fields.append("digital_zip=%s"); vals.append(bool(request.digital_zip))
     # ── Phase 1: SaaS-grade physical fields ──
     for fld in ("sku", "barcode", "brand", "manufacturer", "vendor",
                 "country_of_origin", "hs_code"):
@@ -10454,6 +10626,10 @@ def update_product(product_id: int, request: UpdateProductRequest, project_id: i
                 sync_vals
             )
         conn.commit()
+    # Flipping the ZIP toggle (on → build from current files, off → drop the bundle).
+    if request.digital_zip is not None:
+        _rebuild_digital_zip(project_id, product_id)
+    push_project_event(project_id, "products_changed", {"action": "updated", "id": product_id})
     return {"ok": True}
 
 
@@ -10499,8 +10675,16 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
         cur.execute("DELETE FROM favorites          WHERE product_id=%s AND project_id=%s", (product_id, project_id))
         cur.execute("DELETE FROM cart_items         WHERE product_id=%s", (product_id,))
         cur.execute("DELETE FROM product_page_views WHERE product_id=%s AND project_id=%s", (product_id, project_id))
+        # Funnel-analytics audit log + low-stock alert log reference the product / its SKUs
+        # but have NO ON DELETE CASCADE FK to them (only to the project) — wipe by hand so
+        # they don't outlive the product as orphans.
+        cur.execute("DELETE FROM cart_events WHERE product_id=%s AND project_id=%s", (product_id, project_id))
+        if l2_ids:
+            cur.execute("DELETE FROM crm_low_stock_alerts WHERE sku_id = ANY(%s)", (l2_ids,))
 
-        # order_items intentionally NOT touched — past orders display the checkout-snapshot fields (product_title / configuration_name).
+        # order_items goes too: its product_id / variation_id / configuration_id FKs are all
+        # ON DELETE CASCADE, and the row carries no title snapshot (the order view JOINs live
+        # to the product), so the line is removed from past orders along with the product.
 
         cur.execute("DELETE FROM products WHERE id=%s AND project_id=%s", (product_id, project_id))
         conn.commit()
@@ -10510,6 +10694,10 @@ def delete_product(product_id: int, project_id: int = Query(...), user: dict = D
         url = (r or {}).get("image_url")
         if url:
             s3_delete_url(url, prefix)
+    # Digital products: files + their generated .zip bundle live under a per-product
+    # folder — wipe the whole prefix (no-op for products without any).
+    s3_delete_prefix(f"projects/{project_id}/files/{product_id}/")
+    push_project_event(project_id, "products_changed", {"action": "deleted", "id": product_id})
     return {"ok": True}
 
 
@@ -10673,6 +10861,7 @@ def duplicate_product(product_id: int, project_id: int = Query(...), user: dict 
                             (item_map[d], group_map[g["id"]]))
 
         conn.commit()
+    push_project_event(project_id, "products_changed", {"action": "duplicated", "id": new_pid})
     return {"id": new_pid, "title": new_title}
 
 
@@ -10782,6 +10971,9 @@ def bulk_action(project_id: int, request: BulkActionRequest, user: dict = Depend
         else:
             raise HTTPException(400, f"Unknown action: {action}")
         conn.commit()
+    push_project_event(project_id, "products_changed", {"action": "bulk", "op": action, "count": len(valid_ids)})
+    if action == "set_stock":
+        push_project_event(project_id, "inventory_changed", {"action": "bulk_set_stock"})
     return {"ok": True, "affected": len(valid_ids), "action": action}
 
 
@@ -11438,7 +11630,7 @@ def export_products_csv(project_id: int, ids: Optional[str] = Query(None),
         "  LEFT JOIN product_configurations_l1 l1 ON l1.product_id = p.id"
         "  LEFT JOIN product_configurations_l2 l2 ON l2.variation_id = l1.id"
         " WHERE p.project_id = %s" + where_extra +
-        " ORDER BY p.id, l1.position, l2.position",
+        " ORDER BY p.id, l1.position, l1.id, l2.position, l2.id",
         tuple(params)
     )
 
@@ -11894,6 +12086,8 @@ def import_products_csv(project_id: int, request: CsvImportRequest,
                 counters["errors"].append({"row": i + 1, "error": str(e)[:200]})
         conn.commit()
 
+    push_project_event(project_id, "products_changed", {"action": "import"})
+    push_project_event(project_id, "inventory_changed", {"action": "import"})
     counters["ok"] = True
     return counters
 
@@ -12067,6 +12261,148 @@ def delete_variation(product_id: int, var_id: int, project_id: int = Query(...),
         conn.commit()
     for url in (old.get("images") if old else None) or []:
         if url: s3_delete_url(url, f"projects/{project_id}/products/")
+    return {"ok": True}
+
+
+# ── Digital-product ZIP bundling ──────────────────────────────────
+# When a merchant turns on "deliver as one ZIP", the CRM file list becomes the
+# *contents* of an archive: the backend packs every downloadable file into a single
+# .zip stored in R2, rebuilt whenever the files (or the toggle) change. External's
+# order-paid email then hands out that one URL instead of N per-file links.
+_DIGITAL_ZIP_MAX_BYTES = 200 * 1024 * 1024   # 200 MB total — above this we skip auto-bundling
+                                             # (keeps the in-RAM zip within Cloud Run limits)
+
+def _digital_zip_key(project_id: int, product_id: int) -> str:
+    # Stable key (overwritten each rebuild), parked alongside the product's files.
+    return f"projects/{project_id}/files/{product_id}/_bundle.zip"
+
+def _clear_digital_zip(project_id: int, product_id: int) -> None:
+    s3_delete(_digital_zip_key(project_id, product_id))
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE products SET digital_zip_url=NULL WHERE id=%s AND project_id=%s",
+                    (product_id, project_id))
+        conn.commit()
+
+def _rebuild_digital_zip(project_id: int, product_id: int) -> None:
+    """Rebuild (or clear) a digital product's downloadable .zip and store its URL on
+    products.digital_zip_url. Best-effort: any failure is logged and leaves the prior
+    state intact, so the calling write still succeeds (delivery falls back to per-file
+    links). No-op unless the product is digital AND digital_zip is on."""
+    if not STORAGE_ENABLED:
+        return
+    prod = db_one("SELECT product_type, digital_zip, digital_zip_url FROM products "
+                  "WHERE id=%s AND project_id=%s", (product_id, project_id))
+    if not prod:
+        return
+    # Off (or not digital) → drop any stale bundle and bail.
+    if prod.get("product_type") != "digital" or not prod.get("digital_zip"):
+        if prod.get("digital_zip_url"):
+            _clear_digital_zip(project_id, product_id)
+        return
+    rows = db_all(
+        "SELECT field_value FROM product_custom_fields "
+        "WHERE project_id=%s AND product_id=%s AND field_type='file' AND field_value <> ''",
+        (project_id, product_id)
+    )
+    keys = [k for k in (s3_key_from_url(r["field_value"]) for r in rows) if k]
+    if not keys:
+        if prod.get("digital_zip_url"):
+            _clear_digital_zip(project_id, product_id)
+        return
+    try:
+        total = sum(s3_head_size(k) for k in keys)
+        if total > _DIGITAL_ZIP_MAX_BYTES:
+            print(f"[digital_zip] product {product_id}: {total} B over cap — left as per-file")
+            return
+        s3 = _s3_client()
+        buf = io.BytesIO()
+        used = set()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for k in keys:
+                name = urllib.parse.unquote(os.path.basename(k)) or "file"
+                stem, dot, ext = name.rpartition(".")
+                n = 2
+                while name in used:                       # de-dupe identical filenames
+                    name = f"{stem} ({n}).{ext}" if dot else f"{name} ({n})"
+                    n += 1
+                used.add(name)
+                # Stream each object into the zip entry in 1 MB chunks — the source
+                # file is never held whole in RAM (only the growing zip is, bounded
+                # by the size cap above).
+                body = s3.get_object(Bucket=STORAGE_BUCKET, Key=k)["Body"]
+                with zf.open(name, "w") as dest:
+                    while True:
+                        chunk = body.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        dest.write(chunk)
+        buf.seek(0)
+        title = (db_one("SELECT title FROM products WHERE id=%s", (product_id,)) or {}).get("title") or "download"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", title).strip("_") or "download"
+        url = s3_upload(buf, _digital_zip_key(project_id, product_id),
+                        content_type="application/zip", cache_control="no-cache",
+                        content_disposition=f'attachment; filename="{safe}.zip"')
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE products SET digital_zip_url=%s WHERE id=%s", (url, product_id))
+            conn.commit()
+        print(f"[digital_zip] product {product_id}: bundled {len(keys)} file(s)")
+    except Exception as e:
+        print(f"[digital_zip] product {product_id} rebuild failed: {e}")
+
+
+@app.get("/api/products/{product_id}/digital-config")
+def get_digital_config(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Single source of truth for a digital product's preview gallery + price.
+
+    Lazily materialises the one L1 config row a digital product needs (products
+    created before this was seeded in create_product get it on first open). The
+    frontend manages images through the existing PUT /layers/1/{var_id} machinery
+    (VariationGalleryPopover) and price through the same endpoint — this just hands
+    back the variation_id to target plus the current values."""
+    require_page_auto(user, project_id)
+    prod = db_one("SELECT id, digital_zip, digital_zip_url FROM products WHERE id=%s AND project_id=%s",
+                  (product_id, project_id))
+    if not prod:
+        raise HTTPException(404, "Product not found")
+    row = db_one("SELECT id, price, images FROM product_configurations_l1 "
+                 "WHERE product_id=%s ORDER BY id ASC LIMIT 1", (product_id,))
+    if not row:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO product_configurations_l1 (product_id, variation_name, images, price, stock_quantity, sold_quantity, position)"
+                " VALUES (%s, '', '{}', 0, 1000000, 0, 0) RETURNING id, price, images",
+                (product_id,)
+            )
+            row = cur.fetchone()
+            conn.commit()
+    # Ensure the hidden sellable L2 SKU exists (storefront cart/checkout pipeline is
+    # built around L2 — without it the product shows $0 / out-of-stock / can't be bought).
+    if not db_one("SELECT 1 FROM product_configurations_l2 WHERE variation_id=%s", (row["id"],)):
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO product_configurations_l2 (product_id, variation_id, configuration_name, price, stock_quantity, position)"
+                " VALUES (%s, %s, 'Digital', NULL, 1000000, 0)",
+                (product_id, row["id"])
+            )
+            conn.commit()
+    return {
+        "variation_id":   row["id"],
+        "price":          float(row["price"]) if row.get("price") is not None else None,
+        "images":         list(row.get("images") or []),
+        "digital_zip":    bool(prod.get("digital_zip")),
+        "digital_zip_url": prod.get("digital_zip_url"),
+    }
+
+
+@app.post("/api/products/{product_id}/digital-zip/rebuild")
+def rebuild_digital_zip_endpoint(product_id: int, project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Re-pack the digital product's files into its R2 .zip. The CRM fires this after
+    files are added/removed; it no-ops unless digital_zip is on, so the frontend can
+    call it blindly after any file change."""
+    require_page_auto(user, project_id)
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+    _rebuild_digital_zip(project_id, product_id)
     return {"ok": True}
 
 
@@ -13004,6 +13340,12 @@ def delete_custom_field(product_id: int, field_key: str, project_id: int = Query
         else:
             cur.execute("DELETE FROM product_custom_fields WHERE id=%s", (row["id"],))
         conn.commit()
+    # Also remove the backing object from R2 for file-type fields (digital products) —
+    # otherwise deleting a file in the CRM leaves an orphan in storage. Best-effort +
+    # project-prefixed so it can never touch another tenant's keys.
+    for r in removed:
+        if r.get("field_type") == "file" and r.get("field_value"):
+            s3_delete_url(r["field_value"], f"projects/{project_id}/")
     return {"ok": True, "cascaded": bool(row["is_global"]), "removed": removed}
 
 
@@ -13473,7 +13815,7 @@ def list_promo_codes(project_id: int = Query(...),
 @app.post("/api/promo-codes")
 def create_promo_code(req: PromoCodeRequest, project_id: int = Query(...),
                       user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     _ensure_promo_codes_table()
     code = sanitize((req.code or '').strip().upper())[:40]
     if not code: raise HTTPException(400, "Code is required")
@@ -13520,13 +13862,14 @@ def create_promo_code(req: PromoCodeRequest, project_id: int = Query(...),
             raise HTTPException(400, f"Code '{code}' already exists for this project")
         new_id = cur.fetchone()["id"]
         conn.commit()
+    push_project_event(project_id, "promo_changed", {"action": "created", "id": new_id})
     return {"id": new_id}
 
 
 @app.put("/api/promo-codes/{pcid}")
 def update_promo_code(pcid: int, req: PromoCodeRequest, project_id: int = Query(...),
                       user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM promo_codes WHERE id=%s AND project_id=%s",
                   (pcid, project_id)):
         raise HTTPException(404, "Promo code not found")
@@ -13572,19 +13915,21 @@ def update_promo_code(pcid: int, req: PromoCodeRequest, project_id: int = Query(
     with db_cursor() as (conn, cur):
         cur.execute(f"UPDATE promo_codes SET {', '.join(fields)} WHERE id=%s", vals)
         conn.commit()
+    push_project_event(project_id, "promo_changed", {"action": "updated", "id": pcid})
     return {"ok": True}
 
 
 @app.delete("/api/promo-codes/{pcid}")
 def delete_promo_code(pcid: int, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM promo_codes WHERE id=%s AND project_id=%s",
                   (pcid, project_id)):
         raise HTTPException(404, "Promo code not found")
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM promo_codes WHERE id=%s", (pcid,))
         conn.commit()
+    push_project_event(project_id, "promo_changed", {"action": "deleted", "id": pcid})
     return {"ok": True}
 
 
@@ -13605,7 +13950,7 @@ def list_tax_categories(project_id: int = Query(...), user: dict = Depends(get_c
 @app.post("/api/tax-categories")
 def create_tax_category(req: TaxCategoryRequest, project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     name = sanitize((req.name or '').strip())[:120]
     if not name: raise HTTPException(400, "Name is required")
     rate = float(req.rate or 0)
@@ -13628,7 +13973,7 @@ def create_tax_category(req: TaxCategoryRequest, project_id: int = Query(...),
 @app.put("/api/tax-categories/{tcid}")
 def update_tax_category(tcid: int, req: TaxCategoryRequest, project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM product_tax_categories WHERE id=%s AND project_id=%s",
                   (tcid, project_id)):
         raise HTTPException(404, "Tax category not found")
@@ -13658,7 +14003,7 @@ def update_tax_category(tcid: int, req: TaxCategoryRequest, project_id: int = Qu
 @app.delete("/api/tax-categories/{tcid}")
 def delete_tax_category(tcid: int, project_id: int = Query(...),
                         user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM product_tax_categories WHERE id=%s AND project_id=%s",
                   (tcid, project_id)):
         raise HTTPException(404, "Tax category not found")
@@ -13714,6 +14059,7 @@ def create_tier_pricing(product_id: int, req: TierPricingRequest,
             conn.commit()
         except psycopg2.errors.UniqueViolation:
             raise HTTPException(400, f"Tier pricing already exists for sku {req.sku_id}, qty {req.min_qty}")
+    push_project_event(project_id, "tier_changed", {"action": "created", "id": new_id})
     return {"id": new_id, "sku_id": req.sku_id, "min_qty": req.min_qty, "price": req.price}
 
 
@@ -13734,6 +14080,7 @@ def delete_tier_pricing(product_id: int, tier_id: int,
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM product_tier_pricing WHERE id=%s", (tier_id,))
         conn.commit()
+    push_project_event(project_id, "tier_changed", {"action": "deleted", "id": tier_id})
     return {"ok": True}
 
 
@@ -13889,6 +14236,8 @@ def receive_batch(project_id: int, req: ReceiveBatchRequest,
         )
         _sync_l2_stock(cur, req.sku_id)
         conn.commit()
+    push_project_event(project_id, "inventory_changed", {"action": "receive", "sku_id": req.sku_id})
+    push_project_event(project_id, "batch_changed", {"action": "received", "id": new_row["id"]})
     return {"ok": True, "batch_id": new_row["id"], "batch_name": name}
 
 
@@ -14104,6 +14453,8 @@ def bulk_receive(project_id: int, req: BulkReceiveRequest,
 
         conn.commit()
 
+    push_project_event(project_id, "inventory_changed", {"action": "bulk_receive"})
+    push_project_event(project_id, "batch_changed", {"action": "bulk_received"})
     return {
         "ok": True,
         "batches_created": batches_created,
@@ -14259,6 +14610,8 @@ def update_batch(project_id: int, batch_id: int, req: BatchUpdateRequest,
             )
             _sync_l2_stock(cur, cur_row['sku_id'])
         conn.commit()
+    push_project_event(project_id, "batch_changed", {"action": "updated", "id": batch_id})
+    push_project_event(project_id, "inventory_changed", {"action": "batch_update"})
     return {"ok": True}
 
 
@@ -14291,6 +14644,8 @@ def delete_batch(project_id: int, batch_id: int, user: dict = Depends(get_curren
              'Batch deleted — never consumed')
         )
         conn.commit()
+    push_project_event(project_id, "batch_changed", {"action": "deleted", "id": batch_id})
+    push_project_event(project_id, "inventory_changed", {"action": "batch_delete"})
     return {"ok": True}
 
 
@@ -14394,6 +14749,7 @@ def update_project_batch_settings(project_id: int, req: ProjectBatchSettingsRequ
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE crm_projects SET " + ", ".join(fields) + " WHERE id=%s", vals)
         conn.commit()
+    push_project_event(project_id, "project_settings_changed", {"kind": "batch"})
     return {"ok": True}
 
 
@@ -14468,6 +14824,7 @@ def update_shipping_settings(project_id: int, req: ProjectShippingSettingsReques
                   updated_at              = NOW()
         """, (project_id, final_cost, final_thr))
         conn.commit()
+    push_project_event(project_id, "project_settings_changed", {"kind": "shipping"})
     return {"ok": True, "shipping_cost": final_cost, "free_shipping_threshold": final_thr}
 
 
@@ -14642,6 +14999,7 @@ def adjust_stock(product_id: int, req: StockAdjustRequest,
         }
         for _, email in notify_emails:
             background_tasks.add_task(_send_template_email, project_id, "restock", email, rvars)
+    push_project_event(project_id, "inventory_changed", {"action": "adjust", "sku_id": req.sku_id})
     return {"ok": True, "new_quantity": new_qty, "notified": len(notify_emails)}
 
 
@@ -14692,7 +15050,7 @@ def get_per_warehouse_stock(product_id: int, project_id: int = Query(...),
         "  FROM product_configurations_l2 c"
         "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
         " WHERE v.product_id = %s"
-        " ORDER BY v.position ASC, c.position ASC, c.id ASC",
+        " ORDER BY v.position ASC, v.id ASC, c.position ASC, c.id ASC",
         (product_id,)
     )
     if not skus: return []
@@ -14766,7 +15124,7 @@ def get_project_stock_summary(project_id: int,
         "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
         "  JOIN products p ON v.product_id = p.id"
         " WHERE w.project_id=%s AND w.is_active"
-        " ORDER BY w.is_default DESC, w.name ASC, p.title ASC, v.position ASC, c.position ASC",
+        " ORDER BY w.is_default DESC, w.name ASC, p.title ASC, v.position ASC, v.id ASC, c.position ASC, c.id ASC",
         (project_id,)
     )
     return rows
@@ -14932,6 +15290,8 @@ def bulk_transfer_stock(project_id: int, body: dict = Body(...),
         for sid in affected_skus:
             _sync_l2_stock(cur, sid)
         conn.commit()
+    push_project_event(project_id, "inventory_changed", {"action": "transfer", "skus": len(affected_skus)})
+    push_project_event(project_id, "batch_changed", {"action": "transfer"})
     return {"ok": True, "transfers_applied": len(parsed), "skus_affected": len(affected_skus)}
 
 
@@ -14940,7 +15300,7 @@ def bulk_transfer_stock(project_id: int, body: dict = Body(...),
 @app.post("/api/projects/{project_id}/products/bulk-apply-defaults")
 def bulk_apply_product_defaults(project_id: int, body: dict = Body(...),
                                   user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     fields_in = body.get("fields") if isinstance(body, dict) else None
     if not isinstance(fields_in, dict) or not fields_in:
         raise HTTPException(400, "No fields provided")
@@ -14974,6 +15334,7 @@ def bulk_apply_product_defaults(project_id: int, body: dict = Body(...),
         cur.execute(f"UPDATE products SET {', '.join(set_clauses)} WHERE project_id=%s", vals)
         affected = cur.rowcount
         conn.commit()
+    push_project_event(project_id, "products_changed", {"action": "bulk_defaults", "count": affected})
     return {"ok": True, "affected": affected}
 
 
@@ -15080,7 +15441,7 @@ def list_warehouses(project_id: int = Query(...), user: dict = Depends(get_curre
 @app.post("/api/warehouses")
 def create_warehouse(req: WarehouseRequest, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     name = sanitize((req.name or '').strip())[:120]
     if not name: raise HTTPException(400, "Name is required")
     code     = sanitize((req.code or '').strip())[:40]
@@ -15104,13 +15465,14 @@ def create_warehouse(req: WarehouseRequest, project_id: int = Query(...),
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
+    push_project_event(project_id, "warehouse_changed", {"action": "created", "id": new_id})
     return {"id": new_id}
 
 
 @app.put("/api/warehouses/{wid}")
 def update_warehouse(wid: int, req: WarehouseRequest, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     if not db_one("SELECT id FROM warehouses WHERE id=%s AND project_id=%s", (wid, project_id)):
         raise HTTPException(404, "Warehouse not found")
     fields, vals = [], []
@@ -15166,13 +15528,14 @@ def update_warehouse(wid: int, req: WarehouseRequest, project_id: int = Query(..
                         (project_id, wid))
         cur.execute(f"UPDATE warehouses SET {', '.join(fields)} WHERE id=%s", vals)
         conn.commit()
+    push_project_event(project_id, "warehouse_changed", {"action": "updated", "id": wid})
     return {"ok": True}
 
 
 @app.delete("/api/warehouses/{wid}")
 def delete_warehouse(wid: int, project_id: int = Query(...),
                      user: dict = Depends(get_current_user)):
-    require_owner(user, project_id)
+    require_page_auto(user, project_id)
     row = db_one("SELECT id, is_default FROM warehouses WHERE id=%s AND project_id=%s",
                  (wid, project_id))
     if not row: raise HTTPException(404, "Warehouse not found")
@@ -15190,6 +15553,7 @@ def delete_warehouse(wid: int, project_id: int = Query(...),
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM warehouses WHERE id=%s", (wid,))
         conn.commit()
+    push_project_event(project_id, "warehouse_changed", {"action": "deleted", "id": wid})
     return {"ok": True}
 
 
@@ -15239,6 +15603,23 @@ def reply_to_review(product_id: int, review_id: int, req: ReviewReplyRequest,
                 "UPDATE product_reviews SET merchant_reply=NULL, merchant_reply_at=NULL WHERE id=%s",
                 (review_id,)
             )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/products/{product_id}/reviews/{review_id}")
+def delete_review(product_id: int, review_id: int,
+                  project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    """Merchant-side moderation: delete a storefront review for one of their products.
+    Photos + helpful-votes cascade via FK ON DELETE CASCADE."""
+    require_page_auto(user, project_id)
+    if not db_one(
+        "SELECT id FROM product_reviews WHERE id=%s AND product_id=%s AND project_id=%s",
+        (review_id, product_id, project_id)
+    ):
+        raise HTTPException(404, "Review not found")
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM product_reviews WHERE id=%s", (review_id,))
         conn.commit()
     return {"ok": True}
 
@@ -15392,6 +15773,7 @@ class PresignRequest(BaseModel):
     content_type: Optional[str] = ""
     size: int
     kind: Optional[str] = "file"             # "image" | "media" | "file"
+    product_id: Optional[int] = None         # digital files: groups them in one per-product folder
 
 class ConfirmUploadRequest(BaseModel):
     key: str
@@ -15418,9 +15800,22 @@ def presign_upload(body: PresignRequest, project_id: int = Query(...),
     safe = (_re_local.sub(r"[^a-zA-Z0-9._-]", "_", body.filename or "file")[:120] or "file")
     ext  = safe.rsplit(".", 1)[-1].lower() if "." in safe else ""
     kind = (body.kind or "file").lower()
-    folder = (f"projects/{project_id}/products" if kind in ("image", "media")
-              else f"projects/{project_id}/files")
-    key   = f"{folder}/{secrets.token_hex(16)}" + (f".{ext}" if ext else "")
+    # Digital files get a HUMAN-READABLE key — projects/{id}/files/{product}/{filename}
+    # — so the bucket is browsable and the original name survives. The product
+    # subfolder namespaces collisions between products. Other kinds keep a random hex.
+    if kind == "file" and body.product_id:
+        # All of a digital product's files live in ONE folder keyed by the product id
+        # (stable — survives renames, keeps the files grouped). Filename preserved;
+        # uploading the same name twice replaces it, which is the expected behaviour.
+        key = f"projects/{project_id}/files/{int(body.product_id)}/{safe}"
+    elif kind == "file":
+        # No product context (e.g. a custom-field file) → per-upload hash subfolder +
+        # original name so unrelated files never collide.
+        key = f"projects/{project_id}/files/{secrets.token_hex(8)}/{safe}"
+    else:
+        folder = (f"projects/{project_id}/products" if kind in ("image", "media")
+                  else f"projects/{project_id}/files")
+        key = f"{folder}/{secrets.token_hex(16)}" + (f".{ext}" if ext else "")
     ctype = body.content_type or "application/octet-stream"
     # Digital downloads: ANY file type is allowed, but forced as `attachment` so
     # it can never render/execute — it's a download from the R2 (cdn) domain,
@@ -15747,6 +16142,7 @@ def save_email_domain(req: EmailDomainRequest, project_id: int = Query(...), use
         conn.commit()
 
     _fanout_auth_config("crm_email_domains", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "email"})
     return get_email_domain(project_id=project_id, user=user)
 
 
@@ -15782,6 +16178,7 @@ def verify_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
         conn.commit()
 
     _fanout_auth_config("crm_email_domains", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "email", "action": "verify"})
     return {"dkim_ok": dkim_ok, "spf_ok": spf_ok, "dmarc_ok": dmarc_ok, "all_ok": all_ok}
 
 
@@ -15798,6 +16195,7 @@ def delete_email_domain(project_id: int = Query(...), user: dict = Depends(get_c
         cur.execute("DELETE FROM crm_email_domains WHERE project_id=%s", (project_id,))
         conn.commit()
     _fanout_auth_delete("crm_email_domains", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "email", "action": "deleted"})
     return {"success": True}
 
 
@@ -15849,6 +16247,7 @@ def save_oauth_settings(req: OAuthSettingsRequest, project_id: int = Query(...),
             )
         conn.commit()
     _fanout_auth_config("crm_oauth_settings", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "google"})
     return {"ok": True}
 
 
@@ -15859,6 +16258,7 @@ def delete_oauth_settings(project_id: int = Query(...), user: dict = Depends(get
         cur.execute("DELETE FROM crm_oauth_settings WHERE project_id=%s", (project_id,))
         conn.commit()
     _fanout_auth_delete("crm_oauth_settings", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "google", "action": "deleted"})
     return {"ok": True}
 
 
@@ -15933,6 +16333,7 @@ def save_auth_provider(provider: str, req: AuthProviderRequest,
             )
         conn.commit()
     _fanout_auth_config("crm_auth_providers", project_id, ("project_id", "provider"))
+    push_project_event(project_id, "auth_changed", {"kind": "provider", "provider": provider})
     return {"ok": True}
 
 
@@ -15946,6 +16347,7 @@ def delete_auth_provider(provider: str, project_id: int = Query(...), user: dict
         )
         conn.commit()
     _fanout_auth_delete("crm_auth_providers", project_id, " AND provider=%s", (provider,))
+    push_project_event(project_id, "auth_changed", {"kind": "provider", "provider": provider, "action": "deleted"})
     return {"ok": True}
 
 
@@ -16144,6 +16546,7 @@ def save_sms_settings(req: SmsSettingsRequest,
             )
         conn.commit()
     _fanout_auth_config("crm_sms_settings", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "sms"})
     return {"ok": True}
 
 
@@ -16154,6 +16557,7 @@ def delete_sms_settings(project_id: int = Query(...), user: dict = Depends(get_c
         cur.execute("DELETE FROM crm_sms_settings WHERE project_id=%s", (project_id,))
         conn.commit()
     _fanout_auth_delete("crm_sms_settings", project_id)
+    push_project_event(project_id, "auth_changed", {"kind": "sms", "action": "deleted"})
     return {"ok": True}
 
 
@@ -16179,6 +16583,7 @@ def save_url_config(req: UrlConfigRequest, project_id: int = Query(...), user: d
         else:
             cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (project_id, url or None))
         conn.commit()
+    push_project_event(project_id, "url_config_changed", {"action": "site_url"})
     return {"ok": True}
 
 
@@ -16204,6 +16609,7 @@ def add_redirect_url(req: AddRedirectUrlRequest, project_id: int = Query(...), u
         cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s) RETURNING id", (project_id, url))
         new_id = cur.fetchone()["id"]
         conn.commit()
+        push_project_event(project_id, "url_config_changed", {"action": "redirect_added"})
         return {"ok": True, "id": new_id, "url": url}
 
 
@@ -16215,6 +16621,7 @@ def delete_redirect_url(url_id: int, project_id: int = Query(...), user: dict = 
     with db_cursor() as (conn, cur):
         cur.execute("DELETE FROM crm_redirect_urls WHERE id=%s", (url_id,))
         conn.commit()
+    push_project_event(project_id, "url_config_changed", {"action": "redirect_deleted"})
     return {"ok": True}
 
 
@@ -17060,6 +17467,273 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
     return {"ok": True, "status": new_status}
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# POS / in-store sales — the merchant rings up a counter sale from CRM Orders.
+# Unlike storefront checkout (External, reservation model), a POS sale is handed
+# over on the spot: the order is born status='delivered' + paid, stock is deducted
+# immediately, optionally off a specific batch (FEFO default). The catalog + scan
+# endpoints feed the cashier modal; hardware barcode scanners just "type" the code
+# then Enter, so /pos/scan is a plain barcode→SKU lookup (no device API needed).
+# ─────────────────────────────────────────────────────────────────────────
+
+# SELECT prefix shared by catalog + scan — one sellable PHYSICAL SKU with its
+# product/variation context, price (SKU price or inherited L1), and aggregate stock.
+_POS_SKU_SELECT = (
+    "SELECT c.id AS sku_id, c.configuration_name, c.sku_code, c.barcode,"
+    "       COALESCE(c.price, v.price) AS price,"
+    "       COALESCE(c.stock_quantity, 0) AS stock,"
+    "       v.id AS variation_id, v.variation_name, (v.images)[1] AS image_url,"
+    "       p.id AS product_id, p.title AS product_title"
+    "  FROM product_configurations_l2 c"
+    "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+    "  JOIN products p                  ON v.product_id   = p.id"
+)
+
+def _pos_clean(rows):
+    for r in rows:
+        r["price"] = float(r["price"] or 0)
+        r["stock"] = int(r["stock"] or 0)
+    return rows
+
+
+@app.get("/api/projects/{project_id}/pos/catalog")
+def pos_catalog(project_id: int, search: Optional[str] = Query(None),
+                category_id: Optional[int] = Query(None),
+                user: dict = Depends(get_current_user)):
+    """Sellable PHYSICAL SKUs for the POS cashier modal — browse by category or
+    search. No filters → the whole physical catalog (cashier browses freely)."""
+    require_page(user, project_id, "orders", "manage")
+    q = (search or "").strip().lower()
+    params: list = [project_id]
+    extra = ""
+    if category_id is not None:
+        extra += " AND p.category_id = %s"
+        params.append(category_id)
+    if q:
+        like = f"%{q}%"
+        extra += (" AND (LOWER(p.title) LIKE %s OR LOWER(COALESCE(c.configuration_name,'')) LIKE %s"
+                  " OR LOWER(COALESCE(c.sku_code,'')) LIKE %s OR COALESCE(c.barcode,'') LIKE %s"
+                  " OR LOWER(COALESCE(v.variation_name,'')) LIKE %s OR COALESCE(p.barcode,'') LIKE %s)")
+        params += [like, like, like, like, like, like]
+    rows = db_all(
+        _POS_SKU_SELECT +
+        " WHERE p.project_id=%s AND p.product_type='physical'"
+        "   AND COALESCE(p.is_archived, FALSE)=FALSE" + extra +
+        " ORDER BY p.title ASC, v.position ASC, v.id ASC, c.position ASC, c.id ASC LIMIT 400",
+        tuple(params)
+    )
+    return _pos_clean(rows)
+
+
+@app.get("/api/projects/{project_id}/pos/scan")
+def pos_scan(project_id: int, code: str = Query(...),
+             user: dict = Depends(get_current_user)):
+    """Resolve a scanned/typed barcode to ONE sellable SKU. Tries, in order:
+    SKU barcode → SKU code → product-level barcode (its first sellable SKU)."""
+    require_page(user, project_id, "orders", "manage")
+    code = (code or "").strip()
+    if not code:
+        raise HTTPException(400, "code is required")
+    where = (" WHERE p.project_id=%s AND p.product_type='physical'"
+             "   AND COALESCE(p.is_archived, FALSE)=FALSE AND ")
+    row = (db_one(_POS_SKU_SELECT + where + "c.barcode=%s LIMIT 1", (project_id, code))
+           or db_one(_POS_SKU_SELECT + where + "c.sku_code=%s LIMIT 1", (project_id, code))
+           or db_one(_POS_SKU_SELECT + where + "p.barcode=%s"
+                     " ORDER BY v.position ASC, v.id ASC, c.position ASC, c.id ASC LIMIT 1", (project_id, code)))
+    if not row:
+        raise HTTPException(404, "No product matches this barcode")
+    return _pos_clean([row])[0]
+
+
+@app.get("/api/projects/{project_id}/pos/sku-batches")
+def pos_sku_batches(project_id: int, sku_id: int = Query(...),
+                    user: dict = Depends(get_current_user)):
+    """Non-empty, non-frozen batches for a SKU, FEFO-ordered (earliest expiry
+    first) so the cashier modal can default to the batch that should sell next."""
+    require_page(user, project_id, "orders", "manage")
+    if not db_one(
+        "SELECT c.id FROM product_configurations_l2 c"
+        "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+        "  JOIN products p ON v.product_id = p.id"
+        " WHERE c.id=%s AND p.project_id=%s", (sku_id, project_id)):
+        raise HTTPException(404, "SKU not found in this project")
+    rows = db_all(
+        "SELECT b.id, b.batch_name, b.warehouse_id, w.name AS warehouse_name,"
+        "       b.quantity_remaining, b.production_date, b.expiry_date"
+        "  FROM inventory_batches b"
+        "  JOIN warehouses w ON b.warehouse_id = w.id"
+        " WHERE b.project_id=%s AND b.sku_id=%s"
+        "   AND COALESCE(b.is_frozen, FALSE)=FALSE AND b.quantity_remaining > 0"
+        " ORDER BY b.expiry_date ASC NULLS LAST, b.received_at ASC",
+        (project_id, sku_id)
+    )
+    for r in rows:
+        r["quantity_remaining"] = int(r["quantity_remaining"] or 0)
+        r["production_date"] = r["production_date"].isoformat() if r.get("production_date") else None
+        r["expiry_date"]     = r["expiry_date"].isoformat() if r.get("expiry_date") else None
+    return rows
+
+
+class POSSaleItem(BaseModel):
+    sku_id:       int
+    quantity:     int
+    batch_id:     Optional[int]   = None
+    warehouse_id: Optional[int]   = None
+    price:        Optional[float] = None   # unit-price override; else SKU price
+
+
+class POSSaleRequest(BaseModel):
+    items:          List[POSSaleItem]
+    customer_name:  Optional[str] = None
+    customer_email: Optional[str] = None
+    phone:          Optional[str] = None
+    payment_method: Optional[str] = "cash"   # cash | card | other
+    comment:        Optional[str] = None
+
+
+_POS_PAYMENT_METHODS = {"cash", "card", "other"}
+
+
+@app.post("/api/projects/{project_id}/pos/sale")
+def pos_sale(project_id: int, req: POSSaleRequest,
+             user: dict = Depends(get_current_user)):
+    """Ring up an in-store sale: create a delivered + paid order and deduct stock
+    immediately (batch-aware). Mirrors a storefront order that's been handed over,
+    so later refund/cancel restock via the same _apply_stock_transition path."""
+    require_page(user, project_id, "orders", "manage")
+    if not req.items:
+        raise HTTPException(400, "items must be non-empty")
+    if len(req.items) > 200:
+        raise HTTPException(400, "Too many lines (max 200)")
+    pay_method = (req.payment_method or "cash").strip().lower()
+    if pay_method not in _POS_PAYMENT_METHODS:
+        pay_method = "other"
+    currency = (db_one("SELECT currency FROM crm_projects WHERE id=%s", (project_id,)) or {}).get("currency") or "USD"
+
+    with db_cursor() as (conn, cur):
+        # 1) Resolve + validate every line (SKU ∈ project, batch/warehouse, stock).
+        lines, total = [], 0.0
+        for idx, it in enumerate(req.items):
+            qty = int(it.quantity or 0)
+            if qty <= 0:
+                raise HTTPException(400, f"line {idx+1}: quantity must be > 0")
+            cur.execute(
+                "SELECT c.id AS sku_id, COALESCE(c.price, v.price) AS price, c.cost_price,"
+                "       v.id AS variation_id, p.id AS product_id"
+                "  FROM product_configurations_l2 c"
+                "  JOIN product_configurations_l1 v ON c.variation_id = v.id"
+                "  JOIN products p                  ON v.product_id   = p.id"
+                " WHERE c.id=%s AND p.project_id=%s",
+                (it.sku_id, project_id)
+            )
+            sku = cur.fetchone()
+            if not sku:
+                raise HTTPException(404, f"line {idx+1}: SKU not found in this project")
+
+            # A chosen batch (locked) fixes the warehouse; else pick a WH with stock.
+            batch_id = None
+            if it.batch_id is not None:
+                cur.execute(
+                    "SELECT id, warehouse_id, quantity_remaining, batch_name"
+                    "  FROM inventory_batches"
+                    " WHERE id=%s AND project_id=%s AND sku_id=%s FOR UPDATE",
+                    (it.batch_id, project_id, it.sku_id)
+                )
+                b = cur.fetchone()
+                if not b:
+                    raise HTTPException(400, f"line {idx+1}: batch not found for this SKU")
+                if int(b["quantity_remaining"]) < qty:
+                    raise HTTPException(400, f"line {idx+1}: batch \"{b['batch_name']}\" has only {b['quantity_remaining']} left")
+                batch_id, wh_id = b["id"], b["warehouse_id"]
+            elif it.warehouse_id:
+                wh_id = it.warehouse_id
+                _verify_warehouse_in_project(cur, wh_id, project_id)
+            else:
+                cur.execute("SELECT warehouse_id FROM product_stock"
+                            " WHERE sku_id=%s AND quantity > 0 ORDER BY quantity DESC LIMIT 1",
+                            (it.sku_id,))
+                wrow = cur.fetchone()
+                wh_id = wrow["warehouse_id"] if wrow else _default_warehouse_id(cur, project_id)
+
+            # Stock guard at the chosen warehouse (lock the row).
+            cur.execute("SELECT quantity FROM product_stock WHERE sku_id=%s AND warehouse_id=%s FOR UPDATE",
+                        (it.sku_id, wh_id))
+            srow = cur.fetchone()
+            avail = int((srow or {}).get("quantity") or 0)
+            if avail < qty:
+                raise HTTPException(400, f"line {idx+1}: only {avail} in stock at the selected warehouse")
+
+            unit_price = float(it.price) if it.price is not None else float(sku["price"] or 0)
+            if unit_price < 0:
+                raise HTTPException(400, f"line {idx+1}: price must be ≥ 0")
+            total += unit_price * qty
+            lines.append({"sku_id": it.sku_id, "product_id": sku["product_id"],
+                          "variation_id": sku["variation_id"], "qty": qty,
+                          "unit_price": unit_price, "cost_price": sku.get("cost_price"),
+                          "wh_id": wh_id, "batch_id": batch_id})
+
+        total = round(total, 2)
+        rn      = sanitize((req.customer_name or "").strip())[:200] or "Walk-in customer"
+        c_email = sanitize((req.customer_email or "").strip())[:200] or None
+        phone   = sanitize((req.phone or "").strip())[:60] or None
+        comment = sanitize((req.comment or "").strip())[:1000] or None
+
+        # 2) Order — delivered + paid the moment it's rung up. user_id NULL = walk-in.
+        cur.execute(
+            "INSERT INTO order_history"
+            "  (project_id, user_id, total_amount, status, delivery_method,"
+            "   recipient_name, phone, comment, payment_method, payment_status,"
+            "   payment_provider, payment_currency, payment_amount_paid, payment_paid_at,"
+            "   fulfillment_type, stock_deducted, customer_email, shipped_at, delivered_at)"
+            " VALUES (%s, NULL, %s, 'delivered', 'pickup',"
+            "         %s, %s, %s, %s, 'paid',"
+            "         'pos', %s, %s, NOW(),"
+            "         'pos', TRUE, %s, NOW(), NOW())"
+            " RETURNING id",
+            (project_id, total, rn, phone, comment, pay_method, currency, total, c_email)
+        )
+        order_id = cur.fetchone()["id"]
+
+        # 3) Line items + immediate, batch-aware stock deduction + audit log.
+        cur.execute("SET LOCAL torta.skip_audit = 'on'")
+        for ln in lines:
+            cur.execute(
+                "INSERT INTO order_items"
+                "  (order_id, product_id, variation_id, configuration_id, quantity, price,"
+                "   cost_per_unit, selected_modifier_item_ids)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (order_id, ln["product_id"], ln["variation_id"], ln["sku_id"],
+                 ln["qty"], round(ln["unit_price"], 2), ln["cost_price"], [])
+            )
+            cur.execute(
+                "INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity, reserved_quantity)"
+                " VALUES (%s, %s, 0, 0, 0) ON CONFLICT (sku_id, warehouse_id) DO NOTHING",
+                (ln["sku_id"], ln["wh_id"])
+            )
+            cur.execute(
+                "UPDATE product_stock SET quantity = quantity - %s, sold_quantity = sold_quantity + %s"
+                " WHERE sku_id=%s AND warehouse_id=%s",
+                (ln["qty"], ln["qty"], ln["sku_id"], ln["wh_id"])
+            )
+            if ln["batch_id"]:
+                cur.execute("UPDATE inventory_batches SET quantity_remaining = quantity_remaining - %s WHERE id=%s",
+                            (ln["qty"], ln["batch_id"]))
+            _sync_l2_stock(cur, ln["sku_id"])
+            cur.execute(
+                "INSERT INTO product_stock_log"
+                "  (project_id, sku_id, warehouse_id, delta, reason, reference_id, user_id, note)"
+                " VALUES (%s, %s, %s, %s, 'sale', %s, %s, %s)",
+                (project_id, ln["sku_id"], ln["wh_id"], -ln["qty"], order_id, user["id"],
+                 f"POS sale · order #{order_id}")
+            )
+        conn.commit()
+
+    # 4) Realtime — the Orders SSE poll picks up the new id; also fire the project
+    #    event (Analytics live-updates + parity with storefront's order_created).
+    push_project_event(project_id, "order_created", {"order_id": order_id, "total": total, "source": "pos"})
+    return {"ok": True, "order_id": order_id, "total": total}
+
+
 class UpdatePaymentStatus(BaseModel):
     payment_status: str   # 'paid' | 'pending' | 'manual'
 
@@ -17888,30 +18562,51 @@ chat_hub = ChatHub()
 
 # ── Project-level events hub (orders / bookings / analytics) ──────────────
 class ProjectEventsHub:
+    """Per-project WebSocket fan-out for live data events (orders / bookings /
+    products / settings…). Each connection advertises which event topics its
+    CURRENT page cares about via a {type:'subscribe', topics:[...]} frame, and
+    broadcast() delivers an event only to connections whose topic set contains its
+    type. So a teammate on the Orders page never receives a booking / alert /
+    product event fired elsewhere — no wasted network or client-side parsing.
+    topics=None (the default until a frame arrives, and the explicit 'all' case)
+    means "deliver everything" — keeps full-stream consumers (e.g. Analytics)
+    working unchanged."""
     def __init__(self):
-        self._subs: dict[int, set[WebSocket]] = {}
+        # project_id → { ws: set(topics) | None }
+        self._subs: "dict[int, dict[WebSocket, set | None]]" = {}
         self._lock = asyncio.Lock()
 
     async def connect(self, project_id: int, ws: WebSocket):
         await ws.accept()
         async with self._lock:
-            self._subs.setdefault(project_id, set()).add(ws)
+            self._subs.setdefault(project_id, {})[ws] = None
 
     async def disconnect(self, project_id: int, ws: WebSocket):
         async with self._lock:
-            subs = self._subs.get(project_id)
-            if subs:
-                subs.discard(ws)
-                if not subs:
+            conns = self._subs.get(project_id)
+            if conns is not None:
+                conns.pop(ws, None)
+                if not conns:
                     self._subs.pop(project_id, None)
 
+    async def set_topics(self, project_id: int, ws: WebSocket, topics):
+        """Narrow (or widen, with None) which event types this connection receives."""
+        async with self._lock:
+            conns = self._subs.get(project_id)
+            if conns is not None and ws in conns:
+                conns[ws] = topics
+
     async def broadcast(self, project_id: int, event: dict):
-        subs = list(self._subs.get(project_id, ()))
-        if not subs:
+        # Snapshot first so set_topics/disconnect during an await can't mutate mid-loop.
+        conns = list(self._subs.get(project_id, {}).items())
+        if not conns:
             return
+        etype   = event.get("type")
         payload = json.dumps(event)
         dead = []
-        for ws in subs:
+        for ws, topics in conns:
+            if topics is not None and etype not in topics:
+                continue   # this connection's page doesn't care about this event type
             try:
                 await ws.send_text(payload)
             except Exception:
@@ -17921,7 +18616,7 @@ class ProjectEventsHub:
                 cur = self._subs.get(project_id)
                 if cur:
                     for w in dead:
-                        cur.discard(w)
+                        cur.pop(w, None)
 
 
 events_hub = ProjectEventsHub()
@@ -18868,7 +19563,14 @@ MEDIA_SIG_SECRET = os.getenv("MEDIA_SIG_SECRET") or secrets.token_hex(32)
 
 # 24h signed URL — long enough that an opened conversation keeps working all day, short enough to limit scrape windows if leaked.
 def _sign_chat_media_url(msg_id: int, idx: int, project_id: int, ttl_seconds: int = 86400) -> str:
-    exp = int(time.time()) + ttl_seconds
+    # Bucket the expiry to a fixed window so re-signing the SAME attachment yields a
+    # byte-identical URL within that window. Otherwise every message re-fetch mints a
+    # fresh exp/sig → the <img src> string changes → the browser re-downloads every
+    # attachment on every poll (and each Telegram/WhatsApp proxy hit re-calls the
+    # external API). Day-aligned bucket → each client fetches a given attachment at
+    # most once per window; everything else is a browser HTTP-cache hit (max-age=86400).
+    window = max(ttl_seconds, 1)
+    exp = (int(time.time()) // window + 2) * window   # 1–2 windows ahead, stable within the window
     payload  = f"{msg_id}.{idx}.{project_id}.{exp}"
     sig      = hmac.new(MEDIA_SIG_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
     return f"{CRM_BACKEND_URL}/api/chat/media/{msg_id}/{idx}?pid={project_id}&exp={exp}&sig={sig}"
@@ -19418,6 +20120,13 @@ async def email_inbound(req: EmailInboundRequest, request: Request):
     if not message_id or not to_email or not from_email or "@" not in from_email:
         raise HTTPException(400, "message_id, from_email, to_email required")
 
+    # Platform inboxes (legal@ / support@tortacrm.com) belong to no project — peel
+    # them off into the Admin → Inbox tables instead of the per-store chat.
+    _mbx = _ADMIN_INBOX.get(to_email)
+    if _mbx:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: _store_admin_inbox(_mbx, req))
+
     loop = asyncio.get_event_loop()
     proj = await loop.run_in_executor(None, lambda: _resolve_email_project(to_email))
     if not proj:
@@ -19770,6 +20479,7 @@ def booking_create_service(req: BookingServiceRequest,
                     (st_id, sid)
                 )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "service", "action": "created"})
     return {"id": sid}
 
 @app.put("/api/booking/services/{sid}")
@@ -19809,6 +20519,7 @@ def booking_update_service(sid: int, req: BookingServiceRequest,
                     (st_id, sid)
                 )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "service", "action": "updated"})
     return {"ok": True}
 
 @app.delete("/api/booking/services/{sid}")
@@ -19839,6 +20550,7 @@ def booking_delete_service(sid: int, project_id: int = Query(...),
         cur.execute("DELETE FROM booking_services WHERE id=%s AND project_id=%s",
                     (sid, project_id))
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "service", "action": "deleted"})
     return {"ok": True}
 
 # ── Staff ─────────────────────────────────────────────────────────────────────
@@ -19885,6 +20597,7 @@ def booking_create_staff(req: BookingStaffRequest,
                     (st_id, s_id)
                 )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "staff", "action": "created"})
     return {"id": st_id}
 
 @app.put("/api/booking/staff/{st_id}")
@@ -19914,6 +20627,7 @@ def booking_update_staff(st_id: int, req: BookingStaffRequest,
                     (st_id, s_id)
                 )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "staff", "action": "updated"})
     return {"ok": True}
 
 @app.delete("/api/booking/staff/{st_id}")
@@ -19940,6 +20654,7 @@ def booking_delete_staff(st_id: int, project_id: int = Query(...),
         cur.execute("DELETE FROM booking_staff WHERE id=%s AND project_id=%s",
                     (st_id, project_id))
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "staff", "action": "deleted"})
     return {"ok": True}
 
 
@@ -20072,6 +20787,7 @@ def booking_set_hours(req: BookingHoursRequest,
                 (project_id, req.staff_id, r.day_of_week, r.open_time, r.close_time)
             )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "hours", "action": "updated"})
     return {"ok": True}
 
 # ── Booking-level settings ────────────────────────────────────────────────────
@@ -20129,6 +20845,7 @@ def booking_save_settings(req: BookingSettingsRequest,
                 vals + (project_id,)
             )
         conn.commit()
+    push_project_event(project_id, "booking_meta_changed", {"kind": "settings", "action": "updated"})
     return {"ok": True}
 
 # ── Bookings (the actual appointments) ────────────────────────────────────────
@@ -20372,6 +21089,8 @@ def booking_create_admin(req: CreateBookingRequest,
         )
         bid = cur.fetchone()["id"]
         conn.commit()
+    # Live-sync: every teammate viewing this project's Booking page refetches.
+    push_project_event(project_id, "booking_changed", {"id": bid, "action": "created"})
     return {"id": bid}
 
 @app.patch("/api/booking/bookings/{bid}")
@@ -20400,6 +21119,7 @@ def booking_update_status(bid: int, req: UpdateBookingStatusRequest,
         cur.execute("UPDATE bookings SET status=%s WHERE id=%s AND project_id=%s",
                     (req.status, bid, project_id))
         conn.commit()
+    push_project_event(project_id, "booking_changed", {"id": bid, "action": "status", "status": req.status})
     return {"ok": True}
 
 @app.put("/api/booking/bookings/{bid}/move")
@@ -20430,6 +21150,7 @@ def booking_move(bid: int,
     with db_cursor() as (conn, cur):
         cur.execute("UPDATE bookings SET starts_at=%s, ends_at=%s WHERE id=%s", (starts, ends, bid))
         conn.commit()
+    push_project_event(project_id, "booking_changed", {"id": bid, "action": "moved"})
     return {"ok": True, "starts_at": starts.isoformat(), "ends_at": ends.isoformat()}
 
 
@@ -20441,6 +21162,7 @@ def booking_delete(bid: int, project_id: int = Query(...),
         cur.execute("DELETE FROM bookings WHERE id=%s AND project_id=%s",
                     (bid, project_id))
         conn.commit()
+    push_project_event(project_id, "booking_changed", {"id": bid, "action": "deleted"})
     return {"ok": True}
 
 
@@ -26266,6 +26988,7 @@ def goals_create(req: GoalRequest, project_id: int = Query(...),
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
+    push_project_event(project_id, "target_changed", {"id": new_id, "action": "created"})
     return {"id": new_id}
 
 
@@ -26305,6 +27028,7 @@ def goals_update(goal_id: int, req: GoalRequest, project_id: int = Query(...),
     with db_cursor() as (conn, cur):
         cur.execute(f"UPDATE crm_goals SET {', '.join(fields)} WHERE id=%s", vals)
         conn.commit()
+    push_project_event(project_id, "target_changed", {"id": goal_id, "action": "updated"})
     return {"ok": True}
 
 
@@ -26316,6 +27040,7 @@ def goals_delete(goal_id: int, project_id: int = Query(...),
         cur.execute("DELETE FROM crm_goals WHERE id=%s AND project_id=%s",
                     (goal_id, project_id))
         conn.commit()
+    push_project_event(project_id, "target_changed", {"id": goal_id, "action": "deleted"})
     return {"ok": True}
 
 
@@ -26863,9 +27588,19 @@ async def project_events_ws(ws: WebSocket, project_id: int):
     await events_hub.connect(project_id, ws)
     try:
         while True:
-            # Client doesn't need to send anything — receive_text just
-            # keeps the connection alive and detects disconnects.
-            await ws.receive_text()
+            # The only client→server frame is a topic subscription so the server
+            # can filter delivery per page (don't ship Orders events to a Booking
+            # viewer). Any other frame just keeps the socket alive / detects close.
+            raw = await ws.receive_text()
+            try:
+                msg = json.loads(raw)
+                if isinstance(msg, dict) and msg.get("type") == "subscribe":
+                    topics = msg.get("topics")
+                    await events_hub.set_topics(
+                        project_id, ws,
+                        set(topics) if isinstance(topics, list) else None)
+            except Exception:
+                pass
     except WebSocketDisconnect:
         pass
     finally:
@@ -27005,7 +27740,7 @@ _health_mv_last_refresh    = None   # type: Optional[datetime]
 _health_alerts_last_loop   = None   # type: Optional[datetime]
 
 
-@app.get("/api/ready")
+@app.api_route("/api/ready", methods=["GET", "HEAD"])
 def healthcheck_ready():
     """Shallow probe — does the process answer HTTP and has the DB pool
     been initialised? Cheap; Docker/K8s hits this every few seconds."""
@@ -27014,7 +27749,7 @@ def healthcheck_ready():
     return {"ready": True}
 
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def healthcheck_full():
     """Deep probe — every critical subsystem. Returns HTTP 200 with
     per-component status object even when degraded, so ops can see the
@@ -27115,6 +27850,7 @@ def create_alert(project_id: int, body: AlertCreateBody,
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
+    push_project_event(project_id, "alert_changed", {"id": new_id, "action": "created"})
     return {"ok": True, "id": new_id}
 
 
@@ -27133,6 +27869,7 @@ def update_alert(project_id: int, alert_id: int, body: AlertCreateBody,
         if cur.rowcount == 0:
             raise HTTPException(404, "Alert not found")
         conn.commit()
+    push_project_event(project_id, "alert_changed", {"id": alert_id, "action": "updated"})
     return {"ok": True}
 
 
@@ -27146,6 +27883,7 @@ def delete_alert(project_id: int, alert_id: int,
             (alert_id, project_id)
         )
         conn.commit()
+    push_project_event(project_id, "alert_changed", {"id": alert_id, "action": "deleted"})
     return {"ok": True}
 
 
@@ -28202,3 +28940,289 @@ def admin_logs_errors(page: int = 1, per_page: int = 50, user: dict = Depends(ge
          LIMIT %s OFFSET %s
     """, (per_page, offset))
     return {"items": rows, "page": page, "per_page": per_page}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# User feedback — the CRM Header "Feedback" widget (Issue / Idea) submits here;
+# the Admin panel → Feedback page lists, opens, and replies officially via SES
+# (from support@tortacrm.com). name/email are snapshotted at submit time so the
+# operator can answer even if the user later changes their email.
+# ─────────────────────────────────────────────────────────────────────────
+
+class FeedbackRequest(BaseModel):
+    kind:    str   # 'issue' | 'idea'
+    subject: str
+    message: str
+
+
+@app.post("/api/feedback")
+def submit_feedback(req: FeedbackRequest, user: dict = Depends(get_current_user)):
+    kind = (req.kind or "").strip().lower()
+    if kind not in ("issue", "idea"):
+        raise HTTPException(400, "kind must be 'issue' or 'idea'")
+    subject = sanitize((req.subject or "").strip())[:300]
+    message = sanitize((req.message or "").strip())[:5000]
+    if not subject: raise HTTPException(400, "Subject is required")
+    if not message: raise HTTPException(400, "Description is required")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_feedback (user_id, name, email, kind, subject, message)"
+            " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (user["id"], (user.get("name") or "")[:200], (user.get("email") or "")[:255],
+             kind, subject, message)
+        )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "id": new_id}
+
+
+@app.get("/api/admin/feedback")
+def admin_list_feedback(kind: Optional[str] = Query(None), q: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    require_admin(user)
+    where, params = ["TRUE"], []
+    if kind in ("issue", "idea"):
+        where.append("kind = %s"); params.append(kind)
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        where.append("(LOWER(subject) LIKE %s OR LOWER(message) LIKE %s"
+                     " OR LOWER(email) LIKE %s OR LOWER(name) LIKE %s)")
+        params += [like, like, like, like]
+    rows = db_all(
+        "SELECT id, user_id, name, email, kind, subject, message, status,"
+        "       reply_text, replied_at, replied_by, created_at"
+        "  FROM crm_feedback WHERE " + " AND ".join(where) +
+        " ORDER BY created_at DESC LIMIT 500", tuple(params))
+    for r in rows:
+        r["created_at"] = r["created_at"].isoformat() if r.get("created_at") else None
+        r["replied_at"] = r["replied_at"].isoformat() if r.get("replied_at") else None
+    return rows
+
+
+class FeedbackReplyRequest(BaseModel):
+    reply: str
+
+
+def _feedback_reply_html(fb: dict, reply: str) -> str:
+    """Torta-branded reply body. Reply text is HTML-escaped + newline→<br>."""
+    safe = (reply or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    name = (fb.get("name") or "").strip() or "there"
+    return (
+        "<div style='font-family:-apple-system,Inter,Arial,sans-serif;color:#1a1a1a;"
+        "line-height:1.6;font-size:15px;max-width:560px'>"
+        f"<p>Hi {name},</p>"
+        f"<p>{safe}</p>"
+        "<p style='color:#888;font-size:13px;margin-top:28px'>— Torta Support · "
+        "<a href='https://tortacrm.com' style='color:#0071E3;text-decoration:none'>tortacrm.com</a></p>"
+        "</div>"
+    )
+
+
+@app.post("/api/admin/feedback/{fid}/reply")
+def admin_reply_feedback(fid: int, body: FeedbackReplyRequest,
+                         user: dict = Depends(get_current_user)):
+    require_admin(user)
+    fb = db_one("SELECT id, email, name, subject FROM crm_feedback WHERE id=%s", (fid,))
+    if not fb:
+        raise HTTPException(404, "Feedback not found")
+    reply = (body.reply or "").strip()
+    if not reply:
+        raise HTTPException(400, "Reply text is required")
+    if not (fb.get("email") or "").strip():
+        raise HTTPException(400, "This feedback has no email to reply to")
+    subj = fb.get("subject") or ""
+    ok = send_email(
+        fb["email"],
+        f"Re: {subj}" if subj else "Re: your feedback to Torta",
+        _feedback_reply_html(fb, reply),
+        from_email="support@tortacrm.com", from_name="Torta",
+    )
+    if not ok:
+        raise HTTPException(502, "Failed to send the email — try again")
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_feedback SET status='replied', reply_text=%s, replied_at=NOW(),"
+            " replied_by=%s WHERE id=%s",
+            (sanitize(reply)[:5000], (user.get("email") or "")[:255], fid))
+        conn.commit()
+    _admin_audit(user, "feedback_reply", target_email=fb.get("email"), detail=f"feedback #{fid}")
+    return {"ok": True}
+
+
+@app.delete("/api/admin/feedback/{fid}")
+def admin_delete_feedback(fid: int, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_feedback WHERE id=%s", (fid,))
+        conn.commit()
+    _admin_audit(user, "feedback_delete", detail=f"feedback #{fid}")
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Admin Inbox — inbound mail to the PLATFORM addresses legal@ / support@tortacrm.com.
+# These belong to no project, so email_inbound() peels them off here (above) into
+# dedicated tables. Threaded per (mailbox, sender_email); the operator replies
+# officially via SES from the same address. Like Chat with Customers, internal.
+# ─────────────────────────────────────────────────────────────────────────
+
+_ADMIN_INBOX = {"legal@tortacrm.com": "legal", "support@tortacrm.com": "support"}
+_ADMIN_INBOX_FROM_NAME = {"legal": "Torta Legal", "support": "Torta Support"}
+
+
+def _store_admin_inbox(mailbox: str, req: "EmailInboundRequest") -> dict:
+    """Persist an inbound platform email into the admin inbox (thread + message).
+    Idempotent on the email Message-Id. Runs in a threadpool (sync DB)."""
+    message_id = (req.message_id or "").strip()
+    from_email = (req.from_email or "").strip().lower()
+    from_name  = (req.from_name or "").strip()[:255]
+    to_email   = (req.to_email or "").strip().lower()
+    subject    = (req.subject or "").strip()[:500]
+    body_text  = (req.body_text or "").strip()
+    if not body_text and req.body_html:
+        body_text = _strip_html_to_text(req.body_html)
+    preview = (body_text or subject or "").replace("\n", " ").strip()[:200]
+
+    # Global dedup on Message-Id (Postfix may retry delivery).
+    if message_id and db_one("SELECT id FROM crm_admin_inbox_messages WHERE message_id=%s", (message_id,)):
+        return {"ok": True, "duplicate": True}
+
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_admin_inbox_threads"
+            "  (mailbox, sender_email, sender_name, subject, status, unread_count, last_message_at, last_preview)"
+            " VALUES (%s, %s, %s, %s, 'open', 1, NOW(), %s)"
+            " ON CONFLICT (mailbox, sender_email) DO UPDATE SET"
+            "   unread_count    = crm_admin_inbox_threads.unread_count + 1,"
+            "   last_message_at = NOW(),"
+            "   last_preview    = EXCLUDED.last_preview,"
+            "   status          = 'open',"
+            "   sender_name     = CASE WHEN EXCLUDED.sender_name <> '' THEN EXCLUDED.sender_name"
+            "                          ELSE crm_admin_inbox_threads.sender_name END,"
+            "   subject         = CASE WHEN crm_admin_inbox_threads.subject = '' THEN EXCLUDED.subject"
+            "                          ELSE crm_admin_inbox_threads.subject END"
+            " RETURNING id",
+            (mailbox, from_email, from_name, subject, preview)
+        )
+        thread_id = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO crm_admin_inbox_messages"
+            "  (thread_id, direction, subject, body_text, body_html, message_id, in_reply_to,"
+            "   \"references\", from_email, to_email, spf_pass, dkim_pass)"
+            " VALUES (%s, 'in', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (thread_id, subject, body_text[:50000], (req.body_html or "")[:200000] or None,
+             message_id or None, (req.in_reply_to or "").strip() or None,
+             (req.references or "").strip() or None, from_email, to_email,
+             req.spf_pass, req.dkim_pass)
+        )
+        new_msg_id = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "routed": True, "thread_id": thread_id, "message_id": new_msg_id}
+
+
+@app.get("/api/admin/inbox/threads")
+def admin_inbox_threads(mailbox: Optional[str] = Query(None), q: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    require_admin(user)
+    where, params = ["TRUE"], []
+    if mailbox in ("legal", "support"):
+        where.append("mailbox = %s"); params.append(mailbox)
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        where.append("(LOWER(sender_email) LIKE %s OR LOWER(sender_name) LIKE %s"
+                     " OR LOWER(subject) LIKE %s OR LOWER(last_preview) LIKE %s)")
+        params += [like, like, like, like]
+    rows = db_all(
+        "SELECT id, mailbox, sender_email, sender_name, subject, status, unread_count,"
+        "       last_message_at, last_preview, created_at"
+        "  FROM crm_admin_inbox_threads WHERE " + " AND ".join(where) +
+        " ORDER BY last_message_at DESC NULLS LAST, id DESC LIMIT 500", tuple(params))
+    for r in rows:
+        r["last_message_at"] = r["last_message_at"].isoformat() if r.get("last_message_at") else None
+        r["created_at"]      = r["created_at"].isoformat() if r.get("created_at") else None
+    return rows
+
+
+@app.get("/api/admin/inbox/threads/{tid}/messages")
+def admin_inbox_thread_messages(tid: int, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    th = db_one(
+        "SELECT id, mailbox, sender_email, sender_name, subject, status, unread_count, created_at"
+        "  FROM crm_admin_inbox_threads WHERE id=%s", (tid,))
+    if not th:
+        raise HTTPException(404, "Thread not found")
+    msgs = db_all(
+        "SELECT id, direction, subject, body_text, body_html, from_email, to_email, admin_email, created_at"
+        "  FROM crm_admin_inbox_messages WHERE thread_id=%s ORDER BY id ASC", (tid,))
+    for m in msgs:
+        m["created_at"] = m["created_at"].isoformat() if m.get("created_at") else None
+    # Opening a thread clears its unread badge.
+    with db_cursor() as (conn, cur):
+        cur.execute("UPDATE crm_admin_inbox_threads SET unread_count=0 WHERE id=%s", (tid,))
+        conn.commit()
+    th["created_at"]   = th["created_at"].isoformat() if th.get("created_at") else None
+    th["unread_count"] = 0
+    return {"thread": th, "messages": msgs}
+
+
+class InboxReplyRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/admin/inbox/threads/{tid}/reply")
+def admin_inbox_reply(tid: int, body: InboxReplyRequest, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    th = db_one("SELECT id, mailbox, sender_email, subject FROM crm_admin_inbox_threads WHERE id=%s", (tid,))
+    if not th:
+        raise HTTPException(404, "Thread not found")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Reply text is required")
+    mailbox    = th["mailbox"]
+    from_email = f"{mailbox}@tortacrm.com"
+    from_name  = _ADMIN_INBOX_FROM_NAME.get(mailbox, "Torta")
+    to_email   = th["sender_email"]
+    # Thread off the last inbound message so the customer's client groups it.
+    last_in = db_one("SELECT message_id, \"references\" FROM crm_admin_inbox_messages"
+                     " WHERE thread_id=%s AND direction='in' ORDER BY id DESC LIMIT 1", (tid,))
+    in_reply_to = (last_in or {}).get("message_id") or ""
+    refs        = (last_in or {}).get("references") or ""
+    subj = th.get("subject") or "your message"
+    if not subj.lower().startswith(("re:", "fw:", "fwd:")):
+        subj = f"Re: {subj}"
+    out_mid = f"<reply.{secrets.token_hex(8)}.{int(time.time())}@tortacrm.com>"
+    html = ("<div style='font-family:-apple-system,Inter,Segoe UI,sans-serif;font-size:14px;"
+            "color:#1d1d1f;line-height:1.6'>" + sanitize(text).replace("\n", "<br>") + "</div>")
+    payload = {
+        "to": to_email, "subject": subj[:500], "html": html,
+        "from_email": from_email, "from_name": from_name,
+        "extra_headers": {
+            "Message-Id": out_mid,
+            **({"In-Reply-To": in_reply_to} if in_reply_to else {}),
+            **({"References": (refs + " " + in_reply_to).strip()} if (refs or in_reply_to) else {}),
+        },
+    }
+    _ses("POST", "/send", payload)
+    preview = text.replace("\n", " ").strip()[:200]
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "INSERT INTO crm_admin_inbox_messages"
+            "  (thread_id, direction, subject, body_text, message_id, from_email, to_email, admin_email)"
+            " VALUES (%s, 'out', %s, %s, %s, %s, %s, %s)",
+            (tid, subj[:500], sanitize(text)[:50000], out_mid, from_email, to_email,
+             (user.get("email") or "")[:255]))
+        cur.execute("UPDATE crm_admin_inbox_threads SET last_message_at=NOW(), last_preview=%s,"
+                    " status='open' WHERE id=%s", ("↩ " + preview, tid))
+        conn.commit()
+    _admin_audit(user, "inbox_reply", target_email=to_email, detail=f"inbox #{tid} ({mailbox})")
+    return {"ok": True}
+
+
+@app.delete("/api/admin/inbox/threads/{tid}")
+def admin_inbox_delete(tid: int, user: dict = Depends(get_current_user)):
+    require_admin(user)
+    with db_cursor() as (conn, cur):
+        cur.execute("DELETE FROM crm_admin_inbox_threads WHERE id=%s", (tid,))
+        conn.commit()
+    _admin_audit(user, "inbox_delete", detail=f"inbox #{tid}")
+    return {"ok": True}

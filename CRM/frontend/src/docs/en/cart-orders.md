@@ -88,6 +88,8 @@ const r = await client.orders.place({
 const { data: orders } = await client.orders.list();
 ```
 
+Each order carries its `items`, status and totals. An order that contains **digital products** also includes a `downloads` array — `[{ label, url }]`, ready to render as download links (one entry for the single-ZIP bundle, or one per file). The storefront shows these on the order-success page and in My Orders; they're emailed too.
+
 ## Cancel an order
 
 Allowed while the order is `new`, `confirmed` or `shipped`. Stock side-effects are reversed automatically (reservation released, or units restocked for shipped). `delivered` orders can't be cancelled — use a return instead.

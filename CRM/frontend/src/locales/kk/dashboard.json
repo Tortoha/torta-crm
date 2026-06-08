@@ -1,0 +1,18 @@
+{
+  "dashboard": {
+    "title": "Сіздің ұйымдарыңыз",
+    "searchPlaceholder": "Ұйымдарды іздеу…",
+    "newOrganization": "Жаңа ұйым",
+    "projectCount_one": "{{count}} жоба",
+    "projectCount_other": "{{count}} жоба",
+    "empty": "Әзірге ұйымдар жоқ. Бастау үшін біреуін құрыңыз.",
+    "noResults": "Сұранысыңызға сәйкес ұйымдар жоқ.",
+    "modalTitle": "Жаңа ұйым",
+    "nameLabel": "Атауы",
+    "namePlaceholder": "Ұйым атауы",
+    "creating": "Құрылуда…",
+    "create": "Құру",
+    "nameRequired": "Атауы міндетті",
+    "error": "Қате"
+  }
+}

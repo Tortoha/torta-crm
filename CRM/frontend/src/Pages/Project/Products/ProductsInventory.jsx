@@ -2,10 +2,12 @@ import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'rea
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useOutletContext } from 'react-router-dom';
+import { useLiveReload } from '../../../Utils/useLiveReload.js';
 import { MagnifyingGlass, CaretRight, CaretDown, Folder, Cube, PencilSimple, X, ArrowDown, FolderSimple, Warehouse, Tag } from '@phosphor-icons/react';
 import { API_BASE } from '../../../api.js';
 import { formatMoney } from '../../../Utils/currency.js';
 import { PoListRow } from '../../../Utils/PoListRow.jsx';
+import MediaThumb from '../../../Utils/MediaThumb.jsx';
 import { Combobox } from '../Booking/BookingCreateModal.jsx';
 import { DynamicBlock } from '../../../Utils/DynamicBlock.js';
 import BulkTransferWizard, { BulkTransferButton } from './BulkTransferWizard.jsx';
@@ -191,6 +193,8 @@ function ProductsInventory() {
   }, [pq, categoryFilter, projectId]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
+  // Live collaboration: stock / receive / transfer / warehouse changes refetch the inventory grid.
+  useLiveReload(projectId, ['inventory_changed', 'products_changed', 'warehouse_changed'], loadProducts);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/categories${pq}`, { credentials: 'include' })
@@ -700,7 +704,7 @@ function WarehouseGroups({ warehouses, products, summary, onEdit }) {
                                   chevron={vOpen ? 'open' : 'closed'}
                                   onChevron={() => toggleVar(vKey)}
                                   icon={v.variation_image
-                                    ? <img src={v.variation_image} alt="" className="po-tree-avatar" />
+                                    ? <MediaThumb url={v.variation_image} alt="" className="po-tree-avatar" />
                                     : <span className="po-tree-avatar-fallback" />}>
                                   <span className="po-set-strong">{v.variation_name || '—'}</span>
                                   <span className="po-set-note po-tree-meta">

@@ -1,0 +1,184 @@
+{
+  "integrations": {
+    "title": "Intégrations",
+    "subtitle": "Connectez des outils externes pour recevoir les événements de votre boutique, ou exportez des fichiers prêts pour la comptabilité (1C / Kompra / QuickBooks / Xero / DATEV) à la demande ou de manière planifiée.",
+    "tabs": {
+      "browse": "Parcourir",
+      "logs": "Journaux"
+    },
+    "row": {
+      "installed": "Installé",
+      "installedTimes": "Installé ×{{count}}",
+      "notInstalled": "Non installé",
+      "comingSoon": "Bientôt disponible",
+      "plannedFeatures": "Fonctionnalités prévues",
+      "notifyMe": "Me prévenir quand c'est prêt"
+    },
+    "browse": {
+      "searchPlaceholder": "Rechercher des intégrations…",
+      "noMatch": "Aucune intégration ne correspond à vos filtres."
+    },
+    "logs": {
+      "allStatuses": "Tous les statuts",
+      "successOnly": "Réussis uniquement",
+      "failedOnly": "Échoués uniquement",
+      "eventFilterPlaceholder": "Filtrer par événement (p. ex. order.paid)…",
+      "refresh": "Actualiser",
+      "colTime": "Heure",
+      "colEvent": "Événement",
+      "colConnector": "Connecteur",
+      "colStatus": "Statut",
+      "colHttp": "HTTP",
+      "colDuration": "Durée",
+      "loading": "Chargement…",
+      "empty": "Aucune livraison pour le moment. Déclenchez un événement (p. ex. passez une commande test) ou cliquez sur « Envoi test » sur une intégration.",
+      "payload": "Charge utile",
+      "responseBody": "Corps de la réponse",
+      "emptyValue": "(vide)",
+      "retry": "Réessayer",
+      "ago": {
+        "seconds": "il y a {{n}} s",
+        "minutes": "il y a {{n}} min",
+        "hours": "il y a {{n}} h"
+      }
+    },
+    "toast": {
+      "saved": "Enregistré",
+      "installed": "Installé",
+      "deleted": "Supprimé",
+      "requestSent": "Demande envoyée",
+      "couldNotInstall": "Impossible d'installer"
+    },
+    "connector": {
+      "events": {
+        "groupOrders": "Commandes",
+        "groupBookings": "Réservations",
+        "groupOther": "Autres"
+      },
+      "defaults": {
+        "webhook": {
+          "label": "URL du point de terminaison",
+          "placeholder": "https://your-server.com/torta-webhook",
+          "help": "Votre serveur doit accepter les requêtes POST et vérifier X-Torta-Signature."
+        },
+        "slack": {
+          "label": "URL du Webhook",
+          "placeholder": "https://hooks.slack.com/services/T0…/B0…/…",
+          "help": "Obtenez-la sur api.slack.com/messaging/webhooks"
+        },
+        "discord": {
+          "label": "URL du Webhook",
+          "placeholder": "https://discord.com/api/webhooks/…/…",
+          "help": "Server Settings → Integrations → Webhooks → New Webhook"
+        },
+        "fallbackLabel": "URL du Webhook",
+        "fallbackPlaceholder": "https://your-endpoint.com/hook"
+      },
+      "nameLabel": "Nom (interne)",
+      "primaryRequired": "Le champ « {{label}} » est requis",
+      "primaryHttp": "« {{label}} » doit commencer par http:// ou https://",
+      "saveFailed": "Échec de l'enregistrement",
+      "saveFirstThenTest": "Enregistrez d'abord l'intégration, puis testez",
+      "confirmDelete": "Supprimer cette intégration ? Les journaux sont conservés.",
+      "signingSecret": "Secret de signature",
+      "copied": "Copié",
+      "copy": "Copier",
+      "signingHint": "Vérifiez <0>X-Torta-Signature: sha256=&lt;hex&gt;</0> sur chaque requête : <1>HMAC-SHA256(body, secret)</1>.",
+      "subscribeAll": "S'abonner à tous les événements",
+      "subscribeAllHintMailchimp": "Mailchimp n'écoute que customer.created — les autres événements sont ignorés silencieusement côté serveur.",
+      "subscribeAllHintGa4": "GA4 associe order.paid → purchase, order.created → begin_checkout. Les autres événements sont ignorés.",
+      "subscribeAllHintDefault": "Lorsque cette option est activée, chaque événement de ce projet déclenche cette intégration.",
+      "active": "Actif",
+      "activeHint": "Suspendre la livraison sans perdre la configuration.",
+      "saving": "Enregistrement…",
+      "saveChanges": "Enregistrer les modifications",
+      "install": "Installer",
+      "testSend": "Envoi test",
+      "docs": "Documentation",
+      "delete": "Supprimer",
+      "hide": "Masquer",
+      "show": "Afficher"
+    },
+    "request": {
+      "comingSoon": "Bientôt disponible",
+      "comingSoonSub": "Dites-nous que vous en avez besoin — nous vous écrivons le jour de son lancement et donnons la priorité aux plus demandées.",
+      "plannedFeatures": "Fonctionnalités prévues",
+      "notifyMe": "Me prévenir",
+      "yourEmail": "Votre e-mail",
+      "emailPlaceholder": "vous@exemple.com",
+      "anythingSpecific": "Quelque chose de précis ? (facultatif)",
+      "notePlaceholder": "Quel est votre cas d'usage ? Quels champs comptent le plus pour vous ?",
+      "requestFailed": "Échec de la demande",
+      "sending": " Envoi…",
+      "sendRequest": " Envoyer la demande",
+      "close": "Fermer",
+      "thanksTitle": "Merci — nous vous tiendrons informé.",
+      "thanksBody": "Votre demande a été enregistrée. Nous vous écrirons par e-mail dès que {{name}} sera disponible.",
+      "done": "Terminé"
+    },
+    "accounting": {
+      "period": {
+        "today": "Aujourd'hui",
+        "yesterday": "Hier",
+        "last7d": "7 derniers jours",
+        "last30d": "30 derniers jours",
+        "thisMonth": "Ce mois-ci",
+        "lastMonth": "Mois dernier",
+        "thisQuarter": "Ce trimestre",
+        "custom": "Plage personnalisée…"
+      },
+      "schedule": {
+        "off": "Désactivé — téléchargements manuels uniquement",
+        "daily": "Quotidien — commandes de la veille",
+        "weekly": "Hebdomadaire — 7 derniers jours",
+        "monthly": "Mensuel — mois précédent"
+      },
+      "hourLabel": "{{h}}:00 UTC",
+      "fileFormat": "Format de fichier",
+      "periodLabel": "Période",
+      "includeUnpaid": "Inclure les impayées / en attente",
+      "pickBothDates": "Choisissez les dates de début et de fin pour une plage personnalisée.",
+      "start": "Début",
+      "end": "Fin",
+      "preview": "Aperçu",
+      "refresh": "Actualiser",
+      "orders": "Commandes",
+      "revenue": "Revenu",
+      "window": "Fenêtre",
+      "loading": "Chargement…",
+      "loadingPreview": "Chargement de l'aperçu…",
+      "previewFailed": "Échec de l'aperçu",
+      "colOrder": "Commande",
+      "colDate": "Date",
+      "colCustomer": "Client",
+      "colItems": "Articles",
+      "colAmount": "Montant",
+      "showingOf": "Affichage de {{shown}} sur {{total}} commandes. Téléchargez le fichier complet.",
+      "noMatchingOrders": "Aucune commande correspondante sur cette période.",
+      "emailSchedule": "Planification d'e-mail",
+      "cadence": "Fréquence",
+      "cadenceHint": "Lorsqu'elle est définie, nous envoyons un lien de téléchargement signé selon votre fréquence — les fichiers eux-mêmes restent sur le CRM et le lien est valable 30 jours.",
+      "hourUtc": "Heure (UTC)",
+      "recipientEmail": "E-mail du destinataire",
+      "recipientPlaceholder": "comptable@exemple.com",
+      "recipientHint": "Requis uniquement lorsque la planification est active. Laissez vide pour le téléchargement seul.",
+      "active": "Actif",
+      "activeHint": "Les intégrations désactivées cessent de recevoir les exports planifiés jusqu'à leur réactivation.",
+      "howToImport": "Comment importer dans {{name}}",
+      "setEmailOrOff": "Indiquez un e-mail de destinataire ou réglez la planification sur Désactivé.",
+      "saveFailed": "Échec de l'enregistrement",
+      "saved": "Enregistré",
+      "setRecipientFirst": "Indiquez d'abord un e-mail de destinataire.",
+      "testSendFailed": "Échec de l'envoi test",
+      "emailSentTo": "E-mail envoyé à {{email}}",
+      "confirmDelete": "Supprimer cette intégration comptable ? Les téléchargements passés ne sont pas affectés.",
+      "download": "Télécharger",
+      "downloadOrders": "Télécharger · {{count}} commande",
+      "downloadOrders_other": "Télécharger · {{count}} commandes",
+      "saving": "Enregistrement…",
+      "saveSchedule": "Enregistrer la planification",
+      "testSend": "Envoi test",
+      "delete": "Supprimer"
+    }
+  }
+}

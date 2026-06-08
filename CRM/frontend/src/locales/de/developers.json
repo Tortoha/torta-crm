@@ -1,0 +1,56 @@
+{
+  "developers": {
+    "nav": "Entwickler",
+    "meta": {
+      "getStarted": "Kostenlos starten",
+      "docs": "Dokumentation lesen",
+      "reference": "API-Referenz"
+    },
+    "hero": {
+      "eyebrow": "Entwickler",
+      "title": "Ihre Storefront-API, in Minuten eingerichtet",
+      "lead": "Produkte, Warenkorb, Checkout, Anmeldung, Live-Chat und Analysen – alles über ein winziges JavaScript-SDK. Standardmäßig sicher, Framework-unabhängig und mit nur wenigen Zeilen einsatzbereit."
+    },
+    "one": {
+      "eyebrow": "Ein Client",
+      "title": "Jeder Teil Ihres Shops, nur einen Aufruf entfernt",
+      "lead": "Erstellen Sie den Client einmal und erreichen Sie die gesamte Storefront über saubere, mit Namensräumen versehene Methoden. Kein rohes fetch, kein Boilerplate – und jeder Aufruf kommt in derselben vorhersehbaren Form zurück."
+    },
+    "secure": {
+      "eyebrow": "Standardmäßig sicher",
+      "title": "Bedenkenlos für jeden Browser auslieferbar",
+      "lead": "Die Schlüssel, die im Browser liegen, können nichts Gefährliches anrichten – und der mächtige verlässt niemals Ihren Server.",
+      "cards": [
+        { "title": "Zwei Schlüssel, nicht einer", "desc": "Ein öffentlicher Schlüssel identifiziert den Shop; ein veröffentlichbarer Schlüssel wird bei jeder Anfrage geprüft. Das bloße Kopieren Ihrer URL genügt nicht." },
+        { "title": "Geheimer Schlüssel bleibt serverseitig", "desc": "Vertrauenswürdige Schreibvorgänge nutzen einen geheimen Schlüssel, den Sie auf Ihrem Backend behalten – er wird niemals an den Browser ausgeliefert." },
+        { "title": "Sitzungen erneuern sich selbst", "desc": "Die Anmeldung erfolgt cookie-basiert; bei einem 401 erneuert das SDK still und wiederholt die Anfrage. Sie fassen niemals Token an." },
+        { "title": "CSRF für Sie erledigt", "desc": "Jeder Schreibvorgang ist automatisch geschützt – es gibt nichts einzurichten." }
+      ]
+    },
+    "shape": {
+      "eyebrow": "Vorhersehbar",
+      "title": "Dieselbe Antwort, jedes Mal",
+      "lead": "Jede Methode liefert dasselbe Objekt und wirft bei einem HTTP-Fehler niemals eine Ausnahme. Prüfen Sie ok, zeigen Sie error an (immer eine anzeigefertige Zeichenkette), nutzen Sie data – ohne try/catch-Verrenkungen."
+    },
+    "frameworks": {
+      "eyebrow": "Framework-unabhängig",
+      "title": "Binden Sie es in jedes Tool ein, mit dem Sie entwickeln",
+      "lead": "Es ist reines JavaScript ohne jegliche Abhängigkeiten und läuft daher überall. Die Dokumentation enthält ein Copy-and-paste-Setup für jedes Framework."
+    },
+    "quickstart": {
+      "eyebrow": "Schnellstart",
+      "title": "In unter einer Minute einsatzbereit",
+      "lead": "Drei Schritte von npm install bis zu Ihrem ersten Aufruf.",
+      "steps": [
+        { "title": "Installieren", "desc": "Fügen Sie das SDK hinzu – oder laden Sie es direkt von einem CDN, ganz ohne Bundler." },
+        { "title": "Client erstellen", "desc": "Zwei browsersichere Schlüssel, kopiert aus Ihrer Projektübersicht." },
+        { "title": "Alles aufrufen", "desc": "Produkte, Warenkorb, Checkout, Authentifizierung – alles vorhanden, mit einheitlicher Antwort." }
+      ]
+    },
+    "cta": {
+      "eyebrow": "Loslegen",
+      "title": "Erstellen Sie noch heute Ihre Storefront",
+      "sub": "Holen Sie sich Ihre Schlüssel und führen Sie Ihren ersten Aufruf in Minuten aus. Kostenlos zu starten, ohne Kreditkarte."
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "usage": {
+    "title": "Лимиттер",
+    "unlimited": "Шектеусіз",
+
+    "planSection": "Ағымдағы тариф",
+    "planFreeSub": "Сіз Free тарифіндесіз — мүмкіндіктерді сынап көруге өте қолайлы.",
+    "planPaidSub": "${{price}}/ай · Барлық ақылы мүмкіндіктер мен webhook-тар кіреді.",
+    "upgradeBtn":  "Жоғарылату",
+    "manageBtn":   "Басқару",
+
+    "usageSection": "Осы кезеңде пайдаланылды",
+    "barPercent":   "{{percent}}% пайдаланылды",
+    "barUnlimited": "Бұл тарифте шектеу жоқ",
+
+    "capsSection": "Тариф лимиттері",
+    "caps": {
+      "apiRate":          "API сұраулары / мин",
+      "broadcasts":       "Электрондық пошта таратылымдары",
+      "broadcastsNone":   "Кірмейді",
+      "broadcastsIncluded": "Кіреді",
+      "broadcastsLim":    "{{n}}/күн"
+    },
+
+    "metrics": {
+      "projects":         "Жобалар",
+      "team_members":     "Топ мүшелері",
+      "storefront_users": "Дүкен клиенттері",
+      "storage_bytes":    "Файл қоймасы",
+      "database_bytes":   "Дерекқор көлемі",
+      "emails_today":     "Бүгінгі хаттар"
+    }
+  }
+}
