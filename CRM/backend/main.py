@@ -6270,16 +6270,19 @@ def _paddle_apply_subscription(event_type: str, data: dict) -> None:
     cancelled_at = data.get("canceled_at") or None
 
     # Plan-slug write strategy:
-    #   • subscription.expired → drop to 'free' (paid period actually ended).
-    #   • subscription.canceled → keep paid plan until period_end; status='canceled'
-    #     tells the UI to surface "ending on <date>". Server only flips to free
-    #     when we get the .expired event.
+    #   • subscription.expired → Free (paid period actually ended).
+    #   • subscription.canceled WITH a future period_end → keep the paid plan
+    #     until then; status='canceled' makes the UI show "ending on <date>".
+    #   • subscription.canceled with NO remaining period (immediate cancel) → Free
+    #     now: Paddle won't send a separate .expired, so the org would otherwise be
+    #     stuck on the paid plan forever with an "Ending soon" badge and no date.
     #   • everything else (active / past_due / paused / created / activated / updated):
     #     mirror Paddle's status as-is, keep the paid plan_slug.
-    if event_type == "subscription.expired":
-        new_plan = "free"
-    else:
-        new_plan = plan_slug
+    if event_type == "subscription.expired" or (status == "canceled" and not ends):
+        _demote_org_subscription_to_free(org_id)
+        print(f"[paddle/webhook] {event_type}: org={org_id} → free (canceled/expired, no remaining period)")
+        return
+    new_plan = plan_slug
 
     try:
         with db_cursor() as (conn, cur):
@@ -6449,11 +6452,18 @@ def _paddle_sync_org_subscription(org_id: int, owner_email: str) -> bool:
         print(f"[paddle/sync] org={org_id} unknown price_id {price_id!r}. Skipped.")
         return False
 
-    new_plan = "free" if status == "expired" else plan_slug
     period = target.get("current_billing_period") or {}
     starts = period.get("starts_at") or None
     ends   = period.get("ends_at")   or None
     cancelled_at = target.get("canceled_at") or None
+    # Canceled with no remaining paid period (or expired) → Free now. Paddle won't
+    # emit a later .expired for an immediate cancel, so the org would otherwise be
+    # stuck on the paid plan with an "Ending soon" badge and no end date.
+    if status == "expired" or (status == "canceled" and not ends):
+        _demote_org_subscription_to_free(org_id)
+        print(f"[paddle/sync] org={org_id} → free (sub {sub_id} canceled/expired)")
+        return True
+    new_plan = plan_slug
 
     try:
         with db_cursor() as (conn, cur):
