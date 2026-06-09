@@ -569,8 +569,13 @@ def set_refresh_cookie(response: Response, raw: str):
     )
 
 def clear_auth_cookies(response: Response):
-    response.delete_cookie("authx_token",   path="/")
-    response.delete_cookie("authx_refresh", path="/")
+    # Deletion MUST mirror set_auth_cookie's samesite + secure. Otherwise the
+    # browser rejects the delete in a cross-site context (storefront origin →
+    # API origin): a Set-Cookie without SameSite=None;Secure can't modify a
+    # SameSite=None cookie cross-site, so the cookie survives and the user stays
+    # logged in. This was the "Sign Out does nothing" bug.
+    response.delete_cookie("authx_token",   path="/", samesite=_SESSION_SAMESITE, secure=COOKIE_SECURE)
+    response.delete_cookie("authx_refresh", path="/", samesite=_SESSION_SAMESITE, secure=COOKIE_SECURE)
 
 # ── Refresh token helpers (mirror CRM backend, scoped per project) ─────
 REVOKE_REASON_LOGOUT  = "logout"
