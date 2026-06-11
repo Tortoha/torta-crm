@@ -7102,8 +7102,23 @@ def make_slug(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")
     return slug or "org"
 
-def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
-    user = db_one("SELECT id FROM crm_users WHERE google_id=%s OR (email=%s AND google_id IS NULL)", (g_id, email))
+def _upsert_google_user(g_id: str, email: str, name: str, picture: str, email_verified: bool = False) -> int:
+    # 1) Returning Google user — match on the Google subject id (stable, trusted).
+    user = db_one("SELECT id FROM crm_users WHERE google_id=%s", (g_id,))
+    if not user:
+        # 2) No Google identity yet. We may LINK to a pre-existing NATIVE
+        #    (password) account that happens to share this email — but ONLY when
+        #    Google asserts the address is verified. Otherwise an attacker who
+        #    controls an unverified Google identity for the victim's address
+        #    (federated/SAML/externally-provisioned Workspace accounts can emit
+        #    email_verified=false) could attach their google_id to the victim's
+        #    row and sign in as them. Google's own guidance warns against
+        #    trusting an unverified email for account linking.
+        native = db_one("SELECT id FROM crm_users WHERE email=%s AND google_id IS NULL", (email,))
+        if native:
+            if not email_verified:
+                raise HTTPException(403, "Google account email is not verified")
+            user = native
     if user:
         user_id = user["id"]
         with db_cursor() as (conn, cur):
@@ -8580,38 +8595,53 @@ def refund_org_subscription(org_id: int, user: dict = Depends(get_current_user))
     _require_org_owner(org_id, user)
     if not PADDLE_API_KEY:
         raise HTTPException(503, "Billing not configured")
-    sub = db_one("SELECT plan_slug, paddle_subscription_id, COALESCE(refund_used, FALSE) AS refund_used "
-                 "FROM crm_subscriptions WHERE org_id=%s", (org_id,))
-    sub_id = (sub or {}).get("paddle_subscription_id")
-    if not sub or sub.get("plan_slug") == "free" or not sub_id:
-        raise HTTPException(409, "No active paid subscription to refund")
-    if sub.get("refund_used"):
-        raise HTTPException(409, "The money-back guarantee was already used for this organization")
-    # first_billed_at gates the 14-day window.
-    r = _http_request("GET", f"{_paddle_saas_api_base()}/subscriptions/{sub_id}", headers=_paddle_saas_headers())
-    sd = ((r["body"] or {}).get("data") or {}) if r["status"] < 400 else {}
-    fb = sd.get("first_billed_at")
-    if not fb:
-        raise HTTPException(409, "No payment found to refund")
     from datetime import timezone as _tz, timedelta as _td
-    try:
-        fbd = datetime.fromisoformat(str(fb).replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        raise HTTPException(409, "Could not read the first payment date")
-    if datetime.now(_tz.utc) > fbd + _td(days=14):
-        raise HTTPException(409, "The 14-day money-back window has passed")
-    # Latest paid transaction for this subscription = what we refund.
-    rt = _http_request("GET",
-        f"{_paddle_saas_api_base()}/transactions?subscription_id={sub_id}"
-        f"&status=billed,paid,completed&per_page=1&order_by=billed_at[desc]",
-        headers=_paddle_saas_headers())
-    txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
-    if not txns:
-        raise HTTPException(409, "No paid transaction found to refund")
-    if not _paddle_refund_transaction(txns[0].get("id", ""), "14-day money-back guarantee"):
-        raise HTTPException(502, "Refund failed at payment provider")
-    _paddle_cancel_subscription(sub_id, "immediately")
     with db_cursor() as (conn, cur):
+        # Serialize concurrent refund attempts for THIS org. The row lock makes a
+        # second simultaneous request block here until we commit/rollback, closing
+        # the check-then-act window that previously let two requests both pass the
+        # refund_used=FALSE gate and issue two refunds. The Paddle helpers below are
+        # HTTP-only, so holding this row lock across them is safe and only blocks
+        # other refund attempts on the SAME org.
+        cur.execute("SELECT plan_slug, paddle_subscription_id, COALESCE(refund_used, FALSE) AS refund_used "
+                    "FROM crm_subscriptions WHERE org_id=%s FOR UPDATE", (org_id,))
+        sub = cur.fetchone()
+        sub_id = (sub or {}).get("paddle_subscription_id")
+        if not sub or sub.get("plan_slug") == "free" or not sub_id:
+            raise HTTPException(409, "No active paid subscription to refund")
+        if sub.get("refund_used"):
+            raise HTTPException(409, "The money-back guarantee was already used for this organization")
+        # first_billed_at gates the 14-day window.
+        r = _http_request("GET", f"{_paddle_saas_api_base()}/subscriptions/{sub_id}", headers=_paddle_saas_headers())
+        sd = ((r["body"] or {}).get("data") or {}) if r["status"] < 400 else {}
+        fb = sd.get("first_billed_at")
+        if not fb:
+            raise HTTPException(409, "No payment found to refund")
+        try:
+            fbd = datetime.fromisoformat(str(fb).replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            raise HTTPException(409, "Could not read the first payment date")
+        if datetime.now(_tz.utc) > fbd + _td(days=14):
+            raise HTTPException(409, "The 14-day money-back window has passed")
+        # Latest paid transaction for this subscription = what we refund.
+        rt = _http_request("GET",
+            f"{_paddle_saas_api_base()}/transactions?subscription_id={sub_id}"
+            f"&status=billed,paid,completed&per_page=1&order_by=billed_at[desc]",
+            headers=_paddle_saas_headers())
+        txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
+        if not txns:
+            raise HTTPException(409, "No paid transaction found to refund")
+        # CLAIM the one-shot atomically BEFORE the irreversible provider refund.
+        # The row is already locked; rowcount != 1 means another request won the race.
+        cur.execute("UPDATE crm_subscriptions SET refund_used=TRUE WHERE org_id=%s AND refund_used=FALSE", (org_id,))
+        if cur.rowcount != 1:
+            raise HTTPException(409, "The money-back guarantee was already used for this organization")
+        # Irreversible. If the provider refund fails, roll back to un-claim the
+        # one-shot so the window stays usable (self-healing on provider error).
+        if not _paddle_refund_transaction(txns[0].get("id", ""), "14-day money-back guarantee"):
+            conn.rollback()
+            raise HTTPException(502, "Refund failed at payment provider")
+        _paddle_cancel_subscription(sub_id, "immediately")
         cur.execute("""UPDATE crm_subscriptions
                           SET plan_slug='free', status='active', refund_used=TRUE,
                               current_period_start=NULL, current_period_end=NULL,
@@ -16393,6 +16423,7 @@ def google_callback(request: Request, code: str = None, error: str = None, state
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
         picture = idinfo.get("picture")
+        email_verified = bool(idinfo.get("email_verified", False))
     except Exception:
         import traceback; traceback.print_exc()
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_verify")
@@ -16408,7 +16439,7 @@ def google_callback(request: Request, code: str = None, error: str = None, state
         r.delete_cookie("crm_oa_from",  path="/")
         return r
 
-    user_id   = _upsert_google_user(g_id, email, name, picture)
+    user_id   = _upsert_google_user(g_id, email, name, picture, email_verified)
     jwt_token = make_token(user_id)
     refresh   = issue_refresh_token(user_id, request, label="Google login")
     landing   = f"{ADMIN_FRONTEND_URL}/" if from_admin else f"{CRM_FRONTEND_URL}/dashboard"
@@ -16437,11 +16468,12 @@ def google_auth(request: GoogleAuthRequest, response: Response, req: Request):
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
         picture = idinfo.get("picture")
+        email_verified = bool(idinfo.get("email_verified", False))
     except Exception:
         # Don't leak internal token-parsing details
         raise HTTPException(400, "Invalid Google token")
 
-    user_id = _upsert_google_user(g_id, email, name, picture)
+    user_id = _upsert_google_user(g_id, email, name, picture, email_verified)
     set_cookie(response, make_token(user_id))
     set_refresh_cookie(response, issue_refresh_token(user_id, req, label="Google login"))
     return {"success": True}
@@ -17806,17 +17838,7 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
     require_page_auto(user, project_id)
     if body.status not in ORDER_STATUSES:
         raise HTTPException(400, f"Invalid status. Allowed: {ORDER_STATUSES}")
-    o = db_one(
-        "SELECT id, status, COALESCE(stock_deducted, FALSE) AS stock_deducted"
-        "  FROM order_history WHERE id=%s AND project_id=%s",
-        (order_id, project_id)
-    )
-    if not o:
-        raise HTTPException(404, "Order not found")
-
-    old_status   = o["status"]
-    new_status   = body.status
-    was_deducted = bool(o["stock_deducted"])
+    new_status = body.status
 
     extra_sql = ""
     if new_status == "shipped":
@@ -17829,13 +17851,31 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
                      " shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP)")
 
     with db_cursor() as (conn, cur):
+        # Lock the order row FOR UPDATE so two concurrent PATCHes (a double-click,
+        # or two operators firing the same transition within a few ms) serialize.
+        # Reading stock_deducted on a separate pooled connection (the old db_one)
+        # held no lock, so both requests could see FALSE and both run the
+        # reserved→deducted branch — double-decrementing stock & sold_quantity.
+        cur.execute(
+            "SELECT id, status, COALESCE(stock_deducted, FALSE) AS stock_deducted"
+            "  FROM order_history WHERE id=%s AND project_id=%s FOR UPDATE",
+            (order_id, project_id)
+        )
+        o = cur.fetchone()
+        if not o:
+            raise HTTPException(404, "Order not found")
+        old_status   = o["status"]
+        was_deducted = bool(o["stock_deducted"])
+
         cur.execute(
             f"UPDATE order_history SET status=%s, updated_at=CURRENT_TIMESTAMP{extra_sql} "
             "WHERE id=%s AND project_id=%s",
             (new_status, order_id, project_id)
         )
         # Apply stock side-effects ONLY when status really changed — avoids
-        # double-deducting on a no-op PATCH.
+        # double-deducting on a no-op PATCH. With the FOR UPDATE lock above, the
+        # losing concurrent PATCH re-reads the already-committed state, so this
+        # guard correctly no-ops the second time.
         if old_status != new_status:
             _apply_stock_transition(cur, order_id, project_id,
                                      old_status, new_status, was_deducted)

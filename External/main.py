@@ -2093,6 +2093,43 @@ def _build_discord_message(event: str, data: dict) -> dict:
                         "timestamp": _utcnow().isoformat()}]}
 
 
+_PRIVATE_NET_RE = _re_global.compile(
+    r"^(?:127\.|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|"
+    r"::1$|fc00:|fd00:|fe80:|0\.0\.0\.0)"
+)
+def _url_is_safe_for_outbound(url: str) -> tuple:
+    """SSRF guard for merchant-supplied webhook URLs, mirroring the CRM backend's
+    check. MUST run at DELIVERY time (every dispatch), not only at registration —
+    the registration-time check in CRM cannot stop a hostname that resolves to a
+    public IP at create time and is later re-pointed (DNS rebinding) at a private/
+    metadata address. Rejects non-http(s) schemes and any hostname that resolves
+    to a private / loopback / link-local / cloud-metadata address."""
+    import socket
+    import urllib.parse as _uparse
+    try:
+        parsed = _uparse.urlparse(url)
+    except Exception:
+        return False, "Malformed URL"
+    if parsed.scheme not in ("http", "https"):
+        return False, "Only http/https URLs are accepted"
+    if IS_PRODUCTION and parsed.scheme != "https":
+        return False, "Production webhooks must use https"
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "URL is missing a hostname"
+    if host in ("localhost", "ip6-localhost", "ip6-loopback"):
+        return False, "Loopback URLs are not allowed"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return False, f"Could not resolve hostname '{host}'"
+    for _fam, _t, _p, _c, sockaddr in infos:
+        ip = sockaddr[0]
+        if _PRIVATE_NET_RE.match(ip):
+            return False, f"URL resolves to a private/loopback address ({ip})"
+    return True, ""
+
+
 def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
     sub_type = sub["type"]
     if sub_type == "slack":
@@ -2122,6 +2159,13 @@ def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> di
     out = {"subscription_id": sub["id"], "project_id": sub["project_id"],
            "event": event, "payload": json.dumps(body_obj, default=str),
            "attempt": attempt}
+    # SSRF guard at delivery time — refuse to fetch private/loopback/metadata
+    # targets even if the URL passed the registration-time check (DNS rebinding).
+    ok, reason = _url_is_safe_for_outbound(sub.get("url") or "")
+    if not ok:
+        out.update({"status": "failed", "http_code": None,
+                    "response_body": f"[blocked] {reason}"[:2000], "duration_ms": 0})
+        return out
     try:
         req = urllib.request.Request(sub["url"], data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -6198,6 +6242,16 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                  sorted(it["selected_modifier_item_ids"] or []))
             )
             it["id"] = cursor.fetchone()["id"]
+            # Digital items carry no physical stock, and a digital-only order is
+            # born 'delivered' — so the reserved→deducted/released transition
+            # (CRM update_order_status) never runs to unwind a reservation. If we
+            # reserved here, reserved_quantity (especially the L2 mirror, which
+            # updates even when the SKU has no warehouse row) would inflate
+            # permanently and leak availability for that SKU. Skip all stock
+            # side-effects for digital line items — the order_items row above is
+            # all a digital purchase needs.
+            if it.get("product_type") == "digital":
+                continue
             # Reservation model — at order time we RESERVE stock, we don't
             # decrement it. The customer's order is not yet shipped, so the
             # physical stock count and the "sold" lifetime number must not
@@ -6779,27 +6833,38 @@ def request_return(api_key: str, order_id: int, body: RequestReturnBody,
             raise HTTPException(400,
                 f"Cannot return {it.quantity} of item {it.order_item_id} — only {oi['quantity']} purchased")
 
-    # Block duplicate active returns for the same line item
-    existing = db_all(
-        """SELECT ri.order_item_id, SUM(ri.quantity) AS qty
-             FROM order_return_items ri
-             JOIN order_returns r ON ri.return_id = r.id
-            WHERE r.order_id=%s AND r.status = ANY(%s)
-            GROUP BY ri.order_item_id""",
-        (order_id, list(ACTIVE_RETURN_STATUSES))
-    )
-    active_by_item = {row["order_item_id"]: int(row["qty"] or 0) for row in existing}
-    for it in body.items:
-        ordered = int(oi_by_id[it.order_item_id]["quantity"])
-        already_returning = active_by_item.get(it.order_item_id, 0)
-        if already_returning + it.quantity > ordered:
-            raise HTTPException(400,
-                f"Item {it.order_item_id}: {already_returning} already in an active return, "
-                f"can only request {ordered - already_returning} more")
-
     photos = [sanitize(p)[:1000] for p in (body.customer_photos or [])][:10]
 
     with db_cursor() as (conn, cur):
+        # Lock the order row so concurrent return requests for the SAME order
+        # serialize. Without it, two requests both read the same already-returning
+        # total and both insert, together exceeding the purchased quantity — which
+        # the CRM inspect flow would then restock, inflating inventory. The
+        # duplicate-active-return check therefore has to run INSIDE this locked
+        # transaction (on this cursor), not on a separate pooled connection.
+        cur.execute(
+            "SELECT id FROM order_history WHERE id=%s AND project_id=%s FOR UPDATE",
+            (order_id, project_id)
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "Order not found")
+        cur.execute(
+            """SELECT ri.order_item_id, SUM(ri.quantity) AS qty
+                 FROM order_return_items ri
+                 JOIN order_returns r ON ri.return_id = r.id
+                WHERE r.order_id=%s AND r.status = ANY(%s)
+                GROUP BY ri.order_item_id""",
+            (order_id, list(ACTIVE_RETURN_STATUSES))
+        )
+        active_by_item = {row["order_item_id"]: int(row["qty"] or 0) for row in cur.fetchall()}
+        for it in body.items:
+            ordered = int(oi_by_id[it.order_item_id]["quantity"])
+            already_returning = active_by_item.get(it.order_item_id, 0)
+            if already_returning + it.quantity > ordered:
+                raise HTTPException(400,
+                    f"Item {it.order_item_id}: {already_returning} already in an active return, "
+                    f"can only request {ordered - already_returning} more")
+
         cur.execute(
             "INSERT INTO order_returns"
             "  (order_id, project_id, customer_user_id, status, reason,"
