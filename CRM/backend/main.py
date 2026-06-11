@@ -8531,39 +8531,27 @@ def _paddle_cancel_subscription(sub_id: str, effective_from: str = "immediately"
     return True
 
 
-def _paddle_refund_transaction(txn_id: str, reason: str = "Customer refund") -> bool:
-    """Full refund of a Paddle transaction via POST /adjustments. Paddle's adjustments
-    API requires the per-line-item ids (txnitm_…) — a top-level type=full is NOT valid
-    — so we fetch the transaction first and refund every line item with type=full.
-    Paddle auto-approves refunds ≤ $400 on a verified account with sufficient balance."""
+def _paddle_refund_transaction(txn_id: str, reason: str = "Customer refund") -> tuple:
+    """Full refund of a Paddle transaction via POST /adjustments. Per Paddle's docs a
+    FULL refund uses top-level action=refund + type=full + transaction_id + reason;
+    an `items` array is ONLY needed for PARTIAL refunds. Returns (ok, error_detail) so
+    the caller can surface WHY Paddle rejected it instead of a blank 502.
+    NOTE: on LIVE accounts Paddle usually creates the adjustment as `pending_approval`
+    (HTTP 2xx) — that's success here; Paddle reviews it, it isn't instant."""
     if not (PADDLE_API_KEY and txn_id):
-        return False
-    # 1) Fetch the transaction to get its line-item ids (required by /adjustments).
-    tr = _http_request("GET", f"{_paddle_saas_api_base()}/transactions/{txn_id}",
-                       headers=_paddle_saas_headers())
-    if tr["status"] >= 400 or tr["status"] == 0:
-        print(f"[paddle/refund] txn={txn_id} fetch HTTP {tr['status']} body={tr['body']!r}")
-        return False
-    tdata = (tr["body"] or {}).get("data") or {}
-    line_items = ((tdata.get("details") or {}).get("line_items")) or []
-    item_ids = [li.get("id") for li in line_items if isinstance(li, dict) and li.get("id")]
-    if not item_ids:
-        print(f"[paddle/refund] txn={txn_id} no line-item ids; details={tdata.get('details')!r}")
-        return False
-    # 2) Refund every line item in full.
-    payload = {
-        "action": "refund",
-        "transaction_id": txn_id,
-        "reason": (reason or "")[:255],
-        "items": [{"item_id": iid, "type": "full"} for iid in item_ids],
-    }
+        return False, "billing not configured"
+    payload = {"action": "refund", "type": "full",
+               "transaction_id": txn_id, "reason": (reason or "")[:255]}
     r = _http_request("POST", f"{_paddle_saas_api_base()}/adjustments",
                       headers=_paddle_saas_headers(),
                       body=json.dumps(payload).encode("utf-8"))
     if r["status"] >= 400 or r["status"] == 0:
-        print(f"[paddle/refund] txn={txn_id} HTTP {r['status']} body={r['body']!r}")
-        return False
-    return True
+        body = r.get("body")
+        err  = (body.get("error") or {}) if isinstance(body, dict) else {}
+        detail = err.get("detail") or err.get("code") or (str(body)[:300] if body else "no response")
+        print(f"[paddle/refund] txn={txn_id} HTTP {r['status']} body={body!r}")
+        return False, f"Paddle {r['status']}: {detail}"
+    return True, ""
 
 
 class CancelSubscriptionRequest(BaseModel):
@@ -8640,12 +8628,19 @@ def refund_org_subscription(org_id: int, user: dict = Depends(get_current_user))
             raise HTTPException(409, "Could not read the first payment date")
         if datetime.now(_tz.utc) > fbd + _td(days=14):
             raise HTTPException(409, "The 14-day money-back window has passed")
-        # Latest paid transaction for this subscription = what we refund.
+        # Latest REAL paid transaction for this subscription = what we refund.
+        # EXCLUDE card-update transactions (origin=subscription_payment_method_change):
+        # after the user changes their card, the newest transaction is the $0
+        # card-capture one, which Paddle can't refund → the refund 502'd. Fetch a
+        # page and pick the newest ACTUAL payment instead of blindly the newest txn.
+        # (Paddle always refunds to the original payment method of that transaction.)
         rt = _http_request("GET",
             f"{_paddle_saas_api_base()}/transactions?subscription_id={sub_id}"
-            f"&status=billed,paid,completed&per_page=1&order_by=billed_at[desc]",
+            f"&status=billed,paid,completed&per_page=20&order_by=billed_at[desc]",
             headers=_paddle_saas_headers())
-        txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
+        all_txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
+        txns = [t for t in all_txns if isinstance(t, dict)
+                and (t.get("origin") or "") != "subscription_payment_method_change"]
         if not txns:
             raise HTTPException(409, "No paid transaction found to refund")
         # CLAIM the one-shot atomically BEFORE the irreversible provider refund.
@@ -8655,9 +8650,10 @@ def refund_org_subscription(org_id: int, user: dict = Depends(get_current_user))
             raise HTTPException(409, "The money-back guarantee was already used for this organization")
         # Irreversible. If the provider refund fails, roll back to un-claim the
         # one-shot so the window stays usable (self-healing on provider error).
-        if not _paddle_refund_transaction(txns[0].get("id", ""), "14-day money-back guarantee"):
+        _ref_ok, _ref_why = _paddle_refund_transaction(txns[0].get("id", ""), "14-day money-back guarantee")
+        if not _ref_ok:
             conn.rollback()
-            raise HTTPException(502, "Refund failed at payment provider")
+            raise HTTPException(502, _ref_why or "Refund failed at payment provider")
         _paddle_cancel_subscription(sub_id, "immediately")
         cur.execute("""UPDATE crm_subscriptions
                           SET plan_slug='free', status='active', refund_used=TRUE,
