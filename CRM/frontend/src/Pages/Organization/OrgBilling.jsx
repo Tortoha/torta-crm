@@ -13,7 +13,7 @@ import { Link, useNavigate, useOutletContext, useSearchParams } from 'react-rout
 import { useTranslation } from 'react-i18next';
 import {
   ArrowSquareOut, CheckCircle, ArrowRight, X, Trash,
-  ArrowsClockwise, PencilSimple,
+  ArrowsClockwise, PencilSimple, ArrowUUpLeft,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { closeCheckout, onPaddleEvent } from '../../Utils/paddle.js';
@@ -121,6 +121,45 @@ function CancelModal({ planName, periodEnd, busy, onCancel, onConfirm }) {
             <button type="button" className="crm-submit-btn" onClick={onCancel}
               style={{ marginLeft: 'auto' }} disabled={busy}>
               {t('billing.cancel.keep', { defaultValue: 'Keep subscription' })}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Refund (money-back) confirm modal ────────────────────────────────
+function RefundModal({ busy, onCancel, onConfirm }) {
+  const { t } = useTranslation();
+  return createPortal(
+    <div className="auth-modal-overlay" onClick={onCancel}>
+      <div className="auth-modal" onClick={e => e.stopPropagation()} style={{ width: 460 }}>
+        <div className="auth-modal-body">
+          <div className="auth-modal-title-row">
+            <h2 className="auth-modal-title">
+              {t('billing.refund.confirmTitle', { defaultValue: 'Get a full refund?' })}
+            </h2>
+          </div>
+          <p className="cpm-section-hint" style={{ marginTop: 0 }}>
+            {t('billing.refund.confirmBody', {
+              defaultValue: 'We refund your latest payment in full and end the subscription now. This one-time guarantee can’t be used again on this organization.',
+            })}
+          </p>
+          <ul className="ob-modal-list">
+            <li>{t('billing.refund.b1', { defaultValue: 'Money goes back to your original payment method' })}</li>
+            <li>{t('billing.refund.b2', { defaultValue: 'Your organization drops to the Free plan' })}</li>
+            <li>{t('billing.refund.b3', { defaultValue: 'Your data stays — projects & customers are kept' })}</li>
+          </ul>
+          <div className="auth-actions" style={{ marginTop: 16 }}>
+            <button type="button" className="auth-btn-danger" onClick={onConfirm} disabled={busy}>
+              {busy ? t('common.loading', { defaultValue: 'Working…' })
+                : t('billing.refund.confirm', { defaultValue: 'Refund & cancel' })}
+            </button>
+            <button type="button" className="crm-submit-btn" onClick={onCancel}
+              style={{ marginLeft: 'auto' }} disabled={busy}>
+              {t('billing.refund.keep', { defaultValue: 'Keep subscription' })}
             </button>
           </div>
         </div>
@@ -263,6 +302,7 @@ export default function OrgBilling() {
   const [loading, setLoading] = useState(true);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [planOpen,   setPlanOpen]   = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -291,6 +331,7 @@ export default function OrgBilling() {
   const planName = sub?.plan_name || 'Free';
   const periodEnd = sub?.current_period_end;
   const monthly = sub?.price_usd || 0;
+  const refundEligible = !!sub?.refund_eligible;
 
   const reload = useCallback(async () => {
     if (!org?.id) return;
@@ -382,6 +423,25 @@ export default function OrgBilling() {
         kind: 'err',
         msg: t('billing.cancelFailed', { defaultValue: 'Cancellation failed — try again' })
       });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRefund() {
+    if (!org?.id) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/orgs/${org.id}/billing/refund`, {
+        method: 'POST', credentials: 'include',
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setRefundOpen(false);
+      setToast({ kind: 'ok', msg: t('billing.refund.ok', { defaultValue: 'Refunded — the money is on its way back' }) });
+      setTimeout(reload, 1800);
+    } catch (e) {
+      console.error('[billing/refund]', e);
+      setToast({ kind: 'err', msg: t('billing.refund.failed', { defaultValue: 'Refund failed — try again' }) });
     } finally {
       setBusy(false);
     }
@@ -550,6 +610,36 @@ export default function OrgBilling() {
             )}
         </section>
 
+        {/* ── Money-back guarantee (only in the 14-day window, once per org) ── */}
+        {refundEligible && (
+          <section className="bulk-section">
+            <SectionHead
+              title={t('billing.refund.title', { defaultValue: '14-day money-back guarantee' })}
+              subtitle={t('billing.refund.sub', {
+                defaultValue: 'Not a fit? Get a full refund within 14 days of your first payment. One-time per organization.',
+              })}
+            />
+            <div className="bulk-section-fields bulk-section-fields--single">
+              <div className="bulk-field bulk-field--noswitch bulk-field--on">
+                <div className="ob-cancel-row">
+                  <div className="ob-cancel-label">
+                    <div className="ob-pm-line1">
+                      {t('billing.refund.label', { defaultValue: 'Request a full refund' })}
+                    </div>
+                    <div className="ob-pm-line2">
+                      {t('billing.refund.hint', { defaultValue: 'Refunds your latest payment and ends the subscription.' })}
+                    </div>
+                  </div>
+                  <button type="button" className="auth-btn-check ob-primary-btn" onClick={() => setRefundOpen(true)} disabled={busy}>
+                    <ArrowUUpLeft size={14} weight="regular" />
+                    {t('billing.refund.btn', { defaultValue: 'Get a refund' })}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* ── Cancellation (paid only, not already cancelled) ── */}
         {isPaid && !sub?.cancelled_at && (
           <section className="bulk-section">
@@ -609,6 +699,13 @@ export default function OrgBilling() {
           busy={busy}
           onCancel={() => !busy && setCancelOpen(false)}
           onConfirm={handleCancelConfirm}
+        />
+      )}
+      {refundOpen && (
+        <RefundModal
+          busy={busy}
+          onCancel={() => !busy && setRefundOpen(false)}
+          onConfirm={handleRefund}
         />
       )}
       {toast && createPortal(

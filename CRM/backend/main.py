@@ -4309,6 +4309,10 @@ def run_migrations():
                   FOREIGN KEY (plan_slug) REFERENCES crm_subscription_plans(slug)
             """)
 
+            # Money-back guarantee: one-time per org. The 14-day window is derived
+            # live from Paddle's first_billed_at; we only persist "already used".
+            cur.execute("ALTER TABLE crm_subscriptions ADD COLUMN IF NOT EXISTS refund_used BOOLEAN NOT NULL DEFAULT FALSE")
+
             # Every existing org gets a subscription row at the Free tier (idempotent).
             cur.execute("""
                 INSERT INTO crm_subscriptions (org_id, plan_slug, status)
@@ -8111,6 +8115,7 @@ def get_org_subscription(org_id: int, user: dict = Depends(get_current_user)):
         SELECT s.plan_slug, s.status,
                s.current_period_start, s.current_period_end,
                s.cancelled_at, s.paddle_subscription_id, s.paddle_customer_id,
+               COALESCE(s.refund_used, FALSE) AS refund_used,
                p.name AS plan_name, p.price_usd
           FROM crm_subscriptions s
           JOIN crm_subscription_plans p ON p.slug = s.plan_slug
@@ -8123,9 +8128,32 @@ def get_org_subscription(org_id: int, user: dict = Depends(get_current_user)):
             "plan_slug": "free", "plan_name": "Free", "price_usd": 0,
             "status": "active",
             "current_period_start": None, "current_period_end": None,
-            "cancelled_at": None,
+            "cancelled_at": None, "refund_used": False,
             "paddle_subscription_id": None, "paddle_customer_id": None,
         }
+    # Pause state + money-back window come from Paddle live (one call): scheduled_change
+    # surfaces a pending pause/cancel; first_billed_at gates the one-time 14-day refund.
+    row["scheduled_change"] = None
+    row["refund_eligible"]  = False
+    sub_id = row.get("paddle_subscription_id")
+    if sub_id and PADDLE_API_KEY:
+        rr = _http_request("GET", f"{_paddle_saas_api_base()}/subscriptions/{sub_id}",
+                           headers=_paddle_saas_headers())
+        if rr["status"] < 400:
+            sd = (rr["body"] or {}).get("data") or {}
+            sc = sd.get("scheduled_change")
+            if sc:
+                row["scheduled_change"] = {"action": sc.get("action"), "at": sc.get("effective_at")}
+            fb = sd.get("first_billed_at")
+            if (fb and not row.get("refund_used")
+                    and row.get("plan_slug") != "free"
+                    and row.get("status") != "paused"):
+                try:
+                    from datetime import timezone as _tz, timedelta as _td
+                    fbd = datetime.fromisoformat(str(fb).replace("Z", "+00:00"))
+                    row["refund_eligible"] = datetime.now(_tz.utc) <= fbd + _td(days=14)
+                except (ValueError, AttributeError):
+                    row["refund_eligible"] = False
     return row
 
 
@@ -8300,6 +8328,23 @@ def _paddle_cancel_subscription(sub_id: str, effective_from: str = "immediately"
     return True
 
 
+def _paddle_refund_transaction(txn_id: str, reason: str = "Customer refund") -> bool:
+    """Full refund of a Paddle transaction via POST /adjustments. Paddle auto-approves
+    refunds ≤ $400 on a verified account with a sufficient balance."""
+    if not (PADDLE_API_KEY and txn_id):
+        return False
+    r = _http_request(
+        "POST", f"{_paddle_saas_api_base()}/adjustments",
+        headers=_paddle_saas_headers(),
+        body=json.dumps({"action": "refund", "type": "full",
+                         "transaction_id": txn_id, "reason": (reason or "")[:255]}).encode("utf-8"),
+    )
+    if r["status"] >= 400 or r["status"] == 0:
+        print(f"[paddle/refund] txn={txn_id} HTTP {r['status']} body={r['body']!r}")
+        return False
+    return True
+
+
 class CancelSubscriptionRequest(BaseModel):
     # Paddle accepts 'next_billing_period' (default — keeps service to period
     # end) or 'immediately'. We always use the former — no surprise outages.
@@ -8334,6 +8379,58 @@ def sync_org_billing(org_id: int, user: dict = Depends(get_current_user)):
     owner_email = (row or {}).get("email") or ""
     synced = _paddle_sync_org_subscription(org_id, owner_email)
     return {"synced": synced}
+
+
+@app.post("/api/orgs/{org_id}/billing/refund")
+def refund_org_subscription(org_id: int, user: dict = Depends(get_current_user)):
+    """Self-serve 14-day money-back guarantee. Owner-only, ONCE per org: full refund
+    of the latest paid transaction within 14 days of the org's FIRST payment, then
+    cancel + drop to Free + lock refund_used so it can never be used again on this
+    org (even after re-subscribing). The 14-day window is read live from Paddle's
+    first_billed_at."""
+    _require_org_owner(org_id, user)
+    if not PADDLE_API_KEY:
+        raise HTTPException(503, "Billing not configured")
+    sub = db_one("SELECT plan_slug, paddle_subscription_id, COALESCE(refund_used, FALSE) AS refund_used "
+                 "FROM crm_subscriptions WHERE org_id=%s", (org_id,))
+    sub_id = (sub or {}).get("paddle_subscription_id")
+    if not sub or sub.get("plan_slug") == "free" or not sub_id:
+        raise HTTPException(409, "No active paid subscription to refund")
+    if sub.get("refund_used"):
+        raise HTTPException(409, "The money-back guarantee was already used for this organization")
+    # first_billed_at gates the 14-day window.
+    r = _http_request("GET", f"{_paddle_saas_api_base()}/subscriptions/{sub_id}", headers=_paddle_saas_headers())
+    sd = ((r["body"] or {}).get("data") or {}) if r["status"] < 400 else {}
+    fb = sd.get("first_billed_at")
+    if not fb:
+        raise HTTPException(409, "No payment found to refund")
+    from datetime import timezone as _tz, timedelta as _td
+    try:
+        fbd = datetime.fromisoformat(str(fb).replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        raise HTTPException(409, "Could not read the first payment date")
+    if datetime.now(_tz.utc) > fbd + _td(days=14):
+        raise HTTPException(409, "The 14-day money-back window has passed")
+    # Latest paid transaction for this subscription = what we refund.
+    rt = _http_request("GET",
+        f"{_paddle_saas_api_base()}/transactions?subscription_id={sub_id}"
+        f"&status=billed,paid,completed&per_page=1&order_by=billed_at[desc]",
+        headers=_paddle_saas_headers())
+    txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
+    if not txns:
+        raise HTTPException(409, "No paid transaction found to refund")
+    if not _paddle_refund_transaction(txns[0].get("id", ""), "14-day money-back guarantee"):
+        raise HTTPException(502, "Refund failed at payment provider")
+    _paddle_cancel_subscription(sub_id, "immediately")
+    with db_cursor() as (conn, cur):
+        cur.execute("""UPDATE crm_subscriptions
+                          SET plan_slug='free', status='active', refund_used=TRUE,
+                              current_period_start=NULL, current_period_end=NULL,
+                              cancelled_at=NULL, updated_at=NOW()
+                        WHERE org_id=%s""", (org_id,))
+        cur.execute("UPDATE crm_organizations SET plan_slug='free' WHERE id=%s", (org_id,))
+        conn.commit()
+    return {"ok": True}
 
 
 @app.post("/api/orgs/{org_id}/billing/update-payment-method")
