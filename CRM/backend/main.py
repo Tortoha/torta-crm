@@ -4302,6 +4302,8 @@ def run_migrations():
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_size_bytes BIGINT NOT NULL DEFAULT 0")
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_size_checked_at TIMESTAMP")
             cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS db_over_since TIMESTAMP")
+            # Storage-over-limit grace clock — 14-day daily-email window before trim.
+            cur.execute("ALTER TABLE crm_organizations ADD COLUMN IF NOT EXISTS storage_over_since TIMESTAMP")
             cur.execute("ALTER TABLE crm_organizations DROP CONSTRAINT IF EXISTS crm_organizations_plan_slug_fkey")
             cur.execute("""
                 ALTER TABLE crm_organizations
@@ -4810,7 +4812,7 @@ def _reset_del(h):    _kv_delete(_reset_key(h))
 
 # CSRF double-submit cookie: GET /api/csrf sets readable cookie, frontend echoes it as X-CSRF-Token, middleware compares; exempt: inbound webhooks and X-Internal-Key chat endpoint.
 _CSRF_SAFE_METHODS  = {"GET", "HEAD", "OPTIONS", "TRACE"}
-_CSRF_EXEMPT_PREFIX = ("/api/chat/webhook/", "/api/chat/internal/")
+_CSRF_EXEMPT_PREFIX = ("/api/chat/webhook/", "/api/chat/internal/", "/api/internal/")
 
 class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -6151,6 +6153,163 @@ def _org_storage_inc(org_id: int, delta: int) -> None:
             conn.commit()
     except Exception:
         pass
+
+
+# ── Storage-over-limit enforcement (daily cron) ──────────────────────
+# Free-plan orgs over the storage limit (e.g. after downgrading from a paid plan)
+# get a 14-day window of daily warning emails; after that we trim the OLDEST files
+# until the org is back under the limit. Dangling references (a now-missing product
+# image) are an accepted trade-off — the merchant was warned daily for two weeks.
+# The platform owner's own orgs are exempt. Driven by a VPS cron hitting
+# POST /api/internal/storage-enforcement with X-Internal-Key.
+STORAGE_GRACE_DAYS = 14
+
+def _free_storage_limit_bytes() -> int:
+    row = db_one("SELECT (limits->>'storage_bytes_max') AS m FROM crm_subscription_plans WHERE slug='free'")
+    try:
+        return int((row or {}).get("m") or 0) or 104857600
+    except (TypeError, ValueError):
+        return 104857600
+
+
+def _set_storage_over_since(org_id: int, ts) -> None:
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_organizations SET storage_over_since=%s WHERE id=%s", (ts, org_id))
+            conn.commit()
+    except Exception as e:
+        print(f"[storage/enforce] set storage_over_since failed org={org_id}: {e}")
+
+
+def _trim_org_storage(org_id: int, target_bytes: int) -> dict:
+    """Delete the org's OLDEST R2/S3 objects (across all its `projects/{id}/`
+    prefixes) until total size <= target_bytes. Returns {deleted, freed, total_after}."""
+    res = {"deleted": 0, "freed": 0, "total_after": 0}
+    if not (S3_AVAILABLE and STORAGE_ENABLED):
+        return res
+    try:
+        rows = db_all("SELECT id FROM crm_projects WHERE org_id=%s", (org_id,))
+        s3 = _s3_client()
+        objs = []   # (LastModified, Key, Size)
+        for row in rows or []:
+            prefix = f"projects/{row['id']}/"
+            for page in s3.get_paginator("list_objects_v2").paginate(Bucket=STORAGE_BUCKET, Prefix=prefix):
+                for obj in (page.get("Contents") or []):
+                    objs.append((obj.get("LastModified"), obj["Key"], int(obj.get("Size") or 0)))
+        total = sum(o[2] for o in objs)
+        if total <= target_bytes:
+            res["total_after"] = total
+            return res
+        objs.sort(key=lambda o: o[0])   # oldest first
+        for _lm, key, size in objs:
+            if total <= target_bytes:
+                break
+            try:
+                s3.delete_object(Bucket=STORAGE_BUCKET, Key=key)
+                total -= size
+                res["deleted"] += 1
+                res["freed"]  += size
+            except Exception as e:
+                print(f"[storage/trim] org={org_id} delete {key!r} failed: {e}")
+        res["total_after"] = total
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_organizations SET storage_used_bytes=%s WHERE id=%s", (total, org_id))
+            conn.commit()
+        print(f"[storage/trim] org={org_id} deleted={res['deleted']} freed={res['freed']} after={total}")
+    except Exception as e:
+        print(f"[storage/trim] org={org_id} failed: {e}")
+    return res
+
+
+def _mb(b) -> str:
+    try:
+        return f"{int(b) / 1048576:.0f} MB"
+    except (TypeError, ValueError):
+        return "0 MB"
+
+
+def _email_storage_warning(org: dict, size: int, limit: int, days_left: int, deadline) -> None:
+    to = org.get("owner_email")
+    if not to:
+        return
+    name = org.get("name", "your organization")
+    subject = f"Action needed: {name} is over the free storage limit"
+    html = (
+        '<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;color:#1d1d1f">'
+        '<h2 style="margin:0 0 12px">You’re over the free storage limit</h2>'
+        f'<p><b>{name}</b> is using <b>{_mb(size)}</b>, over the Free plan limit of <b>{_mb(limit)}</b>.</p>'
+        f'<p>Please free up space or upgrade your plan within <b>{days_left} day(s)</b> '
+        f'(by {deadline.strftime("%b %d, %Y")}). After that we’ll automatically remove the '
+        '<b>oldest</b> files in this organization until it’s back under the limit.</p>'
+        '<p style="color:#86868b">— Torta</p></div>'
+    )
+    send_email(to, subject, html, from_email="support@tortacrm.com", from_name="Torta")
+
+
+def _email_storage_trimmed(org: dict, res: dict, limit: int) -> None:
+    to = org.get("owner_email")
+    if not to:
+        return
+    name = org.get("name", "your organization")
+    subject = f"Files removed: {name} was over the storage limit"
+    html = (
+        '<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;color:#1d1d1f">'
+        '<h2 style="margin:0 0 12px">We removed the oldest files to fit the free limit</h2>'
+        f'<p>After {STORAGE_GRACE_DAYS} days over the Free storage limit of <b>{_mb(limit)}</b>, '
+        f'we removed <b>{res.get("deleted", 0)} file(s)</b> ({_mb(res.get("freed", 0))}) from '
+        f'<b>{name}</b>, starting with the oldest.</p>'
+        '<p>Upgrade your plan any time to restore headroom and avoid this in future.</p>'
+        '<p style="color:#86868b">— Torta</p></div>'
+    )
+    send_email(to, subject, html, from_email="support@tortacrm.com", from_name="Torta")
+
+
+@app.post("/api/internal/storage-enforcement")
+def storage_enforcement(request: Request):
+    """Daily job (VPS cron → X-Internal-Key). For each Free-plan org over the
+    storage limit (platform owner exempt): start/continue a 14-day daily-email
+    grace, then trim the OLDEST files back under the limit. Orgs that clear up or
+    re-subscribe get their clock reset."""
+    if (request.headers.get("X-Internal-Key") or "") != INTERNAL_API_KEY:
+        raise HTTPException(403, "Forbidden")
+    from datetime import timezone as _tz, timedelta as _td
+    limit = _free_storage_limit_bytes()
+    cands = db_all("""
+        SELECT o.id, o.name, o.storage_over_since, u.email AS owner_email
+          FROM crm_organizations o
+          JOIN crm_users u ON u.id = o.owner_id
+         WHERE o.plan_slug = 'free'
+           AND o.storage_used_bytes > %s
+           AND LOWER(u.email) <> %s
+    """, (limit, ADMIN_LOCKED_EMAIL))
+    out = {"checked": 0, "warned": 0, "trimmed": 0, "cleared": 0}
+    now = datetime.now(_tz.utc)
+    for org in cands or []:
+        out["checked"] += 1
+        org_id = org["id"]
+        size = _reconcile_org_storage(org_id).get("total_bytes", 0)   # accurate, overwrites counter
+        if size <= limit:
+            if org.get("storage_over_since"):
+                _set_storage_over_since(org_id, None)
+                out["cleared"] += 1
+            continue
+        over_since = org.get("storage_over_since")
+        if not over_since:
+            _set_storage_over_since(org_id, now)
+            over_since = now
+        ovs = over_since if getattr(over_since, "tzinfo", None) else over_since.replace(tzinfo=_tz.utc)
+        deadline = ovs + _td(days=STORAGE_GRACE_DAYS)
+        if now >= deadline:
+            res = _trim_org_storage(org_id, limit)
+            _set_storage_over_since(org_id, None)
+            _email_storage_trimmed(org, res, limit)
+            out["trimmed"] += 1
+        else:
+            secs = (deadline - now).total_seconds()
+            days_left = max(1, int((secs + 86399) // 86400))   # ceil to whole days
+            _email_storage_warning(org, size, limit, days_left, deadline)
+            out["warned"] += 1
+    return {"ok": True, **out}
 
 def _project_org_id(project_id) -> int | None:
     """Helper for endpoints that have a project_id but not the org_id —
