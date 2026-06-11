@@ -4126,18 +4126,9 @@ def get_product_page(product_hash: str, request: Request,
         tier_pricing_by_sku=tier_pricing_by_sku,
         spec_groups_by_node=spec_groups_by_node,
     )
-    # Digital products expose their buyer download links (one ZIP when digital_zip is
-    # on, else a link per file) so the storefront's digital page can surface / test the
-    # download. NOTE: files live in a public R2 bucket, so this is not a hard paywall —
-    # production would gate behind a verified purchase or signed private URLs.
-    if payload.get("product_type") == "digital":
-        payload["downloads"] = [
-            {"label": d["label"], "url": d["url"]}
-            for d in _digital_downloads(
-                project_id,
-                [{"product_id": product["id"], "title": product["title"], "product_type": "digital"}],
-            )
-        ]
+    # Digital download links are NOT exposed on the public product endpoint — they are
+    # paid content. The storefront receives working URLs only from authenticated,
+    # owned-order paths (order success / My Orders), never to anonymous visitors.
     return payload
 
 

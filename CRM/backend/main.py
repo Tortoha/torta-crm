@@ -789,29 +789,30 @@ def run_migrations():
     # *previous* lock state (where I'd over-written .password with the
     # admin pwd) so we can heal that and put values where they belong.
     try:
-        target_email = 'iskandersuleiemenov@gmail.com'
-        crm_pw       = 'REDACTED'
-        admin_pw     = 'REDACTED'
+        target_email = ADMIN_LOCKED_EMAIL
+        # Bootstrap admin/CRM passwords ONLY from env vars — never from source code.
+        # If unset, seeding is skipped (the prod owner account already has its
+        # admin_password from an earlier run). Rotate any previously-committed values.
+        crm_pw   = os.getenv("ADMIN_CRM_BOOTSTRAP_PASSWORD", "")
+        admin_pw = os.getenv("ADMIN_BOOTSTRAP_PASSWORD", "")
         with db_cursor() as (conn, cur):
             cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS admin_password VARCHAR(128) DEFAULT NULL")
             conn.commit()
         row = db_one("SELECT id, password, admin_password FROM crm_users WHERE LOWER(email) = LOWER(%s)", (target_email,))
-        if row:
+        if row and (admin_pw or crm_pw):
             cur_pwd       = row.get("password") or ""
             cur_admin_pwd = row.get("admin_password") or ""
             updates = []
             params  = []
-            # Seed admin_password if it's missing.
-            if not cur_admin_pwd:
+            if admin_pw and not cur_admin_pwd:
                 updates.append("admin_password = %s")
                 params.append(hash_pw(admin_pw))
-            # Heal: if .password currently matches the admin pwd (legacy
-            # state from when I'd wrongly over-written it), reset .password
-            # to the desired CRM value.
+            # Heal a legacy state where .password was overwritten with the admin pwd.
             password_is_admin = False
-            try: password_is_admin = verify_pw(admin_pw, cur_pwd)
-            except Exception: pass
-            if password_is_admin:
+            if admin_pw:
+                try: password_is_admin = verify_pw(admin_pw, cur_pwd)
+                except Exception: pass
+            if password_is_admin and crm_pw:
                 updates.append("password = %s")
                 params.append(hash_pw(crm_pw))
             if updates:
@@ -819,11 +820,11 @@ def run_migrations():
                 with db_cursor() as (conn, cur):
                     cur.execute(f"UPDATE crm_users SET {', '.join(updates)} WHERE id = %s", tuple(params))
                     conn.commit()
-                print(f"[migration] two-password split applied for {target_email}: {len(updates)} field(s) updated")
+                print(f"[migration] admin bootstrap applied for {target_email}: {len(updates)} field(s)")
     except NameError:
         pass
     except Exception as e:
-        print(f"[migration] two-password split failed: {e}")
+        print(f"[migration] admin bootstrap failed: {e}")
 
     # ─── Refresh tokens (long-lived sessions, rotated on use) ─────────
     try:
@@ -6361,6 +6362,13 @@ def _paddle_verify_webhook(raw_body: bytes, signature_header: str) -> bool:
     sig = parts.get("h1",  "")
     if not ts or not sig:
         return False
+    # Reject stale signatures so a captured, once-valid event can't be replayed forever.
+    import time as _t
+    try:
+        if abs(_t.time() - int(ts)) > 300:
+            return False
+    except (TypeError, ValueError):
+        return False
     msg = f"{ts}:".encode("utf-8") + raw_body
     expected = hmac.new(PADDLE_WEBHOOK_SECRET.encode("utf-8"),
                         msg, hashlib.sha256).hexdigest()
@@ -8211,6 +8219,21 @@ def claim_org_transaction(org_id: int, body: ClaimRequest, user: dict = Depends(
         raise HTTPException(502, "Could not read the transaction")
     txn = (r["body"] or {}).get("data") or {}
 
+    # SECURITY: transaction_id is client-supplied. Only attach it if it is actually
+    # PAID and belongs to THIS caller — otherwise an owner could upgrade for free with
+    # an unpaid txn, or attach a stranger's paid subscription to their own org.
+    if (txn.get("status") or "").lower() not in ("completed", "paid", "billed"):
+        raise HTTPException(409, "Transaction is not paid")
+    _custom = txn.get("custom_data") or {}
+    _owner_ok = str(_custom.get("owner_id") or "") == str(user["id"])
+    try:
+        _org_ok = int(_custom.get("org_id") or 0) == int(org_id)
+    except (TypeError, ValueError):
+        _org_ok = False
+    if not (_owner_ok or _org_ok):
+        print(f"[paddle/claim] org={org_id} txn={txn_id}: not owned by caller {user['id']}")
+        raise HTTPException(403, "Transaction does not belong to you")
+
     sub_id  = (txn.get("subscription_id") or "").strip()
     cust_id = (txn.get("customer_id") or "").strip()
     items   = txn.get("items") or []
@@ -8231,6 +8254,13 @@ def claim_org_transaction(org_id: int, body: ClaimRequest, user: dict = Depends(
         print(f"[paddle/claim] org={org_id} txn={txn_id}: unresolved plan "
               f"(price={price_id!r}, custom={txn.get('custom_data')!r})")
         raise HTTPException(400, "Unknown price on transaction")
+
+    # One Paddle subscription must map to exactly one org — never re-attach a sub that
+    # already belongs elsewhere (prevents invoice / payment-method leakage).
+    if sub_id:
+        _bound = db_one("SELECT org_id FROM crm_subscriptions WHERE paddle_subscription_id=%s", (sub_id,))
+        if _bound and int(_bound["org_id"]) != int(org_id):
+            raise HTTPException(409, "This subscription is already attached to another organization")
 
     try:
         with db_cursor() as (conn, cur):
@@ -12506,6 +12536,7 @@ def reorder_specifications(
     if req.layer is None or req.parent_id is None:
         raise HTTPException(400, "layer and parent_id required")
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     owner_pid = _product_id_for(req.layer, req.parent_id)
     if owner_pid != product_id:
         raise HTTPException(404, "Parent not found")
@@ -12883,6 +12914,7 @@ def copy_specifications_to_all(product_id: int, var_id: int,
 def create_specification_generic(product_id: int, request: CreateSpecificationRequest,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     layer = request.layer or 1
     parent_id = request.parent_id
     if parent_id is None:
@@ -12926,6 +12958,7 @@ def create_specification_generic(product_id: int, request: CreateSpecificationRe
 def update_specification_generic(product_id: int, spec_id: int, request: UpdateSpecificationRequest,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     spec = db_one("SELECT layer, parent_id FROM product_specifications WHERE id=%s", (spec_id,))
     if not spec: raise HTTPException(404, "Spec not found")
     owner_pid = _product_id_for(spec["layer"] or 1, spec["parent_id"])
@@ -12948,6 +12981,7 @@ def update_specification_generic(product_id: int, spec_id: int, request: UpdateS
 def delete_specification_generic(product_id: int, spec_id: int,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     spec = db_one("SELECT layer, parent_id FROM product_specifications WHERE id=%s", (spec_id,))
     if not spec: return {"ok": True}
     owner_pid = _product_id_for(spec["layer"] or 1, spec["parent_id"])
@@ -12968,6 +13002,7 @@ def delete_specification_generic(product_id: int, spec_id: int,
 def create_spec_group(product_id: int, request: SpecGroupRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     layer = request.layer or 1
     parent_id = request.parent_id
     if parent_id is None:
@@ -12997,6 +13032,7 @@ def create_spec_group(product_id: int, request: SpecGroupRequest,
 def reorder_spec_groups(product_id: int, req: ReorderIdsRequest,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     ids = list(req.ids or [])
     with db_cursor() as (conn, cur):
         cur.execute("SELECT id FROM product_spec_groups WHERE product_id=%s AND id = ANY(%s)",
@@ -13014,6 +13050,7 @@ def reorder_spec_groups(product_id: int, req: ReorderIdsRequest,
 def update_spec_group(product_id: int, group_id: int, request: SpecGroupUpdateRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     g = db_one("SELECT id FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
     if not g: raise HTTPException(404, "Group not found")
     if request.name is None: return {"ok": True}
@@ -13029,6 +13066,7 @@ def update_spec_group(product_id: int, group_id: int, request: SpecGroupUpdateRe
 def delete_spec_group(product_id: int, group_id: int,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     g = db_one("SELECT id FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
     if not g: return {"ok": True}
     with db_cursor() as (conn, cur):
@@ -13352,10 +13390,20 @@ def create_layer_item(product_id: int, layer: int, request: CreateLayerItemReque
     }
 
 
+def _assert_product_in_project(product_id: int, project_id: int) -> None:
+    """Bind an attacker-controlled product_id to the authorized project_id. Product
+    sub-resource endpoints (layers, specs, modifiers, tier-pricing) that only verify
+    item→product chaining could otherwise be pointed at another tenant's product.
+    404 (not 403) avoids leaking the existence of other tenants' ids."""
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+
+
 @app.put("/api/products/{product_id}/layers/{layer}/{item_id}")
 def update_layer_item(product_id: int, layer: int, item_id: int, request: UpdateLayerItemRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
     tbl = _layer_table(layer)
     name_col = _layer_name_col(layer)
@@ -13454,6 +13502,7 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
 def delete_layer_item(product_id: int, layer: int, item_id: int,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
     tbl = _layer_table(layer)
     # Capture L1 image URLs before delete so we can S3-clean them post-commit.
@@ -13473,6 +13522,7 @@ def copy_layer_to_siblings(product_id: int, layer: int, item_id: int,
     if layer < 1 or layer > 4:
         raise HTTPException(400, "copy-to-siblings requires layer 1-4 (deeper layers have no children)")
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
 
     child_layer = layer + 1
@@ -13854,6 +13904,7 @@ def create_modifier_group(product_id: int, request: ModifierGroupRequest,
 def update_modifier_group(product_id: int, gid: int, request: ModifierGroupRequest,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     g = db_one(
         "SELECT id, control_type, min_select, max_select FROM product_modifier_groups"
         " WHERE id=%s AND product_id=%s", (gid, product_id)
@@ -13898,6 +13949,7 @@ def update_modifier_group(product_id: int, gid: int, request: ModifierGroupReque
 def delete_modifier_group(product_id: int, gid: int,
                            project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     if not db_one("SELECT id FROM product_modifier_groups WHERE id=%s AND product_id=%s",
                   (gid, product_id)):
         raise HTTPException(404, "Modifier group not found")
@@ -14004,6 +14056,7 @@ def delete_modifier_item(product_id: int, iid: int,
 def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     payload = list(req.items or [])
     if not payload: return {"ok": True}
 
@@ -14368,6 +14421,7 @@ def list_tier_pricing(product_id: int, project_id: int = Query(...),
 def create_tier_pricing(product_id: int, req: TierPricingRequest,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     # Verify the SKU belongs to this product (IDOR defense).
     if not db_one(
         "SELECT c.id FROM product_configurations_l2 c"
@@ -15992,6 +16046,7 @@ class AddMediaUrlRequest(BaseModel):
 def add_media_url(product_id: int, var_id: int, req: AddMediaUrlRequest,
                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     _verify_layer_item_belongs_to_product(1, var_id, product_id)
     url = (req.url or '').strip()
     if not _is_safe_media_url(url):
