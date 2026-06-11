@@ -103,11 +103,13 @@ export default function ProductTour() {
                     className="ln-tour-shot ln-tour-shot--light"
                     src={`/Landing/${s.name}_L.webp`}
                     alt={t(`landing.tour.steps.${s.key}.title`)}
+                    width="1920" height="1080"
                     loading="lazy" />
                   <img
                     className="ln-tour-shot ln-tour-shot--dark"
                     src={`/Landing/${s.name}_B.webp`}
                     alt={t(`landing.tour.steps.${s.key}.title`)}
+                    width="1920" height="1080"
                     loading="lazy" />
                 </div>
               ))}
