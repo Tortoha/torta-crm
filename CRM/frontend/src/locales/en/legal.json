@@ -55,7 +55,7 @@
           "id": "refunds",
           "title": "3. Refunds",
           "paragraphs": [
-            "Refunds are handled according to our separate Refund Policy. In summary: first-time subscriptions are eligible for a full refund within 14 calendar days of purchase. Renewals and recurring charges are non-refundable except where required by law."
+            "Refunds are handled according to our separate Refund Policy. In summary: a first-time subscription is eligible for a full, self-service refund within 14 calendar days of the first payment, available once per organization from your billing page. Renewals and recurring charges are non-refundable except where required by law."
           ]
         },
         {
@@ -80,7 +80,8 @@
             "You retain ownership of all data you upload to the Service (\"Customer Data\"), including products, orders, customer records, emails, files and analytics.",
             "You grant us a limited license to host, process, transmit and display your Customer Data solely as necessary to provide the Service to you.",
             "You are responsible for ensuring that you have all necessary rights and consents to upload Customer Data, including consent from your end users (your storefront shoppers) where required by applicable privacy laws.",
-            "We will not sell, rent or share your Customer Data with third parties except as described in our Privacy Policy or as required by law."
+            "We will not sell, rent or share your Customer Data with third parties except as described in our Privacy Policy or as required by law.",
+            "Each plan includes a storage allowance for the files you upload (product images, digital files, attachments). If your organization exceeds its plan's storage limit — for example after downgrading to the Free plan — we email the organization owner once per day for 14 days. If the organization is still over the limit after that period, we may automatically delete files, oldest first, until storage is back within the limit. Re-subscribing or freeing up space before the deadline prevents any deletion."
           ]
         },
         {
@@ -324,8 +325,8 @@
           "id": "money-back",
           "title": "2. 14-day money-back guarantee",
           "paragraphs": [
-            "For first-time paid subscriptions, we offer a full refund within 14 calendar days of the initial charge if you are not satisfied with the Service, for any reason.",
-            "To request a refund, write to {{email}} from the email address associated with your account, within 14 days of the charge date. Include your organization name and the reason (optional but helpful)."
+            "For first-time paid subscriptions, we offer a full refund within 14 calendar days of the first payment if you are not satisfied with the Service, for any reason. This guarantee can be used once per organization.",
+            "You can request the refund yourself, with one click, from the billing page of your organization while you are within the 14-day window — it is processed automatically through Paddle back to your original payment method, and your organization returns to the Free plan. If you run into any trouble, you can also email {{email}}."
           ]
         },
         {
