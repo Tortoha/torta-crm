@@ -101,12 +101,12 @@ export default function ProductTour() {
                   className={`ln-tour-shot-wrap${active === i ? ' is-active' : ''}`}>
                   <img
                     className="ln-tour-shot ln-tour-shot--light"
-                    src={`/Landing/${s.name}_L.png`}
+                    src={`/Landing/${s.name}_L.webp`}
                     alt={t(`landing.tour.steps.${s.key}.title`)}
                     loading="lazy" />
                   <img
                     className="ln-tour-shot ln-tour-shot--dark"
-                    src={`/Landing/${s.name}_B.png`}
+                    src={`/Landing/${s.name}_B.webp`}
                     alt={t(`landing.tour.steps.${s.key}.title`)}
                     loading="lazy" />
                 </div>

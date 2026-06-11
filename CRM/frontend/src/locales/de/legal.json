@@ -55,7 +55,7 @@
           "id": "refunds",
           "title": "3. Rückerstattungen",
           "paragraphs": [
-            "Rückerstattungen werden gemäß unserer separaten Rückerstattungsrichtlinie gehandhabt. Zusammenfassend: Erstabonnements sind innerhalb von 14 Kalendertagen nach dem Kauf vollständig erstattungsfähig. Verlängerungen und wiederkehrende Belastungen sind nicht erstattungsfähig, außer wo dies gesetzlich vorgeschrieben ist."
+            "Rückerstattungen werden gemäß unserer separaten Rückerstattungsrichtlinie gehandhabt. Zusammenfassend: Ein Erstabonnement ist innerhalb von 14 Kalendertagen nach der ersten Zahlung vollständig und im Self-Service erstattungsfähig, einmal pro Organisation verfügbar über Ihre Abrechnungsseite. Verlängerungen und wiederkehrende Belastungen sind nicht erstattungsfähig, außer wo dies gesetzlich vorgeschrieben ist."
           ]
         },
         {
@@ -80,7 +80,8 @@
             "Sie behalten das Eigentum an allen Daten, die Sie in den Dienst hochladen („Kundendaten\"), einschließlich Produkten, Bestellungen, Kundendatensätzen, E-Mails, Dateien und Analysen.",
             "Sie gewähren uns eine eingeschränkte Lizenz zum Hosten, Verarbeiten, Übertragen und Anzeigen Ihrer Kundendaten, ausschließlich soweit dies zur Bereitstellung des Dienstes für Sie erforderlich ist.",
             "Sie sind dafür verantwortlich sicherzustellen, dass Sie über alle erforderlichen Rechte und Einwilligungen zum Hochladen von Kundendaten verfügen, einschließlich der Einwilligung Ihrer Endnutzer (der Käufer in Ihrem Shop), soweit dies nach geltenden Datenschutzgesetzen erforderlich ist.",
-            "Wir werden Ihre Kundendaten nicht verkaufen, vermieten oder an Dritte weitergeben, außer wie in unserer Datenschutzrichtlinie beschrieben oder gesetzlich vorgeschrieben."
+            "Wir werden Ihre Kundendaten nicht verkaufen, vermieten oder an Dritte weitergeben, außer wie in unserer Datenschutzrichtlinie beschrieben oder gesetzlich vorgeschrieben.",
+            "Jeder Tarif beinhaltet ein Speicherkontingent für die von Ihnen hochgeladenen Dateien (Produktbilder, digitale Dateien, Anhänge). Wenn Ihre Organisation das Speicherlimit ihres Tarifs überschreitet — zum Beispiel nach einer Herabstufung auf den Free-Tarif — senden wir dem Inhaber der Organisation 14 Tage lang einmal täglich eine E-Mail. Liegt die Organisation nach diesem Zeitraum weiterhin über dem Limit, können wir automatisch Dateien löschen, beginnend mit den ältesten, bis der Speicher wieder innerhalb des Limits liegt. Ein erneutes Abonnieren oder das Freigeben von Speicherplatz vor Ablauf der Frist verhindert jegliche Löschung."
           ]
         },
         {
@@ -324,8 +325,8 @@
           "id": "money-back",
           "title": "2. 14-tägige Geld-zurück-Garantie",
           "paragraphs": [
-            "Für bezahlte Erstabonnements bieten wir eine vollständige Rückerstattung innerhalb von 14 Kalendertagen nach der ersten Belastung an, wenn Sie aus irgendeinem Grund mit dem Dienst nicht zufrieden sind.",
-            "Um eine Rückerstattung anzufordern, schreiben Sie innerhalb von 14 Tagen nach dem Belastungsdatum an {{email}}, und zwar von der mit Ihrem Konto verknüpften E-Mail-Adresse aus. Geben Sie Ihren Organisationsnamen und den Grund an (optional, aber hilfreich)."
+            "Für bezahlte Erstabonnements bieten wir eine vollständige Rückerstattung innerhalb von 14 Kalendertagen nach der ersten Zahlung an, wenn Sie aus irgendeinem Grund mit dem Dienst nicht zufrieden sind. Diese Garantie kann einmal pro Organisation in Anspruch genommen werden.",
+            "Sie können die Rückerstattung selbst mit einem Klick über die Abrechnungsseite Ihrer Organisation anfordern, solange Sie sich innerhalb des 14-Tage-Zeitraums befinden — sie wird automatisch über Paddle auf Ihre ursprüngliche Zahlungsmethode abgewickelt, und Ihre Organisation wechselt zurück auf den Free-Tarif. Sollten Sie auf Probleme stoßen, können Sie auch eine E-Mail an {{email}} senden."
           ]
         },
         {

@@ -33,9 +33,6 @@ def _utcnow():
 def s3_delete_url(url: str, prefix: str) -> None:
     pass
 
-def s3_delete_prefix(prefix: str) -> None:
-    pass
-
 
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
@@ -1158,6 +1155,8 @@ def _assemble_product_payload(
     modifier_groups=None,    # list of pre-shaped groups for THIS product (or None)
     tier_pricing_by_sku=None,  # { l2_id → [{min_qty, price}, ...] } pre-fetched
     spec_groups_by_node=None,  # { (layer, parent_id) → [{name, specs:[…]}] } pre-shaped
+    review_stats=None,         # (true_count, true_avg) when `reviews_raw` is a capped subset (list endpoint);
+                               # None → derive totals from the full reviews_raw array (single-product page)
 ):
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
@@ -1278,8 +1277,16 @@ def _assemble_product_payload(
         }
         for r in reviews_raw
     ]
-    reviews_count  = len(reviews)
-    average_rating = round(sum(r["rating"] for r in reviews) / reviews_count, 1) if reviews_count else 0.0
+    if review_stats is not None:
+        # List endpoint: `reviews` is capped to the newest few; totals come from a
+        # separate per-product COUNT/AVG so the rating badge stays correct.
+        true_count, true_avg = review_stats
+        reviews_count  = int(true_count or 0)
+        average_rating = round(float(true_avg), 1) if true_avg is not None else 0.0
+    else:
+        # Single-product page: `reviews` is the full set — derive totals from it.
+        reviews_count  = len(reviews)
+        average_rating = round(sum(r["rating"] for r in reviews) / reviews_count, 1) if reviews_count else 0.0
 
     first_l2 = (final_variations[0].get("conf_layer_2") if final_variations else None) or []
     initial_configuration_id = first_l2[0]["id"] if first_l2 else None
@@ -1645,7 +1652,10 @@ def _healthcheck():
         row = db_one("SELECT 1 AS one")
         ok = bool(row and row.get("one") == 1)
     except Exception as e:
-        return _JSON({"ok": False, "db": False, "error": str(e)[:200]}, status_code=503)
+        # Log the real reason server-side, but never echo the DB exception to an
+        # unauthenticated caller — psycopg2 errors embed host/port/user/dbname.
+        print(f"[health] DB probe failed: {e}", flush=True)
+        return _JSON({"ok": False, "db": False}, status_code=503)
     return {"ok": ok, "db": ok}
 
 
@@ -2093,6 +2103,43 @@ def _build_discord_message(event: str, data: dict) -> dict:
                         "timestamp": _utcnow().isoformat()}]}
 
 
+_PRIVATE_NET_RE = _re_global.compile(
+    r"^(?:127\.|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|"
+    r"::1$|fc00:|fd00:|fe80:|0\.0\.0\.0)"
+)
+def _url_is_safe_for_outbound(url: str) -> tuple:
+    """SSRF guard for merchant-supplied webhook URLs, mirroring the CRM backend's
+    check. MUST run at DELIVERY time (every dispatch), not only at registration —
+    the registration-time check in CRM cannot stop a hostname that resolves to a
+    public IP at create time and is later re-pointed (DNS rebinding) at a private/
+    metadata address. Rejects non-http(s) schemes and any hostname that resolves
+    to a private / loopback / link-local / cloud-metadata address."""
+    import socket
+    import urllib.parse as _uparse
+    try:
+        parsed = _uparse.urlparse(url)
+    except Exception:
+        return False, "Malformed URL"
+    if parsed.scheme not in ("http", "https"):
+        return False, "Only http/https URLs are accepted"
+    if IS_PRODUCTION and parsed.scheme != "https":
+        return False, "Production webhooks must use https"
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "URL is missing a hostname"
+    if host in ("localhost", "ip6-localhost", "ip6-loopback"):
+        return False, "Loopback URLs are not allowed"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return False, f"Could not resolve hostname '{host}'"
+    for _fam, _t, _p, _c, sockaddr in infos:
+        ip = sockaddr[0]
+        if _PRIVATE_NET_RE.match(ip):
+            return False, f"URL resolves to a private/loopback address ({ip})"
+    return True, ""
+
+
 def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
     sub_type = sub["type"]
     if sub_type == "slack":
@@ -2122,6 +2169,13 @@ def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> di
     out = {"subscription_id": sub["id"], "project_id": sub["project_id"],
            "event": event, "payload": json.dumps(body_obj, default=str),
            "attempt": attempt}
+    # SSRF guard at delivery time — refuse to fetch private/loopback/metadata
+    # targets even if the URL passed the registration-time check (DNS rebinding).
+    ok, reason = _url_is_safe_for_outbound(sub.get("url") or "")
+    if not ok:
+        out.update({"status": "failed", "http_code": None,
+                    "response_body": f"[blocked] {reason}"[:2000], "duration_ms": 0})
+        return out
     try:
         req = urllib.request.Request(sub["url"], data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -2673,14 +2727,6 @@ def _pg_kv_delete(key: str) -> None:
         cur.execute("DELETE FROM crm_kv_store WHERE key = %s", (key,))
         conn.commit()
 
-def _pg_kv_exists(key: str) -> bool:
-    row = db_one(
-        "SELECT 1 FROM crm_kv_store "
-        " WHERE key = %s AND (expires_at IS NULL OR expires_at > NOW())",
-        (key,)
-    )
-    return bool(row)
-
 def _pg_kv_incr(key: str, ttl=None) -> int:
     with db_cursor() as (conn, cur):
         if ttl:
@@ -2769,16 +2815,6 @@ def _kv_delete(key: str) -> None:
     with _mem_lock:
         _mem.pop(key, None)
         _mem_expires.pop(key, None)
-
-def _kv_exists(key: str) -> bool:
-    if _redis:
-        return bool(_redis.exists(key))
-    if _pg_kv_active:
-        try:    return _pg_kv_exists(key)
-        except Exception: pass
-    with _mem_lock:
-        _mem_purge_expired()
-        return key in _mem
 
 def _kv_incr(key: str, ttl: int | None = None) -> int:
     """
@@ -3644,9 +3680,23 @@ def get_storefront_config(api_key_record: dict = Depends(resolve_api_key)):
 def get_products(request: Request,
                  api_key_record: dict = Depends(resolve_api_key),
                  category: Optional[str] = None,
-                 uncategorized: bool = False):
+                 uncategorized: bool = False,
+                 page: Optional[int] = None,
+                 limit: Optional[int] = None):
     project_id = api_key_record["id"]
     user_id    = try_get_current_user_id(request)
+
+    # OPT-IN pagination. Default (limit is None) = return the WHOLE catalog,
+    # byte-for-byte identical to the pre-pagination behavior. The storefront
+    # (Grid/FavoritesGrid/DigitalProducts) filters client-side and relies on the
+    # full list, so pagination must never be forced on. Only when `limit` is
+    # supplied do we clamp and apply LIMIT/OFFSET.
+    paginate = limit is not None
+    offset = 0
+    if paginate:
+        limit = max(1, min(int(limit), 100))   # clamp 1..100
+        page  = max(1, int(page or 1))
+        offset = (page - 1) * limit
 
     with db_cursor() as (_, cursor):
         # ── 1. Products (with category filter) — archived/paused hidden from storefront.
@@ -3659,6 +3709,14 @@ def get_products(request: Request,
         elif category:
             where.append("c.slug = %s")
             params.append(category)
+        # Pagination is appended only when explicitly requested (opt-in); the
+        # default query is unchanged so the storefront's full-catalog fetch and
+        # its client-side filtering keep working exactly as before.
+        page_clause = ""
+        page_params = []
+        if paginate:
+            page_clause = " LIMIT %s OFFSET %s"
+            page_params = [limit, offset]
         cursor.execute(
             "SELECT p.id, p.title, p.subtitle, p.description, p.product_type, "
             "p.seo_title, p.seo_description, p.seo_keywords, "
@@ -3674,8 +3732,9 @@ def get_products(request: Request,
             "LEFT JOIN product_categories c ON c.id = p.category_id "
             "LEFT JOIN product_tax_categories tc ON tc.id = p.tax_category_id "
             f"WHERE {' AND '.join(where)} "
-            "ORDER BY p.id ASC",
-            params
+            "ORDER BY p.id ASC"
+            f"{page_clause}",
+            params + page_params
         )
         products = cursor.fetchall()
         if not products: return []
@@ -3784,17 +3843,40 @@ def get_products(request: Request,
                 })
 
         # ── 6. Reviews per product ────────────────────────────────────
+        # Cap embedded reviews to the 3 newest per product — the catalog card only
+        # needs a small preview; the full thread lives on get_product_page. Keeps
+        # the payload bounded no matter how many reviews a product accumulates.
+        REVIEW_PREVIEW_N = 3
         cursor.execute(
-            f"SELECT pr.id, pr.user_id, pr.product_id, pr.rating, pr.comment, pr.created_at, "
-            f"u.name AS user_name FROM product_reviews pr "
-            f"JOIN users u ON pr.user_id = u.id AND u.project_id = %s "
-            f"WHERE pr.product_id IN ({fmt}) AND pr.project_id = %s "
-            f"ORDER BY pr.created_at DESC",
-            [project_id] + product_ids + [project_id]
+            f"SELECT id, user_id, product_id, rating, comment, created_at, user_name FROM ("
+            f"  SELECT pr.id, pr.user_id, pr.product_id, pr.rating, pr.comment, pr.created_at, "
+            f"         u.name AS user_name, "
+            f"         ROW_NUMBER() OVER (PARTITION BY pr.product_id ORDER BY pr.created_at DESC, pr.id DESC) AS rn "
+            f"  FROM product_reviews pr "
+            f"  JOIN users u ON pr.user_id = u.id AND u.project_id = %s "
+            f"  WHERE pr.product_id IN ({fmt}) AND pr.project_id = %s "
+            f") ranked WHERE rn <= %s "
+            f"ORDER BY product_id ASC, created_at DESC",
+            [project_id] + product_ids + [project_id, REVIEW_PREVIEW_N]
         )
         reviews_by_product = {}
         for r in cursor.fetchall():
             reviews_by_product.setdefault(r["product_id"], []).append(r)
+
+        # Separate per-product totals (JOIN users to match the embedded query's
+        # exclusion of reviews whose author row is gone) so reviews_count /
+        # average_rating stay accurate even though only a preview slice is embedded.
+        cursor.execute(
+            f"SELECT pr.product_id, COUNT(*) AS cnt, AVG(pr.rating) AS avg_rating "
+            f"FROM product_reviews pr "
+            f"JOIN users u ON pr.user_id = u.id AND u.project_id = %s "
+            f"WHERE pr.product_id IN ({fmt}) AND pr.project_id = %s "
+            f"GROUP BY pr.product_id",
+            [project_id] + product_ids + [project_id]
+        )
+        review_stats_by_product = {
+            r["product_id"]: (r["cnt"], r["avg_rating"]) for r in cursor.fetchall()
+        }
 
         # ── 7. Custom fields per product ──────────────────────────────
         cursor.execute(
@@ -3866,6 +3948,7 @@ def get_products(request: Request,
             can_review=p["id"] in can_review_set,
             custom_fields=cf_by_product.get(p["id"], {}),
             reviews_raw=reviews_by_product.get(p["id"], []),
+            review_stats=review_stats_by_product.get(p["id"]),
             user_id=user_id,
             modifier_groups=modifier_groups_by_product.get(p["id"], []),
             tier_pricing_by_sku=tier_pricing_by_sku,
@@ -4126,18 +4209,9 @@ def get_product_page(product_hash: str, request: Request,
         tier_pricing_by_sku=tier_pricing_by_sku,
         spec_groups_by_node=spec_groups_by_node,
     )
-    # Digital products expose their buyer download links (one ZIP when digital_zip is
-    # on, else a link per file) so the storefront's digital page can surface / test the
-    # download. NOTE: files live in a public R2 bucket, so this is not a hard paywall —
-    # production would gate behind a verified purchase or signed private URLs.
-    if payload.get("product_type") == "digital":
-        payload["downloads"] = [
-            {"label": d["label"], "url": d["url"]}
-            for d in _digital_downloads(
-                project_id,
-                [{"product_id": product["id"], "title": product["title"], "product_type": "digital"}],
-            )
-        ]
+    # Digital download links are NOT exposed on the public product endpoint — they are
+    # paid content. The storefront receives working URLs only from authenticated,
+    # owned-order paths (order success / My Orders), never to anonymous visitors.
     return payload
 
 
@@ -4982,10 +5056,6 @@ def _load_fernet() -> Fernet | None:
         return None
 
 
-def is_encryption_configured() -> bool:
-    return _load_fernet() is not None
-
-
 def encrypt_credentials(data: dict[str, Any]) -> str:
     """Serialize a credentials dict to JSON, encrypt with Fernet, return as str.
 
@@ -5029,19 +5099,6 @@ def decrypt_credentials(token: str) -> dict[str, Any]:
         raise ValueError("Decrypted payload is not a dict")
     return out
 
-
-def mask_secret(value: str | None, keep: int = 4) -> str:
-    """Returns "••••••••1234" — only last `keep` chars exposed.
-
-    Use anywhere a secret would otherwise be in an API response.
-    Never includes the original value in the masked form's length.
-    """
-    if not value:
-        return ""
-    s = str(value)
-    if len(s) <= keep:
-        return "•" * len(s)
-    return "•" * 8 + s[-keep:]
 
 # ── Inlined: payment_providers (External-side: create_intent + webhook handling) ──
 
@@ -5744,6 +5801,7 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             "ci.selected_modifier_item_ids, "
             # Price walk SKU → variation (same as cart-get + cart-subtotal).
             "COALESCE(pc.price, pv.price) AS price, "
+            "pc.cost_price, "
             "pc.stock_quantity, p.title, p.product_type, pv.variation_name "
             "FROM cart_items ci "
             "JOIN product_configurations_l2 pc ON ci.configuration_id = pc.id "
@@ -6160,15 +6218,24 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
         wh_options = [dict(r) for r in cursor.fetchall()]
         default_wh = next((w for w in wh_options if w["is_default"]), None)
 
+        # Bulk-load stock for ALL line-item SKUs once (was: 1 query per item).
+        _all_sku_ids = list({int(it["configuration_id"]) for it in items if it.get("configuration_id")})
+        _stock_rows = []
+        if _all_sku_ids:
+            cursor.execute(
+                "SELECT sku_id, warehouse_id, quantity FROM product_stock WHERE sku_id = ANY(%s)",
+                (_all_sku_ids,)
+            )
+            _stock_rows = cursor.fetchall()
+        _stock_by_sku: dict = {}
+        for _r in _stock_rows:
+            _stock_by_sku.setdefault(_r["sku_id"], {})[_r["warehouse_id"]] = _r["quantity"]
+
         def _pick_wh_for_sku(sku_id: int) -> int | None:
             if not wh_options:
                 return None
-            # Find warehouses with enough stock for this SKU first.
-            cursor.execute(
-                "SELECT warehouse_id, quantity FROM product_stock WHERE sku_id=%s",
-                (sku_id,)
-            )
-            stock_by_wh = {r["warehouse_id"]: r["quantity"] for r in cursor.fetchall()}
+            # Per-SKU stock now read from the pre-loaded bulk map.
+            stock_by_wh = _stock_by_sku.get(sku_id, {})
 
             def rank(w):
                 city    = (w.get("city")    or "").lower()
@@ -6191,12 +6258,10 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
         # later. Without the snapshot, COGS computed at report time would use
         # whatever cost_price happens to be RIGHT NOW.
         for it in items:
-            cursor.execute(
-                "SELECT cost_price FROM product_configurations_l2 WHERE id=%s",
-                (it["configuration_id"],)
-            )
-            _cp_row = cursor.fetchone()
-            cost_per_unit = (_cp_row or {}).get("cost_price")
+            # cost_price now comes from the cart-items SELECT (pc.cost_price added
+            # there), so no per-item round-trip here. Falls back to None for any row
+            # where the column is absent (legacy / non-L2 line).
+            cost_per_unit = it.get("cost_price")
             cursor.execute(
                 "INSERT INTO order_items"
                 "  (order_id, product_id, variation_id, configuration_id,"
@@ -6207,6 +6272,16 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                  sorted(it["selected_modifier_item_ids"] or []))
             )
             it["id"] = cursor.fetchone()["id"]
+            # Digital items carry no physical stock, and a digital-only order is
+            # born 'delivered' — so the reserved→deducted/released transition
+            # (CRM update_order_status) never runs to unwind a reservation. If we
+            # reserved here, reserved_quantity (especially the L2 mirror, which
+            # updates even when the SKU has no warehouse row) would inflate
+            # permanently and leak availability for that SKU. Skip all stock
+            # side-effects for digital line items — the order_items row above is
+            # all a digital purchase needs.
+            if it.get("product_type") == "digital":
+                continue
             # Reservation model — at order time we RESERVE stock, we don't
             # decrement it. The customer's order is not yet shipped, so the
             # physical stock count and the "sold" lifetime number must not
@@ -6337,24 +6412,37 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
     return {"success": True, "order_id": order_id}
 
 
-def _digital_downloads(project_id: int, items: list) -> list:
+def _digital_downloads(project_id: int, items: list,
+                       _prod_cache: dict | None = None,
+                       _file_cache: dict | None = None) -> list:
     """Download links for digital products in an order — [{title, label, url}] (engine escapes at render).
 
     When a product opts into one-ZIP delivery (products.digital_zip) and the CRM has
     built its bundle (products.digital_zip_url), hand out that single archive instead
     of N per-file links. Products without bundling (or whose zip isn't built yet) fall
-    back to the per-file links."""
+    back to the per-file links.
+
+    Optional pre-fetched caches let a batched caller (e.g. get_my_orders rendering many
+    orders at once) avoid the per-order product/custom-field queries entirely:
+      _prod_cache: {product_id: {"digital_zip": bool, "digital_zip_url": str|None}}
+      _file_cache: {product_id: [ {"field_key": str, "field_value": str}, ... ]}
+    Both must cover EVERY digital product_id in `items` when supplied, or those ids are
+    treated as having no rows (same as a DB miss). When None (default) the function
+    self-fetches exactly as before — preserving behavior for all other callers."""
     digital_ids = list(dict.fromkeys(
         it["product_id"] for it in items if it.get("product_type") == "digital"))
     if not digital_ids:
         return []
     titles = {it["product_id"]: it["title"] for it in items}
-    fmt = ",".join(["%s"] * len(digital_ids))
-    try:
-        prods = db_all(f"SELECT id, digital_zip, digital_zip_url FROM products WHERE id IN ({fmt})",
-                       tuple(digital_ids))
-    except Exception:
-        prods = []   # columns not present yet → everyone gets per-file links
+    if _prod_cache is not None:
+        prods = [dict(id=pid, **_prod_cache[pid]) for pid in digital_ids if pid in _prod_cache]
+    else:
+        fmt = ",".join(["%s"] * len(digital_ids))
+        try:
+            prods = db_all(f"SELECT id, digital_zip, digital_zip_url FROM products WHERE id IN ({fmt})",
+                           tuple(digital_ids))
+        except Exception:
+            prods = []   # columns not present yet → everyone gets per-file links
     out, per_file_ids = [], []
     for pid in digital_ids:
         p = next((x for x in prods if x["id"] == pid), None) or {}
@@ -6363,14 +6451,20 @@ def _digital_downloads(project_id: int, items: list) -> list:
         else:
             per_file_ids.append(pid)
     if per_file_ids:
-        fmt2 = ",".join(["%s"] * len(per_file_ids))
-        rows = db_all(
-            f"SELECT product_id, field_key, field_value FROM product_custom_fields "
-            f"WHERE project_id=%s AND product_id IN ({fmt2}) AND field_type='file' AND field_value <> ''",
-            tuple([project_id] + per_file_ids)
-        )
-        out += [{"title": titles.get(r["product_id"]) or "", "label": r["field_key"], "url": r["field_value"]}
-                for r in rows]
+        if _file_cache is not None:
+            for pid in per_file_ids:
+                for r in _file_cache.get(pid, []):
+                    out.append({"title": titles.get(pid) or "",
+                                "label": r["field_key"], "url": r["field_value"]})
+        else:
+            fmt2 = ",".join(["%s"] * len(per_file_ids))
+            rows = db_all(
+                f"SELECT product_id, field_key, field_value FROM product_custom_fields "
+                f"WHERE project_id=%s AND product_id IN ({fmt2}) AND field_type='file' AND field_value <> ''",
+                tuple([project_id] + per_file_ids)
+            )
+            out += [{"title": titles.get(r["product_id"]) or "", "label": r["field_key"], "url": r["field_value"]}
+                    for r in rows]
     return out
 
 
@@ -6386,6 +6480,31 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
     except Exception:
         raise HTTPException(401, "Invalid or expired token")
 
+    # Opt-in pagination: limit/offset only take effect when explicitly supplied as
+    # query params. When BOTH are absent the query is unchanged (no LIMIT) so the
+    # default fetch-all behavior is preserved — OrderSuccess.jsx fetches the full
+    # list then .find()s one order, and the SDK's client.orders.list() passes no
+    # params. Callers that DO want a page pass ?limit=N (&offset=M).
+    qp = request.query_params
+    page_sql, page_params = "", []
+    if qp.get("limit") is not None:
+        try:
+            lim = max(1, min(int(qp.get("limit")), 200))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "limit must be an integer")
+        page_sql += " LIMIT %s"
+        page_params.append(lim)
+        if qp.get("offset") is not None:
+            try:
+                off = max(0, int(qp.get("offset")))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "offset must be an integer")
+            page_sql += " OFFSET %s"
+            page_params.append(off)
+    elif qp.get("offset") is not None:
+        # offset without limit is meaningless in SQL; reject rather than silently ignore.
+        raise HTTPException(400, "offset requires limit")
+
     orders = db_all(
         """SELECT oh.id, oh.total_amount, oh.status, oh.delivery_method,
                   oh.recipient_name, oh.address, oh.payment_method, oh.comment,
@@ -6400,9 +6519,75 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
            FROM order_history oh
            LEFT JOIN shipping_carriers c ON c.id = oh.carrier_id
            WHERE oh.user_id=%s AND oh.project_id=%s
-           ORDER BY oh.created_at DESC""",
-        (user_id, project_id)
+           ORDER BY oh.created_at DESC""" + page_sql,
+        tuple([user_id, project_id] + page_params)
     )
+    if not orders:
+        return []
+
+    order_ids = [o["id"] for o in orders]
+
+    # ── 1. ALL order_items for these orders in ONE query (was N queries). ──────────
+    #    oi.order_id added to the SELECT so rows can be grouped per order in Python.
+    item_rows = db_all(
+        """SELECT oi.order_id, oi.id AS order_item_id, oi.quantity, oi.price,
+                  oi.selected_modifier_item_ids, oi.product_id,
+                  p.title, p.product_type, pv.variation_name,
+                  (pv.images)[1] AS image_url, pc.configuration_name
+           FROM order_items oi
+           JOIN products p ON oi.product_id=p.id
+           JOIN product_configurations_l1 pv ON oi.variation_id=pv.id
+           JOIN product_configurations_l2 pc ON oi.configuration_id=pc.id
+           WHERE oi.order_id = ANY(%s)
+           ORDER BY oi.order_id, oi.id""",
+        (order_ids,)
+    )
+    items_by_order = {}
+    for it in item_rows:
+        items_by_order.setdefault(it["order_id"], []).append(it)
+
+    # ── 2. ALL modifier items referenced by ANY line across ALL orders in ONE query. ─
+    all_mod_ids = {mid for it in item_rows for mid in (it["selected_modifier_item_ids"] or [])}
+    mod_meta = {}
+    if all_mod_ids:
+        mods = db_all(
+            "SELECT i.id, i.name, i.price_delta, g.name AS group_name"
+            "  FROM product_modifier_items i"
+            "  JOIN product_modifier_groups g ON i.group_id = g.id"
+            " WHERE i.id = ANY(%s)",
+            (list(all_mod_ids),)
+        )
+        for m in mods:
+            mod_meta[m["id"]] = {
+                "id":          m["id"],
+                "name":        m["name"],
+                "price_delta": float(m["price_delta"] or 0),
+                "group_name":  m["group_name"],
+            }
+
+    # ── 3+4. Pre-fetch digital-download data for ALL digital products at once, then
+    #    let _digital_downloads resolve per order from the cache (0 queries per order).
+    digital_ids = list(dict.fromkeys(
+        it["product_id"] for it in item_rows if it.get("product_type") == "digital"))
+    prod_cache, file_cache = {}, {}
+    if digital_ids:
+        dfmt = ",".join(["%s"] * len(digital_ids))
+        try:
+            for r in db_all(
+                f"SELECT id, digital_zip, digital_zip_url FROM products WHERE id IN ({dfmt})",
+                tuple(digital_ids)
+            ):
+                prod_cache[r["id"]] = {"digital_zip": r["digital_zip"],
+                                       "digital_zip_url": r["digital_zip_url"]}
+        except Exception:
+            prod_cache = {}   # columns not present yet → fall through to per-file links
+        for r in db_all(
+            f"SELECT product_id, field_key, field_value FROM product_custom_fields "
+            f"WHERE project_id=%s AND product_id IN ({dfmt}) AND field_type='file' AND field_value <> ''",
+            tuple([project_id] + digital_ids)
+        ):
+            file_cache.setdefault(r["product_id"], []).append(
+                {"field_key": r["field_key"], "field_value": r["field_value"]})
 
     result = []
     for o in orders:
@@ -6414,41 +6599,13 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
         track = (o.get("tracking_number") or "").strip()
         tpl   = o.get("tracking_url_template") or ""
         tracking_url = tpl.replace("{tracking}", track) if (tpl and track) else None
-        items = db_all(
-            """SELECT oi.id AS order_item_id, oi.quantity, oi.price, oi.selected_modifier_item_ids,
-                      oi.product_id, p.title, p.product_type, pv.variation_name, (pv.images)[1] AS image_url, pc.configuration_name
-               FROM order_items oi
-               JOIN products p ON oi.product_id=p.id
-               JOIN product_configurations_l1 pv ON oi.variation_id=pv.id
-               JOIN product_configurations_l2 pc ON oi.configuration_id=pc.id
-               WHERE oi.order_id=%s
-               ORDER BY oi.id""",
-            (o["id"],)
-        )
-        # Bulk-fetch modifier item names referenced by any line in this order.
-        mod_ids = {mid for it in items for mid in (it["selected_modifier_item_ids"] or [])}
-        mod_meta = {}
-        if mod_ids:
-            mods = db_all(
-                "SELECT i.id, i.name, i.price_delta, g.name AS group_name"
-                "  FROM product_modifier_items i"
-                "  JOIN product_modifier_groups g ON i.group_id = g.id"
-                " WHERE i.id = ANY(%s)",
-                (list(mod_ids),)
-            )
-            for m in mods:
-                mod_meta[m["id"]] = {
-                    "id":          m["id"],
-                    "name":        m["name"],
-                    "price_delta": float(m["price_delta"] or 0),
-                    "group_name":  m["group_name"],
-                }
-        # Digital download links for this order (one ZIP when bundled, else per file).
-        # Lets the storefront show "your files are here" on the order page + success page.
+        items = items_by_order.get(o["id"], [])
+        # Digital download links for this order (one ZIP when bundled, else per file)
+        # resolved from the batched caches — same output as the per-order call.
         order_downloads = _digital_downloads(project_id, [
             {"product_id": it["product_id"], "title": it["title"], "product_type": it.get("product_type")}
             for it in items
-        ])
+        ], _prod_cache=prod_cache, _file_cache=file_cache)
         result.append({
             "id":              o["id"],
             "total_amount":    o["total_amount"],
@@ -6788,27 +6945,38 @@ def request_return(api_key: str, order_id: int, body: RequestReturnBody,
             raise HTTPException(400,
                 f"Cannot return {it.quantity} of item {it.order_item_id} — only {oi['quantity']} purchased")
 
-    # Block duplicate active returns for the same line item
-    existing = db_all(
-        """SELECT ri.order_item_id, SUM(ri.quantity) AS qty
-             FROM order_return_items ri
-             JOIN order_returns r ON ri.return_id = r.id
-            WHERE r.order_id=%s AND r.status = ANY(%s)
-            GROUP BY ri.order_item_id""",
-        (order_id, list(ACTIVE_RETURN_STATUSES))
-    )
-    active_by_item = {row["order_item_id"]: int(row["qty"] or 0) for row in existing}
-    for it in body.items:
-        ordered = int(oi_by_id[it.order_item_id]["quantity"])
-        already_returning = active_by_item.get(it.order_item_id, 0)
-        if already_returning + it.quantity > ordered:
-            raise HTTPException(400,
-                f"Item {it.order_item_id}: {already_returning} already in an active return, "
-                f"can only request {ordered - already_returning} more")
-
     photos = [sanitize(p)[:1000] for p in (body.customer_photos or [])][:10]
 
     with db_cursor() as (conn, cur):
+        # Lock the order row so concurrent return requests for the SAME order
+        # serialize. Without it, two requests both read the same already-returning
+        # total and both insert, together exceeding the purchased quantity — which
+        # the CRM inspect flow would then restock, inflating inventory. The
+        # duplicate-active-return check therefore has to run INSIDE this locked
+        # transaction (on this cursor), not on a separate pooled connection.
+        cur.execute(
+            "SELECT id FROM order_history WHERE id=%s AND project_id=%s FOR UPDATE",
+            (order_id, project_id)
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "Order not found")
+        cur.execute(
+            """SELECT ri.order_item_id, SUM(ri.quantity) AS qty
+                 FROM order_return_items ri
+                 JOIN order_returns r ON ri.return_id = r.id
+                WHERE r.order_id=%s AND r.status = ANY(%s)
+                GROUP BY ri.order_item_id""",
+            (order_id, list(ACTIVE_RETURN_STATUSES))
+        )
+        active_by_item = {row["order_item_id"]: int(row["qty"] or 0) for row in cur.fetchall()}
+        for it in body.items:
+            ordered = int(oi_by_id[it.order_item_id]["quantity"])
+            already_returning = active_by_item.get(it.order_item_id, 0)
+            if already_returning + it.quantity > ordered:
+                raise HTTPException(400,
+                    f"Item {it.order_item_id}: {already_returning} already in an active return, "
+                    f"can only request {ordered - already_returning} more")
+
         cur.execute(
             "INSERT INTO order_returns"
             "  (order_id, project_id, customer_user_id, status, reason,"
@@ -9683,13 +9851,20 @@ def internal_check_low_stock(request: Request):
     )
     alerted, skipped = 0, 0
     cutoff = _utcnow() - timedelta(hours=24)
+    # Batch the last-alert lookup: one grouped query keyed by sku_id instead of
+    # one SELECT per candidate SKU.
+    _sku_ids = [r["sku_id"] for r in rows]
+    _last_alert_by_sku = {}
+    if _sku_ids:
+        for _a in db_all(
+            "SELECT sku_id, MAX(alerted_at) AS alerted_at FROM crm_low_stock_alerts"
+            " WHERE sku_id = ANY(%s) GROUP BY sku_id",
+            (_sku_ids,)
+        ):
+            _last_alert_by_sku[_a["sku_id"]] = _a["alerted_at"]
     for r in rows:
-        last = db_one(
-            "SELECT alerted_at FROM crm_low_stock_alerts"
-            " WHERE project_id=%s AND sku_id=%s ORDER BY alerted_at DESC LIMIT 1",
-            (r["project_id"], r["sku_id"])
-        )
-        if last and last["alerted_at"] and last["alerted_at"] > cutoff:
+        last_alerted = _last_alert_by_sku.get(r["sku_id"])
+        if last_alerted and last_alerted > cutoff:
             skipped += 1; continue
 
         # Bell push to every operator (was: only owner; team members never

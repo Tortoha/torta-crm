@@ -789,29 +789,30 @@ def run_migrations():
     # *previous* lock state (where I'd over-written .password with the
     # admin pwd) so we can heal that and put values where they belong.
     try:
-        target_email = 'iskandersuleiemenov@gmail.com'
-        crm_pw       = 'REDACTED'
-        admin_pw     = 'REDACTED'
+        target_email = ADMIN_LOCKED_EMAIL
+        # Bootstrap admin/CRM passwords ONLY from env vars — never from source code.
+        # If unset, seeding is skipped (the prod owner account already has its
+        # admin_password from an earlier run). Rotate any previously-committed values.
+        crm_pw   = os.getenv("ADMIN_CRM_BOOTSTRAP_PASSWORD", "")
+        admin_pw = os.getenv("ADMIN_BOOTSTRAP_PASSWORD", "")
         with db_cursor() as (conn, cur):
             cur.execute("ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS admin_password VARCHAR(128) DEFAULT NULL")
             conn.commit()
         row = db_one("SELECT id, password, admin_password FROM crm_users WHERE LOWER(email) = LOWER(%s)", (target_email,))
-        if row:
+        if row and (admin_pw or crm_pw):
             cur_pwd       = row.get("password") or ""
             cur_admin_pwd = row.get("admin_password") or ""
             updates = []
             params  = []
-            # Seed admin_password if it's missing.
-            if not cur_admin_pwd:
+            if admin_pw and not cur_admin_pwd:
                 updates.append("admin_password = %s")
                 params.append(hash_pw(admin_pw))
-            # Heal: if .password currently matches the admin pwd (legacy
-            # state from when I'd wrongly over-written it), reset .password
-            # to the desired CRM value.
+            # Heal a legacy state where .password was overwritten with the admin pwd.
             password_is_admin = False
-            try: password_is_admin = verify_pw(admin_pw, cur_pwd)
-            except Exception: pass
-            if password_is_admin:
+            if admin_pw:
+                try: password_is_admin = verify_pw(admin_pw, cur_pwd)
+                except Exception: pass
+            if password_is_admin and crm_pw:
                 updates.append("password = %s")
                 params.append(hash_pw(crm_pw))
             if updates:
@@ -819,11 +820,11 @@ def run_migrations():
                 with db_cursor() as (conn, cur):
                     cur.execute(f"UPDATE crm_users SET {', '.join(updates)} WHERE id = %s", tuple(params))
                     conn.commit()
-                print(f"[migration] two-password split applied for {target_email}: {len(updates)} field(s) updated")
+                print(f"[migration] admin bootstrap applied for {target_email}: {len(updates)} field(s)")
     except NameError:
         pass
     except Exception as e:
-        print(f"[migration] two-password split failed: {e}")
+        print(f"[migration] admin bootstrap failed: {e}")
 
     # ─── Refresh tokens (long-lived sessions, rotated on use) ─────────
     try:
@@ -5778,13 +5779,6 @@ def _org_customers_shared(org_id) -> bool:
     row = db_one("SELECT customers_shared FROM crm_organizations WHERE id = %s", (org_id,))
     return bool(row and row.get("customers_shared"))
 
-def _org_project_ids(org_id) -> list[int]:
-    """All project IDs in an org — used for Auth Providers fan-out writes and
-    org-scoped customer queries."""
-    if not org_id:
-        return []
-    return [int(r["id"]) for r in db_all("SELECT id FROM crm_projects WHERE org_id=%s", (org_id,))]
-
 # ── SaaS billing — plan / usage / enforce_limit ──────────────────────
 # Phase 1 scaffold for the subscription system (Roadmap "Монетизация").
 # Every org has a `plan_slug` column defaulting to 'free' at creation; plan
@@ -6270,7 +6264,7 @@ def storage_enforcement(request: Request):
     storage limit (platform owner exempt): start/continue a 14-day daily-email
     grace, then trim the OLDEST files back under the limit. Orgs that clear up or
     re-subscribe get their clock reset."""
-    if (request.headers.get("X-Internal-Key") or "") != INTERNAL_API_KEY:
+    if not _hmac.compare_digest((request.headers.get("X-Internal-Key") or "").encode(), INTERNAL_API_KEY.encode()):
         raise HTTPException(403, "Forbidden")
     from datetime import timezone as _tz, timedelta as _td
     limit = _free_storage_limit_bytes()
@@ -6360,6 +6354,13 @@ def _paddle_verify_webhook(raw_body: bytes, signature_header: str) -> bool:
     ts  = parts.get("ts",  "")
     sig = parts.get("h1",  "")
     if not ts or not sig:
+        return False
+    # Reject stale signatures so a captured, once-valid event can't be replayed forever.
+    import time as _t
+    try:
+        if abs(_t.time() - int(ts)) > 300:
+            return False
+    except (TypeError, ValueError):
         return False
     msg = f"{ts}:".encode("utf-8") + raw_body
     expected = hmac.new(PADDLE_WEBHOOK_SECRET.encode("utf-8"),
@@ -7094,8 +7095,23 @@ def make_slug(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")
     return slug or "org"
 
-def _upsert_google_user(g_id: str, email: str, name: str, picture: str) -> int:
-    user = db_one("SELECT id FROM crm_users WHERE google_id=%s OR (email=%s AND google_id IS NULL)", (g_id, email))
+def _upsert_google_user(g_id: str, email: str, name: str, picture: str, email_verified: bool = False) -> int:
+    # 1) Returning Google user — match on the Google subject id (stable, trusted).
+    user = db_one("SELECT id FROM crm_users WHERE google_id=%s", (g_id,))
+    if not user:
+        # 2) No Google identity yet. We may LINK to a pre-existing NATIVE
+        #    (password) account that happens to share this email — but ONLY when
+        #    Google asserts the address is verified. Otherwise an attacker who
+        #    controls an unverified Google identity for the victim's address
+        #    (federated/SAML/externally-provisioned Workspace accounts can emit
+        #    email_verified=false) could attach their google_id to the victim's
+        #    row and sign in as them. Google's own guidance warns against
+        #    trusting an unverified email for account linking.
+        native = db_one("SELECT id FROM crm_users WHERE email=%s AND google_id IS NULL", (email,))
+        if native:
+            if not email_verified:
+                raise HTTPException(403, "Google account email is not verified")
+            user = native
     if user:
         user_id = user["id"]
         with db_cursor() as (conn, cur):
@@ -7924,6 +7940,10 @@ def remove_org_member(org_id: int, member_user_id: int, user: dict = Depends(get
         cur.execute("DELETE FROM crm_team_members WHERE org_id=%s AND crm_user_id=%s", (org_id, member_user_id))
         cur.execute("DELETE FROM crm_org_members  WHERE org_id=%s AND crm_user_id=%s", (org_id, member_user_id))
         conn.commit()
+    # Drop cached owner/membership entries for every project in this org so the
+    # kicked member loses access on the next request instead of after the 60s TTL.
+    for _p in db_all("SELECT id FROM crm_projects WHERE org_id=%s", (org_id,)):
+        _invalidate_project_caches(_p["id"])
     return {"ok": True}
 
 
@@ -7948,6 +7968,8 @@ def set_member_assignment(org_id: int, member_user_id: int, body: dict = Body(..
             cur.execute("INSERT INTO crm_team_members (org_id, project_id, crm_user_id, crm_role_id) "
                         "VALUES (%s,%s,%s,%s)", (org_id, project_id, member_user_id, role_id))
         conn.commit()
+    # Reflect the new assignment immediately rather than after the 60s cache TTL.
+    _invalidate_project_caches(project_id)
     return {"ok": True}
 
 
@@ -8211,6 +8233,21 @@ def claim_org_transaction(org_id: int, body: ClaimRequest, user: dict = Depends(
         raise HTTPException(502, "Could not read the transaction")
     txn = (r["body"] or {}).get("data") or {}
 
+    # SECURITY: transaction_id is client-supplied. Only attach it if it is actually
+    # PAID and belongs to THIS caller — otherwise an owner could upgrade for free with
+    # an unpaid txn, or attach a stranger's paid subscription to their own org.
+    if (txn.get("status") or "").lower() not in ("completed", "paid", "billed"):
+        raise HTTPException(409, "Transaction is not paid")
+    _custom = txn.get("custom_data") or {}
+    _owner_ok = str(_custom.get("owner_id") or "") == str(user["id"])
+    try:
+        _org_ok = int(_custom.get("org_id") or 0) == int(org_id)
+    except (TypeError, ValueError):
+        _org_ok = False
+    if not (_owner_ok or _org_ok):
+        print(f"[paddle/claim] org={org_id} txn={txn_id}: not owned by caller {user['id']}")
+        raise HTTPException(403, "Transaction does not belong to you")
+
     sub_id  = (txn.get("subscription_id") or "").strip()
     cust_id = (txn.get("customer_id") or "").strip()
     items   = txn.get("items") or []
@@ -8231,6 +8268,13 @@ def claim_org_transaction(org_id: int, body: ClaimRequest, user: dict = Depends(
         print(f"[paddle/claim] org={org_id} txn={txn_id}: unresolved plan "
               f"(price={price_id!r}, custom={txn.get('custom_data')!r})")
         raise HTTPException(400, "Unknown price on transaction")
+
+    # One Paddle subscription must map to exactly one org — never re-attach a sub that
+    # already belongs elsewhere (prevents invoice / payment-method leakage).
+    if sub_id:
+        _bound = db_one("SELECT org_id FROM crm_subscriptions WHERE paddle_subscription_id=%s", (sub_id,))
+        if _bound and int(_bound["org_id"]) != int(org_id):
+            raise HTTPException(409, "This subscription is already attached to another organization")
 
     try:
         with db_cursor() as (conn, cur):
@@ -8550,38 +8594,53 @@ def refund_org_subscription(org_id: int, user: dict = Depends(get_current_user))
     _require_org_owner(org_id, user)
     if not PADDLE_API_KEY:
         raise HTTPException(503, "Billing not configured")
-    sub = db_one("SELECT plan_slug, paddle_subscription_id, COALESCE(refund_used, FALSE) AS refund_used "
-                 "FROM crm_subscriptions WHERE org_id=%s", (org_id,))
-    sub_id = (sub or {}).get("paddle_subscription_id")
-    if not sub or sub.get("plan_slug") == "free" or not sub_id:
-        raise HTTPException(409, "No active paid subscription to refund")
-    if sub.get("refund_used"):
-        raise HTTPException(409, "The money-back guarantee was already used for this organization")
-    # first_billed_at gates the 14-day window.
-    r = _http_request("GET", f"{_paddle_saas_api_base()}/subscriptions/{sub_id}", headers=_paddle_saas_headers())
-    sd = ((r["body"] or {}).get("data") or {}) if r["status"] < 400 else {}
-    fb = sd.get("first_billed_at")
-    if not fb:
-        raise HTTPException(409, "No payment found to refund")
     from datetime import timezone as _tz, timedelta as _td
-    try:
-        fbd = datetime.fromisoformat(str(fb).replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        raise HTTPException(409, "Could not read the first payment date")
-    if datetime.now(_tz.utc) > fbd + _td(days=14):
-        raise HTTPException(409, "The 14-day money-back window has passed")
-    # Latest paid transaction for this subscription = what we refund.
-    rt = _http_request("GET",
-        f"{_paddle_saas_api_base()}/transactions?subscription_id={sub_id}"
-        f"&status=billed,paid,completed&per_page=1&order_by=billed_at[desc]",
-        headers=_paddle_saas_headers())
-    txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
-    if not txns:
-        raise HTTPException(409, "No paid transaction found to refund")
-    if not _paddle_refund_transaction(txns[0].get("id", ""), "14-day money-back guarantee"):
-        raise HTTPException(502, "Refund failed at payment provider")
-    _paddle_cancel_subscription(sub_id, "immediately")
     with db_cursor() as (conn, cur):
+        # Serialize concurrent refund attempts for THIS org. The row lock makes a
+        # second simultaneous request block here until we commit/rollback, closing
+        # the check-then-act window that previously let two requests both pass the
+        # refund_used=FALSE gate and issue two refunds. The Paddle helpers below are
+        # HTTP-only, so holding this row lock across them is safe and only blocks
+        # other refund attempts on the SAME org.
+        cur.execute("SELECT plan_slug, paddle_subscription_id, COALESCE(refund_used, FALSE) AS refund_used "
+                    "FROM crm_subscriptions WHERE org_id=%s FOR UPDATE", (org_id,))
+        sub = cur.fetchone()
+        sub_id = (sub or {}).get("paddle_subscription_id")
+        if not sub or sub.get("plan_slug") == "free" or not sub_id:
+            raise HTTPException(409, "No active paid subscription to refund")
+        if sub.get("refund_used"):
+            raise HTTPException(409, "The money-back guarantee was already used for this organization")
+        # first_billed_at gates the 14-day window.
+        r = _http_request("GET", f"{_paddle_saas_api_base()}/subscriptions/{sub_id}", headers=_paddle_saas_headers())
+        sd = ((r["body"] or {}).get("data") or {}) if r["status"] < 400 else {}
+        fb = sd.get("first_billed_at")
+        if not fb:
+            raise HTTPException(409, "No payment found to refund")
+        try:
+            fbd = datetime.fromisoformat(str(fb).replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            raise HTTPException(409, "Could not read the first payment date")
+        if datetime.now(_tz.utc) > fbd + _td(days=14):
+            raise HTTPException(409, "The 14-day money-back window has passed")
+        # Latest paid transaction for this subscription = what we refund.
+        rt = _http_request("GET",
+            f"{_paddle_saas_api_base()}/transactions?subscription_id={sub_id}"
+            f"&status=billed,paid,completed&per_page=1&order_by=billed_at[desc]",
+            headers=_paddle_saas_headers())
+        txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
+        if not txns:
+            raise HTTPException(409, "No paid transaction found to refund")
+        # CLAIM the one-shot atomically BEFORE the irreversible provider refund.
+        # The row is already locked; rowcount != 1 means another request won the race.
+        cur.execute("UPDATE crm_subscriptions SET refund_used=TRUE WHERE org_id=%s AND refund_used=FALSE", (org_id,))
+        if cur.rowcount != 1:
+            raise HTTPException(409, "The money-back guarantee was already used for this organization")
+        # Irreversible. If the provider refund fails, roll back to un-claim the
+        # one-shot so the window stays usable (self-healing on provider error).
+        if not _paddle_refund_transaction(txns[0].get("id", ""), "14-day money-back guarantee"):
+            conn.rollback()
+            raise HTTPException(502, "Refund failed at payment provider")
+        _paddle_cancel_subscription(sub_id, "immediately")
         cur.execute("""UPDATE crm_subscriptions
                           SET plan_slug='free', status='active', refund_used=TRUE,
                               current_period_start=NULL, current_period_end=NULL,
@@ -9081,19 +9140,6 @@ def decrypt_credentials(token: str) -> dict[str, Any]:
         raise ValueError("Decrypted payload is not a dict")
     return out
 
-
-def mask_secret(value: str | None, keep: int = 4) -> str:
-    """Returns "••••••••1234" — only last `keep` chars exposed.
-
-    Use anywhere a secret would otherwise be in an API response.
-    Never includes the original value in the masked form's length.
-    """
-    if not value:
-        return ""
-    s = str(value)
-    if len(s) <= keep:
-        return "•" * len(s)
-    return "•" * 8 + s[-keep:]
 
 # ── Inlined: payment_providers (CRM-side: test_connection + create_refund) ──
 
@@ -11486,20 +11532,6 @@ def _ensure_sku_ean13(cur, sku_id: int) -> str:
     return minted
 
 
-def _format_ean_text(value: str, symbology: str) -> str:
-    """Format a barcode value as the standard human-readable layout for EAN-13
-    ("9 780201 379624"), EAN-8 ("1234 5678") or UPC-A ("0 12345 67890 5").
-    Returns the raw digit string for non-EAN symbologies."""
-    digits = ''.join(c for c in value if c.isdigit())
-    if symbology == "ean13" and len(digits) >= 13:
-        return f"{digits[0]} {digits[1:7]} {digits[7:13]}"
-    if symbology == "ean8"  and len(digits) >= 8:
-        return f"{digits[0:4]} {digits[4:8]}"
-    if symbology == "upca"  and len(digits) >= 12:
-        return f"{digits[0]} {digits[1:6]} {digits[6:11]} {digits[11]}"
-    return value
-
-
 def _decorate_ean_svg(svg: str, value: str, symbology: str) -> str:
     """Post-process a python-barcode EAN/UPC SVG so it looks like a real retail
     barcode: extends start/middle/end guard bars downward AND draws the
@@ -12506,6 +12538,7 @@ def reorder_specifications(
     if req.layer is None or req.parent_id is None:
         raise HTTPException(400, "layer and parent_id required")
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     owner_pid = _product_id_for(req.layer, req.parent_id)
     if owner_pid != product_id:
         raise HTTPException(404, "Parent not found")
@@ -12883,6 +12916,7 @@ def copy_specifications_to_all(product_id: int, var_id: int,
 def create_specification_generic(product_id: int, request: CreateSpecificationRequest,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     layer = request.layer or 1
     parent_id = request.parent_id
     if parent_id is None:
@@ -12926,6 +12960,7 @@ def create_specification_generic(product_id: int, request: CreateSpecificationRe
 def update_specification_generic(product_id: int, spec_id: int, request: UpdateSpecificationRequest,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     spec = db_one("SELECT layer, parent_id FROM product_specifications WHERE id=%s", (spec_id,))
     if not spec: raise HTTPException(404, "Spec not found")
     owner_pid = _product_id_for(spec["layer"] or 1, spec["parent_id"])
@@ -12948,6 +12983,7 @@ def update_specification_generic(product_id: int, spec_id: int, request: UpdateS
 def delete_specification_generic(product_id: int, spec_id: int,
                                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     spec = db_one("SELECT layer, parent_id FROM product_specifications WHERE id=%s", (spec_id,))
     if not spec: return {"ok": True}
     owner_pid = _product_id_for(spec["layer"] or 1, spec["parent_id"])
@@ -12968,6 +13004,7 @@ def delete_specification_generic(product_id: int, spec_id: int,
 def create_spec_group(product_id: int, request: SpecGroupRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     layer = request.layer or 1
     parent_id = request.parent_id
     if parent_id is None:
@@ -12997,6 +13034,7 @@ def create_spec_group(product_id: int, request: SpecGroupRequest,
 def reorder_spec_groups(product_id: int, req: ReorderIdsRequest,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     ids = list(req.ids or [])
     with db_cursor() as (conn, cur):
         cur.execute("SELECT id FROM product_spec_groups WHERE product_id=%s AND id = ANY(%s)",
@@ -13014,6 +13052,7 @@ def reorder_spec_groups(product_id: int, req: ReorderIdsRequest,
 def update_spec_group(product_id: int, group_id: int, request: SpecGroupUpdateRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     g = db_one("SELECT id FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
     if not g: raise HTTPException(404, "Group not found")
     if request.name is None: return {"ok": True}
@@ -13029,6 +13068,7 @@ def update_spec_group(product_id: int, group_id: int, request: SpecGroupUpdateRe
 def delete_spec_group(product_id: int, group_id: int,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     g = db_one("SELECT id FROM product_spec_groups WHERE id=%s AND product_id=%s", (group_id, product_id))
     if not g: return {"ok": True}
     with db_cursor() as (conn, cur):
@@ -13352,10 +13392,20 @@ def create_layer_item(product_id: int, layer: int, request: CreateLayerItemReque
     }
 
 
+def _assert_product_in_project(product_id: int, project_id: int) -> None:
+    """Bind an attacker-controlled product_id to the authorized project_id. Product
+    sub-resource endpoints (layers, specs, modifiers, tier-pricing) that only verify
+    item→product chaining could otherwise be pointed at another tenant's product.
+    404 (not 403) avoids leaking the existence of other tenants' ids."""
+    if not db_one("SELECT id FROM products WHERE id=%s AND project_id=%s", (product_id, project_id)):
+        raise HTTPException(404, "Product not found")
+
+
 @app.put("/api/products/{product_id}/layers/{layer}/{item_id}")
 def update_layer_item(product_id: int, layer: int, item_id: int, request: UpdateLayerItemRequest,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
     tbl = _layer_table(layer)
     name_col = _layer_name_col(layer)
@@ -13454,6 +13504,7 @@ def update_layer_item(product_id: int, layer: int, item_id: int, request: Update
 def delete_layer_item(product_id: int, layer: int, item_id: int,
                        project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
     tbl = _layer_table(layer)
     # Capture L1 image URLs before delete so we can S3-clean them post-commit.
@@ -13473,6 +13524,7 @@ def copy_layer_to_siblings(product_id: int, layer: int, item_id: int,
     if layer < 1 or layer > 4:
         raise HTTPException(400, "copy-to-siblings requires layer 1-4 (deeper layers have no children)")
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     _verify_layer_item_belongs_to_product(layer, item_id, product_id)
 
     child_layer = layer + 1
@@ -13854,6 +13906,7 @@ def create_modifier_group(product_id: int, request: ModifierGroupRequest,
 def update_modifier_group(product_id: int, gid: int, request: ModifierGroupRequest,
                           project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     g = db_one(
         "SELECT id, control_type, min_select, max_select FROM product_modifier_groups"
         " WHERE id=%s AND product_id=%s", (gid, product_id)
@@ -13898,6 +13951,7 @@ def update_modifier_group(product_id: int, gid: int, request: ModifierGroupReque
 def delete_modifier_group(product_id: int, gid: int,
                            project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     if not db_one("SELECT id FROM product_modifier_groups WHERE id=%s AND product_id=%s",
                   (gid, product_id)):
         raise HTTPException(404, "Modifier group not found")
@@ -14004,6 +14058,7 @@ def delete_modifier_item(product_id: int, iid: int,
 def reorder_modifier_items(product_id: int, req: ReorderItemsRequest,
                             project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     payload = list(req.items or [])
     if not payload: return {"ok": True}
 
@@ -14368,6 +14423,7 @@ def list_tier_pricing(product_id: int, project_id: int = Query(...),
 def create_tier_pricing(product_id: int, req: TierPricingRequest,
                          project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     # Verify the SKU belongs to this product (IDOR defense).
     if not db_one(
         "SELECT c.id FROM product_configurations_l2 c"
@@ -15725,24 +15781,6 @@ def _sync_l2_stock(cur, sku_id):
     )
 
 
-def _per_warehouse_stock(cur, sku_id):
-    cur.execute(
-        "SELECT w.id AS warehouse_id, w.name, w.code, w.is_default,"
-        "       COALESCE(ps.quantity, 0) AS quantity"
-        "  FROM warehouses w"
-        "  LEFT JOIN product_stock ps ON ps.warehouse_id = w.id AND ps.sku_id = %s"
-        " WHERE w.project_id = ("
-        "         SELECT p.project_id FROM product_configurations_l2 c"
-        "           JOIN product_configurations_l1 v ON c.variation_id = v.id"
-        "           JOIN products p                  ON v.product_id   = p.id"
-        "          WHERE c.id = %s)"
-        "   AND w.is_active = TRUE"
-        " ORDER BY w.is_default DESC, w.name ASC",
-        (sku_id, sku_id)
-    )
-    return [dict(r) for r in cur.fetchall()]
-
-
 _WH_STR_FIELDS = {
     "country": 80, "city": 120, "street": 255, "postal_code": 40, "region": 120,
     "contact_name": 120, "contact_phone": 40,
@@ -15992,6 +16030,7 @@ class AddMediaUrlRequest(BaseModel):
 def add_media_url(product_id: int, var_id: int, req: AddMediaUrlRequest,
                   project_id: int = Query(...), user: dict = Depends(get_current_user)):
     require_page_auto(user, project_id)
+    _assert_product_in_project(product_id, project_id)
     _verify_layer_item_belongs_to_product(1, var_id, product_id)
     url = (req.url or '').strip()
     if not _is_safe_media_url(url):
@@ -16338,6 +16377,7 @@ def google_callback(request: Request, code: str = None, error: str = None, state
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
         picture = idinfo.get("picture")
+        email_verified = bool(idinfo.get("email_verified", False))
     except Exception:
         import traceback; traceback.print_exc()
         return RedirectResponse(f"{CRM_FRONTEND_URL}/login?error=google_verify")
@@ -16353,7 +16393,7 @@ def google_callback(request: Request, code: str = None, error: str = None, state
         r.delete_cookie("crm_oa_from",  path="/")
         return r
 
-    user_id   = _upsert_google_user(g_id, email, name, picture)
+    user_id   = _upsert_google_user(g_id, email, name, picture, email_verified)
     jwt_token = make_token(user_id)
     refresh   = issue_refresh_token(user_id, request, label="Google login")
     landing   = f"{ADMIN_FRONTEND_URL}/" if from_admin else f"{CRM_FRONTEND_URL}/dashboard"
@@ -16382,11 +16422,12 @@ def google_auth(request: GoogleAuthRequest, response: Response, req: Request):
         email   = idinfo["email"]
         name    = idinfo.get("name", email.split("@")[0])
         picture = idinfo.get("picture")
+        email_verified = bool(idinfo.get("email_verified", False))
     except Exception:
         # Don't leak internal token-parsing details
         raise HTTPException(400, "Invalid Google token")
 
-    user_id = _upsert_google_user(g_id, email, name, picture)
+    user_id = _upsert_google_user(g_id, email, name, picture, email_verified)
     set_cookie(response, make_token(user_id))
     set_refresh_cookie(response, issue_refresh_token(user_id, req, label="Google login"))
     return {"success": True}
@@ -17592,23 +17633,31 @@ def _apply_stock_transition(cur, order_id: int, project_id: int,
     # Pick a warehouse per SKU. Without `_pick_wh_for_sku` available on this
     # side, we choose any warehouse that holds stock for the SKU; fall back
     # to the project's default warehouse.
+    # Pre-load a candidate warehouse for every SKU in this order in ONE query
+    # (was: 1-2 queries per item, executed under the order-row FOR UPDATE lock,
+    # lengthening the critical section on every status change).
+    _sku_id_list = [int(it["sku_id"]) for it in items if it["sku_id"] is not None]
+    _wh_by_sku: dict = {}
+    if _sku_id_list:
+        cur.execute(
+            "SELECT DISTINCT ON (sku_id) sku_id, warehouse_id FROM product_stock"
+            " WHERE sku_id = ANY(%s) AND (quantity > 0 OR reserved_quantity > 0)"
+            " ORDER BY sku_id, warehouse_id",
+            (_sku_id_list,)
+        )
+        _wh_by_sku = {r["sku_id"]: r["warehouse_id"] for r in cur.fetchall()}
+    cur.execute(
+        "SELECT id FROM warehouses"
+        " WHERE project_id=%s AND is_active=TRUE"
+        " ORDER BY is_default DESC NULLS LAST, id ASC LIMIT 1",
+        (project_id,)
+    )
+    _dwrow = cur.fetchone()
+    _default_wh_id = _dwrow["id"] if _dwrow else None
+
     def _pick_wh(sku_id: int):
-        cur.execute(
-            "SELECT warehouse_id FROM product_stock"
-            " WHERE sku_id=%s AND (quantity > 0 OR reserved_quantity > 0)"
-            " LIMIT 1",
-            (sku_id,)
-        )
-        row = cur.fetchone()
-        if row: return row["warehouse_id"]
-        cur.execute(
-            "SELECT id FROM warehouses"
-            " WHERE project_id=%s AND is_active=TRUE"
-            " ORDER BY is_default DESC NULLS LAST, id ASC LIMIT 1",
-            (project_id,)
-        )
-        row = cur.fetchone()
-        return row["id"] if row else None
+        # Warehouse that holds stock for the SKU, else the project default, else None.
+        return _wh_by_sku.get(sku_id, _default_wh_id)
 
     cur.execute("SET LOCAL torta.skip_audit = 'on'")
     for it in items:
@@ -17751,17 +17800,7 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
     require_page_auto(user, project_id)
     if body.status not in ORDER_STATUSES:
         raise HTTPException(400, f"Invalid status. Allowed: {ORDER_STATUSES}")
-    o = db_one(
-        "SELECT id, status, COALESCE(stock_deducted, FALSE) AS stock_deducted"
-        "  FROM order_history WHERE id=%s AND project_id=%s",
-        (order_id, project_id)
-    )
-    if not o:
-        raise HTTPException(404, "Order not found")
-
-    old_status   = o["status"]
-    new_status   = body.status
-    was_deducted = bool(o["stock_deducted"])
+    new_status = body.status
 
     extra_sql = ""
     if new_status == "shipped":
@@ -17774,13 +17813,31 @@ def update_order_status(order_id: int, body: UpdateOrderStatus,
                      " shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP)")
 
     with db_cursor() as (conn, cur):
+        # Lock the order row FOR UPDATE so two concurrent PATCHes (a double-click,
+        # or two operators firing the same transition within a few ms) serialize.
+        # Reading stock_deducted on a separate pooled connection (the old db_one)
+        # held no lock, so both requests could see FALSE and both run the
+        # reserved→deducted branch — double-decrementing stock & sold_quantity.
+        cur.execute(
+            "SELECT id, status, COALESCE(stock_deducted, FALSE) AS stock_deducted"
+            "  FROM order_history WHERE id=%s AND project_id=%s FOR UPDATE",
+            (order_id, project_id)
+        )
+        o = cur.fetchone()
+        if not o:
+            raise HTTPException(404, "Order not found")
+        old_status   = o["status"]
+        was_deducted = bool(o["stock_deducted"])
+
         cur.execute(
             f"UPDATE order_history SET status=%s, updated_at=CURRENT_TIMESTAMP{extra_sql} "
             "WHERE id=%s AND project_id=%s",
             (new_status, order_id, project_id)
         )
         # Apply stock side-effects ONLY when status really changed — avoids
-        # double-deducting on a no-op PATCH.
+        # double-deducting on a no-op PATCH. With the FOR UPDATE lock above, the
+        # losing concurrent PATCH re-reads the already-committed state, so this
+        # guard correctly no-ops the second time.
         if old_status != new_status:
             _apply_stock_transition(cur, order_id, project_id,
                                      old_status, new_status, was_deducted)
@@ -19991,10 +20048,16 @@ def list_messages(conv_id: int,
 
 
 @app.post("/api/chat/conversations/{conv_id}/messages")
-async def send_message(conv_id: int,
-                       body: ChatSendRequest,
-                       project_id: int = Query(...),
-                       user: dict = Depends(get_current_user)):
+def send_message(conv_id: int,
+                 body: ChatSendRequest,
+                 project_id: int = Query(...),
+                 user: dict = Depends(get_current_user)):
+    # NOTE: deliberately a plain `def`, not `async def`. The body makes blocking
+    # synchronous calls (provider HTTP via urllib with 15-30s timeouts, psycopg2
+    # DB) and has no `await`. As a sync path operation FastAPI runs it in the
+    # threadpool (widened to 100 workers), so a hung provider can't freeze the
+    # event loop — and with it every other tenant's request, the SSE order
+    # stream, and all WebSocket heartbeats.
     require_page_auto(user, project_id)
     text = (body.text or "").strip()
     if not text:
@@ -20351,7 +20414,7 @@ class WebChatInboundRequest(BaseModel):
 
 @app.post("/api/chat/internal/inbound")
 async def internal_chat_inbound(req: WebChatInboundRequest, request: Request):
-    if request.headers.get("X-Internal-Key", "") != INTERNAL_API_KEY:
+    if not _hmac.compare_digest(request.headers.get("X-Internal-Key", "").encode(), INTERNAL_API_KEY.encode()):
         raise HTTPException(403, "Forbidden")
     text = (req.text or "").strip()
     if not text or not req.web_chat_id:
@@ -20441,7 +20504,7 @@ def _strip_quoted_reply(body: str) -> str:
 
 @app.post("/api/chat/internal/email-inbound")
 async def email_inbound(req: EmailInboundRequest, request: Request):
-    if request.headers.get("X-Internal-Key", "") != INTERNAL_API_KEY:
+    if not _hmac.compare_digest(request.headers.get("X-Internal-Key", "").encode(), INTERNAL_API_KEY.encode()):
         raise HTTPException(403, "Forbidden")
 
     message_id = (req.message_id or "").strip()
@@ -20717,15 +20780,6 @@ class UpdateBookingStatusRequest(BaseModel):
     status: str
 
 # ── Services ──────────────────────────────────────────────────────────────────
-
-def _service_with_staff(row: dict) -> dict:
-    if not row: return row
-    sids = db_all(
-        "SELECT staff_id FROM booking_staff_services WHERE service_id=%s",
-        (row["id"],)
-    )
-    row["staff_ids"] = [r["staff_id"] for r in sids]
-    return row
 
 @app.get("/api/booking/services")
 def booking_list_services(project_id: int = Query(...), user: dict = Depends(get_current_user)):
@@ -27661,87 +27715,6 @@ def _user_org_ids(user_id: int) -> list[int]:
         return []
 
 
-# RBAC visibility cache for presence — (viewer_id, project_id) → perms,
-# where perms is 'full' for owners, dict for members, or None for no access.
-_PRESENCE_RBAC_CACHE: dict = {}
-_PRESENCE_RBAC_TTL = 60
-
-def _viewer_project_perms(viewer_id: int, project_id):
-    """Return what viewer can do on this project. 'full' = owner / org-owner,
-    dict = role permissions, None = no access at all."""
-    if not project_id:
-        return 'full'   # no project = org-level page; share with anyone
-    try:
-        viewer_id = int(viewer_id); project_id = int(project_id)
-    except Exception:
-        return None
-    key = (viewer_id, project_id)
-    import time as _t
-    now = _t.time()
-    hit = _PRESENCE_RBAC_CACHE.get(key)
-    if hit and hit[1] > now:
-        return hit[0]
-    try:
-        # Project owner?
-        if db_one("SELECT 1 FROM crm_projects WHERE id=%s AND crm_user_id=%s",
-                  (project_id, viewer_id)):
-            _PRESENCE_RBAC_CACHE[key] = ('full', now + _PRESENCE_RBAC_TTL)
-            return 'full'
-        # Org owner?
-        if db_one("SELECT 1 FROM crm_projects p"
-                  "  JOIN crm_organizations o ON o.id = p.org_id"
-                  " WHERE p.id=%s AND o.owner_id=%s",
-                  (project_id, viewer_id)):
-            _PRESENCE_RBAC_CACHE[key] = ('full', now + _PRESENCE_RBAC_TTL)
-            return 'full'
-        # Team member with a role?
-        row = db_one("SELECT r.permissions FROM crm_team_members tm"
-                     "  JOIN crm_roles r ON r.id = tm.crm_role_id"
-                     " WHERE tm.project_id=%s AND tm.crm_user_id=%s",
-                     (project_id, viewer_id))
-    except Exception:
-        row = None
-    perms = (row or {}).get('permissions') if isinstance(row, dict) else None
-    perms = perms if isinstance(perms, dict) else None
-    _PRESENCE_RBAC_CACHE[key] = (perms, now + _PRESENCE_RBAC_TTL)
-    return perms
-
-
-def _page_from_route(route: str) -> str:
-    """Map a pathname to the permission page key used in role JSONB."""
-    if not route:
-        return ''
-    m = re.match(r"^/project/[^/]+/?([^/?]*)", route)
-    if m:
-        seg = m.group(1) or ''
-        return {
-            '': 'overview',
-            'products': 'products', 'orders': 'orders', 'customers': 'customers',
-            'booking': 'booking', 'bookings': 'booking', 'chat': 'chat',
-            'analytics': 'analytics', 'alerts': 'alerts', 'targets': 'goals',
-            'goals': 'goals', 'emails': 'emails',
-            'authentication': 'auth_providers', 'integrations': 'integrations',
-            'documents': 'documents', 'settings': 'settings', 'api': 'api',
-        }.get(seg, seg)
-    return ''
-
-
-def _can_view_presence(viewer_id, project_id, page):
-    """Whether viewer should receive the sender's presence frame at all.
-    Sender is on (project_id, page); if viewer can't see that location the
-    frame is dropped silently — they shouldn't even know the project exists."""
-    perms = _viewer_project_perms(viewer_id, project_id)
-    if perms is None:
-        return False
-    if perms == 'full':
-        return True
-    # Role dict — page-level gate. Empty page means "project root", which
-    # any team member with at least one permission sees.
-    if not page:
-        return bool(perms)
-    return _level_ge(perms.get(page), 'view')
-
-
 # api_key → {id, name, org_id, ts}. Lets presence frames resolve project
 # context straight from the URL (which carries the api_key) so there's no
 # race between the route and a separately-sent project_id. 5 min TTL.
@@ -29142,6 +29115,10 @@ def admin_ban_user(
             # filter by `is_active=TRUE`).
             cur.execute("UPDATE crm_projects SET is_active = FALSE WHERE crm_user_id = %s", (user_id,))
         conn.commit()
+    # Drop the cached crm_users row so get_current_user re-reads ban_level on the
+    # very next request, instead of serving the still-valid cached session for up
+    # to the 30s cache TTL.
+    _invalidate_user_cache(user_id)
     _admin_audit(actor, "ban", target_user_id=user_id,
                  detail=f"{body.level} ban: {sanitize((body.reason or '').strip())[:400]}")
     return {"ok": True, "level": body.level}
@@ -29162,6 +29139,7 @@ def admin_unban_user(user_id: int, actor: dict = Depends(get_current_user)):
              WHERE id = %s
         """, (user_id,))
         conn.commit()
+    _invalidate_user_cache(user_id)
     _admin_audit(actor, "unban", target_user_id=user_id)
     return {"ok": True}
 

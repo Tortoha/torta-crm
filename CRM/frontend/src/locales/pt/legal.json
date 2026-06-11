@@ -55,7 +55,7 @@
           "id": "refunds",
           "title": "3. Reembolsos",
           "paragraphs": [
-            "Os reembolsos são tratados de acordo com a nossa Política de Reembolso separada. Em resumo: as primeiras assinaturas são elegíveis a reembolso integral dentro de 14 dias corridos da compra. Renovações e cobranças recorrentes não são reembolsáveis, exceto quando exigido por lei."
+            "Os reembolsos são tratados de acordo com a nossa Política de Reembolso separada. Em resumo: uma primeira assinatura é elegível a reembolso integral em autoatendimento dentro de 14 dias corridos do primeiro pagamento, disponível uma vez por organização a partir da sua página de cobrança. Renovações e cobranças recorrentes não são reembolsáveis, exceto quando exigido por lei."
           ]
         },
         {
@@ -80,7 +80,8 @@
             "Você mantém a titularidade de todos os dados que carrega no Serviço (\"Dados do Cliente\"), incluindo produtos, pedidos, registros de clientes, e-mails, arquivos e análises.",
             "Você nos concede uma licença limitada para hospedar, processar, transmitir e exibir seus Dados do Cliente exclusivamente conforme necessário para fornecer o Serviço a você.",
             "Você é responsável por garantir que possui todos os direitos e consentimentos necessários para carregar os Dados do Cliente, incluindo o consentimento dos seus usuários finais (os compradores da sua loja) quando exigido pelas leis de privacidade aplicáveis.",
-            "Não venderemos, alugaremos nem compartilharemos seus Dados do Cliente com terceiros, exceto conforme descrito em nossa Política de Privacidade ou conforme exigido por lei."
+            "Não venderemos, alugaremos nem compartilharemos seus Dados do Cliente com terceiros, exceto conforme descrito em nossa Política de Privacidade ou conforme exigido por lei.",
+            "Cada plano inclui uma cota de armazenamento para os arquivos que você carrega (imagens de produtos, arquivos digitais, anexos). Se a sua organização exceder o limite de armazenamento do seu plano — por exemplo, após o downgrade para o plano Free — enviamos um e-mail ao proprietário da organização uma vez por dia durante 14 dias. Se a organização ainda estiver acima do limite após esse período, poderemos excluir arquivos automaticamente, do mais antigo ao mais recente, até que o armazenamento volte a ficar dentro do limite. Assinar novamente ou liberar espaço antes do prazo evita qualquer exclusão."
           ]
         },
         {
@@ -324,8 +325,8 @@
           "id": "money-back",
           "title": "2. Garantia de devolução do dinheiro em 14 dias",
           "paragraphs": [
-            "Para primeiras assinaturas pagas, oferecemos reembolso integral dentro de 14 dias corridos da cobrança inicial caso você não esteja satisfeito com o Serviço, por qualquer motivo.",
-            "Para solicitar um reembolso, escreva para {{email}} a partir do endereço de e-mail associado à sua conta, dentro de 14 dias da data da cobrança. Inclua o nome da sua organização e o motivo (opcional, mas útil)."
+            "Para primeiras assinaturas pagas, oferecemos reembolso integral dentro de 14 dias corridos do primeiro pagamento caso você não esteja satisfeito com o Serviço, por qualquer motivo. Esta garantia pode ser usada uma vez por organização.",
+            "Você pode solicitar o reembolso por conta própria, com um clique, na página de cobrança da sua organização enquanto estiver dentro da janela de 14 dias — ele é processado automaticamente pela Paddle de volta para o seu método de pagamento original, e sua organização retorna ao plano Free. Se você tiver qualquer problema, também pode escrever para {{email}}."
           ]
         },
         {

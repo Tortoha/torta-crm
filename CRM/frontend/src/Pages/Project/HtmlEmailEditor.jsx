@@ -14,10 +14,12 @@
 //
 // Controlled: { emailType, subject, html, onChange({subject, html}), headerRight }.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import CodeMirror from '@uiw/react-codemirror';
 import { html as cmHtml, htmlLanguage } from '@codemirror/lang-html';
+// CodeMirror is a heavy, rarely-first-paint widget — load it only when the HTML
+// email editor actually mounts, keeping it out of the Emails route chunk.
+const CodeMirror = lazy(() => import('@uiw/react-codemirror'));
 import { Warning, Images } from '@phosphor-icons/react';
 import { crmCodeMirrorTheme } from '../../Utils/codeMirrorTheme.js';
 import { TYPE_VARS, DEFAULT_HTML, missingRequiredVars, renderPreview } from '../../Utils/emailTemplateDefaults.js';
@@ -146,15 +148,17 @@ export default function HtmlEmailEditor({ emailType = '__broadcast', subject, ht
       )}
 
       <div className="em-html-editor">
-        <CodeMirror
-          ref={cmRef}
-          value={html || ''}
-          height="360px"
-          theme="none"
-          basicSetup={CM_SETUP}
-          extensions={cmExtensions}
-          onChange={(val) => onChange?.({ subject, html: val })}
-        />
+        <Suspense fallback={<div style={{ height: '360px' }} />}>
+          <CodeMirror
+            ref={cmRef}
+            value={html || ''}
+            height="360px"
+            theme="none"
+            basicSetup={CM_SETUP}
+            extensions={cmExtensions}
+            onChange={(val) => onChange?.({ subject, html: val })}
+          />
+        </Suspense>
       </div>
 
       <div className="em-html-preview">
