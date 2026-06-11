@@ -17659,6 +17659,58 @@ def _apply_stock_transition(cur, order_id: int, project_id: int,
         # Warehouse that holds stock for the SKU, else the project default, else None.
         return _wh_by_sku.get(sku_id, _default_wh_id)
 
+    # ── Batch (inventory_batches) bookkeeping ───────────────────────────────
+    # product_stock moves on every transition, but the batch ledger used to NOT
+    # move on online orders → SUM(inventory_batches.quantity_remaining) drifted
+    # from product_stock for batch-tracked stores (corrupting FEFO/COGS reports).
+    # These keep them in lockstep. Both NO-OP for SKUs that have no batches, so a
+    # store that doesn't use batch tracking is never affected.
+    def _consume_batches_fefo(sku_id: int, wh_id: int, units: int):
+        """Consume `units` from this SKU's batches in `wh_id`, FEFO (expiry first,
+        then oldest received) — same ordering the rest of the app uses."""
+        if units <= 0:
+            return
+        cur.execute(
+            "SELECT id, quantity_remaining FROM inventory_batches"
+            " WHERE sku_id=%s AND warehouse_id=%s"
+            "   AND COALESCE(is_frozen, FALSE)=FALSE AND quantity_remaining > 0"
+            " ORDER BY expiry_date ASC NULLS LAST, received_at ASC, id"
+            " FOR UPDATE",
+            (sku_id, wh_id)
+        )
+        left = units
+        for _b in cur.fetchall():
+            if left <= 0:
+                break
+            take = min(left, int(_b["quantity_remaining"] or 0))
+            if take <= 0:
+                continue
+            cur.execute(
+                "UPDATE inventory_batches SET quantity_remaining = quantity_remaining - %s WHERE id=%s",
+                (take, _b["id"])
+            )
+            left -= take
+
+    def _restock_batches(sku_id: int, wh_id: int, units: int):
+        """Put `units` back into this SKU's newest non-frozen batch in `wh_id`,
+        restoring the SUM(quantity_remaining) == product_stock invariant on a
+        cancel/refund restock. No-op (never creates a batch) if the SKU has none."""
+        if units <= 0:
+            return
+        cur.execute(
+            "SELECT id FROM inventory_batches"
+            " WHERE sku_id=%s AND warehouse_id=%s AND COALESCE(is_frozen, FALSE)=FALSE"
+            " ORDER BY received_at DESC, id DESC LIMIT 1 FOR UPDATE",
+            (sku_id, wh_id)
+        )
+        _row = cur.fetchone()
+        if not _row:
+            return
+        cur.execute(
+            "UPDATE inventory_batches SET quantity_remaining = quantity_remaining + %s WHERE id=%s",
+            (units, _row["id"])
+        )
+
     cur.execute("SET LOCAL torta.skip_audit = 'on'")
     for it in items:
         sku_id = int(it["sku_id"]) if it["sku_id"] is not None else None
@@ -17697,6 +17749,7 @@ def _apply_stock_transition(cur, order_id: int, project_id: int,
                 (project_id, sku_id, wh_id, -qty, order_id,
                  f"Order #{order_id} · status → {new_status}")
             )
+            _consume_batches_fefo(sku_id, wh_id, qty)
         # ── reserved → released (cancel before ship) ────────────────────
         elif will_release and was_reserved:
             cur.execute(
@@ -17741,6 +17794,7 @@ def _apply_stock_transition(cur, order_id: int, project_id: int,
                 (project_id, sku_id, wh_id, qty, order_id,
                  f"Order #{order_id} · restocked ({new_status})")
             )
+            _restock_batches(sku_id, wh_id, qty)
         # ── released → reserved (reactivation) ──────────────────────────
         elif will_reserve and not was_reserved and not was_deducted:
             cur.execute(
@@ -17784,6 +17838,7 @@ def _apply_stock_transition(cur, order_id: int, project_id: int,
                 (project_id, sku_id, wh_id, -qty, order_id,
                  f"Order #{order_id} · status → {new_status}")
             )
+            _consume_batches_fefo(sku_id, wh_id, qty)
 
     # Flip the persistent flag so the next transition reads the new state.
     new_deducted_flag = will_deduct

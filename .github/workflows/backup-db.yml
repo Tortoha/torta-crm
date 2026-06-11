@@ -1,0 +1,67 @@
+name: Nightly DB backup → R2
+
+# Independent, off-Neon disaster copy of the production database.
+# Neon PITR is only ~6h on the free plan — this keeps DAILY dumps you control in
+# Cloudflare R2. Runs on GitHub's infra, so NO VPS is involved.
+#
+# REQUIRED repo secrets (Settings → Secrets and variables → Actions → New secret):
+#   BACKUP_DATABASE_URL    prod Neon DIRECT (non-pooled) conn string incl. ?sslmode=require
+#   R2_BUCKET              backups bucket, e.g. torta-backups
+#   R2_ENDPOINT            https://<account-id>.r2.cloudflarestorage.com
+#   R2_ACCESS_KEY_ID       R2 API token (S3) with write access to that bucket
+#   R2_SECRET_ACCESS_KEY   the token's secret
+#
+# Retention: set a lifecycle rule on the R2 bucket (delete objects under db/ after
+# ~30 days) — cleaner than pruning in the job, and you keep a month of dailies.
+#
+# IMPORTANT: scheduled workflows only fire from the repo's DEFAULT branch — merge
+# this file to it for the nightly cron to run. `workflow_dispatch` lets you run it
+# by hand from any branch (Actions tab → this workflow → Run workflow) to test now.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # 03:17 UTC daily
+  workflow_dispatch: {}
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install pg_dump 17 (PGDG apt)
+        run: |
+          set -euo pipefail
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Dump → gzip → upload to R2
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          set -euo pipefail
+          : "${DATABASE_URL:?BACKUP_DATABASE_URL secret not set}"
+          : "${R2_BUCKET:?R2_BUCKET secret not set}"
+          : "${R2_ENDPOINT:?R2_ENDPOINT secret not set}"
+          TS=$(date -u +%Y%m%d-%H%M%S)
+          FILE="crmdb-${TS}.sql.gz"
+          echo "Dumping crmdb → ${FILE}"
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --no-owner --no-privileges | gzip -9 > "$FILE"
+          # Guard against a truncated/empty dump (gzip of nothing is ~20 bytes).
+          BYTES=$(stat -c%s "$FILE")
+          if [ "$BYTES" -lt 1000 ]; then
+            echo "::error::dump suspiciously small (${BYTES} bytes) — aborting upload"; exit 1
+          fi
+          echo "Dumped $(du -h "$FILE" | cut -f1) — uploading → s3://${R2_BUCKET}/db/${FILE}"
+          aws s3 cp "$FILE" "s3://${R2_BUCKET}/db/${FILE}" --endpoint-url "$R2_ENDPOINT" --only-show-errors
+          echo "✓ backup uploaded: db/${FILE}"

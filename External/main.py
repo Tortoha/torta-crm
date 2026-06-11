@@ -29,9 +29,71 @@ def _utcnow():
     return datetime.now(timezone.utc)
 
 
-# ── S3 cleanup stubs ──────────────────────────────────────────────
+# ── Object storage cleanup — Cloudflare R2 (S3-compatible), mirrors CRM ──────
+# Deleting a review photo must free the underlying R2 object, not just the DB
+# row — the platform bills on storage, so a no-op here leaks storage forever.
+# Reads the same R2_* env as the CRM backend (same bucket). The prefix check
+# keeps deletes scoped to projects/{id}/... so a row's url can never delete
+# outside its own project. Gracefully no-ops if storage/boto3 isn't configured
+# here, so this is never worse than the old stub.
+try:
+    import boto3 as _boto3
+    _S3_AVAILABLE = True
+except Exception:
+    _S3_AVAILABLE = False
+
+_R2_ENDPOINT           = os.getenv("R2_ENDPOINT", "")
+_R2_ACCESS_KEY_ID      = os.getenv("R2_ACCESS_KEY_ID", "")
+_R2_SECRET_ACCESS_KEY  = os.getenv("R2_SECRET_ACCESS_KEY", "")
+_R2_BUCKET             = os.getenv("R2_BUCKET", "torta-crm")
+_AWS_ACCESS_KEY_ID     = os.getenv("AWS_ACCESS_KEY_ID", "")
+_AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+_AWS_S3_BUCKET         = os.getenv("AWS_S3_BUCKET", "torta-crm")
+_AWS_S3_REGION         = os.getenv("AWS_S3_REGION", "eu-central-1")
+_R2_ENABLED      = bool(_R2_ENDPOINT and _R2_ACCESS_KEY_ID and _R2_SECRET_ACCESS_KEY)
+_STORAGE_BUCKET  = _R2_BUCKET if _R2_ENABLED else _AWS_S3_BUCKET
+_STORAGE_ENABLED = _R2_ENABLED or bool(_AWS_ACCESS_KEY_ID)
+
+
+def _s3_client():
+    """boto3 client pointed at R2 (when configured) or AWS S3 — same as CRM."""
+    if _R2_ENABLED:
+        return _boto3.client(
+            "s3", endpoint_url=_R2_ENDPOINT, region_name="auto",
+            aws_access_key_id=_R2_ACCESS_KEY_ID,
+            aws_secret_access_key=_R2_SECRET_ACCESS_KEY,
+        )
+    return _boto3.client(
+        "s3", region_name=_AWS_S3_REGION,
+        aws_access_key_id=_AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=_AWS_SECRET_ACCESS_KEY,
+    )
+
+
+def _s3_key_from_url(url: str):
+    if not url:
+        return None
+    try:
+        from urllib.parse import urlparse
+        path = urlparse(url.split("?")[0]).path.lstrip("/")
+        return path or None
+    except Exception:
+        return None
+
+
 def s3_delete_url(url: str, prefix: str) -> None:
-    pass
+    """Delete the R2/S3 object backing `url`, but only if its key sits under
+    `prefix` (project-scoped safety). No-ops silently when storage isn't
+    configured or boto3 is missing — so it's never worse than the prior stub."""
+    if not (_S3_AVAILABLE and _STORAGE_ENABLED):
+        return
+    key = _s3_key_from_url(url)
+    if not (key and key.startswith(prefix)):
+        return
+    try:
+        _s3_client().delete_object(Bucket=_STORAGE_BUCKET, Key=key)
+    except Exception:
+        pass
 
 
 from psycopg2.pool import ThreadedConnectionPool
@@ -6310,9 +6372,9 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                 " WHERE id = %s",
                 (int(it["quantity"]), it["configuration_id"])
             )
-            # NOTE: inventory_batches are also untouched at reservation time.
-            # When status transitions to shipped/delivered, the CRM-side
-            # `_apply_stock_deduction` consumes batches FIFO/LIFO.
+            # NOTE: inventory_batches are untouched at reservation time. When the
+            # merchant transitions the order to shipped/delivered, the CRM-side
+            # `_apply_stock_transition` consumes batches FEFO (expiry first).
             # Stock log is still written here as an audit trail for the
             # reservation event so the merchant sees "reserved -36 for order #N".
             cursor.execute(
@@ -6812,6 +6874,21 @@ def _release_or_restock_for_cancel(cur, order_id: int, project_id: int,
                 (project_id, sku_id, wh_id, qty, order_id,
                  f"Order #{order_id} · cancelled by customer (restocked)")
             )
+            # Keep the batch ledger in lockstep with product_stock — put the
+            # restocked qty back into the SKU's newest non-frozen batch. No-op
+            # (never creates a batch) when the SKU isn't batch-tracked.
+            cur.execute(
+                "SELECT id FROM inventory_batches"
+                " WHERE sku_id=%s AND warehouse_id=%s AND COALESCE(is_frozen, FALSE)=FALSE"
+                " ORDER BY received_at DESC, id DESC LIMIT 1 FOR UPDATE",
+                (sku_id, wh_id)
+            )
+            _br = cur.fetchone()
+            if _br:
+                cur.execute(
+                    "UPDATE inventory_batches SET quantity_remaining = quantity_remaining + %s WHERE id=%s",
+                    (qty, _br["id"])
+                )
         elif old_status in _X_RESERVED_STATES:
             # Still reserved — release the reservation only.
             cur.execute(
