@@ -6271,7 +6271,7 @@ def storage_enforcement(request: Request):
     storage limit (platform owner exempt): start/continue a 14-day daily-email
     grace, then trim the OLDEST files back under the limit. Orgs that clear up or
     re-subscribe get their clock reset."""
-    if (request.headers.get("X-Internal-Key") or "") != INTERNAL_API_KEY:
+    if not _hmac.compare_digest((request.headers.get("X-Internal-Key") or "").encode(), INTERNAL_API_KEY.encode()):
         raise HTTPException(403, "Forbidden")
     from datetime import timezone as _tz, timedelta as _td
     limit = _free_storage_limit_bytes()
@@ -7947,6 +7947,10 @@ def remove_org_member(org_id: int, member_user_id: int, user: dict = Depends(get
         cur.execute("DELETE FROM crm_team_members WHERE org_id=%s AND crm_user_id=%s", (org_id, member_user_id))
         cur.execute("DELETE FROM crm_org_members  WHERE org_id=%s AND crm_user_id=%s", (org_id, member_user_id))
         conn.commit()
+    # Drop cached owner/membership entries for every project in this org so the
+    # kicked member loses access on the next request instead of after the 60s TTL.
+    for _p in db_all("SELECT id FROM crm_projects WHERE org_id=%s", (org_id,)):
+        _invalidate_project_caches(_p["id"])
     return {"ok": True}
 
 
@@ -7971,6 +7975,8 @@ def set_member_assignment(org_id: int, member_user_id: int, body: dict = Body(..
             cur.execute("INSERT INTO crm_team_members (org_id, project_id, crm_user_id, crm_role_id) "
                         "VALUES (%s,%s,%s,%s)", (org_id, project_id, member_user_id, role_id))
         conn.commit()
+    # Reflect the new assignment immediately rather than after the 60s cache TTL.
+    _invalidate_project_caches(project_id)
     return {"ok": True}
 
 
@@ -20446,7 +20452,7 @@ class WebChatInboundRequest(BaseModel):
 
 @app.post("/api/chat/internal/inbound")
 async def internal_chat_inbound(req: WebChatInboundRequest, request: Request):
-    if request.headers.get("X-Internal-Key", "") != INTERNAL_API_KEY:
+    if not _hmac.compare_digest(request.headers.get("X-Internal-Key", "").encode(), INTERNAL_API_KEY.encode()):
         raise HTTPException(403, "Forbidden")
     text = (req.text or "").strip()
     if not text or not req.web_chat_id:
@@ -20536,7 +20542,7 @@ def _strip_quoted_reply(body: str) -> str:
 
 @app.post("/api/chat/internal/email-inbound")
 async def email_inbound(req: EmailInboundRequest, request: Request):
-    if request.headers.get("X-Internal-Key", "") != INTERNAL_API_KEY:
+    if not _hmac.compare_digest(request.headers.get("X-Internal-Key", "").encode(), INTERNAL_API_KEY.encode()):
         raise HTTPException(403, "Forbidden")
 
     message_id = (req.message_id or "").strip()
@@ -29237,6 +29243,10 @@ def admin_ban_user(
             # filter by `is_active=TRUE`).
             cur.execute("UPDATE crm_projects SET is_active = FALSE WHERE crm_user_id = %s", (user_id,))
         conn.commit()
+    # Drop the cached crm_users row so get_current_user re-reads ban_level on the
+    # very next request, instead of serving the still-valid cached session for up
+    # to the 30s cache TTL.
+    _invalidate_user_cache(user_id)
     _admin_audit(actor, "ban", target_user_id=user_id,
                  detail=f"{body.level} ban: {sanitize((body.reason or '').strip())[:400]}")
     return {"ok": True, "level": body.level}
@@ -29257,6 +29267,7 @@ def admin_unban_user(user_id: int, actor: dict = Depends(get_current_user)):
              WHERE id = %s
         """, (user_id,))
         conn.commit()
+    _invalidate_user_cache(user_id)
     _admin_audit(actor, "unban", target_user_id=user_id)
     return {"ok": True}
 

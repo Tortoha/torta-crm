@@ -1645,7 +1645,10 @@ def _healthcheck():
         row = db_one("SELECT 1 AS one")
         ok = bool(row and row.get("one") == 1)
     except Exception as e:
-        return _JSON({"ok": False, "db": False, "error": str(e)[:200]}, status_code=503)
+        # Log the real reason server-side, but never echo the DB exception to an
+        # unauthenticated caller — psycopg2 errors embed host/port/user/dbname.
+        print(f"[health] DB probe failed: {e}", flush=True)
+        return _JSON({"ok": False, "db": False}, status_code=503)
     return {"ok": ok, "db": ok}
 
 
