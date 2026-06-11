@@ -6372,9 +6372,9 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                 " WHERE id = %s",
                 (int(it["quantity"]), it["configuration_id"])
             )
-            # NOTE: inventory_batches are also untouched at reservation time.
-            # When status transitions to shipped/delivered, the CRM-side
-            # `_apply_stock_deduction` consumes batches FIFO/LIFO.
+            # NOTE: inventory_batches are untouched at reservation time. When the
+            # merchant transitions the order to shipped/delivered, the CRM-side
+            # `_apply_stock_transition` consumes batches FEFO (expiry first).
             # Stock log is still written here as an audit trail for the
             # reservation event so the merchant sees "reserved -36 for order #N".
             cursor.execute(
@@ -6874,6 +6874,21 @@ def _release_or_restock_for_cancel(cur, order_id: int, project_id: int,
                 (project_id, sku_id, wh_id, qty, order_id,
                  f"Order #{order_id} · cancelled by customer (restocked)")
             )
+            # Keep the batch ledger in lockstep with product_stock — put the
+            # restocked qty back into the SKU's newest non-frozen batch. No-op
+            # (never creates a batch) when the SKU isn't batch-tracked.
+            cur.execute(
+                "SELECT id FROM inventory_batches"
+                " WHERE sku_id=%s AND warehouse_id=%s AND COALESCE(is_frozen, FALSE)=FALSE"
+                " ORDER BY received_at DESC, id DESC LIMIT 1 FOR UPDATE",
+                (sku_id, wh_id)
+            )
+            _br = cur.fetchone()
+            if _br:
+                cur.execute(
+                    "UPDATE inventory_batches SET quantity_remaining = quantity_remaining + %s WHERE id=%s",
+                    (qty, _br["id"])
+                )
         elif old_status in _X_RESERVED_STATES:
             # Still reserved — release the reservation only.
             cur.execute(
