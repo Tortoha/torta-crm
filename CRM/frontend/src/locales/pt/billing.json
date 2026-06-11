@@ -49,6 +49,23 @@
     "cancelOk":     "Assinatura cancelada — ativa até o fim do período",
     "cancelFailed": "Falha no cancelamento — tente novamente",
 
+    "refund": {
+      "title":        "Garantia de devolução do dinheiro em 14 dias",
+      "sub":          "Não combinou? Receba reembolso integral dentro de 14 dias do seu primeiro pagamento. Uma vez por organização.",
+      "label":        "Solicitar reembolso integral",
+      "hint":         "Reembolsa seu último pagamento e encerra a assinatura.",
+      "btn":          "Obter reembolso",
+      "confirmTitle": "Obter reembolso integral?",
+      "confirmBody":  "Reembolsamos seu último pagamento integralmente e encerramos a assinatura agora. Esta garantia única não pode ser usada novamente nesta organização.",
+      "b1":           "O dinheiro volta para o seu método de pagamento original",
+      "b2":           "Sua organização passa para o plano Free",
+      "b3":           "Seus dados permanecem — projetos e clientes são preservados",
+      "confirm":      "Reembolsar e cancelar",
+      "keep":         "Manter assinatura",
+      "ok":           "Reembolsado — o dinheiro está a caminho de volta",
+      "failed":       "Falha no reembolso — tente novamente"
+    },
+
     "updated": "Assinatura atualizada",
 
     "modal": {

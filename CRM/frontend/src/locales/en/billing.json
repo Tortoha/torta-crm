@@ -49,6 +49,23 @@
     "cancelOk":     "Subscription cancelled — active until period end",
     "cancelFailed": "Cancellation failed — try again",
 
+    "refund": {
+      "title":        "14-day money-back guarantee",
+      "sub":          "Not a fit? Get a full refund within 14 days of your first payment. One-time per organization.",
+      "label":        "Request a full refund",
+      "hint":         "Refunds your latest payment and ends the subscription.",
+      "btn":          "Get a refund",
+      "confirmTitle": "Get a full refund?",
+      "confirmBody":  "We refund your latest payment in full and end the subscription now. This one-time guarantee can’t be used again on this organization.",
+      "b1":           "Money goes back to your original payment method",
+      "b2":           "Your organization drops to the Free plan",
+      "b3":           "Your data stays — projects & customers are kept",
+      "confirm":      "Refund & cancel",
+      "keep":         "Keep subscription",
+      "ok":           "Refunded — the money is on its way back",
+      "failed":       "Refund failed — try again"
+    },
+
     "updated": "Subscription updated",
 
     "modal": {

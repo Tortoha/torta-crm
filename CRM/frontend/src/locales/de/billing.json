@@ -49,6 +49,23 @@
     "cancelOk":     "Abonnement gekündigt – aktiv bis zum Ende des Zeitraums",
     "cancelFailed": "Kündigung fehlgeschlagen – bitte erneut versuchen",
 
+    "refund": {
+      "title":        "14-tägige Geld-zurück-Garantie",
+      "sub":          "Nicht das Richtige? Erhalten Sie innerhalb von 14 Tagen nach Ihrer ersten Zahlung eine vollständige Rückerstattung. Einmalig pro Organisation.",
+      "label":        "Vollständige Rückerstattung anfordern",
+      "hint":         "Erstattet Ihre letzte Zahlung und beendet das Abonnement.",
+      "btn":          "Rückerstattung erhalten",
+      "confirmTitle": "Vollständige Rückerstattung erhalten?",
+      "confirmBody":  "Wir erstatten Ihre letzte Zahlung vollständig und beenden das Abonnement jetzt. Diese einmalige Garantie kann für diese Organisation nicht erneut in Anspruch genommen werden.",
+      "b1":           "Das Geld geht zurück auf Ihre ursprüngliche Zahlungsmethode",
+      "b2":           "Ihre Organisation wechselt auf den Free-Tarif",
+      "b3":           "Ihre Daten bleiben erhalten – Projekte und Kunden werden bewahrt",
+      "confirm":      "Erstatten und kündigen",
+      "keep":         "Abonnement behalten",
+      "ok":           "Erstattet – das Geld ist auf dem Rückweg",
+      "failed":       "Rückerstattung fehlgeschlagen – bitte erneut versuchen"
+    },
+
     "updated": "Abonnement aktualisiert",
 
     "modal": {

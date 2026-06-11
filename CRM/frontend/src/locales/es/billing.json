@@ -49,6 +49,23 @@
     "cancelOk":     "Suscripción cancelada: activa hasta el final del período",
     "cancelFailed": "No se pudo cancelar: inténtelo de nuevo",
 
+    "refund": {
+      "title":        "Garantía de devolución de dinero de 14 días",
+      "sub":          "¿No es lo que buscaba? Obtenga un reembolso completo dentro de los 14 días siguientes a su primer pago. Una sola vez por organización.",
+      "label":        "Solicitar un reembolso completo",
+      "hint":         "Reembolsa su último pago y finaliza la suscripción.",
+      "btn":          "Obtener un reembolso",
+      "confirmTitle": "¿Obtener un reembolso completo?",
+      "confirmBody":  "Reembolsamos su último pago en su totalidad y finalizamos la suscripción ahora. Esta garantía de un solo uso no podrá volver a utilizarse en esta organización.",
+      "b1":           "El dinero regresa a su método de pago original",
+      "b2":           "Su organización baja al plan Gratis",
+      "b3":           "Sus datos se conservan: los proyectos y clientes se mantienen",
+      "confirm":      "Reembolsar y cancelar",
+      "keep":         "Mantener la suscripción",
+      "ok":           "Reembolsado: el dinero está en camino de vuelta",
+      "failed":       "No se pudo reembolsar: inténtelo de nuevo"
+    },
+
     "updated": "Suscripción actualizada",
 
     "modal": {

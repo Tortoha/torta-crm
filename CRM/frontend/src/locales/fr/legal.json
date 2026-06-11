@@ -55,7 +55,7 @@
           "id": "refunds",
           "title": "3. Remboursements",
           "paragraphs": [
-            "Les remboursements sont régis par notre Politique de remboursement distincte. En résumé : les premiers abonnements donnent droit à un remboursement intégral dans un délai de 14 jours calendaires suivant l'achat. Les renouvellements et les prélèvements récurrents ne sont pas remboursables, sauf disposition contraire de la loi."
+            "Les remboursements sont régis par notre Politique de remboursement distincte. En résumé : un premier abonnement donne droit à un remboursement intégral en libre-service dans un délai de 14 jours calendaires suivant le premier paiement, disponible une seule fois par organisation depuis votre page de facturation. Les renouvellements et les prélèvements récurrents ne sont pas remboursables, sauf disposition contraire de la loi."
           ]
         },
         {
@@ -80,7 +80,8 @@
             "Vous conservez la propriété de toutes les données que vous téléversez vers le Service (les « Données client »), y compris les produits, commandes, fiches clients, e-mails, fichiers et statistiques.",
             "Vous nous accordez une licence limitée pour héberger, traiter, transmettre et afficher vos Données client, uniquement dans la mesure nécessaire à la fourniture du Service.",
             "Vous êtes responsable de vous assurer que vous disposez de tous les droits et consentements nécessaires pour téléverser les Données client, y compris le consentement de vos utilisateurs finaux (les acheteurs de votre boutique) lorsque les lois applicables en matière de protection de la vie privée l'exigent.",
-            "Nous ne vendrons, ne louerons ni ne partagerons vos Données client avec des tiers, sauf dans les cas décrits dans notre Politique de confidentialité ou exigés par la loi."
+            "Nous ne vendrons, ne louerons ni ne partagerons vos Données client avec des tiers, sauf dans les cas décrits dans notre Politique de confidentialité ou exigés par la loi.",
+            "Chaque formule inclut un quota de stockage pour les fichiers que vous téléversez (images de produits, fichiers numériques, pièces jointes). Si votre organisation dépasse la limite de stockage de sa formule — par exemple après une rétrogradation vers la formule Free — nous envoyons un e-mail au propriétaire de l'organisation une fois par jour pendant 14 jours. Si l'organisation dépasse toujours la limite à l'issue de cette période, nous pouvons supprimer automatiquement des fichiers, les plus anciens en premier, jusqu'à ce que le stockage revienne sous la limite. Se réabonner ou libérer de l'espace avant l'échéance évite toute suppression."
           ]
         },
         {
@@ -324,8 +325,8 @@
           "id": "money-back",
           "title": "2. Garantie de remboursement de 14 jours",
           "paragraphs": [
-            "Pour les premiers abonnements payants, nous proposons un remboursement intégral dans un délai de 14 jours calendaires suivant le premier prélèvement, si le Service ne vous satisfait pas, pour quelque raison que ce soit.",
-            "Pour demander un remboursement, écrivez à {{email}} depuis l'adresse e-mail associée à votre compte, dans un délai de 14 jours suivant la date du prélèvement. Indiquez le nom de votre organisation et le motif (facultatif mais utile)."
+            "Pour les premiers abonnements payants, nous proposons un remboursement intégral dans un délai de 14 jours calendaires suivant le premier paiement, si le Service ne vous satisfait pas, pour quelque raison que ce soit. Cette garantie peut être utilisée une seule fois par organisation.",
+            "Vous pouvez demander le remboursement vous-même, en un clic, depuis la page de facturation de votre organisation tant que vous êtes dans le délai de 14 jours — il est traité automatiquement via Paddle sur votre moyen de paiement d'origine, et votre organisation revient à la formule Free. En cas de difficulté, vous pouvez également écrire à {{email}}."
           ]
         },
         {

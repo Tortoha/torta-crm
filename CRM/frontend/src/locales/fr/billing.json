@@ -49,6 +49,23 @@
     "cancelOk":     "Abonnement résilié — actif jusqu'à la fin de la période",
     "cancelFailed": "Échec de la résiliation — veuillez réessayer",
 
+    "refund": {
+      "title":        "Garantie de remboursement de 14 jours",
+      "sub":          "Cela ne vous convient pas ? Obtenez un remboursement intégral dans les 14 jours suivant votre premier paiement. Une seule fois par organisation.",
+      "label":        "Demander un remboursement intégral",
+      "hint":         "Rembourse votre dernier paiement et met fin à l'abonnement.",
+      "btn":          "Obtenir un remboursement",
+      "confirmTitle": "Obtenir un remboursement intégral ?",
+      "confirmBody":  "Nous remboursons intégralement votre dernier paiement et mettons fin à l'abonnement immédiatement. Cette garantie unique ne pourra plus être utilisée sur cette organisation.",
+      "b1":           "L'argent est reversé sur votre moyen de paiement d'origine",
+      "b2":           "Votre organisation repasse au forfait Gratuit",
+      "b3":           "Vos données sont conservées — projets et clients restent intacts",
+      "confirm":      "Rembourser et résilier",
+      "keep":         "Conserver l'abonnement",
+      "ok":           "Remboursé — l'argent est en cours de retour",
+      "failed":       "Échec du remboursement — veuillez réessayer"
+    },
+
     "updated": "Abonnement mis à jour",
 
     "modal": {
