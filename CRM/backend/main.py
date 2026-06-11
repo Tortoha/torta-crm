@@ -5779,13 +5779,6 @@ def _org_customers_shared(org_id) -> bool:
     row = db_one("SELECT customers_shared FROM crm_organizations WHERE id = %s", (org_id,))
     return bool(row and row.get("customers_shared"))
 
-def _org_project_ids(org_id) -> list[int]:
-    """All project IDs in an org — used for Auth Providers fan-out writes and
-    org-scoped customer queries."""
-    if not org_id:
-        return []
-    return [int(r["id"]) for r in db_all("SELECT id FROM crm_projects WHERE org_id=%s", (org_id,))]
-
 # ── SaaS billing — plan / usage / enforce_limit ──────────────────────
 # Phase 1 scaffold for the subscription system (Roadmap "Монетизация").
 # Every org has a `plan_slug` column defaulting to 'free' at creation; plan
@@ -9148,19 +9141,6 @@ def decrypt_credentials(token: str) -> dict[str, Any]:
     return out
 
 
-def mask_secret(value: str | None, keep: int = 4) -> str:
-    """Returns "••••••••1234" — only last `keep` chars exposed.
-
-    Use anywhere a secret would otherwise be in an API response.
-    Never includes the original value in the masked form's length.
-    """
-    if not value:
-        return ""
-    s = str(value)
-    if len(s) <= keep:
-        return "•" * len(s)
-    return "•" * 8 + s[-keep:]
-
 # ── Inlined: payment_providers (CRM-side: test_connection + create_refund) ──
 
 import base64
@@ -11550,20 +11530,6 @@ def _ensure_sku_ean13(cur, sku_id: int) -> str:
     cur.execute("UPDATE product_configurations_l2 SET barcode = %s WHERE id = %s",
                 (minted, sku_id))
     return minted
-
-
-def _format_ean_text(value: str, symbology: str) -> str:
-    """Format a barcode value as the standard human-readable layout for EAN-13
-    ("9 780201 379624"), EAN-8 ("1234 5678") or UPC-A ("0 12345 67890 5").
-    Returns the raw digit string for non-EAN symbologies."""
-    digits = ''.join(c for c in value if c.isdigit())
-    if symbology == "ean13" and len(digits) >= 13:
-        return f"{digits[0]} {digits[1:7]} {digits[7:13]}"
-    if symbology == "ean8"  and len(digits) >= 8:
-        return f"{digits[0:4]} {digits[4:8]}"
-    if symbology == "upca"  and len(digits) >= 12:
-        return f"{digits[0]} {digits[1:6]} {digits[6:11]} {digits[11]}"
-    return value
 
 
 def _decorate_ean_svg(svg: str, value: str, symbology: str) -> str:
@@ -15813,24 +15779,6 @@ def _sync_l2_stock(cur, sku_id):
         " WHERE id=%s",
         (sku_id, sku_id)
     )
-
-
-def _per_warehouse_stock(cur, sku_id):
-    cur.execute(
-        "SELECT w.id AS warehouse_id, w.name, w.code, w.is_default,"
-        "       COALESCE(ps.quantity, 0) AS quantity"
-        "  FROM warehouses w"
-        "  LEFT JOIN product_stock ps ON ps.warehouse_id = w.id AND ps.sku_id = %s"
-        " WHERE w.project_id = ("
-        "         SELECT p.project_id FROM product_configurations_l2 c"
-        "           JOIN product_configurations_l1 v ON c.variation_id = v.id"
-        "           JOIN products p                  ON v.product_id   = p.id"
-        "          WHERE c.id = %s)"
-        "   AND w.is_active = TRUE"
-        " ORDER BY w.is_default DESC, w.name ASC",
-        (sku_id, sku_id)
-    )
-    return [dict(r) for r in cur.fetchall()]
 
 
 _WH_STR_FIELDS = {
@@ -20832,15 +20780,6 @@ class UpdateBookingStatusRequest(BaseModel):
     status: str
 
 # ── Services ──────────────────────────────────────────────────────────────────
-
-def _service_with_staff(row: dict) -> dict:
-    if not row: return row
-    sids = db_all(
-        "SELECT staff_id FROM booking_staff_services WHERE service_id=%s",
-        (row["id"],)
-    )
-    row["staff_ids"] = [r["staff_id"] for r in sids]
-    return row
 
 @app.get("/api/booking/services")
 def booking_list_services(project_id: int = Query(...), user: dict = Depends(get_current_user)):
@@ -27774,87 +27713,6 @@ def _user_org_ids(user_id: int) -> list[int]:
         return sorted({int(r['id']) for r in own} | {int(r['org_id']) for r in mem if r.get('org_id')})
     except Exception:
         return []
-
-
-# RBAC visibility cache for presence — (viewer_id, project_id) → perms,
-# where perms is 'full' for owners, dict for members, or None for no access.
-_PRESENCE_RBAC_CACHE: dict = {}
-_PRESENCE_RBAC_TTL = 60
-
-def _viewer_project_perms(viewer_id: int, project_id):
-    """Return what viewer can do on this project. 'full' = owner / org-owner,
-    dict = role permissions, None = no access at all."""
-    if not project_id:
-        return 'full'   # no project = org-level page; share with anyone
-    try:
-        viewer_id = int(viewer_id); project_id = int(project_id)
-    except Exception:
-        return None
-    key = (viewer_id, project_id)
-    import time as _t
-    now = _t.time()
-    hit = _PRESENCE_RBAC_CACHE.get(key)
-    if hit and hit[1] > now:
-        return hit[0]
-    try:
-        # Project owner?
-        if db_one("SELECT 1 FROM crm_projects WHERE id=%s AND crm_user_id=%s",
-                  (project_id, viewer_id)):
-            _PRESENCE_RBAC_CACHE[key] = ('full', now + _PRESENCE_RBAC_TTL)
-            return 'full'
-        # Org owner?
-        if db_one("SELECT 1 FROM crm_projects p"
-                  "  JOIN crm_organizations o ON o.id = p.org_id"
-                  " WHERE p.id=%s AND o.owner_id=%s",
-                  (project_id, viewer_id)):
-            _PRESENCE_RBAC_CACHE[key] = ('full', now + _PRESENCE_RBAC_TTL)
-            return 'full'
-        # Team member with a role?
-        row = db_one("SELECT r.permissions FROM crm_team_members tm"
-                     "  JOIN crm_roles r ON r.id = tm.crm_role_id"
-                     " WHERE tm.project_id=%s AND tm.crm_user_id=%s",
-                     (project_id, viewer_id))
-    except Exception:
-        row = None
-    perms = (row or {}).get('permissions') if isinstance(row, dict) else None
-    perms = perms if isinstance(perms, dict) else None
-    _PRESENCE_RBAC_CACHE[key] = (perms, now + _PRESENCE_RBAC_TTL)
-    return perms
-
-
-def _page_from_route(route: str) -> str:
-    """Map a pathname to the permission page key used in role JSONB."""
-    if not route:
-        return ''
-    m = re.match(r"^/project/[^/]+/?([^/?]*)", route)
-    if m:
-        seg = m.group(1) or ''
-        return {
-            '': 'overview',
-            'products': 'products', 'orders': 'orders', 'customers': 'customers',
-            'booking': 'booking', 'bookings': 'booking', 'chat': 'chat',
-            'analytics': 'analytics', 'alerts': 'alerts', 'targets': 'goals',
-            'goals': 'goals', 'emails': 'emails',
-            'authentication': 'auth_providers', 'integrations': 'integrations',
-            'documents': 'documents', 'settings': 'settings', 'api': 'api',
-        }.get(seg, seg)
-    return ''
-
-
-def _can_view_presence(viewer_id, project_id, page):
-    """Whether viewer should receive the sender's presence frame at all.
-    Sender is on (project_id, page); if viewer can't see that location the
-    frame is dropped silently — they shouldn't even know the project exists."""
-    perms = _viewer_project_perms(viewer_id, project_id)
-    if perms is None:
-        return False
-    if perms == 'full':
-        return True
-    # Role dict — page-level gate. Empty page means "project root", which
-    # any team member with at least one permission sees.
-    if not page:
-        return bool(perms)
-    return _level_ge(perms.get(page), 'view')
 
 
 # api_key → {id, name, org_id, ts}. Lets presence frames resolve project

@@ -33,9 +33,6 @@ def _utcnow():
 def s3_delete_url(url: str, prefix: str) -> None:
     pass
 
-def s3_delete_prefix(prefix: str) -> None:
-    pass
-
 
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2.extras import RealDictCursor
@@ -2730,14 +2727,6 @@ def _pg_kv_delete(key: str) -> None:
         cur.execute("DELETE FROM crm_kv_store WHERE key = %s", (key,))
         conn.commit()
 
-def _pg_kv_exists(key: str) -> bool:
-    row = db_one(
-        "SELECT 1 FROM crm_kv_store "
-        " WHERE key = %s AND (expires_at IS NULL OR expires_at > NOW())",
-        (key,)
-    )
-    return bool(row)
-
 def _pg_kv_incr(key: str, ttl=None) -> int:
     with db_cursor() as (conn, cur):
         if ttl:
@@ -2826,16 +2815,6 @@ def _kv_delete(key: str) -> None:
     with _mem_lock:
         _mem.pop(key, None)
         _mem_expires.pop(key, None)
-
-def _kv_exists(key: str) -> bool:
-    if _redis:
-        return bool(_redis.exists(key))
-    if _pg_kv_active:
-        try:    return _pg_kv_exists(key)
-        except Exception: pass
-    with _mem_lock:
-        _mem_purge_expired()
-        return key in _mem
 
 def _kv_incr(key: str, ttl: int | None = None) -> int:
     """
@@ -5077,10 +5056,6 @@ def _load_fernet() -> Fernet | None:
         return None
 
 
-def is_encryption_configured() -> bool:
-    return _load_fernet() is not None
-
-
 def encrypt_credentials(data: dict[str, Any]) -> str:
     """Serialize a credentials dict to JSON, encrypt with Fernet, return as str.
 
@@ -5124,19 +5099,6 @@ def decrypt_credentials(token: str) -> dict[str, Any]:
         raise ValueError("Decrypted payload is not a dict")
     return out
 
-
-def mask_secret(value: str | None, keep: int = 4) -> str:
-    """Returns "••••••••1234" — only last `keep` chars exposed.
-
-    Use anywhere a secret would otherwise be in an API response.
-    Never includes the original value in the masked form's length.
-    """
-    if not value:
-        return ""
-    s = str(value)
-    if len(s) <= keep:
-        return "•" * len(s)
-    return "•" * 8 + s[-keep:]
 
 # ── Inlined: payment_providers (External-side: create_intent + webhook handling) ──
 
