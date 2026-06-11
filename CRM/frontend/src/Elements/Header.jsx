@@ -295,7 +295,16 @@ function ProjectSwitcher({ project }) {
         body: JSON.stringify({ name, frontend_url: url, timezone: browserTz }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.detail || t('header.form.error')); return; }
+      if (!res.ok) {
+        // 402 plan-limit is surfaced by the global PlanLimitModal — do NOT also
+        // render the structured detail OBJECT inline (that throws React #31 →
+        // white screen). Other errors show the string detail (or a generic msg).
+        if (res.status !== 402) {
+          const d = data && data.detail;
+          setErr(typeof d === 'string' ? d : t('header.form.error'));
+        }
+        return;
+      }
       setProjects(prev => [data, ...prev]);
       closeModal();
       navigate(`/project/${data.api_key}`);

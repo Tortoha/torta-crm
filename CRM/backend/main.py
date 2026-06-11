@@ -8532,16 +8532,34 @@ def _paddle_cancel_subscription(sub_id: str, effective_from: str = "immediately"
 
 
 def _paddle_refund_transaction(txn_id: str, reason: str = "Customer refund") -> bool:
-    """Full refund of a Paddle transaction via POST /adjustments. Paddle auto-approves
-    refunds ≤ $400 on a verified account with a sufficient balance."""
+    """Full refund of a Paddle transaction via POST /adjustments. Paddle's adjustments
+    API requires the per-line-item ids (txnitm_…) — a top-level type=full is NOT valid
+    — so we fetch the transaction first and refund every line item with type=full.
+    Paddle auto-approves refunds ≤ $400 on a verified account with sufficient balance."""
     if not (PADDLE_API_KEY and txn_id):
         return False
-    r = _http_request(
-        "POST", f"{_paddle_saas_api_base()}/adjustments",
-        headers=_paddle_saas_headers(),
-        body=json.dumps({"action": "refund", "type": "full",
-                         "transaction_id": txn_id, "reason": (reason or "")[:255]}).encode("utf-8"),
-    )
+    # 1) Fetch the transaction to get its line-item ids (required by /adjustments).
+    tr = _http_request("GET", f"{_paddle_saas_api_base()}/transactions/{txn_id}",
+                       headers=_paddle_saas_headers())
+    if tr["status"] >= 400 or tr["status"] == 0:
+        print(f"[paddle/refund] txn={txn_id} fetch HTTP {tr['status']} body={tr['body']!r}")
+        return False
+    tdata = (tr["body"] or {}).get("data") or {}
+    line_items = ((tdata.get("details") or {}).get("line_items")) or []
+    item_ids = [li.get("id") for li in line_items if isinstance(li, dict) and li.get("id")]
+    if not item_ids:
+        print(f"[paddle/refund] txn={txn_id} no line-item ids; details={tdata.get('details')!r}")
+        return False
+    # 2) Refund every line item in full.
+    payload = {
+        "action": "refund",
+        "transaction_id": txn_id,
+        "reason": (reason or "")[:255],
+        "items": [{"item_id": iid, "type": "full"} for iid in item_ids],
+    }
+    r = _http_request("POST", f"{_paddle_saas_api_base()}/adjustments",
+                      headers=_paddle_saas_headers(),
+                      body=json.dumps(payload).encode("utf-8"))
     if r["status"] >= 400 or r["status"] == 0:
         print(f"[paddle/refund] txn={txn_id} HTTP {r['status']} body={r['body']!r}")
         return False
