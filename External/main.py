@@ -5401,7 +5401,7 @@ def _compute_cart_total(cursor, project_id: int, user_id: int,
         return {"ok": False, "error": "Cart is empty"}
 
     cursor.execute(
-        "SELECT ci.quantity, ci.selected_modifier_item_ids,"
+        "SELECT ci.configuration_id, ci.quantity, ci.selected_modifier_item_ids,"
         "       COALESCE(pc.price, pv.price) AS price"
         "  FROM cart_items ci"
         "  JOIN product_configurations_l2 pc ON ci.configuration_id = pc.id"
@@ -5423,13 +5423,29 @@ def _compute_cart_total(cursor, project_id: int, user_id: int,
         for r in cursor.fetchall():
             mod_delta[r["id"]] = float(r["price_delta"] or 0)
 
+    # Pricing layers MUST match place_order(): base → tier (wholesale) → sale →
+    # modifiers. The old version used only the base price, so init-payment charged
+    # the provider the undiscounted total while POST /orders validated the tier/sale
+    # total — the amounts disagreed and checkout 409'd ("Cart total changed").
+    from datetime import timezone as _tz
+    _now = datetime.now(_tz.utc)
+    _pairs = [(r["configuration_id"], r["quantity"]) for r in rows if r.get("configuration_id")]
+    _ids   = [s for s, _ in _pairs]
+    tier_by_sku = _resolve_unit_prices_bulk(cursor, _pairs)
+    sale_by_sku = _resolve_sku_sales_bulk(cursor, _ids, _now)
+
     subtotal = 0.0
     items_count = 0
     for r in rows:
-        unit_price = float(r["price"] or 0)
+        sku_id = r.get("configuration_id")
+        unit   = tier_by_sku.get(sku_id, float(r["price"] or 0)) if sku_id else float(r["price"] or 0)
+        if sku_id:
+            st, sv, _, _ = sale_by_sku.get(sku_id, (None, None, None, None))
+            if st:
+                unit = _apply_sale(unit, st, sv)
         for mid in (r["selected_modifier_item_ids"] or []):
-            unit_price += mod_delta.get(mid, 0.0)
-        subtotal += unit_price * int(r["quantity"])
+            unit += mod_delta.get(mid, 0.0)
+        subtotal += unit * int(r["quantity"])
         items_count += int(r["quantity"])
 
     cursor.execute(
@@ -5437,29 +5453,57 @@ def _compute_cart_total(cursor, project_id: int, user_id: int,
         (project_id,)
     )
     s = cursor.fetchone()
-    shipping_cost  = float(s["shipping_cost"]) if s else 0.0
-    free_threshold = float(s["free_shipping_threshold"]) if s else 0.0
+    shipping_cost  = float((s or {}).get("shipping_cost") or 0)
+    free_threshold = float((s or {}).get("free_shipping_threshold") or 0)
     final_shipping = 0.0 if (delivery_method == "postal" or subtotal >= free_threshold) else shipping_cost
 
+    # Promo — evaluate exactly like place_order (uppercased code, validity window,
+    # usage / per-user limits, category restriction, max_discount cap), but READ-ONLY:
+    # we never increment times_used here. Any divergence re-introduces the 409.
     discount = 0.0
     if promo_code:
         cursor.execute(
-            "SELECT discount_type, discount_value, min_order_amount, is_active"
-            "  FROM promo_codes WHERE code=%s AND project_id=%s",
-            (promo_code.strip(), project_id)
+            "SELECT * FROM promo_codes WHERE code=%s AND project_id=%s AND is_active=TRUE",
+            (promo_code.strip().upper(), project_id)
         )
-        p = cursor.fetchone()
-        if p and p["is_active"] and subtotal >= float(p["min_order_amount"] or 0):
-            # promo_codes.discount_type stores 'percentage' or 'fixed' (see
-            # CRM migration). The old check for 'percent' never matched, so
-            # init-payment used to compute discount=0 for percent codes
-            # while POST /orders applied the discount correctly — totals
-            # disagreed and the payment-amount validation rejected the order.
-            if p["discount_type"] == "percentage":
-                discount = subtotal * float(p["discount_value"] or 0) / 100.0
-            else:
-                discount = float(p["discount_value"] or 0)
-            discount = max(0.0, min(discount, subtotal))
+        promo = cursor.fetchone()
+        if promo:
+            def _aware(d):
+                if d is None: return None
+                return d if getattr(d, 'tzinfo', None) else d.replace(tzinfo=_tz.utc)
+            vf = _aware(promo.get("valid_from"))
+            vu = _aware(promo.get("valid_until"))
+            per_user_ok = True
+            if promo.get("per_user_limit"):
+                cursor.execute(
+                    "SELECT COUNT(*) AS n FROM promo_code_uses WHERE promo_id=%s AND user_id=%s",
+                    (promo["id"], user_id)
+                )
+                if int((cursor.fetchone() or {}).get("n") or 0) >= int(promo["per_user_limit"]):
+                    per_user_ok = False
+            cat_ok = True
+            cat_ids = list(promo.get("category_ids") or [])
+            if cat_ids:
+                cursor.execute(
+                    "SELECT DISTINCT p.category_id FROM cart_items ci"
+                    "  JOIN products p ON ci.product_id = p.id"
+                    " WHERE ci.cart_id=%s",
+                    (cart["id"],)
+                )
+                cart_cats = {r["category_id"] for r in cursor.fetchall()}
+                if None in cart_cats or not cart_cats.issubset(set(cat_ids)):
+                    cat_ok = False
+            if (per_user_ok and cat_ok and
+                (not vf or vf <= _now) and (not vu or vu >= _now) and
+                subtotal >= float(promo["min_order_amount"] or 0) and
+                (not promo["usage_limit"] or promo["times_used"] < promo["usage_limit"])):
+                dv = float(promo["discount_value"] or 0)
+                if promo["discount_type"] == "percentage":
+                    discount = subtotal * (dv / 100)
+                    if promo["max_discount"]:
+                        discount = min(discount, float(promo["max_discount"] or 0))
+                else:
+                    discount = dv
 
     total = round(subtotal + final_shipping - discount, 2)
     return {
