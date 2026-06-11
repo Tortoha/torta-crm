@@ -317,7 +317,15 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
         body: JSON.stringify({ name: trimName, frontend_url: trimUrl, timezone: browserTz }),
       });
       const data = await res.json();
-      if (!res.ok) return setErr(data.detail || t('org.projects.error'));
+      if (!res.ok) {
+        // 402 plan-limit → global PlanLimitModal handles it; never render the
+        // structured detail OBJECT inline (React #31 → white screen).
+        if (res.status !== 402) {
+          const d = data && data.detail;
+          setErr(typeof d === 'string' ? d : t('org.projects.error'));
+        }
+        return;
+      }
       onCreated(data); onClose();
     } catch { setErr(t('common.networkError')); }
     finally   { setSaving(false); }

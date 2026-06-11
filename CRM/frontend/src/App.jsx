@@ -22,6 +22,7 @@ installPlanLimitInterceptor();
 // pages wrapped in a Layout. Otherwise a user sitting on /dashboard would
 // be invisible to others on the Team page.
 import PresenceBoot from './Elements/PresenceBoot.jsx';
+import ErrorBoundary from './Elements/ErrorBoundary.jsx';
 
 // ── Страницы — lazy (каждая в отдельном chunk) ──
 const Home          = lazy(() => import('./Home.jsx'));
@@ -110,6 +111,7 @@ function App() {
       {/* Opens the presence WebSocket once /api/me confirms a logged-in user.
           Lives outside Routes so Dashboard / Invite / etc. also report online. */}
       <PresenceBoot />
+      <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/"                          element={<Home />} />
@@ -206,6 +208,7 @@ function App() {
           </Route>
         </Routes>
       </Suspense>
+      </ErrorBoundary>
     </Router>
   );
 }
