@@ -1,10 +1,12 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Plus, Trash, CaretDown, ArrowCounterClockwise, DotsSixVertical, ArrowsOut, X, MagicWand, CloudArrowUp, Image as ImageIcon } from '@phosphor-icons/react';
-import CodeMirror from '@uiw/react-codemirror';
 import { json as cmJson } from '@codemirror/lang-json';
+// CodeMirror is only used for the JSON custom-fields editor here — load it on
+// demand so it stays out of the default product-overview route chunk.
+const CodeMirror = lazy(() => import('@uiw/react-codemirror'));
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -1130,23 +1132,25 @@ function CfJsonInput({ value, onChange }) {
           <ArrowsOut weight="bold" /> {t('productDetail.customFields.json.expand')}
         </button>
       </div>
-      <CodeMirror
-        value={value || ''}
-        onChange={onChange}
-        extensions={CF_JSON_EXTENSIONS}
-        basicSetup={{
-          lineNumbers: false,
-          foldGutter: false,
-          highlightActiveLine: false,
-          highlightActiveLineGutter: false,
-          autocompletion: false,
-          searchKeyMap: false,
-        }}
-        placeholder='{"key": "value"}'
-        minHeight="60px"
-        maxHeight="240px"
-        className="cf-json-cm"
-      />
+      <Suspense fallback={<div className="cf-json-cm" style={{ minHeight: '60px' }} />}>
+        <CodeMirror
+          value={value || ''}
+          onChange={onChange}
+          extensions={CF_JSON_EXTENSIONS}
+          basicSetup={{
+            lineNumbers: false,
+            foldGutter: false,
+            highlightActiveLine: false,
+            highlightActiveLineGutter: false,
+            autocompletion: false,
+            searchKeyMap: false,
+          }}
+          placeholder='{"key": "value"}'
+          minHeight="60px"
+          maxHeight="240px"
+          className="cf-json-cm"
+        />
+      </Suspense>
       {expanded && createPortal(
         <CfJsonModal value={value || ''} onChange={onChange} onClose={() => setExpanded(false)} />,
         document.body
@@ -1194,20 +1198,22 @@ function CfJsonModal({ value, onChange, onClose }) {
           </button>
         </div>
         <div className="cf-json-modal-body">
-          <CodeMirror
-            value={draft}
-            onChange={setDraft}
-            extensions={CF_JSON_EXTENSIONS}
-            basicSetup={{
-              lineNumbers: true,
-              foldGutter: true,
-              highlightActiveLine: true,
-              autocompletion: false,
-            }}
-            placeholder='{"key": "value"}'
-            height="100%"
-            className="cf-json-cm cf-json-cm--modal"
-          />
+          <Suspense fallback={<div className="cf-json-cm cf-json-cm--modal" />}>
+            <CodeMirror
+              value={draft}
+              onChange={setDraft}
+              extensions={CF_JSON_EXTENSIONS}
+              basicSetup={{
+                lineNumbers: true,
+                foldGutter: true,
+                highlightActiveLine: true,
+                autocompletion: false,
+              }}
+              placeholder='{"key": "value"}'
+              height="100%"
+              className="cf-json-cm cf-json-cm--modal"
+            />
+          </Suspense>
         </div>
         <div className="cf-json-modal-foot">
           <button type="button" className="crm-submit-btn auth-btn-secondary" onClick={onClose}>

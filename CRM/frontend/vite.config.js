@@ -8,10 +8,14 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          // React core — отдельный chunk, кэшируется долго
+          // React core — separate, long-cache chunk.
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          // Иконки — самая тяжёлая зависимость
-          'vendor-icons': ['@phosphor-icons/react'],
+          // NB: @phosphor-icons/react is deliberately NOT pinned to a manual chunk.
+          // Pinning it (array OR function form) consolidates every used icon into one
+          // eagerly-loaded chunk (~480 kB on first paint). Leaving it to Rollup's
+          // default chunking lets route-exclusive icons ride along in their own lazy
+          // route chunks, so only first-paint/shared icons stay eager — measured
+          // ~252 kB (~51 kB gzip) smaller initial load.
         },
       },
     },
@@ -19,6 +23,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 400,
   },
   optimizeDeps: {
-    include: ['react', 'react-dom', 'react-router-dom', '@phosphor-icons/react'],
+    include: ['react', 'react-dom', 'react-router-dom'],
   },
 })

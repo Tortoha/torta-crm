@@ -17685,23 +17685,31 @@ def _apply_stock_transition(cur, order_id: int, project_id: int,
     # Pick a warehouse per SKU. Without `_pick_wh_for_sku` available on this
     # side, we choose any warehouse that holds stock for the SKU; fall back
     # to the project's default warehouse.
+    # Pre-load a candidate warehouse for every SKU in this order in ONE query
+    # (was: 1-2 queries per item, executed under the order-row FOR UPDATE lock,
+    # lengthening the critical section on every status change).
+    _sku_id_list = [int(it["sku_id"]) for it in items if it["sku_id"] is not None]
+    _wh_by_sku: dict = {}
+    if _sku_id_list:
+        cur.execute(
+            "SELECT DISTINCT ON (sku_id) sku_id, warehouse_id FROM product_stock"
+            " WHERE sku_id = ANY(%s) AND (quantity > 0 OR reserved_quantity > 0)"
+            " ORDER BY sku_id, warehouse_id",
+            (_sku_id_list,)
+        )
+        _wh_by_sku = {r["sku_id"]: r["warehouse_id"] for r in cur.fetchall()}
+    cur.execute(
+        "SELECT id FROM warehouses"
+        " WHERE project_id=%s AND is_active=TRUE"
+        " ORDER BY is_default DESC NULLS LAST, id ASC LIMIT 1",
+        (project_id,)
+    )
+    _dwrow = cur.fetchone()
+    _default_wh_id = _dwrow["id"] if _dwrow else None
+
     def _pick_wh(sku_id: int):
-        cur.execute(
-            "SELECT warehouse_id FROM product_stock"
-            " WHERE sku_id=%s AND (quantity > 0 OR reserved_quantity > 0)"
-            " LIMIT 1",
-            (sku_id,)
-        )
-        row = cur.fetchone()
-        if row: return row["warehouse_id"]
-        cur.execute(
-            "SELECT id FROM warehouses"
-            " WHERE project_id=%s AND is_active=TRUE"
-            " ORDER BY is_default DESC NULLS LAST, id ASC LIMIT 1",
-            (project_id,)
-        )
-        row = cur.fetchone()
-        return row["id"] if row else None
+        # Warehouse that holds stock for the SKU, else the project default, else None.
+        return _wh_by_sku.get(sku_id, _default_wh_id)
 
     cur.execute("SET LOCAL torta.skip_audit = 'on'")
     for it in items:
@@ -20092,10 +20100,16 @@ def list_messages(conv_id: int,
 
 
 @app.post("/api/chat/conversations/{conv_id}/messages")
-async def send_message(conv_id: int,
-                       body: ChatSendRequest,
-                       project_id: int = Query(...),
-                       user: dict = Depends(get_current_user)):
+def send_message(conv_id: int,
+                 body: ChatSendRequest,
+                 project_id: int = Query(...),
+                 user: dict = Depends(get_current_user)):
+    # NOTE: deliberately a plain `def`, not `async def`. The body makes blocking
+    # synchronous calls (provider HTTP via urllib with 15-30s timeouts, psycopg2
+    # DB) and has no `await`. As a sync path operation FastAPI runs it in the
+    # threadpool (widened to 100 workers), so a hung provider can't freeze the
+    # event loop — and with it every other tenant's request, the SSE order
+    # stream, and all WebSocket heartbeats.
     require_page_auto(user, project_id)
     text = (body.text or "").strip()
     if not text:
