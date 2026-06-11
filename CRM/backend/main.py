@@ -8628,12 +8628,19 @@ def refund_org_subscription(org_id: int, user: dict = Depends(get_current_user))
             raise HTTPException(409, "Could not read the first payment date")
         if datetime.now(_tz.utc) > fbd + _td(days=14):
             raise HTTPException(409, "The 14-day money-back window has passed")
-        # Latest paid transaction for this subscription = what we refund.
+        # Latest REAL paid transaction for this subscription = what we refund.
+        # EXCLUDE card-update transactions (origin=subscription_payment_method_change):
+        # after the user changes their card, the newest transaction is the $0
+        # card-capture one, which Paddle can't refund → the refund 502'd. Fetch a
+        # page and pick the newest ACTUAL payment instead of blindly the newest txn.
+        # (Paddle always refunds to the original payment method of that transaction.)
         rt = _http_request("GET",
             f"{_paddle_saas_api_base()}/transactions?subscription_id={sub_id}"
-            f"&status=billed,paid,completed&per_page=1&order_by=billed_at[desc]",
+            f"&status=billed,paid,completed&per_page=20&order_by=billed_at[desc]",
             headers=_paddle_saas_headers())
-        txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
+        all_txns = (((rt["body"] or {}).get("data") or []) if rt["status"] < 400 else [])
+        txns = [t for t in all_txns if isinstance(t, dict)
+                and (t.get("origin") or "") != "subscription_payment_method_change"]
         if not txns:
             raise HTTPException(409, "No paid transaction found to refund")
         # CLAIM the one-shot atomically BEFORE the irreversible provider refund.
