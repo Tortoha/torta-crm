@@ -435,13 +435,18 @@ export default function OrgBilling() {
       const r = await fetch(`${API_BASE}/api/orgs/${org.id}/billing/refund`, {
         method: 'POST', credentials: 'include',
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        // Surface the backend reason (incl. the real Paddle error) instead of a
+        // blank "try again" — otherwise refund failures are undiagnosable.
+        const body = await r.json().catch(() => ({}));
+        throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`);
+      }
       setRefundOpen(false);
       setToast({ kind: 'ok', msg: t('billing.refund.ok', { defaultValue: 'Refunded — the money is on its way back' }) });
       setTimeout(reload, 1800);
     } catch (e) {
       console.error('[billing/refund]', e);
-      setToast({ kind: 'err', msg: t('billing.refund.failed', { defaultValue: 'Refund failed — try again' }) });
+      setToast({ kind: 'err', msg: e.message || t('billing.refund.failed', { defaultValue: 'Refund failed — try again' }) });
     } finally {
       setBusy(false);
     }
