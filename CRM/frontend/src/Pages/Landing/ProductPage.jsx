@@ -79,7 +79,7 @@ export default function ProductPage({ slug: slugProp }) {
   useSeo({
     title: cfg ? tp('seo.title', { defaultValue: `${tp('hero.eyebrow')} — Torta CRM` }) : 'Torta CRM',
     description: cfg ? tp('seo.description', { defaultValue: tp('hero.lead') }) : '',
-    canonical: `https://tortacrm.com/${slug}`,
+    path: slug,
   });
 
   // Unknown slug → home.

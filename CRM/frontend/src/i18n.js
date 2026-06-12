@@ -71,4 +71,15 @@ export async function syncLang(lang) {
   localStorage.setItem(LS_KEY, lang);
 }
 
+// Apply a language to the CURRENT view WITHOUT persisting it. Used by the public
+// /{lang}/ SEO routes so that visiting (or sharing) a localized landing page
+// never overwrites a logged-in user's saved console language — that lives in
+// localStorage and is only changed via syncLang (from Settings). The URL alone
+// drives the public page's language, which is exactly what a crawler needs.
+export async function applyLang(lang) {
+  if (!lang || !SUPPORTED_LANGS.includes(lang)) return;
+  await ensureLang(lang);
+  if (i18n.language !== lang) i18n.changeLanguage(lang);
+}
+
 export default i18n;

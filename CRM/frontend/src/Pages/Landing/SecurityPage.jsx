@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useSeo } from '../../Utils/useSeo.js';
 import {
   Lock, Cube, Key, UsersThree,
   Cloud, EnvelopeSimple, Shield, FloppyDisk,
@@ -61,9 +62,13 @@ export default function SecurityPage() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    document.title = t('security.meta.title');
-  }, [t]);
+  // Locale-aware title + description + hreflang (the security copy is fully
+  // translated, so /ru/security etc. are real localized pages).
+  useSeo({
+    title: t('security.meta.title'),
+    description: t('security.hero.subtitle'),
+    path: 'security',
+  });
 
   // Pull contact email from the central legal entity block so we never
   // hard-code addresses in components — single source of truth.

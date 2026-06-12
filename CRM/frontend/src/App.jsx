@@ -1,5 +1,5 @@
-import { lazy, Suspense } from 'react';
-import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
+import { BrowserRouter as Router, Route, Routes, Navigate, Outlet } from 'react-router-dom';
 import './Style/App.css';
 
 // ── Layouts (загружаются сразу — нужны как обёртки) ──
@@ -27,6 +27,23 @@ import ErrorBoundary from './Elements/ErrorBoundary.jsx';
 // No language switching — English is the default for everyone; multi-language
 // SEO is handled via per-locale URLs + hreflang, not geo.
 import CountryTracker from './Elements/CountryTracker.jsx';
+import { applyLang } from './i18n.js';
+
+// Public marketing pages exist in every language at /{lang}/… for SEO. Slugs are
+// inlined (NOT imported from product/data.js) so App's main bundle never pulls in
+// that icon module. Legal pages (terms/privacy/refund) stay English-only.
+const SEO_LANGS = ['ru', 'kk', 'de', 'es', 'fr', 'pt'];
+const PUBLIC_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies', 'reviews'];
+
+// Switches the UI language for a localized public subtree (/ru/…), then renders
+// the matched page. applyLang loads the target bundle on demand and changes the
+// view language WITHOUT persisting it (so it never clobbers a logged-in user's
+// saved console language). Google waits for JS, so a crawler at /ru/accounting
+// indexes the Russian page.
+function LangScope({ lang }) {
+  useEffect(() => { applyLang(lang); }, [lang]);
+  return <Outlet />;
+}
 
 // ── Страницы — lazy (каждая в отдельном chunk) ──
 const Home          = lazy(() => import('./Home.jsx'));
@@ -128,10 +145,25 @@ function App() {
           <Route path="/security"                  element={<SecurityPage />} />
           <Route path="/developers"                element={<DevelopersPage />} />
           {/* Product feature pages at top-level slugs (Supabase-style: /database,
-              /auth, …). Mirrors PRODUCT_SLUGS in Pages/Landing/product/data.js —
-              inlined here so App's main bundle doesn't pull in that icon module. */}
-          {['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies', 'reviews'].map(s => (
+              /auth, …). PUBLIC_SLUGS is inlined at module scope so App's main
+              bundle doesn't pull in product/data.js's icon module. */}
+          {PUBLIC_SLUGS.map(s => (
             <Route key={s} path={`/${s}`} element={<ProductPage slug={s} />} />
+          ))}
+          {/* The same public pages under each locale prefix (/ru/…, /de/…) for
+              multilingual SEO. LangScope switches the UI language for the subtree;
+              useSeo emits hreflang tags cross-linking every locale. Legal pages
+              (terms/privacy/refund) stay English-only at the root. */}
+          {SEO_LANGS.map(lang => (
+            <Route key={lang} path={`/${lang}`} element={<LangScope lang={lang} />}>
+              <Route index             element={<Home />} />
+              <Route path="pricing"    element={<Pricing />} />
+              <Route path="security"   element={<SecurityPage />} />
+              <Route path="developers" element={<DevelopersPage />} />
+              {PUBLIC_SLUGS.map(s => (
+                <Route key={s} path={s} element={<ProductPage slug={s} />} />
+              ))}
+            </Route>
           ))}
           <Route path="/login"                     element={<Login />} />
           <Route path="/login/verification"        element={<Verification />} />
