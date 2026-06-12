@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { syncLang } from '../i18n.js';
+import { API_BASE } from '../api.js';
 import { resolveGeoLanguage } from '../Utils/geoLang.js';
 import '../Style/GeoLang.css';
 
@@ -23,7 +24,18 @@ export default function GeoLangBanner() {
   useEffect(() => {
     let alive = true;
     resolveGeoLanguage().then(res => {
-      if (alive && res && res.pickerKZ) setShowKZ(true);
+      if (!alive || !res) return;
+      if (res.pickerKZ) setShowKZ(true);
+      // Best-effort: report the visitor's current country so a logged-in user's
+      // last_country follows them if they relocate (anonymous → 401, ignored).
+      if (res.country) {
+        fetch(`${API_BASE}/api/me/country`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ country: res.country }),
+        }).catch(() => {});
+      }
     });
     return () => { alive = false; };
   }, []);

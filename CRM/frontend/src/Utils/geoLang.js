@@ -49,11 +49,14 @@ export async function detectCountry() {
 // 'crm_lang', so this never runs twice) and reports whether to show the KZ
 // picker. No-op when the visitor already has a language preference.
 export async function resolveGeoLanguage() {
-  if (typeof localStorage === 'undefined') return { skip: true };
-  if (localStorage.getItem('crm_lang')) return { skip: true };   // honour an existing choice
-  const cc = await detectCountry();
+  const cc = await detectCountry();   // always detect — the country is also reported to the backend
   if (!cc) return { country: null, pickerKZ: false };
+  // Only auto-set the language on a true first visit; never override an
+  // existing choice (a returning visitor, or a logged-in user whose language
+  // is re-applied from /api/me).
+  const hasPref = typeof localStorage !== 'undefined' && localStorage.getItem('crm_lang');
+  if (hasPref) return { country: cc, pickerKZ: false };
   const { lang, pickerKZ } = countryToLang(cc);
-  await syncLang(lang);   // sets 'crm_lang' too → guard above blocks re-runs
+  await syncLang(lang);   // sets 'crm_lang' too → won't auto-set again
   return { country: cc, pickerKZ: !!pickerKZ };
 }

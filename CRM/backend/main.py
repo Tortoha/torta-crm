@@ -7414,6 +7414,31 @@ def get_me(user: dict = Depends(get_current_user)):
     return u
 
 
+class CountryReport(BaseModel):
+    country: str
+
+
+@app.post("/api/me/country")
+def report_my_country(req: CountryReport, user: dict = Depends(get_current_user)):
+    """Refresh the signed-in user's last_country from the visitor's CURRENT
+    country. The frontend reads the country from Cloudflare's same-origin
+    /cdn-cgi/trace (accurate, no rate limit) and posts it here. We update only
+    when it actually changes, so the admin "where are our users" map follows
+    people who relocate. signup_country stays frozen at registration; this is
+    the live one. Anonymous callers get 401 from get_current_user and are
+    harmlessly ignored by the fire-and-forget client."""
+    cc = (req.country or "").strip().upper()
+    if len(cc) != 2 or not cc.isalpha():
+        return {"ok": False}
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "UPDATE crm_users SET last_country=%s "
+            "WHERE id=%s AND last_country IS DISTINCT FROM %s",
+            (cc, user["id"], cc))
+        conn.commit()
+    return {"ok": True}
+
+
 @app.post("/api/me/accept-terms")
 def accept_terms(request: Request, user: dict = Depends(get_current_user)):
     """One-shot consent recorder for Google-OAuth users (or any user with
