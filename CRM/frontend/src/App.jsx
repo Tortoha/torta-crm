@@ -23,9 +23,10 @@ installPlanLimitInterceptor();
 // be invisible to others on the Team page.
 import PresenceBoot from './Elements/PresenceBoot.jsx';
 import ErrorBoundary from './Elements/ErrorBoundary.jsx';
-// First-visit geo → UI language (+ kk/ru/en picker in Kazakhstan). No-op once
-// the visitor has a language preference, so it never overrides a real choice.
-import GeoLangBanner from './Elements/GeoLangBanner.jsx';
+// Best-effort country tracking (keeps a logged-in user's last_country current).
+// No language switching — English is the default for everyone; multi-language
+// SEO is handled via per-locale URLs + hreflang, not geo.
+import CountryTracker from './Elements/CountryTracker.jsx';
 
 // ── Страницы — lazy (каждая в отдельном chunk) ──
 const Home          = lazy(() => import('./Home.jsx'));
@@ -114,9 +115,8 @@ function App() {
       {/* Opens the presence WebSocket once /api/me confirms a logged-in user.
           Lives outside Routes so Dashboard / Invite / etc. also report online. */}
       <PresenceBoot />
-      {/* Sets the UI language from the visitor's country on a first anonymous
-          visit, and shows a kk/ru/en picker in Kazakhstan. */}
-      <GeoLangBanner />
+      {/* Keeps a logged-in user's last_country current (no language switching). */}
+      <CountryTracker />
       <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
