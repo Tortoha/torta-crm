@@ -13,6 +13,15 @@
     "nav": {
       "product": "Product",
       "name": {
+        "developers": "API & SDK",
+        "analytics": "Analytics",
+        "accounting": "Accounting export",
+        "pos": "Point of sale",
+        "multi-store": "Multi-store",
+        "products": "Products",
+        "booking": "Booking",
+        "chat": "Customer chat",
+        "digital": "Digital products",
         "database": "Database",
         "auth": "Auth",
         "storage": "Storage",
@@ -21,6 +30,15 @@
         "realtime": "Realtime"
       },
       "tagline": {
+        "developers": "Build on the platform",
+        "analytics": "Reports & insights",
+        "accounting": "Export to 1C, QuickBooks…",
+        "pos": "In-store + online",
+        "multi-store": "Many stores, one account",
+        "products": "Catalog, stock & pricing",
+        "booking": "Services, staff & calendar",
+        "chat": "All messengers, one inbox",
+        "digital": "Sell files & downloads",
         "database": "Structured store data",
         "auth": "Customer sign-in",
         "storage": "Media & files",
@@ -31,6 +49,10 @@
     },
 
     "database": {
+      "seo": {
+        "title": "Order, inventory & product management — Torta CRM",
+        "description": "Manage products, orders, customers, inventory and bookings in one place — multi-warehouse stock, batches, low-stock alerts and live analytics. No spreadsheets."
+      },
       "hero": {
         "eyebrow": "Database",
         "title": "Every order, customer and product — structured and yours",
@@ -66,6 +88,10 @@
     },
 
     "auth": {
+      "seo": {
+        "title": "Customer login & accounts for your store — Torta CRM",
+        "description": "Let shoppers sign in with a one-time email or SMS code, or 17 social logins like Google and Apple. Guest checkout, multi-device sessions and password reset, built in."
+      },
       "hero": {
         "eyebrow": "Authentication",
         "title": "Sign-in your customers actually trust",
@@ -101,6 +127,10 @@
     },
 
     "storage": {
+      "seo": {
+        "title": "Sell digital downloads & host product media — Torta CRM",
+        "description": "Upload product photos and sell digital downloads — ZIPs, audio, video, e-books, almost any file. Secure direct uploads, per-plan storage and live usage tracking."
+      },
       "hero": {
         "eyebrow": "Storage",
         "title": "Store the images and files your store needs",
@@ -136,6 +166,10 @@
     },
 
     "automations": {
+      "seo": {
+        "title": "Webhooks, integrations & automation — Torta CRM",
+        "description": "Send store events — paid orders, new customers, bookings — to Slack, Discord, your own endpoint or 12 connectors. Scheduled alerts and email campaigns that run on their own."
+      },
       "hero": {
         "eyebrow": "Webhooks & Automations",
         "title": "Connect your store to everything else you run",
@@ -171,6 +205,10 @@
     },
 
     "email": {
+      "seo": {
+        "title": "Email marketing & transactional email — Torta CRM",
+        "description": "Send order confirmations, reminders and marketing campaigns from your own verified domain (DKIM, SPF, DMARC). Built-in templates, an HTML editor and scheduling."
+      },
       "hero": {
         "eyebrow": "Email",
         "title": "Email your customers actually receive",
@@ -206,6 +244,10 @@
     },
 
     "realtime": {
+      "seo": {
+        "title": "Real-time team collaboration — Torta CRM",
+        "description": "See who's online, follow teammates' live cursors and watch shared edits across every page of your CRM. Cursor chat, presence and jump-to-teammate, built in."
+      },
       "hero": {
         "eyebrow": "Realtime",
         "title": "Your team, live on the same page",
@@ -237,6 +279,318 @@
         ],
         "chipsTitle": "What's live",
         "chips": ["Live cursors", "Presence stack", "Online status", "Cursor chat", "Shared typing", "Jump to teammate", "Project pages", "Product pages", "Org console"]
+      }
+    },
+
+    "products": {
+      "seo": {
+        "title": "Product catalog, inventory & warehouses — Torta CRM",
+        "description": "A deep catalog for physical goods: nested variations with inherited pricing, per-SKU cost and barcodes, multi-warehouse stock, batch tracking with expiry, promo codes, scheduled discounts and quantity tier pricing."
+      },
+      "hero": {
+        "eyebrow": "Products",
+        "title": "A catalog built for real physical inventory",
+        "lead": "Sell physical products with deep, flexible configuration — nested variations, per-SKU pricing, cost and barcodes — then run stock across warehouses with batch tracking, promo codes, scheduled discounts and quantity tier pricing."
+      },
+      "stats": [
+        { "value": "Up to 5 levels", "label": "Nested variations — price once or override per SKU" },
+        { "value": "Per warehouse", "label": "Stock, batches and transfers across locations" },
+        { "value": "FEFO batches", "label": "Expiry-first depletion with per-batch cost" },
+        { "value": "3 price tools", "label": "Promo codes, scheduled discounts and tier pricing" }
+      ],
+      "cards": [
+        { "title": "Flexible variations", "desc": "Nest variations up to five levels deep — the leaf is the SKU. Price a whole variation once, or override it per item." },
+        { "title": "Per-SKU details", "desc": "An SKU code, auto-generated EAN-13 barcode, cost price, weight and dimensions on every sellable unit." },
+        { "title": "Multi-warehouse stock", "desc": "Track quantity per warehouse, transfer between them, and offer in-store pickup with delivery ETAs." },
+        { "title": "Batch tracking", "desc": "Receive stock in batches with production and expiry dates; depletion is expiry-first (FEFO) with per-batch cost for true COGS." },
+        { "title": "Promo codes & discounts", "desc": "Percentage or fixed promo codes with caps and limits, plus scheduled sales on a product, a variation or a single SKU." },
+        { "title": "Tier pricing", "desc": "Quantity-break pricing per SKU for wholesale — the right unit price kicks in automatically at checkout." }
+      ],
+      "deep": {
+        "eyebrow": "Inventory",
+        "title": "Stock you can actually trust",
+        "body": "Receive, adjust and transfer stock from a dedicated Inventory view grouped by warehouse. Every movement is logged with a reason, batches deplete by expiry, and customers on a restock waitlist are emailed the moment an item is back.",
+        "points": [
+          "Bulk-receive stock into batches with production, expiry and cost",
+          "Adjust with reason codes — delivery, return, recount, damage — fully logged",
+          "Transfer stock between warehouses in one atomic move",
+          "Low-stock and out-of-stock filters with live counters and margins"
+        ],
+        "chipsTitle": "Built into the catalog",
+        "chips": ["Variations (5 levels)", "Per-SKU barcodes", "Cost & margin", "Warehouses", "Batches & expiry", "Promo codes", "Scheduled discounts", "Tier pricing", "Pre-orders", "B2B / MOQ / Net-30", "Categories", "Specifications"]
+      }
+    },
+
+    "booking": {
+      "seo": {
+        "title": "Booking & appointment scheduling — Torta CRM",
+        "description": "Take appointments for your services: configurable duration, price and group capacity, staff with their own working hours, a drag-and-drop week calendar, and a public availability API to book from anywhere."
+      },
+      "hero": {
+        "eyebrow": "Booking",
+        "title": "Appointments, services and staff in one calendar",
+        "lead": "Let customers book your services online. Set each service's duration, price and group capacity, give staff their own schedules, and run it all on a drag-and-drop week calendar — or take bookings straight through the API."
+      },
+      "stats": [
+        { "value": "5–1440 min", "label": "Set any service duration; group capacity for classes" },
+        { "value": "Per-staff hours", "label": "Each staff member has their own weekly schedule" },
+        { "value": "Live availability", "label": "A real slots engine with seats-left for group bookings" },
+        { "value": "Book via API", "label": "Create bookings and read availability from the SDK" }
+      ],
+      "cards": [
+        { "title": "Services", "desc": "Each service sets its own duration, price and group capacity, and where it happens — at your shop, the customer's place, or either." },
+        { "title": "Staff & schedules", "desc": "Assign staff to services and give each one their own weekly working hours, including split shifts." },
+        { "title": "Week calendar", "desc": "A Google-Calendar-style week view. Drag a booking to reschedule — capacity is checked before the drop lands." },
+        { "title": "Customers & statuses", "desc": "Every booking carries the customer's name, phone and notes, and moves through pending, confirmed, completed, cancelled or no-show." },
+        { "title": "Group capacity", "desc": "Set a capacity above one and several customers can share the same slot — perfect for classes and group sessions." },
+        { "title": "Public booking API", "desc": "Read live availability and create bookings from your own site or app through the External API and the torta-js SDK." }
+      ],
+      "deep": {
+        "eyebrow": "How booking works",
+        "title": "From an open slot to a confirmed appointment",
+        "body": "The availability engine walks each staff member's working hours, offers only slots where the full service fits and capacity is free, and confirms (or holds) the booking the moment it's made. Reschedule by dragging on the calendar — the duration moves with it.",
+        "points": [
+          "Slot interval, lead time, max-advance and cancellation window are yours to set",
+          "Auto-confirm bookings or hold them as pending for review",
+          "Group capacity tracked per slot, with seats-left shown to customers",
+          "Drag-and-drop reschedule, with the calendar updating live for your team"
+        ],
+        "chipsTitle": "Bookable building blocks",
+        "chips": ["Services", "Staff", "Working hours", "Group capacity", "At-shop or mobile", "Pending / confirmed", "No-show tracking", "Availability API", "SDK booking", "Reminders", "Freeform bookings"]
+      }
+    },
+
+    "chat": {
+      "seo": {
+        "title": "Customer chat — all messengers in one inbox — Torta CRM",
+        "description": "Talk to customers on Telegram, WhatsApp, Instagram, Facebook, Viber, X, Discord, email and a website widget — every conversation in one real-time inbox, with replies routed back to the channel they came from."
+      },
+      "hero": {
+        "eyebrow": "Customer chat",
+        "title": "Every customer message, in one inbox",
+        "lead": "Connect Telegram, WhatsApp, Instagram, Facebook, Viber, X, Discord, email and a website chat widget — and answer them all from a single real-time inbox. Reply once; it goes back out on the channel the customer used."
+      },
+      "stats": [
+        { "value": "9 channels", "label": "Telegram, WhatsApp, Instagram, Facebook, Viber, X, Discord, email, web" },
+        { "value": "One inbox", "label": "Every channel threads into a single conversation list" },
+        { "value": "Real-time", "label": "New messages arrive live over a WebSocket — no refresh" },
+        { "value": "Two-way", "label": "Replies route back to the customer's original channel" }
+      ],
+      "cards": [
+        { "title": "Nine channels", "desc": "Website widget, Telegram, WhatsApp, Instagram, Facebook Messenger, Viber, X DMs, Discord and email — all wired in." },
+        { "title": "Unified inbox", "desc": "Messages from every channel land in one threaded list, with unread badges and last-message previews." },
+        { "title": "Real-time", "desc": "A WebSocket pushes new and edited messages the moment they arrive — your whole team sees them update." },
+        { "title": "Privacy-safe threading", "desc": "Customers appear under a stable anonymous ID, one conversation per person per channel." },
+        { "title": "Email that threads", "desc": "Email replies keep proper headers so they collapse into the same thread in Gmail and Outlook." },
+        { "title": "Quick setup", "desc": "Paste a bot token or connect a page; credentials are validated live, and the web widget needs nothing at all." }
+      ],
+      "deep": {
+        "eyebrow": "One place for everything",
+        "title": "Stop juggling a dozen apps",
+        "body": "Your customers message wherever they like — you answer from one screen. Each channel connects with its own simple setup, every conversation threads by customer, and replies are delivered back on the channel they came in on.",
+        "points": [
+          "Connect a channel with a token or page link — validated the moment you save",
+          "Reply from the CRM; it's delivered on the originating channel",
+          "Email reuses your verified sending domain and threads correctly",
+          "Live updates, plus a notification when a new message comes in"
+        ],
+        "chipsTitle": "Channels you can connect",
+        "chips": ["Web Chat", "Telegram", "WhatsApp", "Instagram", "Facebook", "Viber", "X (Twitter)", "Discord", "Email"]
+      }
+    },
+
+    "digital": {
+      "seo": {
+        "title": "Sell digital products & downloads — Torta CRM",
+        "description": "Sell digital downloads — e-books, audio, video, ZIPs, almost any file. Upload from the dashboard, optionally bundle into one ZIP, and deliver automatically by email and on the order page after purchase."
+      },
+      "hero": {
+        "eyebrow": "Digital products",
+        "title": "Sell downloads, delivered automatically",
+        "lead": "Upload the files you sell — e-books, audio, video, design assets, almost any type — set a price, and Torta delivers them the moment an order is paid: by email, on the receipt, and on the customer's order page."
+      },
+      "stats": [
+        { "value": "Any file type", "label": "PDFs, audio, video, archives — up to 4 GB each" },
+        { "value": "One-ZIP or per-file", "label": "Bundle everything into a single download, or keep files separate" },
+        { "value": "Auto-delivered", "label": "Links sent by email and shown on the order page after payment" },
+        { "value": "No stock to mind", "label": "Digital products never run out and skip the shipping step" }
+      ],
+      "cards": [
+        { "title": "Upload & sell", "desc": "Drag in the files you sell — almost any type, up to 4 GB each — and set a single price." },
+        { "title": "One-ZIP delivery", "desc": "Optionally bundle every file into one .zip the customer downloads in a single click." },
+        { "title": "Automatic delivery", "desc": "When the order is paid, download links go out by email, on the receipt PDF, and on the order page." },
+        { "title": "Rich previews", "desc": "Show off the product with a gallery of photos, video or 3D before the buyer commits." },
+        { "title": "Frictionless checkout", "desc": "Digital products skip the variation, stock and shipping steps — buyers go straight to download." },
+        { "title": "Re-download anytime", "desc": "Customers grab their files again from My Orders whenever they need them." }
+      ],
+      "deep": {
+        "eyebrow": "How delivery works",
+        "title": "Paid, then delivered — hands-free",
+        "body": "The moment a digital order is paid it's marked delivered — there's nothing to ship. The customer gets their download links three ways and can always come back for them. You just upload the files and set a price.",
+        "points": [
+          "Files upload straight from the browser to fast object storage",
+          "Bundle into one ZIP (up to 200 MB) or deliver each file separately",
+          "Links delivered by email, on the receipt PDF and on the order page",
+          "Buyers re-download from My Orders at any time"
+        ],
+        "chipsTitle": "What you can sell",
+        "chips": ["E-books / PDFs", "Audio", "Video", "Design assets", "ZIP archives", "Software", "Templates", "Almost any file"]
+      }
+    },
+
+    "analytics": {
+      "seo": {
+        "title": "Ecommerce analytics & profit reporting — Torta CRM",
+        "description": "Real-time ecommerce analytics: revenue trends, sales-funnel conversion, gross margin by SKU, customer cohorts and lifetime value, returns and inventory health — across one store or your whole organization. No spreadsheets."
+      },
+      "hero": {
+        "eyebrow": "Analytics",
+        "title": "Know exactly what's working",
+        "lead": "Revenue, conversion, profit margin down to the SKU, customer cohorts and lifetime value, returns, traffic and more — over twenty built-in reports, updated in real time, for one store or your whole organization. No setup, no spreadsheets."
+      },
+      "stats": [
+        { "value": "20+ reports", "label": "From revenue to cohorts to margin — built in" },
+        { "value": "Margin by SKU", "label": "Real gross profit, using cost at the time of sale" },
+        { "value": "Real-time", "label": "New orders show up within seconds" },
+        { "value": "One or many stores", "label": "Roll every store into one view, FX-converted" }
+      ],
+      "cards": [
+        { "title": "Revenue & funnel", "desc": "Revenue over time with period comparison, and a true unique-visitor funnel from view to cart to paid." },
+        { "title": "Profit margin by SKU", "desc": "Gross profit and margin per product, variation and SKU — using the cost captured at the moment of sale." },
+        { "title": "Cohorts & lifetime value", "desc": "Monthly retention cohorts, new-vs-returning, top customers and what they're worth over time." },
+        { "title": "Returns & operations", "desc": "Return rates and reasons, processing times, and fulfilment speed from order to delivery." },
+        { "title": "Traffic & search", "desc": "Sources, UTM campaigns, devices and countries — plus the searches that came back empty." },
+        { "title": "Inventory & goals", "desc": "Stock health at a glance and live progress against the targets you set." }
+      ],
+      "deep": {
+        "eyebrow": "Built in",
+        "title": "The reports a store actually needs",
+        "body": "Every metric is computed in your store's own timezone, cached for speed and refreshed in real time as orders land. Pick any date range, drill into a single day's orders, compare two periods, or export the numbers to CSV.",
+        "points": [
+          "Every report respects your store's local day and timezone",
+          "Custom date ranges and period-over-period comparison everywhere",
+          "Drill from a chart straight into the underlying orders",
+          "Export any report to CSV for your own analysis"
+        ],
+        "chipsTitle": "What you can measure",
+        "chips": ["Revenue", "Conversion funnel", "Gross margin", "Cohort retention", "Customer LTV", "Returns", "Traffic & UTM", "Search insights", "Inventory health", "Bookings", "Promo performance", "Cross-store rollup"]
+      }
+    },
+
+    "accounting": {
+      "seo": {
+        "title": "Export orders to 1C, Kompra, QuickBooks & Xero — Torta CRM",
+        "description": "Export your store's orders and bookings to 25 accounting systems — 1C, Kompra (ЭСФ), QuickBooks, Xero, DATEV and more. The right format and encoding, VAT split out, on demand or auto-delivered to your accountant."
+      },
+      "hero": {
+        "eyebrow": "Accounting export",
+        "title": "Your sales, ready for your accountant",
+        "lead": "Export every order and booking to the accounting system you already use — 1C, Kompra, QuickBooks, Xero, DATEV and twenty more — in exactly the format it expects. Download on demand, or have it emailed to your accountant on a schedule."
+      },
+      "stats": [
+        { "value": "25 systems", "label": "1C, Kompra, QuickBooks, Xero, DATEV and 20 more" },
+        { "value": "Native format", "label": "CSV or IIF, correct encoding, localized per system" },
+        { "value": "VAT split", "label": "Net, tax and gross split for the local rate" },
+        { "value": "Auto-delivered", "label": "Daily, weekly or monthly to your accountant" }
+      ],
+      "cards": [
+        { "title": "1C & Kompra", "desc": "Cyrillic-safe files for 1C 8.3, and bulk ЭСФ upload to Kompra with Kazakhstan's 12% VAT split out." },
+        { "title": "QuickBooks, Xero & DATEV", "desc": "IIF for QuickBooks, asterisked CSV for Xero, a Buchungsstapel for DATEV — each in its own native format." },
+        { "title": "Built for your country", "desc": "25 systems across the CIS, Europe, Latin America and Asia, each matched to the local standard and tax rate." },
+        { "title": "On a schedule", "desc": "Send yesterday's, last week's or last month's sales automatically, at the hour you pick." },
+        { "title": "Straight to your accountant", "desc": "Scheduled exports arrive by email with a secure download link — always the latest file, no attachment." },
+        { "title": "Numbers that reconcile", "desc": "Paid orders only by default, returns subtracted, bookings included — the file matches your revenue." }
+      ],
+      "deep": {
+        "eyebrow": "How export works",
+        "title": "Pick a system, pick a period — done",
+        "body": "Choose your accounting software and a date range, and Torta builds the file in exactly the format it expects — the right delimiter, decimal separator, encoding and VAT treatment. Preview the first rows, download it, or set it to email your accountant on repeat.",
+        "points": [
+          "Eight period presets plus any custom range, in your store's timezone",
+          "Net / VAT / gross split for the local tax rate",
+          "Orders and service bookings merged into one file",
+          "The preview matches the download, row for row"
+        ],
+        "chipsTitle": "Systems you can export to",
+        "chips": ["1C", "Kompra (ЭСФ)", "QuickBooks", "Xero", "DATEV", "BAS", "Conta Azul", "Contpaqi", "Tally", "Zoho Books", "Freee", "+ 14 more"]
+      }
+    },
+
+    "pos": {
+      "seo": {
+        "title": "Point of sale — sell in-store and online from one inventory — Torta CRM",
+        "description": "A built-in point of sale: ring up counter sales with a barcode scanner (no drivers), and every sale draws down the same stock your website sells from. One catalog, one inventory, one set of analytics."
+      },
+      "hero": {
+        "eyebrow": "Point of sale",
+        "title": "Sell at the counter and online, from one inventory",
+        "lead": "Ring up in-store sales with a barcode scanner — no drivers, no extra hardware — and every sale draws down the same stock, batches and analytics your website uses. Online and in-store, finally on one system."
+      },
+      "stats": [
+        { "value": "One inventory", "label": "In-store and online sales share the same stock" },
+        { "value": "Just scan", "label": "Any keyboard-wedge barcode scanner — no drivers" },
+        { "value": "Batch-aware", "label": "Sells the earliest-expiry batch first, tracks cost" },
+        { "value": "One report", "label": "Counter and web sales in the same analytics" }
+      ],
+      "cards": [
+        { "title": "Barcode checkout", "desc": "Scan to add — the reader just types the code. Or browse the catalog by category and tap." },
+        { "title": "Fast register", "desc": "Build the ticket, take cash, card or other, add a walk-in customer — done in seconds." },
+        { "title": "Shared stock", "desc": "Every counter sale deducts from the same inventory your storefront sells from — no double-selling." },
+        { "title": "Batches & cost", "desc": "Picks the earliest-expiry batch by default and records its cost, so margin and FEFO stay correct." },
+        { "title": "Per warehouse", "desc": "Sell from the right location's stock, with pickup and delivery handled the same way as online." },
+        { "title": "Live everywhere", "desc": "A counter sale appears in Orders and Analytics in real time, exactly like a web order." }
+      ],
+      "deep": {
+        "eyebrow": "Unified commerce",
+        "title": "One catalog. One stock. Online and in-store.",
+        "body": "There's no separate POS database. A sale at the register and a sale on your website land in the same orders table, deduct from the same batches, and feed the same reports — so your numbers are never split across two systems.",
+        "points": [
+          "Hardware scanners work out of the box — they act as a keyboard",
+          "Stock, batches and cost stay in lockstep across both channels",
+          "Returns and refunds flow back through the same restock path",
+          "Walk-in or named customer, paid by cash, card or other"
+        ],
+        "chipsTitle": "At the register",
+        "chips": ["Barcode scan", "Category catalog", "Batch picker", "Cash / card / other", "Walk-in customer", "Real-time stock", "Same analytics", "Multi-warehouse"]
+      }
+    },
+
+    "multi-store": {
+      "seo": {
+        "title": "Manage multiple online stores from one dashboard — Torta CRM",
+        "description": "Run several online stores from one account: separate catalogs, currencies and teams, with combined analytics across every store (currency-normalized) and an optional shared customer base."
+      },
+      "hero": {
+        "eyebrow": "Multi-store",
+        "title": "Run all your stores from one place",
+        "lead": "Open as many stores as you need under one account — each with its own catalog, currency, domain and team — then see them combined in one dashboard, with revenue rolled up across stores in a single currency."
+      },
+      "stats": [
+        { "value": "One account", "label": "As many stores as you need, each fully isolated" },
+        { "value": "Cross-store view", "label": "Combined revenue and margin, FX-normalized" },
+        { "value": "Shared customers", "label": "Optionally recognize a buyer across your stores" },
+        { "value": "Per-store teams", "label": "Each store with its own staff and roles" }
+      ],
+      "cards": [
+        { "title": "Many stores, one login", "desc": "Group stores into organizations and switch between them in a click — no separate accounts." },
+        { "title": "Cross-store analytics", "desc": "Combined revenue, orders and margin across every store, normalized into one currency." },
+        { "title": "A store leaderboard", "desc": "See which store earns the most and which has the best margin, side by side." },
+        { "title": "Shared customers", "desc": "Optionally recognize a customer who bought at one store when they visit another." },
+        { "title": "Roles per store", "desc": "Give each teammate access to just the stores and pages they need." },
+        { "title": "Independent by design", "desc": "Separate catalog, currency, domain and email per store — fully isolated data." }
+      ],
+      "deep": {
+        "eyebrow": "Built to scale",
+        "title": "From one shop to a whole group",
+        "body": "Every store is its own isolated workspace — its own products, orders, currency and team — but they roll up into organization-level analytics and an optional shared customer base, so a multi-brand operator manages everything from one screen.",
+        "points": [
+          "Each store's data is fully isolated from the others",
+          "Organization analytics sum revenue across stores, FX-converted",
+          "An optional shared customer base across stores in a group",
+          "Per-store team seats and granular roles"
+        ],
+        "chipsTitle": "Per store, or across all",
+        "chips": ["Own catalog", "Own currency", "Own domain", "Own team", "Cross-store revenue", "Store leaderboard", "Shared customers", "Org-level roles"]
       }
     }
   }

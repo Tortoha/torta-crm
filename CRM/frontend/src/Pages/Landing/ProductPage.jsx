@@ -72,9 +72,13 @@ export default function ProductPage({ slug: slugProp }) {
   }, []);
 
   const tp = (k, o) => (cfg ? t(`product.${slug}.${k}`, o) : '');
+  // SEO title/description are decoupled from the visible eyebrow/lead so the
+  // <title> can target what buyers actually search ("order management",
+  // "sell digital downloads") while the page keeps its clean label. Falls
+  // back to the old eyebrow/lead when a page has no dedicated seo.* copy.
   useSeo({
-    title: cfg ? `${tp('hero.eyebrow')} — Torta CRM` : 'Torta CRM',
-    description: cfg ? tp('hero.lead') : '',
+    title: cfg ? tp('seo.title', { defaultValue: `${tp('hero.eyebrow')} — Torta CRM` }) : 'Torta CRM',
+    description: cfg ? tp('seo.description', { defaultValue: tp('hero.lead') }) : '',
     canonical: `https://tortacrm.com/${slug}`,
   });
 
@@ -111,7 +115,9 @@ export default function ProductPage({ slug: slugProp }) {
                   </Link>
                 </div>
               </div>
-              <div className="pf-art pf-art--hero">{Illus && <Illus />}</div>
+              <div className="pf-art pf-art--hero">
+                {Illus ? <Illus /> : <cfg.Icon className="pf-art-fallback" weight="thin" />}
+              </div>
             </div>
           </div>
         </section>

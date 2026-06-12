@@ -14,7 +14,7 @@ import { encodeId } from '../Utils/hashids.js';
 import { DynamicBlock } from '../Utils/DynamicBlock.js';
 import '../Style/Header.css';
 import '../Style/ProductNav.css';
-import { PRODUCT_NAV } from '../Pages/Landing/product/data.js';
+import { PRODUCT_NAV, DEVELOPER_NAV } from '../Pages/Landing/product/data.js';
 
 /* ── Initials avatar ── */
 function InitialsAvatar({ name, size = 28 }) {
@@ -633,6 +633,92 @@ function ProductSwitcherCrumb({ project, productContext }) {
   );
 }
 
+/* One landing-nav dropdown (Product / Developers). Owns its open state + the
+   2-D "you are here" indicator that follows the hovered item across the menu
+   grid. The PARENT owns the nav-level indicator (which top tab is lit); this
+   reports hover + open up via onNavHover / onOpenChange and registers its
+   wrapper via btnRef so that indicator can find it. */
+function NavDropdown({ navKey, label, NavIcon, items, activeSlug, isActiveTab, btnRef, onNavHover, onOpenChange }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [open, setOpen]       = useState(false);
+  const [itemHov, setItemHov] = useState(null);
+  const indRef     = useRef(null);
+  const itemRefs   = useRef({});
+  const closeTimer = useRef(null);
+
+  const setOpenState = (v) => { setOpen(v); onOpenChange(navKey, v); };
+  const openMenu  = () => { clearTimeout(closeTimer.current); setOpenState(true); };
+  const closeMenu = () => { closeTimer.current = setTimeout(() => { setOpen(false); setItemHov(null); onOpenChange(navKey, false); }, 110); };
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
+  // Item the indicator rests on: hovered item, else the active page's item.
+  const ownActive = items.some(i => i.slug === activeSlug) ? activeSlug : null;
+  const cur = itemHov ?? ownActive;
+
+  // Park the indicator on open (no transition) so the first hover slides nicely.
+  useEffect(() => {
+    if (!open) return;
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = itemRefs.current[cur ?? items[0].slug];
+      if (!ind || !el) return;
+      ind.style.transition = 'none';
+      ind.style.transform  = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
+      ind.style.width      = `${el.offsetWidth}px`;
+      ind.style.height     = `${el.offsetHeight}px`;
+      requestAnimationFrame(() => { if (indRef.current) indRef.current.style.transition = ''; });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [open]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Follow the current item on X and Y.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const ind = indRef.current;
+      const el  = cur ? itemRefs.current[cur] : null;
+      if (!ind) return;
+      if (!el || !open) { ind.style.opacity = '0'; return; }
+      ind.style.opacity   = '1';
+      ind.style.transform = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
+      ind.style.width     = `${el.offsetWidth}px`;
+      ind.style.height    = `${el.offsetHeight}px`;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [cur, open]);
+
+  return (
+    <div className={`hdr-prod${open ? ' hdr-prod--open' : ''}`}
+         ref={btnRef}
+         onMouseEnter={() => { openMenu(); onNavHover(navKey); }}
+         onMouseLeave={() => { closeMenu(); onNavHover(null); }}>
+      <button type="button" aria-expanded={open}
+        className={`hdr-landing-nav-tab${isActiveTab ? ' hdr-landing-nav-tab--active' : ''}`}
+        onClick={() => setOpenState(!open)}>
+        <NavIcon className="hdr-landing-nav-icon" weight="bold" />
+        {label}
+        <CaretDown className="hdr-prod-caret" weight="bold" />
+      </button>
+      <div className="hdr-prod-panel" onMouseLeave={() => setItemHov(null)}>
+        <div ref={indRef} className="hdr-prod-ind" />
+        {items.map(({ slug, Icon }) => (
+          <button key={slug} type="button"
+            ref={el => { itemRefs.current[slug] = el; }}
+            className={`hdr-prod-item${cur === slug ? ' hdr-prod-item--current' : ''}`}
+            onMouseEnter={() => setItemHov(slug)}
+            onClick={() => { setOpenState(false); navigate(`/${slug}`); }}>
+            <span className="hdr-prod-item-ic"><Icon weight="bold" /></span>
+            <span className="hdr-prod-item-txt">
+              <span className="hdr-prod-item-name">{t(`product.nav.name.${slug}`)}</span>
+              <span className="hdr-prod-item-desc">{t(`product.nav.tagline.${slug}`)}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ── Landing nav — Product mega-dropdown + Pricing/Docs tabs ──
    Two Dynamic Blocks:
    (1) the nav indicator slides on X across Product / Pricing / Docs (tracks
@@ -651,40 +737,32 @@ function HeaderLandingNav() {
   const btnRefs    = useRef({});
   const [hovered, setHovered] = useState(null);
 
-  // Product dropdown open-state + its 2-D indicator refs.
-  const [prodOpen, setProdOpen]       = useState(false);
-  const [prodHovered, setProdHovered] = useState(null);
-  const prodIndRef   = useRef(null);
-  const prodItemRefs = useRef({});
-  const closeTimer   = useRef(null);
-  const openProd  = () => { clearTimeout(closeTimer.current); setProdOpen(true); };
-  const closeProd = () => { closeTimer.current = setTimeout(() => { setProdOpen(false); setProdHovered(null); }, 110); };
-  useEffect(() => () => clearTimeout(closeTimer.current), []);
+  // Which dropdown (if any) is open — keeps the nav bar parked under it while
+  // the close-timer runs, even after the mouse has left.
+  const [openKey, setOpenKey] = useState(null);
+  const onOpenChange = (key, isOpen) =>
+    setOpenKey(prev => (isOpen ? key : (prev === key ? null : prev)));
 
   const tabs = useMemo(() => [
-    { key: 'developers', label: t('developers.nav'), to: '/developers', Icon: Code },
     { key: 'pricing', label: t('header.nav.pricing'), to: '/pricing', Icon: Tag },
     // Query param routes Docs through DocsLayout's landing-header branch.
     { key: 'docs',    label: t('header.nav.docs'),    to: '/docs/getting-started?from=landing', Icon: BookOpen },
   ], [t]);
 
-  // Which feature page (if any) we're on — drives the "you are here" indicator.
-  const activeSlug = PRODUCT_NAV.find(p => location.pathname === `/${p.slug}`)?.slug ?? null;
-  // Which tab is "active" — match by pathname prefix.
+  // Which feature page (if any) we're on — across BOTH dropdown groups.
+  const activeSlug = [...PRODUCT_NAV, ...DEVELOPER_NAV]
+    .find(p => location.pathname === `/${p.slug}`)?.slug ?? null;
   const activeKey = (() => {
-    if (activeSlug) return 'product';
-    if (location.pathname.startsWith('/developers')) return 'developers';
+    if (PRODUCT_NAV.some(p => p.slug === activeSlug))   return 'product';
+    if (DEVELOPER_NAV.some(p => p.slug === activeSlug)) return 'developers';
     if (location.pathname.startsWith('/pricing')) return 'pricing';
     if (location.pathname.startsWith('/docs'))    return 'docs';
     return null;
   })();
-  // Hover wins; while the dropdown is open keep the bar under Product.
-  const curTab = hovered ?? (prodOpen ? 'product' : activeKey);
-  // Inside the dropdown, rest the 2-D indicator on the current page's item
-  // (so you see "you are here"); hovering another item overrides it.
-  const curSlug = prodHovered ?? activeSlug;
+  // Hover wins; while a dropdown is open keep the bar under it.
+  const curTab = hovered ?? openKey ?? activeKey;
 
-  // (1) Nav indicator — slides on X across Product / Pricing / Docs.
+  // Nav indicator — slides on X across Product / Developers / Pricing / Docs.
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
       const ind = indRef.current;
@@ -696,76 +774,23 @@ function HeaderLandingNav() {
       ind.style.width     = `${el.offsetWidth}px`;
     });
     return () => cancelAnimationFrame(raf);
-  }, [curTab, activeKey, prodOpen]);
-
-  // (2) On open, park the dropdown indicator on the active page's item (or the
-  // first), with no transition + still hidden, so the first hover slides from a
-  // sensible spot — never grows out of the corner.
-  useEffect(() => {
-    if (!prodOpen) return;
-    const raf = requestAnimationFrame(() => {
-      const ind = prodIndRef.current;
-      const el  = prodItemRefs.current[activeSlug ?? PRODUCT_NAV[0].slug];
-      if (!ind || !el) return;
-      ind.style.transition = 'none';
-      ind.style.transform  = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
-      ind.style.width      = `${el.offsetWidth}px`;
-      ind.style.height     = `${el.offsetHeight}px`;
-      requestAnimationFrame(() => { if (prodIndRef.current) prodIndRef.current.style.transition = ''; });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [prodOpen]);
-
-  // (2) Dropdown indicator — follows the current item (hovered, else the active
-  // page) on X AND Y.
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      const ind = prodIndRef.current;
-      const el  = curSlug ? prodItemRefs.current[curSlug] : null;
-      if (!ind) return;
-      if (!el || !prodOpen) { ind.style.opacity = '0'; return; }
-      ind.style.opacity   = '1';
-      ind.style.transform = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
-      ind.style.width     = `${el.offsetWidth}px`;
-      ind.style.height    = `${el.offsetHeight}px`;
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [curSlug, prodOpen]);
+  }, [curTab, activeKey, openKey]);
 
   return (
     <nav className="hdr-landing-nav" onMouseLeave={() => setHovered(null)}>
       <div ref={indRef} className="hdr-landing-nav-ind" />
 
-      {/* Product mega-dropdown. The wrapper carries the nav-indicator ref —
-          its offsetParent is the nav (the inner button's would be .hdr-prod). */}
-      <div className={`hdr-prod${prodOpen ? ' hdr-prod--open' : ''}`}
-           ref={el => { btnRefs.current.product = el; }}
-           onMouseEnter={() => { openProd(); setHovered('product'); }}
-           onMouseLeave={() => { closeProd(); setHovered(null); }}>
-        <button type="button" aria-expanded={prodOpen}
-          className={`hdr-landing-nav-tab${curTab === 'product' ? ' hdr-landing-nav-tab--active' : ''}`}
-          onClick={() => setProdOpen(o => !o)}>
-          <Stack className="hdr-landing-nav-icon" weight="bold" />
-          {t('product.nav.product')}
-          <CaretDown className="hdr-prod-caret" weight="bold" />
-        </button>
-        <div className="hdr-prod-panel" onMouseLeave={() => setProdHovered(null)}>
-          <div ref={prodIndRef} className="hdr-prod-ind" />
-          {PRODUCT_NAV.map(({ slug, Icon }) => (
-            <button key={slug} type="button"
-              ref={el => { prodItemRefs.current[slug] = el; }}
-              className={`hdr-prod-item${curSlug === slug ? ' hdr-prod-item--current' : ''}`}
-              onMouseEnter={() => setProdHovered(slug)}
-              onClick={() => { setProdOpen(false); navigate(`/${slug}`); }}>
-              <span className="hdr-prod-item-ic"><Icon weight="bold" /></span>
-              <span className="hdr-prod-item-txt">
-                <span className="hdr-prod-item-name">{t(`product.nav.name.${slug}`)}</span>
-                <span className="hdr-prod-item-desc">{t(`product.nav.tagline.${slug}`)}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Two mega-dropdowns, split by audience. Each wrapper carries its own
+          nav-indicator ref (offsetParent is the nav, not the inner button). */}
+      <NavDropdown navKey="product" label={t('product.nav.product')} NavIcon={Stack}
+        items={PRODUCT_NAV} activeSlug={activeSlug} isActiveTab={curTab === 'product'}
+        btnRef={el => { btnRefs.current.product = el; }}
+        onNavHover={setHovered} onOpenChange={onOpenChange} />
+
+      <NavDropdown navKey="developers" label={t('developers.nav')} NavIcon={Code}
+        items={DEVELOPER_NAV} activeSlug={activeSlug} isActiveTab={curTab === 'developers'}
+        btnRef={el => { btnRefs.current.developers = el; }}
+        onNavHover={setHovered} onOpenChange={onOpenChange} />
 
       {/* Pricing + Docs */}
       {tabs.map(({ key, label, to, Icon }) => (
@@ -830,9 +855,14 @@ function HeaderLandingMobile() {
               </button>
             ))}
             <div className="hdr-lm-divider" />
-            <button type="button" className="hdr-lm-item" onClick={() => go('/developers')}>
-              <Code className="hdr-lm-ic" weight="bold" /><span>{t('developers.nav')}</span>
-            </button>
+            <span className="hdr-lm-group">{t('developers.nav')}</span>
+            {DEVELOPER_NAV.map(({ slug, Icon }) => (
+              <button key={slug} type="button" className="hdr-lm-item" onClick={() => go(`/${slug}`)}>
+                <Icon className="hdr-lm-ic" weight="bold" />
+                <span>{t(`product.nav.name.${slug}`)}</span>
+              </button>
+            ))}
+            <div className="hdr-lm-divider" />
             <button type="button" className="hdr-lm-item" onClick={() => go('/pricing')}>
               <Tag className="hdr-lm-ic" weight="bold" /><span>{t('header.nav.pricing')}</span>
             </button>
