@@ -71,7 +71,7 @@ export default function DevelopersPage() {
   useSeo({
     title: 'Developer API — Torta CRM',
     description: t('developers.hero.lead'),
-    canonical: 'https://tortacrm.com/developers',
+    path: 'developers',
   });
 
   // Hero code — stagger the lines in on mount (above the fold).

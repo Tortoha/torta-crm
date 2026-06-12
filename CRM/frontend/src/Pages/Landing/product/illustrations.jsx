@@ -557,6 +557,75 @@ function MultiStoreIllus() {
   );
 }
 
+/* ── Team & roles: a member with a role, and a per-page permission matrix
+      where the active level (none / view / manage) lights up per row. ──── */
+function TeamIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+    tl.fromTo('.pf-rl-card', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5 });
+    tl.fromTo('.pf-rl-member', { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.35, ease: 'back.out(1.8)' }, '-=0.2');
+    tl.fromTo('.pf-rl-row', { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.34, stagger: 0.1 }, '-=0.1');
+    tl.fromTo('.pf-rl-seg.is-on', { scale: 0.3 }, { scale: 1, duration: 0.32, stagger: 0.1, ease: 'back.out(2.4)' }, '-=0.1');
+  });
+  const LBL = ['—', 'View', 'Manage'];
+  const rows = [
+    { page: 'Products', lvl: 2 },
+    { page: 'Orders', lvl: 2 },
+    { page: 'Promo codes', lvl: 1 },
+    { page: 'Billing', lvl: 0 },
+  ];
+  return (
+    <div className="pf-rl" ref={ref}>
+      <div className="pf-rl-card pf-card pf-anim">
+        <div className="pf-rl-member pf-anim">
+          <span className="pf-rl-ava">M</span>
+          <span className="pf-rl-name"><b>Mia</b><i>Manager</i></span>
+        </div>
+        {rows.map((r, i) => (
+          <div className="pf-rl-row pf-anim" key={i}>
+            <span className="pf-rl-page">{r.page}</span>
+            <div className="pf-rl-segs">
+              {[0, 1, 2].map(s => (
+                <span key={s} className={`pf-rl-seg${s === r.lvl ? ' is-on' : ''}`}>{LBL[s]}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Multi-currency: the same product priced in three currencies, plus a
+      row of more currency-symbol chips. ─────────────────────────────── */
+function CurrenciesIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+    tl.fromTo('.pf-cur-tag', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, stagger: 0.12, ease: 'back.out(1.4)' });
+    tl.fromTo('.pf-cur-chip', { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.3, stagger: 0.05, ease: 'back.out(2)' }, '-=0.1');
+  });
+  const tags = [
+    { sym: '$', amt: '24.00', cc: 'USD' },
+    { sym: '₸', amt: '11 200', cc: 'KZT' },
+    { sym: '€', amt: '22.40', cc: 'EUR' },
+  ];
+  const chips = ['£', '₽', 'R$', '¥', 'zł', '₺', '₴', '﷼'];
+  return (
+    <div className="pf-cur" ref={ref}>
+      <div className="pf-cur-tags">
+        {tags.map((t, i) => (
+          <span className="pf-cur-tag pf-card pf-anim" key={i}>
+            <b>{t.sym}{t.amt}</b><i>{t.cc}</i>
+          </span>
+        ))}
+      </div>
+      <div className="pf-cur-chips">
+        {chips.map((c, i) => <span className="pf-cur-chip pf-anim" key={i}>{c}</span>)}
+      </div>
+    </div>
+  );
+}
+
 export const ILLUSTRATIONS = {
   database: DatabaseIllus,
   auth: AuthIllus,
@@ -572,6 +641,8 @@ export const ILLUSTRATIONS = {
   accounting: AccountingIllus,
   pos: PosIllus,
   'multi-store': MultiStoreIllus,
+  team: TeamIllus,
+  currencies: CurrenciesIllus,
 };
 
 /* ════════════════════════════════════════════════════════════════════

@@ -29,7 +29,7 @@ export default function Landing() {
   useSeo({
     title: 'Torta CRM — run your online store from one place',
     description: 'One platform for your online store: physical & digital products, orders, inventory, bookings, customer chat across every messenger, and email campaigns. Start free, no credit card.',
-    canonical: 'https://tortacrm.com/',
+    path: '',
   });
 
   useEffect(() => {

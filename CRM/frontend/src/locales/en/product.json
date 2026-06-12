@@ -14,6 +14,8 @@
       "product": "Product",
       "name": {
         "developers": "API & SDK",
+        "team": "Team & roles",
+        "currencies": "Multi-currency",
         "analytics": "Analytics",
         "accounting": "Accounting export",
         "pos": "Point of sale",
@@ -31,6 +33,8 @@
       },
       "tagline": {
         "developers": "Build on the platform",
+        "team": "Roles & permissions",
+        "currencies": "49 currencies",
         "analytics": "Reports & insights",
         "accounting": "Export to 1C, QuickBooks…",
         "pos": "In-store + online",
@@ -591,6 +595,84 @@
         ],
         "chipsTitle": "Per store, or across all",
         "chips": ["Own catalog", "Own currency", "Own domain", "Own team", "Cross-store revenue", "Store leaderboard", "Shared customers", "Org-level roles"]
+      }
+    },
+
+    "team": {
+      "seo": {
+        "title": "Team roles & permissions for your store — Torta CRM",
+        "description": "Invite your team and control exactly what each person can do — preset Admin/Manager/Staff/Viewer roles or custom ones, with granular per-page view/manage permissions. Billing stays owner-only."
+      },
+      "hero": {
+        "eyebrow": "Team & roles",
+        "title": "Give your team exactly the access they need",
+        "lead": "Invite staff and assign roles — Admin, Manager, Staff, Viewer, or your own — with fine-grained, per-page permissions. Everyone sees only what they should, and billing stays owner-only."
+      },
+      "stats": [
+        { "value": "29 pages", "label": "Grant view or manage on each page, per role" },
+        { "value": "4 preset roles", "label": "Admin, Manager, Staff, Viewer — ready to use" },
+        { "value": "Custom roles", "label": "Build your own permission sets" },
+        { "value": "Safe invites", "label": "An invite link grants zero access until you assign a role" }
+      ],
+      "cards": [
+        { "title": "Invite your team", "desc": "Add members by email, or share one reusable invite link for the whole organization." },
+        { "title": "Preset & custom roles", "desc": "Start with Admin, Manager, Staff and Viewer, or craft roles with exactly the permissions you want." },
+        { "title": "Granular permissions", "desc": "Set none, view or manage on each of 29 pages — restrict Promo codes without locking all of Products." },
+        { "title": "Per-store access", "desc": "In a multi-store account, give each teammate access only to the stores they work on." },
+        { "title": "Billing stays private", "desc": "Billing is never delegatable — only the owner ever sees or changes it." },
+        { "title": "Safe by default", "desc": "A new joiner via the invite link gets zero roles until you assign one — no accidental data exposure." }
+      ],
+      "deep": {
+        "eyebrow": "Access control",
+        "title": "Roles that map to how your team actually works",
+        "body": "Pick a preset or build a custom role as a map of pages to permission levels, then assign it per member. The owner and org-owner always have full access; everyone else sees exactly what their role allows.",
+        "points": [
+          "Preset Admin / Manager / Staff / Viewer, plus unlimited custom roles",
+          "Per-page none / view / manage, grouped into clear sections",
+          "Per-email invites and a reusable organization invite link",
+          "Billing is owner-only and can never be delegated"
+        ],
+        "chipsTitle": "What you can control",
+        "chips": ["Admin", "Manager", "Staff", "Viewer", "Custom roles", "Per-page view/manage", "Per-store access", "Email invites", "Invite link", "Owner-only billing"]
+      }
+    },
+
+    "currencies": {
+      "seo": {
+        "title": "Sell in 49 currencies — multi-currency online store — Torta CRM",
+        "description": "Run each store in its own currency — 49 supported, with correct symbols and decimals — and every order keeps the exact currency it was charged in, so invoices and reports never drift."
+      },
+      "hero": {
+        "eyebrow": "Multi-currency",
+        "title": "Sell in your customers' currency",
+        "lead": "Pick from 49 currencies for each store — from dollars and euros to tenge, ruble and real — with the right symbol, position and decimals. Every order is locked to the currency it was actually charged in."
+      },
+      "stats": [
+        { "value": "49 currencies", "label": "Dollar, euro, tenge, ruble, real and more" },
+        { "value": "Correct symbols", "label": "$100, 100 ₸, ¥100 — position and decimals right" },
+        { "value": "Per store", "label": "Each store sets its own currency" },
+        { "value": "Locked per order", "label": "Receipts never drift if you change currency later" }
+      ],
+      "cards": [
+        { "title": "49 currencies", "desc": "Strong coverage of the CIS, Latin America, Europe and Asia — pick one per store." },
+        { "title": "Correct everywhere", "desc": "The right symbol, prefix-vs-suffix and decimals (zero for tenge, yen, won) for each currency." },
+        { "title": "Locked per order", "desc": "Each order stores the exact currency it was charged in, so old invoices and receipts stay accurate." },
+        { "title": "Across the storefront", "desc": "Prices, cart, checkout and emails all show the store's currency, set once." },
+        { "title": "No surprises", "desc": "Numbers aren't reconverted on the fly — you choose the currency and it stays put." },
+        { "title": "Roll up across stores", "desc": "In a multi-store account, revenue in different currencies is normalized into one for combined reporting." }
+      ],
+      "deep": {
+        "eyebrow": "How it works",
+        "title": "One currency per store, correct down to the receipt",
+        "body": "Set a store's currency and every price, cart and email follows it — with the right symbol and decimal rules. Each order snapshots the currency it was charged in, so changing a store's currency later never rewrites its history.",
+        "points": [
+          "49 currencies with correct symbol position and decimals",
+          "Per-order currency snapshot — historical accuracy",
+          "Set once at the store level; the storefront follows",
+          "Cross-store revenue normalized for organization analytics"
+        ],
+        "chipsTitle": "A few of the 49",
+        "chips": ["USD $", "EUR €", "KZT ₸", "RUB ₽", "BRL R$", "GBP £", "PLN zł", "JPY ¥", "TRY ₺", "+ 40 more"]
       }
     }
   }

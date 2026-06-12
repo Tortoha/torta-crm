@@ -3,9 +3,11 @@
 
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useLocalePath } from '../../Utils/useLocalePath.js';
 
 export default function Footer() {
   const { t } = useTranslation();
+  const lp = useLocalePath();
   const year = new Date().getFullYear();
 
   // Every link points to a REAL, live page (no `#` placeholders): the six
@@ -21,11 +23,13 @@ export default function Footer() {
       { id: 'email',       to: '/email' },
       { id: 'analytics',   to: '/analytics' },
       { id: 'pos',         to: '/pos' },
+      { id: 'currencies',  to: '/currencies' },
       { id: 'pricing',     to: '/pricing' },
     ]},
     { key: 'developers', links: [
       { id: 'api',         to: '/developers' },
       { id: 'multistore',  to: '/multi-store' },
+      { id: 'team',        to: '/team' },
       { id: 'database',    to: '/database' },
       { id: 'auth',        to: '/auth' },
       { id: 'storage',     to: '/storage' },
@@ -68,7 +72,7 @@ export default function Footer() {
                   return (
                     <li key={l.id}>
                       {l.to
-                        ? <Link to={l.to}>{label}</Link>
+                        ? <Link to={lp(l.to)}>{label}</Link>
                         : <a href="#">{label}</a>}
                     </li>
                   );

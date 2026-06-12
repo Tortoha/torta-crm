@@ -230,7 +230,7 @@ export default function Pricing() {
   useSeo({
     title: t('pricing.meta.title'),
     description: t('pricing.meta.description'),
-    canonical: 'https://tortacrm.com/pricing',
+    path: 'pricing',
   });
 
   // Flatten compare groups into ordered chunks for rendering. Each group has
