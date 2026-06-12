@@ -209,8 +209,8 @@
     "footer": {
       "tagline": "A single CRM platform for online stores — built for solo founders, small agencies and multi-brand operators alike.",
       "cols": {
-        "product": { "title": "Product",  "links": { "database": "Database", "products": "Products", "booking": "Booking", "digital": "Digital products", "chat": "Customer chat", "auth": "Auth", "storage": "Storage", "automations": "Automations", "email": "Email", "realtime": "Realtime", "pricing": "Pricing" } },
-        "developers": { "title": "Developers", "links": { "api": "API", "docs": "Docs", "reference": "API reference", "quickstart": "Quickstart", "frameworks": "Frameworks" } },
+        "product": { "title": "Product",  "links": { "products": "Products", "booking": "Booking", "digital": "Digital products", "chat": "Customer chat", "email": "Email", "pricing": "Pricing" } },
+        "developers": { "title": "Developers", "links": { "api": "API", "database": "Database", "auth": "Auth", "storage": "Storage", "realtime": "Realtime", "automations": "Automations", "docs": "Docs", "reference": "API reference", "quickstart": "Quickstart", "frameworks": "Frameworks" } },
         "legal":   { "title": "Legal",    "links": { "terms": "Terms of Service", "privacy": "Privacy Policy", "refund": "Refund Policy", "security": "Security" } }
       },
       "rights": "All rights reserved.",

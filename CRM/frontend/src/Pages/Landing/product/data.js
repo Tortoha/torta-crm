@@ -57,7 +57,17 @@ export const PRODUCTS = {
   },
 };
 
-// Order shown in the Header "Product" dropdown and the in-page "Explore" links.
+// All feature-page slugs — drives the in-page "Explore more" links + sitemap.
 export const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime'];
 
-export const PRODUCT_NAV = PRODUCT_SLUGS.map(slug => ({ slug, Icon: PRODUCTS[slug].Icon }));
+// The landing Header splits the feature pages into two dropdowns by audience:
+//   Product    — what you sell + how you talk to customers
+//   Developers — the platform building blocks + the API page (/developers)
+export const PRODUCT_NAV = ['products', 'booking', 'digital', 'chat', 'email']
+  .map(slug => ({ slug, Icon: PRODUCTS[slug].Icon }));
+
+export const DEVELOPER_NAV = [
+  { slug: 'developers', Icon: Code },   // the API & SDK page at /developers
+  ...['database', 'auth', 'storage', 'realtime', 'automations']
+    .map(slug => ({ slug, Icon: PRODUCTS[slug].Icon })),
+];

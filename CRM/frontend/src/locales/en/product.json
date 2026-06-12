@@ -13,6 +13,7 @@
     "nav": {
       "product": "Product",
       "name": {
+        "developers": "API & SDK",
         "products": "Products",
         "booking": "Booking",
         "chat": "Customer chat",
@@ -25,6 +26,7 @@
         "realtime": "Realtime"
       },
       "tagline": {
+        "developers": "Build on the platform",
         "products": "Catalog, stock & pricing",
         "booking": "Services, staff & calendar",
         "chat": "All messengers, one inbox",
