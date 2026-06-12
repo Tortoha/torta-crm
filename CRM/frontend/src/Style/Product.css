@@ -311,6 +311,74 @@
 
 @media (prefers-reduced-motion: reduce) { .pf-rt-caret { animation: none; } }
 
+/* ════════════════════════════════════════════════════════════════════
+   Bespoke hero scenes for the commerce feature pages (products / booking /
+   chat / digital). Same one-shot GSAP-on-view pattern as the originals —
+   accent-led, shadow-based, no borders.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* These scenes set explicit % / 100% widths alongside padding — keep them
+   border-box so a block never overflows its column or column-track. */
+.pf-inv *, .pf-cal *, .pf-omni *, .pf-dl * { box-sizing: border-box; }
+
+/* ── PRODUCTS — inventory card, stock bars filling, batch badge ──────── */
+.pf-inv { width: 100%; max-width: 400px; position: relative; }
+.pf-inv-card { display: flex; flex-direction: column; gap: 11px; padding: 16px 18px; }
+.pf-inv-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+.pf-inv-head b { font-size: 14px; font-weight: 700; color: var(--text); }
+.pf-inv-wh { font-size: 10px; font-weight: 600; letter-spacing: 0.03em; color: var(--accent); background: var(--accent-tint); padding: 4px 10px; border-radius: 999px; }
+.pf-inv-row { display: grid; grid-template-columns: 14px 1fr 86px 30px; gap: 11px; align-items: center; }
+.pf-inv-sw { width: 14px; height: 14px; border-radius: 5px; }
+.pf-inv-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.pf-inv-track { height: 6px; border-radius: 999px; background: rgba(var(--fg-rgb), 0.09); overflow: hidden; }
+.pf-inv-fill { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--accent); }
+.pf-inv-n { font-size: 12px; font-weight: 700; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.pf-inv-recv { position: absolute; right: -4px; bottom: -16px; font-size: 11px; font-weight: 600; color: #fff; background: var(--accent); padding: 7px 13px; border-radius: 999px; box-shadow: 0 14px 28px -10px rgba(0, 113, 227, 0.6); }
+
+/* ── BOOKING — week calendar with duration blocks ───────────────────── */
+.pf-cal { width: 100%; max-width: 420px; }
+.pf-cal-card { padding: 14px 16px 16px; position: relative; }
+.pf-cal-days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 10px; }
+.pf-cal-day { font-size: 10px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); text-align: center; }
+.pf-cal-body { position: relative; height: 196px; border-radius: 12px; background: repeating-linear-gradient(to bottom, transparent 0 24%, rgba(var(--fg-rgb), 0.05) 24% calc(24% + 1px)); }
+.pf-cal-ev { position: absolute; left: calc(var(--c) * 20% + 1.4%); width: 17.2%; top: var(--t); height: var(--h); background: var(--accent); color: #fff; border-radius: 9px; padding: 7px 8px; display: flex; flex-direction: column; gap: 2px; overflow: hidden; transform-origin: top; box-shadow: 0 10px 22px -10px rgba(0, 113, 227, 0.55); }
+.pf-cal-ev em { font-size: 11px; font-weight: 700; font-style: normal; line-height: 1.12; }
+.pf-cal-ev i { font-size: 9.5px; font-style: normal; opacity: 0.86; }
+.pf-cal-ev--soft { background: var(--accent-tint); color: var(--accent); box-shadow: none; }
+.pf-cal-chk { position: absolute; right: 12px; bottom: 10px; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--accent); background: var(--card); padding: 5px 11px 5px 9px; border-radius: 999px; box-shadow: 0 12px 26px -10px rgba(0, 0, 0, 0.28); }
+.pf-cal-chk svg { width: 15px; height: 15px; }
+
+/* ── CHAT — channels converging into one inbox ──────────────────────── */
+.pf-omni { width: 100%; max-width: 430px; display: grid; grid-template-columns: 48px 56px 1fr; align-items: center; }
+.pf-omni-channels { display: flex; flex-direction: column; gap: 11px; }
+.pf-omni-ch { width: 46px; height: 46px; border-radius: 14px; background: var(--card); box-shadow: 0 10px 22px -12px rgba(0, 0, 0, 0.3); display: flex; align-items: center; justify-content: center; }
+.pf-omni-ch img { width: 25px; height: 25px; object-fit: contain; }
+.pf-omni-ch svg { width: 25px; height: 25px; color: var(--accent); }
+.pf-omni-wire { width: 56px; height: 270px; overflow: visible; }
+.pf-omni-line { fill: none; stroke: rgba(var(--fg-rgb), 0.17); stroke-width: 2; }
+.pf-omni-inbox { display: flex; flex-direction: column; gap: 8px; padding: 14px 15px; }
+.pf-omni-inbox-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.pf-omni-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.pf-omni-badge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.pf-omni-msg { font-size: 11.5px; line-height: 1.35; color: var(--text); background: rgba(var(--fg-rgb), 0.06); padding: 8px 11px; border-radius: 13px 13px 13px 4px; max-width: 90%; }
+.pf-omni-msg.is-me { align-self: flex-end; background: var(--accent); color: #fff; border-radius: 13px 13px 4px 13px; }
+
+/* ── DIGITAL — files fan in, bundle to a ZIP, get delivered ──────────── */
+.pf-dl { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.pf-dl-files { display: flex; gap: 12px; }
+.pf-dl-file { display: inline-flex; align-items: center; gap: 7px; padding: 9px 13px; font-size: 11.5px; font-weight: 600; color: var(--text); }
+.pf-dl-file svg { width: 16px; height: 16px; color: var(--accent); }
+.pf-dl-zip { display: flex; align-items: center; gap: 12px; padding: 14px 16px; width: 100%; }
+.pf-dl-zip-ic { width: 40px; height: 40px; border-radius: 11px; background: var(--accent-tint); color: var(--accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.pf-dl-zip-ic svg { width: 20px; height: 20px; }
+.pf-dl-zip-meta { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.pf-dl-zip-meta b { font-size: 13px; font-weight: 700; color: var(--text); }
+.pf-dl-zip-meta i { font-size: 11px; font-style: normal; color: var(--muted); }
+.pf-dl-zip-ar { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 10px 22px -10px rgba(0, 113, 227, 0.6); }
+.pf-dl-zip-ar svg { width: 17px; height: 17px; }
+.pf-dl-sent { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-tint); padding: 8px 14px; border-radius: 999px; }
+.pf-dl-sent svg { width: 16px; height: 16px; }
+
 /* ── Big stat strip (reused across pages) ─────────────────────────── */
 .pf-stats {
   display: grid;

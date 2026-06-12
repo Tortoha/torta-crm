@@ -8,6 +8,8 @@ import { useEffect } from 'react';
 import gsap from 'gsap';
 import {
   ImageSquare, FilePdf, PaperPlaneTilt, Globe,
+  InstagramLogo, ChatCircleDots, CheckCircle,
+  MusicNotes, VideoCamera, FileZip, DownloadSimple, EnvelopeSimple,
 } from '@phosphor-icons/react';
 import { useInView } from '../../../Utils/useInView.js';
 
@@ -254,6 +256,161 @@ function RealtimeIllus() {
   );
 }
 
+/* ── Products: a live inventory card — variant rows whose stock bars fill
+      in, a warehouse tag, and a "received / batch" badge floating up. ──── */
+function ProductsIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+    tl.fromTo('.pf-inv-card', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5 });
+    tl.fromTo('.pf-inv-row', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, stagger: 0.12 }, '-=0.2');
+    tl.to('.pf-inv-fill', { width: (i, el) => el.dataset.to, duration: 0.85, stagger: 0.12, ease: 'power1.inOut' }, '-=0.35');
+    tl.fromTo('.pf-inv-recv', { opacity: 0, scale: 0.7, y: 10 }, { opacity: 1, scale: 1, y: 0, duration: 0.45, ease: 'back.out(2)' }, '-=0.1');
+    gsap.to('.pf-inv-recv', { y: -5, duration: 1.9, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 0.6 });
+  });
+  const rows = [
+    { sw: 'var(--accent)',            name: 'Gray / M',  to: '88%', n: '142' },
+    { sw: 'rgba(var(--fg-rgb), 0.8)', name: 'Black / M', to: '56%', n: '90' },
+    { sw: 'rgba(var(--fg-rgb), 0.3)', name: 'Sand / L',  to: '20%', n: '11' },
+  ];
+  return (
+    <div className="pf-inv" ref={ref}>
+      <div className="pf-inv-card pf-card pf-anim">
+        <div className="pf-inv-head">
+          <b>Cotton Tee</b>
+          <span className="pf-inv-wh">Main warehouse</span>
+        </div>
+        {rows.map((r, i) => (
+          <div className="pf-inv-row pf-anim" key={i}>
+            <i className="pf-inv-sw" style={{ background: r.sw }} />
+            <span className="pf-inv-name">{r.name}</span>
+            <span className="pf-inv-track"><i className="pf-inv-fill" data-to={r.to} /></span>
+            <span className="pf-inv-n">{r.n}</span>
+          </div>
+        ))}
+      </div>
+      <span className="pf-inv-recv pf-anim">+120 received · Batch B-2026</span>
+    </div>
+  );
+}
+
+/* ── Booking: a week calendar with appointment blocks of different durations
+      dropping into their slots; one keeps drifting (a live reschedule) and a
+      "Confirmed" pill settles in — mirrors the real Booking calendar. ───── */
+function BookingIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    tl.fromTo('.pf-cal-card', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5 });
+    tl.fromTo('.pf-cal-day', { opacity: 0, y: -6 }, { opacity: 1, y: 0, duration: 0.3, stagger: 0.05 }, '-=0.2');
+    tl.fromTo('.pf-cal-ev', { opacity: 0, scaleY: 0.3 }, { opacity: 1, scaleY: 1, duration: 0.45, stagger: 0.12, ease: 'back.out(1.5)' }, '-=0.05');
+    tl.fromTo('.pf-cal-chk', { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.42, ease: 'back.out(2.4)' }, '-=0.1');
+    gsap.to('.pf-cal-ev--move', { yPercent: 30, duration: 2.7, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 0.6 });
+  });
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+  const evs = [
+    { c: 0, t: '6%',  h: '24%', name: 'Haircut', time: '09:00', cls: '' },
+    { c: 2, t: '14%', h: '46%', name: 'Consult', time: '10:30', cls: 'pf-cal-ev--move' },
+    { c: 3, t: '56%', h: '22%', name: 'Fitting', time: '13:00', cls: 'pf-cal-ev--soft' },
+  ];
+  return (
+    <div className="pf-cal" ref={ref}>
+      <div className="pf-cal-card pf-card pf-anim">
+        <div className="pf-cal-days">
+          {days.map((d, i) => <span className="pf-cal-day pf-anim" key={i}>{d}</span>)}
+        </div>
+        <div className="pf-cal-body">
+          {evs.map((e, i) => (
+            <span className={`pf-cal-ev pf-anim ${e.cls}`} key={i}
+              style={{ '--c': e.c, '--t': e.t, '--h': e.h }}>
+              <em>{e.name}</em><i>{e.time}</i>
+            </span>
+          ))}
+        </div>
+        <span className="pf-cal-chk pf-anim"><CheckCircle weight="fill" /> Confirmed</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Chat: messenger channels on the left, their wires converging into a
+      single live inbox on the right — the omnichannel story in one frame. ─ */
+function ChatIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+    tl.fromTo('.pf-omni-ch', { opacity: 0, scale: 0.5, x: -12 },
+      { opacity: 1, scale: 1, x: 0, duration: 0.42, stagger: 0.08, ease: 'back.out(1.8)' });
+    tl.fromTo('.pf-omni-inbox', { opacity: 0, x: 16 }, { opacity: 1, x: 0, duration: 0.5 }, '-=0.25');
+    tl.fromTo('.pf-omni-msg', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.34, stagger: 0.14 }, '-=0.15');
+    tl.fromTo('.pf-omni-badge', { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.4, ease: 'back.out(2.4)' }, '-=0.05');
+    gsap.set('.pf-omni-line', { strokeDasharray: '5 9' });
+    gsap.to('.pf-omni-line', { strokeDashoffset: -28, duration: 1.3, repeat: -1, ease: 'none' });
+  });
+  const chans = [
+    { logo: 'telegram' }, { logo: 'whatsapp' }, { Ic: InstagramLogo }, { logo: 'discord' }, { Ic: ChatCircleDots },
+  ];
+  return (
+    <div className="pf-omni" ref={ref}>
+      <div className="pf-omni-channels">
+        {chans.map(({ logo, Ic }, i) => (
+          <span className="pf-omni-ch pf-anim" key={i}>
+            {logo ? <img src={`/brand-logos/${logo}.svg`} alt="" /> : <Ic weight="fill" />}
+          </span>
+        ))}
+      </div>
+      <svg className="pf-omni-wire" viewBox="0 0 56 240" preserveAspectRatio="none">
+        <path className="pf-omni-line" d="M2,22 C38,22 28,120 54,120" />
+        <path className="pf-omni-line" d="M2,71 C38,71 32,120 54,120" />
+        <path className="pf-omni-line" d="M2,120 L54,120" />
+        <path className="pf-omni-line" d="M2,169 C38,169 32,120 54,120" />
+        <path className="pf-omni-line" d="M2,218 C38,218 28,120 54,120" />
+      </svg>
+      <div className="pf-omni-inbox pf-card pf-anim">
+        <div className="pf-omni-inbox-head">
+          <span className="pf-omni-dot" /> One inbox
+          <span className="pf-omni-badge pf-anim">3</span>
+        </div>
+        <span className="pf-omni-msg pf-anim">Is the jacket back in stock?</span>
+        <span className="pf-omni-msg is-me pf-anim">Yes — restocked this morning ✦</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Digital: the files you sell fan in, bundle into a single ZIP, then a
+      "Delivered by email" pill confirms hands-free delivery. ───────────── */
+function DigitalIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+    tl.fromTo('.pf-dl-file', { opacity: 0, y: -18, rotate: 0 },
+      { opacity: 1, y: 0, rotate: (i) => (i - 1) * 7, duration: 0.45, stagger: 0.1, ease: 'back.out(1.5)' });
+    tl.fromTo('.pf-dl-zip', { opacity: 0, scale: 0.6, y: 10 },
+      { opacity: 1, scale: 1, y: 0, duration: 0.5, ease: 'back.out(1.8)' }, '+=0.05');
+    tl.fromTo('.pf-dl-sent', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
+    gsap.to('.pf-dl-zip-ar', { y: 5, duration: 1.1, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+  });
+  const files = [
+    { Ic: FilePdf, name: 'guide.pdf' },
+    { Ic: MusicNotes, name: 'track.mp3' },
+    { Ic: VideoCamera, name: 'promo.mp4' },
+  ];
+  return (
+    <div className="pf-dl" ref={ref}>
+      <div className="pf-dl-files">
+        {files.map(({ Ic, name }, i) => (
+          <span className="pf-dl-file pf-card pf-anim" key={i}>
+            <Ic weight="fill" /> {name}
+          </span>
+        ))}
+      </div>
+      <div className="pf-dl-zip pf-card pf-anim">
+        <span className="pf-dl-zip-ic"><FileZip weight="fill" /></span>
+        <span className="pf-dl-zip-meta"><b>orders.zip</b><i>3 files · ready</i></span>
+        <span className="pf-dl-zip-ar"><DownloadSimple weight="bold" /></span>
+      </div>
+      <span className="pf-dl-sent pf-anim"><EnvelopeSimple weight="fill" /> Delivered by email</span>
+    </div>
+  );
+}
+
 export const ILLUSTRATIONS = {
   database: DatabaseIllus,
   auth: AuthIllus,
@@ -261,6 +418,10 @@ export const ILLUSTRATIONS = {
   automations: AutomationsIllus,
   email: EmailIllus,
   realtime: RealtimeIllus,
+  products: ProductsIllus,
+  booking: BookingIllus,
+  chat: ChatIllus,
+  digital: DigitalIllus,
 };
 
 /* ════════════════════════════════════════════════════════════════════
