@@ -18,7 +18,19 @@
         "storage": "Armazenamento",
         "automations": "Automações",
         "email": "E-mail",
-        "realtime": "Tempo real"
+        "realtime": "Tempo real",
+        "developers": "API & SDK",
+        "team": "Equipe e funções",
+        "currencies": "Múltiplas moedas",
+        "reviews": "Avaliações",
+        "analytics": "Análises",
+        "accounting": "Exportação contábil",
+        "pos": "Ponto de venda",
+        "multi-store": "Múltiplas lojas",
+        "products": "Produtos",
+        "booking": "Agendamentos",
+        "chat": "Chat com clientes",
+        "digital": "Produtos digitais"
       },
       "tagline": {
         "database": "Dados estruturados da loja",
@@ -26,10 +38,21 @@
         "storage": "Mídia e arquivos",
         "automations": "Webhooks e alertas",
         "email": "Transacionais e campanhas",
-        "realtime": "Cursores e presença ao vivo"
+        "realtime": "Cursores e presença ao vivo",
+        "developers": "Construa sobre a plataforma",
+        "team": "Funções e permissões",
+        "currencies": "49 moedas",
+        "reviews": "Compradores verificados + fotos",
+        "analytics": "Relatórios e insights",
+        "accounting": "Exporte para 1C, QuickBooks…",
+        "pos": "Na loja + online",
+        "multi-store": "Várias lojas, uma conta",
+        "products": "Catálogo, estoque e preços",
+        "booking": "Serviços, equipe e agenda",
+        "chat": "Todos os canais, uma caixa de entrada",
+        "digital": "Venda arquivos e downloads"
       }
     },
-
     "database": {
       "hero": {
         "eyebrow": "Banco de dados",
@@ -37,18 +60,48 @@
         "lead": "Sua loja funciona sobre um banco de dados relacional e limpo. Produtos, pedidos, clientes, carrinhos, avaliações, agendamentos e estoque vivem como registros conectados que você pode ler, filtrar e usar — sem planilhas, sem achismos."
       },
       "stats": [
-        { "value": "1 loja, 1 espaço", "label": "Seus dados ficam totalmente isolados de qualquer outra loja" },
-        { "value": "Relacional", "label": "Pedidos conectam-se a clientes, itens, pagamentos e devoluções" },
-        { "value": "Mais de 9 tipos de registro", "label": "Produtos, pedidos, clientes, agendamentos, avaliações e mais" },
-        { "value": "Análises ao vivo", "label": "Receita, funil e estoque lidos diretamente dos seus dados" }
+        {
+          "value": "1 loja, 1 espaço",
+          "label": "Seus dados ficam totalmente isolados de qualquer outra loja"
+        },
+        {
+          "value": "Relacional",
+          "label": "Pedidos conectam-se a clientes, itens, pagamentos e devoluções"
+        },
+        {
+          "value": "Mais de 9 tipos de registro",
+          "label": "Produtos, pedidos, clientes, agendamentos, avaliações e mais"
+        },
+        {
+          "value": "Análises ao vivo",
+          "label": "Receita, funil e estoque lidos diretamente dos seus dados"
+        }
       ],
       "cards": [
-        { "title": "Produtos", "desc": "Produtos com várias opções, variações, tamanhos, preço por item e estoque." },
-        { "title": "Pedidos", "desc": "Cada pedido com seus itens, totais, pagamento e entrega — do início ao fim." },
-        { "title": "Clientes", "desc": "Um perfil por comprador: dados de contato, histórico de pedidos e endereços salvos." },
-        { "title": "Avaliações", "desc": "Notas, avaliações escritas e fotos vinculadas ao produto certo." },
-        { "title": "Agendamentos", "desc": "Compromissos por horário com serviços, equipe e status." },
-        { "title": "Análises", "desc": "Receita, ticket médio, conversão e estoque, calculados ao vivo." }
+        {
+          "title": "Produtos",
+          "desc": "Produtos com várias opções, variações, tamanhos, preço por item e estoque."
+        },
+        {
+          "title": "Pedidos",
+          "desc": "Cada pedido com seus itens, totais, pagamento e entrega — do início ao fim."
+        },
+        {
+          "title": "Clientes",
+          "desc": "Um perfil por comprador: dados de contato, histórico de pedidos e endereços salvos."
+        },
+        {
+          "title": "Avaliações",
+          "desc": "Notas, avaliações escritas e fotos vinculadas ao produto certo."
+        },
+        {
+          "title": "Agendamentos",
+          "desc": "Compromissos por horário com serviços, equipe e status."
+        },
+        {
+          "title": "Análises",
+          "desc": "Receita, ticket médio, conversão e estoque, calculados ao vivo."
+        }
       ],
       "deep": {
         "eyebrow": "Embutido",
@@ -61,10 +114,26 @@
           "Tudo visível no painel — pesquise, filtre e detalhe"
         ],
         "chipsTitle": "Tipos de registro",
-        "chips": ["Produtos", "Variações", "Estoque e lotes", "Pedidos", "Devoluções", "Clientes", "Endereços", "Carrinhos", "Avaliações", "Favoritos", "Agendamentos", "Códigos promocionais"]
+        "chips": [
+          "Produtos",
+          "Variações",
+          "Estoque e lotes",
+          "Pedidos",
+          "Devoluções",
+          "Clientes",
+          "Endereços",
+          "Carrinhos",
+          "Avaliações",
+          "Favoritos",
+          "Agendamentos",
+          "Códigos promocionais"
+        ]
+      },
+      "seo": {
+        "title": "Gestão de pedidos, estoque e produtos — Torta CRM",
+        "description": "Gerencie produtos, pedidos, clientes, estoque e agendamentos em um só lugar — estoque multi-armazém, lotes, alertas de estoque baixo e análises em tempo real. Sem planilhas."
       }
     },
-
     "auth": {
       "hero": {
         "eyebrow": "Autenticação",
@@ -72,18 +141,48 @@
         "lead": "Deixe os compradores criarem uma conta e entrarem da forma que preferirem — um código único por e-mail, o número de telefone ou uma conta social — sem que você precise desenvolver nada disso."
       },
       "stats": [
-        { "value": "17 provedores", "label": "Google, Apple e mais 15 logins sociais" },
-        { "value": "E-mail + SMS", "label": "Códigos únicos por e-mail ou mensagem de texto" },
-        { "value": "Multidispositivo", "label": "Os clientes veem e revogam as próprias sessões" },
-        { "value": "Checkout como convidado", "label": "Compre primeiro, crie a conta depois" }
+        {
+          "value": "17 provedores",
+          "label": "Google, Apple e mais 15 logins sociais"
+        },
+        {
+          "value": "E-mail + SMS",
+          "label": "Códigos únicos por e-mail ou mensagem de texto"
+        },
+        {
+          "value": "Multidispositivo",
+          "label": "Os clientes veem e revogam as próprias sessões"
+        },
+        {
+          "value": "Checkout como convidado",
+          "label": "Compre primeiro, crie a conta depois"
+        }
       ],
       "cards": [
-        { "title": "Código por e-mail", "desc": "Códigos únicos sem senha enviados para a caixa de entrada do cliente." },
-        { "title": "Código por telefone", "desc": "Códigos únicos por SMS para públicos que priorizam o telefone." },
-        { "title": "Login social", "desc": "Google, Apple, GitHub, Discord e mais com um toque." },
-        { "title": "Redefinição de senha", "desc": "Um fluxo de redefinição seguro e autônomo, já pronto." },
-        { "title": "Sessões", "desc": "Dispositivos ativos listados; saia de qualquer lugar, a qualquer momento." },
-        { "title": "Checkout como convidado", "desc": "Os compradores compram como convidados e migram para uma conta depois." }
+        {
+          "title": "Código por e-mail",
+          "desc": "Códigos únicos sem senha enviados para a caixa de entrada do cliente."
+        },
+        {
+          "title": "Código por telefone",
+          "desc": "Códigos únicos por SMS para públicos que priorizam o telefone."
+        },
+        {
+          "title": "Login social",
+          "desc": "Google, Apple, GitHub, Discord e mais com um toque."
+        },
+        {
+          "title": "Redefinição de senha",
+          "desc": "Um fluxo de redefinição seguro e autônomo, já pronto."
+        },
+        {
+          "title": "Sessões",
+          "desc": "Dispositivos ativos listados; saia de qualquer lugar, a qualquer momento."
+        },
+        {
+          "title": "Checkout como convidado",
+          "desc": "Os compradores compram como convidados e migram para uma conta depois."
+        }
       ],
       "deep": {
         "eyebrow": "Seguro por padrão",
@@ -96,10 +195,31 @@
           "Uma identidade de cliente pode funcionar em todas as localizações da sua loja"
         ],
         "chipsTitle": "Provedores sociais",
-        "chips": ["Google", "Apple", "GitHub", "Discord", "LinkedIn", "Figma", "Twitch", "Spotify", "Slack", "Notion", "Zoom", "Bitbucket", "GitLab", "Facebook", "Kakao", "X", "Azure"]
+        "chips": [
+          "Google",
+          "Apple",
+          "GitHub",
+          "Discord",
+          "LinkedIn",
+          "Figma",
+          "Twitch",
+          "Spotify",
+          "Slack",
+          "Notion",
+          "Zoom",
+          "Bitbucket",
+          "GitLab",
+          "Facebook",
+          "Kakao",
+          "X",
+          "Azure"
+        ]
+      },
+      "seo": {
+        "title": "Login e contas de clientes para sua loja — Torta CRM",
+        "description": "Deixe seus clientes entrar com um código único por e-mail ou SMS, ou por 17 redes sociais como Google e Apple. Checkout como convidado, sessões em múltiplos dispositivos e recuperação de senha já incluídos."
       }
     },
-
     "storage": {
       "hero": {
         "eyebrow": "Armazenamento",
@@ -107,18 +227,48 @@
         "lead": "Envie fotos de produtos, imagens de avaliações e os arquivos digitais que você vende — quase qualquer tipo de arquivo — direto do painel. Os arquivos são enviados de forma direta e segura, e a mídia de cada loja permanece dela."
       },
       "stats": [
-        { "value": "100 MB – 2 TB", "label": "A cota de mídia escala conforme o seu plano" },
-        { "value": "Qualquer tipo de arquivo", "label": "Imagens, PDFs e os downloads digitais que você vende" },
-        { "value": "Upload direto", "label": "Os arquivos vão direto para o armazenamento a partir do navegador" },
-        { "value": "Por loja", "label": "Sua mídia fica isolada de qualquer outra loja" }
+        {
+          "value": "100 MB – 2 TB",
+          "label": "A cota de mídia escala conforme o seu plano"
+        },
+        {
+          "value": "Qualquer tipo de arquivo",
+          "label": "Imagens, PDFs e os downloads digitais que você vende"
+        },
+        {
+          "value": "Upload direto",
+          "label": "Os arquivos vão direto para o armazenamento a partir do navegador"
+        },
+        {
+          "value": "Por loja",
+          "label": "Sua mídia fica isolada de qualquer outra loja"
+        }
       ],
       "cards": [
-        { "title": "Imagens de produtos", "desc": "Galerias de fotos por produto e por variação." },
-        { "title": "Fotos de avaliações", "desc": "Os clientes anexam até cinco fotos por avaliação." },
-        { "title": "Avatares", "desc": "Fotos de perfil para os seus clientes." },
-        { "title": "Mídia de e-mail", "desc": "Imagens e PDFs que você insere nas campanhas de e-mail." },
-        { "title": "Downloads digitais", "desc": "Venda produtos digitais — ZIPs, áudio, vídeo, e-books, quase qualquer arquivo." },
-        { "title": "Controle de uso", "desc": "Veja exatamente quanto da sua cota você já utilizou." }
+        {
+          "title": "Imagens de produtos",
+          "desc": "Galerias de fotos por produto e por variação."
+        },
+        {
+          "title": "Fotos de avaliações",
+          "desc": "Os clientes anexam até cinco fotos por avaliação."
+        },
+        {
+          "title": "Avatares",
+          "desc": "Fotos de perfil para os seus clientes."
+        },
+        {
+          "title": "Mídia de e-mail",
+          "desc": "Imagens e PDFs que você insere nas campanhas de e-mail."
+        },
+        {
+          "title": "Downloads digitais",
+          "desc": "Venda produtos digitais — ZIPs, áudio, vídeo, e-books, quase qualquer arquivo."
+        },
+        {
+          "title": "Controle de uso",
+          "desc": "Veja exatamente quanto da sua cota você já utilizou."
+        }
       ],
       "deep": {
         "eyebrow": "Simples e seguro",
@@ -131,10 +281,22 @@
           "Excluir uma loja remove os arquivos dela de forma limpa"
         ],
         "chipsTitle": "O que você pode armazenar",
-        "chips": ["Fotos de produtos", "Imagens de variações", "Fotos de avaliações", "Avatares", "Imagens de e-mail", "Guias em PDF", "Downloads digitais (qualquer tipo)", "Logotipo da marca"]
+        "chips": [
+          "Fotos de produtos",
+          "Imagens de variações",
+          "Fotos de avaliações",
+          "Avatares",
+          "Imagens de e-mail",
+          "Guias em PDF",
+          "Downloads digitais (qualquer tipo)",
+          "Logotipo da marca"
+        ]
+      },
+      "seo": {
+        "title": "Venda downloads digitais e hospede mídias dos seus produtos — Torta CRM",
+        "description": "Faça upload de fotos dos produtos e venda downloads digitais — ZIPs, áudio, vídeo, e-books e quase qualquer arquivo. Uploads diretos seguros, armazenamento por plano e monitoramento de uso em tempo real."
       }
     },
-
     "automations": {
       "hero": {
         "eyebrow": "Webhooks e automações",
@@ -142,18 +304,48 @@
         "lead": "Quando algo acontece na sua loja — um pedido pago, um novo cliente, um agendamento cancelado — envie para qualquer lugar: Slack, Discord, seu próprio endpoint ou conectores prontos. Além de alertas e campanhas que rodam de forma agendada."
       },
       "stats": [
-        { "value": "14 eventos", "label": "Pedidos, agendamentos, clientes, pagamentos e produtos" },
-        { "value": "12 conectores", "label": "Slack, Discord, ferramentas de contabilidade e análise" },
-        { "value": "Agendado", "label": "Alertas e campanhas de e-mail que disparam sozinhos" },
-        { "value": "Logs de entrega", "label": "Cada envio registrado com seu status e novas tentativas" }
+        {
+          "value": "14 eventos",
+          "label": "Pedidos, agendamentos, clientes, pagamentos e produtos"
+        },
+        {
+          "value": "12 conectores",
+          "label": "Slack, Discord, ferramentas de contabilidade e análise"
+        },
+        {
+          "value": "Agendado",
+          "label": "Alertas e campanhas de e-mail que disparam sozinhos"
+        },
+        {
+          "value": "Logs de entrega",
+          "label": "Cada envio registrado com seu status e novas tentativas"
+        }
       ],
       "cards": [
-        { "title": "Webhooks de eventos", "desc": "Envie um payload JSON por POST ao seu endpoint quando um evento dispara." },
-        { "title": "Slack e Discord", "desc": "Solte atualizações de pedidos e agendamentos em um canal." },
-        { "title": "Conectores", "desc": "Conexões prontas com ferramentas de contabilidade e análise." },
-        { "title": "Alertas agendados", "desc": "Quedas de receita, estoque baixo e resumos diários por e-mail." },
-        { "title": "Campanhas de e-mail", "desc": "Envios únicos ou recorrentes que rodam automaticamente." },
-        { "title": "Logs de entrega", "desc": "Veja cada entrega, sua resposta e as novas tentativas automáticas." }
+        {
+          "title": "Webhooks de eventos",
+          "desc": "Envie um payload JSON por POST ao seu endpoint quando um evento dispara."
+        },
+        {
+          "title": "Slack e Discord",
+          "desc": "Solte atualizações de pedidos e agendamentos em um canal."
+        },
+        {
+          "title": "Conectores",
+          "desc": "Conexões prontas com ferramentas de contabilidade e análise."
+        },
+        {
+          "title": "Alertas agendados",
+          "desc": "Quedas de receita, estoque baixo e resumos diários por e-mail."
+        },
+        {
+          "title": "Campanhas de e-mail",
+          "desc": "Envios únicos ou recorrentes que rodam automaticamente."
+        },
+        {
+          "title": "Logs de entrega",
+          "desc": "Veja cada entrega, sua resposta e as novas tentativas automáticas."
+        }
       ],
       "deep": {
         "eyebrow": "Nada para hospedar",
@@ -166,10 +358,28 @@
           "Alertas e campanhas agendados rodam sem que você mexa um dedo"
         ],
         "chipsTitle": "Eventos que você pode assinar",
-        "chips": ["order.created", "order.paid", "order.shipped", "order.delivered", "order.cancelled", "order.returned", "booking.created", "booking.completed", "booking.cancelled", "booking.no_show", "customer.created", "payment.received", "product.created", "product.updated"]
+        "chips": [
+          "order.created",
+          "order.paid",
+          "order.shipped",
+          "order.delivered",
+          "order.cancelled",
+          "order.returned",
+          "booking.created",
+          "booking.completed",
+          "booking.cancelled",
+          "booking.no_show",
+          "customer.created",
+          "payment.received",
+          "product.created",
+          "product.updated"
+        ]
+      },
+      "seo": {
+        "title": "Webhooks, integrações e automações — Torta CRM",
+        "description": "Envie eventos da loja — pedidos pagos, novos clientes, agendamentos — para Slack, Discord, seu próprio endpoint ou 12 conectores. Alertas agendados e campanhas de e-mail que rodam sozinhos."
       }
     },
-
     "email": {
       "hero": {
         "eyebrow": "E-mail",
@@ -177,18 +387,48 @@
         "lead": "Envie confirmações de pedido, lembretes e campanhas de marketing a partir do seu próprio domínio verificado — escritos em HTML puro, entregues direto dos nossos servidores de e-mail e ajustados para cair na caixa de entrada."
       },
       "stats": [
-        { "value": "Seu domínio", "label": "Envie como voce@suamarca.com, totalmente verificado" },
-        { "value": "Em segundos", "label": "As mensagens normalmente chegam em poucos segundos" },
-        { "value": "6 modelos", "label": "E-mails transacionais embutidos, todos editáveis" },
-        { "value": "Campanhas", "label": "Disparos únicos ou recorrentes para os seus clientes" }
+        {
+          "value": "Seu domínio",
+          "label": "Envie como voce@suamarca.com, totalmente verificado"
+        },
+        {
+          "value": "Em segundos",
+          "label": "As mensagens normalmente chegam em poucos segundos"
+        },
+        {
+          "value": "6 modelos",
+          "label": "E-mails transacionais embutidos, todos editáveis"
+        },
+        {
+          "value": "Campanhas",
+          "label": "Disparos únicos ou recorrentes para os seus clientes"
+        }
       ],
       "cards": [
-        { "title": "Transacionais", "desc": "E-mails de verificação, redefinição, pedido, agendamento, carrinho e reabastecimento." },
-        { "title": "Campanhas", "desc": "Anuncie novidades e promoções aos seus clientes." },
-        { "title": "Seu domínio", "desc": "Envio verificado com DKIM, SPF e DMARC." },
-        { "title": "Editor HTML", "desc": "Escreva exatamente o e-mail que você quer, com pré-visualização ao vivo." },
-        { "title": "Agendamento", "desc": "Envie agora, em um horário definido ou com repetição semanal ou anual." },
-        { "title": "Entregabilidade", "desc": "Envio autenticado ajustado para alcançar a caixa de entrada." }
+        {
+          "title": "Transacionais",
+          "desc": "E-mails de verificação, redefinição, pedido, agendamento, carrinho e reabastecimento."
+        },
+        {
+          "title": "Campanhas",
+          "desc": "Anuncie novidades e promoções aos seus clientes."
+        },
+        {
+          "title": "Seu domínio",
+          "desc": "Envio verificado com DKIM, SPF e DMARC."
+        },
+        {
+          "title": "Editor HTML",
+          "desc": "Escreva exatamente o e-mail que você quer, com pré-visualização ao vivo."
+        },
+        {
+          "title": "Agendamento",
+          "desc": "Envie agora, em um horário definido ou com repetição semanal ou anual."
+        },
+        {
+          "title": "Entregabilidade",
+          "desc": "Envio autenticado ajustado para alcançar a caixa de entrada."
+        }
       ],
       "deep": {
         "eyebrow": "Feito para chegar",
@@ -201,10 +441,21 @@
           "O volume diário escala conforme o seu plano"
         ],
         "chipsTitle": "E-mails que sua loja pode enviar",
-        "chips": ["Código de verificação", "Redefinição de senha", "Confirmação de pedido", "Lembrete de agendamento", "Carrinho abandonado", "Alerta de reabastecimento", "Campanhas de marketing"]
+        "chips": [
+          "Código de verificação",
+          "Redefinição de senha",
+          "Confirmação de pedido",
+          "Lembrete de agendamento",
+          "Carrinho abandonado",
+          "Alerta de reabastecimento",
+          "Campanhas de marketing"
+        ]
+      },
+      "seo": {
+        "title": "E-mail marketing e e-mail transacional — Torta CRM",
+        "description": "Envie confirmações de pedidos, lembretes e campanhas de marketing pelo seu próprio domínio verificado (DKIM, SPF, DMARC). Templates prontos, editor HTML e agendamento incluídos."
       }
     },
-
     "realtime": {
       "hero": {
         "eyebrow": "Tempo real",
@@ -212,18 +463,48 @@
         "lead": "Presença, cursores e edição compartilhada ao vivo em todo o seu CRM. Veja quem está on-line e onde, acompanhe o cursor de um colega de equipe se mover com o nome dele e deixe uma mensagem bem no seu ponteiro — em cada página de projeto, produto e organização."
       },
       "stats": [
-        { "value": "Toda página", "label": "Presença e cursores em cada tela de projeto, produto e organização" },
-        { "value": "Cursores ao vivo", "label": "Veja o ponteiro de cada colega de equipe, identificado com o nome dele" },
-        { "value": "Digitação compartilhada", "label": "Veja as edições surgirem em um campo conforme são digitadas" },
-        { "value": "Um socket", "label": "Um único WebSocket por sessão dá conta de tudo isso" }
+        {
+          "value": "Toda página",
+          "label": "Presença e cursores em cada tela de projeto, produto e organização"
+        },
+        {
+          "value": "Cursores ao vivo",
+          "label": "Veja o ponteiro de cada colega de equipe, identificado com o nome dele"
+        },
+        {
+          "value": "Digitação compartilhada",
+          "label": "Veja as edições surgirem em um campo conforme são digitadas"
+        },
+        {
+          "value": "Um socket",
+          "label": "Um único WebSocket por sessão dá conta de tudo isso"
+        }
       ],
       "cards": [
-        { "title": "Presença ao vivo", "desc": "Uma pilha de avatares no cabeçalho e pontos de on-line mostram quem está aqui, em tempo real." },
-        { "title": "Cursores ao vivo", "desc": "O cursor de cada colega de equipe se move ao vivo, identificado com o nome dele e preciso ao pixel em qualquer tela." },
-        { "title": "Chat no cursor", "desc": "Pressione Ctrl+M para fixar uma mensagem rápida no seu cursor — uma palavra no momento, sem thread." },
-        { "title": "Edição compartilhada", "desc": "Veja um colega de equipe digitar em um campo de e-mail ou de produto, espelhado tecla por tecla." },
-        { "title": "Ir até um colega de equipe", "desc": "Abra o menu de presença e clique em qualquer pessoa para chegar exatamente onde ela está trabalhando." },
-        { "title": "Feito para escalar", "desc": "Um WebSocket autenticado por sessão, distribuído entre instâncias com Postgres LISTEN/NOTIFY." }
+        {
+          "title": "Presença ao vivo",
+          "desc": "Uma pilha de avatares no cabeçalho e pontos de on-line mostram quem está aqui, em tempo real."
+        },
+        {
+          "title": "Cursores ao vivo",
+          "desc": "O cursor de cada colega de equipe se move ao vivo, identificado com o nome dele e preciso ao pixel em qualquer tela."
+        },
+        {
+          "title": "Chat no cursor",
+          "desc": "Pressione Ctrl+M para fixar uma mensagem rápida no seu cursor — uma palavra no momento, sem thread."
+        },
+        {
+          "title": "Edição compartilhada",
+          "desc": "Veja um colega de equipe digitar em um campo de e-mail ou de produto, espelhado tecla por tecla."
+        },
+        {
+          "title": "Ir até um colega de equipe",
+          "desc": "Abra o menu de presença e clique em qualquer pessoa para chegar exatamente onde ela está trabalhando."
+        },
+        {
+          "title": "Feito para escalar",
+          "desc": "Um WebSocket autenticado por sessão, distribuído entre instâncias com Postgres LISTEN/NOTIFY."
+        }
       ],
       "deep": {
         "eyebrow": "Multijogador",
@@ -236,7 +517,887 @@
           "Um WebSocket autenticado, escalado entre instâncias via Postgres LISTEN/NOTIFY"
         ],
         "chipsTitle": "O que está ao vivo",
-        "chips": ["Cursores ao vivo", "Pilha de presença", "Status on-line", "Chat no cursor", "Digitação compartilhada", "Ir até colega de equipe", "Páginas de projeto", "Páginas de produto", "Console da organização"]
+        "chips": [
+          "Cursores ao vivo",
+          "Pilha de presença",
+          "Status on-line",
+          "Chat no cursor",
+          "Digitação compartilhada",
+          "Ir até colega de equipe",
+          "Páginas de projeto",
+          "Páginas de produto",
+          "Console da organização"
+        ]
+      },
+      "seo": {
+        "title": "Colaboração em equipe em tempo real — Torta CRM",
+        "description": "Veja quem está online, acompanhe os cursores ao vivo dos colegas e visualize edições compartilhadas em todas as páginas do seu CRM. Chat por cursor, presença e navegação até o colega, tudo integrado."
+      }
+    },
+    "products": {
+      "seo": {
+        "title": "Catálogo de produtos, estoque e armazéns — Torta CRM",
+        "description": "Um catálogo completo para produtos físicos: variações aninhadas com preços herdáveis, custo e código de barras por SKU, estoque multi-armazém, rastreamento de lotes com validade, códigos promocionais, descontos agendados e preços por quantidade."
+      },
+      "hero": {
+        "eyebrow": "Produtos",
+        "title": "Um catálogo criado para o estoque físico real",
+        "lead": "Venda produtos físicos com configuração completa e flexível — variações aninhadas, preços por SKU, custo e códigos de barras — e gerencie o estoque em múltiplos armazéns com rastreamento de lotes, códigos promocionais, descontos agendados e preços por quantidade."
+      },
+      "stats": [
+        {
+          "value": "Até 5 níveis",
+          "label": "Variações aninhadas — precifique em bloco ou por SKU"
+        },
+        {
+          "value": "Por armazém",
+          "label": "Estoque, lotes e transferências entre locais"
+        },
+        {
+          "value": "Lotes FEFO",
+          "label": "Baixa por vencimento primeiro, com custo por lote"
+        },
+        {
+          "value": "3 ferramentas de preço",
+          "label": "Cupons, descontos agendados e preços por quantidade"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Variações flexíveis",
+          "desc": "Aninha variações em até cinco níveis — a folha é o SKU. Precifique toda uma variação de uma vez, ou defina por item."
+        },
+        {
+          "title": "Detalhes por SKU",
+          "desc": "Código SKU, código de barras EAN-13 gerado automaticamente, preço de custo, peso e dimensões em cada unidade vendável."
+        },
+        {
+          "title": "Estoque multi-armazém",
+          "desc": "Controle a quantidade por armazém, transfira entre eles e ofereça retirada na loja com prazos de entrega estimados."
+        },
+        {
+          "title": "Rastreamento de lotes",
+          "desc": "Receba estoque em lotes com datas de produção e vencimento; a baixa segue o critério de vencimento primeiro (FEFO) com custo por lote para um COGS preciso."
+        },
+        {
+          "title": "Cupons e descontos",
+          "desc": "Cupons percentuais ou fixos com tetos e limites de uso, mais promoções agendadas por produto, variação ou SKU específico."
+        },
+        {
+          "title": "Preços por quantidade",
+          "desc": "Tabela de preços por faixa de quantidade por SKU para atacado — o preço unitário correto é aplicado automaticamente no checkout."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Estoque",
+        "title": "Um estoque em que você pode confiar",
+        "body": "Receba, ajuste e transfira estoque em uma visão dedicada por armazém. Cada movimentação é registrada com motivo, os lotes são baixados por vencimento e os clientes na lista de espera por reposição recebem um e-mail assim que o item volta ao estoque.",
+        "points": [
+          "Recebimento em massa em lotes com produção, vencimento e custo",
+          "Ajustes com motivos — entrega, devolução, recontagem, avaria — totalmente registrados",
+          "Transferência de estoque entre armazéns em uma operação única",
+          "Filtros de estoque baixo e zerado com contadores e margens em tempo real"
+        ],
+        "chipsTitle": "Integrado ao catálogo",
+        "chips": [
+          "Variações (5 níveis)",
+          "Código de barras por SKU",
+          "Custo e margem",
+          "Armazéns",
+          "Lotes e validade",
+          "Cupons",
+          "Descontos agendados",
+          "Preços por quantidade",
+          "Pré-vendas",
+          "B2B / MOQ / Net-30",
+          "Categorias",
+          "Especificações"
+        ]
+      }
+    },
+    "booking": {
+      "seo": {
+        "title": "Agendamento e marcação de consultas — Torta CRM",
+        "description": "Aceite agendamentos para seus serviços: duração, preço e capacidade de grupo configuráveis, equipe com horários próprios, calendário semanal com arrastar e soltar, e uma API pública de disponibilidade para agendar de qualquer lugar."
+      },
+      "hero": {
+        "eyebrow": "Agendamentos",
+        "title": "Consultas, serviços e equipe em uma só agenda",
+        "lead": "Deixe os clientes agendar seus serviços online. Defina a duração, o preço e a capacidade de grupo de cada serviço, configure horários individuais para a equipe e gerencie tudo em um calendário semanal com arrastar e soltar — ou aceite agendamentos direto pela API."
+      },
+      "stats": [
+        {
+          "value": "5–1440 min",
+          "label": "Defina qualquer duração; capacidade de grupo para turmas"
+        },
+        {
+          "value": "Horários por colaborador",
+          "label": "Cada membro da equipe tem sua própria agenda semanal"
+        },
+        {
+          "value": "Disponibilidade em tempo real",
+          "label": "Motor de vagas real com assentos restantes para grupos"
+        },
+        {
+          "value": "Agendar via API",
+          "label": "Crie agendamentos e consulte disponibilidade pelo SDK"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Serviços",
+          "desc": "Cada serviço define sua própria duração, preço e capacidade de grupo, e onde acontece — na sua loja, na casa do cliente ou qualquer um dos dois."
+        },
+        {
+          "title": "Equipe e horários",
+          "desc": "Atribua colaboradores aos serviços e configure horários de trabalho semanais individuais, incluindo turnos partidos."
+        },
+        {
+          "title": "Calendário semanal",
+          "desc": "Uma visão semanal estilo Google Calendar. Arraste um agendamento para remarcar — a capacidade é verificada antes de confirmar."
+        },
+        {
+          "title": "Clientes e status",
+          "desc": "Cada agendamento tem o nome, telefone e observações do cliente, e passa por pendente, confirmado, concluído, cancelado ou não compareceu."
+        },
+        {
+          "title": "Capacidade de grupo",
+          "desc": "Defina uma capacidade acima de um e vários clientes podem compartilhar o mesmo horário — ideal para turmas e sessões em grupo."
+        },
+        {
+          "title": "API pública de agendamento",
+          "desc": "Consulte disponibilidade em tempo real e crie agendamentos pelo seu próprio site ou app via API Externa e o SDK torta-js."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Como funciona o agendamento",
+        "title": "De um horário disponível a uma consulta confirmada",
+        "body": "O motor de disponibilidade percorre os horários de cada colaborador, oferece apenas os slots onde o serviço cabe inteiro e a capacidade está livre, e confirma (ou reserva) o agendamento no momento em que é feito. Remarque arrastando no calendário — a duração acompanha.",
+        "points": [
+          "Intervalo de slots, antecedência mínima, máximo de dias à frente e janela de cancelamento são configuráveis",
+          "Confirme agendamentos automaticamente ou deixe-os pendentes para revisão",
+          "Capacidade de grupo controlada por slot, com vagas restantes exibidas ao cliente",
+          "Remarcação por arrastar, com o calendário atualizando em tempo real para sua equipe"
+        ],
+        "chipsTitle": "Blocos de agendamento",
+        "chips": [
+          "Serviços",
+          "Equipe",
+          "Horários de trabalho",
+          "Capacidade de grupo",
+          "Na loja ou a domicílio",
+          "Pendente / confirmado",
+          "Controle de ausências",
+          "API de disponibilidade",
+          "Agendamento via SDK",
+          "Lembretes",
+          "Agendamentos avulsos"
+        ]
+      }
+    },
+    "chat": {
+      "seo": {
+        "title": "Chat com clientes — todos os canais em uma caixa de entrada — Torta CRM",
+        "description": "Atenda clientes no Telegram, WhatsApp, Instagram, Facebook, Viber, X, Discord, e-mail e widget de site — todas as conversas em uma caixa de entrada em tempo real, com respostas entregues de volta ao canal de origem."
+      },
+      "hero": {
+        "eyebrow": "Chat com clientes",
+        "title": "Todas as mensagens dos clientes em uma caixa de entrada",
+        "lead": "Conecte Telegram, WhatsApp, Instagram, Facebook, Viber, X, Discord, e-mail e um widget de chat no site — e responda a tudo em uma única caixa de entrada em tempo real. Responda uma vez; a mensagem sai pelo canal que o cliente usou."
+      },
+      "stats": [
+        {
+          "value": "9 canais",
+          "label": "Telegram, WhatsApp, Instagram, Facebook, Viber, X, Discord, e-mail, web"
+        },
+        {
+          "value": "Uma caixa de entrada",
+          "label": "Todos os canais em uma única lista de conversas"
+        },
+        {
+          "value": "Tempo real",
+          "label": "Novas mensagens chegam via WebSocket — sem precisar atualizar"
+        },
+        {
+          "value": "Bidirecional",
+          "label": "Respostas são entregues no canal original do cliente"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Nove canais",
+          "desc": "Widget de site, Telegram, WhatsApp, Instagram, Facebook Messenger, Viber, X DMs, Discord e e-mail — todos conectados."
+        },
+        {
+          "title": "Caixa de entrada unificada",
+          "desc": "Mensagens de todos os canais chegam em uma lista encadeada, com badges de não lidos e prévia da última mensagem."
+        },
+        {
+          "title": "Tempo real",
+          "desc": "Um WebSocket entrega mensagens novas e editadas no instante em que chegam — toda a equipe vê a atualização."
+        },
+        {
+          "title": "Conversas com privacidade",
+          "desc": "Clientes aparecem sob um ID anônimo estável — uma conversa por pessoa por canal."
+        },
+        {
+          "title": "E-mail encadeado",
+          "desc": "Respostas por e-mail mantêm os cabeçalhos corretos para colapsar na mesma thread no Gmail e Outlook."
+        },
+        {
+          "title": "Configuração rápida",
+          "desc": "Cole um token de bot ou conecte uma página; as credenciais são validadas na hora, e o widget de site não precisa de nada."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Tudo em um só lugar",
+        "title": "Pare de alternar entre dezenas de apps",
+        "body": "Seus clientes falam onde quiserem — você responde em uma tela. Cada canal se conecta com uma configuração simples, todas as conversas são organizadas por cliente e as respostas são entregues no canal em que chegaram.",
+        "points": [
+          "Conecte um canal com um token ou link de página — validado no momento em que você salva",
+          "Responda pelo CRM; a mensagem é entregue no canal de origem",
+          "O e-mail usa seu domínio de envio verificado e encadeia corretamente",
+          "Atualizações em tempo real e notificação quando uma nova mensagem chega"
+        ],
+        "chipsTitle": "Canais que você pode conectar",
+        "chips": [
+          "Chat no site",
+          "Telegram",
+          "WhatsApp",
+          "Instagram",
+          "Facebook",
+          "Viber",
+          "X (Twitter)",
+          "Discord",
+          "E-mail"
+        ]
+      }
+    },
+    "digital": {
+      "seo": {
+        "title": "Venda produtos digitais e downloads — Torta CRM",
+        "description": "Venda downloads digitais — e-books, áudio, vídeo, ZIPs e quase qualquer arquivo. Faça upload pelo painel, agrupe opcionalmente em um ZIP e entregue automaticamente por e-mail e na página do pedido após a compra."
+      },
+      "hero": {
+        "eyebrow": "Produtos digitais",
+        "title": "Venda downloads, entregues automaticamente",
+        "lead": "Faça upload dos arquivos que você vende — e-books, áudio, vídeo, assets de design, quase qualquer tipo — defina um preço, e o Torta os entrega no instante em que o pedido é pago: por e-mail, no recibo e na página de pedidos do cliente."
+      },
+      "stats": [
+        {
+          "value": "Qualquer tipo de arquivo",
+          "label": "PDFs, áudio, vídeo, arquivos comprimidos — até 4 GB cada"
+        },
+        {
+          "value": "ZIP único ou por arquivo",
+          "label": "Agrupe tudo em um download só, ou entregue os arquivos separados"
+        },
+        {
+          "value": "Entrega automática",
+          "label": "Links enviados por e-mail e exibidos na página do pedido após o pagamento"
+        },
+        {
+          "value": "Sem estoque para gerenciar",
+          "label": "Produtos digitais nunca acabam e pulam a etapa de envio"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Faça upload e venda",
+          "desc": "Arraste os arquivos que você vende — quase qualquer tipo, até 4 GB cada — e defina um preço único."
+        },
+        {
+          "title": "Entrega em ZIP único",
+          "desc": "Agrupe opcionalmente todos os arquivos em um .zip que o cliente baixa com um clique."
+        },
+        {
+          "title": "Entrega automática",
+          "desc": "Quando o pedido é pago, os links de download são enviados por e-mail, no PDF do recibo e na página do pedido."
+        },
+        {
+          "title": "Prévia rica",
+          "desc": "Exiba o produto com uma galeria de fotos, vídeo ou 3D antes de o comprador confirmar."
+        },
+        {
+          "title": "Checkout sem atrito",
+          "desc": "Produtos digitais pulam as etapas de variação, estoque e frete — o comprador vai direto para o download."
+        },
+        {
+          "title": "Baixe quando quiser",
+          "desc": "Os clientes acessam seus arquivos novamente em Meus Pedidos sempre que precisarem."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Como funciona a entrega",
+        "title": "Pago e entregue — sem esforço",
+        "body": "No instante em que um pedido digital é pago, ele é marcado como entregue — não há nada para enviar. O cliente recebe os links de download de três formas e pode voltar para buscá-los quando quiser. Você só precisa fazer o upload e definir um preço.",
+        "points": [
+          "Os arquivos sobem direto do navegador para um armazenamento de objetos rápido",
+          "Agrupe em um ZIP (até 200 MB) ou entregue cada arquivo separadamente",
+          "Links entregues por e-mail, no PDF do recibo e na página do pedido",
+          "Compradores baixam novamente em Meus Pedidos a qualquer hora"
+        ],
+        "chipsTitle": "O que você pode vender",
+        "chips": [
+          "E-books / PDFs",
+          "Áudio",
+          "Vídeo",
+          "Assets de design",
+          "Arquivos ZIP",
+          "Software",
+          "Templates",
+          "Quase qualquer arquivo"
+        ]
+      }
+    },
+    "analytics": {
+      "seo": {
+        "title": "Análises de e-commerce e relatórios de lucro — Torta CRM",
+        "description": "Análises de e-commerce em tempo real: tendências de receita, conversão do funil de vendas, margem bruta por SKU, coortes de clientes e valor ao longo do tempo, devoluções e saúde do estoque — para uma loja ou toda a organização. Sem planilhas."
+      },
+      "hero": {
+        "eyebrow": "Análises",
+        "title": "Saiba exatamente o que está funcionando",
+        "lead": "Receita, conversão, margem de lucro até o nível do SKU, coortes de clientes e valor ao longo do tempo, devoluções, tráfego e muito mais — mais de vinte relatórios integrados, atualizados em tempo real, para uma loja ou toda a organização. Sem configuração, sem planilhas."
+      },
+      "stats": [
+        {
+          "value": "20+ relatórios",
+          "label": "De receita a coortes e margem — integrado"
+        },
+        {
+          "value": "Margem por SKU",
+          "label": "Lucro bruto real, usando o custo no momento da venda"
+        },
+        {
+          "value": "Tempo real",
+          "label": "Novos pedidos aparecem em segundos"
+        },
+        {
+          "value": "Uma ou várias lojas",
+          "label": "Consolide todas as lojas em uma visão, convertido em FX"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Receita e funil",
+          "desc": "Receita ao longo do tempo com comparação de períodos, e um funil real de visitantes únicos da visualização ao carrinho até o pagamento."
+        },
+        {
+          "title": "Margem de lucro por SKU",
+          "desc": "Lucro bruto e margem por produto, variação e SKU — usando o custo registrado no momento da venda."
+        },
+        {
+          "title": "Coortes e valor ao longo do tempo",
+          "desc": "Coortes mensais de retenção, novos versus recorrentes, melhores clientes e quanto eles valem ao longo do tempo."
+        },
+        {
+          "title": "Devoluções e operações",
+          "desc": "Taxas e motivos de devolução, tempos de processamento e velocidade de fulfillment do pedido à entrega."
+        },
+        {
+          "title": "Tráfego e pesquisa",
+          "desc": "Fontes, campanhas UTM, dispositivos e países — mais as pesquisas que não retornaram resultados."
+        },
+        {
+          "title": "Estoque e metas",
+          "desc": "Saúde do estoque em um relance e progresso em tempo real em relação às metas que você definiu."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Integrado",
+        "title": "Os relatórios que uma loja realmente precisa",
+        "body": "Cada métrica é calculada no fuso horário da sua loja, armazenada em cache para velocidade e atualizada em tempo real conforme os pedidos chegam. Escolha qualquer intervalo de datas, detalhe os pedidos de um dia específico, compare dois períodos ou exporte os números para CSV.",
+        "points": [
+          "Todos os relatórios respeitam o dia local e o fuso horário da sua loja",
+          "Intervalos de datas personalizados e comparação período a período em todo lugar",
+          "Acesse de um gráfico diretamente os pedidos subjacentes",
+          "Exporte qualquer relatório para CSV para sua própria análise"
+        ],
+        "chipsTitle": "O que você pode medir",
+        "chips": [
+          "Receita",
+          "Funil de conversão",
+          "Margem bruta",
+          "Retenção por coorte",
+          "LTV do cliente",
+          "Devoluções",
+          "Tráfego e UTM",
+          "Insights de busca",
+          "Saúde do estoque",
+          "Agendamentos",
+          "Desempenho de promoções",
+          "Consolidação entre lojas"
+        ]
+      }
+    },
+    "accounting": {
+      "seo": {
+        "title": "Exporte pedidos para 1C, Kompra, QuickBooks e Xero — Torta CRM",
+        "description": "Exporte os pedidos e agendamentos da sua loja para 25 sistemas contábeis — 1C, Kompra (ЭСФ), QuickBooks, Xero, DATEV e mais. No formato e codificação corretos, com IVA discriminado, sob demanda ou enviado automaticamente ao seu contador."
+      },
+      "hero": {
+        "eyebrow": "Exportação contábil",
+        "title": "Suas vendas, prontas para o contador",
+        "lead": "Exporte todos os pedidos e agendamentos para o sistema contábil que você já usa — 1C, Kompra, QuickBooks, Xero, DATEV e mais vinte — exatamente no formato que ele espera. Baixe sob demanda ou agende o envio por e-mail ao seu contador."
+      },
+      "stats": [
+        {
+          "value": "25 sistemas",
+          "label": "1C, Kompra, QuickBooks, Xero, DATEV e mais 20"
+        },
+        {
+          "value": "Formato nativo",
+          "label": "CSV ou IIF, codificação correta, adaptado por sistema"
+        },
+        {
+          "value": "IVA discriminado",
+          "label": "Valor líquido, imposto e total bruto separados pela alíquota local"
+        },
+        {
+          "value": "Entrega automática",
+          "label": "Diária, semanal ou mensal para o seu contador"
+        }
+      ],
+      "cards": [
+        {
+          "title": "1C e Kompra",
+          "desc": "Arquivos com suporte a caracteres cirílicos para o 1C 8.3, e upload em massa de ЭСФ no Kompra com IVA de 12% do Cazaquistão discriminado."
+        },
+        {
+          "title": "QuickBooks, Xero e DATEV",
+          "desc": "IIF para QuickBooks, CSV com asterisco para Xero, Buchungsstapel para DATEV — cada um no seu formato nativo."
+        },
+        {
+          "title": "Feito para o seu país",
+          "desc": "25 sistemas para a CEI, Europa, América Latina e Ásia, cada um adaptado ao padrão e alíquota local."
+        },
+        {
+          "title": "Agendado",
+          "desc": "Envie as vendas de ontem, da semana passada ou do mês passado automaticamente, no horário que você escolher."
+        },
+        {
+          "title": "Direto para o seu contador",
+          "desc": "As exportações agendadas chegam por e-mail com um link seguro para download — sempre o arquivo mais recente, sem anexo."
+        },
+        {
+          "title": "Números que batem",
+          "desc": "Somente pedidos pagos por padrão, devoluções subtraídas, agendamentos incluídos — o arquivo fecha com a sua receita."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Como funciona a exportação",
+        "title": "Escolha o sistema, escolha o período — pronto",
+        "body": "Escolha seu software contábil e um intervalo de datas, e o Torta gera o arquivo exatamente no formato esperado — com o delimitador, separador decimal, codificação e tratamento de IVA corretos. Visualize as primeiras linhas, baixe ou agende o envio por e-mail ao seu contador de forma recorrente.",
+        "points": [
+          "Oito períodos pré-definidos mais qualquer intervalo personalizado, no fuso horário da sua loja",
+          "Discriminação de valor líquido, IVA e bruto pela alíquota local",
+          "Pedidos e agendamentos de serviços mesclados em um único arquivo",
+          "A prévia corresponde ao download, linha por linha"
+        ],
+        "chipsTitle": "Sistemas compatíveis para exportação",
+        "chips": [
+          "1C",
+          "Kompra (ЭСФ)",
+          "QuickBooks",
+          "Xero",
+          "DATEV",
+          "BAS",
+          "Conta Azul",
+          "Contpaqi",
+          "Tally",
+          "Zoho Books",
+          "Freee",
+          "+ 14 mais"
+        ]
+      }
+    },
+    "pos": {
+      "seo": {
+        "title": "Ponto de venda — venda na loja e online com um só estoque — Torta CRM",
+        "description": "Um ponto de venda integrado: registre vendas no balcão com leitor de código de barras (sem drivers) e cada venda baixa do mesmo estoque que o seu site usa. Um catálogo, um estoque, uma análise."
+      },
+      "hero": {
+        "eyebrow": "Ponto de venda",
+        "title": "Venda no balcão e online, com um só estoque",
+        "lead": "Registre vendas presenciais com um leitor de código de barras — sem drivers, sem hardware extra — e cada venda baixa do mesmo estoque, lotes e análises que seu site usa. Online e presencial, finalmente em um único sistema."
+      },
+      "stats": [
+        {
+          "value": "Um estoque",
+          "label": "Vendas na loja e online compartilham o mesmo estoque"
+        },
+        {
+          "value": "É só escanear",
+          "label": "Qualquer leitor de código de barras via teclado — sem drivers"
+        },
+        {
+          "value": "Controle de lotes",
+          "label": "Vende o lote com validade mais próxima primeiro, registra o custo"
+        },
+        {
+          "value": "Um relatório",
+          "label": "Vendas no balcão e na web nas mesmas análises"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Checkout por código de barras",
+          "desc": "Escaneie para adicionar — o leitor funciona como teclado. Ou navegue pelo catálogo por categoria e toque."
+        },
+        {
+          "title": "Caixa rápido",
+          "desc": "Monte o pedido, aceite dinheiro, cartão ou outro meio, adicione um cliente avulso — pronto em segundos."
+        },
+        {
+          "title": "Estoque compartilhado",
+          "desc": "Cada venda no balcão desconta do mesmo estoque que a sua loja online usa — sem vender em duplicidade."
+        },
+        {
+          "title": "Lotes e custo",
+          "desc": "Seleciona por padrão o lote com vencimento mais próximo e registra seu custo, mantendo a margem e o FEFO corretos."
+        },
+        {
+          "title": "Por armazém",
+          "desc": "Venda do estoque do local correto, com retirada e entrega tratadas da mesma forma que no online."
+        },
+        {
+          "title": "Atualização imediata",
+          "desc": "Uma venda no balcão aparece em Pedidos e Análises em tempo real, exatamente como um pedido online."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Comércio unificado",
+        "title": "Um catálogo. Um estoque. Online e na loja.",
+        "body": "Não existe um banco de dados separado para o POS. Uma venda no caixa e uma venda no site caem na mesma tabela de pedidos, descontam dos mesmos lotes e alimentam os mesmos relatórios — seus números nunca ficam divididos em dois sistemas.",
+        "points": [
+          "Leitores de código de barras funcionam de imediato — agem como teclado",
+          "Estoque, lotes e custo sincronizados em ambos os canais",
+          "Devoluções e reembolsos seguem o mesmo caminho de reposição",
+          "Cliente avulso ou identificado, pagamento em dinheiro, cartão ou outro"
+        ],
+        "chipsTitle": "No caixa",
+        "chips": [
+          "Leitura de código de barras",
+          "Catálogo por categoria",
+          "Seletor de lote",
+          "Dinheiro / cartão / outro",
+          "Cliente avulso",
+          "Estoque em tempo real",
+          "Mesmas análises",
+          "Multi-armazém"
+        ]
+      }
+    },
+    "multi-store": {
+      "seo": {
+        "title": "Gerencie múltiplas lojas online em um só painel — Torta CRM",
+        "description": "Administre várias lojas online em uma conta: catálogos, moedas e equipes separados, com análises consolidadas de todas as lojas (normalizadas por moeda) e base de clientes compartilhada opcional."
+      },
+      "hero": {
+        "eyebrow": "Múltiplas lojas",
+        "title": "Gerencie todas as suas lojas em um só lugar",
+        "lead": "Abra quantas lojas precisar em uma conta — cada uma com seu próprio catálogo, moeda, domínio e equipe — e veja tudo consolidado em um painel, com a receita somada entre lojas em uma única moeda."
+      },
+      "stats": [
+        {
+          "value": "Uma conta",
+          "label": "Quantas lojas precisar, cada uma totalmente isolada"
+        },
+        {
+          "value": "Visão consolidada",
+          "label": "Receita e margem combinadas, normalizadas em FX"
+        },
+        {
+          "value": "Clientes compartilhados",
+          "label": "Reconheça opcionalmente um comprador entre suas lojas"
+        },
+        {
+          "value": "Equipes por loja",
+          "label": "Cada loja com sua própria equipe e funções"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Várias lojas, um login",
+          "desc": "Agrupe lojas em organizações e alterne entre elas com um clique — sem contas separadas."
+        },
+        {
+          "title": "Análises consolidadas",
+          "desc": "Receita, pedidos e margem combinados de todas as lojas, normalizados em uma única moeda."
+        },
+        {
+          "title": "Ranking das lojas",
+          "desc": "Veja qual loja mais fatura e qual tem a melhor margem, lado a lado."
+        },
+        {
+          "title": "Clientes compartilhados",
+          "desc": "Reconheça opcionalmente um cliente que comprou em uma loja quando ele visita outra."
+        },
+        {
+          "title": "Funções por loja",
+          "desc": "Dê a cada colaborador acesso apenas às lojas e páginas de que ele precisa."
+        },
+        {
+          "title": "Isolado por design",
+          "desc": "Catálogo, moeda, domínio e e-mail separados por loja — dados totalmente isolados."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Pensado para crescer",
+        "title": "De uma loja a um grupo inteiro",
+        "body": "Cada loja é um espaço de trabalho isolado — com seus próprios produtos, pedidos, moeda e equipe — mas elas se consolidam em análises no nível da organização e uma base de clientes compartilhada opcional, para que um operador multimarca gerencie tudo em uma tela.",
+        "points": [
+          "Os dados de cada loja são totalmente isolados das demais",
+          "Análises da organização somam a receita entre lojas, convertida em FX",
+          "Base de clientes compartilhada opcional entre as lojas do grupo",
+          "Vagas de equipe e funções granulares por loja"
+        ],
+        "chipsTitle": "Por loja ou em todas",
+        "chips": [
+          "Catálogo próprio",
+          "Moeda própria",
+          "Domínio próprio",
+          "Equipe própria",
+          "Receita consolidada",
+          "Ranking das lojas",
+          "Clientes compartilhados",
+          "Funções no nível da organização"
+        ]
+      }
+    },
+    "team": {
+      "seo": {
+        "title": "Funções e permissões de equipe para sua loja — Torta CRM",
+        "description": "Convide sua equipe e controle exatamente o que cada pessoa pode fazer — funções predefinidas de Admin/Gerente/Colaborador/Visualizador ou personalizadas, com permissões granulares de visualizar/gerenciar por página. Faturamento exclusivo do proprietário."
+      },
+      "hero": {
+        "eyebrow": "Equipe e funções",
+        "title": "Dê à sua equipe exatamente o acesso que ela precisa",
+        "lead": "Convide colaboradores e atribua funções — Admin, Gerente, Colaborador, Visualizador ou as suas próprias — com permissões detalhadas por página. Cada um vê apenas o que deve, e o faturamento fica exclusivo para o proprietário."
+      },
+      "stats": [
+        {
+          "value": "29 páginas",
+          "label": "Conceda visualizar ou gerenciar em cada página, por função"
+        },
+        {
+          "value": "4 funções predefinidas",
+          "label": "Admin, Gerente, Colaborador, Visualizador — prontas para uso"
+        },
+        {
+          "value": "Funções personalizadas",
+          "label": "Crie seus próprios conjuntos de permissões"
+        },
+        {
+          "value": "Convites seguros",
+          "label": "Um link de convite não dá nenhum acesso até você atribuir uma função"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Convide sua equipe",
+          "desc": "Adicione membros por e-mail ou compartilhe um link de convite reutilizável para toda a organização."
+        },
+        {
+          "title": "Funções predefinidas e personalizadas",
+          "desc": "Comece com Admin, Gerente, Colaborador e Visualizador, ou crie funções com exatamente as permissões que você quer."
+        },
+        {
+          "title": "Permissões granulares",
+          "desc": "Defina nenhuma, visualizar ou gerenciar para cada uma das 29 páginas — restrinja Cupons sem bloquear o módulo de Produtos inteiro."
+        },
+        {
+          "title": "Acesso por loja",
+          "desc": "Em uma conta com várias lojas, dê a cada colaborador acesso apenas às lojas em que trabalha."
+        },
+        {
+          "title": "Faturamento privado",
+          "desc": "Faturamento nunca pode ser delegado — somente o proprietário pode ver ou alterar."
+        },
+        {
+          "title": "Seguro por padrão",
+          "desc": "Um novo membro que entra pelo link de convite não recebe nenhuma função até você atribuir uma — sem exposição acidental de dados."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Controle de acesso",
+        "title": "Funções que refletem como sua equipe realmente trabalha",
+        "body": "Escolha uma função predefinida ou crie uma personalizada como um mapa de páginas para níveis de permissão e atribua-a por membro. O proprietário e o proprietário da organização sempre têm acesso total; todos os demais veem exatamente o que a função permite.",
+        "points": [
+          "Admin / Gerente / Colaborador / Visualizador predefinidos, mais funções personalizadas ilimitadas",
+          "Nenhuma / visualizar / gerenciar por página, agrupados em seções claras",
+          "Convites por e-mail e link de convite reutilizável para a organização",
+          "Faturamento exclusivo do proprietário e nunca delegável"
+        ],
+        "chipsTitle": "O que você pode controlar",
+        "chips": [
+          "Admin",
+          "Gerente",
+          "Colaborador",
+          "Visualizador",
+          "Funções personalizadas",
+          "Visualizar/gerenciar por página",
+          "Acesso por loja",
+          "Convites por e-mail",
+          "Link de convite",
+          "Faturamento exclusivo do proprietário"
+        ]
+      }
+    },
+    "currencies": {
+      "seo": {
+        "title": "Venda em 49 moedas — loja online multidivisa — Torta CRM",
+        "description": "Administre cada loja na sua própria moeda — 49 suportadas, com símbolos e decimais corretos — e cada pedido mantém exatamente a moeda em que foi cobrado, sem distorções em faturas e relatórios."
+      },
+      "hero": {
+        "eyebrow": "Múltiplas moedas",
+        "title": "Venda na moeda dos seus clientes",
+        "lead": "Escolha entre 49 moedas para cada loja — de dólares e euros ao tenge, rublo e real — com símbolo, posição e decimais corretos. Cada pedido é fixado à moeda em que foi efetivamente cobrado."
+      },
+      "stats": [
+        {
+          "value": "49 moedas",
+          "label": "Dólar, euro, tenge, rublo, real e muito mais"
+        },
+        {
+          "value": "Símbolos corretos",
+          "label": "$100, 100 ₸, ¥100 — posição e decimais certos"
+        },
+        {
+          "value": "Por loja",
+          "label": "Cada loja define sua própria moeda"
+        },
+        {
+          "value": "Fixado por pedido",
+          "label": "Recibos nunca mudam se você alterar a moeda depois"
+        }
+      ],
+      "cards": [
+        {
+          "title": "49 moedas",
+          "desc": "Ampla cobertura da CEI, América Latina, Europa e Ásia — escolha uma por loja."
+        },
+        {
+          "title": "Correto em todo lugar",
+          "desc": "Símbolo certo, prefixo ou sufixo e decimais (zero para tenge, iene, won) para cada moeda."
+        },
+        {
+          "title": "Fixado por pedido",
+          "desc": "Cada pedido armazena a moeda exata em que foi cobrado, para que faturas e recibos antigos continuem precisos."
+        },
+        {
+          "title": "Em toda a loja",
+          "desc": "Preços, carrinho, checkout e e-mails exibem a moeda da loja, configurada uma única vez."
+        },
+        {
+          "title": "Sem surpresas",
+          "desc": "Os valores não são reconvertidos dinamicamente — você escolhe a moeda e ela permanece."
+        },
+        {
+          "title": "Consolidação entre lojas",
+          "desc": "Em uma conta com várias lojas, a receita em moedas diferentes é normalizada em uma só para relatórios combinados."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Como funciona",
+        "title": "Uma moeda por loja, correta até o recibo",
+        "body": "Configure a moeda da loja e todos os preços, carrinhos e e-mails a seguem — com símbolo e regras de decimal corretos. Cada pedido captura a moeda em que foi cobrado, de modo que alterar a moeda da loja depois nunca reescreve seu histórico.",
+        "points": [
+          "49 moedas com posição de símbolo e decimais corretos",
+          "Captura de moeda por pedido — precisão histórica garantida",
+          "Configurada uma vez no nível da loja; a vitrine segue",
+          "Receita entre lojas normalizada para análises da organização"
+        ],
+        "chipsTitle": "Algumas das 49",
+        "chips": [
+          "USD $",
+          "EUR €",
+          "KZT ₸",
+          "RUB ₽",
+          "BRL R$",
+          "GBP £",
+          "PLN zł",
+          "JPY ¥",
+          "TRY ₺",
+          "+ 40 mais"
+        ]
+      }
+    },
+    "reviews": {
+      "seo": {
+        "title": "Avaliações de produtos com fotos e compradores verificados — Torta CRM",
+        "description": "Colete avaliações de compradores verificados — notas com estrelas, avaliações escritas e até cinco fotos cada, com respostas do lojista e votos de utilidade. Integrado, isolado por loja."
+      },
+      "hero": {
+        "eyebrow": "Avaliações",
+        "title": "Avaliações em que os compradores confiam",
+        "lead": "Deixe os clientes avaliar o que compraram — com fotos — e responda por conta própria. Somente quem realmente recebeu o pedido pode publicar, então cada avaliação vem de um comprador verificado."
+      },
+      "stats": [
+        {
+          "value": "Compradores verificados",
+          "label": "Somente clientes com pedido entregue podem avaliar"
+        },
+        {
+          "value": "Até 5 fotos",
+          "label": "Fotos reais anexadas a cada avaliação"
+        },
+        {
+          "value": "Resposta do lojista",
+          "label": "Responda publicamente a qualquer avaliação"
+        },
+        {
+          "value": "Por loja",
+          "label": "Avaliações isoladas em cada loja"
+        }
+      ],
+      "cards": [
+        {
+          "title": "Notas e avaliações",
+          "desc": "Nota de 1 a 5 estrelas mais avaliação escrita, uma por cliente por produto."
+        },
+        {
+          "title": "Compra verificada",
+          "desc": "Somente um cliente cujo pedido foi entregue (ou devolvido/reembolsado) pode deixar uma avaliação."
+        },
+        {
+          "title": "Fotos",
+          "desc": "Clientes anexam até cinco fotos, armazenadas de forma privada por loja."
+        },
+        {
+          "title": "Resposta do lojista",
+          "desc": "Responda a qualquer avaliação — agradeça um fã ou resolva um problema publicamente."
+        },
+        {
+          "title": "Votos de utilidade",
+          "desc": "Compradores votam nas avaliações que foram úteis para eles, destacando as mais relevantes."
+        },
+        {
+          "title": "Médias honestas",
+          "desc": "A nota média e o número de avaliações são calculados com precisão para todo o conjunto."
+        }
+      ],
+      "deep": {
+        "eyebrow": "Integrado",
+        "title": "Avaliações reais, de compradores reais",
+        "body": "As avaliações são restritas a compras verificadas, então têm peso real. Clientes adicionam fotos e votam nas avaliações uns dos outros; você responde onde importa. As avaliações de cada loja são totalmente isoladas das demais.",
+        "points": [
+          "Somente compradores com pedido entregue / devolvido / reembolsado podem publicar — uma avaliação por produto",
+          "Até cinco fotos por avaliação, armazenadas por loja",
+          "Respostas do lojista e votos de utilidade",
+          "Nota média precisa e contagem para todo o conjunto"
+        ],
+        "chipsTitle": "Em cada avaliação",
+        "chips": [
+          "1–5 estrelas",
+          "Avaliação escrita",
+          "Até 5 fotos",
+          "Comprador verificado",
+          "Resposta do lojista",
+          "Votos de utilidade",
+          "Isolado por loja"
+        ]
       }
     }
   }

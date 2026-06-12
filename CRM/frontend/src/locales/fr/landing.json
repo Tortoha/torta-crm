@@ -14,207 +14,376 @@
       "stat3Value": "Centré client",
       "stat3Label": "E-mail, chat en direct et connexion en un geste intégrés"
     },
-
     "marquee": {
       "label": "Tout ce dont votre vitrine a besoin, au même endroit",
       "items": {
-        "multiStore":  "Multiboutique",
-        "allInOne":    "Espace de travail tout-en-un",
-        "analytics":   "Analyses approfondies",
-        "chat":        "Chat web en direct",
-        "orders":      "Pipeline de commandes",
-        "booking":     "Calendrier de réservations",
-        "broadcasts":  "Campagnes e-mail",
-        "multiCcy":    "Multidevise",
-        "rbac":        "Rôles et permissions",
-        "team":        "Espace d'équipe",
-        "alerts":      "Alertes intelligentes",
-        "fulfil":      "Préparation et retours"
+        "multiStore": "Multiboutique",
+        "allInOne": "Espace de travail tout-en-un",
+        "analytics": "Analyses approfondies",
+        "chat": "Chat web en direct",
+        "orders": "Pipeline de commandes",
+        "booking": "Calendrier de réservations",
+        "broadcasts": "Campagnes e-mail",
+        "multiCcy": "Multidevise",
+        "rbac": "Rôles et permissions",
+        "team": "Espace d'équipe",
+        "alerts": "Alertes intelligentes",
+        "fulfil": "Préparation et retours"
       }
     },
-
     "tour": {
       "eyebrow": "Visite du produit",
       "title": "Tout ce qu'il faut pour gérer une boutique — déjà intégré",
       "subtitle": "Quatre volets de la plateforme qui occupent l'essentiel de la journée d'un commerçant. Tous sont livrés et prêts dès la création de votre première boutique.",
       "stepWord": "Étape",
       "steps": {
-        "products":  { "label": "Catalogue",  "title": "Ajoutez des produits en quelques minutes — variantes comprises", "desc": "Couleurs, tailles, matières, lots — définissez-les une fois et chaque variante reste synchronisée. Modifiez les prix en masse, gérez le stock par entrepôt, archivez les articles saisonniers en deux clics." },
-        "orders":    { "label": "Ventes",     "title": "Traitez chaque commande du panier à la livraison",  "desc": "Confirmez, emballez, expédiez, livrez — sans changer d'onglet. Remboursements et retours vivent dans le même pipeline. Vos clients reçoivent les mises à jour de statut depuis votre domaine, pas le nôtre." },
-        "bookings":  { "label": "Réservations", "title": "Un calendrier pour les entreprises de services",  "desc": "Configurez les services, affectez le personnel, gérez les horaires d'ouverture. Vos clients choisissent un créneau en ligne, vous le voyez dans votre calendrier. Les annulations et reports informent tout le monde automatiquement." },
-        "analytics": { "label": "Insights",   "title": "Sachez ce qui marche — sans tableurs",             "desc": "Chiffre d'affaires, conversion, cohortes d'acheteurs récurrents, panier moyen par canal. Des chiffres en temps réel qui se mettent à jour à chaque vente, avec les comparaisons dont votre comptable a besoin." }
+        "products": {
+          "label": "Catalogue",
+          "title": "Ajoutez des produits en quelques minutes — variantes comprises",
+          "desc": "Couleurs, tailles, matières, lots — définissez-les une fois et chaque variante reste synchronisée. Modifiez les prix en masse, gérez le stock par entrepôt, archivez les articles saisonniers en deux clics."
+        },
+        "orders": {
+          "label": "Ventes",
+          "title": "Traitez chaque commande du panier à la livraison",
+          "desc": "Confirmez, emballez, expédiez, livrez — sans changer d'onglet. Remboursements et retours vivent dans le même pipeline. Vos clients reçoivent les mises à jour de statut depuis votre domaine, pas le nôtre."
+        },
+        "bookings": {
+          "label": "Réservations",
+          "title": "Un calendrier pour les entreprises de services",
+          "desc": "Configurez les services, affectez le personnel, gérez les horaires d'ouverture. Vos clients choisissent un créneau en ligne, vous le voyez dans votre calendrier. Les annulations et reports informent tout le monde automatiquement."
+        },
+        "analytics": {
+          "label": "Insights",
+          "title": "Sachez ce qui marche — sans tableurs",
+          "desc": "Chiffre d'affaires, conversion, cohortes d'acheteurs récurrents, panier moyen par canal. Des chiffres en temps réel qui se mettent à jour à chaque vente, avec les comparaisons dont votre comptable a besoin."
+        }
       },
       "scenes": {
-        "products":  { "title": "Catalogue", "meta": "3 sur 124", "layers": "Variantes : 4 couleurs × 5 tailles", "add": "Nouveau produit" },
-        "orders":    { "title": "Pipeline de commandes", "meta": "Dernières 24 heures",
-          "status": { "new": "Nouvelle", "confirmed": "Confirmée", "shipped": "Expédiée", "delivered": "Livrée" } },
-        "bookings":  { "title": "Cette semaine", "meta": "5 réservations aujourd'hui",
-          "service1": "Coiffure",  "service2": "Taille de barbe", "service3": "Coloration", "service4": "Manucure",
-          "staff": "avec" },
-        "analytics": { "title": "Analyses de la vitrine", "meta": "En direct",
-          "aov": "Panier moyen", "ltv": "LTV", "retention": "Rétention", "funnel": "Entonnoir de conversion" }
+        "products": {
+          "title": "Catalogue",
+          "meta": "3 sur 124",
+          "layers": "Variantes : 4 couleurs × 5 tailles",
+          "add": "Nouveau produit"
+        },
+        "orders": {
+          "title": "Pipeline de commandes",
+          "meta": "Dernières 24 heures",
+          "status": {
+            "new": "Nouvelle",
+            "confirmed": "Confirmée",
+            "shipped": "Expédiée",
+            "delivered": "Livrée"
+          }
+        },
+        "bookings": {
+          "title": "Cette semaine",
+          "meta": "5 réservations aujourd'hui",
+          "service1": "Coiffure",
+          "service2": "Taille de barbe",
+          "service3": "Coloration",
+          "service4": "Manucure",
+          "staff": "avec"
+        },
+        "analytics": {
+          "title": "Analyses de la vitrine",
+          "meta": "En direct",
+          "aov": "Panier moyen",
+          "ltv": "LTV",
+          "retention": "Rétention",
+          "funnel": "Entonnoir de conversion"
+        }
       }
     },
-
     "features": {
       "eyebrow": "Ce que vous obtenez aussi",
       "title": "Des outils que votre équipe utilisera vraiment chaque jour.",
       "subtitle": "Les quatre grands volets ci-dessus forment la colonne vertébrale. Tout ce qui suit est activé par défaut et prêt à l'emploi dès que vous créez une boutique.",
       "items": {
-        "customers":  { "title": "Profils clients",        "desc": "Chaque acheteur, chaque achat, chaque interaction — sur une seule page. Un acheteur récurrent dans la boutique A affiche le même profil dans la boutique B." },
-        "broadcasts": { "title": "Campagnes e-mail",       "desc": "Envoyez de superbes e-mails à votre liste de clients, depuis votre propre domaine. Modèles intégrés, ouvertures et clics suivis automatiquement." },
-        "auth":       { "title": "Connexion client en un geste", "desc": "Vos acheteurs se connectent avec un code à 6 chiffres envoyé par e-mail. Aucun mot de passe à oublier, aucune friction à l'inscription — plus de commandes finalisées." },
-        "chat":       { "title": "Chat web en direct",     "desc": "Un widget de chat que vos clients voient sur la vitrine, et une boîte de réception pour votre équipe. Chaque message notifie tous ceux qui ont accès." },
-        "team":       { "title": "Espace d'équipe",        "desc": "Invitez vos collègues dans votre organisation. Donnez à chacun les pages dont il a besoin — Produits, Commandes, Marketing — et rien d'autre." },
-        "integrations": { "title": "Se connecte à ce que vous utilisez déjà", "desc": "Prestataires de paiement, transporteurs, outils comptables, plateformes marketing — connectez-les une fois et tout reste synchronisé." }
+        "customers": {
+          "title": "Profils clients",
+          "desc": "Chaque acheteur, chaque achat, chaque interaction — sur une seule page. Un acheteur récurrent dans la boutique A affiche le même profil dans la boutique B."
+        },
+        "broadcasts": {
+          "title": "Campagnes e-mail",
+          "desc": "Envoyez de superbes e-mails à votre liste de clients, depuis votre propre domaine. Modèles intégrés, ouvertures et clics suivis automatiquement."
+        },
+        "auth": {
+          "title": "Connexion client en un geste",
+          "desc": "Vos acheteurs se connectent avec un code à 6 chiffres envoyé par e-mail. Aucun mot de passe à oublier, aucune friction à l'inscription — plus de commandes finalisées."
+        },
+        "chat": {
+          "title": "Chat web en direct",
+          "desc": "Un widget de chat que vos clients voient sur la vitrine, et une boîte de réception pour votre équipe. Chaque message notifie tous ceux qui ont accès."
+        },
+        "team": {
+          "title": "Espace d'équipe",
+          "desc": "Invitez vos collègues dans votre organisation. Donnez à chacun les pages dont il a besoin — Produits, Commandes, Marketing — et rien d'autre."
+        },
+        "integrations": {
+          "title": "Se connecte à ce que vous utilisez déjà",
+          "desc": "Prestataires de paiement, transporteurs, outils comptables, plateformes marketing — connectez-les une fois et tout reste synchronisé."
+        }
       }
     },
-
     "allInOne": {
       "eyebrow": "Tout-en-un",
       "title": "Une seule console au lieu d'une dizaine d'applications",
       "subtitle": "Stock, marketing, support, planification, analyses — chaque facette de la gestion d'une boutique en ligne, dans un seul espace de travail.",
       "items": {
-        "products":   "Produits et stock",
-        "orders":     "Commandes et retours",
-        "bookings":   "Calendrier de réservations",
-        "customers":  "Base de clients",
-        "marketing":  "Marketing par e-mail",
-        "chat":       "Chat web en direct",
-        "team":       "Espace d'équipe",
-        "analytics":  "Analyses approfondies"
+        "products": "Produits et stock",
+        "orders": "Commandes et retours",
+        "bookings": "Calendrier de réservations",
+        "customers": "Base de clients",
+        "marketing": "Marketing par e-mail",
+        "chat": "Chat web en direct",
+        "team": "Espace d'équipe",
+        "analytics": "Analyses approfondies"
       }
     },
-
     "teamReady": {
       "eyebrow": "Prêt pour les équipes",
       "title": "Conçu pour les équipes, pas seulement les fondateurs solo",
       "subtitle": "Invitez designers, comptables, opérationnels, marketeurs. Chacun ne voit que les pages dont il a besoin.",
       "items": {
-        "roles":     { "title": "Rôles personnalisés par page", "desc": "Créez un rôle qui permet à votre designer de modifier les Produits mais pas les Commandes. Un comptable peut consulter le Chiffre d'affaires sans toucher aux paramètres." },
-        "workspace": { "title": "Un seul espace, toutes les boutiques", "desc": "Invitez vos collègues dans votre organisation une seule fois. Ils accèdent aux boutiques que vous choisissez, avec les permissions que vous accordez." },
-        "audit":     { "title": "Journal d'audit", "desc": "Chaque modification dans votre console est tracée — qui, quoi, quand. Annulez les éditions erronées ou remettez le journal à votre auditeur." }
+        "roles": {
+          "title": "Rôles personnalisés par page",
+          "desc": "Créez un rôle qui permet à votre designer de modifier les Produits mais pas les Commandes. Un comptable peut consulter le Chiffre d'affaires sans toucher aux paramètres."
+        },
+        "workspace": {
+          "title": "Un seul espace, toutes les boutiques",
+          "desc": "Invitez vos collègues dans votre organisation une seule fois. Ils accèdent aux boutiques que vous choisissez, avec les permissions que vous accordez."
+        },
+        "audit": {
+          "title": "Journal d'audit",
+          "desc": "Chaque modification dans votre console est tracée — qui, quoi, quand. Annulez les éditions erronées ou remettez le journal à votre auditeur."
+        }
       }
     },
-
     "customerFirst": {
       "eyebrow": "Centré client",
       "title": "Des outils que vos clients ressentiront vraiment",
       "subtitle": "Connexion sans mot de passe, conversations en temps réel, e-mails depuis votre domaine — chaque point de contact avec votre client vous appartient.",
       "items": {
-        "auth":       { "title": "Connexion en un geste", "desc": "Vos acheteurs se connectent avec un code à 6 chiffres envoyé par e-mail. Aucun mot de passe à oublier, aucune friction à l'inscription — plus de commandes finalisées." },
-        "chat":       { "title": "Chat web en direct", "desc": "Un widget de chat que vos acheteurs voient sur la vitrine, plus une boîte de réception pour votre équipe. Des conversations en temps réel depuis votre console." },
-        "broadcasts": { "title": "Campagnes e-mail", "desc": "Envoyez de superbes e-mails depuis votre propre domaine. Modèles intégrés, ouvertures et clics suivis automatiquement." }
+        "auth": {
+          "title": "Connexion en un geste",
+          "desc": "Vos acheteurs se connectent avec un code à 6 chiffres envoyé par e-mail. Aucun mot de passe à oublier, aucune friction à l'inscription — plus de commandes finalisées."
+        },
+        "chat": {
+          "title": "Chat web en direct",
+          "desc": "Un widget de chat que vos acheteurs voient sur la vitrine, plus une boîte de réception pour votre équipe. Des conversations en temps réel depuis votre console."
+        },
+        "broadcasts": {
+          "title": "Campagnes e-mail",
+          "desc": "Envoyez de superbes e-mails depuis votre propre domaine. Modèles intégrés, ouvertures et clics suivis automatiquement."
+        }
       }
     },
-
     "howItWorks": {
       "eyebrow": "Comment démarrer",
       "title": "Trois étapes vers votre première boutique",
       "subtitle": "Aucun appel de démo requis, aucune carte bancaire pour commencer. Avancez à votre rythme — chaque étape est guidée.",
       "steps": {
-        "setup":   { "title": "Créez votre boutique",       "desc": "Inscrivez-vous, nommez votre organisation, ajoutez vos premiers produits. Nous vous accompagnons pour le DNS, l'e-mail et les paiements avec des vérifications en un clic." },
-        "connect": { "title": "Connectez votre vitrine",    "desc": "Utilisez notre modèle prêt à l'emploi, ou raccordez le site que vous avez déjà. Même paiement, même console." },
-        "run":     { "title": "Pilotez tout depuis un seul onglet", "desc": "Prenez les commandes, répondez aux chats, envoyez des campagnes, consultez les analyses — sans quitter la console." }
+        "setup": {
+          "title": "Créez votre boutique",
+          "desc": "Inscrivez-vous, nommez votre organisation, ajoutez vos premiers produits. Nous vous accompagnons pour le DNS, l'e-mail et les paiements avec des vérifications en un clic."
+        },
+        "connect": {
+          "title": "Connectez votre vitrine",
+          "desc": "Utilisez notre modèle prêt à l'emploi, ou raccordez le site que vous avez déjà. Même paiement, même console."
+        },
+        "run": {
+          "title": "Pilotez tout depuis un seul onglet",
+          "desc": "Prenez les commandes, répondez aux chats, envoyez des campagnes, consultez les analyses — sans quitter la console."
+        }
       }
     },
-
     "useCases": {
       "eyebrow": "Conçu pour votre façon de travailler",
       "title": "Choisissez la formule qui vous convient",
       "subtitle": "Une seule plateforme répond à trois profils très différents — sans forcer aucun d'eux à faire de compromis.",
       "items": {
         "solo": {
-          "tab":      "Fondateur solo",
+          "tab": "Fondateur solo",
           "headline": "Pilotez votre boutique depuis un seul onglet",
-          "body":     "Vous n'avez pas besoin d'une agence. Lancez une boutique, ajoutez des produits, pointez votre site vers le système et commencez à prendre des commandes dès aujourd'hui.",
-          "bullets":  [
+          "body": "Vous n'avez pas besoin d'une agence. Lancez une boutique, ajoutez des produits, pointez votre site vers le système et commencez à prendre des commandes dès aujourd'hui.",
+          "bullets": [
             "Configurez votre catalogue en quelques minutes, pas en jours",
             "E-mail et chat intégrés — aucun service supplémentaire à souscrire",
             "Support client, analyses et réservations, le tout dans une seule console"
           ],
           "tiles": [
-            { "label": "CA depuis le début du mois" },
-            { "label": "SKU actifs" },
-            { "label": "Note moyenne" }
+            {
+              "label": "CA depuis le début du mois"
+            },
+            {
+              "label": "SKU actifs"
+            },
+            {
+              "label": "Note moyenne"
+            }
           ]
         },
         "agency": {
-          "tab":      "Petite agence",
+          "tab": "Petite agence",
           "headline": "Gérez chaque client sans perdre le contexte",
-          "body":     "Chaque client dispose de sa propre organisation. Invitez votre équipe avec exactement les permissions dont elle a besoin — et seulement les pages qu'elle doit voir.",
-          "bullets":  [
+          "body": "Chaque client dispose de sa propre organisation. Invitez votre équipe avec exactement les permissions dont elle a besoin — et seulement les pages qu'elle doit voir.",
+          "bullets": [
             "Rôles personnalisés par projet — designer, opérationnel, analyste",
             "Analyses inter-clients sans exposer les données privées",
             "Le journal d'audit montre qui a changé quoi, et quand"
           ],
           "tiles": [
-            { "label": "Clients" },
-            { "label": "Croissance trim." },
-            { "label": "SLA respecté" }
+            {
+              "label": "Clients"
+            },
+            {
+              "label": "Croissance trim."
+            },
+            {
+              "label": "SLA respecté"
+            }
           ]
         },
         "market": {
-          "tab":      "Opérateur multimarque",
+          "tab": "Opérateur multimarque",
           "headline": "Voyez chaque boutique comme une seule entreprise",
-          "body":     "Quand vous exploitez cinq vitrines, les traiter comme cinq tableurs, c'est ce qui vous épuise. Regroupez-les sous une seule organisation et lisez-les comme un seul chiffre.",
-          "bullets":  [
+          "body": "Quand vous exploitez cinq vitrines, les traiter comme cinq tableurs, c'est ce qui vous épuise. Regroupez-les sous une seule organisation et lisez-les comme un seul chiffre.",
+          "bullets": [
             "Vue client inter-boutiques — un acheteur, toutes les boutiques",
             "Chiffre d'affaires, rétention et stock au niveau de l'organisation",
             "Rôles par boutique + administration globale de l'organisation"
           ],
           "tiles": [
-            { "label": "Vitrines" },
-            { "label": "Commandes du mois" },
-            { "label": "GMV de l'organisation" }
+            {
+              "label": "Vitrines"
+            },
+            {
+              "label": "Commandes du mois"
+            },
+            {
+              "label": "GMV de l'organisation"
+            }
           ]
         }
       }
     },
-
     "security": {
       "eyebrow": "Conçu pour la confiance",
       "title": "Ennuyeux, prévisible, bien isolé",
       "subtitle": "Des réglages de sécurité par défaut auxquels personne ne devrait avoir à penser — intégrés dès la première boutique que vous créez.",
       "items": {
-        "twoKey": { "title": "Accès API à deux clés",   "desc": "Chaque requête de la vitrine exige une clé publique dans l'URL et une clé publishable secrète dans l'en-tête — copier le lien seul ne vous mène nulle part." },
-        "dkim":     { "title": "E-mails signés DKIM",      "desc": "Chaque e-mail que vous envoyez est signé avec la clé de votre domaine. Les enregistrements SPF et DMARC sont guidés par un vérificateur intégré." },
-        "rbac":     { "title": "RBAC au niveau des pages", "desc": "Les permissions vivent sur les pages, pas sur les tables. Un rôle personnalisé peut accorder un accès en lecture seule au Chiffre d'affaires et une édition complète des Produits en même temps." },
-        "audit":    { "title": "Journal d'audit complet",  "desc": "Chaque modification dans votre console — qui, quoi, quand, d'où. Annulez les éditions erronées ou remettez le journal à votre auditeur." }
+        "twoKey": {
+          "title": "Accès API à deux clés",
+          "desc": "Chaque requête de la vitrine exige une clé publique dans l'URL et une clé publishable secrète dans l'en-tête — copier le lien seul ne vous mène nulle part."
+        },
+        "dkim": {
+          "title": "E-mails signés DKIM",
+          "desc": "Chaque e-mail que vous envoyez est signé avec la clé de votre domaine. Les enregistrements SPF et DMARC sont guidés par un vérificateur intégré."
+        },
+        "rbac": {
+          "title": "RBAC au niveau des pages",
+          "desc": "Les permissions vivent sur les pages, pas sur les tables. Un rôle personnalisé peut accorder un accès en lecture seule au Chiffre d'affaires et une édition complète des Produits en même temps."
+        },
+        "audit": {
+          "title": "Journal d'audit complet",
+          "desc": "Chaque modification dans votre console — qui, quoi, quand, d'où. Annulez les éditions erronées ou remettez le journal à votre auditeur."
+        }
       }
     },
-
     "faq": {
       "eyebrow": "Vos questions, nos réponses",
       "title": "FAQ",
       "subtitle": "Si quelque chose n'est pas couvert ici, la documentation en a sans doute la version longue.",
       "items": {
-        "stores":       { "q": "Combien de boutiques puis-je gérer ?", "a": "Il n'y a aucune limite de boutiques au sein d'une organisation. Chaque boutique est totalement isolée — produits, commandes, clients et accès d'équipe ne débordent pas d'une frontière à l'autre." },
-        "customDomain": { "q": "Puis-je envoyer des e-mails depuis mon propre domaine ?", "a": "Oui. Ajoutez le domaine dans la page E-mail, collez les enregistrements DKIM/SPF/DMARC dans votre DNS, cliquez sur Vérifier, et c'est en ligne. Sans attendre un appel commercial." },
-        "noTech":       { "q": "Je ne suis pas technique. Pourrai-je configurer tout cela ?", "a": "Si vous savez remplir un formulaire, vous savez configurer Torta. L'étape la plus difficile est d'ajouter vos enregistrements DNS — et nous vous accompagnons avec une vérification en un clic." },
-        "permissions":  { "q": "Quel est le niveau de granularité des permissions d'équipe ?", "a": "Par page et par action. Vous pouvez créer un rôle qui permet à un designer de modifier les Produits mais jamais de toucher aux Commandes, ou un analyste qui peut consulter le Chiffre d'affaires sans voir les e-mails des clients." },
-        "bookings":     { "q": "Est-ce que cela fonctionne aussi pour les entreprises de services ?", "a": "Oui. Le calendrier de Réservations gère les services, les plannings du personnel et les créneaux récurrents. Vos clients choisissent leurs horaires en ligne ; annulations et reports se synchronisent automatiquement." },
-        "migrate":      { "q": "Puis-je migrer depuis une autre solution ?", "a": "La plupart des équipes importent leur catalogue existant via CSV dans la page Produits, puis pointent leur site vers le système. Clients et commandes affluent dès votre mise en ligne." },
-        "platform":     { "q": "Et si je n'ai pas encore de site web ?", "a": "Nous livrons un modèle de vitrine prêt à l'emploi que vous pouvez lancer en quelques minutes. Vous mettez vos produits en ligne sans écrire une ligne de code." }
+        "stores": {
+          "q": "Combien de boutiques puis-je gérer ?",
+          "a": "Il n'y a aucune limite de boutiques au sein d'une organisation. Chaque boutique est totalement isolée — produits, commandes, clients et accès d'équipe ne débordent pas d'une frontière à l'autre."
+        },
+        "customDomain": {
+          "q": "Puis-je envoyer des e-mails depuis mon propre domaine ?",
+          "a": "Oui. Ajoutez le domaine dans la page E-mail, collez les enregistrements DKIM/SPF/DMARC dans votre DNS, cliquez sur Vérifier, et c'est en ligne. Sans attendre un appel commercial."
+        },
+        "noTech": {
+          "q": "Je ne suis pas technique. Pourrai-je configurer tout cela ?",
+          "a": "Si vous savez remplir un formulaire, vous savez configurer Torta. L'étape la plus difficile est d'ajouter vos enregistrements DNS — et nous vous accompagnons avec une vérification en un clic."
+        },
+        "permissions": {
+          "q": "Quel est le niveau de granularité des permissions d'équipe ?",
+          "a": "Par page et par action. Vous pouvez créer un rôle qui permet à un designer de modifier les Produits mais jamais de toucher aux Commandes, ou un analyste qui peut consulter le Chiffre d'affaires sans voir les e-mails des clients."
+        },
+        "bookings": {
+          "q": "Est-ce que cela fonctionne aussi pour les entreprises de services ?",
+          "a": "Oui. Le calendrier de Réservations gère les services, les plannings du personnel et les créneaux récurrents. Vos clients choisissent leurs horaires en ligne ; annulations et reports se synchronisent automatiquement."
+        },
+        "migrate": {
+          "q": "Puis-je migrer depuis une autre solution ?",
+          "a": "La plupart des équipes importent leur catalogue existant via CSV dans la page Produits, puis pointent leur site vers le système. Clients et commandes affluent dès votre mise en ligne."
+        },
+        "platform": {
+          "q": "Et si je n'ai pas encore de site web ?",
+          "a": "Nous livrons un modèle de vitrine prêt à l'emploi que vous pouvez lancer en quelques minutes. Vous mettez vos produits en ligne sans écrire une ligne de code."
+        }
       }
     },
-
     "cta": {
-      "title":     "Commencez à gérer votre boutique dès aujourd'hui",
-      "subtitle":  "Tout ce que vous avez vu sur cette page est déjà intégré. Posez les fondations maintenant — et développez-vous à partir de là.",
-      "button":    "Commencer gratuitement",
+      "title": "Commencez à gérer votre boutique dès aujourd'hui",
+      "subtitle": "Tout ce que vous avez vu sur cette page est déjà intégré. Posez les fondations maintenant — et développez-vous à partir de là.",
+      "button": "Commencer gratuitement",
       "fineprint": "Aucune carte bancaire requise pour commencer."
     },
-
     "footer": {
       "tagline": "Une plateforme CRM unique pour les boutiques en ligne — conçue aussi bien pour les fondateurs solo, les petites agences que les opérateurs multimarques.",
       "cols": {
-        "product": { "title": "Produit",  "links": { "database": "Base de données", "auth": "Authentification", "storage": "Stockage", "automations": "Automatisations", "email": "E-mail", "realtime": "Temps réel", "pricing": "Tarifs" } },
-        "developers": { "title": "Développeurs", "links": { "api": "API", "docs": "Documentation", "reference": "Référence API", "quickstart": "Démarrage rapide", "frameworks": "Frameworks" } },
-        "legal":   { "title": "Mentions légales",    "links": { "terms": "Conditions d'utilisation", "privacy": "Politique de confidentialité", "refund": "Politique de remboursement", "security": "Sécurité" } }
+        "product": {
+          "title": "Produit",
+          "links": {
+            "database": "Base de données",
+            "auth": "Authentification",
+            "storage": "Stockage",
+            "automations": "Automatisations",
+            "email": "E-mail",
+            "realtime": "Temps réel",
+            "pricing": "Tarifs",
+            "products": "Produits",
+            "booking": "Réservation",
+            "digital": "Produits numériques",
+            "chat": "Chat client",
+            "analytics": "Analytique",
+            "pos": "Point de vente",
+            "currencies": "Multi-devises",
+            "reviews": "Avis clients"
+          }
+        },
+        "developers": {
+          "title": "Développeurs",
+          "links": {
+            "api": "API",
+            "docs": "Documentation",
+            "reference": "Référence API",
+            "quickstart": "Démarrage rapide",
+            "frameworks": "Frameworks",
+            "multistore": "Multi-boutique",
+            "team": "Équipe & rôles",
+            "database": "Base de données",
+            "auth": "Authentification",
+            "storage": "Stockage",
+            "realtime": "Temps réel",
+            "automations": "Automatisations",
+            "accounting": "Export comptable"
+          }
+        },
+        "legal": {
+          "title": "Mentions légales",
+          "links": {
+            "terms": "Conditions d'utilisation",
+            "privacy": "Politique de confidentialité",
+            "refund": "Politique de remboursement",
+            "security": "Sécurité"
+          }
+        }
       },
       "rights": "Tous droits réservés.",
-      "built":  "Conçu pour les boutiques en ligne."
+      "built": "Conçu pour les boutiques en ligne."
     }
   }
 }
