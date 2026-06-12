@@ -28,7 +28,7 @@ export default function Landing() {
   // Homepage SEO — also resets <title> when navigating back from a sub-page.
   useSeo({
     title: 'Torta CRM — run your online store from one place',
-    description: 'Torta CRM is one platform to run your online store — orders, bookings, live customer chat, email campaigns and analytics, without juggling a dozen tools. Start free, no credit card.',
+    description: 'One platform for your online store: physical & digital products, orders, inventory, bookings, customer chat across every messenger, and email campaigns. Start free, no credit card.',
     canonical: 'https://tortacrm.com/',
   });
 

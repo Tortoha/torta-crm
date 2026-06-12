@@ -31,6 +31,10 @@
     },
 
     "database": {
+      "seo": {
+        "title": "Order, inventory & product management — Torta CRM",
+        "description": "Manage products, orders, customers, inventory and bookings in one place — multi-warehouse stock, batches, low-stock alerts and live analytics. No spreadsheets."
+      },
       "hero": {
         "eyebrow": "Database",
         "title": "Every order, customer and product — structured and yours",
@@ -66,6 +70,10 @@
     },
 
     "auth": {
+      "seo": {
+        "title": "Customer login & accounts for your store — Torta CRM",
+        "description": "Let shoppers sign in with a one-time email or SMS code, or 17 social logins like Google and Apple. Guest checkout, multi-device sessions and password reset, built in."
+      },
       "hero": {
         "eyebrow": "Authentication",
         "title": "Sign-in your customers actually trust",
@@ -101,6 +109,10 @@
     },
 
     "storage": {
+      "seo": {
+        "title": "Sell digital downloads & host product media — Torta CRM",
+        "description": "Upload product photos and sell digital downloads — ZIPs, audio, video, e-books, almost any file. Secure direct uploads, per-plan storage and live usage tracking."
+      },
       "hero": {
         "eyebrow": "Storage",
         "title": "Store the images and files your store needs",
@@ -136,6 +148,10 @@
     },
 
     "automations": {
+      "seo": {
+        "title": "Webhooks, integrations & automation — Torta CRM",
+        "description": "Send store events — paid orders, new customers, bookings — to Slack, Discord, your own endpoint or 12 connectors. Scheduled alerts and email campaigns that run on their own."
+      },
       "hero": {
         "eyebrow": "Webhooks & Automations",
         "title": "Connect your store to everything else you run",
@@ -171,6 +187,10 @@
     },
 
     "email": {
+      "seo": {
+        "title": "Email marketing & transactional email — Torta CRM",
+        "description": "Send order confirmations, reminders and marketing campaigns from your own verified domain (DKIM, SPF, DMARC). Built-in templates, an HTML editor and scheduling."
+      },
       "hero": {
         "eyebrow": "Email",
         "title": "Email your customers actually receive",
@@ -206,6 +226,10 @@
     },
 
     "realtime": {
+      "seo": {
+        "title": "Real-time team collaboration — Torta CRM",
+        "description": "See who's online, follow teammates' live cursors and watch shared edits across every page of your CRM. Cursor chat, presence and jump-to-teammate, built in."
+      },
       "hero": {
         "eyebrow": "Realtime",
         "title": "Your team, live on the same page",
