@@ -13,6 +13,7 @@ import {
   ChatCircle, Cursor, PencilSimple, NavigationArrow,
   TreeStructure, Barcode, Warehouse, Tag, Stack, CalendarBlank, FileZip, ArrowsClockwise,
   FileText, Globe, Storefront,
+  CurrencyDollar, ThumbsUp,
 } from '@phosphor-icons/react';
 
 export const PRODUCTS = {
@@ -72,19 +73,31 @@ export const PRODUCTS = {
     Icon: Storefront, docsTo: '/docs/cheatsheet',
     cardIcons: [Storefront, ChartLineUp, UsersThree, UserCircle, Key, Globe],
   },
+  team: {
+    Icon: UsersThree, docsTo: '/docs/cheatsheet',
+    cardIcons: [UsersThree, Key, SealCheck, UserCircle, Lock, ListChecks],
+  },
+  currencies: {
+    Icon: CurrencyDollar, docsTo: '/docs/cheatsheet',
+    cardIcons: [CurrencyDollar, Globe, Receipt, Tag, SealCheck, ChartLineUp],
+  },
+  reviews: {
+    Icon: Star, docsTo: '/docs/cheatsheet',
+    cardIcons: [Star, SealCheck, ImageSquare, ChatCircle, ThumbsUp, UserCircle],
+  },
 };
 
 // All feature-page slugs — drives the in-page "Explore more" links + sitemap.
-export const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store'];
+export const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies', 'reviews'];
 
 // The landing Header splits the feature pages into two dropdowns by audience:
 //   Product    — what you sell + how you talk to customers
 //   Developers — the platform building blocks + the API page (/developers)
-export const PRODUCT_NAV = ['products', 'booking', 'digital', 'chat', 'email', 'analytics', 'pos']
+export const PRODUCT_NAV = ['products', 'booking', 'digital', 'chat', 'email', 'analytics', 'pos', 'currencies', 'reviews']
   .map(slug => ({ slug, Icon: PRODUCTS[slug].Icon }));
 
 export const DEVELOPER_NAV = [
   { slug: 'developers', Icon: Code },   // the API & SDK page at /developers
-  ...['multi-store', 'database', 'auth', 'storage', 'realtime', 'automations', 'accounting']
+  ...['multi-store', 'team', 'database', 'auth', 'storage', 'realtime', 'automations', 'accounting']
     .map(slug => ({ slug, Icon: PRODUCTS[slug].Icon })),
 ];

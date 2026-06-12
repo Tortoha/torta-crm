@@ -11,6 +11,7 @@ import {
   InstagramLogo, ChatCircleDots, CheckCircle,
   MusicNotes, VideoCamera, FileZip, DownloadSimple, EnvelopeSimple,
   FileText, Storefront,
+  Star, SealCheck,
 } from '@phosphor-icons/react';
 import { useInView } from '../../../Utils/useInView.js';
 
@@ -557,6 +558,109 @@ function MultiStoreIllus() {
   );
 }
 
+/* ── Team & roles: a member with a role, and a per-page permission matrix
+      where the active level (none / view / manage) lights up per row. ──── */
+function TeamIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+    tl.fromTo('.pf-rl-card', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5 });
+    tl.fromTo('.pf-rl-member', { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.35, ease: 'back.out(1.8)' }, '-=0.2');
+    tl.fromTo('.pf-rl-row', { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.34, stagger: 0.1 }, '-=0.1');
+    tl.fromTo('.pf-rl-seg.is-on', { scale: 0.3 }, { scale: 1, duration: 0.32, stagger: 0.1, ease: 'back.out(2.4)' }, '-=0.1');
+  });
+  const LBL = ['—', 'View', 'Manage'];
+  const rows = [
+    { page: 'Products', lvl: 2 },
+    { page: 'Orders', lvl: 2 },
+    { page: 'Promo codes', lvl: 1 },
+    { page: 'Billing', lvl: 0 },
+  ];
+  return (
+    <div className="pf-rl" ref={ref}>
+      <div className="pf-rl-card pf-card pf-anim">
+        <div className="pf-rl-member pf-anim">
+          <span className="pf-rl-ava">M</span>
+          <span className="pf-rl-name"><b>Mia</b><i>Manager</i></span>
+        </div>
+        {rows.map((r, i) => (
+          <div className="pf-rl-row pf-anim" key={i}>
+            <span className="pf-rl-page">{r.page}</span>
+            <div className="pf-rl-segs">
+              {[0, 1, 2].map(s => (
+                <span key={s} className={`pf-rl-seg${s === r.lvl ? ' is-on' : ''}`}>{LBL[s]}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Multi-currency: the same product priced in three currencies, plus a
+      row of more currency-symbol chips. ─────────────────────────────── */
+function CurrenciesIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+    tl.fromTo('.pf-cur-tag', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.4, stagger: 0.12, ease: 'back.out(1.4)' });
+    tl.fromTo('.pf-cur-chip', { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.3, stagger: 0.05, ease: 'back.out(2)' }, '-=0.1');
+  });
+  const tags = [
+    { sym: '$', amt: '24.00', cc: 'USD' },
+    { sym: '₸', amt: '11 200', cc: 'KZT' },
+    { sym: '€', amt: '22.40', cc: 'EUR' },
+  ];
+  const chips = ['£', '₽', 'R$', '¥', 'zł', '₺', '₴', '﷼'];
+  return (
+    <div className="pf-cur" ref={ref}>
+      <div className="pf-cur-tags">
+        {tags.map((t, i) => (
+          <span className="pf-cur-tag pf-card pf-anim" key={i}>
+            <b>{t.sym}{t.amt}</b><i>{t.cc}</i>
+          </span>
+        ))}
+      </div>
+      <div className="pf-cur-chips">
+        {chips.map((c, i) => <span className="pf-cur-chip pf-anim" key={i}>{c}</span>)}
+      </div>
+    </div>
+  );
+}
+
+/* ── Reviews: a verified-buyer review card — stars pop in, photos and a
+      merchant reply settle. ─────────────────────────────────────────── */
+function ReviewsIllus() {
+  const ref = useGsapInView(() => {
+    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+    tl.fromTo('.pf-rv-card', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5 });
+    tl.fromTo('.pf-rv-verified', { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.34, ease: 'back.out(2)' }, '-=0.2');
+    tl.fromTo('.pf-rv-star', { scale: 0, rotate: -25 }, { scale: 1, rotate: 0, duration: 0.3, stagger: 0.08, ease: 'back.out(2.4)' }, '-=0.1');
+    tl.fromTo('.pf-rv-photo', { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.3, stagger: 0.08, ease: 'back.out(1.8)' }, '-=0.05');
+    tl.fromTo('.pf-rv-reply', { opacity: 0, x: 14 }, { opacity: 1, x: 0, duration: 0.4 }, '-=0.05');
+  });
+  return (
+    <div className="pf-rv" ref={ref}>
+      <div className="pf-rv-card pf-card pf-anim">
+        <div className="pf-rv-head">
+          <span className="pf-rv-ava">L</span>
+          <span className="pf-rv-meta">
+            <b>Liam</b>
+            <span className="pf-rv-verified pf-anim"><SealCheck weight="fill" /> Verified buyer</span>
+          </span>
+        </div>
+        <div className="pf-rv-stars">
+          {[0, 1, 2, 3, 4].map(i => <Star key={i} className="pf-rv-star" weight="fill" />)}
+        </div>
+        <p className="pf-rv-text">Exactly as described — fast delivery, great quality.</p>
+        <div className="pf-rv-photos">
+          {[0, 1, 2].map(i => <span className="pf-rv-photo pf-anim" key={i} />)}
+        </div>
+        <div className="pf-rv-reply pf-anim"><b>Store</b> Thanks, Liam! ✦</div>
+      </div>
+    </div>
+  );
+}
+
 export const ILLUSTRATIONS = {
   database: DatabaseIllus,
   auth: AuthIllus,
@@ -572,6 +676,9 @@ export const ILLUSTRATIONS = {
   accounting: AccountingIllus,
   pos: PosIllus,
   'multi-store': MultiStoreIllus,
+  team: TeamIllus,
+  currencies: CurrenciesIllus,
+  reviews: ReviewsIllus,
 };
 
 /* ════════════════════════════════════════════════════════════════════
