@@ -60,6 +60,23 @@
       ]
     }
     </script>
+
+    <!-- FAQ structured data — eligible for FAQ rich results. MUST mirror the
+         visible FAQ section (Pages/Landing/Faq.jsx); keep the two in sync. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "What is Torta CRM?", "acceptedAnswer": { "@type": "Answer", "text": "Torta CRM is one platform to run an online store — products, orders, bookings, live customer chat, email campaigns and analytics — without juggling a dozen separate tools." } },
+        { "@type": "Question", "name": "Is there a free plan?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Start free, no credit card required. Upgrade only when you need more projects, team members, or storage." } },
+        { "@type": "Question", "name": "How is it different from using separate tools?", "acceptedAnswer": { "@type": "Answer", "text": "Instead of stitching together a store builder, a CRM, a help desk, an email tool and a spreadsheet, Torta runs all of it in one workspace with shared customer and order data." } },
+        { "@type": "Question", "name": "Do I need a developer to set it up?", "acceptedAnswer": { "@type": "Answer", "text": "No — you run everything from the console. There is also a developer API and the torta-js SDK if you want to connect a custom storefront." } },
+        { "@type": "Question", "name": "Is my data secure?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Two-key API security, per-project access control, DKIM-signed email and role-based permissions are wired in by default." } },
+        { "@type": "Question", "name": "Can I get a refund?", "acceptedAnswer": { "@type": "Answer", "text": "Yes — a 14-day money-back guarantee on your first payment, one-time per organization. You keep access until the current period ends." } }
+      ]
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>
