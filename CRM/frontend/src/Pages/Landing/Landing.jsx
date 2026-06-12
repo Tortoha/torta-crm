@@ -15,6 +15,7 @@ import CustomerFirst  from './CustomerFirst.jsx';
 import HowItWorks     from './HowItWorks.jsx';
 import UseCases       from './UseCases.jsx';
 import Security       from './Security.jsx';
+import Faq            from './Faq.jsx';
 import FinalCta       from './FinalCta.jsx';
 import Footer         from './Footer.jsx';
 import '../../Style/Landing.css';
@@ -51,6 +52,7 @@ export default function Landing() {
         <HowItWorks />
         <UseCases />
         <Security />
+        <Faq />
         <FinalCta />
         <Footer />
       </main>
