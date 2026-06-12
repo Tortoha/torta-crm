@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from 'react-i18next';
 import "./Style/Login.css";
 import { API_BASE } from "./api.js"
+import { trackSignup } from "./Utils/ads.js";
 
 function Verification() {
   const { t } = useTranslation();
@@ -81,6 +82,11 @@ function Verification() {
       const data = await res.json();
 
       if (res.ok) {
+        // Google Ads "Sign up" conversion — only for a real registration.
+        // This same screen also verifies logins, which must NOT count.
+        if (localStorage.getItem("pendingVerificationType") === "register") {
+          trackSignup();
+        }
         localStorage.removeItem("pendingEmail");
         localStorage.removeItem("pendingVerificationType");
         localStorage.removeItem("pendingResendUntil");

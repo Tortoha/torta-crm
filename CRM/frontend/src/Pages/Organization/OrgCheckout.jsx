@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowLeft, CheckCircle, ShieldCheck, Lock } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { openInlineCheckout, onPaddleEvent, getBillingConfig } from '../../Utils/paddle.js';
+import { trackPurchase } from '../../Utils/ads.js';
 import '../../Style/Landing.css';      // .pr-card-list checkmark rows
 import '../../Style/OrgCheckout.css';
 
@@ -50,7 +51,8 @@ export default function OrgCheckout() {
 
   const [status, setStatus] = useState('loading');   // loading | ready | error | done
   const [errMsg, setErrMsg] = useState('');
-  const startedRef = useRef(false);
+  const startedRef  = useRef(false);
+  const convFiredRef = useRef(false);   // Google Ads purchase conversion — fire once
 
   const backToBilling = () => navigate(`/org/${org?.slug}/billing`);
 
@@ -59,6 +61,12 @@ export default function OrgCheckout() {
     const off = onPaddleEvent(ev => {
       if (!ev) return;
       if (ev.name === 'checkout.completed' || ev.name === 'checkout.payment.succeeded') {
+        // Google Ads "Purchase" conversion — once, with the real plan price
+        // (USD). Skip card-updates: no money changes hands, so no conversion.
+        if (!convFiredRef.current && !isCardUpdate && planMeta) {
+          convFiredRef.current = true;
+          trackPurchase(cycle === 'yearly' ? planMeta.yearlyTotal : planMeta.monthly, 'USD');
+        }
         setStatus('done');
         // Give the webhook/sync a beat, then return to Billing where the
         // page mount re-syncs from Paddle and shows the new state.
@@ -66,7 +74,7 @@ export default function OrgCheckout() {
       }
     });
     return off;
-  }, [navigate, org?.slug]);
+  }, [navigate, org?.slug, isCardUpdate, planMeta, cycle]);
 
   // Create the transaction + mount the inline frame once.
   useEffect(() => {
