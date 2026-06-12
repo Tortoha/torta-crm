@@ -15,6 +15,10 @@ export default function Footer() {
   const cols = [
     { key: 'product', links: [
       { id: 'database',    to: '/database' },
+      { id: 'products',    to: '/products' },
+      { id: 'booking',     to: '/booking' },
+      { id: 'digital',     to: '/digital' },
+      { id: 'chat',        to: '/chat' },
       { id: 'auth',        to: '/auth' },
       { id: 'storage',     to: '/storage' },
       { id: 'automations', to: '/automations' },

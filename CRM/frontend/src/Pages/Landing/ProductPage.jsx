@@ -115,7 +115,9 @@ export default function ProductPage({ slug: slugProp }) {
                   </Link>
                 </div>
               </div>
-              <div className="pf-art pf-art--hero">{Illus && <Illus />}</div>
+              <div className="pf-art pf-art--hero">
+                {Illus ? <Illus /> : <cfg.Icon className="pf-art-fallback" weight="thin" />}
+              </div>
             </div>
           </div>
         </section>

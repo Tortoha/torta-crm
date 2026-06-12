@@ -129,6 +129,10 @@
 
 .pf-art--hero { min-height: 380px; }
 
+/* Hero fallback for feature pages without a bespoke GSAP illustration:
+   a single large brand-accent icon, centred by .pf-art's flexbox. */
+.pf-art-fallback { width: 180px; height: 180px; color: var(--accent); opacity: 0.9; }
+
 /* Animated children start hidden; GSAP reveals them. Reduced-motion users
    (and a no-JS fallback) see them immediately via the override below. */
 .pf-anim { opacity: 0; }
