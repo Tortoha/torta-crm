@@ -124,7 +124,7 @@ function App() {
           {/* Product feature pages at top-level slugs (Supabase-style: /database,
               /auth, …). Mirrors PRODUCT_SLUGS in Pages/Landing/product/data.js —
               inlined here so App's main bundle doesn't pull in that icon module. */}
-          {['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime'].map(s => (
+          {['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store'].map(s => (
             <Route key={s} path={`/${s}`} element={<ProductPage slug={s} />} />
           ))}
           <Route path="/login"                     element={<Login />} />

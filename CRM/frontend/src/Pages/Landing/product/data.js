@@ -12,6 +12,7 @@ import {
   Receipt, SealCheck, Code, ClockCountdown, ChartLineUp,
   ChatCircle, Cursor, PencilSimple, NavigationArrow,
   TreeStructure, Barcode, Warehouse, Tag, Stack, CalendarBlank, FileZip, ArrowsClockwise,
+  FileText, Globe, Storefront,
 } from '@phosphor-icons/react';
 
 export const PRODUCTS = {
@@ -55,19 +56,35 @@ export const PRODUCTS = {
     Icon: FileArrowDown, docsTo: '/docs/catalog',
     cardIcons: [FileArrowDown, FileZip, EnvelopeSimple, ImageSquare, ShoppingCart, ArrowsClockwise],
   },
+  analytics: {
+    Icon: ChartLine, docsTo: '/docs/cheatsheet',
+    cardIcons: [ChartLineUp, Stack, UsersThree, ArrowsClockwise, Globe, Gauge],
+  },
+  accounting: {
+    Icon: Receipt, docsTo: '/docs/integrations',
+    cardIcons: [Receipt, FileText, Globe, ClockCountdown, EnvelopeSimple, SealCheck],
+  },
+  pos: {
+    Icon: Barcode, docsTo: '/docs/cheatsheet',
+    cardIcons: [Barcode, ShoppingCart, Package, ArrowsClockwise, Warehouse, Lightning],
+  },
+  'multi-store': {
+    Icon: Storefront, docsTo: '/docs/cheatsheet',
+    cardIcons: [Storefront, ChartLineUp, UsersThree, UserCircle, Key, Globe],
+  },
 };
 
 // All feature-page slugs — drives the in-page "Explore more" links + sitemap.
-export const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime'];
+export const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store'];
 
 // The landing Header splits the feature pages into two dropdowns by audience:
 //   Product    — what you sell + how you talk to customers
 //   Developers — the platform building blocks + the API page (/developers)
-export const PRODUCT_NAV = ['products', 'booking', 'digital', 'chat', 'email']
+export const PRODUCT_NAV = ['products', 'booking', 'digital', 'chat', 'email', 'analytics', 'pos']
   .map(slug => ({ slug, Icon: PRODUCTS[slug].Icon }));
 
 export const DEVELOPER_NAV = [
   { slug: 'developers', Icon: Code },   // the API & SDK page at /developers
-  ...['database', 'auth', 'storage', 'realtime', 'automations']
+  ...['multi-store', 'database', 'auth', 'storage', 'realtime', 'automations', 'accounting']
     .map(slug => ({ slug, Icon: PRODUCTS[slug].Icon })),
 ];

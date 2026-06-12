@@ -14,6 +14,10 @@
       "product": "Product",
       "name": {
         "developers": "API & SDK",
+        "analytics": "Analytics",
+        "accounting": "Accounting export",
+        "pos": "Point of sale",
+        "multi-store": "Multi-store",
         "products": "Products",
         "booking": "Booking",
         "chat": "Customer chat",
@@ -27,6 +31,10 @@
       },
       "tagline": {
         "developers": "Build on the platform",
+        "analytics": "Reports & insights",
+        "accounting": "Export to 1C, QuickBooks…",
+        "pos": "In-store + online",
+        "multi-store": "Many stores, one account",
         "products": "Catalog, stock & pricing",
         "booking": "Services, staff & calendar",
         "chat": "All messengers, one inbox",
@@ -427,6 +435,162 @@
         ],
         "chipsTitle": "What you can sell",
         "chips": ["E-books / PDFs", "Audio", "Video", "Design assets", "ZIP archives", "Software", "Templates", "Almost any file"]
+      }
+    },
+
+    "analytics": {
+      "seo": {
+        "title": "Ecommerce analytics & profit reporting — Torta CRM",
+        "description": "Real-time ecommerce analytics: revenue trends, sales-funnel conversion, gross margin by SKU, customer cohorts and lifetime value, returns and inventory health — across one store or your whole organization. No spreadsheets."
+      },
+      "hero": {
+        "eyebrow": "Analytics",
+        "title": "Know exactly what's working",
+        "lead": "Revenue, conversion, profit margin down to the SKU, customer cohorts and lifetime value, returns, traffic and more — over twenty built-in reports, updated in real time, for one store or your whole organization. No setup, no spreadsheets."
+      },
+      "stats": [
+        { "value": "20+ reports", "label": "From revenue to cohorts to margin — built in" },
+        { "value": "Margin by SKU", "label": "Real gross profit, using cost at the time of sale" },
+        { "value": "Real-time", "label": "New orders show up within seconds" },
+        { "value": "One or many stores", "label": "Roll every store into one view, FX-converted" }
+      ],
+      "cards": [
+        { "title": "Revenue & funnel", "desc": "Revenue over time with period comparison, and a true unique-visitor funnel from view to cart to paid." },
+        { "title": "Profit margin by SKU", "desc": "Gross profit and margin per product, variation and SKU — using the cost captured at the moment of sale." },
+        { "title": "Cohorts & lifetime value", "desc": "Monthly retention cohorts, new-vs-returning, top customers and what they're worth over time." },
+        { "title": "Returns & operations", "desc": "Return rates and reasons, processing times, and fulfilment speed from order to delivery." },
+        { "title": "Traffic & search", "desc": "Sources, UTM campaigns, devices and countries — plus the searches that came back empty." },
+        { "title": "Inventory & goals", "desc": "Stock health at a glance and live progress against the targets you set." }
+      ],
+      "deep": {
+        "eyebrow": "Built in",
+        "title": "The reports a store actually needs",
+        "body": "Every metric is computed in your store's own timezone, cached for speed and refreshed in real time as orders land. Pick any date range, drill into a single day's orders, compare two periods, or export the numbers to CSV.",
+        "points": [
+          "Every report respects your store's local day and timezone",
+          "Custom date ranges and period-over-period comparison everywhere",
+          "Drill from a chart straight into the underlying orders",
+          "Export any report to CSV for your own analysis"
+        ],
+        "chipsTitle": "What you can measure",
+        "chips": ["Revenue", "Conversion funnel", "Gross margin", "Cohort retention", "Customer LTV", "Returns", "Traffic & UTM", "Search insights", "Inventory health", "Bookings", "Promo performance", "Cross-store rollup"]
+      }
+    },
+
+    "accounting": {
+      "seo": {
+        "title": "Export orders to 1C, Kompra, QuickBooks & Xero — Torta CRM",
+        "description": "Export your store's orders and bookings to 25 accounting systems — 1C, Kompra (ЭСФ), QuickBooks, Xero, DATEV and more. The right format and encoding, VAT split out, on demand or auto-delivered to your accountant."
+      },
+      "hero": {
+        "eyebrow": "Accounting export",
+        "title": "Your sales, ready for your accountant",
+        "lead": "Export every order and booking to the accounting system you already use — 1C, Kompra, QuickBooks, Xero, DATEV and twenty more — in exactly the format it expects. Download on demand, or have it emailed to your accountant on a schedule."
+      },
+      "stats": [
+        { "value": "25 systems", "label": "1C, Kompra, QuickBooks, Xero, DATEV and 20 more" },
+        { "value": "Native format", "label": "CSV or IIF, correct encoding, localized per system" },
+        { "value": "VAT split", "label": "Net, tax and gross split for the local rate" },
+        { "value": "Auto-delivered", "label": "Daily, weekly or monthly to your accountant" }
+      ],
+      "cards": [
+        { "title": "1C & Kompra", "desc": "Cyrillic-safe files for 1C 8.3, and bulk ЭСФ upload to Kompra with Kazakhstan's 12% VAT split out." },
+        { "title": "QuickBooks, Xero & DATEV", "desc": "IIF for QuickBooks, asterisked CSV for Xero, a Buchungsstapel for DATEV — each in its own native format." },
+        { "title": "Built for your country", "desc": "25 systems across the CIS, Europe, Latin America and Asia, each matched to the local standard and tax rate." },
+        { "title": "On a schedule", "desc": "Send yesterday's, last week's or last month's sales automatically, at the hour you pick." },
+        { "title": "Straight to your accountant", "desc": "Scheduled exports arrive by email with a secure download link — always the latest file, no attachment." },
+        { "title": "Numbers that reconcile", "desc": "Paid orders only by default, returns subtracted, bookings included — the file matches your revenue." }
+      ],
+      "deep": {
+        "eyebrow": "How export works",
+        "title": "Pick a system, pick a period — done",
+        "body": "Choose your accounting software and a date range, and Torta builds the file in exactly the format it expects — the right delimiter, decimal separator, encoding and VAT treatment. Preview the first rows, download it, or set it to email your accountant on repeat.",
+        "points": [
+          "Eight period presets plus any custom range, in your store's timezone",
+          "Net / VAT / gross split for the local tax rate",
+          "Orders and service bookings merged into one file",
+          "The preview matches the download, row for row"
+        ],
+        "chipsTitle": "Systems you can export to",
+        "chips": ["1C", "Kompra (ЭСФ)", "QuickBooks", "Xero", "DATEV", "BAS", "Conta Azul", "Contpaqi", "Tally", "Zoho Books", "Freee", "+ 14 more"]
+      }
+    },
+
+    "pos": {
+      "seo": {
+        "title": "Point of sale — sell in-store and online from one inventory — Torta CRM",
+        "description": "A built-in point of sale: ring up counter sales with a barcode scanner (no drivers), and every sale draws down the same stock your website sells from. One catalog, one inventory, one set of analytics."
+      },
+      "hero": {
+        "eyebrow": "Point of sale",
+        "title": "Sell at the counter and online, from one inventory",
+        "lead": "Ring up in-store sales with a barcode scanner — no drivers, no extra hardware — and every sale draws down the same stock, batches and analytics your website uses. Online and in-store, finally on one system."
+      },
+      "stats": [
+        { "value": "One inventory", "label": "In-store and online sales share the same stock" },
+        { "value": "Just scan", "label": "Any keyboard-wedge barcode scanner — no drivers" },
+        { "value": "Batch-aware", "label": "Sells the earliest-expiry batch first, tracks cost" },
+        { "value": "One report", "label": "Counter and web sales in the same analytics" }
+      ],
+      "cards": [
+        { "title": "Barcode checkout", "desc": "Scan to add — the reader just types the code. Or browse the catalog by category and tap." },
+        { "title": "Fast register", "desc": "Build the ticket, take cash, card or other, add a walk-in customer — done in seconds." },
+        { "title": "Shared stock", "desc": "Every counter sale deducts from the same inventory your storefront sells from — no double-selling." },
+        { "title": "Batches & cost", "desc": "Picks the earliest-expiry batch by default and records its cost, so margin and FEFO stay correct." },
+        { "title": "Per warehouse", "desc": "Sell from the right location's stock, with pickup and delivery handled the same way as online." },
+        { "title": "Live everywhere", "desc": "A counter sale appears in Orders and Analytics in real time, exactly like a web order." }
+      ],
+      "deep": {
+        "eyebrow": "Unified commerce",
+        "title": "One catalog. One stock. Online and in-store.",
+        "body": "There's no separate POS database. A sale at the register and a sale on your website land in the same orders table, deduct from the same batches, and feed the same reports — so your numbers are never split across two systems.",
+        "points": [
+          "Hardware scanners work out of the box — they act as a keyboard",
+          "Stock, batches and cost stay in lockstep across both channels",
+          "Returns and refunds flow back through the same restock path",
+          "Walk-in or named customer, paid by cash, card or other"
+        ],
+        "chipsTitle": "At the register",
+        "chips": ["Barcode scan", "Category catalog", "Batch picker", "Cash / card / other", "Walk-in customer", "Real-time stock", "Same analytics", "Multi-warehouse"]
+      }
+    },
+
+    "multi-store": {
+      "seo": {
+        "title": "Manage multiple online stores from one dashboard — Torta CRM",
+        "description": "Run several online stores from one account: separate catalogs, currencies and teams, with combined analytics across every store (currency-normalized) and an optional shared customer base."
+      },
+      "hero": {
+        "eyebrow": "Multi-store",
+        "title": "Run all your stores from one place",
+        "lead": "Open as many stores as you need under one account — each with its own catalog, currency, domain and team — then see them combined in one dashboard, with revenue rolled up across stores in a single currency."
+      },
+      "stats": [
+        { "value": "One account", "label": "As many stores as you need, each fully isolated" },
+        { "value": "Cross-store view", "label": "Combined revenue and margin, FX-normalized" },
+        { "value": "Shared customers", "label": "Optionally recognize a buyer across your stores" },
+        { "value": "Per-store teams", "label": "Each store with its own staff and roles" }
+      ],
+      "cards": [
+        { "title": "Many stores, one login", "desc": "Group stores into organizations and switch between them in a click — no separate accounts." },
+        { "title": "Cross-store analytics", "desc": "Combined revenue, orders and margin across every store, normalized into one currency." },
+        { "title": "A store leaderboard", "desc": "See which store earns the most and which has the best margin, side by side." },
+        { "title": "Shared customers", "desc": "Optionally recognize a customer who bought at one store when they visit another." },
+        { "title": "Roles per store", "desc": "Give each teammate access to just the stores and pages they need." },
+        { "title": "Independent by design", "desc": "Separate catalog, currency, domain and email per store — fully isolated data." }
+      ],
+      "deep": {
+        "eyebrow": "Built to scale",
+        "title": "From one shop to a whole group",
+        "body": "Every store is its own isolated workspace — its own products, orders, currency and team — but they roll up into organization-level analytics and an optional shared customer base, so a multi-brand operator manages everything from one screen.",
+        "points": [
+          "Each store's data is fully isolated from the others",
+          "Organization analytics sum revenue across stores, FX-converted",
+          "An optional shared customer base across stores in a group",
+          "Per-store team seats and granular roles"
+        ],
+        "chipsTitle": "Per store, or across all",
+        "chips": ["Own catalog", "Own currency", "Own domain", "Own team", "Cross-store revenue", "Store leaderboard", "Shared customers", "Org-level roles"]
       }
     }
   }

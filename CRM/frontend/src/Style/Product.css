@@ -379,6 +379,69 @@
 .pf-dl-sent { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-tint); padding: 8px 14px; border-radius: 999px; }
 .pf-dl-sent svg { width: 16px; height: 16px; }
 
+.pf-an *, .pf-acc *, .pf-pos *, .pf-ms * { box-sizing: border-box; }
+
+/* ── ANALYTICS — KPI tiles + a self-drawing revenue line ────────────── */
+.pf-an { width: 100%; max-width: 400px; }
+.pf-an-card { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.pf-an-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pf-an-kpi { display: flex; flex-direction: column; gap: 2px; padding: 11px 13px; border-radius: 12px; background: rgba(var(--fg-rgb), 0.05); }
+.pf-an-kpi span { font-size: 10px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
+.pf-an-kpi b { font-size: 19px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+.pf-an-up { font-size: 11px; font-weight: 600; font-style: normal; color: var(--accent); }
+.pf-an-chart { position: relative; height: 92px; }
+.pf-an-chart svg { width: 100%; height: 100%; display: block; }
+.pf-an-area { fill: var(--accent); opacity: 0.12; }
+.pf-an-line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.pf-an-dot { position: absolute; top: 7px; right: 1px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-tint); }
+
+/* ── ACCOUNTING — export file → accounting systems ──────────────────── */
+.pf-acc { width: 100%; max-width: 430px; display: grid; grid-template-columns: 1fr 44px auto; align-items: center; position: relative; }
+.pf-acc-file { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.pf-acc-file-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.pf-acc-file-head svg { width: 18px; height: 18px; color: var(--accent); }
+.pf-acc-row { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; }
+.pf-acc-row span { color: var(--muted); }
+.pf-acc-row i { font-style: normal; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.pf-acc-wire { width: 44px; height: 200px; overflow: visible; }
+.pf-acc-line { fill: none; stroke: rgba(var(--fg-rgb), 0.17); stroke-width: 2; }
+.pf-acc-dests { display: flex; flex-direction: column; gap: 10px; }
+.pf-acc-dest { font-size: 12px; font-weight: 600; color: #fff; background: var(--accent); padding: 8px 14px; border-radius: 999px; text-align: center; box-shadow: 0 10px 22px -12px rgba(0, 113, 227, 0.5); }
+.pf-acc-dest.is-soft { background: var(--accent-tint); color: var(--accent); box-shadow: none; }
+.pf-acc-sent { position: absolute; right: -4px; bottom: -14px; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--accent); background: var(--card); padding: 5px 11px 5px 9px; border-radius: 999px; box-shadow: 0 12px 26px -10px rgba(0, 0, 0, 0.28); }
+.pf-acc-sent svg { width: 14px; height: 14px; }
+
+/* ── POS — barcode with a sweeping scan beam + receipt ──────────────── */
+.pf-pos { width: 100%; max-width: 360px; display: flex; flex-direction: column; align-items: center; gap: 16px; position: relative; }
+.pf-pos-scan { width: 100%; padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.pf-pos-barcode { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 62px; padding: 0 4px; }
+.pf-pos-barcode i { display: block; height: 100%; background: var(--text); border-radius: 1px; }
+.pf-pos-beam { position: absolute; left: -6px; right: -6px; height: 3px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 10px 1px var(--accent); }
+.pf-pos-code { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pf-pos-receipt { width: 86%; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.pf-pos-line { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.pf-pos-line span { color: var(--muted); }
+.pf-pos-line i { font-style: normal; font-weight: 600; color: var(--text); }
+.pf-pos-total { margin-top: 4px; }
+.pf-pos-total span, .pf-pos-total i { color: var(--text); font-weight: 700; font-size: 13px; }
+.pf-pos-paid { position: absolute; right: 4px; bottom: -12px; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); padding: 7px 13px; border-radius: 999px; box-shadow: 0 14px 28px -10px rgba(0, 113, 227, 0.6); }
+.pf-pos-paid svg { width: 14px; height: 14px; }
+
+/* ── MULTI-STORE — separate stores converging into one org total ────── */
+.pf-ms { width: 100%; max-width: 420px; display: grid; grid-template-columns: 1fr 44px auto; align-items: center; }
+.pf-ms-stores { display: flex; flex-direction: column; gap: 11px; }
+.pf-ms-store { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border-radius: 13px; background: var(--card); box-shadow: 0 10px 22px -14px rgba(0, 0, 0, 0.28); }
+.pf-ms-store svg { width: 20px; height: 20px; color: var(--accent); flex-shrink: 0; }
+.pf-ms-store-meta { display: flex; flex-direction: column; gap: 1px; }
+.pf-ms-store-meta b { font-size: 12px; font-weight: 700; color: var(--text); }
+.pf-ms-store-meta i { font-size: 11px; font-style: normal; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pf-ms-wire { width: 44px; height: 150px; overflow: visible; }
+.pf-ms-line { fill: none; stroke: rgba(var(--fg-rgb), 0.17); stroke-width: 2; }
+.pf-ms-total { padding: 16px 18px; display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+.pf-ms-total-label { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.pf-ms-total b { font-size: 26px; font-weight: 700; color: var(--text); letter-spacing: -0.03em; line-height: 1; }
+.pf-ms-total-sub { font-size: 11px; color: var(--accent); font-weight: 600; }
+
 /* ── Big stat strip (reused across pages) ─────────────────────────── */
 .pf-stats {
   display: grid;

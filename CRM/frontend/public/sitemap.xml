@@ -7,6 +7,10 @@
   <url><loc>https://tortacrm.com/booking</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://tortacrm.com/digital</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://tortacrm.com/chat</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://tortacrm.com/analytics</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://tortacrm.com/accounting</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://tortacrm.com/pos</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://tortacrm.com/multi-store</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://tortacrm.com/auth</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://tortacrm.com/storage</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://tortacrm.com/automations</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
