@@ -22,7 +22,6 @@
         "developers": "API & SDK",
         "team": "Equipo y roles",
         "currencies": "Multimoneda",
-        "reviews": "Reseñas",
         "analytics": "Analítica",
         "accounting": "Exportación contable",
         "pos": "Punto de venta",
@@ -42,7 +41,6 @@
         "developers": "Construya sobre la plataforma",
         "team": "Roles y permisos",
         "currencies": "49 monedas",
-        "reviews": "Compradores verificados + fotos",
         "analytics": "Informes e insights",
         "accounting": "Exportar a 1C, QuickBooks…",
         "pos": "En tienda + en línea",
@@ -1321,82 +1319,6 @@
           "JPY ¥",
           "TRY ₺",
           "+ 40 más"
-        ]
-      }
-    },
-    "reviews": {
-      "seo": {
-        "title": "Reseñas de productos con fotos y compradores verificados — Torta CRM",
-        "description": "Recopile reseñas de compradores verificados: valoraciones por estrellas, reseñas escritas y hasta cinco fotos cada una, con respuestas del vendedor y votos de utilidad. Integrado y aislado por tienda."
-      },
-      "hero": {
-        "eyebrow": "Reseñas",
-        "title": "Reseñas en las que los compradores pueden confiar",
-        "lead": "Permita que sus clientes valoren y reseñen lo que compraron — con fotos — y respóndalas usted mismo. Solo quienes realmente recibieron el pedido pueden publicar, por lo que cada reseña proviene de un comprador verificado."
-      },
-      "stats": [
-        {
-          "value": "Compradores verificados",
-          "label": "Solo clientes con un pedido entregado pueden reseñar"
-        },
-        {
-          "value": "Hasta 5 fotos",
-          "label": "Fotos reales adjuntas a cada reseña"
-        },
-        {
-          "value": "Respuestas del vendedor",
-          "label": "Responda públicamente a cualquier reseña"
-        },
-        {
-          "value": "Por tienda",
-          "label": "Las reseñas están aisladas en cada tienda"
-        }
-      ],
-      "cards": [
-        {
-          "title": "Valoraciones y reseñas",
-          "desc": "Una valoración de 1 a 5 estrellas más una reseña escrita, una por cliente por producto."
-        },
-        {
-          "title": "Compra verificada",
-          "desc": "Solo un cliente cuyo pedido fue entregado (o devuelto/reembolsado) puede dejar una reseña."
-        },
-        {
-          "title": "Fotos",
-          "desc": "Los clientes adjuntan hasta cinco fotos, almacenadas de forma privada por tienda."
-        },
-        {
-          "title": "Responda como vendedor",
-          "desc": "Responda a cualquier reseña — agradezca a un fan o aborde un problema en público."
-        },
-        {
-          "title": "Votos de utilidad",
-          "desc": "Los compradores votan las reseñas que les fueron útiles, destacando primero las más valiosas."
-        },
-        {
-          "title": "Promedios honestos",
-          "desc": "La valoración media y el recuento de reseñas se calculan con precisión sobre el conjunto completo."
-        }
-      ],
-      "deep": {
-        "eyebrow": "Integrado",
-        "title": "Reseñas reales, de compradores reales",
-        "body": "Las reseñas están restringidas a compras verificadas, por lo que tienen credibilidad. Los clientes añaden fotos y votan las reseñas de otros; usted responde donde importa. Las reseñas de cada tienda están completamente aisladas de las demás.",
-        "points": [
-          "Solo compradores entregados / devueltos / reembolsados pueden publicar — una reseña por producto",
-          "Hasta cinco fotos por reseña, almacenadas por tienda",
-          "Respuestas del vendedor y votos de utilidad",
-          "Valoración media y recuento precisos sobre el conjunto completo"
-        ],
-        "chipsTitle": "En cada reseña",
-        "chips": [
-          "1–5 estrellas",
-          "Reseña escrita",
-          "Hasta 5 fotos",
-          "Comprador verificado",
-          "Respuesta del vendedor",
-          "Votos de utilidad",
-          "Aislada por tienda"
         ]
       }
     }

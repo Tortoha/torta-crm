@@ -22,7 +22,6 @@
         "developers": "API & SDK",
         "team": "Team & Rollen",
         "currencies": "Mehrere Währungen",
-        "reviews": "Bewertungen",
         "analytics": "Analysen",
         "accounting": "Buchhaltungsexport",
         "pos": "Kassensystem",
@@ -42,7 +41,6 @@
         "developers": "Auf der Plattform entwickeln",
         "team": "Rollen & Berechtigungen",
         "currencies": "49 Währungen",
-        "reviews": "Verifizierte Käufer + Fotos",
         "analytics": "Berichte & Auswertungen",
         "accounting": "Export zu 1C, QuickBooks…",
         "pos": "Stationär + online",
@@ -1321,82 +1319,6 @@
           "JPY ¥",
           "TRY ₺",
           "+ 40 weitere"
-        ]
-      }
-    },
-    "reviews": {
-      "seo": {
-        "title": "Produktbewertungen mit Fotos & verifizierten Käufern — Torta CRM",
-        "description": "Produktbewertungen von verifizierten Käufern sammeln – Sternebewertungen, schriftliche Rezensionen und bis zu fünf Fotos pro Bewertung, mit Händlerantworten und Hilfreiche-Stimmen-Funktion. Integriert, pro Shop isoliert."
-      },
-      "hero": {
-        "eyebrow": "Bewertungen",
-        "title": "Bewertungen, denen Käufer vertrauen können",
-        "lead": "Lassen Sie Kunden das Gekaufte bewerten und rezensieren – mit Fotos – und antworten Sie selbst darauf. Nur Personen, die die Bestellung tatsächlich erhalten haben, können eine Bewertung abgeben, sodass jede Rezension von einem verifizierten Käufer stammt."
-      },
-      "stats": [
-        {
-          "value": "Verifizierte Käufer",
-          "label": "Nur Kunden mit einer gelieferten Bestellung können bewerten"
-        },
-        {
-          "value": "Bis zu 5 Fotos",
-          "label": "Echte Fotos zu jeder Bewertung"
-        },
-        {
-          "value": "Händlerantworten",
-          "label": "Auf jede Bewertung öffentlich antworten"
-        },
-        {
-          "value": "Pro Shop",
-          "label": "Bewertungen sind auf jeden Shop isoliert"
-        }
-      ],
-      "cards": [
-        {
-          "title": "Bewertungen & Rezensionen",
-          "desc": "Eine 1–5-Sterne-Bewertung plus schriftliche Rezension, eine pro Kunde pro Produkt."
-        },
-        {
-          "title": "Verifizierter Kauf",
-          "desc": "Nur ein Kunde, dessen Bestellung geliefert (oder retourniert/erstattet) wurde, kann eine Bewertung abgeben."
-        },
-        {
-          "title": "Fotos",
-          "desc": "Kunden fügen bis zu fünf Fotos hinzu, die pro Shop privat gespeichert werden."
-        },
-        {
-          "title": "Als Händler antworten",
-          "desc": "Auf jede Bewertung reagieren – einem Fan danken oder ein Problem öffentlich ansprechen."
-        },
-        {
-          "title": "Hilfreiche Stimmen",
-          "desc": "Käufer stimmen für die Bewertungen ab, die ihnen geholfen haben, und heben die nützlichsten nach oben."
-        },
-        {
-          "title": "Ehrliche Durchschnittswerte",
-          "desc": "Durchschnittsbewertung und Anzahl der Rezensionen werden präzise aus allen Bewertungen berechnet."
-        }
-      ],
-      "deep": {
-        "eyebrow": "Integriert",
-        "title": "Echte Bewertungen – von echten Käufern",
-        "body": "Bewertungen sind auf verifizierte Käufe beschränkt, sodass sie Gewicht haben. Kunden fügen Fotos hinzu und stimmen für die Bewertungen anderer ab; Sie antworten dort, wo es wichtig ist. Die Bewertungen jedes Shops sind vollständig von den anderen isoliert.",
-        "points": [
-          "Nur gelieferte / retournierte / erstattete Käufer können posten – eine Bewertung pro Produkt",
-          "Bis zu fünf Fotos pro Bewertung, pro Shop gespeichert",
-          "Händlerantworten und hilfreiche Stimmen",
-          "Exakte Durchschnittsbewertung und Gesamtanzahl über alle Bewertungen"
-        ],
-        "chipsTitle": "In jeder Bewertung",
-        "chips": [
-          "1–5 Sterne",
-          "Schriftliche Rezension",
-          "Bis zu 5 Fotos",
-          "Verifizierter Käufer",
-          "Händlerantwort",
-          "Hilfreiche Stimmen",
-          "Pro Shop isoliert"
         ]
       }
     }

@@ -22,7 +22,6 @@
         "developers": "API & SDK",
         "team": "Équipe & rôles",
         "currencies": "Multi-devises",
-        "reviews": "Avis clients",
         "analytics": "Analytique",
         "accounting": "Export comptable",
         "pos": "Point de vente",
@@ -42,7 +41,6 @@
         "developers": "Construisez sur la plateforme",
         "team": "Rôles & permissions",
         "currencies": "49 devises",
-        "reviews": "Acheteurs vérifiés + photos",
         "analytics": "Rapports & insights",
         "accounting": "Export vers 1C, QuickBooks…",
         "pos": "En boutique + en ligne",
@@ -1321,82 +1319,6 @@
           "JPY ¥",
           "TRY ₺",
           "+ 40 autres"
-        ]
-      }
-    },
-    "reviews": {
-      "seo": {
-        "title": "Avis produits avec photos & acheteurs vérifiés — Torta CRM",
-        "description": "Collectez des avis produits d'acheteurs vérifiés — notes en étoiles, avis rédigés et jusqu'à cinq photos chacun, avec réponses du marchand et votes utiles. Intégré, isolé par boutique."
-      },
-      "hero": {
-        "eyebrow": "Avis clients",
-        "title": "Des avis auxquels les acheteurs peuvent faire confiance",
-        "lead": "Laissez vos clients noter et commenter leurs achats — avec des photos — et répondez-leur vous-même. Seules les personnes ayant réellement reçu la commande peuvent publier, donc chaque avis provient d'un acheteur vérifié."
-      },
-      "stats": [
-        {
-          "value": "Acheteurs vérifiés",
-          "label": "Seuls les clients avec une commande livrée peuvent laisser un avis"
-        },
-        {
-          "value": "Jusqu'à 5 photos",
-          "label": "De vraies photos attachées à chaque avis"
-        },
-        {
-          "value": "Réponses du marchand",
-          "label": "Répondez publiquement à n'importe quel avis"
-        },
-        {
-          "value": "Par boutique",
-          "label": "Les avis sont isolés par boutique"
-        }
-      ],
-      "cards": [
-        {
-          "title": "Notes & avis",
-          "desc": "Une note de 1 à 5 étoiles plus un avis rédigé, un par client et par produit."
-        },
-        {
-          "title": "Achat vérifié",
-          "desc": "Seul un client dont la commande a été livrée (ou retournée/remboursée) peut laisser un avis."
-        },
-        {
-          "title": "Photos",
-          "desc": "Les clients joignent jusqu'à cinq photos, stockées de façon privée par boutique."
-        },
-        {
-          "title": "Répondre en tant que marchand",
-          "desc": "Répondez à n'importe quel avis — remerciez un client satisfait ou traitez un problème en public."
-        },
-        {
-          "title": "Votes utiles",
-          "desc": "Les acheteurs votent pour les avis qui les ont aidés, faisant remonter les plus utiles en premier."
-        },
-        {
-          "title": "Moyennes honnêtes",
-          "desc": "La note moyenne et le nombre d'avis sont calculés avec précision sur la totalité des avis."
-        }
-      ],
-      "deep": {
-        "eyebrow": "Intégré",
-        "title": "De vrais avis, de vrais acheteurs",
-        "body": "Les avis sont réservés aux achats vérifiés, ce qui leur confère du poids. Les clients ajoutent des photos et votent pour les avis des autres ; vous répondez là où c'est important. Les avis de chaque boutique sont entièrement isolés des autres.",
-        "points": [
-          "Seuls les acheteurs livrés / retournés / remboursés peuvent publier — un avis par produit",
-          "Jusqu'à cinq photos par avis, stockées par boutique",
-          "Réponses du marchand et votes utiles",
-          "Note moyenne et nombre d'avis précis sur l'ensemble des contributions"
-        ],
-        "chipsTitle": "Dans chaque avis",
-        "chips": [
-          "1 à 5 étoiles",
-          "Avis rédigé",
-          "Jusqu'à 5 photos",
-          "Acheteur vérifié",
-          "Réponse du marchand",
-          "Votes utiles",
-          "Isolé par boutique"
         ]
       }
     }

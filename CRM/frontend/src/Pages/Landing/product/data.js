@@ -13,7 +13,7 @@ import {
   ChatCircle, Cursor, PencilSimple, NavigationArrow,
   TreeStructure, Barcode, Warehouse, Tag, Stack, CalendarBlank, FileZip, ArrowsClockwise,
   FileText, Globe, Storefront,
-  CurrencyDollar, ThumbsUp,
+  CurrencyDollar,
 } from '@phosphor-icons/react';
 
 export const PRODUCTS = {
@@ -81,19 +81,15 @@ export const PRODUCTS = {
     Icon: CurrencyDollar, docsTo: '/docs/cheatsheet',
     cardIcons: [CurrencyDollar, Globe, Receipt, Tag, SealCheck, ChartLineUp],
   },
-  reviews: {
-    Icon: Star, docsTo: '/docs/cheatsheet',
-    cardIcons: [Star, SealCheck, ImageSquare, ChatCircle, ThumbsUp, UserCircle],
-  },
 };
 
 // All feature-page slugs — drives the in-page "Explore more" links + sitemap.
-export const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies', 'reviews'];
+export const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies'];
 
 // The landing Header splits the feature pages into two dropdowns by audience:
 //   Product    — what you sell + how you talk to customers
 //   Developers — the platform building blocks + the API page (/developers)
-export const PRODUCT_NAV = ['products', 'booking', 'digital', 'chat', 'email', 'analytics', 'pos', 'currencies', 'reviews']
+export const PRODUCT_NAV = ['products', 'booking', 'digital', 'chat', 'email', 'analytics', 'pos', 'currencies']
   .map(slug => ({ slug, Icon: PRODUCTS[slug].Icon }));
 
 export const DEVELOPER_NAV = [

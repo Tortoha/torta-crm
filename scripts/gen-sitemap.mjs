@@ -21,7 +21,7 @@ const BASE = 'https://tortacrm.com';
 const LANGS = ['en', 'ru', 'kk', 'de', 'es', 'fr', 'pt'];
 
 // Localized marketing pages. path has no leading slash ('' = home).
-const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies', 'reviews'];
+const PRODUCT_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies'];
 const LOCALIZED = [
   { path: '', freq: 'weekly', prio: '1.0' },
   { path: 'pricing', freq: 'weekly', prio: '0.9' },

@@ -11,7 +11,6 @@ import {
   InstagramLogo, ChatCircleDots, CheckCircle,
   MusicNotes, VideoCamera, FileZip, DownloadSimple, EnvelopeSimple,
   FileText, Storefront,
-  Star, SealCheck,
 } from '@phosphor-icons/react';
 import { useInView } from '../../../Utils/useInView.js';
 
@@ -627,40 +626,6 @@ function CurrenciesIllus() {
   );
 }
 
-/* ── Reviews: a verified-buyer review card — stars pop in, photos and a
-      merchant reply settle. ─────────────────────────────────────────── */
-function ReviewsIllus() {
-  const ref = useGsapInView(() => {
-    const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
-    tl.fromTo('.pf-rv-card', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5 });
-    tl.fromTo('.pf-rv-verified', { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.34, ease: 'back.out(2)' }, '-=0.2');
-    tl.fromTo('.pf-rv-star', { scale: 0, rotate: -25 }, { scale: 1, rotate: 0, duration: 0.3, stagger: 0.08, ease: 'back.out(2.4)' }, '-=0.1');
-    tl.fromTo('.pf-rv-photo', { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.3, stagger: 0.08, ease: 'back.out(1.8)' }, '-=0.05');
-    tl.fromTo('.pf-rv-reply', { opacity: 0, x: 14 }, { opacity: 1, x: 0, duration: 0.4 }, '-=0.05');
-  });
-  return (
-    <div className="pf-rv" ref={ref}>
-      <div className="pf-rv-card pf-card pf-anim">
-        <div className="pf-rv-head">
-          <span className="pf-rv-ava">L</span>
-          <span className="pf-rv-meta">
-            <b>Liam</b>
-            <span className="pf-rv-verified pf-anim"><SealCheck weight="fill" /> Verified buyer</span>
-          </span>
-        </div>
-        <div className="pf-rv-stars">
-          {[0, 1, 2, 3, 4].map(i => <Star key={i} className="pf-rv-star" weight="fill" />)}
-        </div>
-        <p className="pf-rv-text">Exactly as described — fast delivery, great quality.</p>
-        <div className="pf-rv-photos">
-          {[0, 1, 2].map(i => <span className="pf-rv-photo pf-anim" key={i} />)}
-        </div>
-        <div className="pf-rv-reply pf-anim"><b>Store</b> Thanks, Liam! ✦</div>
-      </div>
-    </div>
-  );
-}
-
 export const ILLUSTRATIONS = {
   database: DatabaseIllus,
   auth: AuthIllus,
@@ -678,7 +643,6 @@ export const ILLUSTRATIONS = {
   'multi-store': MultiStoreIllus,
   team: TeamIllus,
   currencies: CurrenciesIllus,
-  reviews: ReviewsIllus,
 };
 
 /* ════════════════════════════════════════════════════════════════════

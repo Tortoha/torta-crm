@@ -24,7 +24,6 @@ export default function Footer() {
       { id: 'analytics',   to: '/analytics' },
       { id: 'pos',         to: '/pos' },
       { id: 'currencies',  to: '/currencies' },
-      { id: 'reviews',     to: '/reviews' },
       { id: 'pricing',     to: '/pricing' },
     ]},
     { key: 'developers', links: [

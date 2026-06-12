@@ -350,8 +350,7 @@
             "chat": "Chat con clientes",
             "analytics": "Analítica",
             "pos": "Punto de venta",
-            "currencies": "Multimoneda",
-            "reviews": "Reseñas"
+            "currencies": "Multimoneda"
           }
         },
         "developers": {

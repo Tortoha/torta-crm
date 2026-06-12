@@ -22,7 +22,6 @@
         "developers": "API & SDK",
         "team": "Equipe e funções",
         "currencies": "Múltiplas moedas",
-        "reviews": "Avaliações",
         "analytics": "Análises",
         "accounting": "Exportação contábil",
         "pos": "Ponto de venda",
@@ -42,7 +41,6 @@
         "developers": "Construa sobre a plataforma",
         "team": "Funções e permissões",
         "currencies": "49 moedas",
-        "reviews": "Compradores verificados + fotos",
         "analytics": "Relatórios e insights",
         "accounting": "Exporte para 1C, QuickBooks…",
         "pos": "Na loja + online",
@@ -1321,82 +1319,6 @@
           "JPY ¥",
           "TRY ₺",
           "+ 40 mais"
-        ]
-      }
-    },
-    "reviews": {
-      "seo": {
-        "title": "Avaliações de produtos com fotos e compradores verificados — Torta CRM",
-        "description": "Colete avaliações de compradores verificados — notas com estrelas, avaliações escritas e até cinco fotos cada, com respostas do lojista e votos de utilidade. Integrado, isolado por loja."
-      },
-      "hero": {
-        "eyebrow": "Avaliações",
-        "title": "Avaliações em que os compradores confiam",
-        "lead": "Deixe os clientes avaliar o que compraram — com fotos — e responda por conta própria. Somente quem realmente recebeu o pedido pode publicar, então cada avaliação vem de um comprador verificado."
-      },
-      "stats": [
-        {
-          "value": "Compradores verificados",
-          "label": "Somente clientes com pedido entregue podem avaliar"
-        },
-        {
-          "value": "Até 5 fotos",
-          "label": "Fotos reais anexadas a cada avaliação"
-        },
-        {
-          "value": "Resposta do lojista",
-          "label": "Responda publicamente a qualquer avaliação"
-        },
-        {
-          "value": "Por loja",
-          "label": "Avaliações isoladas em cada loja"
-        }
-      ],
-      "cards": [
-        {
-          "title": "Notas e avaliações",
-          "desc": "Nota de 1 a 5 estrelas mais avaliação escrita, uma por cliente por produto."
-        },
-        {
-          "title": "Compra verificada",
-          "desc": "Somente um cliente cujo pedido foi entregue (ou devolvido/reembolsado) pode deixar uma avaliação."
-        },
-        {
-          "title": "Fotos",
-          "desc": "Clientes anexam até cinco fotos, armazenadas de forma privada por loja."
-        },
-        {
-          "title": "Resposta do lojista",
-          "desc": "Responda a qualquer avaliação — agradeça um fã ou resolva um problema publicamente."
-        },
-        {
-          "title": "Votos de utilidade",
-          "desc": "Compradores votam nas avaliações que foram úteis para eles, destacando as mais relevantes."
-        },
-        {
-          "title": "Médias honestas",
-          "desc": "A nota média e o número de avaliações são calculados com precisão para todo o conjunto."
-        }
-      ],
-      "deep": {
-        "eyebrow": "Integrado",
-        "title": "Avaliações reais, de compradores reais",
-        "body": "As avaliações são restritas a compras verificadas, então têm peso real. Clientes adicionam fotos e votam nas avaliações uns dos outros; você responde onde importa. As avaliações de cada loja são totalmente isoladas das demais.",
-        "points": [
-          "Somente compradores com pedido entregue / devolvido / reembolsado podem publicar — uma avaliação por produto",
-          "Até cinco fotos por avaliação, armazenadas por loja",
-          "Respostas do lojista e votos de utilidade",
-          "Nota média precisa e contagem para todo o conjunto"
-        ],
-        "chipsTitle": "Em cada avaliação",
-        "chips": [
-          "1–5 estrelas",
-          "Avaliação escrita",
-          "Até 5 fotos",
-          "Comprador verificado",
-          "Resposta do lojista",
-          "Votos de utilidade",
-          "Isolado por loja"
         ]
       }
     }

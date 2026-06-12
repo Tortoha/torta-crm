@@ -33,7 +33,7 @@ import { applyLang } from './i18n.js';
 // inlined (NOT imported from product/data.js) so App's main bundle never pulls in
 // that icon module. Legal pages (terms/privacy/refund) stay English-only.
 const SEO_LANGS = ['ru', 'kk', 'de', 'es', 'fr', 'pt'];
-const PUBLIC_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies', 'reviews'];
+const PUBLIC_SLUGS = ['database', 'products', 'booking', 'digital', 'chat', 'auth', 'storage', 'automations', 'email', 'realtime', 'analytics', 'pos', 'accounting', 'multi-store', 'team', 'currencies'];
 
 // Switches the UI language for a localized public subtree (/ru/…), then renders
 // the matched page. applyLang loads the target bundle on demand and changes the
@@ -150,6 +150,9 @@ function App() {
           {PUBLIC_SLUGS.map(s => (
             <Route key={s} path={`/${s}`} element={<ProductPage slug={s} />} />
           ))}
+          {/* /reviews was removed (the photo-review feature isn't built yet) —
+              redirect any stale link home instead of leaving a blank route. */}
+          <Route path="/reviews" element={<Navigate to="/" replace />} />
           {/* The same public pages under each locale prefix (/ru/…, /de/…) for
               multilingual SEO. LangScope switches the UI language for the subtree;
               useSeo emits hreflang tags cross-linking every locale. Legal pages

@@ -9,7 +9,7 @@ const LOCALIZED = new Set([
   '/', '/pricing', '/developers', '/security',
   '/database', '/products', '/booking', '/digital', '/chat', '/auth', '/storage',
   '/automations', '/email', '/realtime', '/analytics', '/pos', '/accounting',
-  '/multi-store', '/team', '/currencies', '/reviews',
+  '/multi-store', '/team', '/currencies',
 ]);
 
 // On a localized public route (/ru/…), returns lp(to) that prefixes internal

@@ -350,8 +350,7 @@
             "chat": "Chat client",
             "analytics": "Analytique",
             "pos": "Point de vente",
-            "currencies": "Multi-devises",
-            "reviews": "Avis clients"
+            "currencies": "Multi-devises"
           }
         },
         "developers": {

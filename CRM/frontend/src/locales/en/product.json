@@ -16,7 +16,6 @@
         "developers": "API & SDK",
         "team": "Team & roles",
         "currencies": "Multi-currency",
-        "reviews": "Reviews",
         "analytics": "Analytics",
         "accounting": "Accounting export",
         "pos": "Point of sale",
@@ -36,7 +35,6 @@
         "developers": "Build on the platform",
         "team": "Roles & permissions",
         "currencies": "49 currencies",
-        "reviews": "Verified buyers + photos",
         "analytics": "Reports & insights",
         "accounting": "Export to 1C, QuickBooks…",
         "pos": "In-store + online",
@@ -675,45 +673,6 @@
         ],
         "chipsTitle": "A few of the 49",
         "chips": ["USD $", "EUR €", "KZT ₸", "RUB ₽", "BRL R$", "GBP £", "PLN zł", "JPY ¥", "TRY ₺", "+ 40 more"]
-      }
-    },
-
-    "reviews": {
-      "seo": {
-        "title": "Product reviews with photos & verified buyers — Torta CRM",
-        "description": "Collect product reviews from verified buyers — star ratings, written reviews and up to five photos each, with merchant replies and helpful votes. Built in, isolated per store."
-      },
-      "hero": {
-        "eyebrow": "Reviews",
-        "title": "Reviews shoppers can trust",
-        "lead": "Let customers rate and review what they bought — with photos — and reply to them yourself. Only people who actually received the order can post, so every review is from a verified buyer."
-      },
-      "stats": [
-        { "value": "Verified buyers", "label": "Only customers with a delivered order can review" },
-        { "value": "Up to 5 photos", "label": "Real photos attached to each review" },
-        { "value": "Merchant replies", "label": "Respond to any review publicly" },
-        { "value": "Per store", "label": "Reviews are isolated to each store" }
-      ],
-      "cards": [
-        { "title": "Ratings & reviews", "desc": "A 1–5 star rating plus a written review, one per customer per product." },
-        { "title": "Verified purchase", "desc": "Only a customer whose order was delivered (or returned/refunded) can leave a review." },
-        { "title": "Photos", "desc": "Customers attach up to five photos, stored privately per store." },
-        { "title": "Reply as the merchant", "desc": "Respond to any review — thank a fan or address an issue in public." },
-        { "title": "Helpful votes", "desc": "Shoppers upvote the reviews that helped them, surfacing the most useful first." },
-        { "title": "Honest averages", "desc": "Average rating and review count are computed accurately across every review." }
-      ],
-      "deep": {
-        "eyebrow": "Built in",
-        "title": "Real reviews, from real buyers",
-        "body": "Reviews are gated to verified purchases, so they carry weight. Customers add photos and vote on each other's reviews; you reply where it matters. Every store's reviews are fully isolated from the others.",
-        "points": [
-          "Only delivered / returned / refunded buyers can post — one review per product",
-          "Up to five photos per review, stored per store",
-          "Merchant replies and helpful votes",
-          "Accurate average rating and count across the full set"
-        ],
-        "chipsTitle": "In every review",
-        "chips": ["1–5 stars", "Written review", "Up to 5 photos", "Verified buyer", "Merchant reply", "Helpful votes", "Per-store isolated"]
       }
     }
   }
