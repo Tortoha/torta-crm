@@ -15,6 +15,7 @@ import Header from '../../Elements/Header.jsx';
 import Footer from './Footer.jsx';
 import { API_BASE } from '../../api.js';
 import { useSeo } from '../../Utils/useSeo.js';
+import { useLocalePath } from '../../Utils/useLocalePath.js';
 import { useInView } from '../../Utils/useInView.js';
 import { PRODUCTS, PRODUCT_SLUGS } from './product/data.js';
 import { ILLUSTRATIONS, CARD_ART } from './product/illustrations.jsx';
@@ -64,6 +65,7 @@ export default function ProductPage({ slug: slugProp }) {
   const slug = slugProp || params.slug;
   const cfg = PRODUCTS[slug];
   const { t } = useTranslation();
+  const lp = useLocalePath();
   const [user, setUser] = useState(null);
 
   useEffect(() => {
@@ -217,7 +219,7 @@ export default function ProductPage({ slug: slugProp }) {
                 <Link className="ln-btn ln-btn--primary" to="/login">
                   {t('product.meta.getStarted')}
                 </Link>
-                <Link className="ln-btn ln-btn--ghost" to="/pricing">
+                <Link className="ln-btn ln-btn--ghost" to={lp("/pricing")}>
                   {t('product.meta.seePricing')}
                 </Link>
               </div>
@@ -227,7 +229,7 @@ export default function ProductPage({ slug: slugProp }) {
                   {others.map(s => {
                     const OIc = PRODUCTS[s].Icon;
                     return (
-                      <Link className="pf-explore-link" to={`/${s}`} key={s}>
+                      <Link className="pf-explore-link" to={lp(`/${s}`)} key={s}>
                         <OIc weight="bold" /> {t(`product.nav.name.${s}`)} <ArrowRight weight="bold" />
                       </Link>
                     );
