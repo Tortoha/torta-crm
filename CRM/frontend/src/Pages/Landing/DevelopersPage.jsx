@@ -160,7 +160,7 @@ export default function DevelopersPage() {
                   <Reveal className="ln-sec-row" key={i} delay={(i % 4) + 1}>
                     <div className="ln-sec-icon"><Ic weight="bold" /></div>
                     <div>
-                      <h4>{c.title}</h4>
+                      <h3>{c.title}</h3>
                       <p>{c.desc}</p>
                     </div>
                   </Reveal>

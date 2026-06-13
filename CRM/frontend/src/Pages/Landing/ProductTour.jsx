@@ -86,7 +86,7 @@ export default function ProductTour() {
                   <span className="ln-tour-step-label">
                     {t('landing.tour.stepWord')} {String(i + 1).padStart(2, '0')} · {t(`landing.tour.steps.${s.key}.label`)}
                   </span>
-                  <h3 className="ln-tour-step-title">{t(`landing.tour.steps.${s.key}.title`)}</h3>
+                  <h2 className="ln-tour-step-title">{t(`landing.tour.steps.${s.key}.title`)}</h2>
                   <p className="ln-tour-step-desc">{t(`landing.tour.steps.${s.key}.desc`)}</p>
                 </div>
               ))}
