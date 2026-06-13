@@ -4334,7 +4334,15 @@ def run_migrations():
 # Pool size 20: the Analytics page alone fires ~22 parallel fetches; with
 # pool=10 the second half queued behind the first half, doubling perceived
 # load time. 20 covers analytics burst + normal CRM traffic comfortably.
-_pool = ThreadedConnectionPool(1, 20, **DB_CONFIG)
+# Keepalives + a bounded connect timeout: a connection dropped by Neon's
+# scale-to-zero is then detected fast, and a fresh connect to a waking compute
+# doesn't hang. Merged on top of DB_CONFIG for every pooled connection.
+_DB_RESILIENCE = {
+    "connect_timeout": 15,
+    "keepalives": 1, "keepalives_idle": 30,
+    "keepalives_interval": 10, "keepalives_count": 3,
+}
+_pool = ThreadedConnectionPool(1, 20, **{**DB_CONFIG, **_DB_RESILIENCE})
 
 # ── Analytics response cache (in-process, TTL=60s) ──────────────────
 import time as _time
@@ -4404,28 +4412,80 @@ async def analytics_cache_middleware(request, call_next):
 def get_db():
     return _pool.getconn()
 
+def _discard(conn):
+    # Drop a dead connection from the pool (close=True) without leaking it.
+    try:
+        _pool.putconn(conn, close=True)
+    except Exception:
+        pass
+
+# After Neon scale-to-zero the pooled connections are stale: they look open
+# client-side but the first query fails. db_cursor (writes) probes a connection
+# alive BEFORE yielding — a write is never auto-retried, since it may have
+# partially applied — and _read (reads) simply retries on a dead connection,
+# which is safe because reads are idempotent. Both drain stale connections until
+# a live one is found (the pool then opens a fresh one, waking the compute).
 @contextmanager
 def db_cursor():
-    conn = get_db()
+    conn = None
+    for _ in range((getattr(_pool, "maxconn", 20) or 20) + 1):
+        c = _pool.getconn()
+        try:
+            with c.cursor() as _probe:
+                _probe.execute("SELECT 1")
+            conn = c
+            break
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            _discard(c)
+    if conn is None:
+        raise psycopg2.OperationalError("could not obtain a live DB connection")
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
         yield conn, cursor
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        cursor.close()
-        _pool.putconn(conn)
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        _pool.putconn(conn, close=bool(conn.closed))
+
+def _read(sql, params, many):
+    last = None
+    for _ in range((getattr(_pool, "maxconn", 20) or 20) + 1):
+        conn = _pool.getconn()
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(sql, params)
+            out = cur.fetchall() if many else cur.fetchone()
+            cur.close()
+            _pool.putconn(conn)
+            return out
+        except psycopg2.InterfaceError as e:
+            last = e; _discard(conn); continue
+        except psycopg2.OperationalError as e:
+            if conn.closed:                      # connection died (Neon asleep) → drop, retry fresh
+                last = e; _discard(conn); continue
+            _pool.putconn(conn); raise           # other operational error → don't retry
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            _pool.putconn(conn, close=bool(conn.closed))
+            raise
+    raise last or psycopg2.OperationalError("could not obtain a live DB connection")
 
 def db_one(sql: str, params: tuple = ()):
-    with db_cursor() as (_, cur):
-        cur.execute(sql, params)
-        return cur.fetchone()
+    return _read(sql, params, many=False)
 
 def db_all(sql: str, params: tuple = ()):
-    with db_cursor() as (_, cur):
-        cur.execute(sql, params)
-        return cur.fetchall()
+    return _read(sql, params, many=True)
 
 
 # ── PAGINATION HELPERS ──────────────────────────────────
