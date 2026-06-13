@@ -65,7 +65,7 @@ export default function Footer() {
 
           {cols.map(c => (
             <div key={c.key} className="ln-footer-col">
-              <h5>{t(`landing.footer.cols.${c.key}.title`)}</h5>
+              <h3>{t(`landing.footer.cols.${c.key}.title`)}</h3>
               <ul>
                 {c.links.map(l => {
                   const label = t(`landing.footer.cols.${c.key}.links.${l.id}`);

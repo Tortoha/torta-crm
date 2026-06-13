@@ -31,7 +31,7 @@ export default function Security() {
                 <Icon weight="bold" />
               </div>
               <div>
-                <h4>{t(`landing.security.items.${key}.title`)}</h4>
+                <h3>{t(`landing.security.items.${key}.title`)}</h3>
                 <p>{t(`landing.security.items.${key}.desc`)}</p>
               </div>
             </div>
