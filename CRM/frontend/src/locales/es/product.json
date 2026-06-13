@@ -55,7 +55,7 @@
       "hero": {
         "eyebrow": "Base de datos",
         "title": "Cada pedido, cliente y producto — estructurado y suyo",
-        "lead": "Su tienda funciona sobre una base de datos relacional y limpia. Productos, pedidos, clientes, carritos, reseñas, reservas y existencias viven como registros conectados que puede leer, filtrar y utilizar — sin hojas de cálculo ni conjeturas."
+        "lead": "Su tienda funciona sobre una base de datos relacional y limpia. Productos, pedidos, clientes, carritos, reservas y existencias viven como registros conectados que puede leer, filtrar y utilizar — sin hojas de cálculo ni conjeturas."
       },
       "stats": [
         {
@@ -68,7 +68,7 @@
         },
         {
           "value": "9+ tipos de registro",
-          "label": "Productos, pedidos, clientes, reservas, reseñas y más"
+          "label": "Productos, pedidos, clientes, reservas, devoluciones y más"
         },
         {
           "value": "Analítica en vivo",
@@ -89,8 +89,8 @@
           "desc": "Un perfil por comprador: datos de contacto, historial de pedidos y direcciones guardadas."
         },
         {
-          "title": "Reseñas",
-          "desc": "Calificaciones, reseñas escritas y fotos vinculadas al producto correcto."
+          "title": "Devoluciones y reembolsos",
+          "desc": "Las devoluciones y reembolsos son registros de primera clase, cada uno vinculado a su pedido, cliente y el stock que vuelve a disponibilidad."
         },
         {
           "title": "Reservas",
@@ -121,7 +121,6 @@
           "Clientes",
           "Direcciones",
           "Carritos",
-          "Reseñas",
           "Favoritos",
           "Reservas",
           "Códigos promocionales"
@@ -222,7 +221,7 @@
       "hero": {
         "eyebrow": "Almacenamiento",
         "title": "Almacene las imágenes y los archivos que su tienda necesita",
-        "lead": "Suba fotos de productos, imágenes de reseñas y los archivos digitales que vende — casi cualquier tipo de archivo — directamente desde el panel. Los archivos se suben de forma directa y segura, y los multimedia de cada tienda siguen siendo suyos."
+        "lead": "Suba fotos de productos y los archivos digitales que vende — casi cualquier tipo de archivo — directamente desde el panel. Los archivos se suben de forma directa y segura, y los multimedia de cada tienda siguen siendo suyos."
       },
       "stats": [
         {
@@ -248,8 +247,8 @@
           "desc": "Galerías de fotos por producto y por variación."
         },
         {
-          "title": "Fotos de reseñas",
-          "desc": "Los clientes adjuntan hasta cinco fotos por reseña."
+          "title": "Recursos de marca",
+          "desc": "Logotipo y recursos de imagen de la marca utilizados en su escaparate y en los correos transaccionales."
         },
         {
           "title": "Avatares",
@@ -282,7 +281,6 @@
         "chips": [
           "Fotos de productos",
           "Imágenes de variaciones",
-          "Fotos de reseñas",
           "Avatares",
           "Imágenes de correo",
           "Guías en PDF",
