@@ -60,19 +60,19 @@
       "hero": {
         "eyebrow": "Database",
         "title": "Every order, customer and product — structured and yours",
-        "lead": "Your store runs on a clean, relational database. Products, orders, customers, carts, reviews, bookings and stock all live as connected records you can read, filter and act on — no spreadsheets, no guesswork."
+        "lead": "Your store runs on a clean, relational database. Products, orders, customers, carts, bookings and stock all live as connected records you can read, filter and act on — no spreadsheets, no guesswork."
       },
       "stats": [
         { "value": "1 store, 1 space", "label": "Your data is fully isolated from every other store" },
         { "value": "Relational", "label": "Orders link to customers, items, payments and returns" },
-        { "value": "9+ record types", "label": "Products, orders, customers, bookings, reviews and more" },
+        { "value": "9+ record types", "label": "Products, orders, customers, bookings, returns and more" },
         { "value": "Live analytics", "label": "Revenue, funnel and inventory read straight from your data" }
       ],
       "cards": [
         { "title": "Products", "desc": "Multi-option products with variations, sizes, per-item pricing and stock." },
         { "title": "Orders", "desc": "Every order with its items, totals, payment and delivery — start to finish." },
         { "title": "Customers", "desc": "A profile per buyer: contact details, order history and saved addresses." },
-        { "title": "Reviews", "desc": "Ratings, written reviews and photos tied to the right product." },
+        { "title": "Returns & refunds", "desc": "Returns and refunds are first-class records, each linked to its order, customer and the stock put back." },
         { "title": "Bookings", "desc": "Time-based appointments with services, staff and status." },
         { "title": "Analytics", "desc": "Revenue, average order value, conversion and inventory, computed live." }
       ],
@@ -87,7 +87,7 @@
           "Everything visible in the dashboard — search, filter and drill in"
         ],
         "chipsTitle": "Record types",
-        "chips": ["Products", "Variations", "Stock & batches", "Orders", "Returns", "Customers", "Addresses", "Carts", "Reviews", "Favorites", "Bookings", "Promo codes"]
+        "chips": ["Products", "Variations", "Stock & batches", "Orders", "Returns", "Customers", "Addresses", "Carts", "Favorites", "Bookings", "Promo codes"]
       }
     },
 
@@ -138,7 +138,7 @@
       "hero": {
         "eyebrow": "Storage",
         "title": "Store the images and files your store needs",
-        "lead": "Upload product photos, review images, and the digital files you sell — almost any file type — straight from the dashboard. Files upload directly and securely, and every store's media stays its own."
+        "lead": "Upload product photos and the digital files you sell — almost any file type — straight from the dashboard. Files upload directly and securely, and every store's media stays its own."
       },
       "stats": [
         { "value": "100 MB – 2 TB", "label": "Media allowance scales with your plan" },
@@ -148,7 +148,7 @@
       ],
       "cards": [
         { "title": "Product images", "desc": "Photo galleries per product and per variation." },
-        { "title": "Review photos", "desc": "Customers attach up to five photos per review." },
+        { "title": "Brand assets", "desc": "Store logo and brand images used across your storefront and transactional emails." },
         { "title": "Avatars", "desc": "Profile pictures for your customers." },
         { "title": "Email media", "desc": "Images and PDFs you drop into email campaigns." },
         { "title": "Digital downloads", "desc": "Sell digital products — ZIPs, audio, video, e-books, almost any file." },
@@ -165,7 +165,7 @@
           "Deleting a store cleanly removes its files"
         ],
         "chipsTitle": "What you can store",
-        "chips": ["Product photos", "Variation images", "Review photos", "Avatars", "Email images", "PDF guides", "Digital downloads (any type)", "Brand logo"]
+        "chips": ["Product photos", "Variation images", "Avatars", "Email images", "PDF guides", "Digital downloads (any type)", "Brand logo"]
       }
     },
 

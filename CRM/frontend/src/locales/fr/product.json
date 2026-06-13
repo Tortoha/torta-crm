@@ -55,7 +55,7 @@
       "hero": {
         "eyebrow": "Base de données",
         "title": "Chaque commande, client et produit — structuré et vous appartenant",
-        "lead": "Votre boutique repose sur une base de données relationnelle et propre. Produits, commandes, clients, paniers, avis, réservations et stocks existent tous sous forme d'enregistrements liés que vous pouvez consulter, filtrer et exploiter — sans tableurs, sans approximations."
+        "lead": "Votre boutique repose sur une base de données relationnelle et propre. Produits, commandes, clients, paniers, réservations et stocks existent tous sous forme d'enregistrements liés que vous pouvez consulter, filtrer et exploiter — sans tableurs, sans approximations."
       },
       "stats": [
         {
@@ -68,7 +68,7 @@
         },
         {
           "value": "9+ types d'enregistrements",
-          "label": "Produits, commandes, clients, réservations, avis et plus encore"
+          "label": "Produits, commandes, clients, réservations, retours et plus encore"
         },
         {
           "value": "Analyses en direct",
@@ -89,8 +89,8 @@
           "desc": "Un profil par acheteur : coordonnées, historique des commandes et adresses enregistrées."
         },
         {
-          "title": "Avis",
-          "desc": "Notes, avis écrits et photos rattachés au bon produit."
+          "title": "Retours & remboursements",
+          "desc": "Les retours et remboursements sont des enregistrements de premier ordre, chacun lié à sa commande, à son client et au stock remis en rayon."
         },
         {
           "title": "Réservations",
@@ -121,7 +121,6 @@
           "Clients",
           "Adresses",
           "Paniers",
-          "Avis",
           "Favoris",
           "Réservations",
           "Codes promo"
@@ -222,7 +221,7 @@
       "hero": {
         "eyebrow": "Stockage",
         "title": "Stockez les images et fichiers dont votre boutique a besoin",
-        "lead": "Téléversez des photos de produits, des images d'avis et les fichiers numériques que vous vendez — presque tous les types de fichiers — directement depuis le tableau de bord. Les fichiers sont téléversés directement et en toute sécurité, et les médias de chaque boutique lui restent propres."
+        "lead": "Téléversez des photos de produits et les fichiers numériques que vous vendez — presque tous les types de fichiers — directement depuis le tableau de bord. Les fichiers sont téléversés directement et en toute sécurité, et les médias de chaque boutique lui restent propres."
       },
       "stats": [
         {
@@ -248,8 +247,8 @@
           "desc": "Galeries de photos par produit et par variation."
         },
         {
-          "title": "Photos d'avis",
-          "desc": "Les clients joignent jusqu'à cinq photos par avis."
+          "title": "Ressources de marque",
+          "desc": "Stockez le logo et les visuels de votre marque utilisés sur votre vitrine et dans vos e-mails transactionnels."
         },
         {
           "title": "Avatars",
@@ -282,7 +281,6 @@
         "chips": [
           "Photos de produits",
           "Images de variations",
-          "Photos d'avis",
           "Avatars",
           "Images d'e-mail",
           "Guides PDF",

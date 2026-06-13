@@ -55,7 +55,7 @@
       "hero": {
         "eyebrow": "Banco de dados",
         "title": "Cada pedido, cliente e produto — estruturado e seu",
-        "lead": "Sua loja funciona sobre um banco de dados relacional e limpo. Produtos, pedidos, clientes, carrinhos, avaliações, agendamentos e estoque vivem como registros conectados que você pode ler, filtrar e usar — sem planilhas, sem achismos."
+        "lead": "Sua loja funciona sobre um banco de dados relacional e limpo. Produtos, pedidos, clientes, carrinhos, agendamentos e estoque vivem como registros conectados que você pode ler, filtrar e usar — sem planilhas, sem achismos."
       },
       "stats": [
         {
@@ -68,7 +68,7 @@
         },
         {
           "value": "Mais de 9 tipos de registro",
-          "label": "Produtos, pedidos, clientes, agendamentos, avaliações e mais"
+          "label": "Produtos, pedidos, clientes, agendamentos, devoluções e mais"
         },
         {
           "value": "Análises ao vivo",
@@ -89,8 +89,8 @@
           "desc": "Um perfil por comprador: dados de contato, histórico de pedidos e endereços salvos."
         },
         {
-          "title": "Avaliações",
-          "desc": "Notas, avaliações escritas e fotos vinculadas ao produto certo."
+          "title": "Devoluções e reembolsos",
+          "desc": "Devoluções e reembolsos são registros de primeira classe, cada um vinculado ao pedido de origem, ao cliente e ao estoque reposto."
         },
         {
           "title": "Agendamentos",
@@ -121,7 +121,6 @@
           "Clientes",
           "Endereços",
           "Carrinhos",
-          "Avaliações",
           "Favoritos",
           "Agendamentos",
           "Códigos promocionais"
@@ -222,7 +221,7 @@
       "hero": {
         "eyebrow": "Armazenamento",
         "title": "Armazene as imagens e os arquivos de que sua loja precisa",
-        "lead": "Envie fotos de produtos, imagens de avaliações e os arquivos digitais que você vende — quase qualquer tipo de arquivo — direto do painel. Os arquivos são enviados de forma direta e segura, e a mídia de cada loja permanece dela."
+        "lead": "Envie fotos de produtos e os arquivos digitais que você vende — quase qualquer tipo de arquivo — direto do painel. Os arquivos são enviados de forma direta e segura, e a mídia de cada loja permanece dela."
       },
       "stats": [
         {
@@ -248,8 +247,8 @@
           "desc": "Galerias de fotos por produto e por variação."
         },
         {
-          "title": "Fotos de avaliações",
-          "desc": "Os clientes anexam até cinco fotos por avaliação."
+          "title": "Ativos da marca",
+          "desc": "Logotipo e imagens da marca usados em toda a sua vitrine e nos e-mails transacionais."
         },
         {
           "title": "Avatares",
@@ -282,7 +281,6 @@
         "chips": [
           "Fotos de produtos",
           "Imagens de variações",
-          "Fotos de avaliações",
           "Avatares",
           "Imagens de e-mail",
           "Guias em PDF",

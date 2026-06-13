@@ -55,7 +55,7 @@
       "hero": {
         "eyebrow": "Datenbank",
         "title": "Jede Bestellung, jeder Kunde und jedes Produkt — strukturiert und Ihr Eigentum",
-        "lead": "Ihr Shop läuft auf einer sauberen, relationalen Datenbank. Produkte, Bestellungen, Kunden, Warenkörbe, Bewertungen, Buchungen und Bestände leben alle als verbundene Datensätze, die Sie lesen, filtern und nutzen können — keine Tabellenkalkulationen, kein Raten."
+        "lead": "Ihr Shop läuft auf einer sauberen, relationalen Datenbank. Produkte, Bestellungen, Kunden, Warenkörbe, Buchungen und Bestände leben alle als verbundene Datensätze, die Sie lesen, filtern und nutzen können — keine Tabellenkalkulationen, kein Raten."
       },
       "stats": [
         {
@@ -68,7 +68,7 @@
         },
         {
           "value": "9+ Datensatztypen",
-          "label": "Produkte, Bestellungen, Kunden, Buchungen, Bewertungen und mehr"
+          "label": "Produkte, Bestellungen, Kunden, Buchungen, Retouren und mehr"
         },
         {
           "value": "Live-Analytik",
@@ -89,8 +89,8 @@
           "desc": "Ein Profil pro Käufer: Kontaktdaten, Bestellverlauf und gespeicherte Adressen."
         },
         {
-          "title": "Bewertungen",
-          "desc": "Bewertungen, Rezensionen und Fotos, dem richtigen Produkt zugeordnet."
+          "title": "Retouren & Rückerstattungen",
+          "desc": "Retouren und Rückerstattungen sind vollwertige Datensätze, jeweils verknüpft mit der zugehörigen Bestellung, dem Kunden und dem wieder eingebuchten Bestand."
         },
         {
           "title": "Buchungen",
@@ -121,7 +121,6 @@
           "Kunden",
           "Adressen",
           "Warenkörbe",
-          "Bewertungen",
           "Favoriten",
           "Buchungen",
           "Promo-Codes"
@@ -222,7 +221,7 @@
       "hero": {
         "eyebrow": "Speicher",
         "title": "Speichern Sie die Bilder und Dateien, die Ihr Shop braucht",
-        "lead": "Laden Sie Produktfotos, Bewertungsbilder und die digitalen Dateien, die Sie verkaufen — fast jeden Dateityp — direkt aus dem Dashboard hoch. Dateien werden direkt und sicher hochgeladen, und die Medien jedes Shops bleiben seine eigenen."
+        "lead": "Laden Sie Produktfotos, die digitalen Dateien, die Sie verkaufen — fast jeden Dateityp — direkt aus dem Dashboard hoch. Dateien werden direkt und sicher hochgeladen, und die Medien jedes Shops bleiben seine eigenen."
       },
       "stats": [
         {
@@ -248,8 +247,8 @@
           "desc": "Fotogalerien pro Produkt und pro Variante."
         },
         {
-          "title": "Bewertungsfotos",
-          "desc": "Kunden hängen bis zu fünf Fotos pro Bewertung an."
+          "title": "Marken-Assets",
+          "desc": "Logo und Markenbilder, die in Ihrem Schaufenster und in transaktionalen E-Mails verwendet werden."
         },
         {
           "title": "Avatare",
@@ -282,7 +281,6 @@
         "chips": [
           "Produktfotos",
           "Variantenbilder",
-          "Bewertungsfotos",
           "Avatare",
           "E-Mail-Bilder",
           "PDF-Anleitungen",
