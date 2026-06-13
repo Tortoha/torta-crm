@@ -83,7 +83,7 @@ export default function Footer() {
         </div>
 
         <div className="ln-footer-bottom">
-          <span>© {year} Torta CRM. {t('landing.footer.rights')}</span>
+          <span>© {year} Torta CRM · tortacrm.com. {t('landing.footer.rights')}</span>
           <span>{t('landing.footer.built')}</span>
         </div>
       </div>
