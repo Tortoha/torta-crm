@@ -5,10 +5,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/"/>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
@@ -18,10 +14,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/"/>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
@@ -31,75 +23,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/"/>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/"/>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/"/>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/"/>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/"/>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/pricing</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pricing"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pricing"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pricing"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pricing"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pricing"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pricing"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pricing"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pricing"/>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
@@ -109,10 +45,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pricing"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pricing"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pricing"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pricing"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pricing"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pricing"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pricing"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pricing"/>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
@@ -122,75 +54,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pricing"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pricing"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pricing"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pricing"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pricing"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pricing"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pricing"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pricing"/>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/pricing</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pricing"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pricing"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pricing"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pricing"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pricing"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pricing"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pricing"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pricing"/>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/pricing</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pricing"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pricing"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pricing"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pricing"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pricing"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pricing"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pricing"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pricing"/>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/pricing</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pricing"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pricing"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pricing"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pricing"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pricing"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pricing"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pricing"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pricing"/>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/pricing</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pricing"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pricing"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pricing"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pricing"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pricing"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pricing"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pricing"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pricing"/>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/developers</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/developers"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/developers"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/developers"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/developers"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/developers"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/developers"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/developers"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/developers"/>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
@@ -200,10 +76,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/developers"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/developers"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/developers"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/developers"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/developers"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/developers"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/developers"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/developers"/>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
@@ -213,75 +85,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/developers"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/developers"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/developers"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/developers"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/developers"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/developers"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/developers"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/developers"/>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/developers</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/developers"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/developers"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/developers"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/developers"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/developers"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/developers"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/developers"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/developers"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/developers</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/developers"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/developers"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/developers"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/developers"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/developers"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/developers"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/developers"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/developers"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/developers</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/developers"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/developers"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/developers"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/developers"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/developers"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/developers"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/developers"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/developers"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/developers</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/developers"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/developers"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/developers"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/developers"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/developers"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/developers"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/developers"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/developers"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/security</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/security"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/security"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/security"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/security"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/security"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/security"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/security"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/security"/>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
@@ -291,10 +107,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/security"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/security"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/security"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/security"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/security"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/security"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/security"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/security"/>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
@@ -304,75 +116,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/security"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/security"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/security"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/security"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/security"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/security"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/security"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/security"/>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/security</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/security"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/security"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/security"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/security"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/security"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/security"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/security"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/security"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/security</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/security"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/security"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/security"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/security"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/security"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/security"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/security"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/security"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/security</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/security"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/security"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/security"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/security"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/security"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/security"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/security"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/security"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/security</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/security"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/security"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/security"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/security"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/security"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/security"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/security"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/security"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/database</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/database"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/database"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/database"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/database"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/database"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/database"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/database"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/database"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -382,10 +138,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/database"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/database"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/database"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/database"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/database"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/database"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/database"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/database"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -395,75 +147,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/database"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/database"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/database"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/database"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/database"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/database"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/database"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/database"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/database</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/database"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/database"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/database"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/database"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/database"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/database"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/database"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/database"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/database</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/database"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/database"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/database"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/database"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/database"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/database"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/database"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/database"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/database</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/database"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/database"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/database"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/database"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/database"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/database"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/database"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/database"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/database</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/database"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/database"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/database"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/database"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/database"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/database"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/database"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/database"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/products</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/products"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/products"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/products"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/products"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/products"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/products"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/products"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/products"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -473,10 +169,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/products"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/products"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/products"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/products"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/products"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/products"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/products"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/products"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -486,75 +178,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/products"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/products"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/products"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/products"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/products"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/products"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/products"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/products"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/products</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/products"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/products"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/products"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/products"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/products"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/products"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/products"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/products"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/products</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/products"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/products"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/products"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/products"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/products"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/products"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/products"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/products"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/products</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/products"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/products"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/products"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/products"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/products"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/products"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/products"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/products"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/products</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/products"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/products"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/products"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/products"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/products"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/products"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/products"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/products"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/booking</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/booking"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/booking"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/booking"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/booking"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/booking"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/booking"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/booking"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/booking"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -564,10 +200,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/booking"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/booking"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/booking"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/booking"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/booking"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/booking"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/booking"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/booking"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -577,75 +209,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/booking"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/booking"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/booking"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/booking"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/booking"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/booking"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/booking"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/booking"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/booking</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/booking"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/booking"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/booking"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/booking"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/booking"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/booking"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/booking"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/booking"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/booking</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/booking"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/booking"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/booking"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/booking"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/booking"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/booking"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/booking"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/booking"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/booking</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/booking"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/booking"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/booking"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/booking"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/booking"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/booking"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/booking"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/booking"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/booking</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/booking"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/booking"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/booking"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/booking"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/booking"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/booking"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/booking"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/booking"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/digital</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/digital"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/digital"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/digital"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/digital"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/digital"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/digital"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/digital"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/digital"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -655,10 +231,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/digital"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/digital"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/digital"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/digital"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/digital"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/digital"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/digital"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/digital"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -668,75 +240,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/digital"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/digital"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/digital"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/digital"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/digital"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/digital"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/digital"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/digital"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/digital</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/digital"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/digital"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/digital"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/digital"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/digital"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/digital"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/digital"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/digital"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/digital</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/digital"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/digital"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/digital"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/digital"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/digital"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/digital"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/digital"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/digital"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/digital</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/digital"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/digital"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/digital"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/digital"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/digital"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/digital"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/digital"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/digital"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/digital</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/digital"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/digital"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/digital"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/digital"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/digital"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/digital"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/digital"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/digital"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/chat</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/chat"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/chat"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/chat"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/chat"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/chat"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/chat"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/chat"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/chat"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -746,10 +262,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/chat"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/chat"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/chat"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/chat"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/chat"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/chat"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/chat"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/chat"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -759,75 +271,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/chat"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/chat"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/chat"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/chat"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/chat"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/chat"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/chat"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/chat"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/chat</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/chat"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/chat"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/chat"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/chat"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/chat"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/chat"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/chat"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/chat"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/chat</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/chat"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/chat"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/chat"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/chat"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/chat"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/chat"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/chat"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/chat"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/chat</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/chat"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/chat"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/chat"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/chat"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/chat"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/chat"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/chat"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/chat"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/chat</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/chat"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/chat"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/chat"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/chat"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/chat"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/chat"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/chat"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/chat"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/auth</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/auth"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/auth"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/auth"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/auth"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/auth"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/auth"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/auth"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/auth"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -837,10 +293,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/auth"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/auth"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/auth"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/auth"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/auth"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/auth"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/auth"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/auth"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -850,75 +302,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/auth"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/auth"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/auth"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/auth"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/auth"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/auth"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/auth"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/auth"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/auth</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/auth"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/auth"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/auth"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/auth"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/auth"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/auth"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/auth"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/auth"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/auth</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/auth"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/auth"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/auth"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/auth"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/auth"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/auth"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/auth"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/auth"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/auth</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/auth"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/auth"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/auth"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/auth"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/auth"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/auth"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/auth"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/auth"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/auth</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/auth"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/auth"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/auth"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/auth"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/auth"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/auth"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/auth"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/auth"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/storage</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/storage"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/storage"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/storage"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/storage"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/storage"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/storage"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/storage"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/storage"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -928,10 +324,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/storage"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/storage"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/storage"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/storage"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/storage"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/storage"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/storage"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/storage"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -941,75 +333,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/storage"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/storage"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/storage"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/storage"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/storage"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/storage"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/storage"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/storage"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/storage</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/storage"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/storage"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/storage"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/storage"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/storage"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/storage"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/storage"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/storage"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/storage</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/storage"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/storage"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/storage"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/storage"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/storage"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/storage"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/storage"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/storage"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/storage</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/storage"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/storage"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/storage"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/storage"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/storage"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/storage"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/storage"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/storage"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/storage</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/storage"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/storage"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/storage"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/storage"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/storage"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/storage"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/storage"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/storage"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/automations</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/automations"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/automations"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/automations"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/automations"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/automations"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/automations"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/automations"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/automations"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1019,10 +355,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/automations"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/automations"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/automations"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/automations"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/automations"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/automations"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/automations"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/automations"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1032,75 +364,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/automations"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/automations"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/automations"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/automations"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/automations"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/automations"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/automations"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/automations"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/automations</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/automations"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/automations"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/automations"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/automations"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/automations"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/automations"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/automations"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/automations"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/automations</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/automations"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/automations"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/automations"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/automations"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/automations"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/automations"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/automations"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/automations"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/automations</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/automations"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/automations"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/automations"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/automations"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/automations"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/automations"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/automations"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/automations"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/automations</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/automations"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/automations"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/automations"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/automations"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/automations"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/automations"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/automations"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/automations"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/email</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/email"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/email"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/email"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/email"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/email"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/email"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/email"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/email"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1110,10 +386,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/email"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/email"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/email"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/email"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/email"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/email"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/email"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/email"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1123,75 +395,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/email"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/email"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/email"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/email"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/email"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/email"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/email"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/email"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/email</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/email"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/email"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/email"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/email"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/email"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/email"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/email"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/email"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/email</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/email"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/email"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/email"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/email"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/email"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/email"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/email"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/email"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/email</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/email"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/email"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/email"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/email"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/email"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/email"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/email"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/email"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/email</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/email"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/email"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/email"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/email"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/email"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/email"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/email"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/email"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/realtime</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/realtime"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/realtime"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/realtime"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/realtime"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/realtime"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/realtime"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/realtime"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/realtime"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1201,10 +417,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/realtime"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/realtime"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/realtime"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/realtime"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/realtime"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/realtime"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/realtime"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/realtime"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1214,75 +426,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/realtime"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/realtime"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/realtime"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/realtime"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/realtime"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/realtime"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/realtime"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/realtime"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/realtime</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/realtime"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/realtime"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/realtime"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/realtime"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/realtime"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/realtime"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/realtime"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/realtime"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/realtime</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/realtime"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/realtime"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/realtime"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/realtime"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/realtime"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/realtime"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/realtime"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/realtime"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/realtime</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/realtime"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/realtime"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/realtime"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/realtime"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/realtime"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/realtime"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/realtime"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/realtime"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/realtime</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/realtime"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/realtime"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/realtime"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/realtime"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/realtime"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/realtime"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/realtime"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/realtime"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/analytics</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/analytics"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/analytics"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/analytics"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/analytics"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/analytics"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/analytics"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/analytics"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/analytics"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1292,10 +448,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/analytics"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/analytics"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/analytics"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/analytics"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/analytics"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/analytics"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/analytics"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/analytics"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1305,75 +457,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/analytics"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/analytics"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/analytics"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/analytics"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/analytics"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/analytics"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/analytics"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/analytics"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/analytics</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/analytics"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/analytics"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/analytics"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/analytics"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/analytics"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/analytics"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/analytics"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/analytics"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/analytics</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/analytics"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/analytics"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/analytics"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/analytics"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/analytics"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/analytics"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/analytics"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/analytics"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/analytics</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/analytics"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/analytics"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/analytics"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/analytics"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/analytics"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/analytics"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/analytics"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/analytics"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/analytics</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/analytics"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/analytics"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/analytics"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/analytics"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/analytics"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/analytics"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/analytics"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/analytics"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/pos</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pos"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pos"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pos"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pos"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pos"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pos"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pos"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pos"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1383,10 +479,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pos"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pos"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pos"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pos"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pos"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pos"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pos"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pos"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1396,75 +488,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pos"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pos"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pos"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pos"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pos"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pos"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pos"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pos"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/pos</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pos"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pos"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pos"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pos"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pos"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pos"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pos"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pos"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/pos</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pos"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pos"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pos"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pos"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pos"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pos"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pos"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pos"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/pos</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pos"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pos"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pos"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pos"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pos"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pos"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pos"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pos"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/pos</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/pos"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/pos"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/pos"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/pos"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/pos"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/pos"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/pos"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/pos"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/accounting</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/accounting"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/accounting"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/accounting"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/accounting"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/accounting"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/accounting"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/accounting"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/accounting"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1474,10 +510,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/accounting"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/accounting"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/accounting"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/accounting"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/accounting"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/accounting"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/accounting"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/accounting"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1487,75 +519,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/accounting"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/accounting"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/accounting"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/accounting"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/accounting"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/accounting"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/accounting"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/accounting"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/accounting</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/accounting"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/accounting"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/accounting"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/accounting"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/accounting"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/accounting"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/accounting"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/accounting"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/accounting</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/accounting"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/accounting"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/accounting"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/accounting"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/accounting"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/accounting"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/accounting"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/accounting"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/accounting</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/accounting"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/accounting"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/accounting"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/accounting"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/accounting"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/accounting"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/accounting"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/accounting"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/accounting</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/accounting"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/accounting"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/accounting"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/accounting"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/accounting"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/accounting"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/accounting"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/accounting"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/multi-store</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/multi-store"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/multi-store"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/multi-store"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/multi-store"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1565,10 +541,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/multi-store"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/multi-store"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/multi-store"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/multi-store"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1578,75 +550,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/multi-store"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/multi-store"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/multi-store"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/multi-store"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/multi-store</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/multi-store"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/multi-store</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/multi-store"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/multi-store</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/multi-store"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/multi-store</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/multi-store"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/multi-store"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/team</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/team"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/team"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/team"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/team"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/team"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/team"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/team"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/team"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1656,10 +572,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/team"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/team"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/team"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/team"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/team"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/team"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/team"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/team"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1669,75 +581,19 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/team"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/team"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/team"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/team"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/team"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/team"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/team"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/team"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/team</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/team"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/team"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/team"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/team"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/team"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/team"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/team"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/team"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/team</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/team"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/team"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/team"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/team"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/team"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/team"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/team"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/team"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/team</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/team"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/team"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/team"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/team"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/team"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/team"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/team"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/team"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/team</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/team"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/team"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/team"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/team"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/team"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/team"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/team"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/team"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url>
     <loc>https://tortacrm.com/currencies</loc>
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/currencies"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/currencies"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/currencies"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/currencies"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/currencies"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/currencies"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/currencies"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/currencies"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1747,10 +603,6 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/currencies"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/currencies"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/currencies"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/currencies"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/currencies"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/currencies"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/currencies"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/currencies"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1760,66 +612,14 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/currencies"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/currencies"/>
     <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/currencies"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/currencies"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/currencies"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/currencies"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/currencies"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/currencies"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://tortacrm.com/de/currencies</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/currencies"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/currencies"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/currencies"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/currencies"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/currencies"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/currencies"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/currencies"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/currencies"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/es/currencies</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/currencies"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/currencies"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/currencies"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/currencies"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/currencies"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/currencies"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/currencies"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/currencies"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/fr/currencies</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/currencies"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/currencies"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/currencies"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/currencies"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/currencies"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/currencies"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/currencies"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/currencies"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://tortacrm.com/pt/currencies</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://tortacrm.com/currencies"/>
-    <xhtml:link rel="alternate" hreflang="ru" href="https://tortacrm.com/ru/currencies"/>
-    <xhtml:link rel="alternate" hreflang="kk" href="https://tortacrm.com/kk/currencies"/>
-    <xhtml:link rel="alternate" hreflang="de" href="https://tortacrm.com/de/currencies"/>
-    <xhtml:link rel="alternate" hreflang="es" href="https://tortacrm.com/es/currencies"/>
-    <xhtml:link rel="alternate" hreflang="fr" href="https://tortacrm.com/fr/currencies"/>
-    <xhtml:link rel="alternate" hreflang="pt" href="https://tortacrm.com/pt/currencies"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://tortacrm.com/currencies"/>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
+  
+  
+  
+  
   <url><loc>https://tortacrm.com/login</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://tortacrm.com/docs</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://tortacrm.com/docs/getting-started</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>

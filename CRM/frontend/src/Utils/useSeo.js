@@ -18,7 +18,7 @@ import { useEffect } from 'react';
 const BASE = 'https://tortacrm.com';
 // Languages that have translated public pages. 'en' is served at the root (no
 // prefix); the rest live under /{code}/. Mirrors locales/ that are at parity.
-const HREFLANGS = ['en', 'ru', 'kk', 'de', 'es', 'fr', 'pt'];
+const HREFLANGS = ['en', 'ru', 'kk'];
 const PREFIXES = HREFLANGS.filter((l) => l !== 'en');
 
 // Absolute URL for a (lang, path) pair. path has no leading slash; '' = home.

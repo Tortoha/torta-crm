@@ -16,7 +16,7 @@ import { createPortal } from 'react-dom';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  CaretRight, X, Money, CreditCard, CheckCircle,
+  CaretRight, X, Money, CheckCircle,
 } from '@phosphor-icons/react';
 import { Icon } from '@iconify/react';
 import { API_BASE } from '../../api.js';
@@ -26,9 +26,20 @@ import '../../Style/Authentication.css';
 
 
 const CATALOG = [
-  { id: 'stripe', label: 'Stripe', iconify: 'logos:stripe', online: true },
-  { id: 'manual', label: 'Manual', phosphor: Money },
-  { id: 'other',  label: 'Other',  phosphor: CreditCard },
+  { id: 'stripe',      label: 'Stripe', iconify: 'logos:stripe', online: true },
+  // beta:true — wired + unit-tested but NOT yet live-tested end-to-end (only Stripe
+  // is fully verified). Shows a "Beta" pill so the merchant knows to test first.
+  { id: 'kaspi_aipay', label: 'Kaspi',  iconify: 'ph:wallet-fill', color: '#F14635', online: true,
+    blurb: 'Kaspi payments via AiPay', beta: true },
+  { id: 'halyk_epay',  label: 'Halyk (ePay)', iconify: 'ph:bank-fill', color: '#0AA5A8', online: true,
+    blurb: 'Card payments via Halyk Bank ePay', beta: true },
+  { id: 'cloudpayments', label: 'CloudPayments', iconify: 'ph:credit-card-fill', color: '#0085D1', online: true,
+    blurb: 'Card payments via CloudPayments', beta: true },
+  { id: 'robokassa', label: 'Robokassa', iconify: 'ph:wallet-fill', color: '#7A3FF2', online: true,
+    blurb: 'Card payments via Robokassa', beta: true },
+  { id: 'paypal', label: 'PayPal', iconify: 'logos:paypal', online: true,
+    blurb: 'PayPal — international buyers (USD/EUR; not KZT)', beta: true },
+  { id: 'manual',      label: 'Manual', phosphor: Money },
 ];
 
 
@@ -68,7 +79,7 @@ function MethodRow({ provider, method, stripeConnected, onOpen, first, last }) {
   const on   = isStripe ? (enabled && stripeConnected) : enabled;
   const desc = (isStripe && !stripeConnected)
     ? 'Connect to enable card payments'
-    : (method?.display_label || t(`org.payments.providers.${provider.id}`));
+    : (provider.blurb || method?.display_label || t(`org.payments.providers.${provider.id}`));
   const badgeLabel = isStripe
     ? (on ? 'Connected' : 'Not connected')
     : (on ? 'Enabled'   : 'Off');
@@ -82,7 +93,10 @@ function MethodRow({ provider, method, stripeConnected, onOpen, first, last }) {
         <ProviderIcon provider={provider} size={24} />
       </div>
 
-      <span className="auth-provider-name">{provider.label}</span>
+      <span className="auth-provider-name">
+        {provider.label}
+        {provider.beta && <span className="auth-badge-beta">Beta</span>}
+      </span>
       <span className="auth-provider-desc">{desc}</span>
 
       {on
@@ -115,9 +129,12 @@ function PaymentModal({ provider, onClose, children }) {
               <ProviderIcon provider={provider} size={32} />
             </div>
             <div>
-              <div className="auth-modal-title">{provider.label}</div>
+              <div className="auth-modal-title">
+                {provider.label}
+                {provider.beta && <span className="auth-badge-beta">Beta</span>}
+              </div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">{t(`org.payments.providers.${provider.id}`)}</span>
+                <span className="auth-modal-subtitle">{provider.blurb || t(`org.payments.providers.${provider.id}`)}</span>
               </div>
             </div>
           </div>
@@ -289,7 +306,7 @@ export default function OrgPayments() {
 
       {modalProvider && (
         <PaymentModal provider={modalProvider} onClose={() => setModal(null)}>
-          {modalProvider.id === 'stripe'
+          {modalProvider.online
             ? <PaymentProviderPanel
                 provider={modalProvider}
                 orgId={orgId}

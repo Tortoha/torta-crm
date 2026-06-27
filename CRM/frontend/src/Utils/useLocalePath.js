@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 // App.jsx PUBLIC_SLUGS + the localized landing routes. Anything NOT here
 // (/login, /docs, /terms, app routes) must never be prefixed: there's no
 // localized route for it, so a prefix would dead-end.
-const PREFIXES = ['ru', 'kk', 'de', 'es', 'fr', 'pt'];
+const PREFIXES = ['ru', 'kk'];
 const LOCALIZED = new Set([
   '/', '/pricing', '/developers', '/security',
   '/database', '/products', '/booking', '/digital', '/chat', '/auth', '/storage',
