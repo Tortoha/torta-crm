@@ -6,12 +6,84 @@ import { client } from "./api.js";
 import { fmtMoney } from "./currency.js";
 import CountryCombobox from "./CountryCombobox.jsx";
 import StripePaymentModal from "./StripePaymentModal.jsx";
+import KaspiPaymentModal from "./KaspiPaymentModal.jsx";
 import "./Style/Checkout.css";
 import "./Style/Load.css";
 
 // Drop decimals when amount is whole — "$30" reads better than "$30.00"
 // on checkout. fmtMoney handles the currency symbol and position.
 const fmt = (n) => fmtMoney(n, (+n % 1 === 0) ? { decimals: 0 } : undefined);
+
+// Loads Halyk's payment-api.js (once) then calls halyk.pay(cfg), which redirects
+// the buyer to Halyk's hosted page. They return to /checkout/return, which places
+// the order (place_order re-verifies via check-status). The card is entered on
+// Halyk's side — it never touches us (PCI-light).
+function payHalyk(cfg) {
+  return new Promise((resolve, reject) => {
+    const launch = () => {
+      try {
+        window.halyk.pay({
+          invoiceId:       cfg.invoiceId,
+          backLink:        cfg.backLink,
+          failureBackLink: cfg.failureBackLink,
+          postLink:        cfg.postLink,
+          failurePostLink: cfg.postLink,
+          language:        cfg.language || "rus",
+          description:     cfg.description,
+          accountId:       cfg.invoiceId,
+          terminal:        cfg.terminal,
+          amount:          cfg.amount,
+          currency:        cfg.currency || "KZT",
+          auth:            cfg.auth,
+        });
+        resolve();
+      } catch (e) { reject(e); }
+    };
+    if (window.halyk?.pay) return launch();
+    const existing = document.querySelector(`script[src="${cfg.paymentApiJs}"]`);
+    if (existing) { existing.addEventListener("load", launch); return; }
+    const s = document.createElement("script");
+    s.src = cfg.paymentApiJs;
+    s.onload = launch;
+    s.onerror = () => reject(new Error("Failed to load Halyk payment library"));
+    document.head.appendChild(s);
+  });
+}
+
+// Loads CloudPayments' widget (once) then opens the popup via widget.charge().
+// The card is entered in CloudPayments' own popup (PCI-light — never touches us);
+// unlike Halyk there is NO redirect — onSuccess fires on the same page. We resolve,
+// then place the order, which re-verifies the charge server-side via /payments/find
+// before marking it paid (a forged onSuccess can't fake a paid order).
+function payCloudPayments(cfg) {
+  return new Promise((resolve, reject) => {
+    const launch = () => {
+      try {
+        const widget = new window.cp.CloudPayments();
+        widget.charge(
+          {
+            publicId:    cfg.public_id,
+            description: cfg.description,
+            amount:      cfg.amount,
+            currency:    cfg.currency || "KZT",
+            invoiceId:   cfg.invoice_id,
+            accountId:   cfg.account_id || cfg.invoice_id,
+          },
+          () => resolve(),                                                  // onSuccess
+          (reason) => reject(new Error(reason || "Payment was declined")),  // onFail
+        );
+      } catch (e) { reject(e); }
+    };
+    if (window.cp?.CloudPayments) return launch();
+    const existing = document.querySelector(`script[src="${cfg.widget_js}"]`);
+    if (existing) { existing.addEventListener("load", launch); return; }
+    const s = document.createElement("script");
+    s.src = cfg.widget_js;
+    s.onload = launch;
+    s.onerror = () => reject(new Error("Failed to load CloudPayments widget"));
+    document.head.appendChild(s);
+  });
+}
 
 function Checkout() {
   const navigate  = useNavigate();
@@ -26,6 +98,7 @@ function Checkout() {
   // When the merchant requires online payment, holds the Stripe card step:
   // { publishableKey, clientSecret, amountLabel, testMode, payload }.
   const [stripeStep, setStripeStep] = useState(null);
+  const [kaspiStep, setKaspiStep] = useState(null);
 
   // Pre-fill promo from Cart page navigation state
   const initPromo = location.state?.promoCode || "";
@@ -394,6 +467,79 @@ function Checkout() {
         setSubmitting(false);
         return;
       }
+      if (d.kaspi_poll && d.intent_id) {
+        // Async Kaspi push-payment: the invoice is already sent to the customer's
+        // Kaspi app. Wait + poll status; place the order only once it flips to
+        // paid (KaspiPaymentModal → handleKaspiPaid).
+        setKaspiStep({
+          intentId:    d.intent_id,
+          amountLabel: fmt(d.amount),
+          phone:       form.phone || "",
+          payload,
+        });
+        setSubmitting(false);
+        return;
+      }
+      if (d.halyk_pay) {
+        // Halyk ePay — load Halyk's payment-api.js and call halyk.pay(); it
+        // redirects to Halyk's hosted page. On return, /checkout/return places
+        // the order (re-verified server-side before it's marked paid).
+        try {
+          sessionStorage.setItem("checkout_pending", JSON.stringify({
+            payload, intentId: d.intent_id,
+          }));
+        } catch { /* ignore */ }
+        try {
+          await payHalyk(d.halyk_pay);
+        } catch (e) {
+          setError(e?.message || "Could not start Halyk payment. Please try again.");
+          setSubmitting(false);
+        }
+        return;
+      }
+      if (d.cloudpayments_widget) {
+        // CloudPayments — open the popup widget (no redirect). On success we place
+        // the order with the InvoiceId; place_order re-verifies server-side via
+        // /payments/find (Status=Completed) before it's marked paid.
+        try {
+          await payCloudPayments(d.cloudpayments_widget);
+          const placed = await client.orders.place({ ...payload, payment_intent_id: d.intent_id });
+          if (placed.ok) {
+            navigate("/order-success", { state: { orderId: placed.data.order_id } });
+          } else {
+            setError(placed.error || "Payment went through but the order could not be saved. Please contact support.");
+            setSubmitting(false);
+          }
+        } catch (e) {
+          setError(e?.message || "Payment was not completed. Please try again.");
+          setSubmitting(false);
+        }
+        return;
+      }
+      if (d.robokassa_redirect && d.redirect_url) {
+        // Robokassa — redirect to the hosted payment page (like Halyk). Stash the
+        // order payload + InvId; on return (/checkout/return) we place the order,
+        // which re-verifies via OpStateExt server-side before marking it paid.
+        try {
+          sessionStorage.setItem("checkout_pending", JSON.stringify({
+            payload, intentId: d.intent_id,
+          }));
+        } catch { /* sessionStorage unavailable — return flow degrades gracefully */ }
+        window.location.href = d.redirect_url;
+        return;
+      }
+      if (d.paypal_redirect && d.redirect_url) {
+        // PayPal — redirect to the approve page. Stash the order payload + order id;
+        // on return (/checkout/return) place_order CAPTURES + verifies COMPLETED
+        // server-side before the order is marked paid.
+        try {
+          sessionStorage.setItem("checkout_pending", JSON.stringify({
+            payload, intentId: d.intent_id,
+          }));
+        } catch { /* sessionStorage unavailable — return flow degrades gracefully */ }
+        window.location.href = d.redirect_url;
+        return;
+      }
       // Provider fell back to manual (e.g. creds removed) → place directly.
     }
 
@@ -423,6 +569,21 @@ function Checkout() {
       // is idempotency-guarded server-side, so a retry won't double-charge.
       setStripeStep(null);
       setError(error || "Payment went through but the order could not be saved. Please contact support.");
+      setSubmitting(false);
+    }
+  };
+
+  // After Kaspi confirms (status flips to paid), place the order WITH the
+  // verified invoice id — place_order re-verifies it server-side before paid.
+  const handleKaspiPaid = async (intentId) => {
+    const payload = { ...kaspiStep.payload, payment_intent_id: intentId };
+    const { ok, data, error } = await client.orders.place(payload);
+    if (ok) {
+      setKaspiStep(null);
+      navigate("/order-success", { state: { orderId: data.order_id } });
+    } else {
+      setKaspiStep(null);
+      setError(error || "Payment confirmed but the order could not be saved. Please contact support.");
       setSubmitting(false);
     }
   };
@@ -908,6 +1069,16 @@ function Checkout() {
           testMode={stripeStep.testMode}
           onPaid={handleStripePaid}
           onClose={() => { setStripeStep(null); setSubmitting(false); }}
+        />
+      )}
+
+      {kaspiStep && (
+        <KaspiPaymentModal
+          intentId={kaspiStep.intentId}
+          amountLabel={kaspiStep.amountLabel}
+          phone={kaspiStep.phone}
+          onPaid={handleKaspiPaid}
+          onClose={() => { setKaspiStep(null); setSubmitting(false); }}
         />
       )}
     </>

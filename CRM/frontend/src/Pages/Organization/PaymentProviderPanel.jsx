@@ -18,12 +18,19 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { safeHttpUrl } from '../../Utils/safeUrl.js';
+import Modal from '../../Elements/Modal.jsx';
+import '../../Style/Feedback.css';
 
 const MASKED_PLACEHOLDER = '••••••••';
 
 // Console links per provider so merchant can quickly jump to "where do I get these keys".
 const PROVIDER_CONSOLE = {
   stripe: { url: 'https://dashboard.stripe.com/apikeys', name: 'Stripe Dashboard' },
+  kaspi_aipay: { url: 'https://cabinet.aipay.kz', name: 'AiPay Dashboard' },
+  halyk_epay: { url: 'https://epayment.kz', name: 'Halyk ePay' },
+  cloudpayments: { url: 'https://merchant.cloudpayments.kz', name: 'CloudPayments Cabinet' },
+  robokassa: { url: 'https://partner.robokassa.kz', name: 'Robokassa Cabinet' },
+  paypal: { url: 'https://developer.paypal.com/dashboard/applications', name: 'PayPal Developer Dashboard' },
 };
 
 // Free-form hint keys (resolved via t('org.payments.panel.hint.<key>')).
@@ -50,6 +57,13 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
   const [err,      setErr]      = useState('');
   const [toast,    setToast]    = useState('');
   const toastTimer = useRef(null);
+
+  // Beta "Report an issue" — reuses the global feedback pipe (POST /api/feedback,
+  // kind=issue → crm_feedback → Admin replies via SES).
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportMsg,  setReportMsg]  = useState('');
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportErr,  setReportErr]  = useState('');
 
   const showToast = (msg) => {
     setToast(msg);
@@ -186,6 +200,34 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
     }
   };
 
+  const submitReport = async () => {
+    const m = reportMsg.trim();
+    if (!m) { setReportErr(t('org.payments.beta.errMessage')); return; }
+    setReportBusy(true); setReportErr('');
+    try {
+      const r = await fetch(`${API_BASE}/api/feedback`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind:    'issue',
+          subject: `Payment gateway (Beta): ${provider.label}`,
+          message: m,
+        }),
+      });
+      if (r.ok) {
+        setReportOpen(false); setReportMsg('');
+        showToast(t('org.payments.beta.thanks'));
+      } else {
+        const j = await r.json().catch(() => ({}));
+        setReportErr(j.detail || t('org.payments.beta.failed'));
+        setReportBusy(false);
+      }
+    } catch {
+      setReportErr(t('org.payments.beta.failed'));
+      setReportBusy(false);
+    }
+  };
+
   if (!data) return <p className="crm-placeholder">{t('org.payments.panel.loading')}</p>;
 
   const isManual = providerKey === 'manual' || providerKey === 'other';
@@ -197,6 +239,20 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
 
   return (
     <>
+      {provider.beta && (
+        <div className="auth-beta-notice">
+          <Warning weight="fill" className="auth-beta-icon" />
+          <div className="auth-beta-text">
+            <strong>{t('org.payments.beta.title')}</strong>
+            <p>{t('org.payments.beta.body')}</p>
+          </div>
+          <button type="button" className="auth-btn-check auth-beta-btn"
+            onClick={() => { setReportErr(''); setReportOpen(true); }}>
+            {t('org.payments.beta.report')}
+          </button>
+        </div>
+      )}
+
       {/* ── Connection status ── */}
       <div className="auth-toggle-row">
         <div>
@@ -206,7 +262,7 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
             ) : (isCurrentProvider ? t('org.payments.panel.configuredAwaitingTest') : t('org.payments.panel.notConfigured'))}
           </span>
           <p className="auth-field-hint">
-            {t(`org.payments.panel.hint.${providerKey}`, { defaultValue: providerKey })}
+            {t(`org.payments.panel.hint.${providerKey}`, { defaultValue: provider.blurb || providerKey })}
             {data.last_verified_at && isConnected && (
               <>{t('org.payments.panel.lastVerified', { date: new Date(data.last_verified_at).toLocaleString() })}</>
             )}
@@ -361,6 +417,32 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
           </a>
         )}
       </div>
+
+      {reportOpen && (
+        <Modal
+          onClose={() => setReportOpen(false)}
+          title={t('org.payments.beta.modalTitle')}
+          subtitle={t('org.payments.beta.modalSubtitle', { name: provider.label })}
+          maxWidth={520}
+        >
+          <div className="fb-form">
+            <textarea
+              className="fb-textarea" rows={5} maxLength={5000} autoFocus
+              placeholder={t('org.payments.beta.placeholder')}
+              value={reportMsg} onChange={e => setReportMsg(e.target.value)}
+            />
+            {reportErr && <div className="fb-err">{reportErr}</div>}
+            <div className="fb-actions">
+              <button type="button" className="fb-cancel" onClick={() => setReportOpen(false)}>
+                {t('org.payments.beta.cancel')}
+              </button>
+              <button type="button" className="fb-submit" disabled={reportBusy} onClick={submitReport}>
+                {reportBusy ? t('org.payments.beta.sending') : t('org.payments.beta.send')}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {toast && createPortal(
         <div className="auth-toast">{toast}</div>,

@@ -441,6 +441,15 @@ export function createClient(baseUrl, publishableKey, options = {}) {
         const headers = opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {};
         return req("POST", "/orders/init-payment", payload, headers);
       },
+      /**
+       * Poll the authoritative payment status for an async push-payment provider
+       * (Kaspi via AiPay). The status is read server-to-server from the provider —
+       * never from client claims. Returns { ok, data: { status, paid, account_name } }.
+       * @param {string} intentId - the intent/invoice id returned by initPayment()
+       */
+      async status(intentId) {
+        return req("GET", `/orders/payment-status/${encodeURIComponent(intentId)}`);
+      },
     },
 
     // ── Saved delivery addresses ─────────────────────────────────────────────

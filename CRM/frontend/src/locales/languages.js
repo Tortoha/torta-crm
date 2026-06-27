@@ -10,10 +10,6 @@ export const LANGUAGES = [
   { value: 'en', label: 'English' },
   { value: 'ru', label: 'Русский' },
   { value: 'kk', label: 'Қазақша' },
-  { value: 'de', label: 'Deutsch' },
-  { value: 'es', label: 'Español' },
-  { value: 'fr', label: 'Français' },
-  { value: 'pt', label: 'Português' },
 ];
 
 export const SUPPORTED_LANGS = LANGUAGES.map((l) => l.value);

@@ -12,6 +12,7 @@ import ResetPassword from './ResetPassword';
 import Favorites from './Favorites';
 import Cart from './Cart';
 import Checkout from './Checkout';
+import CheckoutReturn from './CheckoutReturn';
 import OrderSuccess from './OrderSuccess';
 import Orders from './Orders';
 import DigitalProducts from './DigitalProducts';
@@ -68,6 +69,7 @@ function App() {
           <Route path='/favorites' element={<Favorites />} />
           <Route path='/cart' element={<Cart />} />
           <Route path='/checkout' element={<Checkout />} />
+          <Route path='/checkout/return' element={<CheckoutReturn />} />
           <Route path='/order-success' element={<OrderSuccess />} />
           <Route path='/orders' element={<Orders />} />
           <Route path='/digital' element={<DigitalProducts />} />

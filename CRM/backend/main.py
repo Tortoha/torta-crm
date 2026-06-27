@@ -170,6 +170,7 @@ RESEND_COOLDOWN_SECONDS = 60
 RESET_TTL_MINUTES       = 30
 UPLOADS_DIR             = "uploads"
 import hmac as _hmac, base64 as _b64
+import xml.etree.ElementTree as ET
 GOOGLE_CLIENT_ID        = os.getenv("GOOGLE_CLIENT_ID",     "")
 GOOGLE_CLIENT_SECRET    = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI     = os.getenv("GOOGLE_REDIRECT_URI",  "http://localhost:8001/api/auth/google/callback")
@@ -3412,7 +3413,7 @@ def run_migrations():
             cur.execute("""
                 ALTER TABLE crm_organizations ADD CONSTRAINT crm_organizations_payment_provider_check
                   CHECK (payment_provider IN (
-                    'stripe','manual','other'
+                    'stripe','manual','other','kaspi_aipay','halyk_epay','cloudpayments','robokassa','paypal'
                   ))
             """)
             conn.commit()
@@ -3463,7 +3464,7 @@ def run_migrations():
             cur.execute("""
                 ALTER TABLE crm_payment_credentials ADD CONSTRAINT crm_payment_credentials_provider_check
                   CHECK (provider IN (
-                    'stripe','manual','other'
+                    'stripe','manual','other','kaspi_aipay','halyk_epay','cloudpayments','robokassa','paypal'
                   ))
             """)
             cur.execute("""DO $$ BEGIN
@@ -3502,8 +3503,40 @@ def run_migrations():
             cur.execute("ALTER TABLE crm_payment_methods DROP CONSTRAINT IF EXISTS crm_payment_methods_method_check")
             cur.execute("""
                 ALTER TABLE crm_payment_methods ADD CONSTRAINT crm_payment_methods_method_check
-                  CHECK (method IN ('stripe','manual','other'))
+                  CHECK (method IN ('stripe','manual','other','kaspi_aipay','halyk_epay','cloudpayments','robokassa','paypal'))
             """)
+            conn.commit()
+
+            # Backfill (2026-06): ensure every org has a kaspi_aipay method row so
+            # the new Kaspi (AiPay) gateway appears in Payments. Disabled by default
+            # (merchant enables it after connecting AiPay). The one-time seed below
+            # only fires for orgs with ZERO rows, so existing orgs need this explicit
+            # backfill. Idempotent.
+            cur.execute(
+                "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
+                "SELECT id, 'kaspi_aipay', FALSE, 'Kaspi', 1 FROM crm_organizations "
+                "ON CONFLICT (org_id, method) DO NOTHING"
+            )
+            cur.execute(
+                "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
+                "SELECT id, 'halyk_epay', FALSE, 'Halyk (ePay)', 3 FROM crm_organizations "
+                "ON CONFLICT (org_id, method) DO NOTHING"
+            )
+            cur.execute(
+                "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
+                "SELECT id, 'cloudpayments', FALSE, 'CloudPayments', 2 FROM crm_organizations "
+                "ON CONFLICT (org_id, method) DO NOTHING"
+            )
+            cur.execute(
+                "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
+                "SELECT id, 'robokassa', FALSE, 'Robokassa', 4 FROM crm_organizations "
+                "ON CONFLICT (org_id, method) DO NOTHING"
+            )
+            cur.execute(
+                "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
+                "SELECT id, 'paypal', FALSE, 'PayPal', 5 FROM crm_organizations "
+                "ON CONFLICT (org_id, method) DO NOTHING"
+            )
             conn.commit()
 
             # One-time seed: for every org that has NO method rows yet, derive its
@@ -3607,6 +3640,19 @@ def run_migrations():
             END $$;""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_order_history_payment_intent "
                         "ON order_history(payment_intent_id) WHERE payment_intent_id <> ''")
+            # Hard idempotency backstop on the money-critical intent key: a partial
+            # UNIQUE index so two concurrent POST /orders carrying the same intent
+            # can't BOTH insert a paid order (the SELECT-then-INSERT guard in
+            # place_order is not race-proof on its own). Defensive: if legacy
+            # duplicate intents exist, skip rather than abort the migration.
+            cur.execute("""
+                DO $$ BEGIN
+                  CREATE UNIQUE INDEX IF NOT EXISTS idx_order_history_intent_uniq
+                    ON order_history(project_id, payment_intent_id)
+                    WHERE payment_intent_id <> '';
+                EXCEPTION WHEN unique_violation THEN
+                  RAISE NOTICE 'idx_order_history_intent_uniq: duplicate payment_intent_id rows exist — skipped';
+                END $$;""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_order_history_payment_status "
                         "ON order_history(project_id, payment_status, created_at DESC)")
             # Backfill: pre-strict-mode orders left 'pending' and never confirmed are
@@ -9267,11 +9313,24 @@ PROVIDER_FIELDS: dict[str, list[dict[str, Any]]] = {
          "placeholder": "whsec_…",      "secret": True,  "required": False,
          "validate_prefix": ["whsec_"]},
     ],
-    "tinkoff": [
-        {"key": "terminal_key", "label": "Terminal key", "type": "text",
-         "placeholder": "1234567890123", "secret": False, "required": True},
-        {"key": "password",     "label": "Terminal password", "type": "password",
-         "placeholder": "",              "secret": True,  "required": True},
+    # Kaspi via AiPay (aipay.kz). Merchant's AiPay account email+password → we
+    # log in server-side for a short-lived JWT. The merchant must also have an
+    # ACTIVE POS terminal logged into their Kaspi in the AiPay dashboard.
+    "kaspi_aipay": [
+        {"key": "email",    "label": "AiPay account email", "type": "text",
+         "placeholder": "you@store.kz", "secret": False, "required": True},
+        {"key": "password", "label": "AiPay account password", "type": "password",
+         "placeholder": "",             "secret": True,  "required": True},
+    ],
+    # Halyk Bank ePay (epayment.kz). OAuth client credentials (Client ID + secret)
+    # + Terminal ID. Hosted widget/page (PCI-light, card on Halyk's page).
+    "halyk_epay": [
+        {"key": "client_id",     "label": "Client ID",     "type": "text",
+         "placeholder": "test",   "secret": False, "required": True},
+        {"key": "client_secret", "label": "Client secret", "type": "password",
+         "placeholder": "",       "secret": True,  "required": True},
+        {"key": "terminal",      "label": "Terminal ID",   "type": "text",
+         "placeholder": "67e34d63-…", "secret": False, "required": True},
     ],
     "cloudpayments": [
         {"key": "public_id", "label": "Public ID",     "type": "text",
@@ -9279,84 +9338,32 @@ PROVIDER_FIELDS: dict[str, list[dict[str, Any]]] = {
         {"key": "api_secret", "label": "API secret",   "type": "password",
          "placeholder": "",              "secret": True,  "required": True},
     ],
-    "yookassa": [
-        {"key": "shop_id",    "label": "Shop ID",      "type": "text",
-         "placeholder": "123456",        "secret": False, "required": True},
-        {"key": "secret_key", "label": "Secret key",   "type": "password",
-         "placeholder": "live_…/test_…", "secret": True,  "required": True},
+    # Robokassa (robokassa.kz). MerchantLogin + two passwords (Password#1 signs the
+    # payment redirect, Password#2 the ResultURL callback + OpState status check).
+    # hash_algo matches the merchant's dashboard setting (md5 default; sha256/sha512).
+    "robokassa": [
+        {"key": "merchant_login", "label": "Merchant login", "type": "text",
+         "placeholder": "your_shop",     "secret": False, "required": True},
+        {"key": "password1", "label": "Password #1", "type": "password",
+         "placeholder": "",              "secret": True,  "required": True},
+        {"key": "password2", "label": "Password #2", "type": "password",
+         "placeholder": "",              "secret": True,  "required": True},
+        {"key": "hash_algo", "label": "Hash algorithm (md5 / sha256 / sha512)", "type": "text",
+         "placeholder": "md5",           "secret": False, "required": False},
     ],
+    # PayPal — OAuth client_id + secret (Orders v2). intent=CAPTURE redirect flow:
+    # create order → redirect to the approve link → capture on return → verify
+    # COMPLETED. ⚠️ PayPal does NOT support KZT — the store currency must be a
+    # PayPal-supported currency (USD/EUR/…), i.e. PayPal targets international buyers.
     "paypal": [
         {"key": "client_id",     "label": "Client ID",     "type": "text",
-         "placeholder": "",              "secret": False, "required": True},
+         "placeholder": "AY…",           "secret": False, "required": True},
         {"key": "client_secret", "label": "Client secret", "type": "password",
-         "placeholder": "",              "secret": True,  "required": True},
-        {"key": "webhook_id",    "label": "Webhook ID",    "type": "text",
-         "placeholder": "WH-…",          "secret": False, "required": False},
+         "placeholder": "EC…",           "secret": True,  "required": True},
     ],
-    # Adyen — API key + HMAC key for webhook signatures + merchant account name.
-    # client_key is the frontend-safe key (Drop-in JS uses it).
-    "adyen": [
-        {"key": "api_key",          "label": "API key",          "type": "password",
-         "placeholder": "AQE…",       "secret": True,  "required": True},
-        {"key": "merchant_account", "label": "Merchant account", "type": "text",
-         "placeholder": "TortaECOM",  "secret": False, "required": True},
-        {"key": "client_key",       "label": "Client key",       "type": "text",
-         "placeholder": "test_…/live_…", "secret": False, "required": False},
-        {"key": "hmac_key",         "label": "HMAC key (webhooks)", "type": "password",
-         "placeholder": "",           "secret": True,  "required": False},
-    ],
-    # Braintree — public/private key pair + merchant_id. webhook signature uses private_key.
-    "braintree": [
-        {"key": "merchant_id", "label": "Merchant ID", "type": "text",
-         "placeholder": "abc123xyz",       "secret": False, "required": True},
-        {"key": "public_key",  "label": "Public key",  "type": "text",
-         "placeholder": "",                "secret": False, "required": True},
-        {"key": "private_key", "label": "Private key", "type": "password",
-         "placeholder": "",                "secret": True,  "required": True},
-    ],
-    # Square — bearer access_token + application_id + location_id (per-location pricing).
-    "square": [
-        {"key": "access_token",   "label": "Access token",   "type": "password",
-         "placeholder": "EAAAEE…",     "secret": True,  "required": True,
-         "validate_prefix": ["EAAA"]},
-        {"key": "application_id", "label": "Application ID", "type": "text",
-         "placeholder": "sandbox-sq0idb-…/sq0idp-…", "secret": False, "required": True},
-        {"key": "location_id",    "label": "Location ID",    "type": "text",
-         "placeholder": "L…",         "secret": False, "required": True},
-        {"key": "webhook_signature_key", "label": "Webhook signature key", "type": "password",
-         "placeholder": "",            "secret": True,  "required": False},
-    ],
-    # Mollie — single API key carries the test/live mode in its prefix.
-    "mollie": [
-        {"key": "api_key", "label": "API key", "type": "password",
-         "placeholder": "test_…/live_…", "secret": True, "required": True,
-         "validate_prefix": ["test_", "live_"]},
-    ],
-    # Razorpay — key_id + key_secret + webhook secret (HMAC-SHA256).
-    "razorpay": [
-        {"key": "key_id",         "label": "Key ID",         "type": "text",
-         "placeholder": "rzp_test_…/rzp_live_…", "secret": False, "required": True,
-         "validate_prefix": ["rzp_test_", "rzp_live_"]},
-        {"key": "key_secret",     "label": "Key secret",     "type": "password",
-         "placeholder": "",         "secret": True,  "required": True},
-        {"key": "webhook_secret", "label": "Webhook secret", "type": "password",
-         "placeholder": "",         "secret": True,  "required": False},
-    ],
-    # Paddle Billing (new API) — bearer api_key + notification secret.
-    "paddle": [
-        {"key": "api_key",        "label": "API key",        "type": "password",
-         "placeholder": "pdl_…",    "secret": True,  "required": True,
-         "validate_prefix": ["pdl_", "apikey_"]},
-        {"key": "webhook_secret", "label": "Notification secret", "type": "password",
-         "placeholder": "pdl_ntfset_…", "secret": True, "required": False},
-    ],
-    # PayBox.money — Kazakhstan-focused. Signature-based auth (no header).
-    "paybox": [
-        {"key": "merchant_id", "label": "Merchant ID", "type": "text",
-         "placeholder": "525447",   "secret": False, "required": True},
-        {"key": "secret_key",  "label": "Secret key",  "type": "password",
-         "placeholder": "",         "secret": True,  "required": True},
-    ],
+    # NOTE: unwired stubs (braintree/square/mollie/razorpay/paddle/paybox) were
+    # removed — they implied gateway coverage (dispatch/test_connection/refund) that
+    # didn't exist. Add a provider here only when its full pipeline is wired.
     "manual": [],
     "other":  [],
 }
@@ -9524,11 +9531,237 @@ def stripe_create_refund(creds: dict, charge_or_intent_id: str, amount_cents: in
 # manual/other are record-only). See git history. --
 
 
+# ── Kaspi via AiPay (aipay.kz) — test-connection + refund ──────────────────
+# Minimal AiPay client for the CRM side (the full payment client lives in
+# External/main.py): login → JWT, verify the merchant has a live POS terminal,
+# and full-invoice refunds. ⚠️ NOT YET LIVE-TESTED — verify in AiPay sandbox.
+_AIPAY_BASE_TEST = os.getenv("AIPAY_API_BASE_TEST", "https://dev.paylab.kz/api/v2").rstrip("/")
+_AIPAY_BASE_LIVE = os.getenv("AIPAY_API_BASE", "").rstrip("/")
+
+
+def _aipay_base(is_test_mode: bool) -> str:
+    return _AIPAY_BASE_TEST if is_test_mode else (_AIPAY_BASE_LIVE or _AIPAY_BASE_TEST)
+
+
+def _aipay_login(creds: dict, is_test_mode: bool) -> tuple[str, str]:
+    email = (creds.get("email") or "").strip()
+    password = creds.get("password") or ""
+    if not email or not password:
+        return "", "Missing AiPay email/password"
+    body = json.dumps({"email": email, "password": password}).encode("utf-8")
+    r = _http_request("POST", f"{_aipay_base(is_test_mode)}/auth/login",
+                       headers={"Content-Type": "application/json"}, body=body)
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        token = ((r["body"].get("data") or {}).get("access_token") or "").strip()
+        return (token, "") if token else ("", "AiPay login returned no access_token")
+    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return "", msg or f"AiPay login failed (HTTP {r['status']})"
+
+
+def aipay_test_connection(creds: dict, is_test_mode: bool) -> dict:
+    """Verify the merchant's AiPay login works AND they have an ACTIVE POS
+    terminal (without one, invoices can't reach customers' Kaspi apps)."""
+    token, err = _aipay_login(creds, is_test_mode)
+    if err:
+        return _err(err)
+    r = _http_request("GET", f"{_aipay_base(is_test_mode)}/pos",
+                       headers={"Content-Type": "application/json"}, bearer=token)
+    if r["status"] != 200 or not isinstance(r["body"], dict):
+        return _ok({"note": "Logged in, but couldn't read POS terminals."})
+    terminals = r["body"].get("data") or []
+    active = [t for t in terminals if (t or {}).get("status") == "active"]
+    if not active:
+        return _err("Login OK, but no ACTIVE Kaspi POS terminal found. "
+                    "Log a terminal into Kaspi in your AiPay dashboard first.")
+    return _ok({"note": f"Connected — {len(active)} active Kaspi terminal(s)."})
+
+
+def aipay_create_refund(creds: dict, invoice_id: str, is_test_mode: bool) -> dict:
+    """Full-invoice refund (AiPay has no partial refunds): PUT /invoices/{id}/refund."""
+    if not invoice_id:
+        return _err("Missing invoice id")
+    token, err = _aipay_login(creds, is_test_mode)
+    if err:
+        return _err(err)
+    r = _http_request("PUT", f"{_aipay_base(is_test_mode)}/invoices/{invoice_id}/refund",
+                       headers={"Content-Type": "application/json"}, bearer=token)
+    if r["status"] in (200, 202):
+        return _ok({"refund_id": invoice_id, "status": "accepted"})
+    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"AiPay refund failed (HTTP {r['status']})")
+
+
+# ── Halyk Bank ePay (epayment.kz) — test-connection ────────────────────────
+def halyk_test_connection(creds: dict, is_test_mode: bool) -> dict:
+    """Validate Client ID / secret by requesting an OAuth token (no payment scope)."""
+    base = ("https://test-epay-oauth.epayment.kz" if is_test_mode
+            else "https://epay-oauth.homebank.kz")
+    payload = {
+        "grant_type":    "client_credentials",
+        "scope":         "webapi usermanagement email_send verification statement statistics payment",
+        "client_id":     creds.get("client_id", ""),
+        "client_secret": creds.get("client_secret", ""),
+    }
+    body = urllib.parse.urlencode(payload).encode("utf-8")
+    r = _http_request("POST", f"{base}/oauth2/token",
+                       headers={"Content-Type": "application/x-www-form-urlencoded"}, body=body)
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("access_token"):
+        return _ok({"note": "Connected — Halyk ePay credentials are valid."})
+    msg = (r["body"] or {}).get("error_description", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or "Invalid Client ID or secret (Halyk token request failed).")
+
+
+# ── CloudPayments (cloudpayments.kz) — test-connection + refund ─────────────
+# HTTP Basic (Public ID : API Secret). Same host for test/live — test mode is
+# driven by using test vs live keys, not a different URL.
+_CP_API_BASE = os.getenv("CLOUDPAYMENTS_API_BASE", "https://api.cloudpayments.kz").rstrip("/")
+
+
+def cloudpayments_test_connection(creds: dict, is_test_mode: bool) -> dict:
+    """Validate the Public ID / API Secret by pinging POST /test (Basic auth).
+    Success:true means the keys authenticate."""
+    public_id  = (creds.get("public_id") or "").strip()
+    api_secret = (creds.get("api_secret") or "").strip()
+    if not public_id or not api_secret:
+        return _err("Enter both the Public ID and the API Secret.")
+    r = _http_request("POST", f"{_CP_API_BASE}/test",
+                      headers={"Content-Type": "application/json"},
+                      body=b"{}", basic_auth=(public_id, api_secret))
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success"):
+        return _ok({"note": "Connected — CloudPayments credentials are valid."})
+    if r["status"] == 401:
+        return _err("Invalid Public ID or API Secret (CloudPayments returned 401).")
+    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"CloudPayments test failed (HTTP {r['status']}).")
+
+
+def cloudpayments_create_refund(creds: dict, transaction_id: str, amount: float,
+                                 is_test_mode: bool) -> dict:
+    """Refund a paid transaction — POST /payments/refund {TransactionId, Amount}.
+    Amount is MAJOR units (KZT/RUB decimal); CloudPayments does NOT use minor units."""
+    public_id  = (creds.get("public_id") or "").strip()
+    api_secret = (creds.get("api_secret") or "").strip()
+    if not public_id or not api_secret:
+        return _err("Missing CloudPayments credentials.")
+    if not transaction_id:
+        return _err("Missing transaction id.")
+    tid = int(transaction_id) if str(transaction_id).isdigit() else transaction_id
+    payload = {"TransactionId": tid, "Amount": round(float(amount), 2)}
+    body = json.dumps(payload).encode("utf-8")
+    r = _http_request("POST", f"{_CP_API_BASE}/payments/refund",
+                      headers={"Content-Type": "application/json"},
+                      body=body, basic_auth=(public_id, api_secret))
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success"):
+        return _ok({"refund_id": str(transaction_id), "status": "accepted"})
+    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"CloudPayments refund failed (HTTP {r['status']}).")
+
+
+# ── Robokassa (robokassa.kz) — test-connection + refund ─────────────────────
+# Redirect gateway. test-connection probes OpStateExt with a dummy InvoiceID: a
+# valid Password#2 signature yields Result.Code 3 ("invoice not found" = auth OK);
+# codes 1/2 mean bad signature / bad-or-inactive login.
+_ROBO_WS = os.getenv("ROBOKASSA_WS_URL",
+                     "https://auth.robokassa.kz/Merchant/WebService/Service.asmx")
+_ROBO_NS = "{http://merchant.roboxchange.com/WebService/}"
+
+
+def _robo_hash(algo: str, s: str) -> str:
+    fn = {"md5": hashlib.md5, "sha256": hashlib.sha256,
+          "sha512": hashlib.sha512}.get((algo or "md5").lower(), hashlib.md5)
+    return fn(s.encode("utf-8")).hexdigest()
+
+
+def robokassa_test_connection(creds: dict, is_test_mode: bool) -> dict:
+    """Probe OpStateExt with a dummy InvoiceID. Result.Code 0/3/4 = login+Password#2
+    valid (operation just not found); 1 = bad signature, 2 = bad/inactive login."""
+    login = (creds.get("merchant_login") or "").strip()
+    if not login or not creds.get("password2"):
+        return _err("Enter Merchant login and Password #2.")
+    algo = creds.get("hash_algo") or "md5"
+    inv  = "1"
+    sig  = _robo_hash(algo, f"{login}:{inv}:{creds.get('password2', '')}")
+    url  = (f"{_ROBO_WS}/OpStateExt?MerchantLogin={urllib.parse.quote(login)}"
+            f"&InvoiceID={inv}&Signature={sig}")
+    r = _http_request("GET", url)
+    if r["status"] != 200 or not isinstance(r["body"], str):
+        return _err(f"Robokassa unreachable (HTTP {r['status']}).")
+    try:
+        code = ET.fromstring(r["body"]).findtext(f".//{_ROBO_NS}Result/{_ROBO_NS}Code")
+    except ET.ParseError:
+        return _err("Robokassa returned unparseable XML.")
+    if code in ("0", "3", "4"):
+        return _ok({"note": "Connected — Robokassa login + Password #2 are valid."})
+    if code == "1":
+        return _err("Invalid signature — check Password #2 and the hash algorithm.")
+    if code == "2":
+        return _err("Merchant login not found or not activated.")
+    return _err(f"Robokassa test failed (result code {code}).")
+
+
+def robokassa_create_refund(creds: dict, inv_id: str, amount: float, is_test_mode: bool) -> dict:
+    """Robokassa has no refund in the basic protocol — refund via the merchant cabinet."""
+    return _err("Robokassa refunds: use the Robokassa merchant cabinet (API refund not wired).")
+
+
+# ── PayPal (Orders v2) — test-connection + refund ───────────────────────────
+_PAYPAL_BASE = {"test": "https://api-m.sandbox.paypal.com", "live": "https://api-m.paypal.com"}
+
+
+def _paypal_token(creds: dict, is_test_mode: bool) -> tuple[str, str]:
+    cid = (creds.get("client_id") or "").strip()
+    sec = (creds.get("client_secret") or "").strip()
+    if not cid or not sec:
+        return "", "Enter PayPal Client ID and Secret."
+    base = _PAYPAL_BASE["test" if is_test_mode else "live"]
+    r = _http_request("POST", f"{base}/v1/oauth2/token",
+                      headers={"Content-Type": "application/x-www-form-urlencoded"},
+                      body=b"grant_type=client_credentials", basic_auth=(cid, sec))
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("access_token"):
+        return r["body"]["access_token"], ""
+    msg = (r["body"] or {}).get("error_description", "") if isinstance(r["body"], dict) else ""
+    return "", msg or f"PayPal auth failed (HTTP {r['status']})"
+
+
+def paypal_test_connection(creds: dict, is_test_mode: bool) -> dict:
+    """Validate client_id/secret by minting an OAuth token (sandbox or live host)."""
+    tok, err = _paypal_token(creds, is_test_mode)
+    if err:
+        return _err(err)
+    return _ok({"note": "Connected — PayPal credentials are valid."})
+
+
+def paypal_create_refund(creds: dict, capture_id: str, amount: float, currency: str,
+                          is_test_mode: bool) -> dict:
+    """Refund a capture — POST /v2/payments/captures/{capture_id}/refund (major units)."""
+    if not capture_id:
+        return _err("Missing PayPal capture id.")
+    tok, err = _paypal_token(creds, is_test_mode)
+    if err:
+        return _err(err)
+    base = _PAYPAL_BASE["test" if is_test_mode else "live"]
+    payload = {"amount": {"value": f"{float(amount):.2f}",
+                          "currency_code": (currency or "USD").upper()}}
+    body = json.dumps(payload).encode("utf-8")
+    r = _http_request("POST", f"{base}/v2/payments/captures/{capture_id}/refund",
+                      headers={"Content-Type": "application/json",
+                               "Authorization": f"Bearer {tok}"}, body=body)
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        return _ok({"refund_id": r["body"].get("id", ""), "status": "accepted"})
+    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"PayPal refund failed (HTTP {r['status']}).")
+
+
 def test_connection(provider: str, creds: dict, *, is_test_mode: bool = True,
                      stripe_account_id: str = "") -> dict:
     if provider == "manual" or provider == "other":
         return _ok({"note": "Manual / Other providers don't have a remote check — credentials are saved as-is."})
     if provider == "stripe":         return stripe_test_connection(creds, stripe_account_id)
+    if provider == "kaspi_aipay":    return aipay_test_connection(creds, is_test_mode)
+    if provider == "halyk_epay":     return halyk_test_connection(creds, is_test_mode)
+    if provider == "cloudpayments":  return cloudpayments_test_connection(creds, is_test_mode)
+    if provider == "robokassa":      return robokassa_test_connection(creds, is_test_mode)
+    if provider == "paypal":         return paypal_test_connection(creds, is_test_mode)
     return _err(f"Unknown provider: {provider}")
 
 
@@ -9553,6 +9786,18 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
         amount_minor = int(round(amount * 100))
         return stripe_create_refund(creds, charge_or_intent_id, amount_minor,
                                      idempotency_key, stripe_account_id)
+    if provider == "kaspi_aipay":
+        # AiPay refunds are full-invoice only (no partial amount in the API).
+        return aipay_create_refund(creds, charge_or_intent_id, is_test_mode)
+    if provider == "halyk_epay":
+        # Halyk refund API (operation refund) not wired yet — refund via Halyk cabinet.
+        return _err("Halyk ePay refunds: use the Halyk merchant cabinet (API refund not wired yet).")
+    if provider == "cloudpayments":
+        return cloudpayments_create_refund(creds, charge_or_intent_id, amount, is_test_mode)
+    if provider == "robokassa":
+        return robokassa_create_refund(creds, charge_or_intent_id, amount, is_test_mode)
+    if provider == "paypal":
+        return paypal_create_refund(creds, charge_or_intent_id, amount, currency, is_test_mode)
     return _err(f"Unknown provider: {provider}")
 
 
@@ -9562,9 +9807,11 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
 # checkout. Stripe is the online card gateway (needs connected credentials);
 # manual/other are offline (record-only) with a label + customer instructions.
 
-ALLOWED_PAY_METHODS = ("stripe", "manual", "other")
+ALLOWED_PAY_METHODS = ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")
 _PAY_METHOD_DEFAULT_LABELS = {
-    "stripe": "Card", "manual": "Cash / Pay on delivery", "other": "Other",
+    "stripe": "Card", "kaspi_aipay": "Kaspi", "halyk_epay": "Halyk (ePay)",
+    "cloudpayments": "CloudPayments", "robokassa": "Robokassa", "paypal": "PayPal",
+    "manual": "Cash / Pay on delivery", "other": "Other",
 }
 
 
@@ -9576,7 +9823,7 @@ def _ensure_payment_methods(org_id: int) -> None:
         cur.execute("SELECT 1 FROM crm_payment_methods WHERE org_id=%s LIMIT 1", (org_id,))
         if cur.fetchone():
             return
-        for idx, m in enumerate(("stripe", "manual", "other")):
+        for idx, m in enumerate(("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")):
             cur.execute(
                 "INSERT INTO crm_payment_methods"
                 "  (org_id, method, is_enabled, display_label, sort_order)"
@@ -9855,11 +10102,16 @@ def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_u
     # Connecting Stripe = the merchant wants card payments → auto-enable the
     # 'stripe' method (they can still toggle it off). Mirrors Shopify enabling
     # the gateway on activation.
-    if result["ok"] and row["provider"] == "stripe":
+    if result["ok"] and row["provider"] in ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal"):
         _ensure_payment_methods(org_id)
         with db_cursor() as (conn, cur):
-            cur.execute("UPDATE crm_payment_methods SET is_enabled=TRUE, updated_at=NOW() "
-                        "WHERE org_id=%s AND method='stripe'", (org_id,))
+            # Upsert: orgs seeded before kaspi_aipay existed won't have its row yet.
+            cur.execute(
+                "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label) "
+                "VALUES (%s, %s, TRUE, %s) "
+                "ON CONFLICT (org_id, method) DO UPDATE SET is_enabled=TRUE, updated_at=NOW()",
+                (org_id, row["provider"], _PAY_METHOD_DEFAULT_LABELS.get(row["provider"], row["provider"]))
+            )
             conn.commit()
     return {"ok": result["ok"], "error": result["error"], "data": result["data"]}
 

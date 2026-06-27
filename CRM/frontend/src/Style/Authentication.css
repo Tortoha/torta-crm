@@ -245,6 +245,27 @@
   width: fit-content;
 }
 
+/* "Beta" pill — gateways that are wired + unit-tested but NOT yet live-tested
+   end-to-end (only Stripe is fully verified). Amber = preview/caution, distinct
+   from the blue "enabled" badge; no green, per the design rules. */
+.auth-badge-beta {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #b26a00;
+  background: #fff3e0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 /* Dark mode: the light #e5e7eb pill turns washed-out and its text goes
    white-on-light. Swap to a dark-grey chip (matches .crm-badge--gray)
    with muted-grey text. Shared by Auth Providers, Integrations, Payments. */
@@ -252,6 +273,57 @@
   background: #2C2C2F;
   color: var(--muted);
 }
+
+[data-theme="dark"] .auth-badge-beta {
+  background: rgba(255, 167, 38, 0.16);
+  color: #ffb74d;
+}
+
+/* Beta notice inside a gateway config panel — amber banner above the form, with a
+   "Report an issue" action. Inner-card radius 16px per the design rules. */
+.auth-beta-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #fff3e0;
+  border: 1px solid rgba(178, 106, 0, 0.22);
+  margin-bottom: 8px;
+}
+.auth-beta-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: #b26a00;
+  margin-top: 1px;
+}
+.auth-beta-text { flex: 1 1 auto; min-width: 0; }
+.auth-beta-text strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8a5200;
+  margin-bottom: 2px;
+}
+.auth-beta-text p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b4a14;
+}
+.auth-beta-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .auth-beta-notice {
+  background: rgba(255, 167, 38, 0.10);
+  border-color: rgba(255, 167, 38, 0.28);
+}
+[data-theme="dark"] .auth-beta-text strong { color: #ffb74d; }
+[data-theme="dark"] .auth-beta-text p { color: rgba(255, 183, 77, 0.85); }
 
 /* ══════════════════════════════════════════════════════
    MODAL

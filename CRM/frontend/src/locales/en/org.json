@@ -307,8 +307,27 @@
       "comingSoon": "Coming soon",
       "providers": {
         "stripe": "Global card payments — 50+ countries, Stripe Payment Intents + Refunds API",
+        "kaspi_aipay": "Kaspi payments via AiPay — async push to the buyer's Kaspi app (needs an active POS terminal). KZT only",
+        "halyk_epay": "Card payments via Halyk Bank ePay — hosted page (PCI-light), KZT, server-verified status",
+        "cloudpayments": "Card payments via CloudPayments — popup widget (PCI-light), KZT/RUB, Refunds API",
+        "robokassa": "Card payments via Robokassa — hosted redirect page (PCI-light), KZT, server-verified status",
+        "paypal": "PayPal — redirect checkout (Orders v2). For international buyers; does NOT support KZT (USD/EUR/…)",
         "manual": "No API integration — cash, bank transfer, etc. Refunds are record-only",
         "other": "Free-form provider — record references manually in Returns workflow"
+      },
+      "beta": {
+        "title": "Beta — may have issues",
+        "body": "This payment method is fully built and unit-tested, but not yet verified end-to-end with real money — so it can misbehave. If something doesn't work, tell us and we'll fix it fast. It will work reliably soon.",
+        "report": "Report an issue",
+        "modalTitle": "Report a payment issue",
+        "modalSubtitle": "{{name}} — tell us what went wrong and we'll get back to you.",
+        "placeholder": "Describe what happened — which step, any error message…",
+        "cancel": "Cancel",
+        "send": "Send report",
+        "sending": "Sending…",
+        "thanks": "Thanks — we'll look into it.",
+        "errMessage": "Please describe the issue.",
+        "failed": "Couldn't send — please try again."
       },
       "panel": {
         "loading": "Loading…",
@@ -355,6 +374,11 @@
         "stripeUnavailable": "Stripe Connect unavailable",
         "hint": {
           "stripe": "Process card payments globally. Test mode keys work without real money.",
+          "kaspi_aipay": "Enter your AiPay account email + password (cabinet.aipay.kz) and keep an ACTIVE Kaspi POS terminal logged in. The buyer enters their phone; AiPay pushes the charge to their Kaspi app and we confirm server-side. KZT only.",
+          "halyk_epay": "Enter your Halyk ePay Client ID + Secret + Terminal ID. The buyer pays on Halyk's hosted page; we confirm via check-status server-side. KZT only.",
+          "cloudpayments": "Enter your CloudPayments Public ID + API Secret from the merchant cabinet. The buyer pays in a popup widget; we confirm the charge server-side. Test mode uses your test keys.",
+          "robokassa": "Enter your Robokassa Merchant login + Password #1 and #2 (and hash algorithm — md5 by default). In your Robokassa cabinet set the Result URL to your store's …/payments/robokassa/result endpoint and the Success/Fail URLs to your store's /checkout/return. The buyer pays on Robokassa's page; we confirm via the OpState status check.",
+          "paypal": "Enter your PayPal app Client ID + Secret (PayPal Developer dashboard). The buyer is redirected to PayPal to approve, then we capture + confirm the payment server-side on return. ⚠️ PayPal can't charge KZT — set your store currency to USD/EUR. Test mode uses your sandbox credentials.",
           "manual": "No API. Orders recorded as payment_status=\"manual\", refunds are record-only — you process money externally (cash / bank transfer).",
           "other": "For providers we haven't integrated. You'll need to manually record references in the Returns workflow."
         }

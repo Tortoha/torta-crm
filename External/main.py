@@ -5234,6 +5234,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from typing import Any
 
 
@@ -5415,8 +5416,547 @@ def stripe_parse_event(raw_body: bytes) -> dict:
     }
 
 
-# -- Non-Stripe provider integrations removed: Stripe is the only API-native
-# gateway; every other gateway runs as manual/other (record-only). See git history. --
+# ── Kaspi via AiPay (aipay.kz / API on paylab.kz) ──────────────────────────
+# Kaspi has no public API; AiPay bridges it. This is an ASYNC push-payment,
+# NOT a card form: we create an invoice for the customer's Kaspi phone, AiPay
+# pushes a payment request into the customer's Kaspi app via the merchant's
+# logged-in POS terminal, and the customer approves inside Kaspi. We confirm
+# the payment server-to-server via GET /invoices/{id} (the webhook payload is
+# undocumented + unsigned, so we never trust it — at most a poll trigger).
+# Amounts are WHOLE TENGE (KZT), not minor units.
+#
+# Merchant credentials (stored encrypted in crm_payment_credentials): AiPay
+# account email + password → short-lived JWT (cached). The merchant must have
+# an ACTIVE POS terminal logged into their Kaspi (done in the AiPay dashboard
+# via OTP) before any invoice can be delivered.
+#
+# ⚠️ NOT YET LIVE-TESTED — see Notes/Roadmap "AiPay" + Notes/Kaspi Integration.
+# Verify in AiPay sandbox (with a logged-in POS) before enabling for real money.
+
+_AIPAY_BASE_TEST = os.getenv("AIPAY_API_BASE_TEST", "https://dev.paylab.kz/api/v2").rstrip("/")
+_AIPAY_BASE_LIVE = os.getenv("AIPAY_API_BASE", "").rstrip("/")  # set once AiPay gives a prod URL
+
+# JWT cache keyed by merchant email — avoids logging in on every API call.
+# Access tokens are short-lived; cache ~12 min and re-login on expiry/401.
+_AIPAY_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
+_AIPAY_TOKEN_TTL = 12 * 60
+
+
+def _aipay_base(is_test_mode: bool) -> str:
+    if is_test_mode:
+        return _AIPAY_BASE_TEST
+    return _AIPAY_BASE_LIVE or _AIPAY_BASE_TEST
+
+
+def _aipay_login(creds: dict, is_test_mode: bool) -> tuple[str, str]:
+    """Returns (access_token, error). Logs in with the merchant's AiPay
+    email+password and returns a JWT bearer token."""
+    email = (creds.get("email") or "").strip()
+    password = creds.get("password") or ""
+    if not email or not password:
+        return "", "Missing AiPay email/password"
+    body = json.dumps({"email": email, "password": password}).encode("utf-8")
+    r = _http_request("POST", f"{_aipay_base(is_test_mode)}/auth/login",
+                       headers={"Content-Type": "application/json"}, body=body)
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        token = ((r["body"].get("data") or {}).get("access_token") or "").strip()
+        if token:
+            return token, ""
+        return "", "AiPay login returned no access_token"
+    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return "", msg or f"AiPay login failed (HTTP {r['status']})"
+
+
+def _aipay_token(creds: dict, is_test_mode: bool, *, force: bool = False) -> tuple[str, str]:
+    """Cached JWT for the merchant. Re-logs in when missing/expired/forced."""
+    email = (creds.get("email") or "").strip().lower()
+    if not force and email in _AIPAY_TOKEN_CACHE:
+        token, exp = _AIPAY_TOKEN_CACHE[email]
+        if time.time() < exp:
+            return token, ""
+    token, err = _aipay_login(creds, is_test_mode)
+    if err:
+        return "", err
+    _AIPAY_TOKEN_CACHE[email] = (token, time.time() + _AIPAY_TOKEN_TTL)
+    return token, ""
+
+
+def _aipay_request(method: str, path: str, creds: dict, is_test_mode: bool,
+                    *, body: bytes | None = None) -> dict:
+    """Authenticated AiPay request with one automatic re-auth on 401."""
+    token, err = _aipay_token(creds, is_test_mode)
+    if err:
+        return {"status": 0, "body": {"error": {"message": err}}}
+    url = f"{_aipay_base(is_test_mode)}{path}"
+    headers = {"Content-Type": "application/json"}
+    r = _http_request(method, url, headers=headers, body=body, bearer=token)
+    if r["status"] == 401:
+        # Token expired/invalidated — force a fresh login once and retry.
+        token, err = _aipay_token(creds, is_test_mode, force=True)
+        if err:
+            return {"status": 401, "body": {"error": {"message": err}}}
+        r = _http_request(method, url, headers=headers, body=body, bearer=token)
+    return r
+
+
+# AiPay numeric status_code -> our canonical payment status. 9 = paid (terminal).
+_AIPAY_STATUS_BY_CODE = {
+    1: "created", 2: "pending", 3: "no_account", 5: "canceled",
+    7: "expired", 8: "canceled", 9: "paid", 11: "refunded", 12: "rejected",
+}
+
+
+def _aipay_canonical_status(inv: dict) -> str:
+    """Prefer the string status if present, else map the numeric status_code."""
+    s = (inv.get("status") or "").strip().lower()
+    if s:
+        return s
+    return _AIPAY_STATUS_BY_CODE.get(inv.get("status_code"), "unknown")
+
+
+def aipay_create_invoice(creds: dict, amount_tenge: int, account_phone: str,
+                          *, message: str = "", is_test_mode: bool = True) -> dict:
+    """Create a Kaspi invoice. amount_tenge is WHOLE tenge (KZT)."""
+    account = (account_phone or "").strip()
+    if not account:
+        return _err("Customer Kaspi phone number is required")
+    if int(amount_tenge) < 1:
+        return _err("Amount must be at least 1 tenge")
+    payload: dict = {"account": account[:20], "amount": int(amount_tenge)}
+    if message:
+        payload["message"] = message[:80]
+    body = json.dumps(payload).encode("utf-8")
+    r = _aipay_request("POST", "/invoices", creds, is_test_mode, body=body)
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        inv = r["body"].get("data") or {}
+        return _ok({
+            "intent_id": inv.get("id", ""),
+            "status":    _aipay_canonical_status(inv),
+            "ref":       inv.get("internal_id") or inv.get("ref"),
+        }, r["body"])
+    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"AiPay invoice create failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def aipay_get_invoice(creds: dict, invoice_id: str, *, is_test_mode: bool = True) -> dict:
+    """Fetch invoice status server-to-server — the source of truth for 'paid'."""
+    if not invoice_id:
+        return _err("Missing invoice id")
+    r = _aipay_request("GET", f"/invoices/{invoice_id}", creds, is_test_mode)
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        inv = r["body"].get("data") or {}
+        return _ok({
+            "intent_id":    inv.get("id", ""),
+            "status":       _aipay_canonical_status(inv),
+            "amount":       inv.get("amount", 0) or 0,   # whole tenge (KZT)
+            "currency":     "KZT",
+            "charge_id":    inv.get("id", ""),
+            "account_name": inv.get("account_name", ""),
+            "paid_at":      inv.get("paid_at"),
+        }, r["body"])
+    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"AiPay invoice fetch failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def aipay_refund(creds: dict, invoice_id: str, *, is_test_mode: bool = True) -> dict:
+    """Refund a paid invoice (PUT /invoices/{id}/refund). Async on AiPay's side."""
+    if not invoice_id:
+        return _err("Missing invoice id")
+    r = _aipay_request("PUT", f"/invoices/{invoice_id}/refund", creds, is_test_mode)
+    if r["status"] in (200, 202) and isinstance(r["body"], dict):
+        return _ok({"result": "accepted"}, r["body"])
+    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"AiPay refund failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── Halyk Bank ePay (epayment.kz) ──────────────────────────────────────────
+# Hosted widget/page gateway (PCI-light — the card is entered on Halyk's page via
+# their payment-api.js; never touches us). OAuth2 client_credentials; the PAYMENT
+# token is SCOPED (invoiceID+amount+terminal+secret_hash+postLink). Flow: server
+# mints a scoped token → frontend halyk.pay({auth: token, …}) → buyer pays on
+# Halyk → postLink (server) + backLink (return). We confirm 'paid' server-to-server
+# via check-status (statusName CHARGE). Amounts are major units (KZT).
+# ⚠️ NOT YET LIVE-TESTED.
+
+_HALYK_OAUTH = {"test": "https://test-epay-oauth.epayment.kz", "live": "https://epay-oauth.homebank.kz"}
+_HALYK_API   = {"test": "https://test-epay-api.epayment.kz",   "live": "https://epay-api.homebank.kz"}
+_HALYK_JS    = {"test": "https://test-epay.epayment.kz/payform/payment-api.js",
+                "live": "https://epay.homebank.kz/payform/payment-api.js"}
+_HALYK_SCOPE = "webapi usermanagement email_send verification statement statistics payment"
+# Halyk statusName → canonical. CHARGE = funds debited (paid); AUTH = held (2-step).
+_HALYK_STATUS = {
+    "charge": "paid", "auth": "pending", "new": "pending", "3d": "pending",
+    "verified": "pending", "cancel": "canceled", "reject": "failed",
+    "failed": "failed", "refund": "refunded",
+}
+
+
+def _halyk_env(is_test_mode: bool) -> str:
+    return "test" if is_test_mode else "live"
+
+
+def halyk_get_token(creds: dict, *, is_test_mode: bool = True,
+                     scope_payment: dict | None = None) -> dict:
+    """OAuth2 client_credentials token. For a payment pass scope_payment with
+    invoiceID/amount/currency/terminal/secret_hash(/postLink) — the widget's
+    `auth` needs that scoped token; for reads (status) omit it."""
+    payload = {
+        "grant_type":    "client_credentials",
+        "scope":         _HALYK_SCOPE,
+        "client_id":     creds.get("client_id", ""),
+        "client_secret": creds.get("client_secret", ""),
+    }
+    if scope_payment:
+        payload.update({k: str(v) for k, v in scope_payment.items()})
+    body = urllib.parse.urlencode(payload).encode("utf-8")
+    r = _http_request("POST", f"{_HALYK_OAUTH[_halyk_env(is_test_mode)]}/oauth2/token",
+                       headers={"Content-Type": "application/x-www-form-urlencoded"}, body=body)
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("access_token"):
+        return _ok(r["body"], r["body"])
+    msg = (r["body"] or {}).get("error_description", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"Halyk token failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def halyk_check_status(creds: dict, invoice_id: str, *, is_test_mode: bool = True) -> dict:
+    """Authoritative status (server-to-server) — confirms 'paid' (statusName CHARGE)."""
+    tok = halyk_get_token(creds, is_test_mode=is_test_mode)
+    if not tok["ok"]:
+        return _err(tok["error"])
+    r = _http_request(
+        "GET",
+        f"{_HALYK_API[_halyk_env(is_test_mode)]}/check-status/payment/transaction/{invoice_id}",
+        bearer=tok["data"].get("access_token", ""))
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        txn  = r["body"].get("transaction") or {}
+        name = (txn.get("statusName") or "").strip().lower()
+        return _ok({
+            "intent_id": str(invoice_id),
+            "status":    _HALYK_STATUS.get(name, "pending"),
+            "amount":    txn.get("amount", 0) or 0,   # major units (KZT)
+            "currency":  txn.get("currency", "KZT") or "KZT",
+            "charge_id": txn.get("id", "") or str(invoice_id),
+        }, r["body"])
+    return _err(f"Halyk status failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+# ── CloudPayments (cloudpayments.kz) ────────────────────────────────────────
+# Hosted popup-widget gateway (PCI-light — the card is entered in CloudPayments'
+# own widget loaded from widget.cloudpayments.kz; never touches us). Auth is HTTP
+# Basic (Public ID : API Secret). The widget is CLIENT-initiated (no server
+# "create" call) — init_payment just mints our InvoiceId + hands the storefront a
+# `cloudpayments_widget` config. The buyer pays in the popup → onSuccess (SAME
+# page, no redirect) → place_order re-verifies server-to-server via POST
+# /payments/find {InvoiceId}: we confirm 'paid' ONLY on Status == Completed.
+# A public Pay webhook (Content-HMAC signed) is the backup confirmation path.
+# Amounts are MAJOR units (KZT/RUB decimal — NOT minor like Stripe).
+# ⚠️ NOT YET LIVE-TESTED.
+
+_CP_API_BASE  = os.getenv("CLOUDPAYMENTS_API_BASE", "https://api.cloudpayments.kz").rstrip("/")
+_CP_WIDGET_JS = os.getenv("CLOUDPAYMENTS_WIDGET_JS",
+                          "https://widget.cloudpayments.kz/bundles/cloudpayments")
+# CloudPayments transaction Status → canonical. Completed = funds captured (paid);
+# Authorized = 2-stage HOLD (NOT captured — must NOT ship); Declined/Cancelled fail.
+_CP_STATUS = {
+    "completed": "paid", "authorized": "pending", "awaitingauthentication": "pending",
+    "cancelled": "canceled", "declined": "failed",
+}
+
+
+def _cp_post(creds: dict, path: str, payload: dict) -> dict:
+    """Authenticated CloudPayments API call (HTTP Basic: Public ID : API Secret)."""
+    public_id  = (creds.get("public_id") or "").strip()
+    api_secret = (creds.get("api_secret") or "").strip()
+    if not public_id or not api_secret:
+        return {"status": 0, "body": {"Success": False, "Message": "Missing CloudPayments credentials"}}
+    body = json.dumps(payload).encode("utf-8")
+    return _http_request("POST", f"{_CP_API_BASE}{path}",
+                         headers={"Content-Type": "application/json"},
+                         body=body, basic_auth=(public_id, api_secret))
+
+
+def cloudpayments_find(creds: dict, invoice_id: str) -> dict:
+    """Authoritative status by OUR InvoiceId (server-to-server) — the source of
+    truth for 'paid'. POST /payments/find. Success=false means no transaction for
+    this invoice yet (buyer abandoned / still pending) → treat as pending."""
+    if not invoice_id:
+        return _err("Missing invoice id")
+    r = _cp_post(creds, "/payments/find", {"InvoiceId": str(invoice_id)})
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        b = r["body"]
+        if not b.get("Success"):
+            return _ok({"intent_id": str(invoice_id), "status": "pending",
+                        "amount": 0, "currency": "KZT", "charge_id": ""}, b)
+        m    = b.get("Model") or {}
+        name = (m.get("Status") or "").strip().lower()
+        return _ok({
+            "intent_id": str(invoice_id),
+            "status":    _CP_STATUS.get(name, "pending"),
+            "amount":    m.get("Amount", 0) or 0,            # major units (KZT)
+            "currency":  m.get("Currency", "KZT") or "KZT",
+            "charge_id": str(m.get("TransactionId", "") or ""),
+        }, b)
+    msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"CloudPayments status failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def cloudpayments_verify_hmac(raw_body: bytes, header_hmac: str, api_secret: str) -> bool:
+    """Validate a CloudPayments webhook: Base64(HMAC-SHA256(raw_body, api_secret))
+    must equal the Content-HMAC / X-Content-HMAC header (constant-time compare)."""
+    if not header_hmac or not api_secret:
+        return False
+    digest   = hmac.new(api_secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
+    expected = base64.b64encode(digest).decode("ascii")
+    return hmac.compare_digest(expected, header_hmac.strip())
+
+
+# ── Robokassa (robokassa.kz) ────────────────────────────────────────────────
+# Redirect gateway (buyer is sent to auth.robokassa.kz, pays, returns) — same UX
+# family as Halyk; reuses CheckoutReturn.jsx. TWO passwords: Password#1 signs the
+# init redirect (+ SuccessURL); Password#2 signs the ResultURL callback + the
+# OpState status web-service. The paid decision is ALWAYS server-to-server via
+# OpStateExt (StateCode 100=completed / 50=funds received) — never trust the
+# callback alone. Hash algo is merchant-configurable (default MD5; SHA256/SHA512).
+# Amounts are MAJOR units (KZT decimal). ⚠️ NOT YET LIVE-TESTED.
+
+_ROBO_INDEX = os.getenv("ROBOKASSA_INDEX_URL", "https://auth.robokassa.kz/Merchant/Index.aspx")
+_ROBO_WS    = os.getenv("ROBOKASSA_WS_URL",
+                        "https://auth.robokassa.kz/Merchant/WebService/Service.asmx")
+_ROBO_NS    = "{http://merchant.roboxchange.com/WebService/}"
+# Robokassa OpState StateCode → canonical. 100 = completed (settled), 50 = funds
+# received from buyer (crediting) — both count as paid. 20 = HOLD (2-stage, NOT
+# paid). 10 = cancelled, 60 = refunded, 5/80 = in-flight.
+_ROBO_STATE = {
+    100: "paid", 50: "paid", 20: "pending", 5: "pending", 80: "pending",
+    10: "canceled", 60: "refunded",
+}
+
+
+def _robo_hash(algo: str, s: str) -> str:
+    fn = {"md5": hashlib.md5, "sha256": hashlib.sha256,
+          "sha512": hashlib.sha512}.get((algo or "md5").lower(), hashlib.md5)
+    return fn(s.encode("utf-8")).hexdigest()
+
+
+def robokassa_build_redirect(creds: dict, *, out_sum: str, inv_id: str,
+                              description: str, is_test_mode: bool) -> str:
+    """Build the signed redirect URL. Init signature = HASH(login:OutSum:InvId:Password#1)."""
+    login = (creds.get("merchant_login") or "").strip()
+    algo  = creds.get("hash_algo") or "md5"
+    sig   = _robo_hash(algo, f"{login}:{out_sum}:{inv_id}:{creds.get('password1', '')}")
+    params = {
+        "MerchantLogin":  login,
+        "OutSum":         out_sum,
+        "InvId":          inv_id,
+        "Description":    description[:100],
+        "SignatureValue": sig,
+        "Culture":        "ru",
+        "Encoding":       "utf-8",
+    }
+    if is_test_mode:
+        params["IsTest"] = "1"
+    return f"{_ROBO_INDEX}?{urllib.parse.urlencode(params)}"
+
+
+def robokassa_verify_result_sig(creds: dict, out_sum: str, inv_id: str, signature: str) -> bool:
+    """Validate a ResultURL callback: HASH(OutSum:InvId:Password#2) == SignatureValue
+    (hex, case-insensitive, constant-time)."""
+    if not signature:
+        return False
+    algo     = creds.get("hash_algo") or "md5"
+    expected = _robo_hash(algo, f"{out_sum}:{inv_id}:{creds.get('password2', '')}")
+    return hmac.compare_digest(expected.lower(), signature.strip().lower())
+
+
+def robokassa_opstate(creds: dict, inv_id: str) -> dict:
+    """Authoritative status via OpStateExt (server-to-server) — the source of truth
+    for 'paid'. Signature = HASH(login:InvoiceID:Password#2). Parses Result.Code
+    (0 = found / 3 = not found yet → pending) + State.Code (100/50 = paid) +
+    Info.OutSum (the amount we requested, major units KZT)."""
+    if not inv_id:
+        return _err("Missing invoice id")
+    login = (creds.get("merchant_login") or "").strip()
+    algo  = creds.get("hash_algo") or "md5"
+    sig   = _robo_hash(algo, f"{login}:{inv_id}:{creds.get('password2', '')}")
+    url   = (f"{_ROBO_WS}/OpStateExt?MerchantLogin={urllib.parse.quote(login)}"
+             f"&InvoiceID={urllib.parse.quote(str(inv_id))}&Signature={sig}")
+    r = _http_request("GET", url)
+    if r["status"] != 200 or not isinstance(r["body"], str):
+        return _err(f"Robokassa OpState failed (HTTP {r['status']})")
+    try:
+        root = ET.fromstring(r["body"])
+    except ET.ParseError:
+        return _err("Robokassa OpState returned unparseable XML")
+    result_code = root.findtext(f".//{_ROBO_NS}Result/{_ROBO_NS}Code")
+    if result_code != "0":
+        # 3 = no operation with this InvoiceID yet (auth OK, buyer hasn't paid) →
+        # pending, not an error. 1 = bad signature, 2 = bad/inactive login.
+        if result_code == "3":
+            return _ok({"intent_id": str(inv_id), "status": "pending", "amount": 0,
+                        "currency": "KZT", "charge_id": ""}, {"result_code": "3"})
+        return _err(f"Robokassa OpState result code {result_code}")
+    state_code = root.findtext(f".//{_ROBO_NS}State/{_ROBO_NS}Code")
+    out_sum    = root.findtext(f".//{_ROBO_NS}Info/{_ROBO_NS}OutSum")
+    inc_sum    = root.findtext(f".//{_ROBO_NS}Info/{_ROBO_NS}IncSum")
+    try:
+        sc = int(state_code) if state_code is not None else 0
+    except ValueError:
+        sc = 0
+    # ⚠️ Robokassa echoes OutSum = amount CREDITED to the store (NET of commission)
+    # and IncSum = amount the buyer PAID. Which one equals the gross order total
+    # depends on the merchant's tariff (buyer-pays-fee → gross == OutSum; store-pays-
+    # fee → gross == IncSum). So we hand BOTH to place_order as gross candidates —
+    # comparing the cart total against OutSum alone (net) would 409-reject every
+    # legitimately-paid order once commission > ~2 tenge.
+    amounts = []
+    for x in (out_sum, inc_sum):
+        try:
+            if x:
+                amounts.append(float(x))
+        except (TypeError, ValueError):
+            pass
+    return _ok({
+        "intent_id": str(inv_id),
+        "status":    _ROBO_STATE.get(sc, "pending"),
+        "amount":    float(out_sum) if out_sum else 0,   # major units (KZT)
+        "amounts":   amounts,                            # gross candidates: [OutSum, IncSum]
+        "currency":  "KZT",
+        "charge_id": str(inv_id),
+    }, {"state_code": state_code})
+
+
+# ── PayPal (Orders API v2) ──────────────────────────────────────────────────
+# Redirect gateway, intent=CAPTURE. Flow: create order → redirect buyer to the
+# "approve" link → buyer returns to /checkout/return → place_order CAPTURES the
+# order server-side and verifies status == COMPLETED. ⭐ Money moves ONLY on our
+# capture, so an abandoned (approved-but-not-captured) order charges nothing — no
+# "paid but no order" gap, hence no webhook needed. Auth = OAuth2 client_credentials
+# (Basic client_id:secret → Bearer). Amounts are MAJOR units (decimal string).
+# ⚠️ PayPal does NOT support KZT — the store currency must be a PayPal currency
+# (USD/EUR/…), i.e. PayPal targets international buyers. ⚠️ NOT YET LIVE-TESTED.
+
+_PAYPAL_BASE = {"test": "https://api-m.sandbox.paypal.com", "live": "https://api-m.paypal.com"}
+
+
+def _paypal_env(is_test_mode: bool) -> str:
+    return "test" if is_test_mode else "live"
+
+
+def paypal_get_token(creds: dict, *, is_test_mode: bool = True) -> dict:
+    """OAuth2 client_credentials → Bearer access token."""
+    cid = (creds.get("client_id") or "").strip()
+    sec = (creds.get("client_secret") or "").strip()
+    if not cid or not sec:
+        return _err("Missing PayPal client_id/client_secret")
+    r = _http_request("POST", f"{_PAYPAL_BASE[_paypal_env(is_test_mode)]}/v1/oauth2/token",
+                       headers={"Content-Type": "application/x-www-form-urlencoded"},
+                       body=b"grant_type=client_credentials", basic_auth=(cid, sec))
+    if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("access_token"):
+        return _ok(r["body"], r["body"])
+    msg = (r["body"] or {}).get("error_description", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"PayPal token failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def _paypal_api(creds: dict, method: str, path: str, is_test_mode: bool,
+                 *, body: bytes | None = None, idem: str = "") -> dict:
+    """Authenticated PayPal Orders v2 call (Bearer)."""
+    tok = paypal_get_token(creds, is_test_mode=is_test_mode)
+    if not tok["ok"]:
+        return {"status": 0, "body": {"message": tok["error"]}}
+    headers = {"Content-Type": "application/json",
+               "Authorization": f"Bearer {tok['data'].get('access_token', '')}"}
+    if idem:
+        headers["PayPal-Request-Id"] = idem
+    return _http_request(method, f"{_PAYPAL_BASE[_paypal_env(is_test_mode)]}{path}",
+                         headers=headers, body=body)
+
+
+def paypal_create_order(creds: dict, *, amount: float, currency: str,
+                         return_url: str, cancel_url: str, reference: str = "",
+                         is_test_mode: bool = True) -> dict:
+    """Create a CAPTURE-intent order → {intent_id (order id), approve_url, status}."""
+    payload = {
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "amount": {"currency_code": (currency or "USD").upper(),
+                       "value": f"{float(amount):.2f}"},
+            **({"custom_id": reference} if reference else {}),
+        }],
+        "application_context": {
+            "return_url": return_url, "cancel_url": cancel_url,
+            "user_action": "PAY_NOW", "shipping_preference": "NO_SHIPPING",
+        },
+    }
+    body = json.dumps(payload).encode("utf-8")
+    r = _paypal_api(creds, "POST", "/v2/checkout/orders", is_test_mode,
+                    body=body, idem="ord-" + secrets.token_urlsafe(16))
+    if r["status"] in (200, 201) and isinstance(r["body"], dict) and r["body"].get("id"):
+        b = r["body"]
+        approve = ""
+        for ln in (b.get("links") or []):
+            if ln.get("rel") in ("approve", "payer-action"):
+                approve = ln.get("href", "")
+                break
+        return _ok({"intent_id": b["id"], "approve_url": approve,
+                    "status": b.get("status", "CREATED")}, b)
+    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"PayPal create order failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def _paypal_extract(order: dict) -> dict:
+    """Pull status + captured amount + capture id from an order/capture response."""
+    status, amount, currency, capture_id = order.get("status", ""), 0.0, "USD", ""
+    for pu in (order.get("purchase_units") or []):
+        caps = ((pu.get("payments") or {}).get("captures")) or []
+        if caps:
+            cap = caps[0]
+            capture_id = cap.get("id", "") or capture_id
+            amt = cap.get("amount") or {}
+            amount = float(amt.get("value", 0) or 0)
+            currency = amt.get("currency_code", currency) or currency
+        elif pu.get("amount"):                      # not captured yet → order amount
+            amount = float(pu["amount"].get("value", 0) or 0)
+            currency = pu["amount"].get("currency_code", currency) or currency
+    return {"status": status, "amount": amount, "currency": currency, "capture_id": capture_id}
+
+
+def paypal_get_order(creds: dict, order_id: str, *, is_test_mode: bool = True) -> dict:
+    """GET the order; if APPROVED, CAPTURE it (money moves HERE), then report status.
+    place_order treats only 'COMPLETED' as terminal. Capture is idempotent: a repeat
+    returns 422 (already captured) → we re-read the order."""
+    if not order_id:
+        return _err("Missing order id")
+    r = _paypal_api(creds, "GET", f"/v2/checkout/orders/{order_id}", is_test_mode)
+    if r["status"] != 200 or not isinstance(r["body"], dict):
+        msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else ""
+        return _err(msg or f"PayPal get order failed (HTTP {r['status']})")
+    info = _paypal_extract(r["body"])
+    if info["status"] == "APPROVED":
+        cap = _paypal_api(creds, "POST", f"/v2/checkout/orders/{order_id}/capture",
+                          is_test_mode, body=b"", idem="cap-" + str(order_id))
+        if cap["status"] in (200, 201) and isinstance(cap["body"], dict):
+            info = _paypal_extract(cap["body"])
+        elif cap["status"] == 422:                  # already captured → re-read
+            r2 = _paypal_api(creds, "GET", f"/v2/checkout/orders/{order_id}", is_test_mode)
+            if r2["status"] == 200 and isinstance(r2["body"], dict):
+                info = _paypal_extract(r2["body"])
+        else:
+            msg = (cap["body"] or {}).get("message", "") if isinstance(cap["body"], dict) else ""
+            return _err(msg or f"PayPal capture failed (HTTP {cap['status']})")
+    return _ok({
+        "intent_id": str(order_id),
+        "status":    info["status"],            # raw PayPal status (terminal = COMPLETED)
+        "amount":    info["amount"],            # major units (decimal)
+        "currency":  info["currency"],
+        "charge_id": info["capture_id"] or str(order_id),
+    }, r["body"])
 
 
 def create_intent(provider: str, creds: dict, *, amount: float, currency: str,
@@ -5437,6 +5977,23 @@ def create_intent(provider: str, creds: dict, *, amount: float, currency: str,
                                      order_metadata=order_metadata,
                                      idempotency_key=idempotency_key,
                                      stripe_account_id=stripe_account_id)
+    if provider == "kaspi_aipay":
+        # Kaspi/AiPay needs the customer phone + runs an async push-payment flow,
+        # so the invoice is created in init_payment (which has data.phone), not here.
+        return _err("Kaspi (AiPay) payments are initialized via init-payment")
+    if provider == "halyk_epay":
+        # Halyk mints a payment-scoped OAuth token + uses halyk.pay JS → init_payment.
+        return _err("Halyk ePay payments are initialized via init-payment")
+    if provider == "cloudpayments":
+        # CloudPayments' popup widget is client-initiated (no server create call);
+        # the storefront opens it with our InvoiceId → handled in init_payment.
+        return _err("CloudPayments payments are initialized via init-payment")
+    if provider == "robokassa":
+        # Robokassa is a redirect gateway — the signed URL is built in init_payment.
+        return _err("Robokassa payments are initialized via init-payment")
+    if provider == "paypal":
+        # PayPal order is created in init_payment (needs the project's return_url).
+        return _err("PayPal payments are initialized via init-payment")
     return _err(f"Unknown provider: {provider}")
 
 
@@ -5446,6 +6003,16 @@ def get_intent(provider: str, creds: dict, *, intent_id: str,
         return _ok({"intent_id": intent_id, "status": "manual_required"})
     if provider == "stripe":
         return stripe_get_intent(creds, intent_id, stripe_account_id)
+    if provider == "kaspi_aipay":
+        return aipay_get_invoice(creds, intent_id, is_test_mode=is_test_mode)
+    if provider == "halyk_epay":
+        return halyk_check_status(creds, intent_id, is_test_mode=is_test_mode)
+    if provider == "cloudpayments":
+        return cloudpayments_find(creds, intent_id)
+    if provider == "robokassa":
+        return robokassa_opstate(creds, intent_id)
+    if provider == "paypal":
+        return paypal_get_order(creds, intent_id, is_test_mode=is_test_mode)
     return _err(f"Unknown provider: {provider}")
 
 
@@ -5461,6 +6028,20 @@ def verify_webhook(provider: str, creds: dict, *, raw_body: bytes,
     if provider == "stripe":
         return stripe_verify_webhook(raw_body, h.get("stripe-signature", ""),
                                       creds.get("webhook_secret", ""))
+    if provider == "kaspi_aipay":
+        # AiPay webhooks are undocumented + unsigned — never trust the payload.
+        # Kaspi payments are confirmed server-to-server via GET /invoices/{id}
+        # (storefront polls payment-status; place_order re-verifies before paid).
+        return False, "AiPay webhooks are unsigned — confirmed via API, not webhook"
+    if provider == "halyk_epay":
+        return False, "Halyk ePay uses its own postLink endpoint"
+    if provider == "cloudpayments":
+        ok = cloudpayments_verify_hmac(
+            raw_body, h.get("content-hmac") or h.get("x-content-hmac") or "",
+            creds.get("api_secret", ""))
+        return (ok, "" if ok else "CloudPayments HMAC mismatch")
+    if provider == "robokassa":
+        return False, "Robokassa validates its ResultURL signature in the endpoint"
     if provider in ("manual", "other"):
         return False, "Provider does not support webhooks"
     return False, f"Unknown provider: {provider}"
@@ -5504,6 +6085,25 @@ def _get_org_payment_config(project_id: int) -> tuple[str, dict | None, bool, st
              row.get("stripe_account_id") or "")
 
 
+# Online (card/gateway) methods that drive the strict-mode init-payment flow on
+# the storefront (vs offline manual/other which are record-only). Listing a method
+# here makes _get_enabled_payment_methods mark it `online: true` so the storefront
+# launches its gateway UI, and is the gate for strict server-side verification in
+# place_order. Keep in sync with the init_payment + place_order branches.
+_ONLINE_PAY_METHODS = ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
+
+# Settlement-currency whitelist per gateway. A KZ gateway charges the raw cart-total
+# NUMBER as its settlement currency, so a store priced in another currency would be
+# silently mischarged (e.g. 50.00 USD → 50 KZT). init_payment refuses (manual
+# fallback) when the store currency isn't supported. Stripe/PayPal aren't listed —
+# they accept many currencies (and PayPal rejects KZT on its own side at create-order).
+_GATEWAY_CCY = {
+    "kaspi_aipay":   {"KZT"},
+    "halyk_epay":    {"KZT"},
+    "robokassa":     {"KZT"},
+    "cloudpayments": {"KZT", "RUB"},
+}
+
 _PAY_METHOD_FALLBACK_LABELS = {
     "stripe": "Card", "manual": "Cash / Pay on delivery", "other": "Other",
 }
@@ -5512,8 +6112,9 @@ _PAY_METHOD_FALLBACK_LABELS = {
 def _get_enabled_payment_methods(project_id: int) -> list[dict]:
     """Enabled payment methods for the project's org (WooCommerce/Shopify model —
     methods coexist, the customer picks one at checkout). Returns
-    [{method, label, instructions, online}] in sort order. The 'stripe' (online
-    card) entry is only included when the org actually has connected credentials.
+    [{method, label, instructions, online}] in sort order. An ONLINE method is only
+    included when it IS the org's connected gateway (creds present); otherwise it's
+    toggled on in the UI but can't move money, so we hide it.
     Defensive fallback to a single manual method when the org has no rows yet."""
     rows = db_all(
         "SELECT pm.method, pm.display_label, pm.instructions, pm.sort_order"
@@ -5524,18 +6125,22 @@ def _get_enabled_payment_methods(project_id: int) -> list[dict]:
         (project_id,)
     )
     provider, creds, _is_test, _acct = _get_org_payment_config(project_id)
-    stripe_usable = (provider == "stripe" and bool(creds))
+    # An org has exactly ONE connected online gateway. An online method is only
+    # offerable when it IS that connected provider — otherwise it's toggled on in the
+    # UI but can't move money (init_payment would fall back to manual). Hide it so the
+    # storefront never advertises a disconnected gateway.
+    gateway_usable = bool(creds) and provider in _ONLINE_PAY_METHODS
 
     out: list[dict] = []
     for r in rows:
         m = r["method"]
-        if m == "stripe" and not stripe_usable:
-            continue   # enabled in UI but gateway not connected → not offerable
+        if m in _ONLINE_PAY_METHODS and not (gateway_usable and m == provider):
+            continue   # online method enabled in UI but its gateway isn't connected
         out.append({
             "method":       m,
             "label":        r["display_label"] or _PAY_METHOD_FALLBACK_LABELS.get(m, m),
             "instructions": r["instructions"] or "",
-            "online":       m == "stripe",
+            "online":       m in _ONLINE_PAY_METHODS,
         })
     if not out:
         out = [{"method": "manual",
@@ -5685,6 +6290,9 @@ def _compute_cart_total(cursor, project_id: int, user_id: int,
                     discount = dv
 
     total = round(subtotal + final_shipping - discount, 2)
+    cursor.execute("SELECT COALESCE(currency, 'USD') AS currency FROM crm_projects WHERE id=%s",
+                   (project_id,))
+    proj_currency = (((cursor.fetchone() or {}).get("currency")) or "USD").upper()
     return {
         "ok": True,
         "subtotal":    round(subtotal, 2),
@@ -5692,7 +6300,7 @@ def _compute_cart_total(cursor, project_id: int, user_id: int,
         "discount":    round(discount, 2),
         "total":       total,
         "items_count": items_count,
-        "currency":    "USD",   # TODO: surface per-org/project currency once multi-currency lands
+        "currency":    proj_currency,   # real per-project currency (crm_projects.currency)
     }
 
 
@@ -5726,6 +6334,213 @@ def init_payment(data: PlaceOrderRequest, request: Request,
                                        data.promo_code)
         if not totals["ok"]:
             raise HTTPException(400, totals["error"])
+
+    # Currency guard: a KZ gateway charges the raw cart-total number AS its settlement
+    # currency, so a store priced in anything else would be mischarged (e.g. 50 USD
+    # sent to Kaspi as 50 KZT). Refuse + fall back to manual instead of mislabeling.
+    _supported_ccy = _GATEWAY_CCY.get(chosen)
+    _store_ccy     = (totals["currency"] or "").upper()
+    if _supported_ccy and provider == chosen and creds and _store_ccy not in _supported_ccy:
+        return {
+            "provider": "manual", "intent_id": "", "client_secret": "",
+            "redirect_url": "", "publishable_key": "",
+            "amount": totals["total"], "currency": totals["currency"],
+            "needs_payment_intent": False,
+            "warning": f"{chosen} settles only in {'/'.join(sorted(_supported_ccy))}; "
+                       f"store currency is {_store_ccy} — falling back to manual.",
+        }
+
+    # Kaspi (AiPay) — async push-payment. We have the customer phone here, so
+    # create the invoice now and tell the storefront to poll payment-status
+    # until it flips to paid. NOTE: amount is sent as WHOLE TENGE — this assumes
+    # the merchant's store currency is KZT (Kaspi only settles in tenge), so the
+    # cart-total number is already in tenge.
+    if chosen == "kaspi_aipay":
+        if provider != "kaspi_aipay" or not creds:
+            return {
+                "provider": "manual", "intent_id": "", "client_secret": "",
+                "redirect_url": "", "publishable_key": "",
+                "amount": totals["total"], "currency": totals["currency"],
+                "needs_payment_intent": False,
+                "warning": "Kaspi not connected; falling back to manual",
+            }
+        phone = clean(data.phone, 20)
+        if not phone:
+            raise HTTPException(400, "Kaspi phone number is required")
+        amount_tenge = int(round(totals["total"]))
+        res = aipay_create_invoice(
+            creds, amount_tenge, phone,
+            message=(api_key_record.get("name") or "Online order"),
+            is_test_mode=is_test_mode,
+        )
+        if not res["ok"]:
+            raise HTTPException(400, f"Kaspi payment error: {res['error']}")
+        return {
+            "provider":      "kaspi_aipay",
+            "intent_id":     res["data"].get("intent_id", ""),
+            "client_secret": "",
+            "redirect_url":  "",
+            "publishable_key": "",
+            "amount":        totals["total"],
+            "currency":      totals["currency"],
+            "needs_payment_intent": False,
+            "kaspi_poll":    True,   # storefront polls /orders/payment-status/{id}
+            "is_test_mode":  is_test_mode,
+        }
+
+    # Halyk ePay — hosted widget/page. Mint a payment-scoped OAuth token and hand
+    # the storefront a `halyk_pay` config; the frontend loads payment-api.js and
+    # calls halyk.pay({auth, …}). The card is entered on Halyk (PCI-light); the
+    # buyer returns to /checkout/return → place_order re-verifies via check-status.
+    if chosen == "halyk_epay":
+        if provider != "halyk_epay" or not creds:
+            return {
+                "provider": "manual", "intent_id": "", "client_secret": "",
+                "redirect_url": "", "publishable_key": "",
+                "amount": totals["total"], "currency": totals["currency"],
+                "needs_payment_intent": False,
+                "warning": "Halyk ePay not connected; falling back to manual",
+            }
+        terminal    = creds.get("terminal", "")
+        invoice_id  = str(secrets.randbelow(10**12)).zfill(12)   # numeric, 6-15 digits, unique
+        secret_hash = secrets.token_hex(8)
+        api_key_str = request.path_params.get("api_key", "")
+        post_link   = f"{MAGAZ_BACKEND_URL}/{api_key_str}/payments/halyk/postlink"
+        front       = get_project_frontend_url(project_id) or ""
+        amount_str  = f"{float(totals['total']):.2f}"
+        tok = halyk_get_token(creds, is_test_mode=is_test_mode, scope_payment={
+            "invoiceID": invoice_id, "amount": amount_str, "currency": "KZT",
+            "terminal": terminal, "secret_hash": secret_hash, "postLink": post_link,
+        })
+        if not tok["ok"]:
+            raise HTTPException(400, f"Halyk payment error: {tok['error']}")
+        return {
+            "provider":             "halyk_epay",
+            "intent_id":            invoice_id,
+            "client_secret":        "",
+            "redirect_url":         "",
+            "publishable_key":      "",
+            "amount":               totals["total"],
+            "currency":             totals["currency"],
+            "needs_payment_intent": False,
+            "halyk_pay": {                       # storefront loads paymentApiJs → halyk.pay(this)
+                "auth":            tok["data"],   # the FULL OAuth token object
+                "invoiceId":       invoice_id,
+                "amount":          float(totals["total"]),
+                "currency":        "KZT",
+                "terminal":        terminal,
+                "postLink":        post_link,
+                "backLink":        front + "/checkout/return?status=success",
+                "failureBackLink": front + "/checkout/return?status=failure",
+                "description":     (api_key_record.get("name") or "Online order")[:120],
+                "language":        "rus",
+                "paymentApiJs":    _HALYK_JS[_halyk_env(is_test_mode)],
+            },
+            "is_test_mode":         is_test_mode,
+        }
+
+    # CloudPayments — hosted popup widget (PCI-light). No server "create" call: we
+    # mint our InvoiceId + hand the storefront a `cloudpayments_widget` config; the
+    # frontend loads cloudpayments.js and calls widget.charge(). The card is entered
+    # in CloudPayments' popup; on success the buyer STAYS on the page (no redirect)
+    # → place_order re-verifies via POST /payments/find (Status=Completed).
+    if chosen == "cloudpayments":
+        if provider != "cloudpayments" or not creds:
+            return {
+                "provider": "manual", "intent_id": "", "client_secret": "",
+                "redirect_url": "", "publishable_key": "",
+                "amount": totals["total"], "currency": totals["currency"],
+                "needs_payment_intent": False,
+                "warning": "CloudPayments not connected; falling back to manual",
+            }
+        invoice_id = str(secrets.randbelow(10**12)).zfill(12)   # numeric, unique per checkout
+        return {
+            "provider":             "cloudpayments",
+            "intent_id":            invoice_id,
+            "client_secret":        "",
+            "redirect_url":         "",
+            "publishable_key":      "",
+            "amount":               totals["total"],
+            "currency":             totals["currency"],
+            "needs_payment_intent": False,
+            "cloudpayments_widget": {                # storefront: new cp.CloudPayments().charge(this)
+                "public_id":   creds.get("public_id", ""),   # publishable key — safe to expose
+                "invoice_id":  invoice_id,
+                "account_id":  clean(data.customer_email, 120) or invoice_id,  # payer id (receipts/recurring)
+                "amount":      float(totals["total"]),
+                "currency":    (totals["currency"] or "KZT").upper(),
+                "description": (api_key_record.get("name") or "Online order")[:120],
+                "widget_js":   _CP_WIDGET_JS,
+            },
+            "is_test_mode":         is_test_mode,
+        }
+
+    # Robokassa — redirect gateway. Mint a numeric InvId, build the signed redirect
+    # URL (HASH(login:OutSum:InvId:Password#1)), and hand it to the storefront. The
+    # buyer pays on auth.robokassa.kz and returns via SuccessURL → /checkout/return
+    # → place_order re-verifies via OpStateExt (StateCode 100/50 = paid).
+    if chosen == "robokassa":
+        if provider != "robokassa" or not creds:
+            return {
+                "provider": "manual", "intent_id": "", "client_secret": "",
+                "redirect_url": "", "publishable_key": "",
+                "amount": totals["total"], "currency": totals["currency"],
+                "needs_payment_intent": False,
+                "warning": "Robokassa not connected; falling back to manual",
+            }
+        inv_id  = str(secrets.randbelow(2_000_000_000) + 1)   # numeric InvId (Robokassa: 1..2^63-1)
+        out_sum = f"{float(totals['total']):.2f}"
+        url = robokassa_build_redirect(
+            creds, out_sum=out_sum, inv_id=inv_id,
+            description=(api_key_record.get("name") or "Online order"),
+            is_test_mode=is_test_mode)
+        return {
+            "provider":             "robokassa",
+            "intent_id":            inv_id,
+            "client_secret":        "",
+            "redirect_url":         url,           # storefront redirects here
+            "publishable_key":      "",
+            "amount":               totals["total"],
+            "currency":             totals["currency"],
+            "needs_payment_intent": False,
+            "robokassa_redirect":   {"url": url, "invoice_id": inv_id},
+            "is_test_mode":         is_test_mode,
+        }
+
+    # PayPal — redirect (Orders v2, intent=CAPTURE). Create the order, hand the
+    # storefront the approve link. The buyer approves on PayPal and returns via
+    # /checkout/return → place_order CAPTURES + verifies COMPLETED. Money moves only
+    # on our capture, so an abandoned approval charges nothing.
+    if chosen == "paypal":
+        if provider != "paypal" or not creds:
+            return {
+                "provider": "manual", "intent_id": "", "client_secret": "",
+                "redirect_url": "", "publishable_key": "",
+                "amount": totals["total"], "currency": totals["currency"],
+                "needs_payment_intent": False,
+                "warning": "PayPal not connected; falling back to manual",
+            }
+        front = get_project_frontend_url(project_id) or ""
+        res = paypal_create_order(
+            creds, amount=totals["total"], currency=totals["currency"],
+            return_url=front + "/checkout/return?status=success",
+            cancel_url=front + "/checkout/return?status=failure",
+            reference=str(project_id), is_test_mode=is_test_mode)
+        if not res["ok"]:
+            raise HTTPException(400, f"PayPal payment error: {res['error']}")
+        return {
+            "provider":             "paypal",
+            "intent_id":            res["data"]["intent_id"],
+            "client_secret":        "",
+            "redirect_url":         res["data"]["approve_url"],
+            "publishable_key":      "",
+            "amount":               totals["total"],
+            "currency":             totals["currency"],
+            "needs_payment_intent": False,
+            "paypal_redirect":      {"url": res["data"]["approve_url"],
+                                     "order_id": res["data"]["intent_id"]},
+            "is_test_mode":         is_test_mode,
+        }
 
     # Offline method (manual / other) — no PaymentIntent; the order is recorded
     # as pending and the merchant collects payment off-platform.
@@ -5764,7 +6579,7 @@ def init_payment(data: PlaceOrderRequest, request: Request,
         "description": f"Order from project {project_id}",
     }
 
-    # Per-project return_url for redirect-flow providers (YooKassa, PayPal)
+    # Per-project return_url (passed to create_intent for redirect-style providers)
     return_url = (get_project_frontend_url(project_id) or "") + "/checkout/return"
 
     result = create_intent(
@@ -5792,6 +6607,128 @@ def init_payment(data: PlaceOrderRequest, request: Request,
         "needs_payment_intent": True,
         "is_test_mode":     is_test_mode,
     }
+
+
+@app.get("/{api_key}/orders/payment-status/{intent_id}")
+def order_payment_status(intent_id: str, request: Request,
+                          api_key_record: dict = Depends(resolve_api_key)):
+    """Storefront polls this during Kaspi (AiPay) checkout until the status flips
+    to paid. Reads the authoritative status server-to-server from the provider —
+    we never trust client claims or unsigned webhooks for the money decision."""
+    project_id = api_key_record["id"]
+    provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id)
+    if provider in ("manual", "other") or not creds:
+        return {"status": "manual", "paid": False}
+    res = get_intent(provider, creds, intent_id=intent_id,
+                      is_test_mode=is_test_mode, stripe_account_id=stripe_account_id)
+    if not res["ok"]:
+        raise HTTPException(400, res["error"])
+    st = (res["data"].get("status") or "").lower()
+    return {
+        "status":       st,
+        "paid":         st in ("paid", "succeeded"),
+        "account_name": res["data"].get("account_name", ""),
+    }
+
+
+@app.post("/{api_key}/payments/halyk/postlink")
+async def halyk_postlink(api_key: str, request: Request):
+    """Halyk ePay postLink — PUBLIC, no auth. Halyk POSTs the payment result JSON.
+    We never trust the payload for the money decision: we re-fetch the authoritative
+    status via check-status and mark the matching order paid (idempotent)."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    proj = db_one("SELECT id FROM crm_projects WHERE api_key=%s AND is_active=TRUE", (api_key,))
+    invoice_id = str(payload.get("invoiceId", "") or "")
+    if not proj or not invoice_id:
+        return {"received": True}
+    provider, creds, is_test_mode, _ = _get_org_payment_config(proj["id"])
+    if provider == "halyk_epay" and creds:
+        st = halyk_check_status(creds, invoice_id, is_test_mode=is_test_mode)
+        if st["ok"] and st["data"].get("status") == "paid":
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    "UPDATE order_history SET payment_status='paid',"
+                    "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
+                    " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
+                    (proj["id"], invoice_id))
+                conn.commit()
+    return {"received": True}
+
+
+@app.post("/{api_key}/payments/cloudpayments/pay")
+async def cloudpayments_pay_webhook(api_key: str, request: Request):
+    """CloudPayments Pay notification — PUBLIC, no auth (CloudPayments POSTs it as
+    application/x-www-form-urlencoded). We (1) validate the Content-HMAC signature,
+    then (2) re-fetch the authoritative status server-to-server and mark the
+    matching order paid (idempotent). We NEVER trust the payload's Status alone for
+    the money decision. Respond {"code":0} so CloudPayments stops retrying."""
+    raw  = await request.body()
+    proj = db_one("SELECT id FROM crm_projects WHERE api_key=%s AND is_active=TRUE", (api_key,))
+    if not proj:
+        return {"code": 0}
+    provider, creds, _is_test, _ = _get_org_payment_config(proj["id"])
+    form       = urllib.parse.parse_qs(raw.decode("utf-8", errors="replace"))
+    invoice_id = (form.get("InvoiceId", [""])[0] or "").strip()
+    if provider != "cloudpayments" or not creds or not invoice_id:
+        return {"code": 0}
+    # 1) Signature gate — reject forged callbacks (never flip to paid on a bad sig).
+    h   = {k.lower(): v for k, v in request.headers.items()}
+    sig = h.get("content-hmac") or h.get("x-content-hmac") or ""
+    if not cloudpayments_verify_hmac(raw, sig, creds.get("api_secret", "")):
+        return {"code": 0}
+    # 2) Re-fetch authoritative status (defence in depth — don't trust the payload).
+    st = cloudpayments_find(creds, invoice_id)
+    if st["ok"] and st["data"].get("status") == "paid":
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "UPDATE order_history SET payment_status='paid',"
+                "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
+                " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
+                (proj["id"], invoice_id))
+            conn.commit()
+    return {"code": 0}
+
+
+@app.post("/{api_key}/payments/robokassa/result")
+async def robokassa_result(api_key: str, request: Request):
+    """Robokassa ResultURL — PUBLIC, no auth (Robokassa POSTs the result). Validate
+    the Password#2 signature, re-fetch authoritative status via OpStateExt (never
+    trust the callback), mark the order paid (idempotent), and respond with the
+    literal 'OK{InvId}' Robokassa requires — otherwise it keeps retrying."""
+    raw  = await request.body()
+    form = urllib.parse.parse_qs(raw.decode("utf-8", errors="replace"))
+    qs   = dict(urllib.parse.parse_qsl(request.url.query))
+    def _f(k: str) -> str:
+        return (form.get(k, [qs.get(k, "")])[0] or "").strip()
+    inv_id  = _f("InvId")
+    out_sum = _f("OutSum")
+    sig     = _f("SignatureValue")
+    proj = db_one("SELECT id FROM crm_projects WHERE api_key=%s AND is_active=TRUE", (api_key,))
+    if not proj or not inv_id:
+        return Response(content="bad request", media_type="text/plain")
+    provider, creds, _is_test, _ = _get_org_payment_config(proj["id"])
+    if provider != "robokassa" or not creds:
+        return Response(content="bad request", media_type="text/plain")
+    # 1) Signature gate (Password#2) — reject forged callbacks.
+    if not robokassa_verify_result_sig(creds, out_sum, inv_id, sig):
+        return Response(content="bad sign", media_type="text/plain")
+    # 2) Re-verify server-to-server (defence in depth — don't trust the callback).
+    st = robokassa_opstate(creds, inv_id)
+    if st["ok"] and st["data"].get("status") == "paid":
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "UPDATE order_history SET payment_status='paid',"
+                "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
+                " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
+                (proj["id"], inv_id))
+            conn.commit()
+    # Signature is valid (genuine Robokassa) → acknowledge with OK{InvId} so it
+    # stops retrying. If OpState lagged below paid, the buyer's return to
+    # /checkout/return re-verifies and places the order.
+    return Response(content=f"OK{inv_id}", media_type="text/plain")
 
 
 @app.post("/{api_key}/orders")
@@ -6154,9 +7091,10 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
         # Strict mode applies ONLY when the customer chose the online card method
         # AND the gateway is actually connected. Offline methods (manual/other),
         # or card-chosen-but-not-connected, are record-only.
-        do_strict = (chosen == "stripe" and provider == "stripe" and bool(creds))
-        if chosen == "stripe" and not do_strict:
-            pay_provider = "manual"   # card chosen but gateway not connected
+        do_strict = (chosen in _ONLINE_PAY_METHODS
+                     and provider == chosen and bool(creds))
+        if chosen in _ONLINE_PAY_METHODS and not do_strict:
+            pay_provider = "manual"   # online method chosen but gateway not connected
 
         if do_strict:
             intent_id = (data.payment_intent_id or "").strip()
@@ -6182,34 +7120,52 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             v = verify["data"]
             terminal_states = {
                 "stripe":        {"succeeded"},
-                "tinkoff":       {"CONFIRMED", "AUTHORIZED"},
-                "cloudpayments": {"Completed"},
-                "yookassa":      {"succeeded"},
+                # CloudPayments: get_intent maps Status=Completed → canonical "paid".
+                # Authorized (2-stage hold) is NOT paid — must not ship.
+                "cloudpayments": {"paid"},
+                # Robokassa: OpState maps StateCode 100/50 → "paid". HOLD(20)=pending.
+                "robokassa":     {"paid"},
                 # PayPal: ONLY "COMPLETED" — "APPROVED" means the buyer
                 # consented but the capture step hasn't happened, so funds
                 # haven't moved. Treating APPROVED as paid would mark
                 # uncaptured orders as paid and the merchant would ship for
                 # free if capture later failed.
                 "paypal":        {"COMPLETED"},
+                # Kaspi via AiPay: only "paid" (status_code 9) is terminal success.
+                # amount is whole tenge (KZT) — falls through to the major-unit
+                # branch below (no /100), so the tolerance check compares tenge↔tenge.
+                "kaspi_aipay":   {"paid"},
+                # Halyk ePay: only "paid" (statusName CHARGE). AUTH = held, not paid.
+                "halyk_epay":    {"paid"},
             }
             if v.get("status") not in terminal_states.get(provider, set()):
                 raise HTTPException(402, f"Payment not completed (provider status: {v.get('status')})")
 
-            # Amount validation. Stripe/Tinkoff use minor units (cents/kopecks),
-            # YooKassa/PayPal use major units (string decimal). Normalise to dollars.
+            # Amount validation. Stripe uses minor units (cents); PayPal/Kaspi/Halyk/
+            # CloudPayments/Robokassa use major units (decimal). Normalise to dollars.
             provider_amount = v.get("amount", 0)
-            if provider in ("stripe", "tinkoff", "cloudpayments"):
+            # Only Stripe uses minor units (cents) → /100. PayPal/Kaspi/Halyk/
+            # CloudPayments/Robokassa all return MAJOR units → else branch (no /100).
+            if provider == "stripe":
                 provider_dollars = float(provider_amount) / 100.0
             else:
                 try:
                     provider_dollars = float(provider_amount)
                 except (TypeError, ValueError):
                     provider_dollars = 0.0
+            # Some providers (Robokassa) can't echo the gross in a single field — the
+            # confirmed amount may be net-of-commission (OutSum) OR the buyer-paid sum
+            # (IncSum). When the provider returns candidate amounts, accept if the cart
+            # total matches ANY of them (each is tied to THIS payment, so a tampered
+            # cart still mismatches both); otherwise use the single normalised amount.
+            amount_candidates = [float(a) for a in (v.get("amounts") or [provider_dollars])]
             # Allow 0.02 tolerance for rounding (e.g. tax computed differently)
-            if abs(provider_dollars - float(total)) > 0.02:
+            if all(abs(a - float(total)) > 0.02 for a in amount_candidates):
                 raise HTTPException(409,
-                    f"Cart total changed since payment: provider charged {provider_dollars}, "
+                    f"Cart total changed since payment: provider charged {amount_candidates}, "
                     f"cart is {total}. Customer should re-init checkout.")
+            # The matched candidate (closest to the cart total) is the gross paid.
+            provider_dollars = min(amount_candidates, key=lambda a: abs(a - float(total)))
 
             pay_status      = "paid"
             pay_intent_id   = intent_id
@@ -7330,8 +8286,14 @@ def _process_payment_event(project_id: int, provider: str, event: dict) -> None:
 
     if canon == "payment.succeeded":
         # Mark order paid IF the order exists. Race-safe: only updates rows still in
-        # pending. The /orders endpoint already sets paid synchronously, so this is
-        # the catch-up path for webhook-before-confirm orderings.
+        # pending. The /orders endpoint already sets paid synchronously (the
+        # money-authoritative path); this is the catch-up path for webhook-before-
+        # confirm orderings. Defense in depth: we also re-validate the event amount
+        # against the recorded order total (0.02 tolerance) so a real signed event
+        # whose amount diverges from the order can't flip it — mirroring place_order.
+        # (%s <= 0 means the event carried no amount → skip the check, don't block.)
+        ev_amount = event.get("amount", 0) or 0
+        ev_major  = (float(ev_amount) / 100.0) if provider == "stripe" else float(ev_amount)
         with db_cursor() as (conn, cur):
             cur.execute(
                 "UPDATE order_history"
@@ -7340,8 +8302,9 @@ def _process_payment_event(project_id: int, provider: str, event: dict) -> None:
                 "       payment_paid_at  = COALESCE(payment_paid_at, NOW()),"
                 "       updated_at = NOW()"
                 " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'"
+                "   AND (%s <= 0 OR ABS(COALESCE(total_amount, 0) - %s) <= 0.02)"
                 " RETURNING id",
-                (charge_id or intent_id, project_id, intent_id)
+                (charge_id or intent_id, project_id, intent_id, ev_amount, ev_major)
             )
             updated = cur.fetchone()
             conn.commit()
