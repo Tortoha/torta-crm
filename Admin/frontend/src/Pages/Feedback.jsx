@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { MagnifyingGlass, Warning, Lightbulb, X, Trash, PaperPlaneTilt } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../api.js';
 import { PoListRow } from '../Utils/PoListRow.jsx';
+import { useRealtimePoll } from '../Utils/useRealtimePoll.js';
 import '../Style/Authentication.css';
 import '../Style/Organization.css';
 import '../Style/Products.css';
@@ -40,16 +41,19 @@ export default function Feedback() {
   const [err, setErr]   = useState('');
   const [open, setOpen] = useState(null);
 
-  const load = () => {
+  // silent=true → background refresh: keep the current rows on a transient
+  // error instead of flashing a "Failed to load" banner over good data.
+  const load = (silent = false) => {
     const params = new URLSearchParams();
     if (kind !== 'all') params.set('kind', kind);
     if (q) params.set('q', q);
     fetch(`${API_BASE}/api/admin/feedback?${params}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(d => { setRows(Array.isArray(d) ? d : []); setErr(''); })
-      .catch(e => setErr(String(e)));
+      .catch(e => { if (!silent) setErr(String(e)); });
   };
   useEffect(load, [q, kind]);
+  useRealtimePoll(() => load(true));
 
   return (
     <>

@@ -715,6 +715,23 @@ def run_migrations():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_created ON crm_feedback (created_at DESC)")
+            # Anonymous landing-page visits — top of the admin sales funnel
+            # (visited → registered → active → paid). Deduped to ONE row per visitor
+            # per day via UNIQUE(visitor_id, visit_day) so the table stays small and
+            # "unique daily visitors" is a plain GROUP BY. visitor_id = an opaque
+            # client-generated id (localStorage) — no PII, no IP stored.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_landing_visits (
+                    id          BIGSERIAL PRIMARY KEY,
+                    visitor_id  VARCHAR(40) NOT NULL,
+                    visit_day   DATE        NOT NULL DEFAULT CURRENT_DATE,
+                    country     CHAR(2),
+                    first_path  VARCHAR(200) NOT NULL DEFAULT '/',
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (visitor_id, visit_day)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_landing_visits_day ON crm_landing_visits (visit_day DESC)")
             # Admin Inbox — inbound mail to legal@/support@tortacrm.com (platform
             # addresses, owned by no project). Threaded per (mailbox, sender); the
             # operator replies officially via SES. Like Chat with Customers, internal.
@@ -7542,6 +7559,39 @@ def report_my_country(req: CountryReport, user: dict = Depends(get_current_user)
             "WHERE id=%s AND last_country IS DISTINCT FROM %s",
             (cc, user["id"], cc))
         conn.commit()
+    return {"ok": True}
+
+
+class VisitBeacon(BaseModel):
+    visitor_id: str
+    path:       Optional[str] = "/"
+    country:    Optional[str] = None
+
+
+@app.post("/api/track/visit")
+@limiter.limit("60/minute")
+def track_visit(beacon: VisitBeacon, request: Request):
+    """Anonymous landing-visit beacon (NO auth) — the TOP of the admin sales funnel
+    (visited → registered → active → paid). Deduped to one row per visitor per day
+    (ON CONFLICT). visitor_id is a client localStorage id (opaque, no PII; no IP
+    stored). Best-effort — analytics must never break a page load."""
+    vid = (beacon.visitor_id or "").strip()[:40]
+    if not vid:
+        return {"ok": False}
+    # Country: prefer Cloudflare's edge header (server-side, accurate), else the
+    # client value from /cdn-cgi/trace.
+    cc = (request.headers.get("CF-IPCountry") or beacon.country or "").strip().upper()[:2]
+    country = cc if (len(cc) == 2 and cc.isalpha() and cc not in ("XX", "T1")) else None
+    path = sanitize((beacon.path or "/"))[:200]
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO crm_landing_visits (visitor_id, country, first_path) "
+                "VALUES (%s, %s, %s) ON CONFLICT (visitor_id, visit_day) DO NOTHING",
+                (vid, country, path))
+            conn.commit()
+    except Exception:
+        pass   # never break a page load for analytics
     return {"ok": True}
 
 
@@ -25138,6 +25188,7 @@ def post_bulk_shipping_labels(body: BulkLabelBody,
 @app.get("/api/notifications")
 def list_notifications(project_id: Optional[int] = Query(None), unread_only: bool = Query(False),
                        limit: int = Query(50), before: Optional[int] = Query(None),
+                       types: Optional[str] = Query(None),
                        user: dict = Depends(get_current_user)):
     where = ["user_id = %s"]
     params: list = [user["id"]]
@@ -25147,6 +25198,14 @@ def list_notifications(project_id: Optional[int] = Query(None), unread_only: boo
         params.append(project_id)
     if unread_only:
         where.append("is_read = FALSE")
+    # Optional comma-separated type allowlist. The admin bell passes
+    # ?types=admin_feedback,admin_inbox so it shows ONLY platform pings — never
+    # the admin's own store notifications (whose /project/... links would 404 in
+    # the Admin app). Empty/omitted → no filter (CRM bell keeps every type).
+    type_list = [t.strip() for t in (types or "").split(",") if t.strip()]
+    if type_list:
+        where.append("type = ANY(%s)")
+        params.append(type_list)
     # Keyset cursor: `before` = id of the last row the client already has.
     # id is BIGSERIAL (monotonic with creation) so `id < before` ≡ "older than".
     if before is not None:
@@ -25172,10 +25231,13 @@ def list_notifications(project_id: Optional[int] = Query(None), unread_only: boo
     rows = [r for r in rows if _notif_visible_to(user["id"], r["project_id"], r["type"], acc_cache)]
 
     # Unread badge counts only visible unread rows, so it matches the list.
-    unread_rows = db_all(
-        "SELECT project_id, type FROM crm_notifications WHERE user_id=%s AND is_read=FALSE",
-        (user["id"],)
-    )
+    # Mirror the same type allowlist so the badge can't outrun the filtered list.
+    unread_sql = "SELECT project_id, type FROM crm_notifications WHERE user_id=%s AND is_read=FALSE"
+    unread_params: list = [user["id"]]
+    if type_list:
+        unread_sql += " AND type = ANY(%s)"
+        unread_params.append(type_list)
+    unread_rows = db_all(unread_sql, tuple(unread_params))
     unread = sum(1 for r in unread_rows
                  if _notif_visible_to(user["id"], r["project_id"], r["type"], acc_cache))
     # Live (un-stored) soft-limit warnings — prepended FIRST as notification rows
@@ -27960,6 +28022,13 @@ class PresenceHub:
     def is_user_connected(self, user_id: int) -> bool:
         return bool(self._user_conns.get(user_id))
 
+    def online_count(self) -> int:
+        """Distinct users with ≥1 live WebSocket right now — the admin "online now"
+        metric. `detach` removes a user's key when their last socket drops, so there
+        are no stale entries. (In-memory per process: with multiple backend instances
+        this is a per-instance count — a lower bound on true global presence.)"""
+        return len(self._user_conns)
+
     def update(self, user_id: int, **fields):
         cur = self._presence.get(user_id, {})
         cur.update(fields)
@@ -29189,6 +29258,25 @@ def push_notification(user_id: int, project_id: Optional[int], ntype: str,
         print(f"[notifications] push failed: {e}")
 
 
+def _notify_admins(ntype: str, title: str, message: str = "",
+                   link: Optional[str] = None, exclude_user_id: Optional[int] = None) -> None:
+    """Fan a notification out to the platform admin(s) — the bell on
+    admin.tortacrm.com. The admin IS a regular CRM user (ADMIN_LOCKED_EMAIL),
+    so this reuses the per-user crm_notifications + WebSocket pipeline; the row
+    is account-level (project_id NULL → always visible). Best-effort: a failure
+    here must never bubble into the caller (feedback/inbound mail still persist).
+    `exclude_user_id` skips the admin when they triggered the event themselves
+    (e.g. the admin filing their own feedback)."""
+    try:
+        rows = db_all("SELECT id FROM crm_users WHERE LOWER(email) = %s", (ADMIN_LOCKED_EMAIL,))
+        for r in rows:
+            if exclude_user_id is not None and r["id"] == exclude_user_id:
+                continue
+            push_notification(r["id"], None, ntype, title, message, link)
+    except Exception as e:
+        print(f"[notifications] admin fan-out failed: {e}")
+
+
 # ════════════════════════════════════════════════════════════════════════
 #  ADMIN PANEL ENDPOINTS  (powers admin.tortacrm.com)
 # ════════════════════════════════════════════════════════════════════════
@@ -29400,11 +29488,76 @@ def admin_stats(period: str = "30d", user: dict = Depends(get_current_user)):
         ORDER BY day ASC
     """)
 
+    # ── Engagement + sales funnel (existing data: last_login_at + login_log) ──
+    eng = db_one("""
+        SELECT
+            COUNT(*) FILTER (WHERE last_login_at >= NOW() - INTERVAL '24 hours') AS dau,
+            COUNT(*) FILTER (WHERE last_login_at >= NOW() - INTERVAL '7 days')   AS wau,
+            COUNT(*) FILTER (WHERE last_login_at >= NOW() - INTERVAL '30 days')  AS mau,
+            COUNT(*) FILTER (WHERE last_login_at IS NOT NULL)                    AS ever_active,
+            COUNT(*) FILTER (WHERE last_login_at IS NOT NULL
+                              AND last_login_at < NOW() - INTERVAL '30 days')    AS churned
+          FROM crm_users
+         WHERE ban_level IS NULL
+    """) or {}
+
+    # Paying customers = distinct owners of orgs on a non-free plan.
+    paid_row = db_one("""
+        SELECT COUNT(DISTINCT owner_id) AS paid_customers, COUNT(*) AS paid_orgs
+          FROM crm_organizations
+         WHERE COALESCE(plan_slug, 'free') <> 'free'
+    """) or {}
+
+    # Unique landing visitors, last 30 days (funnel top — 0 until the beacon ships).
+    vis_row = db_one("""
+        SELECT COUNT(DISTINCT visitor_id) AS visitors_30d
+          FROM crm_landing_visits
+         WHERE visit_day >= CURRENT_DATE - INTERVAL '30 days'
+    """) or {}
+
+    funnel = [
+        {"key": "visited",    "label": "Visited (30d)",      "value": int(vis_row.get("visitors_30d") or 0)},
+        {"key": "registered", "label": "Registered",         "value": int(totals.get("users_total") or 0)},
+        {"key": "active",     "label": "Active (7d)",         "value": int(eng.get("wau") or 0)},
+        {"key": "paid",       "label": "Paid subscription",   "value": int(paid_row.get("paid_customers") or 0)},
+    ]
+
+    # Active users per day (distinct successful logins) — the "are people coming
+    # back" trend, same gap-filled daily shape as the signups series.
+    active_series = db_all(f"""
+        SELECT d::date AS day, COALESCE(a.actives, 0) AS actives
+        FROM generate_series(
+                (CURRENT_DATE - INTERVAL '{int(period_days) - 1} days')::date,
+                CURRENT_DATE::date, INTERVAL '1 day') AS d
+        LEFT JOIN (
+            SELECT created_at::date AS day, COUNT(DISTINCT user_id) AS actives
+              FROM crm_login_log
+             WHERE success = TRUE
+               AND created_at >= CURRENT_DATE - INTERVAL '{int(period_days) - 1} days'
+             GROUP BY 1
+        ) a ON a.day = d::date
+        ORDER BY day ASC
+    """)
+
+    engagement = {
+        "online_now":     presence_hub.online_count(),
+        "dau":            int(eng.get("dau") or 0),
+        "wau":            int(eng.get("wau") or 0),
+        "mau":            int(eng.get("mau") or 0),
+        "ever_active":    int(eng.get("ever_active") or 0),
+        "churned":        int(eng.get("churned") or 0),
+        "paid_customers": int(paid_row.get("paid_customers") or 0),
+        "paid_orgs":      int(paid_row.get("paid_orgs") or 0),
+    }
+
     return {
         "totals":         totals,
         "plans":          plans,
         "countries":      countries,
         "signups_series": signups_series,
+        "engagement":     engagement,
+        "funnel":         funnel,
+        "active_series":  active_series,
         "period":         period,
     }
 
@@ -29687,6 +29840,15 @@ def submit_feedback(req: FeedbackRequest, user: dict = Depends(get_current_user)
         )
         new_id = cur.fetchone()["id"]
         conn.commit()
+    # Ping the admin bell (admin.tortacrm.com) so new feedback is visible without
+    # opening the Feedback page. Skip if the admin filed it themselves.
+    _notify_admins(
+        "admin_feedback",
+        f"New {kind}: {subject}",
+        f"{(user.get('name') or user.get('email') or 'Someone')}: {message}",
+        "/feedback",
+        exclude_user_id=user["id"],
+    )
     return {"ok": True, "id": new_id}
 
 
@@ -29831,6 +29993,15 @@ def _store_admin_inbox(mailbox: str, req: "EmailInboundRequest") -> dict:
         )
         new_msg_id = cur.fetchone()["id"]
         conn.commit()
+    # Ping the admin bell for new inbound platform mail (legal@ / support@).
+    # Reached only on a genuinely new message — the Message-Id dedup above
+    # short-circuits retries before this point.
+    _notify_admins(
+        "admin_inbox",
+        f"New email · {mailbox}",
+        f"{from_name or from_email}: {preview}",
+        "/inbox",
+    )
     return {"ok": True, "routed": True, "thread_id": thread_id, "message_id": new_msg_id}
 
 

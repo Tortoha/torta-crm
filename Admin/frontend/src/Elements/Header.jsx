@@ -1,13 +1,13 @@
 // Stripped clone of CRM/frontend/src/Elements/Header.jsx:
-//   keep — brand SVG, UserMenu (avatar + dropdown + logout)
-//   drop — org/project/product switchers, NotificationsBell, docs/landing
-//          modes, hamburger (we only have desktop targets)
+//   keep — brand SVG, NotificationsBell (feedback / inbox pings), UserMenu
+//   drop — org/project/product switchers, docs/landing modes
 // Same hdr-* classes so the copied Header.css applies untouched.
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SignOut, List } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
+import NotificationsBell from './NotificationsBell.jsx';
 import '../Style/Header.css';
 
 /* ── Initials avatar (1:1 copy from CRM) ── */
@@ -102,6 +102,7 @@ export default function Header({ user, onMobileNavToggle }) {
         <span className="hdr-settings-crumb">Admin</span>
       </div>
       <div className="hdr-right">
+        {user && <NotificationsBell />}
         {user && <UserMenu user={user} />}
       </div>
     </header>
