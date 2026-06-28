@@ -1,0 +1,42 @@
+{
+  "feedback": {
+    "title": "Отзывы",
+    "searchPlaceholder": "Поиск по теме, сообщению, имени или почте…",
+    "filter": {
+      "all": "Все",
+      "issues": "Проблемы",
+      "ideas": "Идеи"
+    },
+    "kind": {
+      "idea": "Идея",
+      "issue": "Проблема"
+    },
+    "col": {
+      "type": "Тип",
+      "subject": "Тема",
+      "from": "От кого",
+      "date": "Дата",
+      "status": "Статус"
+    },
+    "status": {
+      "replied": "Отвечено",
+      "new": "Новый"
+    },
+    "loadFailed": "Не удалось загрузить: {{error}}",
+    "emptyFiltered": "Нет отзывов по этим фильтрам.",
+    "empty": "Отзывов пока нет.",
+    "modal": {
+      "noEmail": "нет почты",
+      "alreadyReplied": "Уже отвечено",
+      "replyLabel": "Ответить по почте — от Torta <{{email}}>",
+      "replyPlaceholder": "Напишите ответ для {{email}}…",
+      "replyPlaceholderNone": "У этого отзыва нет почты для ответа",
+      "sendReply": "Отправить ответ",
+      "sending": "Отправка…",
+      "errWriteFirst": "Сначала напишите ответ",
+      "errSendFailed": "Не удалось отправить",
+      "errNetwork": "Ошибка сети",
+      "deleteConfirm": "Удалить этот отзыв навсегда?"
+    }
+  }
+}

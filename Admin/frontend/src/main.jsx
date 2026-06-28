@@ -8,10 +8,14 @@ import './Style/Layout.css'
 // so there's no flash of light theme for dark-mode users.
 import './api.js'
 import './theme.js'
+import { i18nReady } from './i18n.js'
 import App from './App.jsx'
 
-createRoot(document.getElementById('root')).render(
+const start = () => createRoot(document.getElementById('root')).render(
   <StrictMode>
     <App />
   </StrictMode>,
 )
+// Defer the first paint until the active language bundle is loaded, so the UI
+// never flashes raw translation keys. Render even if loading fails.
+i18nReady.then(start, start)

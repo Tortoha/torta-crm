@@ -1,0 +1,12 @@
+{
+  "common": {
+    "loading": "Loading…",
+    "search": "Search…",
+    "save": "Save",
+    "saved": "Saved",
+    "saveFailed": "Save failed",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "close": "Close"
+  }
+}

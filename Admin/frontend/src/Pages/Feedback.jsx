@@ -3,8 +3,9 @@
 // + kind filter) + .po-set-table rows. Click a row → auth-modal with the full
 // text + the submitter's name/email + a reply box that emails them officially
 // via SES (from Torta <support@tortacrm.com>).
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { MagnifyingGlass, Warning, Lightbulb, X, Trash, PaperPlaneTilt } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../api.js';
 import { PoListRow } from '../Utils/PoListRow.jsx';
@@ -17,9 +18,9 @@ import '../Style/Users.css';
 import '../Style/Feedback.css';
 
 const KIND_FILTER = [
-  { value: 'all',   label: 'All' },
-  { value: 'issue', label: 'Issues' },
-  { value: 'idea',  label: 'Ideas' },
+  { value: 'all',   labelKey: 'feedback.filter.all' },
+  { value: 'issue', labelKey: 'feedback.filter.issues' },
+  { value: 'idea',  labelKey: 'feedback.filter.ideas' },
 ];
 
 const fmtDate = (iso) => {
@@ -29,17 +30,24 @@ const fmtDate = (iso) => {
 };
 
 function KindBadge({ kind }) {
+  const { t } = useTranslation();
   return kind === 'idea'
-    ? <span className="fb-kind fb-kind--idea"><Lightbulb weight="duotone" /> Idea</span>
-    : <span className="fb-kind fb-kind--issue"><Warning weight="duotone" /> Issue</span>;
+    ? <span className="fb-kind fb-kind--idea"><Lightbulb weight="duotone" /> {t('feedback.kind.idea')}</span>
+    : <span className="fb-kind fb-kind--issue"><Warning weight="duotone" /> {t('feedback.kind.issue')}</span>;
 }
 
 export default function Feedback() {
+  const { t } = useTranslation();
   const [q, setQ]       = useState('');
   const [kind, setKind] = useState('all');
   const [rows, setRows] = useState(null);
   const [err, setErr]   = useState('');
   const [open, setOpen] = useState(null);
+
+  const kindFilter = useMemo(
+    () => KIND_FILTER.map(o => ({ value: o.value, label: t(o.labelKey) })),
+    [t],
+  );
 
   // silent=true → background refresh: keep the current rows on a transient
   // error instead of flashing a "Failed to load" banner over good data.
@@ -57,16 +65,16 @@ export default function Feedback() {
 
   return (
     <>
-      <h1 className="crm-page-title">Feedback</h1>
+      <h1 className="crm-page-title">{t('feedback.title')}</h1>
 
       <div className="org-toolbar">
         <div className="org-search-wrap" style={{ flex: 1, minWidth: 240 }}>
           <MagnifyingGlass className="org-search-icon" />
-          <input className="org-search-input" placeholder="Search subject, message, name or email…"
+          <input className="org-search-input" placeholder={t('feedback.searchPlaceholder')}
             value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="org-status-pill">
-          {KIND_FILTER.map(o => (
+          {kindFilter.map(o => (
             <button key={o.value} type="button"
               className={`org-status-btn${kind === o.value ? ' org-status-btn--active' : ''}`}
               onClick={() => setKind(o.value)}>{o.label}</button>
@@ -74,18 +82,18 @@ export default function Feedback() {
         </div>
       </div>
 
-      {err && <div className="crm-placeholder" style={{ color: 'var(--delete)' }}>Failed to load: {err}</div>}
-      {!rows && !err && <div className="crm-placeholder">Loading…</div>}
+      {err && <div className="crm-placeholder" style={{ color: 'var(--delete)' }}>{t('feedback.loadFailed', { error: err })}</div>}
+      {!rows && !err && <div className="crm-placeholder">{t('common.loading')}</div>}
       {rows && rows.length === 0 && (
         <div className="crm-placeholder">
-          {q || kind !== 'all' ? 'No feedback matches these filters.' : 'No feedback yet.'}
+          {q || kind !== 'all' ? t('feedback.emptyFiltered') : t('feedback.empty')}
         </div>
       )}
 
       {rows && rows.length > 0 && (
         <div className="po-set-table">
           <div className="po-set-row po-set-row--head po-set-row--fb">
-            <span>Type</span><span>Subject</span><span>From</span><span>Date</span><span>Status</span>
+            <span>{t('feedback.col.type')}</span><span>{t('feedback.col.subject')}</span><span>{t('feedback.col.from')}</span><span>{t('feedback.col.date')}</span><span>{t('feedback.col.status')}</span>
           </div>
           {rows.map(f => (
             <PoListRow key={f.id} className="po-set-row--fb fb-row" onClick={() => setOpen(f)}>
@@ -98,7 +106,7 @@ export default function Feedback() {
               <span className="fb-date">{fmtDate(f.created_at)}</span>
               <span>
                 <span className={`fb-status fb-status--${f.status === 'replied' ? 'replied' : 'new'}`}>
-                  {f.status === 'replied' ? 'Replied' : 'New'}
+                  {f.status === 'replied' ? t('feedback.status.replied') : t('feedback.status.new')}
                 </span>
               </span>
             </PoListRow>
@@ -112,6 +120,7 @@ export default function Feedback() {
 }
 
 function FeedbackModal({ fb, onClose, onChanged }) {
+  const { t } = useTranslation();
   const [reply, setReply] = useState('');
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
@@ -123,27 +132,27 @@ function FeedbackModal({ fb, onClose, onChanged }) {
   }, [onClose]);
 
   const sendReply = async () => {
-    const t = reply.trim();
-    if (!t) { setErr('Write a reply first'); return; }
+    const text = reply.trim();
+    if (!text) { setErr(t('feedback.modal.errWriteFirst')); return; }
     setBusy(true); setErr('');
     try {
       const r = await fetch(`${API_BASE}/api/admin/feedback/${fb.id}/reply`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reply: t }),
+        body: JSON.stringify({ reply: text }),
       });
       if (r.ok) onChanged();
-      else { const j = await r.json().catch(() => ({})); setErr(pickError(j, 'Failed to send')); setBusy(false); }
-    } catch { setErr('Network error'); setBusy(false); }
+      else { const j = await r.json().catch(() => ({})); setErr(pickError(j, t('feedback.modal.errSendFailed'))); setBusy(false); }
+    } catch { setErr(t('feedback.modal.errNetwork')); setBusy(false); }
   };
 
   const del = async () => {
-    if (!confirm('Delete this feedback permanently?')) return;
+    if (!confirm(t('feedback.modal.deleteConfirm'))) return;
     setBusy(true);
     try {
       await fetch(`${API_BASE}/api/admin/feedback/${fb.id}`, { method: 'DELETE', credentials: 'include' });
       onChanged();
-    } catch { setErr('Network error'); setBusy(false); }
+    } catch { setErr(t('feedback.modal.errNetwork')); setBusy(false); }
   };
 
   return createPortal(
@@ -152,10 +161,10 @@ function FeedbackModal({ fb, onClose, onChanged }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">{fb.subject || (fb.kind === 'idea' ? 'Idea' : 'Issue')}</div>
+              <div className="auth-modal-title">{fb.subject || (fb.kind === 'idea' ? t('feedback.kind.idea') : t('feedback.kind.issue'))}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  <KindBadge kind={fb.kind} /> · {fb.name || '—'} · {fb.email || 'no email'} · {fmtDate(fb.created_at)}
+                  <KindBadge kind={fb.kind} /> · {fb.name || '—'} · {fb.email || t('feedback.modal.noEmail')} · {fmtDate(fb.created_at)}
                 </span>
               </div>
             </div>
@@ -171,16 +180,16 @@ function FeedbackModal({ fb, onClose, onChanged }) {
           {fb.status === 'replied' && fb.reply_text && (
             <div className="cpm-section">
               <label className="po-field-label">
-                Already replied{fb.replied_at ? ` · ${fmtDate(fb.replied_at)}` : ''}
+                {t('feedback.modal.alreadyReplied')}{fb.replied_at ? ` · ${fmtDate(fb.replied_at)}` : ''}
               </label>
               <div className="fb-prev-reply">{fb.reply_text}</div>
             </div>
           )}
 
           <div className="cpm-section">
-            <label className="po-field-label">Reply via email — from Torta &lt;support@tortacrm.com&gt;</label>
+            <label className="po-field-label">{t('feedback.modal.replyLabel', { email: 'support@tortacrm.com' })}</label>
             <textarea className="crm-input cpm-textarea" rows={5} maxLength={5000}
-              placeholder={fb.email ? `Write your reply to ${fb.email}…` : 'This feedback has no email to reply to'}
+              placeholder={fb.email ? t('feedback.modal.replyPlaceholder', { email: fb.email }) : t('feedback.modal.replyPlaceholderNone')}
               value={reply} onChange={(e) => setReply(e.target.value)} disabled={!fb.email} />
           </div>
 
@@ -189,10 +198,10 @@ function FeedbackModal({ fb, onClose, onChanged }) {
           <div className="auth-actions">
             <button type="button" className="crm-submit-btn" disabled={busy || !fb.email} onClick={sendReply}>
               <PaperPlaneTilt weight="fill" style={{ width: 15, height: 15, marginRight: 6 }} />
-              {busy ? 'Sending…' : 'Send reply'}
+              {busy ? t('feedback.modal.sending') : t('feedback.modal.sendReply')}
             </button>
             <button type="button" className="crm-submit-btn auth-btn-danger" disabled={busy} onClick={del}>
-              <Trash style={{ width: 15, height: 15, marginRight: 6 }} /> Delete
+              <Trash style={{ width: 15, height: 15, marginRight: 6 }} /> {t('common.delete')}
             </button>
           </div>
         </div>

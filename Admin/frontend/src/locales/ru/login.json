@@ -1,0 +1,31 @@
+{
+  "login": {
+    "title": "Вход",
+    "email": "Эл. почта",
+    "password": "Пароль",
+    "showPassword": "Показать пароль",
+    "hidePassword": "Скрыть пароль",
+    "sending": "Отправка…",
+    "next": "Далее",
+    "or": "или",
+    "continueWithGoogle": "Войти через Google",
+    "invalidCredentials": "Неверные данные",
+    "networkError": "Ошибка сети",
+    "accessDenied": "Доступ запрещён.",
+    "signInCancelled": "Вход отменён.",
+    "signInFailed": "Не удалось войти.",
+    "verify": {
+      "title": "Подтверждение",
+      "subtitle": "Мы отправили 6-значный код на вашу почту.",
+      "verifying": "Проверка…",
+      "continue": "Продолжить",
+      "sending": "Отправка…",
+      "resendIn": "Повтор через {{count}} с",
+      "resend": "Отправить код снова",
+      "back": "Назад",
+      "failed": "Не удалось подтвердить",
+      "resent": "Код отправлен повторно.",
+      "resendFailed": "Не удалось отправить"
+    }
+  }
+}

@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import {
   MagnifyingGlass, ArrowDown, SquaresFour, List,
   DotsThreeOutline, Prohibit, Trash, ShieldStar, Warning, X,
@@ -24,15 +25,18 @@ import '../Style/Products.css';
 import '../Style/Targets.css';
 import '../Style/Users.css';
 
+// `value` stays stable (API param); `labelKey` resolves to a translation at
+// render time (built into display labels via useMemo inside the component).
 const STATUS_FILTER_OPTIONS = [
-  { value: 'all',    label: 'All users' },
-  { value: 'active', label: 'Active' },
-  { value: 'banned', label: 'Banned' },
-  { value: 'admin',  label: 'Admins' },
+  { value: 'all',    labelKey: 'users.filters.all' },
+  { value: 'active', labelKey: 'users.filters.active' },
+  { value: 'banned', labelKey: 'users.filters.banned' },
+  { value: 'admin',  labelKey: 'users.filters.admin' },
 ];
 
 // ── 3-dot menu (portal) — copy of CRM TargetMenu shape ──────────────────
 function UserMenu({ btnRef, onClose, isBanned, onBan, onUnban, onDelete }) {
+  const { t } = useTranslation();
   const [pos, setPos] = useState(null);
 
   useEffect(() => {
@@ -61,17 +65,17 @@ function UserMenu({ btnRef, onClose, isBanned, onBan, onUnban, onDelete }) {
       onClick={(e) => e.stopPropagation()}>
       {isBanned ? (
         <button className="org-card-dropdown-item" onClick={() => { onClose(); onUnban(); }}>
-          <CheckCircle className="org-card-dropdown-icon" /> Unban user
+          <CheckCircle className="org-card-dropdown-icon" /> {t('users.menu.unban')}
         </button>
       ) : (
         <button className="org-card-dropdown-item" onClick={() => { onClose(); onBan(); }}>
-          <Prohibit className="org-card-dropdown-icon" /> Ban user…
+          <Prohibit className="org-card-dropdown-icon" /> {t('users.menu.ban')}
         </button>
       )}
       <div className="org-card-dropdown-sep" />
       <button className="org-card-dropdown-item org-card-dropdown-item--danger"
         onClick={() => { onClose(); onDelete(); }}>
-        <Trash className="org-card-dropdown-icon" /> Delete account
+        <Trash className="org-card-dropdown-icon" /> {t('users.menu.delete')}
       </button>
     </div>,
     document.body,
@@ -80,6 +84,7 @@ function UserMenu({ btnRef, onClose, isBanned, onBan, onUnban, onDelete }) {
 
 // ── Ban modal (3 tiers in one place) — auth-modal shape ────────────────
 function BanModal({ user, defaultTier, onClose, onDone }) {
+  const { t } = useTranslation();
   const [tier, setTier]     = useState(defaultTier || 'soft');
   const [reason, setReason] = useState('');
   const [typed, setTyped]   = useState('');
@@ -98,7 +103,7 @@ function BanModal({ user, defaultTier, onClose, onDone }) {
       let res;
       if (tier === 'nuclear') {
         if (typed.trim().toLowerCase() !== (user.email || '').toLowerCase()) {
-          setErr('Type the email exactly to confirm.');
+          setErr(t('users.errors.typeEmailExactly'));
           setBusy(false); return;
         }
         res = await fetch(`${API_BASE}/api/admin/users/${user.id}`, {
@@ -115,10 +120,10 @@ function BanModal({ user, defaultTier, onClose, onDone }) {
       if (res.ok) onDone();
       else {
         const j = await res.json().catch(() => ({}));
-        setErr(pickError(j, 'Action failed'));
+        setErr(pickError(j, t('users.errors.actionFailed')));
       }
     } catch {
-      setErr('Network error');
+      setErr(t('users.errors.networkError'));
     } finally {
       setBusy(false);
     }
@@ -131,10 +136,10 @@ function BanModal({ user, defaultTier, onClose, onDone }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">Take action on user</div>
+              <div className="auth-modal-title">{t('users.ban.title')}</div>
               <div className="auth-modal-subtitle-row">
                 <span className="auth-modal-subtitle">
-                  {user.email} · {user.orgs || 0} orgs, {user.projects || 0} projects
+                  {t('users.ban.subtitle', { email: user.email, orgs: user.orgs || 0, projects: user.projects || 0 })}
                 </span>
               </div>
             </div>
@@ -147,28 +152,28 @@ function BanModal({ user, defaultTier, onClose, onDone }) {
         <div className="auth-modal-body">
           <div className="adm-tier-list">
             <Tier active={tier === 'soft'}     onClick={() => setTier('soft')}     Icon={Warning}
-              tone="warn" title="Soft ban — block login only"
-              body="Account stays. Their projects keep running for end customers. Fully reversible from this page." />
+              tone="warn" title={t('users.ban.tiers.soft.title')}
+              body={t('users.ban.tiers.soft.body')} />
             <Tier active={tier === 'hard'}     onClick={() => setTier('hard')}     Icon={Prohibit}
-              tone="danger" title="Hard ban — suspend everything"
-              body="Block login AND mark all their projects inactive (customers' storefronts go dark). Reversible (login); projects must be re-activated manually." />
+              tone="danger" title={t('users.ban.tiers.hard.title')}
+              body={t('users.ban.tiers.hard.body')} />
             <Tier active={tier === 'nuclear'}  onClick={() => setTier('nuclear')}  Icon={Trash}
-              tone="danger" title="Delete account — irreversible"
-              body="Cascade-delete user + orgs + projects + products + orders. Use only for fraud / legal takedown." />
+              tone="danger" title={t('users.ban.tiers.nuclear.title')}
+              body={t('users.ban.tiers.nuclear.body')} />
           </div>
 
           {tier !== 'nuclear' && (
             <div className="cpm-section">
-              <label className="po-field-label">Reason (admin-only)</label>
+              <label className="po-field-label">{t('users.ban.reasonLabel')}</label>
               <textarea className="crm-input cpm-textarea" rows={3} maxLength={1000}
-                placeholder="Why are you taking this action?"
+                placeholder={t('users.ban.reasonPlaceholder')}
                 value={reason} onChange={(e) => setReason(e.target.value)} />
             </div>
           )}
 
           {tier === 'nuclear' && (
             <div className="adm-confirm-box">
-              <p>Type the email <code>{user.email}</code> to confirm permanent deletion.</p>
+              <p>{t('users.ban.confirmTextBefore')} <code>{user.email}</code> {t('users.ban.confirmTextAfter')}</p>
               <input
                 className="crm-input"
                 type="text"
@@ -184,13 +189,13 @@ function BanModal({ user, defaultTier, onClose, onDone }) {
           <div className="auth-actions">
             <button type="button" disabled={busy} onClick={submit}
               className={`crm-submit-btn adm-btn-${tier}`}>
-              {busy ? 'Working…'
-                : tier === 'nuclear' ? 'Delete permanently'
-                : tier === 'hard'    ? 'Hard ban user'
-                                     : 'Soft ban user'}
+              {busy ? t('users.ban.working')
+                : tier === 'nuclear' ? t('users.ban.deleteBtn')
+                : tier === 'hard'    ? t('users.ban.hardBtn')
+                                     : t('users.ban.softBtn')}
             </button>
             <button type="button" className="crm-submit-btn auth-btn-secondary"
-              onClick={onClose} disabled={busy}>Cancel</button>
+              onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
           </div>
         </div>
       </div>
@@ -215,6 +220,7 @@ function Tier({ active, onClick, Icon, tone, title, body }) {
 
 // ── Row ────────────────────────────────────────────────────────────────
 function UserRow({ u, onBan, onUnban, onDelete }) {
+  const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   const banned = !!u.ban_level;
@@ -231,9 +237,9 @@ function UserRow({ u, onBan, onUnban, onDelete }) {
       <span style={{ color: 'var(--muted)' }}>{formatDate(u.created_at)}</span>
       <span style={{ color: 'var(--muted)' }}>{u.signup_country || '—'}</span>
       <span style={{ color: 'var(--muted)' }}>{u.orgs} / {u.projects}</span>
-      <span>{statusBadge(u)}</span>
+      <span>{statusBadge(u, t)}</span>
       <button ref={menuBtnRef} type="button" className="org-list-menu-btn"
-        aria-label="User actions"
+        aria-label={t('users.menu.actions')}
         onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}>
         <DotsThreeOutline weight="fill" className="org-card-menu-icon" />
       </button>
@@ -247,11 +253,11 @@ function UserRow({ u, onBan, onUnban, onDelete }) {
   );
 }
 
-function statusBadge(u) {
-  if (u.ban_level === 'hard') return <span className="t-status t-status--bad"><Prohibit size={11} weight="fill" /> Hard banned</span>;
-  if (u.ban_level === 'soft') return <span className="t-status t-status--warn"><Warning size={11} weight="fill" /> Soft banned</span>;
-  if (u.is_admin)             return <span className="t-status t-status--good"><ShieldStar size={11} weight="fill" /> Admin</span>;
-  return <span className="t-status t-status--neutral">Active</span>;
+function statusBadge(u, t) {
+  if (u.ban_level === 'hard') return <span className="t-status t-status--bad"><Prohibit size={11} weight="fill" /> {t('users.status.hardBanned')}</span>;
+  if (u.ban_level === 'soft') return <span className="t-status t-status--warn"><Warning size={11} weight="fill" /> {t('users.status.softBanned')}</span>;
+  if (u.is_admin)             return <span className="t-status t-status--good"><ShieldStar size={11} weight="fill" /> {t('users.status.admin')}</span>;
+  return <span className="t-status t-status--neutral">{t('users.status.active')}</span>;
 }
 
 function formatDate(iso) {
@@ -263,6 +269,7 @@ function formatDate(iso) {
 
 // ── Page ──────────────────────────────────────────────────────────────
 export default function Users() {
+  const { t } = useTranslation();
   const [q, setQ]             = useState('');
   const [status, setStatus]   = useState('all');
   const [page, setPage]       = useState(1);
@@ -288,7 +295,7 @@ export default function Users() {
   const openBan = (u, tier = 'soft') => { setBanTarget(u); setBanTier(tier); };
 
   const onUnban = async (u) => {
-    if (!confirm(`Unban ${u.email}?`)) return;
+    if (!confirm(t('users.confirmUnban', { email: u.email }))) return;
     await fetch(`${API_BASE}/api/admin/users/${u.id}/unban`, { method: 'POST', credentials: 'include' });
     load();
   };
@@ -297,9 +304,15 @@ export default function Users() {
 
   const filtered = useMemo(() => data?.users || [], [data]);
 
+  // Resolve the module-level status options' i18n keys to display labels.
+  const statusFilters = useMemo(
+    () => STATUS_FILTER_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) })),
+    [t],
+  );
+
   return (
     <>
-      <h1 className="crm-page-title">Users</h1>
+      <h1 className="crm-page-title">{t('users.title')}</h1>
 
       {/* Toolbar — copies CRM Targets toolbar pattern */}
       <div className="org-toolbar">
@@ -308,7 +321,7 @@ export default function Users() {
           <MagnifyingGlass className="org-search-icon" />
           <input
             className="org-search-input"
-            placeholder="Search by email or name…"
+            placeholder={t('users.searchPlaceholder')}
             value={q}
             onChange={(e) => { setPage(1); setQ(e.target.value); }}
           />
@@ -316,7 +329,7 @@ export default function Users() {
 
         {/* Status filter as pill segmented control */}
         <div className="org-status-pill">
-          {STATUS_FILTER_OPTIONS.map(opt => (
+          {statusFilters.map(opt => (
             <button
               key={opt.value}
               type="button"
@@ -327,13 +340,13 @@ export default function Users() {
         </div>
       </div>
 
-      {err && <div className="crm-placeholder" style={{ color: 'var(--delete)' }}>Failed to load: {err}</div>}
+      {err && <div className="crm-placeholder" style={{ color: 'var(--delete)' }}>{t('users.errors.loadFailed', { error: err })}</div>}
 
-      {!data && !err && <div className="crm-placeholder">Loading…</div>}
+      {!data && !err && <div className="crm-placeholder">{t('common.loading')}</div>}
 
       {data && filtered.length === 0 && (
         <div className="crm-placeholder">
-          {q || status !== 'all' ? 'No users match these filters.' : 'No users yet.'}
+          {q || status !== 'all' ? t('users.empty.noMatch') : t('users.empty.none')}
         </div>
       )}
 
@@ -341,12 +354,12 @@ export default function Users() {
         <>
           <div className="po-set-table">
             <div className="po-set-row po-set-row--head po-set-row--user">
-              <span>Email</span>
-              <span>Name</span>
-              <span>Joined</span>
-              <span>Country</span>
-              <span>Orgs / Projects</span>
-              <span>Status</span>
+              <span>{t('users.columns.email')}</span>
+              <span>{t('users.columns.name')}</span>
+              <span>{t('users.columns.joined')}</span>
+              <span>{t('users.columns.country')}</span>
+              <span>{t('users.columns.orgsProjects')}</span>
+              <span>{t('users.columns.status')}</span>
               <span />
             </div>
             {filtered.map(u => (
@@ -360,14 +373,14 @@ export default function Users() {
 
           {/* Pagination */}
           <div className="adm-pagination">
-            <span style={{ color: 'var(--muted)' }}>{data.total} total · page {data.page} of {data.pages}</span>
+            <span style={{ color: 'var(--muted)' }}>{t('users.pageInfo', { total: data.total, page: data.page, pages: data.pages })}</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="crm-submit-btn auth-btn-secondary"
                 disabled={page <= 1}
-                onClick={() => setPage(p => p - 1)}>Prev</button>
+                onClick={() => setPage(p => p - 1)}>{t('users.prev')}</button>
               <button className="crm-submit-btn auth-btn-secondary"
                 disabled={page >= data.pages}
-                onClick={() => setPage(p => p + 1)}>Next</button>
+                onClick={() => setPage(p => p + 1)}>{t('users.next')}</button>
             </div>
           </div>
         </>

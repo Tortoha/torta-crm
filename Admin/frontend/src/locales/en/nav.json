@@ -1,0 +1,14 @@
+{
+  "nav": {
+    "admin": "Admin",
+    "overview": "Overview",
+    "analytics": "Analytics",
+    "users": "Users",
+    "logs": "Logs",
+    "feedback": "Feedback",
+    "inbox": "Inbox",
+    "collapse": "Collapse",
+    "settings": "Settings",
+    "logout": "Log out"
+  }
+}

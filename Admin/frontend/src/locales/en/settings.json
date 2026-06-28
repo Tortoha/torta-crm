@@ -1,0 +1,22 @@
+{
+  "settings": {
+    "title": "Settings",
+    "account": {
+      "title": "Account",
+      "subtitle": "Your admin login identity.",
+      "name": "Name",
+      "email": "Email"
+    },
+    "preferences": {
+      "title": "Preferences",
+      "subtitle": "Interface language and appearance.",
+      "language": "Language",
+      "languageHint": "Interface language for the admin console.",
+      "theme": "Theme",
+      "themeHint": "Choose your preferred appearance.",
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    }
+  }
+}

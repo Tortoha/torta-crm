@@ -11,6 +11,7 @@
 
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ChartLine, UsersThree, Buildings, Package, Receipt, Globe, Wallet,
   Pulse, FunnelSimple,
@@ -21,22 +22,26 @@ import '../Style/Logs.css';
 import { LineChart } from '../Utils/LineChart.jsx';
 import { useRealtimePoll } from '../Utils/useRealtimePoll.js';
 
+// Period selector options. `value` is the API param (never translated); the
+// human label is resolved at render via t(labelKey) inside PeriodSegmented.
 const PERIODS = [
-  { value: '7d',  label: '7 days' },
-  { value: '30d', label: '30 days' },
-  { value: '90d', label: '90 days' },
-  { value: 'all', label: 'All time' },
+  { value: '7d',  labelKey: 'analytics.periods.7d'  },
+  { value: '30d', labelKey: 'analytics.periods.30d' },
+  { value: '90d', labelKey: 'analytics.periods.90d' },
+  { value: 'all', labelKey: 'analytics.periods.all' },
 ];
 
 // Fallback labels only — the real name + price now come from the backend
-// (crm_subscription_plans), so MRR never desyncs when pricing changes.
-const PLAN_LABEL = { free: 'Free', standard: 'Standard', plus: 'Plus', pro: 'Pro', max: 'Max' };
+// (crm_subscription_plans), so MRR never desyncs when pricing changes. The
+// values here are frontend fallbacks, so they resolve via i18n at render.
+const PLAN_LABEL = { free: 'analytics.plans.free', standard: 'analytics.plans.standard', plus: 'analytics.plans.plus', pro: 'analytics.plans.pro', max: 'analytics.plans.max' };
 
 // ── Section wrapper — mirrors CRM SectionShell shape ─────────────────
 // Same .an-section / .an-section-head / .an-section-title classes the
 // CRM Analytics.css styles. Period selector is a pill segmented control
 // (same .an-gran-* classes CRM uses for Day/Week/Month).
 function Section({ title, Icon, period, onPeriodChange, hidePeriod, live, children }) {
+  const { t } = useTranslation();
   return (
     <section className="an-section">
       <header className="an-section-head">
@@ -46,8 +51,8 @@ function Section({ title, Icon, period, onPeriodChange, hidePeriod, live, childr
         </h2>
         <div className="an-section-controls">
           {live && (
-            <span className="an-live" title="Refreshes automatically every 15s">
-              <span className="an-live-dot" />Live
+            <span className="an-live" title={t('analytics.liveTooltip')}>
+              <span className="an-live-dot" />{t('analytics.live')}
             </span>
           )}
           {!hidePeriod && (
@@ -61,6 +66,7 @@ function Section({ title, Icon, period, onPeriodChange, hidePeriod, live, childr
 }
 
 function PeriodSegmented({ value, onChange }) {
+  const { t }   = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -88,7 +94,7 @@ function PeriodSegmented({ value, onChange }) {
           onMouseEnter={() => setHovered(p.value)}
           onClick={() => onChange(p.value)}
           type="button"
-        >{p.label}</button>
+        >{t(p.labelKey)}</button>
       ))}
     </div>
   );
@@ -110,8 +116,9 @@ function Kpi({ label, value, sub }) {
 // gridlines, smoothed line, hover crosshair + tooltip). Backend returns a
 // gap-filled daily series; we just feed it in with signups/day keys.
 function SignupsChart({ data }) {
+  const { t } = useTranslation();
   if (!data?.length) {
-    return <div className="an-chart-empty">No data for this period.</div>;
+    return <div className="an-chart-empty">{t('analytics.noDataPeriod')}</div>;
   }
   const vpb = Math.max(7, Math.min(data.length, 60));
   return (
@@ -121,14 +128,15 @@ function SignupsChart({ data }) {
       dateKey="day"
       height={300}
       viewportBuckets={vpb}
-      formatValue={(v) => `${Math.round(+v || 0)} signup${Math.round(+v || 0) === 1 ? '' : 's'}`}
+      formatValue={(v) => t('analytics.chart.signups', { count: Math.round(+v || 0) })}
     />
   );
 }
 
 // ── Active-users-over-time chart (same LineChart as signups) ───────────
 function ActiveChart({ data }) {
-  if (!data?.length) return <div className="an-chart-empty">No data for this period.</div>;
+  const { t } = useTranslation();
+  if (!data?.length) return <div className="an-chart-empty">{t('analytics.noDataPeriod')}</div>;
   const vpb = Math.max(7, Math.min(data.length, 60));
   return (
     <LineChart
@@ -137,14 +145,15 @@ function ActiveChart({ data }) {
       dateKey="day"
       height={300}
       viewportBuckets={vpb}
-      formatValue={(v) => `${Math.round(+v || 0)} active`}
+      formatValue={(v) => t('analytics.chart.active', { count: Math.round(+v || 0) })}
     />
   );
 }
 
 // ── Sales funnel — stage bars with stage-to-stage conversion % ─────────
 function FunnelView({ stages }) {
-  if (!stages?.length) return <div className="an-chart-empty">No data.</div>;
+  const { t } = useTranslation();
+  if (!stages?.length) return <div className="an-chart-empty">{t('analytics.noData')}</div>;
   // Scale bars to the LARGEST stage (normally "visited"), so the funnel still
   // renders sanely when the top stage has no data yet (visited = 0).
   const top = Math.max(1, ...stages.map(s => Number(s.value || 0)));
@@ -158,7 +167,7 @@ function FunnelView({ stages }) {
         return (
           <div key={s.key} className="an-funnel-row">
             <div className="an-funnel-head">
-              <span className="an-funnel-label">{s.label}</span>
+              <span className="an-funnel-label">{t(`analytics.funnel.${s.key}`, s.label)}</span>
               <span className="an-funnel-value">
                 {v.toLocaleString()}
                 {conv != null && <span className="an-funnel-conv"> · {conv}%</span>}
@@ -176,7 +185,8 @@ function FunnelView({ stages }) {
 
 // ── Bar list (subscription plans) ──────────────────────────────────────
 function BarList({ rows }) {
-  if (!rows?.length) return <div className="an-chart-empty">No data.</div>;
+  const { t } = useTranslation();
+  if (!rows?.length) return <div className="an-chart-empty">{t('analytics.noData')}</div>;
   const total = rows.reduce((s, x) => s + Number(x.value || 0), 0) || 1;
   return (
     <div className="an-bar-list">
@@ -206,13 +216,14 @@ function countryFlag(code) {
          String.fromCodePoint(A + (code.charCodeAt(1) - 65));
 }
 function CountryList({ rows }) {
-  if (!rows?.length) return <div className="an-chart-empty">No data.</div>;
+  const { t } = useTranslation();
+  if (!rows?.length) return <div className="an-chart-empty">{t('analytics.noData')}</div>;
   return (
     <div className="an-country-list">
       {rows.map(r => (
         <div key={r.country} className="an-country-row">
           <span className="an-country-flag">{r.country === 'XX' ? '🌍' : countryFlag(r.country)}</span>
-          <span className="an-country-code">{r.country === 'XX' ? 'Unknown' : r.country}</span>
+          <span className="an-country-code">{r.country === 'XX' ? t('analytics.unknownCountry') : r.country}</span>
           <span className="an-country-count">{r.users}</span>
         </div>
       ))}
@@ -224,6 +235,7 @@ function CountryList({ rows }) {
 //  Page
 // ════════════════════════════════════════════════════════════════════════
 export default function Analytics() {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState('30d');
   const [data, setData]     = useState(null);
   const [err, setErr]       = useState('');
@@ -261,7 +273,9 @@ export default function Analytics() {
 
   const planRows = plans.map(p => ({
     key: p.plan_code,
-    label: p.plan_name || PLAN_LABEL[p.plan_code] || p.plan_code,
+    // Prefer the backend's plan_name (API-provided); fall back to the frontend
+    // i18n label, then the raw code.
+    label: p.plan_name || (PLAN_LABEL[p.plan_code] ? t(PLAN_LABEL[p.plan_code]) : p.plan_code),
     value: Number(p.org_count) || 0,
   }));
 
@@ -271,79 +285,76 @@ export default function Analytics() {
 
   return (
     <>
-      <h1 className="crm-page-title">Analytics</h1>
+      <h1 className="crm-page-title">{t('analytics.title')}</h1>
 
-      {err && <div className="an-section"><div className="an-section-body">Failed to load: {err}</div></div>}
+      {err && <div className="an-section"><div className="an-section-body">{t('analytics.failedToLoad', { error: err })}</div></div>}
 
       {/* SECTION 1 — Overview KPIs */}
-      <Section title="Overview" Icon={ChartLine} period={period} onPeriodChange={setPeriod}>
-        {!data ? <div className="an-chart-empty">Loading…</div> : (
+      <Section title={t('analytics.sections.overview')} Icon={ChartLine} period={period} onPeriodChange={setPeriod}>
+        {!data ? <div className="an-chart-empty">{t('common.loading')}</div> : (
           <div className="an-kpi-grid">
-            <Kpi label="Total users"      value={totals.users_total ?? 0}
-                 sub={`${totals.users_banned ?? 0} banned · ${totals.admins ?? 0} admins`} />
-            <Kpi label="Organizations"    value={totals.orgs_total ?? 0}
-                 sub={`${totals.projects_total ?? 0} projects (${totals.projects_active ?? 0} active)`} />
-            <Kpi label="Orders (24h)"     value={totals.orders_24h ?? 0}
-                 sub={`${totals.orders_total ?? 0} all-time`} />
-            <Kpi label="MRR estimate"     value={`$${mrr.toLocaleString()}`}
-                 sub="Sum of (orgs × plan price)" />
+            <Kpi label={t('analytics.kpi.totalUsers')}      value={totals.users_total ?? 0}
+                 sub={t('analytics.kpi.totalUsersSub', { banned: totals.users_banned ?? 0, count: totals.admins ?? 0 })} />
+            <Kpi label={t('analytics.kpi.organizations')}    value={totals.orgs_total ?? 0}
+                 sub={t('analytics.kpi.organizationsSub', { count: totals.projects_total ?? 0, active: totals.projects_active ?? 0 })} />
+            <Kpi label={t('analytics.kpi.orders24h')}     value={totals.orders_24h ?? 0}
+                 sub={t('analytics.kpi.orders24hSub', { total: totals.orders_total ?? 0 })} />
+            <Kpi label={t('analytics.kpi.mrrEstimate')}     value={`$${mrr.toLocaleString()}`}
+                 sub={t('analytics.kpi.mrrEstimateSub')} />
           </div>
         )}
       </Section>
 
       {/* SECTION — Engagement (live + active + churn) */}
-      <Section title="Engagement" Icon={Pulse} hidePeriod live>
-        {!data ? <div className="an-chart-empty">Loading…</div> : (
+      <Section title={t('analytics.sections.engagement')} Icon={Pulse} hidePeriod live>
+        {!data ? <div className="an-chart-empty">{t('common.loading')}</div> : (
           <div className="an-kpi-grid">
-            <Kpi label="Online now" value={engagement.online_now ?? 0}
-                 sub="live in the CRM right now" />
-            <Kpi label="Active / week (WAU)" value={engagement.wau ?? 0}
-                 sub={`${activeRate}% of users · ${engagement.dau ?? 0} today`} />
-            <Kpi label="Active / month (MAU)" value={engagement.mau ?? 0}
-                 sub={`${engagement.ever_active ?? 0} ever signed in`} />
-            <Kpi label="Churned" value={engagement.churned ?? 0}
-                 sub="signed in once, silent 30d+" />
+            <Kpi label={t('analytics.kpi.onlineNow')} value={engagement.online_now ?? 0}
+                 sub={t('analytics.kpi.onlineNowSub')} />
+            <Kpi label={t('analytics.kpi.wau')} value={engagement.wau ?? 0}
+                 sub={t('analytics.kpi.wauSub', { rate: activeRate, dau: engagement.dau ?? 0 })} />
+            <Kpi label={t('analytics.kpi.mau')} value={engagement.mau ?? 0}
+                 sub={t('analytics.kpi.mauSub', { count: engagement.ever_active ?? 0 })} />
+            <Kpi label={t('analytics.kpi.churned')} value={engagement.churned ?? 0}
+                 sub={t('analytics.kpi.churnedSub')} />
           </div>
         )}
       </Section>
 
       {/* SECTION — Sales funnel */}
-      <Section title="Sales funnel" Icon={FunnelSimple} hidePeriod>
-        {!data ? <div className="an-chart-empty">Loading…</div> : (
+      <Section title={t('analytics.sections.salesFunnel')} Icon={FunnelSimple} hidePeriod>
+        {!data ? <div className="an-chart-empty">{t('common.loading')}</div> : (
           <>
             <FunnelView stages={funnel} />
             {noVisits && (
-              <p className="an-funnel-hint">
-                Visit tracking just shipped — the “Visited” step fills as traffic
-                arrives (one count per visitor per day, anonymous).
-              </p>
+              <p className="an-funnel-hint">{t('analytics.funnelHint')}</p>
             )}
           </>
         )}
       </Section>
 
       {/* SECTION 2 — Signups over time chart */}
-      <Section title="Signups over time" Icon={UsersThree} hidePeriod>
-        {!data ? <div className="an-chart-empty">Loading…</div> : (
+      <Section title={t('analytics.sections.signupsOverTime')} Icon={UsersThree} hidePeriod>
+        {!data ? <div className="an-chart-empty">{t('common.loading')}</div> : (
           <SignupsChart data={series} />
         )}
       </Section>
 
       {/* SECTION — Active users over time (distinct daily logins) */}
-      <Section title="Active users over time" Icon={ChartLine} period={period} onPeriodChange={setPeriod}>
-        {!data ? <div className="an-chart-empty">Loading…</div> : (
+      <Section title={t('analytics.sections.activeUsersOverTime')} Icon={ChartLine} period={period} onPeriodChange={setPeriod}>
+        {!data ? <div className="an-chart-empty">{t('common.loading')}</div> : (
           <ActiveChart data={activeSrs} />
         )}
       </Section>
 
       {/* SECTIONS 3+4 side-by-side — Plans + Countries */}
       <div className="an-row-2col">
-        <Section title="Subscription plans" Icon={Wallet} hidePeriod>
-          {!data ? <div className="an-chart-empty">Loading…</div> : <BarList rows={planRows} />}
+        <Section title={t('analytics.sections.subscriptionPlans')} Icon={Wallet} hidePeriod>
+          {!data ? <div className="an-chart-empty">{t('common.loading')}</div> : <BarList rows={planRows} />}
         </Section>
 
-        <Section title="Top countries" Icon={Globe} hidePeriod>
-          {!data ? <div className="an-chart-empty">Loading…</div> : <CountryList rows={countries} />}
+        <Section title={t('analytics.sections.topCountries')} Icon={Globe} hidePeriod>
+          {!data ? <div className="an-chart-empty">{t('common.loading')}</div> : <CountryList rows={countries} />}
         </Section>
       </div>
     </>

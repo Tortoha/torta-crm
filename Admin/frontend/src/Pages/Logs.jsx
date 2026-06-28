@@ -5,6 +5,7 @@
 // Search + filter run client-side over the loaded page (per_page=200).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Pulse, SignIn, ShieldCheck, Warning, MagnifyingGlass } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import { PoListRow } from '../Utils/PoListRow.jsx';
@@ -17,29 +18,29 @@ import '../Style/Users.css';
 import '../Style/Logs.css';
 
 const TABS = [
-  { key: 'activity', label: 'Activity',    endpoint: 'activity', Icon: Pulse },
-  { key: 'logins',   label: 'Logins',      endpoint: 'logins',   Icon: SignIn },
-  { key: 'audit',    label: 'Admin audit', endpoint: 'audit',    Icon: ShieldCheck },
-  { key: 'errors',   label: 'Technical',   endpoint: 'errors',   Icon: Warning },
+  { key: 'activity', label: 'logs.tabs.activity', endpoint: 'activity', Icon: Pulse },
+  { key: 'logins',   label: 'logs.tabs.logins',   endpoint: 'logins',   Icon: SignIn },
+  { key: 'audit',    label: 'logs.tabs.audit',    endpoint: 'audit',    Icon: ShieldCheck },
+  { key: 'errors',   label: 'logs.tabs.errors',   endpoint: 'errors',   Icon: Warning },
 ];
 
 const FILTERS = {
   activity: [
-    { value: 'all', label: 'All' }, { value: 'signup', label: 'Signups' },
-    { value: 'org', label: 'Orgs' }, { value: 'project', label: 'Projects' },
-    { value: 'order', label: 'Orders' }, { value: 'ban', label: 'Bans' },
+    { value: 'all', label: 'logs.filters.all' }, { value: 'signup', label: 'logs.filters.signup' },
+    { value: 'org', label: 'logs.filters.org' }, { value: 'project', label: 'logs.filters.project' },
+    { value: 'order', label: 'logs.filters.order' }, { value: 'ban', label: 'logs.filters.ban' },
   ],
   logins: [
-    { value: 'all', label: 'All' }, { value: 'success', label: 'Success' },
-    { value: 'failed', label: 'Failed' },
+    { value: 'all', label: 'logs.filters.all' }, { value: 'success', label: 'logs.filters.success' },
+    { value: 'failed', label: 'logs.filters.failed' },
   ],
   audit: [
-    { value: 'all', label: 'All' }, { value: 'ban', label: 'Bans' },
-    { value: 'unban', label: 'Unbans' }, { value: 'delete_user', label: 'Deletions' },
+    { value: 'all', label: 'logs.filters.all' }, { value: 'ban', label: 'logs.filters.ban' },
+    { value: 'unban', label: 'logs.filters.unban' }, { value: 'delete_user', label: 'logs.filters.delete_user' },
   ],
   errors: [
-    { value: 'all', label: 'All' }, { value: '5xx', label: '5xx' },
-    { value: '4xx', label: '4xx' },
+    { value: 'all', label: 'logs.filters.all' }, { value: '5xx', label: 'logs.filters.5xx' },
+    { value: '4xx', label: 'logs.filters.4xx' },
   ],
 };
 
@@ -57,38 +58,45 @@ function flag(code) {
   return String.fromCodePoint(A + c.charCodeAt(0) - 65) +
          String.fromCodePoint(A + c.charCodeAt(1) - 65);
 }
-const Tag = ({ kind, children }) =>
-  <span className={`lg-tag lg-tag--${kind}`}>{children ?? kind}</span>;
+// `children` may be a literal status word stored as an i18n key (e.g.
+// 'logs.tags.failed'); resolve those, but leave dynamic backend strings
+// (r.detail, r.status, the un-snaked action) untouched.
+const Tag = ({ kind, children }) => {
+  const { t } = useTranslation();
+  const raw = children ?? kind;
+  const text = typeof raw === 'string' && raw.startsWith('logs.tags.') ? t(raw) : raw;
+  return <span className={`lg-tag lg-tag--${kind}`}>{text}</span>;
+};
 
-// Per-tab columns: { label, w (grid track), cell, strong?, muted?, ellipsis? }
+// Per-tab columns: { label (i18n key), w (grid track), cell, strong?, muted?, ellipsis? }
 const COLS = {
   activity: [
-    { label: 'When',   w: '1.1fr', cell: r => fmt(r.created_at), muted: true },
-    { label: 'Event',  w: '0.8fr', cell: r => <Tag kind={r.kind} /> },
-    { label: 'Detail', w: '2.6fr', cell: r => r.title || '—', strong: true, ellipsis: true },
-    { label: '',       w: '1.4fr', cell: r => r.meta || '', muted: true, ellipsis: true },
+    { label: 'logs.cols.when',   w: '1.1fr', cell: r => fmt(r.created_at), muted: true },
+    { label: 'logs.cols.event',  w: '0.8fr', cell: r => <Tag kind={r.kind} /> },
+    { label: 'logs.cols.detail', w: '2.6fr', cell: r => r.title || '—', strong: true, ellipsis: true },
+    { label: '',                 w: '1.4fr', cell: r => r.meta || '', muted: true, ellipsis: true },
   ],
   logins: [
-    { label: 'When',    w: '1.2fr', cell: r => fmt(r.created_at), muted: true },
-    { label: 'Email',   w: '2fr',   cell: r => r.email || '—', strong: true, ellipsis: true },
-    { label: 'Result',  w: '1fr',   cell: r => r.success ? <Tag kind="ok">success</Tag> : <Tag kind="bad">{r.detail || 'failed'}</Tag> },
-    { label: 'Country', w: '0.9fr', cell: r => r.country ? `${flag(r.country)} ${r.country}` : '—', muted: true },
-    { label: 'IP',      w: '1.3fr', cell: r => r.ip || '—', muted: true, ellipsis: true },
-    { label: 'Method',  w: '0.8fr', cell: r => r.method || '—', muted: true },
+    { label: 'logs.cols.when',    w: '1.2fr', cell: r => fmt(r.created_at), muted: true },
+    { label: 'logs.cols.email',   w: '2fr',   cell: r => r.email || '—', strong: true, ellipsis: true },
+    { label: 'logs.cols.result',  w: '1fr',   cell: r => r.success ? <Tag kind="ok">{'logs.tags.success'}</Tag> : <Tag kind="bad">{r.detail || 'logs.tags.failed'}</Tag> },
+    { label: 'logs.cols.country', w: '0.9fr', cell: r => r.country ? `${flag(r.country)} ${r.country}` : '—', muted: true },
+    { label: 'logs.cols.ip',      w: '1.3fr', cell: r => r.ip || '—', muted: true, ellipsis: true },
+    { label: 'logs.cols.method',  w: '0.8fr', cell: r => r.method || '—', muted: true },
   ],
   audit: [
-    { label: 'When',   w: '1.2fr', cell: r => fmt(r.created_at), muted: true },
-    { label: 'Admin',  w: '1.7fr', cell: r => r.admin_email || (r.admin_id ? `#${r.admin_id}` : '—'), strong: true, ellipsis: true },
-    { label: 'Action', w: '1fr',   cell: r => <Tag kind={r.action}>{(r.action || '').replace('_', ' ')}</Tag> },
-    { label: 'Target', w: '1.7fr', cell: r => r.target_email || (r.target_user_id ? `#${r.target_user_id}` : '—'), muted: true, ellipsis: true },
-    { label: 'Detail', w: '2.2fr', cell: r => r.detail || '—', muted: true, ellipsis: true },
+    { label: 'logs.cols.when',   w: '1.2fr', cell: r => fmt(r.created_at), muted: true },
+    { label: 'logs.cols.admin',  w: '1.7fr', cell: r => r.admin_email || (r.admin_id ? `#${r.admin_id}` : '—'), strong: true, ellipsis: true },
+    { label: 'logs.cols.action', w: '1fr',   cell: r => <Tag kind={r.action}>{(r.action || '').replace('_', ' ')}</Tag> },
+    { label: 'logs.cols.target', w: '1.7fr', cell: r => r.target_email || (r.target_user_id ? `#${r.target_user_id}` : '—'), muted: true, ellipsis: true },
+    { label: 'logs.cols.detail', w: '2.2fr', cell: r => r.detail || '—', muted: true, ellipsis: true },
   ],
   errors: [
-    { label: 'When',   w: '1.2fr', cell: r => fmt(r.created_at), muted: true },
-    { label: 'Status', w: '0.7fr', cell: r => <Tag kind="bad">{r.status}</Tag> },
-    { label: 'Method', w: '0.7fr', cell: r => r.method || '', muted: true },
-    { label: 'Path',   w: '2.2fr', cell: r => r.path || '—', strong: true, ellipsis: true },
-    { label: 'Error',  w: '2.6fr', cell: r => r.error || '—', muted: true, ellipsis: true },
+    { label: 'logs.cols.when',   w: '1.2fr', cell: r => fmt(r.created_at), muted: true },
+    { label: 'logs.cols.status', w: '0.7fr', cell: r => <Tag kind="bad">{r.status}</Tag> },
+    { label: 'logs.cols.method', w: '0.7fr', cell: r => r.method || '', muted: true },
+    { label: 'logs.cols.path',   w: '2.2fr', cell: r => r.path || '—', strong: true, ellipsis: true },
+    { label: 'logs.cols.error',  w: '2.6fr', cell: r => r.error || '—', muted: true, ellipsis: true },
   ],
 };
 
@@ -111,6 +119,7 @@ function matchesFilter(it, tab, f) {
 }
 
 export default function Logs() {
+  const { t } = useTranslation();
   const [tab,  setTab]  = useState('activity');
   const [page, setPage] = useState(1);
   const [raw,  setRaw]  = useState(null);
@@ -160,7 +169,7 @@ export default function Logs() {
 
   return (
     <>
-      <h1 className="crm-page-title">Logs</h1>
+      <h1 className="crm-page-title">{t('logs.title')}</h1>
 
       {/* TabBar — same component/classes as the CRM Products page */}
       <TabSwitcher tabs={TABS} activeKey={tab} onPick={setTab} />
@@ -171,7 +180,7 @@ export default function Logs() {
           <MagnifyingGlass className="org-search-icon" />
           <input
             className="org-search-input"
-            placeholder="Search logs…"
+            placeholder={t('logs.searchPlaceholder')}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -181,17 +190,17 @@ export default function Logs() {
             {filters.map(opt => (
               <button key={opt.value} type="button"
                 className={`org-status-btn${filter === opt.value ? ' org-status-btn--active' : ''}`}
-                onClick={() => setFilter(opt.value)}>{opt.label}</button>
+                onClick={() => setFilter(opt.value)}>{t(opt.label)}</button>
             ))}
           </div>
         )}
       </div>
 
-      {err && <div className="crm-placeholder" style={{ color: 'var(--delete)' }}>Failed to load: {err}</div>}
-      {loading && !raw && <div className="crm-placeholder">Loading…</div>}
+      {err && <div className="crm-placeholder" style={{ color: 'var(--delete)' }}>{t('logs.loadFailed', { err })}</div>}
+      {loading && !raw && <div className="crm-placeholder">{t('common.loading')}</div>}
       {raw && filtered.length === 0 && !err && (
         <div className="crm-placeholder">
-          {q || filter !== 'all' ? 'No entries match these filters.' : 'No entries yet.'}
+          {q || filter !== 'all' ? t('logs.emptyFiltered') : t('logs.emptyNone')}
         </div>
       )}
 
@@ -199,7 +208,7 @@ export default function Logs() {
         <>
           <div className="po-set-table">
             <div className="po-set-row po-set-row--head" style={{ gridTemplateColumns: grid }}>
-              {cols.map((c, i) => <span key={i}>{c.label}</span>)}
+              {cols.map((c, i) => <span key={i}>{c.label ? t(c.label) : ''}</span>)}
             </div>
             {filtered.map((r, idx) => (
               <PoListRow key={r.id ?? idx} style={{ gridTemplateColumns: grid }}>
@@ -209,12 +218,12 @@ export default function Logs() {
           </div>
 
           <div className="adm-pagination">
-            <span style={{ color: 'var(--muted)' }}>{filtered.length} shown · page {raw.page}</span>
+            <span style={{ color: 'var(--muted)' }}>{t('logs.paginationShown', { count: filtered.length, page: raw.page })}</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="crm-submit-btn auth-btn-secondary"
-                disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Prev</button>
+                disabled={page <= 1} onClick={() => setPage(p => p - 1)}>{t('logs.prev')}</button>
               <button className="crm-submit-btn auth-btn-secondary"
-                disabled={items.length < 200} onClick={() => setPage(p => p + 1)}>Next</button>
+                disabled={items.length < 200} onClick={() => setPage(p => p + 1)}>{t('logs.next')}</button>
             </div>
           </div>
         </>
@@ -227,6 +236,7 @@ export default function Logs() {
 // (Pages/Project/Products/Products.jsx). Same auth-tab-* classes + sliding
 // indicator following hover → active. onPick receives the tab key.
 function TabSwitcher({ tabs, activeKey, onPick }) {
+  const { t }   = useTranslation();
   const indRef  = useRef(null);
   const btnRefs = useRef({});
   const [hovered, setHovered] = useState(null);
@@ -256,7 +266,7 @@ function TabSwitcher({ tabs, activeKey, onPick }) {
             onClick={() => onPick(key)}
             type="button">
             <Icon className="auth-tab-icon" />
-            {label}
+            {t(label)}
           </button>
         ))}
       </div>

@@ -1,0 +1,42 @@
+{
+  "feedback": {
+    "title": "Feedback",
+    "searchPlaceholder": "Search subject, message, name or email…",
+    "filter": {
+      "all": "All",
+      "issues": "Issues",
+      "ideas": "Ideas"
+    },
+    "kind": {
+      "idea": "Idea",
+      "issue": "Issue"
+    },
+    "col": {
+      "type": "Type",
+      "subject": "Subject",
+      "from": "From",
+      "date": "Date",
+      "status": "Status"
+    },
+    "status": {
+      "replied": "Replied",
+      "new": "New"
+    },
+    "loadFailed": "Failed to load: {{error}}",
+    "emptyFiltered": "No feedback matches these filters.",
+    "empty": "No feedback yet.",
+    "modal": {
+      "noEmail": "no email",
+      "alreadyReplied": "Already replied",
+      "replyLabel": "Reply via email — from Torta <{{email}}>",
+      "replyPlaceholder": "Write your reply to {{email}}…",
+      "replyPlaceholderNone": "This feedback has no email to reply to",
+      "sendReply": "Send reply",
+      "sending": "Sending…",
+      "errWriteFirst": "Write a reply first",
+      "errSendFailed": "Failed to send",
+      "errNetwork": "Network error",
+      "deleteConfirm": "Delete this feedback permanently?"
+    }
+  }
+}

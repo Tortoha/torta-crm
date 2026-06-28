@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Eye, EyeSlash } from '@phosphor-icons/react';
 import { API_BASE, pickError } from './api.js';
 import './Style/Login.css';
@@ -17,6 +18,7 @@ import './Style/Login.css';
 //   4. Google OAuth callback rejects non-locked emails when ?from=admin
 
 export default function Login() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [email, setEmail]       = useState('');
@@ -29,10 +31,10 @@ export default function Login() {
   // wording, no email hint).
   useEffect(() => {
     const err = searchParams.get('error');
-    if (err === 'admin_not_allowed')   setGeneralError('Access denied.');
-    else if (err === 'google_cancelled') setGeneralError('Sign-in cancelled.');
-    else if (err)                       setGeneralError('Sign-in failed.');
-  }, [searchParams]);
+    if (err === 'admin_not_allowed')   setGeneralError(t('login.accessDenied'));
+    else if (err === 'google_cancelled') setGeneralError(t('login.signInCancelled'));
+    else if (err)                       setGeneralError(t('login.signInFailed'));
+  }, [searchParams, t]);
 
   const isValid = email.length > 0 && password.length > 0 && !loading;
 
@@ -58,10 +60,10 @@ export default function Login() {
         navigate('/login/verification');
       } else {
         // Generic error — never reveal whether the email exists.
-        setGeneralError(pickError(data, 'Invalid credentials'));
+        setGeneralError(pickError(data, t('login.invalidCredentials')));
       }
     } catch {
-      setGeneralError('Network error');
+      setGeneralError(t('login.networkError'));
     } finally {
       setLoading(false);
     }
@@ -77,13 +79,13 @@ export default function Login() {
   return (
     <div className="regist">
       <section className="regis">
-        <h1>Sign In</h1>
+        <h1>{t('login.title')}</h1>
         <div className="reg">
           <form onSubmit={handleLogin}>
             <div className="secsh">
               <input
                 type="email"
-                placeholder="Email"
+                placeholder={t('login.email')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
@@ -94,7 +96,7 @@ export default function Login() {
               <div className="password-wrapper">
                 <input
                   type={showPw ? 'text' : 'password'}
-                  placeholder="Password"
+                  placeholder={t('login.password')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
@@ -105,7 +107,7 @@ export default function Login() {
                   className="password-eye"
                   onClick={() => setShowPw(s => !s)}
                   tabIndex={-1}
-                  aria-label={showPw ? 'Hide password' : 'Show password'}
+                  aria-label={showPw ? t('login.hidePassword') : t('login.showPassword')}
                 >
                   {showPw ? <EyeSlash size={20} /> : <Eye size={20} />}
                 </button>
@@ -122,13 +124,13 @@ export default function Login() {
               <input
                 className={isValid ? 'button1' : 'not-button'}
                 type="submit"
-                value={loading ? 'Sending…' : 'Next'}
+                value={loading ? t('login.sending') : t('login.next')}
                 disabled={!isValid}
               />
             </div>
 
             <div className="oauth-wrap">
-              <div className="oauth-divider"><span>or</span></div>
+              <div className="oauth-divider"><span>{t('login.or')}</span></div>
               <button type="button" className="oauth-btn" onClick={handleGoogle}>
                 <svg className="oauth-logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -136,7 +138,7 @@ export default function Login() {
                   <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
                   <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                 </svg>
-                Continue with Google
+                {t('login.continueWithGoogle')}
               </button>
             </div>
 

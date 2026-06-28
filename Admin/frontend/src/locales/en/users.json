@@ -1,0 +1,72 @@
+{
+  "users": {
+    "title": "Users",
+    "searchPlaceholder": "Search by email or name…",
+    "filters": {
+      "all": "All users",
+      "active": "Active",
+      "banned": "Banned",
+      "admin": "Admins"
+    },
+    "columns": {
+      "email": "Email",
+      "name": "Name",
+      "joined": "Joined",
+      "country": "Country",
+      "orgsProjects": "Orgs / Projects",
+      "status": "Status"
+    },
+    "status": {
+      "hardBanned": "Hard banned",
+      "softBanned": "Soft banned",
+      "admin": "Admin",
+      "active": "Active"
+    },
+    "menu": {
+      "ban": "Ban user…",
+      "unban": "Unban user",
+      "delete": "Delete account",
+      "actions": "User actions"
+    },
+    "ban": {
+      "title": "Take action on user",
+      "subtitle": "{{email}} · {{orgs}} orgs, {{projects}} projects",
+      "tiers": {
+        "soft": {
+          "title": "Soft ban — block login only",
+          "body": "Account stays. Their projects keep running for end customers. Fully reversible from this page."
+        },
+        "hard": {
+          "title": "Hard ban — suspend everything",
+          "body": "Block login AND mark all their projects inactive (customers' storefronts go dark). Reversible (login); projects must be re-activated manually."
+        },
+        "nuclear": {
+          "title": "Delete account — irreversible",
+          "body": "Cascade-delete user + orgs + projects + products + orders. Use only for fraud / legal takedown."
+        }
+      },
+      "reasonLabel": "Reason (admin-only)",
+      "reasonPlaceholder": "Why are you taking this action?",
+      "confirmTextBefore": "Type the email",
+      "confirmTextAfter": "to confirm permanent deletion.",
+      "softBtn": "Soft ban user",
+      "hardBtn": "Hard ban user",
+      "deleteBtn": "Delete permanently",
+      "working": "Working…"
+    },
+    "empty": {
+      "noMatch": "No users match these filters.",
+      "none": "No users yet."
+    },
+    "pageInfo": "{{total}} total · page {{page}} of {{pages}}",
+    "prev": "Prev",
+    "next": "Next",
+    "confirmUnban": "Unban {{email}}?",
+    "errors": {
+      "loadFailed": "Failed to load: {{error}}",
+      "actionFailed": "Action failed",
+      "networkError": "Network error",
+      "typeEmailExactly": "Type the email exactly to confirm."
+    }
+  }
+}

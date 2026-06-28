@@ -1,0 +1,19 @@
+{
+  "inbox": {
+    "title": "Входящие",
+    "mailbox": {
+      "all": "Все",
+      "support": "Поддержка",
+      "legal": "Юридический"
+    },
+    "searchPlaceholder": "Поиск по отправителю или теме…",
+    "noConversations": "Нет переписок",
+    "selectConversation": "Выберите переписку",
+    "replyPlaceholder": "Ответить из {{mailbox}}@tortacrm.com…",
+    "deleteConfirm": "Удалить эту переписку навсегда?",
+    "deleteConversation": "Удалить переписку",
+    "emptyMessage": "(пусто)",
+    "sendFailed": "Не удалось отправить",
+    "networkError": "Ошибка сети"
+  }
+}

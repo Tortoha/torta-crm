@@ -1,0 +1,52 @@
+{
+  "logs": {
+    "title": "Логи",
+    "tabs": {
+      "activity": "Активность",
+      "logins": "Входы",
+      "audit": "Аудит админа",
+      "errors": "Технические"
+    },
+    "filters": {
+      "all": "Все",
+      "signup": "Регистрации",
+      "org": "Организации",
+      "project": "Проекты",
+      "order": "Заказы",
+      "ban": "Блокировки",
+      "success": "Успешно",
+      "failed": "Ошибка",
+      "unban": "Разблокировки",
+      "delete_user": "Удаления",
+      "5xx": "5xx",
+      "4xx": "4xx"
+    },
+    "cols": {
+      "when": "Когда",
+      "event": "Событие",
+      "detail": "Детали",
+      "email": "Почта",
+      "result": "Результат",
+      "country": "Страна",
+      "ip": "IP",
+      "method": "Метод",
+      "admin": "Админ",
+      "action": "Действие",
+      "target": "Цель",
+      "status": "Статус",
+      "path": "Путь",
+      "error": "Ошибка"
+    },
+    "tags": {
+      "success": "успешно",
+      "failed": "ошибка"
+    },
+    "searchPlaceholder": "Поиск по логам…",
+    "emptyFiltered": "Нет записей по этим фильтрам.",
+    "emptyNone": "Записей пока нет.",
+    "loadFailed": "Не удалось загрузить: {{err}}",
+    "paginationShown": "{{count}} показано · страница {{page}}",
+    "prev": "Назад",
+    "next": "Вперёд"
+  }
+}
