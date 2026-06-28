@@ -17,6 +17,7 @@ import {
 } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../api.js';
 import { PoListRow } from '../Utils/PoListRow.jsx';
+import { useRealtimePoll } from '../Utils/useRealtimePoll.js';
 import '../Style/Authentication.css';
 import '../Style/Organization.css';
 import '../Style/Products.css';
@@ -270,16 +271,19 @@ export default function Users() {
   const [banTarget, setBanTarget] = useState(null);
   const [banTier, setBanTier]     = useState('soft');
 
-  const load = () => {
+  // silent=true → background refresh: keep the current page on a transient
+  // error instead of replacing it with a "Failed to load" banner.
+  const load = (silent = false) => {
     const params = new URLSearchParams({ status, page: String(page), per_page: '50' });
     if (q) params.set('q', q);
     fetch(`${API_BASE}/api/admin/users?${params}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(d => { setData(d); setErr(''); })
-      .catch(e => setErr(String(e)));
+      .catch(e => { if (!silent) setErr(String(e)); });
   };
 
   useEffect(load, [q, status, page]);
+  useRealtimePoll(() => load(true));
 
   const openBan = (u, tier = 'soft') => { setBanTarget(u); setBanTier(tier); };
 

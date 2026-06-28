@@ -4,6 +4,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { MagnifyingGlass, PaperPlaneTilt, Trash, EnvelopeSimple, Scales, Lifebuoy } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../api.js';
+import { useRealtimePoll } from '../Utils/useRealtimePoll.js';
 import '../Style/Organization.css';
 import '../Style/Products.css';
 import '../Style/Authentication.css';
@@ -48,29 +49,59 @@ export default function Inbox() {
   const [busy, setBusy]       = useState(false);
   const [err, setErr]         = useState('');
   const scrollRef = useRef(null);
+  // Mirror `sel` into a ref so async fetches can tell whether the user has
+  // since switched threads (drop the stale result instead of flashing it in).
+  const selRef = useRef(null);
+  useEffect(() => { selRef.current = sel; }, [sel]);
+  // Controls the auto-scroll effect below. Explicit opens/sends pin to the
+  // newest message; a background poll only re-pins if the reader was already
+  // at the bottom — so polling never yanks scroll while reading older mail.
+  const pinBottomRef = useRef(true);
 
   const loadThreads = useCallback(() => {
     const params = new URLSearchParams();
     if (mailbox !== 'all') params.set('mailbox', mailbox);
     if (q) params.set('q', q);
     fetch(`${API_BASE}/api/admin/inbox/threads?${params}`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : [])
+      .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setThreads(Array.isArray(d) ? d : []))
-      .catch(() => setThreads([]));
+      // Keep the current list on a transient error; only fall to empty if we
+      // never had data (so the initial "Loading…" doesn't hang forever).
+      .catch(() => setThreads(prev => prev ?? []));
   }, [mailbox, q]);
   useEffect(loadThreads, [loadThreads]);
 
   const openThread = (id) => {
     setSel(id); setReply(''); setErr('');
+    pinBottomRef.current = true;   // jump to the newest message on explicit open
     fetch(`${API_BASE}/api/admin/inbox/threads/${id}/messages`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { setDetail(d); loadThreads(); })   // reload clears the unread badge
+      .then(d => { if (selRef.current === id) { setDetail(d); loadThreads(); } })  // reload clears the unread badge
       .catch(() => setDetail(null));
   };
 
-  // Auto-scroll the conversation to the newest message.
+  // Realtime: refresh the thread list, and (if a conversation is open) its
+  // messages too — so an inbound reply appears live without re-clicking. Never
+  // touches the `reply` draft. Scroll only snaps down when already at bottom.
+  const refresh = useCallback(() => {
+    loadThreads();
+    const id = selRef.current;
+    if (!id) return;
+    const el = scrollRef.current;
+    pinBottomRef.current = el ? (el.scrollHeight - el.scrollTop - el.clientHeight < 80) : true;
+    fetch(`${API_BASE}/api/admin/inbox/threads/${id}/messages`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && selRef.current === id) setDetail(d); })
+      .catch(() => {});
+  }, [loadThreads]);
+  useRealtimePoll(refresh);
+
+  // Auto-scroll the conversation to the newest message — but only when pinned
+  // to the bottom, so a background refresh can't interrupt reading history.
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (pinBottomRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
   }, [detail]);
 
   const sendReply = async () => {

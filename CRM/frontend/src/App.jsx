@@ -27,6 +27,7 @@ import ErrorBoundary from './Elements/ErrorBoundary.jsx';
 // No language switching — English is the default for everyone; multi-language
 // SEO is handled via per-locale URLs + hreflang, not geo.
 import CountryTracker from './Elements/CountryTracker.jsx';
+import VisitTracker from './Elements/VisitTracker.jsx';
 import { applyLang } from './i18n.js';
 
 // Public marketing pages exist in every language at /{lang}/… for SEO. Slugs are
@@ -134,6 +135,8 @@ function App() {
       <PresenceBoot />
       {/* Keeps a logged-in user's last_country current (no language switching). */}
       <CountryTracker />
+      {/* Anonymous landing-visit beacon → admin sales-funnel top (once/session). */}
+      <VisitTracker />
       <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>

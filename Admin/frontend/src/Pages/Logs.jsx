@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pulse, SignIn, ShieldCheck, Warning, MagnifyingGlass } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import { PoListRow } from '../Utils/PoListRow.jsx';
+import { useRealtimePoll } from '../Utils/useRealtimePoll.js';
 import '../Style/Authentication.css';
 import '../Style/Organization.css';
 import '../Style/Products.css';
@@ -121,17 +122,22 @@ export default function Logs() {
   // Reset search/filter/page when switching tabs.
   useEffect(() => { setPage(1); setQ(''); setFilter('all'); }, [tab]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true); setErr('');
+  // Monotonic request token: only the most recent fetch may apply its result,
+  // so a slow background poll can't clobber a freshly-switched tab/page, and a
+  // late tab-switch can't be overwritten by an in-flight poll.
+  const reqRef = useRef(0);
+  const load = (silent = false) => {
+    const myReq = ++reqRef.current;
+    if (!silent) { setLoading(true); setErr(''); }
     const ep = (TABS.find(t => t.key === tab) || TABS[0]).endpoint;
     fetch(`${API_BASE}/api/admin/logs/${ep}?page=${page}&per_page=200`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
-      .then(d => { if (!cancelled) setRaw(d); })
-      .catch(e => { if (!cancelled) setErr(String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [tab, page]);
+      .then(d => { if (reqRef.current === myReq) { setRaw(d); setErr(''); } })
+      .catch(e => { if (reqRef.current === myReq && !silent) setErr(String(e)); })
+      .finally(() => { if (reqRef.current === myReq && !silent) setLoading(false); });
+  };
+  useEffect(() => { load(false); }, [tab, page]);
+  useRealtimePoll(() => load(true));
 
   const cols    = COLS[tab];
   const grid    = cols.map(c => c.w).join(' ');

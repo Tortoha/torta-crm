@@ -5295,6 +5295,28 @@ def _http_request(method: str, url: str, *, headers: dict | None = None,
 
 _STRIPE_BASE = "https://api.stripe.com/v1"
 
+# ── Currency minor-unit handling (per-gateway, NOT per-display) ──────────────
+# Stripe ZERO-DECIMAL currencies — the PaymentIntent `amount` is the WHOLE unit (NO
+# ×100). This is Stripe's CHARGING list, which is NOT the same as ISO/display minor
+# units: Stripe charges IDR/HUF/ISK/UZS/TWD as ×100 even though they show without
+# decimals, and only the codes below take the amount as-is. Using _PDF_CURRENCY's
+# display decimals here would 100×-UNDERcharge those. Source: docs.stripe.com/currencies.
+_STRIPE_ZERO_DECIMAL = {
+    "BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA",
+    "PYG", "RWF", "VND", "VUV", "XAF", "XOF", "XPF",
+}
+# PayPal currencies that do NOT accept decimals in `value` ("10.00" → 400). Shorter
+# list than Stripe's. Source: developer.paypal.com currency-codes.
+_PAYPAL_ZERO_DECIMAL = {"HUF", "JPY", "TWD"}
+
+
+def _stripe_minor_factor(currency: str) -> int:
+    """100 for normal currencies (USD/EUR/KZT…); 1 for Stripe zero-decimal (JPY/KRW…).
+    The send (create_intent) and the verify (place_order) MUST use the SAME factor —
+    otherwise the amount check silently passes a 100× over/under-charge (the ×100 on
+    both sides cancels out, so the wrong charge looks correct)."""
+    return 1 if (currency or "").strip().upper() in _STRIPE_ZERO_DECIMAL else 100
+
 
 def stripe_create_intent(creds: dict, amount_cents: int, currency: str,
                           *, order_metadata: dict, idempotency_key: str,
@@ -5881,11 +5903,14 @@ def paypal_create_order(creds: dict, *, amount: float, currency: str,
                          return_url: str, cancel_url: str, reference: str = "",
                          is_test_mode: bool = True) -> dict:
     """Create a CAPTURE-intent order → {intent_id (order id), approve_url, status}."""
+    ccy = (currency or "USD").upper()
+    # PayPal rejects decimals for its zero-decimal currencies (HUF/JPY/TWD) — sending
+    # "10.00" there is a 400; use a whole-number value for those.
+    val = f"{float(amount):.{0 if ccy in _PAYPAL_ZERO_DECIMAL else 2}f}"
     payload = {
         "intent": "CAPTURE",
         "purchase_units": [{
-            "amount": {"currency_code": (currency or "USD").upper(),
-                       "value": f"{float(amount):.2f}"},
+            "amount": {"currency_code": ccy, "value": val},
             **({"custom_id": reference} if reference else {}),
         }],
         "application_context": {
@@ -5972,7 +5997,7 @@ def create_intent(provider: str, creds: dict, *, amount: float, currency: str,
         # payment as "external / off-platform" (manual confirmation).
         return _ok({"intent_id": "manual-" + idempotency_key, "status": "manual_required"})
     if provider == "stripe":
-        amount_minor = int(round(amount * 100))
+        amount_minor = int(round(amount * _stripe_minor_factor(currency)))
         return stripe_create_intent(creds, amount_minor, currency,
                                      order_metadata=order_metadata,
                                      idempotency_key=idempotency_key,
@@ -7144,10 +7169,13 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             # Amount validation. Stripe uses minor units (cents); PayPal/Kaspi/Halyk/
             # CloudPayments/Robokassa use major units (decimal). Normalise to dollars.
             provider_amount = v.get("amount", 0)
-            # Only Stripe uses minor units (cents) → /100. PayPal/Kaspi/Halyk/
-            # CloudPayments/Robokassa all return MAJOR units → else branch (no /100).
+            # Stripe returns minor units → divide by the SAME per-currency factor we
+            # multiplied by in create_intent (100 normally, 1 for zero-decimal like
+            # JPY/KRW — see _stripe_minor_factor). PayPal/Kaspi/Halyk/CloudPayments/
+            # Robokassa all return MAJOR units → else branch (no division).
             if provider == "stripe":
-                provider_dollars = float(provider_amount) / 100.0
+                provider_dollars = float(provider_amount) / _stripe_minor_factor(
+                    v.get("currency") or project_currency)
             else:
                 try:
                     provider_dollars = float(provider_amount)
