@@ -238,6 +238,15 @@ export default function AccountingExportModal({
             <div className="acc-format-value">{meta.accountingFormat || 'CSV'}</div>
           </div>
 
+          {/* File-export connectors (Kompra / QuickBooks / Xero / DATEV / …) have
+              no live API — there's nothing to "connect". Spell that out up front,
+              since it's the #1 point of confusion vs. the webhook / 1C connectors. */}
+          <div style={{ padding: '10px 14px', background: 'var(--accent-tint)',
+                        borderRadius: 12, fontSize: 13, lineHeight: 1.5,
+                        color: 'var(--text)', marginBottom: 4 }}>
+            {t('integrations.accounting.fileExportNote', { name: meta.name })}
+          </div>
+
           {/* ── Period ── section title is a bare label sitting OUTSIDE any
               card (po-wh-section-label pattern from New warehouse modal).
               Compose stays inline: Combobox + Include-unpaid on one row. */}

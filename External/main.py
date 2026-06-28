@@ -2185,6 +2185,8 @@ def _build_slack_message(event: str, data: dict) -> dict:
         "booking.no_show":   "👻 No-show",
         "customer.created":  "👤 New customer",  "payment.received":  "💸 Payment received",
         "product.created":   "🆕 Product added", "product.updated":   "✏ Product updated",
+        "product.deleted":   "🗑 Product removed","stock.changed":     "📦 Stock changed",
+        "price.changed":     "🏷 Price changed",  "customer.updated":  "✏ Customer updated",
     }
     title = label_map.get(event, event)
     fields = []
@@ -2211,6 +2213,8 @@ def _build_discord_message(event: str, data: dict) -> dict:
         "booking.no_show":   "👻 No-show",
         "customer.created":  "👤 New customer",  "payment.received":  "💸 Payment received",
         "product.created":   "🆕 Product added", "product.updated":   "✏ Product updated",
+        "product.deleted":   "🗑 Product removed","stock.changed":     "📦 Stock changed",
+        "price.changed":     "🏷 Price changed",  "customer.updated":  "✏ Customer updated",
     }
     title = title_map.get(event, event)
     fields = []
@@ -2262,8 +2266,109 @@ def _url_is_safe_for_outbound(url: str) -> tuple:
     return True, ""
 
 
-def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
-    sub_type = sub["type"]
+# ── Native API formatters for the fixed-endpoint connectors ──────────────
+# GA4 / Mixpanel / Mailchimp are NOT plain webhooks — each speaks its own API.
+# Each builder returns (method, url, body_bytes, headers, body_obj) or None to
+# skip (event not applicable / missing credentials). The endpoint is our own
+# hard-coded trusted host (Google / Mixpanel / Mailchimp), so these skip the
+# merchant-URL SSRF guard. `sub["url"]` holds the connector's primary id
+# (GA4 Measurement ID / Mixpanel token / Mailchimp Audience ID); secrets live
+# in `sub["config"]`.
+
+# GA4 only maps ecommerce order events; catalog/customer events have no GA4
+# meaning → None (the dispatch-level applicability guard already keeps them out).
+_GA4_EVENT = {
+    "order.paid":     "purchase",
+    "order.created":  "begin_checkout",
+    "order.refunded": "refund",
+    "order.returned": "refund",
+}
+
+def _build_ga4(sub, event, data):
+    name = _GA4_EVENT.get(event)
+    mid    = (sub.get("url") or "").strip()
+    secret = ((sub.get("config") or {}).get("api_secret") or "").strip()
+    if not name or not mid or not secret:
+        return None
+    cust = data.get("customer") or {}
+    cid  = str(cust.get("id") or cust.get("email") or data.get("order_id") or "anon")
+    client_id = hashlib.md5(cid.encode("utf-8")).hexdigest()[:20] + ".0"
+    params = {}
+    if data.get("currency"):           params["currency"]       = str(data["currency"]).upper()
+    if data.get("amount") is not None:
+        try: params["value"] = round(float(data["amount"]), 2)
+        except Exception: pass
+    if data.get("order_id") is not None: params["transaction_id"] = str(data["order_id"])
+    items = [{"item_id": str(it.get("product_id") or ""), "item_name": it.get("title") or "",
+              "quantity": it.get("qty") or it.get("quantity") or 1, "price": it.get("price") or 0}
+             for it in (data.get("items") or [])]
+    if items: params["items"] = items
+    url = (f"https://www.google-analytics.com/mp/collect"
+           f"?measurement_id={mid}&api_secret={secret}")
+    body_obj = {"client_id": client_id, "events": [{"name": name, "params": params}]}
+    return ("POST", url, json.dumps(body_obj, default=str).encode("utf-8"),
+            {"Content-Type": "application/json"}, body_obj)
+
+def _build_mixpanel(sub, event, data):
+    # Mixpanel is a generic event tracker — every event name is valid.
+    token = (sub.get("url") or "").strip()
+    if not token:
+        return None
+    cust = data.get("customer") or {}
+    did  = str(cust.get("id") or cust.get("email") or data.get("order_id") or "anon")
+    iid  = hashlib.md5(f"{event}|{data.get('order_id') or data.get('id') or ''}|{did}".encode("utf-8")).hexdigest()
+    props = {"token": token, "distinct_id": did, "$insert_id": iid, "time": int(time.time())}
+    for k, v in (data or {}).items():
+        if isinstance(v, (str, int, float, bool)):
+            props[k] = v
+    if cust.get("email"): props["$email"] = cust["email"]
+    if cust.get("name"):  props["$name"]  = cust["name"]
+    body_obj = [{"event": event, "properties": props}]
+    return ("POST", "https://api.mixpanel.com/track",
+            json.dumps(body_obj, default=str).encode("utf-8"),
+            {"Content-Type": "application/json", "Accept": "text/plain"}, body_obj)
+
+def _build_mailchimp(sub, event, data):
+    cust  = data.get("customer") or {}
+    email = (cust.get("email") or data.get("customer_email") or data.get("email") or "").strip().lower()
+    list_id = (sub.get("url") or "").strip()
+    api_key = ((sub.get("config") or {}).get("api_key") or "").strip()
+    if not email or "@" not in email or not list_id or "-" not in api_key:
+        return None
+    dc = api_key.rsplit("-", 1)[-1]                             # datacenter, e.g. "us21"
+    # `dc` goes into the request HOST — validate it's a real Mailchimp DC token
+    # ([a-z]+[0-9]+) so a malformed key can't inject a different host (e.g.
+    # "key-x@evil.com/" → exfiltrating the API key via Basic auth to evil.com).
+    if not _re.match(r"^[a-z]{2,}[0-9]{1,3}$", dc):
+        return None
+    sub_hash = hashlib.md5(email.encode("utf-8")).hexdigest()   # member id = md5(lowercased email)
+    first, _, last = (cust.get("name") or "").strip().partition(" ")
+    body_obj = {"email_address": email, "status_if_new": "subscribed", "status": "subscribed",
+                "merge_fields": {"FNAME": first, "LNAME": last}}
+    auth = _b64.b64encode(f"anystring:{api_key}".encode("utf-8")).decode("ascii")
+    # PUT /members/{hash} upserts — idempotent: subscribes new, updates existing.
+    url = f"https://{dc}.api.mailchimp.com/3.0/lists/{list_id}/members/{sub_hash}"
+    return ("PUT", url, json.dumps(body_obj).encode("utf-8"),
+            {"Content-Type": "application/json", "Authorization": f"Basic {auth}"}, body_obj)
+
+_NATIVE_BUILDERS = {"ga4": _build_ga4, "mixpanel": _build_mixpanel, "mailchimp": _build_mailchimp}
+
+def _event_applies_to_type(sub_type, event):
+    """Type-aware applicability: GA4 only understands ecommerce order events,
+    Mailchimp only customer events — so they never get catalog/stock noise even
+    if their event-filter is empty. Mixpanel + generic webhooks accept anything."""
+    if sub_type == "ga4":
+        return event in _GA4_EVENT
+    if sub_type == "mailchimp":
+        return event in ("customer.created", "customer.updated")
+    return True
+
+
+def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1):
+    sub_type   = sub["type"]
+    method     = "POST"
+    target_url = sub.get("url") or ""
+    skip_ssrf  = False
     if sub_type == "slack":
         body_obj = _build_slack_message(event, data)
         body     = json.dumps(body_obj).encode()
@@ -2272,6 +2377,12 @@ def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> di
         body_obj = _build_discord_message(event, data)
         body     = json.dumps(body_obj).encode()
         headers  = {"Content-Type": "application/json"}
+    elif sub_type in _NATIVE_BUILDERS:
+        prep = _NATIVE_BUILDERS[sub_type](sub, event, data)
+        if prep is None:
+            return None                 # not applicable / missing creds → skip, no log
+        method, target_url, body, headers, body_obj = prep
+        skip_ssrf = True                # fixed, trusted Google/Mixpanel/Mailchimp host
     else:
         body_obj = {"event": event, "project_id": sub["project_id"],
                     "occurred_at": _utcnow().isoformat(), "data": data}
@@ -2291,15 +2402,17 @@ def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1) -> di
     out = {"subscription_id": sub["id"], "project_id": sub["project_id"],
            "event": event, "payload": json.dumps(body_obj, default=str),
            "attempt": attempt}
-    # SSRF guard at delivery time — refuse to fetch private/loopback/metadata
-    # targets even if the URL passed the registration-time check (DNS rebinding).
-    ok, reason = _url_is_safe_for_outbound(sub.get("url") or "")
-    if not ok:
-        out.update({"status": "failed", "http_code": None,
-                    "response_body": f"[blocked] {reason}"[:2000], "duration_ms": 0})
-        return out
+    # SSRF guard for MERCHANT-supplied URLs (webhook/zapier/slack/discord) — even
+    # if it passed the registration check (DNS rebinding). The ga4/mixpanel/
+    # mailchimp targets are our own hard-coded trusted endpoints → skip the guard.
+    if not skip_ssrf:
+        ok, reason = _url_is_safe_for_outbound(target_url)
+        if not ok:
+            out.update({"status": "failed", "http_code": None,
+                        "response_body": f"[blocked] {reason}"[:2000], "duration_ms": 0})
+            return out
     try:
-        req = urllib.request.Request(sub["url"], data=body, headers=headers, method="POST")
+        req = urllib.request.Request(target_url, data=body, headers=headers, method=method)
         with urllib.request.urlopen(req, timeout=10) as resp:
             text = resp.read(4096).decode("utf-8", errors="replace")
             out.update({"status": "success" if 200 <= resp.status < 300 else "failed",
@@ -2330,8 +2443,12 @@ def dispatch_event(project_id: int, event: str, data: dict):
         events = sub.get("events") or []
         if events and event not in events:
             continue
+        if not _event_applies_to_type(sub.get("type"), event):
+            continue
         try:
             out = _post_webhook_one(dict(sub), event, data)
+            if out is None:        # builder skipped (not applicable / missing creds)
+                continue
             with db_cursor() as (conn, cur):
                 cur.execute(
                     """INSERT INTO crm_webhook_deliveries
@@ -2352,6 +2469,26 @@ def dispatch_event(project_id: int, event: str, data: dict):
                 conn.commit()
         except Exception as e:
             print(f"[webhook] dispatch failed for sub {sub.get('id')}: {e}")
+
+
+# Internal bridge: the CRM backend (where products / stock / prices are edited)
+# can't call dispatch_event directly — it lives here. So CRM POSTs the public
+# event here (with X-Internal-Key) and we fan it out to the project's
+# integrations. This is how a catalog/inventory change in the CRM auto-syncs to
+# every connected webhook / Zapier / Slack in real time, not just orders.
+class _InternalDispatchRequest(BaseModel):
+    project_id: int
+    event: str
+    data: dict = {}
+
+@app.post("/internal/dispatch-event")
+async def internal_dispatch_event(req: _InternalDispatchRequest, request: Request,
+                                  background_tasks: BackgroundTasks):
+    if not _hmac.compare_digest(request.headers.get("X-Internal-Key", "").encode(),
+                                INTERNAL_API_KEY.encode()):
+        raise HTTPException(403, "Forbidden")
+    background_tasks.add_task(dispatch_event, req.project_id, req.event, req.data or {})
+    return {"ok": True}
 
 
 # ── RATE-LIMIT / VERIFICATION STORAGE ────────────────────
@@ -7464,10 +7601,16 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
     # Outbound webhooks. `order.created` always fires; `order.paid` ONLY
     # fires when a real payment was captured — for Pay-on-Delivery (manual)
     # we have no payment to confirm yet, so consumers shouldn't see it.
+    # Order amounts are denominated in the project's configured currency
+    # (crm_projects.currency) — never a hardcoded USD. This drives the webhook
+    # payload AND the operator bell push below, so both match the amount the
+    # customer was actually charged (shown with the same currency in the CRM).
+    _order_proj = db_one("SELECT api_key, currency FROM crm_projects WHERE id=%s", (project_id,)) or {}
+    order_currency = (_order_proj.get("currency") or "USD").upper()
     event_data = {
         "order_id": order_id,
         "amount":   float(total),
-        "currency": "USD",
+        "currency": order_currency,
         "customer": {"name": (user or {}).get("name", "") or rn,
                      "email": (user or {}).get("email", "")},
         "items": [{"product_id": it["product_id"], "title": it["title"],
@@ -7483,10 +7626,9 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
     # number for at-a-glance triage, message has customer + amount, link
     # jumps to the Orders page filtered to this order.
     try:
-        proj = db_one("SELECT api_key, currency FROM crm_projects WHERE id=%s", (project_id,))
-        api_key = (proj or {}).get("api_key")
+        api_key   = _order_proj.get("api_key")
         cust_name = (data.recipient_name or "").strip() or "Guest"
-        currency  = (event_data.get("currency") or (proj or {}).get("currency") or "USD").upper()
+        currency  = order_currency
         amount    = event_data.get("amount") or event_data.get("total") or 0
         background_tasks.add_task(
             push_crm_notification_project,
@@ -10723,14 +10865,17 @@ def public_create_booking(req: PublicCreateBookingRequest,
         conn.commit()
 
     # Outbound webhooks: always fire booking.created; if auto_confirm is on,
-    # also fire booking.confirmed in the same dispatch cycle.
+    # also fire booking.confirmed in the same dispatch cycle. Amount is in the
+    # project's configured currency (crm_projects.currency), never hardcoded USD.
+    _bk_proj = db_one("SELECT api_key, currency FROM crm_projects WHERE id=%s", (project_id,)) or {}
+    booking_currency = (_bk_proj.get("currency") or "USD").upper()
     event_data = {
         "booking_id":   bid, "service_id":  req.service_id,
         "service_name": (svc["name"] if svc else freeform_name) or None,
         "staff_id":     req.staff_id, "starts_at": starts.isoformat(),
         "ends_at":      ends.isoformat(), "status":   initial_status,
         "amount":       float(svc.get("price") or 0) if svc else (freeform_pr or 0.0),
-        "currency":     "USD",
+        "currency":     booking_currency,
         "customer":     {"name": name, "email": email, "phone": phone, "address": address},
     }
     background_tasks.add_task(dispatch_event, project_id, "booking.created", event_data)
@@ -10742,8 +10887,7 @@ def public_create_booking(req: PublicCreateBookingRequest,
     # new booking. Includes service name + customer + start time for quick
     # triage without opening the modal.
     try:
-        proj = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
-        api_key = (proj or {}).get("api_key")
+        api_key = _bk_proj.get("api_key")
         svc_name = (svc or {}).get("name") if svc else (freeform_name or "Service")
         starts_local = starts.strftime("%H:%M · %b %d")
         background_tasks.add_task(
@@ -11229,3 +11373,448 @@ def order_receipt_pdf(order_id: int, request: Request,
     }
     pdf = render_document("receipt", branding["style"], branding, data)
     return _pdf_response(pdf, f"receipt-{order_id}.pdf")
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  1C (CommerceML) two-way exchange   —   /{api_key}/1c-exchange
+# ════════════════════════════════════════════════════════════════════════
+# Implements the classic 1C-Bitrix HTTP exchange protocol. 1C is the ACTIVE
+# party: it authenticates with the per-project exchange login/password (stored
+# hashed in crm_1c_exchange) and drives the state machine itself —
+#   import (1C → CRM):  checkauth → init → file (xN) → import
+#   export (CRM → 1C):  checkauth → query → success
+# So we never poll 1C and never need 1C exposed to the internet — it reaches us.
+# CommerceML 2 tags are Cyrillic; we match by LOCAL name so an XML namespace (if
+# any) is ignored. Catalog import maps Группы→product_categories, Товар→products
+# (+ a default L1/L2 sellable SKU), Предложение(цена+остаток)→L2. Orders export
+# as <Документ>. 1C GUIDs ↔ CRM ids live in crm_1c_id_map so re-imports UPDATE in
+# place instead of duplicating.
+
+def _1c_pw_hash(password: str, project_id) -> str:
+    # Salt by project_id (stable, unique) so changing the login never invalidates
+    # a stored password, and one project's hash can't be reused against another.
+    salt = f"torta1c:{int(project_id)}".encode("utf-8")
+    return hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt, 50000).hex()
+
+def _1c_pw_verify(password: str, stored: str, project_id) -> bool:
+    if not stored:
+        return False
+    try:
+        return _hmac.compare_digest(_1c_pw_hash(password, project_id), stored)
+    except Exception:
+        return False
+
+def _1c_text_resp(text: str, status: int = 200) -> Response:
+    # 1C reads the FIRST line as the status word ("success" / "failure" / "zip=no").
+    return Response(content=text, media_type="text/plain; charset=utf-8", status_code=status)
+
+def _1c_basic_ok(request: Request, cfg: dict) -> bool:
+    h = request.headers.get("authorization", "")
+    if h[:6].lower() != "basic ":
+        return False
+    try:
+        raw = _b64.b64decode(h[6:]).decode("utf-8", "replace")
+    except Exception:
+        return False
+    login, _, pwd = raw.partition(":")
+    if login != (cfg.get("login") or ""):
+        return False
+    return _1c_pw_verify(pwd, cfg.get("password_hash") or "", cfg.get("project_id"))
+
+def _1c_session_ok(request: Request, cfg: dict) -> bool:
+    tok = cfg.get("session_token") or ""
+    if not tok:
+        return False
+    exp = cfg.get("session_expires")
+    if exp is not None and exp < _utcnow():
+        return False
+    return f"TortaSession={tok}" in request.headers.get("cookie", "")
+
+# ── CommerceML local-name helpers (namespace-agnostic) ──────────────────
+def _1c_local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+def _1c_find(el, name: str):
+    if el is None:
+        return None
+    for c in list(el):
+        if _1c_local(c.tag) == name:
+            return c
+    return None
+
+def _1c_findall(el, name: str):
+    if el is None:
+        return []
+    return [c for c in list(el) if _1c_local(c.tag) == name]
+
+def _1c_text(el, name: str, default: str = "") -> str:
+    c = _1c_find(el, name)
+    return (c.text or "").strip() if c is not None and c.text else default
+
+def _1c_to_float(s: str) -> float:
+    if not s:
+        return 0.0
+    try:
+        return float(str(s).replace("\xa0", "").replace(" ", "").replace(",", "."))
+    except Exception:
+        return 0.0
+
+def _1c_slugify(name: str) -> str:
+    s = _re.sub(r"[^a-z0-9а-яё]+", "-", (name or "").lower(), flags=_re.UNICODE).strip("-")
+    return s[:120]
+
+# ── PURE extractors (no DB — unit-testable) ─────────────────────────────
+def _1c_extract_catalog(xml_bytes: bytes) -> dict:
+    """Parse a CommerceML import.xml → {categories:[{guid,name,parent_guid}],
+    products:[{guid,sku,name,description,barcode,group_guids:[]}]}. Reads the
+    encoding from the XML declaration (1C often ships windows-1251)."""
+    root = ET.fromstring(xml_bytes)
+    cats, prods = [], []
+    classifier = _1c_find(root, "Классификатор")
+    if classifier is not None:
+        def walk(groups_parent, parent_guid):
+            for g in _1c_findall(groups_parent, "Группа"):
+                guid = _1c_text(g, "Ид")
+                if guid:
+                    cats.append({"guid": guid, "name": _1c_text(g, "Наименование"), "parent_guid": parent_guid})
+                sub = _1c_find(g, "Группы")
+                if sub is not None:
+                    walk(sub, guid)
+        groups = _1c_find(classifier, "Группы")
+        if groups is not None:
+            walk(groups, "")
+    catalog = _1c_find(root, "Каталог")
+    tovary = _1c_find(catalog, "Товары") if catalog is not None else None
+    if tovary is not None:
+        for t in _1c_findall(tovary, "Товар"):
+            full = _1c_text(t, "Ид")
+            if not full:
+                continue
+            group_guids = []
+            gids = _1c_find(t, "Группы")
+            if gids is not None:
+                for gid in _1c_findall(gids, "Ид"):
+                    if (gid.text or "").strip():
+                        group_guids.append(gid.text.strip())
+            barcode = _1c_text(t, "Штрихкод") or _1c_text(t, "ШтрихкодБазовойЕдиницы") or _1c_text(t, "ШтрихКод")
+            prods.append({
+                "guid":        full.split("#", 1)[0],
+                "sku":         _1c_text(t, "Артикул"),
+                "name":        _1c_text(t, "Наименование"),
+                "description": _1c_text(t, "Описание"),
+                "barcode":     barcode,
+                "group_guids": group_guids,
+            })
+    return {"categories": cats, "products": prods}
+
+def _1c_extract_offers(xml_bytes: bytes) -> list:
+    """Parse a CommerceML offers.xml (ПакетПредложений) → list of
+    {guid, product_guid, char, price, currency, qty, sku, name}."""
+    root = ET.fromstring(xml_bytes)
+    pkg = _1c_find(root, "ПакетПредложений")
+    pred = _1c_find(pkg, "Предложения") if pkg is not None else None
+    out = []
+    for p in _1c_findall(pred, "Предложение"):
+        full = _1c_text(p, "Ид")
+        if not full:
+            continue
+        product_guid, _, char = full.partition("#")
+        price, currency = 0.0, ""
+        prices = _1c_find(p, "Цены")
+        first = _1c_find(prices, "Цена") if prices is not None else None
+        if first is not None:
+            price = _1c_to_float(_1c_text(first, "ЦенаЗаЕдиницу"))
+            currency = _1c_text(first, "Валюта")
+        out.append({
+            "guid": full, "product_guid": product_guid, "char": char,
+            "price": price, "currency": currency,
+            "qty": int(_1c_to_float(_1c_text(p, "Количество"))),
+            "sku": _1c_text(p, "Артикул"), "name": _1c_text(p, "Наименование"),
+        })
+    return out
+
+# ── DB id-map helpers ───────────────────────────────────────────────────
+def _1c_map_lookup(cur, project_id: int, entity_type: str, guid: str):
+    cur.execute("SELECT crm_id FROM crm_1c_id_map WHERE project_id=%s AND entity_type=%s AND guid=%s",
+                (project_id, entity_type, guid[:80]))
+    r = cur.fetchone()
+    return r["crm_id"] if r else None
+
+def _1c_map_insert(cur, project_id: int, entity_type: str, guid: str, crm_id: int):
+    cur.execute(
+        "INSERT INTO crm_1c_id_map (project_id, entity_type, guid, crm_id) VALUES (%s,%s,%s,%s) "
+        "ON CONFLICT (project_id, entity_type, guid) DO UPDATE SET crm_id=EXCLUDED.crm_id",
+        (project_id, entity_type, guid[:80], crm_id))
+
+# ── DB appliers ─────────────────────────────────────────────────────────
+def _1c_apply_catalog(project_id: int, data: dict) -> dict:
+    stats = {"categories": 0, "products_created": 0, "products_updated": 0}
+    with db_cursor() as (conn, cur):
+        guid_to_cat = {}
+        for c in data["categories"]:
+            cid = _1c_map_lookup(cur, project_id, "category", c["guid"])
+            name = (c["name"] or "")[:100]
+            if cid:
+                cur.execute("UPDATE product_categories SET name=%s WHERE id=%s AND project_id=%s", (name, cid, project_id))
+            else:
+                slug = _1c_slugify(name) or c["guid"][:120]
+                base, n = slug, 1
+                while True:
+                    cur.execute("SELECT 1 FROM product_categories WHERE project_id=%s AND slug=%s", (project_id, slug))
+                    if not cur.fetchone():
+                        break
+                    n += 1; slug = f"{base[:110]}-{n}"
+                cur.execute("INSERT INTO product_categories (project_id, name, slug) VALUES (%s,%s,%s) RETURNING id",
+                            (project_id, name, slug))
+                cid = cur.fetchone()["id"]
+                _1c_map_insert(cur, project_id, "category", c["guid"], cid)
+            guid_to_cat[c["guid"]] = cid
+            stats["categories"] += 1
+        for p in data["products"]:
+            pid = _1c_map_lookup(cur, project_id, "product", p["guid"])
+            title = (p["name"] or "Товар")[:255]
+            cat_id = None
+            for gg in p["group_guids"]:
+                cat_id = guid_to_cat.get(gg) or _1c_map_lookup(cur, project_id, "category", gg)
+                if cat_id:
+                    break
+            if pid:
+                cur.execute(
+                    "UPDATE products SET title=%s, description=%s, "
+                    "sku=COALESCE(NULLIF(%s,''), sku), category_id=COALESCE(%s, category_id) "
+                    "WHERE id=%s AND project_id=%s",
+                    (title, p["description"], p["sku"], cat_id, pid, project_id))
+                stats["products_updated"] += 1
+            else:
+                cur.execute(
+                    "INSERT INTO products (project_id, title, description, sku, category_id, product_type) "
+                    "VALUES (%s,%s,%s,%s,%s,'physical') RETURNING id",
+                    (project_id, title, p["description"], p["sku"], cat_id))
+                pid = cur.fetchone()["id"]
+                _1c_map_insert(cur, project_id, "product", p["guid"], pid)
+                if p["barcode"]:
+                    cur.execute("UPDATE products SET barcode=%s WHERE id=%s", (p["barcode"][:80], pid))
+                # Ensure a sellable SKU: default L1('') + L2(''). Base offer → that L2.
+                cur.execute("INSERT INTO product_configurations_l1 (product_id, variation_name, price, stock_quantity, sold_quantity, position) "
+                            "VALUES (%s,'',NULL,0,0,0) RETURNING id", (pid,))
+                l1 = cur.fetchone()["id"]
+                cur.execute("INSERT INTO product_configurations_l2 (product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position) "
+                            "VALUES (%s,%s,'',NULL,0,0,0) RETURNING id", (pid, l1))
+                _1c_map_insert(cur, project_id, "offer", p["guid"], cur.fetchone()["id"])
+                stats["products_created"] += 1
+        conn.commit()
+    return stats
+
+def _1c_apply_offers(project_id: int, offers: list) -> dict:
+    stats = {"offers": 0, "skipped": 0}
+    with db_cursor() as (conn, cur):
+        for o in offers:
+            l2 = _1c_map_lookup(cur, project_id, "offer", o["guid"])
+            if not l2:
+                pid = _1c_map_lookup(cur, project_id, "product", o["product_guid"])
+                if not pid:
+                    stats["skipped"] += 1
+                    continue
+                cur.execute("SELECT id FROM product_configurations_l1 WHERE product_id=%s ORDER BY position, id LIMIT 1", (pid,))
+                row = cur.fetchone()
+                if row:
+                    l1 = row["id"]
+                else:
+                    cur.execute("INSERT INTO product_configurations_l1 (product_id, variation_name, price, stock_quantity, sold_quantity, position) "
+                                "VALUES (%s,'',NULL,0,0,0) RETURNING id", (pid,))
+                    l1 = cur.fetchone()["id"]
+                cur.execute("INSERT INTO product_configurations_l2 (product_id, variation_id, configuration_name, price, stock_quantity, sold_quantity, position) "
+                            "VALUES (%s,%s,%s,%s,%s,0,0) RETURNING id",
+                            (pid, l1, (o["char"] or o["name"] or "")[:20], o["price"], o["qty"]))
+                l2 = cur.fetchone()["id"]
+                _1c_map_insert(cur, project_id, "offer", o["guid"], l2)
+            else:
+                cur.execute("UPDATE product_configurations_l2 SET price=%s, stock_quantity=%s WHERE id=%s",
+                            (o["price"], o["qty"], l2))
+            if o["sku"]:
+                cur.execute("UPDATE product_configurations_l2 SET sku_code=COALESCE(NULLIF(sku_code,''),%s) WHERE id=%s",
+                            (o["sku"][:80], l2))
+            # Best-effort modern stock mirror (per-warehouse). Storefront also sells
+            # off the L2.stock_quantity set above, so this is non-fatal if it fails.
+            # MUST run inside a SAVEPOINT: a failed statement aborts the whole
+            # Postgres transaction, so a bare try/except here would silently break
+            # every following offer + the final commit. The savepoint scopes the
+            # rollback to just this best-effort write.
+            cur.execute("SAVEPOINT s1c_stock")
+            try:
+                cur.execute("SELECT id FROM warehouses WHERE project_id=%s ORDER BY id LIMIT 1", (project_id,))
+                wh = cur.fetchone()
+                if wh:
+                    cur.execute("INSERT INTO product_stock (sku_id, warehouse_id, quantity, sold_quantity) VALUES (%s,%s,%s,0) "
+                                "ON CONFLICT (sku_id, warehouse_id) DO UPDATE SET quantity=EXCLUDED.quantity",
+                                (l2, wh["id"], o["qty"]))
+                cur.execute("RELEASE SAVEPOINT s1c_stock")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT s1c_stock")
+            stats["offers"] += 1
+        conn.commit()
+    return stats
+
+def _merge_stats(acc: dict, s: dict):
+    for k, v in (s or {}).items():
+        acc[k] = acc.get(k, 0) + v
+
+def _1c_run_import(project_id: int) -> dict:
+    rows = db_all("SELECT filename, content FROM crm_1c_import_files WHERE project_id=%s ORDER BY id ASC", (project_id,))
+    by_name = {}
+    for r in rows:
+        by_name.setdefault(r["filename"], bytearray()).extend(bytes(r["content"]))
+    stats = {"catalog": {}, "offers": {}}
+    is_offer = lambda n: ("offer" in n.lower() or "price" in n.lower())
+    # Catalog files first (offers reference the products they create), offers second.
+    for name in [n for n in by_name if not is_offer(n)]:
+        data = bytes(by_name[name])
+        if data.strip():
+            _merge_stats(stats["catalog"], _1c_apply_catalog(project_id, _1c_extract_catalog(data)))
+    for name in [n for n in by_name if is_offer(n)]:
+        data = bytes(by_name[name])
+        if data.strip():
+            _merge_stats(stats["offers"], _1c_apply_offers(project_id, _1c_extract_offers(data)))
+    return stats
+
+# ── Order export (CRM → 1C) ─────────────────────────────────────────────
+def _1c_build_orders_xml(project_id: int, limit: int = 200):
+    """Build a CommerceML <КоммерческаяИнформация> of orders not yet confirmed-
+    exported (no crm_1c_id_map 'order' row, or exported_at IS NULL). Returns
+    (xml_bytes, [order_ids])."""
+    orders = db_all("""
+        SELECT oh.* FROM order_history oh
+        LEFT JOIN crm_1c_id_map m
+               ON m.project_id=oh.project_id AND m.entity_type='order' AND m.guid=oh.id::text
+        WHERE oh.project_id=%s AND (m.id IS NULL OR m.exported_at IS NULL)
+        ORDER BY oh.id ASC LIMIT %s
+    """, (project_id, limit))
+    ci = ET.Element("КоммерческаяИнформация",
+                    {"ВерсияСхемы": "2.05", "ДатаФормирования": _utcnow().strftime("%Y-%m-%dT%H:%M:%S")})
+    ids = []
+    for o in orders:
+        ids.append(o["id"])
+        items = db_all("""
+            SELECT oi.quantity, oi.price, oi.product_id, p.title, m.guid AS prod_guid
+              FROM order_items oi JOIN products p ON oi.product_id=p.id
+              LEFT JOIN crm_1c_id_map m
+                     ON m.project_id=%s AND m.entity_type='product' AND m.crm_id=oi.product_id
+             WHERE oi.order_id=%s ORDER BY oi.id""", (project_id, o["id"]))
+        doc = ET.SubElement(ci, "Документ")
+        ET.SubElement(doc, "Ид").text = str(o["id"])
+        ET.SubElement(doc, "Номер").text = str(o["id"])
+        ET.SubElement(doc, "Дата").text = o["created_at"].strftime("%Y-%m-%d") if o.get("created_at") else ""
+        ET.SubElement(doc, "Время").text = o["created_at"].strftime("%H:%M:%S") if o.get("created_at") else ""
+        ET.SubElement(doc, "ХозОперация").text = "Заказ товара"
+        ET.SubElement(doc, "Роль").text = "Продавец"
+        ET.SubElement(doc, "Валюта").text = o.get("payment_currency") or ""
+        ET.SubElement(doc, "Сумма").text = f"{float(o.get('total_amount') or 0):.2f}"
+        kont = ET.SubElement(ET.SubElement(doc, "Контрагенты"), "Контрагент")
+        ET.SubElement(kont, "Ид").text = str(o.get("user_id") or o["id"])
+        ET.SubElement(kont, "Наименование").text = o.get("recipient_name") or o.get("customer_email") or "Покупатель"
+        ET.SubElement(kont, "Роль").text = "Покупатель"
+        if o.get("phone"):
+            ET.SubElement(kont, "Телефон").text = str(o["phone"])
+        if o.get("customer_email"):
+            ET.SubElement(kont, "Почта").text = str(o["customer_email"])
+        tovary = ET.SubElement(doc, "Товары")
+        for it in items:
+            tv = ET.SubElement(tovary, "Товар")
+            ET.SubElement(tv, "Ид").text = it.get("prod_guid") or str(it["product_id"])
+            ET.SubElement(tv, "Наименование").text = it.get("title") or ""
+            ET.SubElement(tv, "БазоваяЕдиница").text = "шт"
+            ET.SubElement(tv, "ЦенаЗаЕдиницу").text = f"{float(it['price']):.2f}"
+            ET.SubElement(tv, "Количество").text = str(it["quantity"])
+            ET.SubElement(tv, "Сумма").text = f"{float(it['price']) * it['quantity']:.2f}"
+    xml = b'<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(ci, encoding="utf-8")
+    return xml, ids
+
+def _1c_mark_orders_exported(project_id: int):
+    with db_cursor() as (conn, cur):
+        cur.execute("""
+            INSERT INTO crm_1c_id_map (project_id, entity_type, guid, crm_id, exported_at)
+            SELECT %s, 'order', oh.id::text, oh.id, NOW()
+              FROM order_history oh
+              LEFT JOIN crm_1c_id_map m
+                     ON m.project_id=oh.project_id AND m.entity_type='order' AND m.guid=oh.id::text
+             WHERE oh.project_id=%s AND m.id IS NULL
+            ON CONFLICT (project_id, entity_type, guid) DO UPDATE SET exported_at=NOW()
+        """, (project_id, project_id))
+        cur.execute("UPDATE crm_1c_id_map SET exported_at=NOW() "
+                    "WHERE project_id=%s AND entity_type='order' AND exported_at IS NULL", (project_id,))
+        conn.commit()
+
+# ── The exchange endpoint (1C drives this state machine) ─────────────────
+@app.api_route("/{api_key}/1c-exchange", methods=["GET", "POST"])
+async def onec_exchange(api_key: str, request: Request,
+                        type: str = Query(""), mode: str = Query(""),
+                        filename: str = Query("")):
+    proj = db_one("SELECT id FROM crm_projects WHERE api_key=%s AND is_active=TRUE", (api_key,))
+    if not proj:
+        return _1c_text_resp("failure\nUnknown project")
+    project_id = proj["id"]
+    cfg = db_one("SELECT * FROM crm_1c_exchange WHERE project_id=%s", (project_id,))
+    if not cfg or not cfg.get("is_active"):
+        return _1c_text_resp("failure\n1C exchange is disabled for this project")
+
+    if mode == "checkauth":
+        if not _1c_basic_ok(request, cfg):
+            return _1c_text_resp("failure\nAuthorization failed")
+        token = secrets.token_hex(16)
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_1c_exchange SET session_token=%s, "
+                        "session_expires=NOW() + interval '2 hours', last_status='auth', "
+                        "last_error='', updated_at=NOW() WHERE project_id=%s", (token, project_id))
+            conn.commit()
+        return _1c_text_resp(f"success\nTortaSession\n{token}")
+
+    # Every non-checkauth mode requires a live session OR Basic Auth.
+    if not (_1c_session_ok(request, cfg) or _1c_basic_ok(request, cfg)):
+        return _1c_text_resp("failure\nAuthorization required")
+
+    if mode == "init":
+        with db_cursor() as (conn, cur):
+            cur.execute("DELETE FROM crm_1c_import_files WHERE project_id=%s", (project_id,))
+            conn.commit()
+        return _1c_text_resp(f"zip=no\nfile_limit={int(cfg.get('file_limit') or 10485760)}")
+
+    if mode == "file":
+        body = await request.body()
+        with db_cursor() as (conn, cur):
+            cur.execute("INSERT INTO crm_1c_import_files (project_id, filename, content) VALUES (%s,%s,%s)",
+                        (project_id, (filename or "import.xml")[:200], psycopg2.Binary(body)))
+            conn.commit()
+        return _1c_text_resp("success")
+
+    if mode == "import":
+        try:
+            stats = _1c_run_import(project_id)
+            with db_cursor() as (conn, cur):
+                cur.execute("UPDATE crm_1c_exchange SET last_import_at=NOW(), last_status='success', "
+                            "last_error='', stats=%s, updated_at=NOW() WHERE project_id=%s",
+                            (json.dumps(stats), project_id))
+                cur.execute("DELETE FROM crm_1c_import_files WHERE project_id=%s", (project_id,))
+                conn.commit()
+            return _1c_text_resp("success")
+        except Exception as e:
+            traceback.print_exc()
+            with db_cursor() as (conn, cur):
+                cur.execute("UPDATE crm_1c_exchange SET last_status='failed', last_error=%s, "
+                            "updated_at=NOW() WHERE project_id=%s", (str(e)[:2000], project_id))
+                conn.commit()
+            return _1c_text_resp(f"failure\n{e}")
+
+    if type == "sale" and mode == "query":
+        xml, _ids = _1c_build_orders_xml(project_id)
+        return Response(content=xml, media_type="text/xml; charset=utf-8")
+
+    if type == "sale" and mode == "success":
+        _1c_mark_orders_exported(project_id)
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE crm_1c_exchange SET last_export_at=NOW(), last_status='success', "
+                        "updated_at=NOW() WHERE project_id=%s", (project_id,))
+            conn.commit()
+        return _1c_text_resp("success")
+
+    # init/import for type=sale, deactivate, complete, or anything else → ack.
+    return _1c_text_resp("success")

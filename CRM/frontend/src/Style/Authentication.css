@@ -191,6 +191,13 @@
   font-weight: 500;
   color: var(--text);
   white-space: nowrap;
+  /* Match .auth-provider-desc: a long name must ellipsis inside its fixed
+     160px grid column, not overflow into the description cell. min-width:0
+     lets the grid item shrink so overflow/ellipsis can apply. No effect on
+     short names (the frozen desktop rows) — they already fit. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .auth-provider-desc {

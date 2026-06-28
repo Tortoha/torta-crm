@@ -15,6 +15,7 @@ import {
 import ConnectorIcon from './ConnectorIcon.jsx';
 import ConnectorModal from './ConnectorModal.jsx';
 import AccountingExportModal from './AccountingExportModal.jsx';
+import OnecExchangeModal from './OnecExchangeModal.jsx';
 import RequestIntegrationModal from './RequestIntegrationModal.jsx';
 import { Combobox } from '../Booking/BookingCreateModal.jsx';
 
@@ -91,7 +92,16 @@ function AvailableRow({ connector, installedCount, onClick, first, last }) {
         <ConnectorIcon icon={connector.icon} />
       </div>
       <span className="auth-provider-name">{connector.name}</span>
-      <span className="auth-provider-desc">{connector.description}</span>
+      {/* Beta sits at the START of the description (the 1fr column has room),
+          NOT in the status column — so the install indicator keeps its own slot.
+          Still exactly 5 grid children (icon · name · desc · status · chevron);
+          the mobile :nth-child mapping stays intact. */}
+      <span className="auth-provider-desc">
+        {connector.beta && (
+          <span className="auth-badge-beta" style={{ marginRight: 8, verticalAlign: 'middle' }}>Beta</span>
+        )}
+        {connector.description}
+      </span>
       {installedCount > 0
         ? <span className="auth-badge-enabled">
             <CheckCircle weight="fill" size={11} /> {installedCount > 1
@@ -390,6 +400,13 @@ export default function Integrations() {
 
   // When the user clicks an available connector row.
   const onPickConnector = async (connector, existing) => {
+    // 1С:Предприятие live exchange — config lives in its own table
+    // (crm_1c_exchange), not crm_webhook_subscriptions, so it opens its own
+    // modal that reads/writes via GET/PUT /api/1c-exchange.
+    if (connector.kind === 'onec') {
+      setModal({ kind: 'onec', connector });
+      return;
+    }
     // Webhook-style + API-connector kinds share the same ConnectorModal —
     // ConnectorModal renders the right field set based on connector.fields meta.
     if (connector.kind === 'webhook' || connector.kind === 'apiconn') {
@@ -480,6 +497,13 @@ export default function Integrations() {
             onClose={() => setModal(null)}
             onSaved={() => { load(); }}
             onDeleted={() => { setModal(null); showToast(t('integrations.toast.deleted')); load(); }}
+            onToast={showToast} />
+        )}
+
+        {modal?.kind === 'onec' && (
+          <OnecExchangeModal
+            projectId={projectId}
+            onClose={() => setModal(null)}
             onToast={showToast} />
         )}
 
