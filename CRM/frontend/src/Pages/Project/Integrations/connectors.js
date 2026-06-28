@@ -88,12 +88,27 @@ export const CONNECTORS = [
   },
 
   // ── Accounting ───────────────────────────────────────────
+  // Two-way LIVE exchange with 1С:Предприятие (УТ / УНФ / Розница) over the
+  // standard 1C-Bitrix CommerceML protocol — distinct from the acc_1c CSV
+  // export below (one-way snapshot). 1C drives the sync against our endpoint;
+  // catalog/stock/prices flow IN, orders flow OUT. Beta until live-validated.
+  {
+    type: 'onec_exchange', kind: 'onec', category: 'accounting', country: 'cis',
+    name: '1С:Предприятие',
+    description: 'Two-way CommerceML sync: catalog, stock & prices in · orders out (УТ / УНФ).',
+    available: true, icon: '1c', beta: true,
+    features: [
+      'Catalog, categories, stock & prices imported FROM 1C',
+      'Orders exported TO 1C',
+      'Standard 1C exchange protocol (CommerceML 2) — УТ / УНФ / Розница',
+    ],
+  },
   // All 5 now available via the generic export pipeline (CSV / IIF / XML).
   // No OAuth — merchant downloads on demand or receives signed email links.
   {
     type: 'acc_1c', kind: 'accounting', category: 'accounting', country: 'cis',
     name: '1C Бухгалтерия',
-    description: 'Export orders to a 1C-compatible CSV (Windows-1251).',
+    description: 'One-way CSV export of orders for 1C (Windows-1251).',
     available: true, icon: '1c',
     accountingFormat: 'Semicolon CSV · Windows-1251 (Cyrillic)',
     features: [

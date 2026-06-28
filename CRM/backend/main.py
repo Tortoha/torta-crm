@@ -2505,17 +2505,20 @@ def run_migrations():
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_subs_project ON crm_webhook_subscriptions(project_id)")
 
-            # ── Heal: add UNIQUE(project_id, url) so the merchant can't
-            # accidentally register the same webhook target twice and get
-            # duplicate deliveries on every event. Idempotent via pg_constraint
-            # check (same pattern as shipping_settings heal). For existing rows
-            # that already have duplicates, the ADD CONSTRAINT would fail — so
-            # we deduplicate first (keep lowest id), then add the constraint.
+            # ── Heal: UNIQUE(project_id, TYPE, url). The url column is reused as
+            # the recipient EMAIL for accounting connectors and stays blank ('')
+            # until a schedule is set — so a plain UNIQUE(project_id, url) let a
+            # project install only ONE accounting connector (every 2nd collided on
+            # the empty url and the modal silently failed to open). Keying on type
+            # too lets every accounting TYPE (all url='') coexist, while still
+            # blocking the same type twice + duplicate webhook URLs within a type.
+            # Dedup first, then swap the old constraint for the new one. Idempotent.
             try:
                 cur.execute("""
                     DELETE FROM crm_webhook_subscriptions a
                      USING crm_webhook_subscriptions b
                      WHERE a.project_id = b.project_id
+                       AND a.type       = b.type
                        AND a.url        = b.url
                        AND a.id         > b.id
                 """)
@@ -2523,11 +2526,13 @@ def run_migrations():
                     DO $$ BEGIN
                         IF NOT EXISTS (
                             SELECT 1 FROM pg_constraint
-                             WHERE conname = 'crm_webhook_subscriptions_project_url_key'
+                             WHERE conname = 'crm_webhook_subscriptions_project_type_url_key'
                         ) THEN
                             ALTER TABLE crm_webhook_subscriptions
-                                ADD CONSTRAINT crm_webhook_subscriptions_project_url_key
-                                UNIQUE (project_id, url);
+                                DROP CONSTRAINT IF EXISTS crm_webhook_subscriptions_project_url_key;
+                            ALTER TABLE crm_webhook_subscriptions
+                                ADD CONSTRAINT crm_webhook_subscriptions_project_type_url_key
+                                UNIQUE (project_id, type, url);
                         END IF;
                     END $$;
                 """)
@@ -2556,6 +2561,63 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         print(f"[migration] crm_webhook_* failed: {e}")
+
+    # ── 1C (CommerceML) two-way exchange ──────────────────────────────────
+    # The exchange endpoint lives in External (/{api_key}/1c-exchange); 1C is the
+    # ACTIVE party — it polls our endpoint with the login/password below and runs
+    # the classic 1C-Bitrix HTTP protocol (checkauth→init→file→import / query→
+    # success). One config row per project. `crm_1c_id_map` resolves 1C GUIDs to
+    # CRM rows so repeat imports UPDATE in place instead of duplicating, and so
+    # exported orders carry stable ids. `crm_1c_import_files` accumulates the XML
+    # chunks 1C uploads (DB-backed so a chunked upload survives across instances).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_1c_exchange (
+                    project_id      INTEGER PRIMARY KEY REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    is_active       BOOLEAN NOT NULL DEFAULT FALSE,
+                    login           VARCHAR(120) NOT NULL DEFAULT '',
+                    password_hash   VARCHAR(200) NOT NULL DEFAULT '',
+                    session_token   VARCHAR(120) NOT NULL DEFAULT '',
+                    session_expires TIMESTAMPTZ,
+                    zip_enabled     BOOLEAN NOT NULL DEFAULT FALSE,
+                    file_limit      INTEGER NOT NULL DEFAULT 10485760,
+                    last_import_at  TIMESTAMPTZ,
+                    last_export_at  TIMESTAMPTZ,
+                    last_status     VARCHAR(20) NOT NULL DEFAULT 'unknown',
+                    last_error      TEXT NOT NULL DEFAULT '',
+                    stats           JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_1c_id_map (
+                    id          BIGSERIAL PRIMARY KEY,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    entity_type VARCHAR(20) NOT NULL,
+                    guid        VARCHAR(80) NOT NULL,
+                    crm_id      INTEGER NOT NULL,
+                    extra       VARCHAR(120) NOT NULL DEFAULT '',
+                    exported_at TIMESTAMPTZ,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (project_id, entity_type, guid)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_1c_idmap_crm ON crm_1c_id_map(project_id, entity_type, crm_id)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS crm_1c_import_files (
+                    id          BIGSERIAL PRIMARY KEY,
+                    project_id  INTEGER NOT NULL REFERENCES crm_projects(id) ON DELETE CASCADE,
+                    filename    VARCHAR(200) NOT NULL,
+                    content     BYTEA NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_1c_files_proj ON crm_1c_import_files(project_id, filename, id)")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] crm_1c_* failed: {e}")
 
     # Documents (PDF) branding per project — invoice header, footer, tax IDs, etc.
     try:
@@ -19465,6 +19527,42 @@ class ProjectEventsHub:
 events_hub = ProjectEventsHub()
 
 
+# Auto-sync: map an internal push_project_event type → a public webhook event
+# name (or None when it's not worth fanning out). Auto-sync piggybacks on the
+# events the CRM ALREADY emits at every mutation point, so this ONE hook turns
+# every catalog/inventory/price change into a real-time outbound webhook — no
+# per-endpoint instrumentation. `products_changed` carries {action}, so we split
+# it into product.created / .updated / .deleted.
+def _public_webhook_event(event_type: str, data: dict | None):
+    if event_type == "products_changed":
+        return {"created": "product.created", "updated": "product.updated",
+                "deleted": "product.deleted"}.get((data or {}).get("action"), "product.updated")
+    if event_type == "inventory_changed":
+        return "stock.changed"
+    if event_type == "tier_changed":
+        return "price.changed"
+    return None
+
+def fire_integration_event(project_id: int, event: str, data: dict | None = None):
+    """Fan a store-data change out to the project's connected integrations
+    (webhooks / Zapier / Slack / …) by handing it to External's dispatcher
+    (/internal/dispatch-event — dispatch_event lives there, next to the order
+    events). Fire-and-forget on a daemon thread so it never blocks or fails the
+    mutation request it follows."""
+    def _post():
+        try:
+            body = json.dumps({"project_id": int(project_id), "event": event,
+                               "data": data or {}}).encode("utf-8")
+            r = urllib.request.Request(
+                f"{MAGAZ_BACKEND_URL.rstrip('/')}/internal/dispatch-event",
+                data=body, method="POST",
+                headers={"Content-Type": "application/json", "X-Internal-Key": INTERNAL_API_KEY})
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                resp.read()
+        except Exception as e:
+            print(f"[auto-sync] dispatch failed: {e}")
+    threading.Thread(target=_post, name="auto-sync-dispatch", daemon=True).start()
+
 def push_project_event(project_id: int, event_type: str, data: dict | None = None):
     """Fire a project-level event. Both CRM and External call this;
     delivery is via PostgreSQL NOTIFY (single channel `crm_project_events`)
@@ -19485,6 +19583,15 @@ def push_project_event(project_id: int, event_type: str, data: dict | None = Non
         with db_cursor() as (conn, cur):
             cur.execute("SELECT pg_notify(%s, %s)", ("crm_project_events", json.dumps(event)))
             conn.commit()
+    except Exception:
+        pass
+    # Auto-sync: the same change also drives real-time outbound webhooks to the
+    # project's connected integrations (catalog / stock / price — not just
+    # orders). Best-effort + threaded, so it can never affect the mutation.
+    try:
+        pub = _public_webhook_event(event_type, data)
+        if pub:
+            fire_integration_event(project_id, pub, data or {})
     except Exception:
         pass
 
@@ -22013,9 +22120,10 @@ ALL_EVENTS = [
     "order.cancelled", "order.returned",
     "booking.created", "booking.confirmed", "booking.completed",
     "booking.cancelled", "booking.no_show",
-    "customer.created",
+    "customer.created", "customer.updated",
     "payment.received",
-    "product.created", "product.updated",
+    "product.created", "product.updated", "product.deleted",
+    "stock.changed", "price.changed",
     "goal.achieved",
 ]
 ALLOWED_INTEGRATION_TYPES = {
@@ -22465,16 +22573,23 @@ def integrations_create(req: IntegrationCreateRequest,
         raise HTTPException(400, f"Unsupported type {req.type}")
     secret = "wh_sec_" + secrets.token_hex(24)
     name   = (req.name or "").strip()[:200] or _default_integration_name(req.type)
-    with db_cursor() as (conn, cur):
-        cur.execute(
-            """INSERT INTO crm_webhook_subscriptions
-                  (project_id, type, name, url, secret, events, config)
-               VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
-            (project_id, req.type, sanitize(name), url, secret, events,
-             json.dumps(req.config or {}))
-        )
-        sub_id = cur.fetchone()["id"]
-        conn.commit()
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                """INSERT INTO crm_webhook_subscriptions
+                      (project_id, type, name, url, secret, events, config)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
+                (project_id, req.type, sanitize(name), url, secret, events,
+                 json.dumps(req.config or {}))
+            )
+            sub_id = cur.fetchone()["id"]
+            conn.commit()
+    except Exception as e:
+        # UNIQUE(project_id, type, url) — this connector (for accounting, this
+        # type; for webhooks, this URL) is already installed. Clean 409, not 500.
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(409, "This integration is already installed for this project.")
+        raise
     return {"id": sub_id, "secret": secret}
 
 
@@ -24176,6 +24291,63 @@ class IntegrationRequestBody(BaseModel):
     notify_email: Optional[str] = ""
     notes:        Optional[str] = ""
 
+
+# ── 1C (CommerceML) exchange config ──────────────────────────────────────
+# The exchange itself runs in External (/{api_key}/1c-exchange); here we only
+# manage the per-project switch + credentials 1C authenticates with. The
+# password hash MUST stay byte-identical to External._1c_pw_hash so External can
+# verify it (same PBKDF2, salted by project_id).
+def _1c_pw_hash(password: str, project_id) -> str:
+    salt = f"torta1c:{int(project_id)}".encode("utf-8")
+    return hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt, 50000).hex()
+
+class OnecConfigRequest(BaseModel):
+    is_active: Optional[bool] = None
+    login:     Optional[str]  = None
+    password:  Optional[str]  = None
+
+@app.get("/api/1c-exchange")
+def onec_config_get(project_id: int = Query(...), user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    proj = db_one("SELECT api_key FROM crm_projects WHERE id=%s", (project_id,))
+    url  = f"{MAGAZ_BACKEND_URL.rstrip('/')}/{proj['api_key']}/1c-exchange" if proj else ""
+    cfg = db_one(
+        "SELECT is_active, login, (password_hash <> '') AS has_password, "
+        "       session_expires, last_import_at, last_export_at, last_status, "
+        "       last_error, stats, updated_at "
+        "  FROM crm_1c_exchange WHERE project_id=%s", (project_id,))
+    if not cfg:
+        return {"is_active": False, "login": "", "has_password": False,
+                "exchange_url": url, "last_import_at": None, "last_export_at": None,
+                "last_status": "unknown", "last_error": "", "stats": {}}
+    cfg["exchange_url"] = url
+    return cfg
+
+@app.put("/api/1c-exchange")
+def onec_config_put(req: OnecConfigRequest, project_id: int = Query(...),
+                    user: dict = Depends(get_current_user)):
+    require_page_auto(user, project_id)
+    with db_cursor() as (conn, cur):
+        cur.execute("INSERT INTO crm_1c_exchange (project_id) VALUES (%s) "
+                    "ON CONFLICT (project_id) DO NOTHING", (project_id,))
+        sets, vals = [], []
+        if req.is_active is not None:
+            sets.append("is_active=%s"); vals.append(bool(req.is_active))
+        if req.login is not None:
+            # NOT sanitize()'d: the login is a credential compared verbatim by
+            # External (Basic-Auth). HTML-escaping it ("1c&co" → "1c&amp;co")
+            # would silently break auth. It's only ever used in a parameterized
+            # query, so there's no injection risk. Strip control chars + cap.
+            sets.append("login=%s")
+            vals.append("".join(c for c in (req.login or "").strip() if c.isprintable())[:120])
+        if req.password is not None and req.password.strip():
+            sets.append("password_hash=%s"); vals.append(_1c_pw_hash(req.password.strip(), project_id))
+        if sets:
+            sets.append("updated_at=NOW()")
+            vals.append(project_id)
+            cur.execute("UPDATE crm_1c_exchange SET " + ", ".join(sets) + " WHERE project_id=%s", vals)
+        conn.commit()
+    return {"ok": True}
 
 @app.post("/api/integrations/request")
 def request_integration(body: IntegrationRequestBody,
