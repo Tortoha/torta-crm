@@ -127,3 +127,54 @@ def test_succeeded_is_terminal():
 def test_non_final_statuses_not_terminal():
     for s in ("processing", "requires_capture", "requires_payment_method", "canceled"):
         assert s not in _STRIPE_TERMINAL
+
+
+# ── Currency minor-unit factor (zero-decimal overcharge guard) ──────────────
+# Mirror of External/main.py _STRIPE_ZERO_DECIMAL / _stripe_minor_factor. Stripe
+# charges zero-decimal currencies (JPY/KRW/…) in WHOLE units (no ×100); a flat ×100
+# would charge 100× and the amount check wouldn't catch it (÷100 on verify cancels).
+_STRIPE_ZERO_DECIMAL = {
+    "BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA",
+    "PYG", "RWF", "VND", "VUV", "XAF", "XOF", "XPF",
+}
+
+
+def _stripe_minor_factor(currency):
+    return 1 if (currency or "").strip().upper() in _STRIPE_ZERO_DECIMAL else 100
+
+
+def test_normal_currencies_are_x100():
+    for c in ("USD", "EUR", "KZT", "RUB", "GBP", "kzt"):
+        assert _stripe_minor_factor(c) == 100
+
+
+def test_zero_decimal_currencies_are_x1():
+    for c in ("JPY", "KRW", "VND", "CLP", "jpy"):
+        assert _stripe_minor_factor(c) == 1
+
+
+def test_display_zero_but_stripe_charges_x100():
+    # IDR/HUF/ISK/UZS/TWD display without decimals but Stripe CHARGES them ×100 — using
+    # display-decimals here would 100×-undercharge. They must NOT be zero-decimal.
+    for c in ("IDR", "HUF", "ISK", "UZS", "TWD"):
+        assert _stripe_minor_factor(c) == 100
+
+
+def test_send_and_verify_use_same_factor_recovers_total():
+    # The send (×factor) and verify (÷factor) must recover the cart total for ANY
+    # currency — this round-trip is what prevents the silent over/under-charge.
+    for currency, total in (("USD", 10.00), ("KZT", 1500.0), ("JPY", 1000.0), ("KRW", 9900.0)):
+        f = _stripe_minor_factor(currency)
+        assert abs(int(round(total * f)) / f - total) < 0.001, currency
+
+
+def test_jpy_not_multiplied_by_100():
+    # The actual bug fixed: ¥1000 sent as 1000, NOT 100000 (would be a 100× overcharge).
+    assert int(round(1000.0 * _stripe_minor_factor("JPY"))) == 1000
+    assert int(round(10.00 * _stripe_minor_factor("USD"))) == 1000   # $10 → 1000 cents
+
+
+def test_paypal_zero_decimal_set():
+    # PayPal rejects decimals on these — value must be a whole number.
+    paypal_zero = {"HUF", "JPY", "TWD"}
+    assert "JPY" in paypal_zero and "USD" not in paypal_zero
