@@ -1,7 +1,8 @@
 // Admin Inbox — inbound mail to legal@ / support@tortacrm.com, modelled on the
 // CRM "Chat with Customers" 2-pane layout: thread list (left) + conversation
 // (right) + reply composer. Replies go out via SES from the same mailbox.
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MagnifyingGlass, PaperPlaneTilt, Trash, EnvelopeSimple, Scales, Lifebuoy } from '@phosphor-icons/react';
 import { API_BASE, pickError } from '../api.js';
 import { useRealtimePoll } from '../Utils/useRealtimePoll.js';
@@ -10,10 +11,12 @@ import '../Style/Products.css';
 import '../Style/Authentication.css';
 import '../Style/Inbox.css';
 
+// Mailbox filter values stay stable (sent as ?mailbox= and used for CSS classes);
+// labels resolve through i18n inside the component (see MAILBOXES useMemo below).
 const MAILBOXES = [
-  { value: 'all',     label: 'All' },
-  { value: 'support', label: 'Support' },
-  { value: 'legal',   label: 'Legal' },
+  { value: 'all',     labelKey: 'inbox.mailbox.all' },
+  { value: 'support', labelKey: 'inbox.mailbox.support' },
+  { value: 'legal',   labelKey: 'inbox.mailbox.legal' },
 ];
 
 const fmtTime = (iso) => {
@@ -40,6 +43,11 @@ function MailboxIcon({ mailbox, className }) {
 }
 
 export default function Inbox() {
+  const { t } = useTranslation();
+  const mailboxes = useMemo(
+    () => MAILBOXES.map(m => ({ value: m.value, label: t(m.labelKey) })),
+    [t]
+  );
   const [mailbox, setMailbox] = useState('all');
   const [q, setQ]             = useState('');
   const [threads, setThreads] = useState(null);
@@ -115,26 +123,26 @@ export default function Inbox() {
         body: JSON.stringify({ text }),
       });
       if (r.ok) { setReply(''); openThread(sel); loadThreads(); }
-      else { const j = await r.json().catch(() => ({})); setErr(pickError(j, 'Failed to send')); }
-    } catch { setErr('Network error'); }
+      else { const j = await r.json().catch(() => ({})); setErr(pickError(j, t('inbox.sendFailed'))); }
+    } catch { setErr(t('inbox.networkError')); }
     finally { setBusy(false); }
   };
 
   const del = async () => {
-    if (!sel || !confirm('Delete this conversation permanently?')) return;
+    if (!sel || !confirm(t('inbox.deleteConfirm'))) return;
     await fetch(`${API_BASE}/api/admin/inbox/threads/${sel}`, { method: 'DELETE', credentials: 'include' });
     setSel(null); setDetail(null); loadThreads();
   };
 
   return (
     <>
-      <h1 className="crm-page-title">Inbox</h1>
+      <h1 className="crm-page-title">{t('inbox.title')}</h1>
 
       <div className="inbox-shell">
         {/* ── Threads (left) ── */}
         <aside className="inbox-aside">
           <div className="inbox-filter">
-            {MAILBOXES.map(m => (
+            {mailboxes.map(m => (
               <button key={m.value} type="button"
                 className={`inbox-filter-btn${mailbox === m.value ? ' inbox-filter-btn--on' : ''}`}
                 onClick={() => setMailbox(m.value)}>{m.label}</button>
@@ -142,12 +150,12 @@ export default function Inbox() {
           </div>
           <div className="inbox-search">
             <MagnifyingGlass className="inbox-search-icon" />
-            <input className="inbox-search-input" placeholder="Search sender or subject…"
+            <input className="inbox-search-input" placeholder={t('inbox.searchPlaceholder')}
               value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <div className="inbox-list">
-            {threads === null && <div className="inbox-empty-note">Loading…</div>}
-            {threads && threads.length === 0 && <div className="inbox-empty-note">No conversations</div>}
+            {threads === null && <div className="inbox-empty-note">{t('common.loading')}</div>}
+            {threads && threads.length === 0 && <div className="inbox-empty-note">{t('inbox.noConversations')}</div>}
             {threads && threads.map(t => (
               <button key={t.id} type="button"
                 className={`inbox-conv${sel === t.id ? ' inbox-conv--current' : ''}`}
@@ -174,7 +182,7 @@ export default function Inbox() {
           {!detail ? (
             <div className="inbox-thread-empty">
               <EnvelopeSimple weight="thin" />
-              <p>Select a conversation</p>
+              <p>{t('inbox.selectConversation')}</p>
             </div>
           ) : (
             <>
@@ -188,7 +196,7 @@ export default function Inbox() {
                     {detail.thread.sender_email} · {detail.thread.mailbox}@tortacrm.com
                   </div>
                 </div>
-                <button type="button" className="inbox-thread-del" onClick={del} title="Delete conversation">
+                <button type="button" className="inbox-thread-del" onClick={del} title={t('inbox.deleteConversation')}>
                   <Trash />
                 </button>
               </header>
@@ -198,7 +206,7 @@ export default function Inbox() {
                   <div key={m.id} className={`inbox-msg inbox-msg--${m.direction === 'out' ? 'out' : 'in'}`}>
                     <div className="inbox-bubble">
                       {m.subject && <div className="inbox-bubble-subj">{m.subject}</div>}
-                      <div className="inbox-bubble-text">{m.body_text || '(empty)'}</div>
+                      <div className="inbox-bubble-text">{m.body_text || t('inbox.emptyMessage')}</div>
                       <div className="inbox-bubble-time">
                         {m.direction === 'out' && m.admin_email ? `${m.admin_email} · ` : ''}{fmtFull(m.created_at)}
                       </div>
@@ -211,7 +219,7 @@ export default function Inbox() {
 
               <div className="inbox-composer">
                 <textarea className="inbox-composer-input" rows={2}
-                  placeholder={`Reply from ${detail.thread.mailbox}@tortacrm.com…`}
+                  placeholder={t('inbox.replyPlaceholder', { mailbox: detail.thread.mailbox })}
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendReply(); } }} />

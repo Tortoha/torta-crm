@@ -6,22 +6,24 @@
 
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ChartLine, UsersThree, ClipboardText, ChatCircleDots, Tray, CaretDown, ArrowLineLeft, ArrowLineRight,
 } from '@phosphor-icons/react';
 
-// Single section, two items. Mirrors CRM's buildSections() return shape so
-// the rest of the file (NavSection / CollapsedNav) is byte-for-byte CRM.
+// Single section. Mirrors CRM's buildSections() return shape so the rest of the
+// file (NavSection / CollapsedNav) is byte-for-byte CRM. `label` holds an i18n
+// key — resolved with t() at render time.
 function buildSections() {
   return [
     {
-      id: 'admin', label: 'Overview',
+      id: 'admin', label: 'nav.overview',
       items: [
-        { to: '/',      label: 'Analytics', Icon: ChartLine, exact: true },
-        { to: '/users', label: 'Users',     Icon: UsersThree },
-        { to: '/logs',  label: 'Logs',      Icon: ClipboardText },
-        { to: '/feedback', label: 'Feedback', Icon: ChatCircleDots },
-        { to: '/inbox',    label: 'Inbox',    Icon: Tray },
+        { to: '/',         label: 'nav.analytics', Icon: ChartLine, exact: true },
+        { to: '/users',    label: 'nav.users',     Icon: UsersThree },
+        { to: '/logs',     label: 'nav.logs',      Icon: ClipboardText },
+        { to: '/feedback', label: 'nav.feedback',  Icon: ChatCircleDots },
+        { to: '/inbox',    label: 'nav.inbox',     Icon: Tray },
       ],
     },
   ];
@@ -32,6 +34,7 @@ const isActivePath = (p, to, exact = false) => exact ? p === to : (p === to || p
 // ── NavSection — collapsible section with Dynamic Block indicator ──────
 
 function NavSection({ section, open, onToggle, pathname }) {
+  const { t } = useTranslation();
   const itemsEl = useRef(null);
   const itemEls = useRef({});
   const [hoveredKey, setHoveredKey] = useState(null);
@@ -53,7 +56,7 @@ function NavSection({ section, open, onToggle, pathname }) {
   return (
     <div className="sb-block sb-section-block">
       <button type="button" className="sb-section-header" onClick={onToggle}>
-        <span className="sb-section-label">{section.label}</span>
+        <span className="sb-section-label">{t(section.label)}</span>
         <CaretDown className={`sb-chevron${open ? ' sb-chevron--open' : ''}`} />
       </button>
       <div className={`sb-items-wrapper${open ? ' sb-items-wrapper--open' : ''}`}>
@@ -69,7 +72,7 @@ function NavSection({ section, open, onToggle, pathname }) {
             >
               <NavLink to={to} end={!!exact} className="sb-item">
                 <Icon className="sb-icon" />
-                <span className="sb-item-label">{label}</span>
+                <span className="sb-item-label">{t(label)}</span>
               </NavLink>
             </div>
           ))}
@@ -125,6 +128,7 @@ function CollapsedNav({ items, pathname }) {
 // ── Sidebar ──
 
 export default function Sidebar({ collapsed, onToggle }) {
+  const { t } = useTranslation();
   const location = useLocation();
   const sections = useMemo(() => buildSections(), []);
 
@@ -170,7 +174,7 @@ export default function Sidebar({ collapsed, onToggle }) {
           <button className="sb-toggle-btn" onClick={onToggle} type="button" aria-label="Toggle sidebar">
             {collapsed
               ? <ArrowLineRight className="sb-toggle-icon" />
-              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">Collapse</span></>
+              : <><ArrowLineLeft className="sb-toggle-icon" /><span className="sb-toggle-label">{t('nav.collapse')}</span></>
             }
           </button>
         </div>

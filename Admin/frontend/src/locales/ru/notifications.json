@@ -1,0 +1,24 @@
+{
+  "notifications": {
+    "title": "Уведомления",
+    "markAllRead": "Прочитать все",
+    "empty": "Нет уведомлений",
+    "viewAll": "Показать все",
+    "allTitle": "Все уведомления",
+    "allSubtitle": "Всё в одном месте",
+    "loading": "Загрузка…",
+    "time": {
+      "justNow": "только что",
+      "minutesAgo": "{{count}} мин назад",
+      "hoursAgo": "{{count}} ч назад",
+      "daysAgo": "{{count}} дн назад"
+    },
+    "buckets": {
+      "today": "Сегодня",
+      "yesterday": "Вчера",
+      "thisWeek": "На этой неделе",
+      "thisMonth": "В этом месяце",
+      "earlier": "Ранее"
+    }
+  }
+}

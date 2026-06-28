@@ -7,6 +7,7 @@ import Users from './Pages/Users.jsx';
 import Logs from './Pages/Logs.jsx';
 import Feedback from './Pages/Feedback.jsx';
 import Inbox from './Pages/Inbox.jsx';
+import Settings from './Pages/Settings.jsx';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="logs" element={<Logs />} />
           <Route path="feedback" element={<Feedback />} />
           <Route path="inbox" element={<Inbox />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

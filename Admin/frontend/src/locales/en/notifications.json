@@ -1,0 +1,24 @@
+{
+  "notifications": {
+    "title": "Notifications",
+    "markAllRead": "Mark all read",
+    "empty": "No notifications",
+    "viewAll": "View all",
+    "allTitle": "All notifications",
+    "allSubtitle": "Everything in one place",
+    "loading": "Loading…",
+    "time": {
+      "justNow": "just now",
+      "minutesAgo": "{{count}}m ago",
+      "hoursAgo": "{{count}}h ago",
+      "daysAgo": "{{count}}d ago"
+    },
+    "buckets": {
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "thisWeek": "This week",
+      "thisMonth": "This month",
+      "earlier": "Earlier"
+    }
+  }
+}

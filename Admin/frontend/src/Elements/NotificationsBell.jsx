@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Bell, X, CaretRight, ChatCircleDots, EnvelopeSimple,
 } from '@phosphor-icons/react';
@@ -48,27 +49,23 @@ const TYPE_ICON = {
   admin_inbox:    <EnvelopeSimple weight="bold" />,  // inbound platform mail
 };
 
-function timeAgo(iso) {
+function timeAgo(iso, t) {
   if (!iso) return '';
   const ms = Date.now() - new Date(iso).getTime();
   const s = Math.floor(ms / 1000);
-  if (s < 60) return 'just now';
+  if (s < 60) return t('notifications.time.justNow');
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return t('notifications.time.minutesAgo', { count: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
+  if (h < 24) return t('notifications.time.hoursAgo', { count: h });
   const d = Math.floor(h / 24);
-  return `${d}d ago`;
+  return t('notifications.time.daysAgo', { count: d });
 }
-
-const BUCKET_LABEL = {
-  today: 'Today', yesterday: 'Yesterday', thisWeek: 'This week',
-  thisMonth: 'This month', earlier: 'Earlier',
-};
 
 // Shared row renderer. `Row` is the tilt-wrapper — defaults to the dropdown's
 // bigger-tilt NotifRow; the modal passes PoListRow for the standard tilt.
 function NotifItem({ it, onClick, Row = NotifRow }) {
+  const { t } = useTranslation();
   return (
     <Row
       className={`notif-row notif-row--clickable${it.is_read ? '' : ' notif-row--unread'}`}
@@ -80,7 +77,7 @@ function NotifItem({ it, onClick, Row = NotifRow }) {
           <span className="notif-row-message">{it.message}</span>
         </span>
       </span>
-      <span className="notif-row-time">{timeAgo(it.created_at)}</span>
+      <span className="notif-row-time">{timeAgo(it.created_at, t)}</span>
     </Row>
   );
 }
@@ -102,6 +99,7 @@ function dateBucket(iso) {
 const NOTIF_PAGE = 30;
 
 function AllNotificationsModal({ onClose, onOpenItem }) {
+  const { t } = useTranslation();
   const [items, setItems]             = useState([]);
   const [loading, setLoading]         = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -165,9 +163,9 @@ function AllNotificationsModal({ onClose, onOpenItem }) {
         <div className="auth-modal-head">
           <div className="auth-modal-title-row">
             <div>
-              <div className="auth-modal-title">All notifications</div>
+              <div className="auth-modal-title">{t('notifications.allTitle')}</div>
               <div className="auth-modal-subtitle-row">
-                <span className="auth-modal-subtitle">Everything in one place</span>
+                <span className="auth-modal-subtitle">{t('notifications.allSubtitle')}</span>
               </div>
             </div>
           </div>
@@ -177,13 +175,13 @@ function AllNotificationsModal({ onClose, onOpenItem }) {
         </div>
 
         <div className="auth-modal-body notif-all-body" ref={bodyRef}>
-          {loading && <p className="crm-placeholder">Loading…</p>}
+          {loading && <p className="crm-placeholder">{t('notifications.loading')}</p>}
           {!loading && items.length === 0 && (
-            <p className="crm-placeholder">No notifications</p>
+            <p className="crm-placeholder">{t('notifications.empty')}</p>
           )}
           {groups.map(g => (
             <div className="notif-group" key={g.label}>
-              <div className="notif-group-label">{BUCKET_LABEL[g.label] || 'Earlier'}</div>
+              <div className="notif-group-label">{t(`notifications.buckets.${g.label}`)}</div>
               <div className="po-set-table notif-table">
                 {g.items.map(it => (
                   <NotifItem key={it.id} it={it} onClick={() => onOpenItem(it)} Row={PoListRow} />
@@ -193,7 +191,7 @@ function AllNotificationsModal({ onClose, onOpenItem }) {
           ))}
           {hasMore && (
             <div ref={sentinelRef} className="notif-load-sentinel">
-              {loadingMore ? 'Loading…' : ''}
+              {loadingMore ? t('notifications.loading') : ''}
             </div>
           )}
         </div>
@@ -204,6 +202,7 @@ function AllNotificationsModal({ onClose, onOpenItem }) {
 }
 
 export default function NotificationsBell() {
+  const { t }    = useTranslation();
   const navigate = useNavigate();
   const btnRef   = useRef(null);
   const [open,    setOpen]    = useState(false);
@@ -301,7 +300,7 @@ export default function NotificationsBell() {
     <>
       <button ref={btnRef} className="hdr-bell-btn" type="button"
         onClick={() => { setOpen(v => !v); if (!open) load(); }}
-        title="Notifications">
+        title={t('notifications.title')}>
         <Bell weight={unread ? 'fill' : 'regular'} />
         {unread > 0 && <span className="hdr-bell-badge">{unread > 9 ? '9+' : unread}</span>}
       </button>
@@ -311,15 +310,15 @@ export default function NotificationsBell() {
           {unread > 0 && (
             <div className="notif-head">
               <button className="notif-mark-all" type="button" onClick={markAllRead}>
-                Mark all read
+                {t('notifications.markAllRead')}
               </button>
             </div>
           )}
 
           <div className="notif-list">
-            {loading && <p className="crm-placeholder">Loading…</p>}
+            {loading && <p className="crm-placeholder">{t('notifications.loading')}</p>}
             {!loading && items.length === 0 && (
-              <p className="crm-placeholder">No notifications</p>
+              <p className="crm-placeholder">{t('notifications.empty')}</p>
             )}
             {items.length > 0 && (
               <div className="po-set-table notif-table">
@@ -330,7 +329,7 @@ export default function NotificationsBell() {
                   <NotifRow className="notif-row notif-viewall-row"
                     onClick={() => { setShowAll(true); setOpen(false); }}>
                     <span className="notif-viewall-inner">
-                      View all
+                      {t('notifications.viewAll')}
                       <CaretRight weight="bold" />
                     </span>
                   </NotifRow>

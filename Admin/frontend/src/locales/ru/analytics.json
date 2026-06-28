@@ -1,0 +1,70 @@
+{
+  "analytics": {
+    "title": "Аналитика",
+    "live": "Онлайн",
+    "liveTooltip": "Обновляется автоматически каждые 15 с",
+    "noData": "Нет данных.",
+    "noDataPeriod": "Нет данных за этот период.",
+    "unknownCountry": "Неизвестно",
+    "failedToLoad": "Не удалось загрузить: {{error}}",
+    "funnelHint": "Отслеживание визитов только запущено — шаг «Посетили» заполняется по мере прихода трафика (один учёт на посетителя в день, анонимно).",
+    "periods": {
+      "7d": "7 дней",
+      "30d": "30 дней",
+      "90d": "90 дней",
+      "all": "Всё время"
+    },
+    "plans": {
+      "free": "Free",
+      "standard": "Standard",
+      "plus": "Plus",
+      "pro": "Pro",
+      "max": "Max"
+    },
+    "funnel": {
+      "visited": "Посетили (30 дн)",
+      "registered": "Зарегистрировались",
+      "active": "Активны (7 дн)",
+      "paid": "Платная подписка"
+    },
+    "chart": {
+      "signups_one": "{{count}} регистрация",
+      "signups_few": "{{count}} регистрации",
+      "signups_many": "{{count}} регистраций",
+      "active": "{{count}} активных"
+    },
+    "sections": {
+      "overview": "Обзор",
+      "engagement": "Вовлечённость",
+      "salesFunnel": "Воронка продаж",
+      "signupsOverTime": "Регистрации по времени",
+      "activeUsersOverTime": "Активные пользователи по времени",
+      "subscriptionPlans": "Тарифы подписки",
+      "topCountries": "Топ стран"
+    },
+    "kpi": {
+      "totalUsers": "Всего пользователей",
+      "totalUsersSub_one": "{{banned}} забанено · {{count}} админ",
+      "totalUsersSub_few": "{{banned}} забанено · {{count}} админа",
+      "totalUsersSub_many": "{{banned}} забанено · {{count}} админов",
+      "organizations": "Организации",
+      "organizationsSub_one": "{{count}} проект ({{active}} активных)",
+      "organizationsSub_few": "{{count}} проекта ({{active}} активных)",
+      "organizationsSub_many": "{{count}} проектов ({{active}} активных)",
+      "orders24h": "Заказы (24ч)",
+      "orders24hSub": "{{total}} за всё время",
+      "mrrEstimate": "Оценка MRR",
+      "mrrEstimateSub": "Сумма (организации × цена тарифа)",
+      "onlineNow": "Онлайн сейчас",
+      "onlineNowSub": "сейчас в CRM",
+      "wau": "Активны за неделю (WAU)",
+      "wauSub": "{{rate}}% пользователей · {{dau}} сегодня",
+      "mau": "Активны за месяц (MAU)",
+      "mauSub_one": "{{count}} заходил хоть раз",
+      "mauSub_few": "{{count}} заходили хоть раз",
+      "mauSub_many": "{{count}} заходили хоть раз",
+      "churned": "Отток",
+      "churnedSub": "зашли один раз, молчат 30+ дней"
+    }
+  }
+}

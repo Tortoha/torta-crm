@@ -2,6 +2,9 @@
 // no i18n/theme sync (admin is single-locale, light theme).
 // Talks to the CRM backend — admin endpoints are /api/admin/* on the same host.
 
+import { syncLang } from "./i18n.js";
+import { syncTheme } from "./theme.js";
+
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8001";
 
 export function pickError(data, fallback = "Something went wrong") {
@@ -76,6 +79,18 @@ if (typeof window !== "undefined" && !window.fetch.__torta_admin_patched) {
     }
 
     let res = await originalFetch(input, init);
+
+    // Apply the server-stored UI language + theme whenever we load the current
+    // user, so they follow the account across devices (localStorage is a cache).
+    if (res.ok && method === "GET") {
+      try {
+        const path = new URL(url, window.location.origin).pathname;
+        if (path.endsWith("/api/me")) {
+          res.clone().json().then(j => { syncLang(j?.language); syncTheme(j?.theme); }).catch(() => {});
+        }
+      } catch { /* ignore */ }
+    }
+
     if (res.status !== 401 || shouldSkipRefresh(url)) return res;
     const refreshed = await doRefresh(originalFetch);
     if (!refreshed) return res;

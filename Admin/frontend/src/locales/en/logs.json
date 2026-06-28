@@ -1,0 +1,52 @@
+{
+  "logs": {
+    "title": "Logs",
+    "tabs": {
+      "activity": "Activity",
+      "logins": "Logins",
+      "audit": "Admin audit",
+      "errors": "Technical"
+    },
+    "filters": {
+      "all": "All",
+      "signup": "Signups",
+      "org": "Orgs",
+      "project": "Projects",
+      "order": "Orders",
+      "ban": "Bans",
+      "success": "Success",
+      "failed": "Failed",
+      "unban": "Unbans",
+      "delete_user": "Deletions",
+      "5xx": "5xx",
+      "4xx": "4xx"
+    },
+    "cols": {
+      "when": "When",
+      "event": "Event",
+      "detail": "Detail",
+      "email": "Email",
+      "result": "Result",
+      "country": "Country",
+      "ip": "IP",
+      "method": "Method",
+      "admin": "Admin",
+      "action": "Action",
+      "target": "Target",
+      "status": "Status",
+      "path": "Path",
+      "error": "Error"
+    },
+    "tags": {
+      "success": "success",
+      "failed": "failed"
+    },
+    "searchPlaceholder": "Search logs…",
+    "emptyFiltered": "No entries match these filters.",
+    "emptyNone": "No entries yet.",
+    "loadFailed": "Failed to load: {{err}}",
+    "paginationShown": "{{count}} shown · page {{page}}",
+    "prev": "Prev",
+    "next": "Next"
+  }
+}

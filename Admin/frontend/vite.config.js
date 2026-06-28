@@ -6,7 +6,7 @@ import react from '@vitejs/plugin-react'
 // endpoints live under /api/admin/* and are gated by require_admin.
 export default defineConfig({
   plugins: [react()],
-  server: { port: 5175 },
+  server: { port: Number(process.env.PORT) || 5175 },
   build: {
     rollupOptions: {
       output: {

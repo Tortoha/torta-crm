@@ -1,0 +1,66 @@
+{
+  "analytics": {
+    "title": "Analytics",
+    "live": "Live",
+    "liveTooltip": "Refreshes automatically every 15s",
+    "noData": "No data.",
+    "noDataPeriod": "No data for this period.",
+    "unknownCountry": "Unknown",
+    "failedToLoad": "Failed to load: {{error}}",
+    "funnelHint": "Visit tracking just shipped — the “Visited” step fills as traffic arrives (one count per visitor per day, anonymous).",
+    "periods": {
+      "7d": "7 days",
+      "30d": "30 days",
+      "90d": "90 days",
+      "all": "All time"
+    },
+    "plans": {
+      "free": "Free",
+      "standard": "Standard",
+      "plus": "Plus",
+      "pro": "Pro",
+      "max": "Max"
+    },
+    "funnel": {
+      "visited": "Visited (30d)",
+      "registered": "Registered",
+      "active": "Active (7d)",
+      "paid": "Paid subscription"
+    },
+    "chart": {
+      "signups_one": "{{count}} signup",
+      "signups_other": "{{count}} signups",
+      "active": "{{count}} active"
+    },
+    "sections": {
+      "overview": "Overview",
+      "engagement": "Engagement",
+      "salesFunnel": "Sales funnel",
+      "signupsOverTime": "Signups over time",
+      "activeUsersOverTime": "Active users over time",
+      "subscriptionPlans": "Subscription plans",
+      "topCountries": "Top countries"
+    },
+    "kpi": {
+      "totalUsers": "Total users",
+      "totalUsersSub_one": "{{banned}} banned · {{count}} admin",
+      "totalUsersSub_other": "{{banned}} banned · {{count}} admins",
+      "organizations": "Organizations",
+      "organizationsSub_one": "{{count}} project ({{active}} active)",
+      "organizationsSub_other": "{{count}} projects ({{active}} active)",
+      "orders24h": "Orders (24h)",
+      "orders24hSub": "{{total}} all-time",
+      "mrrEstimate": "MRR estimate",
+      "mrrEstimateSub": "Sum of (orgs × plan price)",
+      "onlineNow": "Online now",
+      "onlineNowSub": "live in the CRM right now",
+      "wau": "Active / week (WAU)",
+      "wauSub": "{{rate}}% of users · {{dau}} today",
+      "mau": "Active / month (MAU)",
+      "mauSub_one": "{{count}} ever signed in",
+      "mauSub_other": "{{count}} ever signed in",
+      "churned": "Churned",
+      "churnedSub": "signed in once, silent 30d+"
+    }
+  }
+}

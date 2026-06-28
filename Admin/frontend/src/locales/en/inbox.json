@@ -1,0 +1,19 @@
+{
+  "inbox": {
+    "title": "Inbox",
+    "mailbox": {
+      "all": "All",
+      "support": "Support",
+      "legal": "Legal"
+    },
+    "searchPlaceholder": "Search sender or subject…",
+    "noConversations": "No conversations",
+    "selectConversation": "Select a conversation",
+    "replyPlaceholder": "Reply from {{mailbox}}@tortacrm.com…",
+    "deleteConfirm": "Delete this conversation permanently?",
+    "deleteConversation": "Delete conversation",
+    "emptyMessage": "(empty)",
+    "sendFailed": "Failed to send",
+    "networkError": "Network error"
+  }
+}

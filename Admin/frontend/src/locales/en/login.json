@@ -1,0 +1,31 @@
+{
+  "login": {
+    "title": "Sign In",
+    "email": "Email",
+    "password": "Password",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "sending": "Sending…",
+    "next": "Next",
+    "or": "or",
+    "continueWithGoogle": "Continue with Google",
+    "invalidCredentials": "Invalid credentials",
+    "networkError": "Network error",
+    "accessDenied": "Access denied.",
+    "signInCancelled": "Sign-in cancelled.",
+    "signInFailed": "Sign-in failed.",
+    "verify": {
+      "title": "Verify",
+      "subtitle": "We just sent a 6-digit code to your inbox.",
+      "verifying": "Verifying…",
+      "continue": "Continue",
+      "sending": "Sending…",
+      "resendIn": "Resend in {{count}}s",
+      "resend": "Resend code",
+      "back": "Back",
+      "failed": "Verification failed",
+      "resent": "Code re-sent.",
+      "resendFailed": "Resend failed"
+    }
+  }
+}

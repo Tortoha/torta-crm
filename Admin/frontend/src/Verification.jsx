@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { API_BASE, pickError } from './api.js';
 import './Style/Login.css';
 
@@ -19,6 +20,7 @@ import './Style/Login.css';
 //   mounts fresh and reads the just-set cookie via /api/me.
 
 export default function Verification() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [code, setCode]                 = useState('');
   const [generalError, setGeneralError] = useState('');
@@ -87,10 +89,10 @@ export default function Verification() {
         // races the cookie commit when StrictMode double-fires useEffect.
         window.location.href = '/';
       } else {
-        setGeneralError(pickError(data, 'Verification failed'));
+        setGeneralError(pickError(data, t('login.verify.failed')));
       }
     } catch {
-      setGeneralError('Network error');
+      setGeneralError(t('login.networkError'));
     } finally {
       setLoading(false);
     }
@@ -112,17 +114,17 @@ export default function Verification() {
         const secs = Number(data.resend_available_in || 60);
         localStorage.setItem('pendingResendUntil', String(Date.now() + secs * 1000));
         setCooldown(secs);
-        setGeneralError('Code re-sent.');
+        setGeneralError(t('login.verify.resent'));
       } else {
         if (res.status === 429) {
           const secs = extractSecondsFromMessage(data.detail);
           localStorage.setItem('pendingResendUntil', String(Date.now() + secs * 1000));
           setCooldown(secs);
         }
-        setGeneralError(pickError(data, 'Resend failed'));
+        setGeneralError(pickError(data, t('login.verify.resendFailed')));
       }
     } catch {
-      setGeneralError('Network error');
+      setGeneralError(t('login.networkError'));
     } finally {
       setResending(false);
     }
@@ -137,8 +139,8 @@ export default function Verification() {
   return (
     <div className="regist">
       <section className="regis">
-        <h1 className="verify-h1">Verify</h1>
-        <p className="verify-p">We just sent a 6-digit code to your inbox.</p>
+        <h1 className="verify-h1">{t('login.verify.title')}</h1>
+        <p className="verify-p">{t('login.verify.subtitle')}</p>
 
         <div className="reg">
           <form onSubmit={handleVerify}>
@@ -165,7 +167,7 @@ export default function Verification() {
               <input
                 className={isValid && !loading ? 'button1' : 'not-button'}
                 type="submit"
-                value={loading ? 'Verifying…' : 'Continue'}
+                value={loading ? t('login.verify.verifying') : t('login.verify.continue')}
                 disabled={!isValid || loading}
               />
             </div>
@@ -176,10 +178,10 @@ export default function Verification() {
                 className={cooldown === 0 && !resending ? 'button3' : 'not-button3'}
                 value={
                   resending
-                    ? 'Sending…'
+                    ? t('login.verify.sending')
                     : cooldown > 0
-                      ? `Resend in ${cooldown}s`
-                      : 'Resend code'
+                      ? t('login.verify.resendIn', { count: cooldown })
+                      : t('login.verify.resend')
                 }
                 onClick={handleResend}
                 disabled={resending || cooldown > 0}
@@ -190,7 +192,7 @@ export default function Verification() {
               <input
                 type="button"
                 className="button2"
-                value="Back"
+                value={t('login.verify.back')}
                 onClick={handleGoBack}
               />
             </div>

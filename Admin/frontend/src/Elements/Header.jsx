@@ -5,7 +5,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { SignOut, List } from '@phosphor-icons/react';
+import { useTranslation } from 'react-i18next';
+import { SignOut, List, Gear } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import NotificationsBell from './NotificationsBell.jsx';
 import '../Style/Header.css';
@@ -41,6 +42,8 @@ function UserAvatar({ user, size = 28 }) {
 
 /* ── User menu — avatar with logout dropdown ── */
 function UserMenu({ user }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -72,8 +75,12 @@ function UserMenu({ user }) {
             </div>
           </div>
           <div className="hdr-user-sep" />
+          <button className="hdr-drop-item" type="button"
+            onClick={() => { setOpen(false); navigate('/settings'); }}>
+            <Gear className="hdr-drop-icon" /> {t('nav.settings')}
+          </button>
           <button className="hdr-drop-item hdr-drop-item--danger" onClick={logout} type="button">
-            <SignOut className="hdr-drop-icon" /> Log out
+            <SignOut className="hdr-drop-icon" /> {t('nav.logout')}
           </button>
         </div>
       </div>
@@ -83,6 +90,7 @@ function UserMenu({ user }) {
 
 /* ── Header ── */
 export default function Header({ user, onMobileNavToggle }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   return (
     <header className="crm-header">
@@ -99,7 +107,7 @@ export default function Header({ user, onMobileNavToggle }) {
           </svg>
         </button>
         <span className="hdr-sep">/</span>
-        <span className="hdr-settings-crumb">Admin</span>
+        <span className="hdr-settings-crumb">{t('nav.admin')}</span>
       </div>
       <div className="hdr-right">
         {user && <NotificationsBell />}
