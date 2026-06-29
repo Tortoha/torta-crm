@@ -53,7 +53,7 @@ const CABINET_URLS = {
 };
 
 
-export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose }) {
+export default function PaymentProviderPanel({ provider, orgId, method, onSaved, onClose }) {
   const { t } = useTranslation();
   const providerKey = provider.id;
   const consoleInfo = PROVIDER_CONSOLE[providerKey];
@@ -86,6 +86,13 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
   const [projects,  setProjects]  = useState([]);
   const [projIdx,   setProjIdx]   = useState(0);
   const [copiedKey, setCopiedKey] = useState('');
+
+  // Active (is_enabled) — whether this gateway is OFFERED at checkout. A separate
+  // switch from test/live mode; toggled instantly via PATCH /payment-methods so the
+  // merchant can pause a gateway (e.g. if something's off) without deleting its keys.
+  const [enabled,  setEnabled]  = useState(!!method?.is_enabled);
+  const [enabling, setEnabling] = useState(false);
+  useEffect(() => { setEnabled(!!method?.is_enabled); }, [method?.is_enabled]);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -197,6 +204,31 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
     finally { setTesting(false); }
   };
 
+  // Active switch — instant enable/disable of the checkout method (is_enabled),
+  // independent of credentials. Enabling requires connected creds (backend guard),
+  // so the switch stays disabled until then. Optimistic, reverts on failure.
+  const toggleEnabled = async (val) => {
+    setEnabled(val); setErr(''); setEnabling(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/orgs/${orgId}/payment-methods/${providerKey}`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_enabled: val }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        setEnabled(!val);
+        setErr(j?.detail || t('org.payments.panel.saveFailed'));
+        return;
+      }
+      showToast(t('org.payments.panel.saved'));
+      onSaved?.();
+    } catch {
+      setEnabled(!val);
+      setErr(t('org.payments.panel.networkError'));
+    } finally { setEnabling(false); }
+  };
+
   const disconnect = async () => {
     if (!confirm(t('org.payments.panel.disconnectConfirm'))) return;
     setDeleting(true);
@@ -301,21 +333,41 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
             )}
           </p>
         </div>
-        {!isManual && (
-          <label className="auth-toggle">
-            <input type="checkbox" checked={!testMode}
-              onChange={e => { setTestMode(!e.target.checked); setDirty(true); }} />
+      </div>
+
+      {/* ── Switch 1: Active — is this gateway OFFERED at checkout (independent of mode) ── */}
+      {!isManual && (
+        <div className="auth-toggle-row">
+          <div>
+            <span className="auth-toggle-label">{t('org.payments.panel.active')}</span>
+            <p className="auth-field-hint">
+              {isConnected ? t('org.payments.panel.activeHint') : t('org.payments.panel.activeNeedsConnect')}
+            </p>
+          </div>
+          <label className="auth-toggle"
+            title={isConnected ? '' : t('org.payments.panel.activeNeedsConnect')}>
+            <input type="checkbox" checked={enabled} disabled={!isConnected || enabling}
+              onChange={e => toggleEnabled(e.target.checked)} />
             <span className="auth-toggle-track" />
           </label>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* ── Switch 2: Test mode — test ↔ live (applied on Save) ── */}
       {!isManual && (
-        <p className="auth-field-hint" style={{ marginTop: -8 }}>
-          {t('org.payments.panel.modeNotePre')}<strong>{testMode ? t('org.payments.panel.modeTest') : t('org.payments.panel.modeLive')}</strong>{t('org.payments.panel.modeNoteMid')}
-          {testMode
-            ? t('org.payments.panel.modeTestHint')
-            : t('org.payments.panel.modeLiveHint')}
-        </p>
+        <div className="auth-toggle-row">
+          <div>
+            <span className="auth-toggle-label">{t('org.payments.panel.testModeLabel')}</span>
+            <p className="auth-field-hint">
+              {testMode ? t('org.payments.panel.modeTestHint') : t('org.payments.panel.modeLiveHint')}
+            </p>
+          </div>
+          <label className="auth-toggle">
+            <input type="checkbox" checked={testMode}
+              onChange={e => { setTestMode(e.target.checked); setDirty(true); }} />
+            <span className="auth-toggle-track" />
+          </label>
+        </div>
       )}
 
       <div className="auth-sep" />
