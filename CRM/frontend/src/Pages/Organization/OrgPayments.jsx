@@ -38,9 +38,9 @@ const CATALOG = [
   { id: 'cloudpayments', label: 'TipTop Pay (CloudPayments)', iconify: 'ph:credit-card-fill', color: '#0085D1', online: true,
     blurb: 'Card payments via TipTop Pay (ex-CloudPayments)', beta: true },
   { id: 'robokassa', label: 'Robokassa', iconify: 'ph:wallet-fill', color: '#7A3FF2', online: true,
-    blurb: 'Card payments via Robokassa', beta: true },
+    blurb: 'Card payments via Robokassa' },
   { id: 'paypal', label: 'PayPal', iconify: 'logos:paypal', online: true,
-    blurb: 'PayPal — international buyers (USD/EUR; not KZT)', beta: true },
+    blurb: 'PayPal — international buyers (USD/EUR; not KZT)' },
   { id: 'manual',      label: 'Manual', phosphor: Money },
 ];
 
