@@ -1,7 +1,10 @@
-"""Pure-logic unit tests for CloudPayments status mapping + webhook HMAC.
+"""Pure-logic unit tests for the CloudPayments / TipTop Pay status map + webhook HMAC.
 
-Mirrors External/main.py `_CP_STATUS` and `cloudpayments_verify_hmac` (keep in
-sync — the live module can't be imported here; the DB pool is created at import).
+Gateway rebranded CloudPayments KZ → TipTop Pay (2026); internal id stays
+`cloudpayments` and the REST API stayed CloudPayments-compatible, so the status map
++ Content-HMAC scheme are UNCHANGED — these still mirror External/main.py
+`_CP_STATUS` and `cloudpayments_verify_hmac` (keep in sync — the live module can't
+be imported here; the DB pool is created at import).
 Completed = funds captured (paid); Authorized = 2-stage HOLD that must NOT be
 treated as paid. CloudPayments amounts are MAJOR units (KZT/RUB decimal), never
 minor. Live HTTP + e2e are verified in CloudPayments test mode (see

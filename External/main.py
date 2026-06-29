@@ -5803,22 +5803,25 @@ def halyk_check_status(creds: dict, invoice_id: str, *, is_test_mode: bool = Tru
                 r["body"] if isinstance(r["body"], dict) else {})
 
 
-# ── CloudPayments (cloudpayments.kz) ────────────────────────────────────────
-# Hosted popup-widget gateway (PCI-light — the card is entered in CloudPayments'
-# own widget loaded from widget.cloudpayments.kz; never touches us). Auth is HTTP
-# Basic (Public ID : API Secret). The widget is CLIENT-initiated (no server
-# "create" call) — init_payment just mints our InvoiceId + hands the storefront a
-# `cloudpayments_widget` config. The buyer pays in the popup → onSuccess (SAME
-# page, no redirect) → place_order re-verifies server-to-server via POST
-# /payments/find {InvoiceId}: we confirm 'paid' ONLY on Status == Completed.
-# A public Pay webhook (Content-HMAC signed) is the backup confirmation path.
-# Amounts are MAJOR units (KZT/RUB decimal — NOT minor like Stripe).
-# ⚠️ NOT YET LIVE-TESTED.
+# ── TipTop Pay — ex-CloudPayments KZ (tiptoppay.kz) ──────────────────────────
+# Internal id stays `cloudpayments` (DB enums, routes, order snapshots). TipTop Pay
+# is the 2026 rebrand of CloudPayments KZ with a NEW widget SDK + new hosts; the
+# REST API stays CloudPayments-compatible (HTTP Basic Public ID : API Secret).
+# Hosted popup-widget gateway (PCI-light — card entered in TipTop Pay's own widget
+# loaded from widget.tiptoppay.kz; never touches us). CLIENT-initiated (no server
+# "create"): init_payment mints our externalId + hands the storefront a
+# `cloudpayments_widget` config. Buyer pays in the popup → tiptop.Widget oncomplete
+# returns the gateway TransactionId (SAME page, no redirect) → place_order
+# re-verifies server-to-server via POST /payments/get {TransactionId}: 'paid' ONLY
+# on Status == Completed. (find-by-InvoiceId is undocumented for TipTop Pay, so we
+# verify by the TransactionId the widget returns.) A public Pay webhook is the
+# backup path. Amounts are MAJOR units (KZT decimal — NOT minor like Stripe).
+# ⚠️ NOT YET LIVE-TESTED (rebrand migration done from docs; no test account yet).
 
-_CP_API_BASE  = os.getenv("CLOUDPAYMENTS_API_BASE", "https://api.cloudpayments.kz").rstrip("/")
+_CP_API_BASE  = os.getenv("CLOUDPAYMENTS_API_BASE", "https://api.tiptoppay.kz").rstrip("/")
 _CP_WIDGET_JS = os.getenv("CLOUDPAYMENTS_WIDGET_JS",
-                          "https://widget.cloudpayments.kz/bundles/cloudpayments")
-# CloudPayments transaction Status → canonical. Completed = funds captured (paid);
+                          "https://widget.tiptoppay.kz/bundles/widget.js")
+# TipTop Pay transaction Status → canonical. Completed = funds captured (paid);
 # Authorized = 2-stage HOLD (NOT captured — must NOT ship); Declined/Cancelled fail.
 _CP_STATUS = {
     "completed": "paid", "authorized": "pending", "awaitingauthentication": "pending",
@@ -5838,35 +5841,41 @@ def _cp_post(creds: dict, path: str, payload: dict) -> dict:
                          body=body, basic_auth=(public_id, api_secret))
 
 
-def cloudpayments_find(creds: dict, invoice_id: str) -> dict:
-    """Authoritative status by OUR InvoiceId (server-to-server) — the source of
-    truth for 'paid'. POST /payments/find. Success=false means no transaction for
-    this invoice yet (buyer abandoned / still pending) → treat as pending."""
-    if not invoice_id:
-        return _err("Missing invoice id")
-    r = _cp_post(creds, "/payments/find", {"InvoiceId": str(invoice_id)})
+def cloudpayments_get(creds: dict, transaction_id: str) -> dict:
+    """Authoritative status by the gateway's TransactionId (server-to-server) — the
+    source of truth for 'paid'. POST /payments/get {TransactionId}. (TipTop Pay does
+    NOT document find-by-InvoiceId, so we verify by the TransactionId the widget
+    returns on success.) Success=false → no such transaction yet → treat as pending."""
+    if not transaction_id:
+        return _err("Missing transaction id")
+    tid = int(transaction_id) if str(transaction_id).isdigit() else transaction_id
+    r = _cp_post(creds, "/payments/get", {"TransactionId": tid})
     if r["status"] == 200 and isinstance(r["body"], dict):
         b = r["body"]
         if not b.get("Success"):
-            return _ok({"intent_id": str(invoice_id), "status": "pending",
-                        "amount": 0, "currency": "KZT", "charge_id": ""}, b)
+            return _ok({"intent_id": str(transaction_id), "status": "pending",
+                        "amount": 0, "currency": "KZT", "charge_id": str(transaction_id)}, b)
         m    = b.get("Model") or {}
         name = (m.get("Status") or "").strip().lower()
         return _ok({
-            "intent_id": str(invoice_id),
+            "intent_id": str(transaction_id),
             "status":    _CP_STATUS.get(name, "pending"),
             "amount":    m.get("Amount", 0) or 0,            # major units (KZT)
             "currency":  m.get("Currency", "KZT") or "KZT",
-            "charge_id": str(m.get("TransactionId", "") or ""),
+            "charge_id": str(m.get("TransactionId", "") or transaction_id),
         }, b)
     msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"CloudPayments status failed (HTTP {r['status']})",
+    return _err(msg or f"TipTop Pay status failed (HTTP {r['status']})",
                 r["body"] if isinstance(r["body"], dict) else {})
 
 
 def cloudpayments_verify_hmac(raw_body: bytes, header_hmac: str, api_secret: str) -> bool:
-    """Validate a CloudPayments webhook: Base64(HMAC-SHA256(raw_body, api_secret))
-    must equal the Content-HMAC / X-Content-HMAC header (constant-time compare)."""
+    """Validate a Pay-webhook signature: Base64(HMAC-SHA256(raw_body, api_secret))
+    must equal the Content-HMAC / X-Content-HMAC header (constant-time compare).
+    ⚠️ TipTop Pay's notification-verification spec is undocumented; this is carried
+    over from CloudPayments (same platform). Safe even if the scheme changed: the
+    webhook handler re-fetches authoritative status server-side, so a bad/forged
+    signature can never fake a paid order — at worst a real webhook is ignored."""
     if not header_hmac or not api_secret:
         return False
     digest   = hmac.new(api_secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
@@ -6170,7 +6179,7 @@ def get_intent(provider: str, creds: dict, *, intent_id: str,
     if provider == "halyk_epay":
         return halyk_check_status(creds, intent_id, is_test_mode=is_test_mode)
     if provider == "cloudpayments":
-        return cloudpayments_find(creds, intent_id)
+        return cloudpayments_get(creds, intent_id)
     if provider == "robokassa":
         return robokassa_opstate(creds, intent_id)
     if provider == "paypal":
@@ -6217,20 +6226,27 @@ def parse_event(provider: str, raw_body: bytes) -> dict:
 
 
 
-def _get_org_payment_config(project_id: int) -> tuple[str, dict | None, bool, str]:
-    """Returns (provider, credentials, is_test_mode, stripe_account_id).
-    If org has no credentials row or provider is 'manual'/'other', returns ('manual', None, True, '').
-    Never returns the credentials in a way that leaks them — caller is responsible
-    for not echoing them back to the storefront.
+def _get_org_payment_config(project_id: int, provider: str | None = None) -> tuple[str, dict | None, bool, str]:
+    """Returns (provider, credentials, is_test_mode, stripe_account_id) for ONE
+    gateway. Multi-gateway: each provider has its own crm_payment_credentials row,
+    so pass the method the customer chose (or a fixed gateway, for a callback) to
+    get THAT gateway's keys. With provider=None, returns any connected gateway
+    (legacy callers / config display).
+    If the requested gateway has no row, isn't connected, or is manual/other,
+    returns ('manual', None, True, '') so checkout proceeds in manual mode rather
+    than blocking. Never echo the credentials back to the storefront.
     """
-    row = db_one(
-        "SELECT pc.provider, pc.credentials_encrypted, pc.is_test_mode, pc.is_connected,"
-        "       pc.stripe_account_id"
-        "  FROM crm_payment_credentials pc"
-        "  JOIN crm_projects pr ON pr.org_id = (SELECT org_id FROM crm_projects WHERE id = %s)"
-        " WHERE pc.org_id = pr.org_id LIMIT 1",
-        (project_id,)
-    )
+    base = ("SELECT pc.provider, pc.credentials_encrypted, pc.is_test_mode, pc.is_connected,"
+            "       pc.stripe_account_id"
+            "  FROM crm_payment_credentials pc"
+            " WHERE pc.org_id = (SELECT org_id FROM crm_projects WHERE id = %s)")
+    prov = (provider or "").strip().lower()
+    if prov:
+        row = db_one(base + " AND pc.provider = %s LIMIT 1", (project_id, prov))
+    else:
+        # Legacy: prefer a connected gateway, newest first.
+        row = db_one(base + " ORDER BY pc.is_connected DESC, pc.updated_at DESC LIMIT 1",
+                     (project_id,))
     if not row or not row["credentials_encrypted"]:
         return ("manual", None, True, "")
     if row["provider"] in ("manual", "other"):
@@ -6253,6 +6269,19 @@ def _get_org_payment_config(project_id: int) -> tuple[str, dict | None, bool, st
 # launches its gateway UI, and is the gate for strict server-side verification in
 # place_order. Keep in sync with the init_payment + place_order branches.
 _ONLINE_PAY_METHODS = ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
+
+
+def _connected_online_providers(project_id: int) -> set:
+    """Set of ONLINE gateways this project's org has CONNECTED (verified) creds for.
+    Multi-gateway: each gateway is connected independently, so a checkout can offer
+    every gateway whose own credentials are live (not just one)."""
+    rows = db_all(
+        "SELECT pc.provider FROM crm_payment_credentials pc"
+        " WHERE pc.org_id = (SELECT org_id FROM crm_projects WHERE id=%s)"
+        "   AND pc.is_connected = TRUE AND pc.credentials_encrypted <> ''",
+        (project_id,)
+    )
+    return {r["provider"] for r in rows if r["provider"] in _ONLINE_PAY_METHODS}
 
 # Settlement-currency whitelist per gateway. A KZ gateway charges the raw cart-total
 # NUMBER as its settlement currency, so a store priced in another currency would be
@@ -6286,17 +6315,15 @@ def _get_enabled_payment_methods(project_id: int) -> list[dict]:
         " ORDER BY pm.sort_order, pm.method",
         (project_id,)
     )
-    provider, creds, _is_test, _acct = _get_org_payment_config(project_id)
-    # An org has exactly ONE connected online gateway. An online method is only
-    # offerable when it IS that connected provider — otherwise it's toggled on in the
-    # UI but can't move money (init_payment would fall back to manual). Hide it so the
-    # storefront never advertises a disconnected gateway.
-    gateway_usable = bool(creds) and provider in _ONLINE_PAY_METHODS
+    # Multi-gateway: an online method is offerable only when ITS OWN gateway is
+    # connected (its credentials row exists + is_connected). Methods toggled on in
+    # the UI but not connected can't move money, so hide them from the storefront.
+    connected = _connected_online_providers(project_id)
 
     out: list[dict] = []
     for r in rows:
         m = r["method"]
-        if m in _ONLINE_PAY_METHODS and not (gateway_usable and m == provider):
+        if m in _ONLINE_PAY_METHODS and m not in connected:
             continue   # online method enabled in UI but its gateway isn't connected
         out.append({
             "method":       m,
@@ -6487,7 +6514,7 @@ def init_payment(data: PlaceOrderRequest, request: Request,
 
     # Which method did the customer pick? (validated against the enabled set)
     chosen, _methods = _resolve_chosen_method(project_id, data.payment_method)
-    provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id)
+    provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id, chosen)
 
     # Compute total
     with db_cursor() as (conn, cursor):
@@ -6601,11 +6628,12 @@ def init_payment(data: PlaceOrderRequest, request: Request,
             "is_test_mode":         is_test_mode,
         }
 
-    # CloudPayments — hosted popup widget (PCI-light). No server "create" call: we
-    # mint our InvoiceId + hand the storefront a `cloudpayments_widget` config; the
-    # frontend loads cloudpayments.js and calls widget.charge(). The card is entered
-    # in CloudPayments' popup; on success the buyer STAYS on the page (no redirect)
-    # → place_order re-verifies via POST /payments/find (Status=Completed).
+    # TipTop Pay (ex-CloudPayments) — hosted popup widget (PCI-light). No server
+    # "create" call: we mint our externalId + hand the storefront a
+    # `cloudpayments_widget` config; the frontend loads widget.js and calls
+    # tiptop.Widget().start(). On success the buyer STAYS on the page (no redirect)
+    # and the widget returns the gateway TransactionId → place_order re-verifies via
+    # POST /payments/get (Status=Completed).
     if chosen == "cloudpayments":
         if provider != "cloudpayments" or not creds:
             return {
@@ -6613,9 +6641,9 @@ def init_payment(data: PlaceOrderRequest, request: Request,
                 "redirect_url": "", "publishable_key": "",
                 "amount": totals["total"], "currency": totals["currency"],
                 "needs_payment_intent": False,
-                "warning": "CloudPayments not connected; falling back to manual",
+                "warning": "TipTop Pay not connected; falling back to manual",
             }
-        invoice_id = str(secrets.randbelow(10**12)).zfill(12)   # numeric, unique per checkout
+        invoice_id = str(secrets.randbelow(10**12)).zfill(12)   # our externalId, unique per checkout
         return {
             "provider":             "cloudpayments",
             "intent_id":            invoice_id,
@@ -6625,14 +6653,15 @@ def init_payment(data: PlaceOrderRequest, request: Request,
             "amount":               totals["total"],
             "currency":             totals["currency"],
             "needs_payment_intent": False,
-            "cloudpayments_widget": {                # storefront: new cp.CloudPayments().charge(this)
-                "public_id":   creds.get("public_id", ""),   # publishable key — safe to expose
-                "invoice_id":  invoice_id,
-                "account_id":  clean(data.customer_email, 120) or invoice_id,  # payer id (receipts/recurring)
-                "amount":      float(totals["total"]),
-                "currency":    (totals["currency"] or "KZT").upper(),
-                "description": (api_key_record.get("name") or "Online order")[:120],
-                "widget_js":   _CP_WIDGET_JS,
+            "cloudpayments_widget": {                # storefront: tiptop.Widget().start(this)
+                "public_terminal_id": creds.get("public_id", ""),  # Public ID = widget publicTerminalId (safe to expose)
+                "external_id":  invoice_id,           # our id → TipTop externalId (their InvoiceId)
+                "account_id":   clean(data.customer_email, 120) or invoice_id,  # receiptEmail / payer ref
+                "amount":       float(totals["total"]),
+                "currency":     (totals["currency"] or "KZT").upper(),
+                "description":  (api_key_record.get("name") or "Online order")[:120],
+                "payment_schema": "Single",           # one-stage immediate capture (vs Dual = auth+confirm)
+                "widget_js":    _CP_WIDGET_JS,
             },
             "is_test_mode":         is_test_mode,
         }
@@ -6778,7 +6807,8 @@ def order_payment_status(intent_id: str, request: Request,
     to paid. Reads the authoritative status server-to-server from the provider —
     we never trust client claims or unsigned webhooks for the money decision."""
     project_id = api_key_record["id"]
-    provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id)
+    # Kaspi (AiPay) is the only gateway that drives this async poll endpoint.
+    provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id, "kaspi_aipay")
     if provider in ("manual", "other") or not creds:
         return {"status": "manual", "paid": False}
     res = get_intent(provider, creds, intent_id=intent_id,
@@ -6806,7 +6836,7 @@ async def halyk_postlink(api_key: str, request: Request):
     invoice_id = str(payload.get("invoiceId", "") or "")
     if not proj or not invoice_id:
         return {"received": True}
-    provider, creds, is_test_mode, _ = _get_org_payment_config(proj["id"])
+    provider, creds, is_test_mode, _ = _get_org_payment_config(proj["id"], "halyk_epay")
     if provider == "halyk_epay" and creds:
         st = halyk_check_status(creds, invoice_id, is_test_mode=is_test_mode)
         if st["ok"] and st["data"].get("status") == "paid":
@@ -6831,10 +6861,12 @@ async def cloudpayments_pay_webhook(api_key: str, request: Request):
     proj = db_one("SELECT id FROM crm_projects WHERE api_key=%s AND is_active=TRUE", (api_key,))
     if not proj:
         return {"code": 0}
-    provider, creds, _is_test, _ = _get_org_payment_config(proj["id"])
-    form       = urllib.parse.parse_qs(raw.decode("utf-8", errors="replace"))
-    invoice_id = (form.get("InvoiceId", [""])[0] or "").strip()
-    if provider != "cloudpayments" or not creds or not invoice_id:
+    provider, creds, _is_test, _ = _get_org_payment_config(proj["id"], "cloudpayments")
+    form   = urllib.parse.parse_qs(raw.decode("utf-8", errors="replace"))
+    # We store the gateway TransactionId as payment_intent_id (find-by-InvoiceId is
+    # undocumented for TipTop Pay). The Pay notification carries TransactionId.
+    txn_id = (form.get("TransactionId", [""])[0] or "").strip()
+    if provider != "cloudpayments" or not creds or not txn_id:
         return {"code": 0}
     # 1) Signature gate — reject forged callbacks (never flip to paid on a bad sig).
     h   = {k.lower(): v for k, v in request.headers.items()}
@@ -6842,14 +6874,14 @@ async def cloudpayments_pay_webhook(api_key: str, request: Request):
     if not cloudpayments_verify_hmac(raw, sig, creds.get("api_secret", "")):
         return {"code": 0}
     # 2) Re-fetch authoritative status (defence in depth — don't trust the payload).
-    st = cloudpayments_find(creds, invoice_id)
+    st = cloudpayments_get(creds, txn_id)
     if st["ok"] and st["data"].get("status") == "paid":
         with db_cursor() as (conn, cur):
             cur.execute(
                 "UPDATE order_history SET payment_status='paid',"
                 "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
                 " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
-                (proj["id"], invoice_id))
+                (proj["id"], txn_id))
             conn.commit()
     return {"code": 0}
 
@@ -6871,7 +6903,7 @@ async def robokassa_result(api_key: str, request: Request):
     proj = db_one("SELECT id FROM crm_projects WHERE api_key=%s AND is_active=TRUE", (api_key,))
     if not proj or not inv_id:
         return Response(content="bad request", media_type="text/plain")
-    provider, creds, _is_test, _ = _get_org_payment_config(proj["id"])
+    provider, creds, _is_test, _ = _get_org_payment_config(proj["id"], "robokassa")
     if provider != "robokassa" or not creds:
         return Response(content="bad request", media_type="text/plain")
     # 1) Signature gate (Password#2) — reject forged callbacks.
@@ -7222,10 +7254,11 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
         total = round(subtotal + final_shipping - discount, 2)
 
         # ── Payment validation (Strict mode) ──────────────────────────────
-        provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id)
         # Which enabled method did the customer pick? Cannot claim an offline
         # method to bypass a required card (validated against the enabled set).
         chosen, _methods = _resolve_chosen_method(project_id, data.payment_method)
+        # Resolve creds for the CHOSEN gateway (multi-gateway: one row per provider).
+        provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id, chosen)
         # Per-project default currency. Each order row snapshots the
         # currency it was placed in — even if the merchant later changes
         # the project's currency, historical orders stay immutable. For
