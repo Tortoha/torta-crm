@@ -63,13 +63,14 @@ const ROW_TILT = {
 
 // ── Method row (icon + name + enable toggle + open-config chevron) ───
 
-function MethodRow({ provider, method, connectedProviders, onOpen, first, last }) {
+function MethodRow({ provider, method, connectedProviders, configuredProviders, onOpen, first, last }) {
   const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
 
-  const enabled   = !!method?.is_enabled;
-  const isOnline  = !!provider.online;
-  const connected = isOnline && connectedProviders.includes(provider.id);
+  const enabled    = !!method?.is_enabled;
+  const isOnline   = !!provider.online;
+  const connected  = isOnline && connectedProviders.includes(provider.id);
+  const configured = isOnline && !connected && configuredProviders.includes(provider.id);
 
   const cls = [
     'auth-provider-row',
@@ -77,17 +78,22 @@ function MethodRow({ provider, method, connectedProviders, onOpen, first, last }
     last  && 'auth-provider-row--last',
   ].filter(Boolean).join(' ');
 
-  // Status badge only — toggling on/off happens INSIDE the modal (click the
-  // row). Online gateways show their own connection state; offline methods
-  // (manual/other) show enabled/off. Multi-gateway: each gateway is connected
-  // independently, so several can be "Connected" at once and work together.
-  const on   = isOnline ? (enabled && connected) : enabled;
-  const desc = (isOnline && !connected)
-    ? (provider.blurb || 'Connect to enable card payments')
-    : (provider.blurb || method?.display_label || t(`org.payments.providers.${provider.id}`));
+  // Status badge only — verifying/toggling happens INSIDE the modal (click the row).
+  // Online gateways: Connected (verified) / Configured (creds saved, awaiting check)
+  // / Not connected (no creds). Offline (manual/other): Enabled / Off. Multi-gateway:
+  // each gateway connects independently, so several can be live at once.
+  const live  = isOnline ? connected : enabled;   // blue "on" badge
+  const label = isOnline
+    ? provider.label                              // proper noun (Stripe, Kaspi, …)
+    : t(`org.payments.labels.${provider.id}`, { defaultValue: provider.label });
+  const desc = (isOnline && !connected && !configured)
+    ? t('org.payments.connectToEnable')
+    : t(`org.payments.providers.${provider.id}`, { defaultValue: provider.blurb || method?.display_label || '' });
   const badgeLabel = isOnline
-    ? (on ? 'Connected' : 'Not connected')
-    : (on ? 'Enabled'   : 'Off');
+    ? (connected ? t('org.payments.connected')
+       : configured ? t('org.payments.awaitingTest')
+       : t('org.payments.notConnected'))
+    : (enabled ? t('org.payments.enabled') : t('org.payments.off'));
 
   return (
     <div ref={ref} className={cls} {...handlers}
@@ -99,14 +105,16 @@ function MethodRow({ provider, method, connectedProviders, onOpen, first, last }
       </div>
 
       <span className="auth-provider-name">
-        {provider.label}
+        {label}
         {provider.beta && <span className="auth-badge-beta">Beta</span>}
       </span>
       <span className="auth-provider-desc">{desc}</span>
 
-      {on
+      {live
         ? <span className="auth-badge-enabled"><CheckCircle weight="fill" size={11} /> {badgeLabel}</span>
-        : <span className="auth-badge-disabled">{badgeLabel}</span>}
+        : configured
+          ? <span className="auth-badge-disabled" style={{ color: 'var(--accent)', background: 'var(--accent-tint)' }}>{badgeLabel}</span>
+          : <span className="auth-badge-disabled">{badgeLabel}</span>}
 
       <CaretRight className="auth-provider-chevron" />
     </div>
@@ -160,6 +168,7 @@ function PaymentModal({ provider, onClose, children }) {
 // merchant enable/disable the method. Saves via PATCH /payment-methods/{method}.
 
 function OfflineMethodPanel({ provider, orgId, method, onSaved }) {
+  const { t } = useTranslation();
   const [enabled,      setEnabled]      = useState(!!method?.is_enabled);
   const [label,        setLabel]        = useState(method?.display_label || '');
   const [instructions, setInstructions] = useState(method?.instructions || '');
@@ -183,7 +192,7 @@ function OfflineMethodPanel({ provider, orgId, method, onSaved }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_enabled: enabled, display_label: label, instructions }),
       });
-      showToast('Saved');
+      showToast(t('org.payments.offline.saved'));
       onSaved?.();
     } finally { setSaving(false); }
   };
@@ -192,11 +201,9 @@ function OfflineMethodPanel({ provider, orgId, method, onSaved }) {
     <>
       <div className="auth-toggle-row">
         <div>
-          <span className="auth-toggle-label">{enabled ? 'Enabled' : 'Disabled'}</span>
+          <span className="auth-toggle-label">{enabled ? t('org.payments.offline.enabled') : t('org.payments.offline.disabled')}</span>
           <p className="auth-field-hint">
-            {isOther
-              ? 'Any other gateway (Kaspi, your own payment link, bank). The order is recorded; you collect the payment yourself and confirm it.'
-              : 'Cash, bank transfer or pay-on-delivery. The order is recorded; no card is charged online.'}
+            {isOther ? t('org.payments.offline.hintOther') : t('org.payments.offline.hintManual')}
           </p>
         </div>
         <label className="auth-toggle">
@@ -209,25 +216,18 @@ function OfflineMethodPanel({ provider, orgId, method, onSaved }) {
       <div className="auth-sep" />
 
       <div className="auth-field">
-        <label className="auth-label">Display name</label>
-        <p className="auth-field-hint">
-          What the customer sees at checkout.
-        </p>
+        <label className="auth-label">{t('org.payments.offline.displayName')}</label>
+        <p className="auth-field-hint">{t('org.payments.offline.displayNameHint')}</p>
         <input className="crm-input" type="text"
-          placeholder={isOther ? 'Kaspi / Bank transfer' : 'Cash / Pay on delivery'}
+          placeholder={isOther ? t('org.payments.offline.phOther') : t('org.payments.offline.phManual')}
           value={label} onChange={e => setLabel(e.target.value)} autoComplete="off" />
       </div>
 
       <div className="auth-field">
-        <label className="auth-label">Payment instructions (shown to the customer)</label>
-        <p className="auth-field-hint">
-          Displayed on the order-confirmation screen so the buyer knows how to pay.
-          E.g. “Send the total to Kaspi +7 700 123 4567 and reply with the receipt photo.”
-        </p>
+        <label className="auth-label">{t('org.payments.offline.instructions')}</label>
+        <p className="auth-field-hint">{t('org.payments.offline.instructionsHint')}</p>
         <textarea className="crm-input" rows={4}
-          placeholder={isOther
-            ? 'Send the total to Kaspi +7 …, then reply with the receipt.'
-            : 'Pay the courier in cash on delivery.'}
+          placeholder={isOther ? t('org.payments.offline.instrPhOther') : t('org.payments.offline.instrPhManual')}
           value={instructions} onChange={e => setInstructions(e.target.value)}
           style={{ borderRadius: 16, resize: 'vertical', minHeight: 96 }} />
       </div>
@@ -235,7 +235,7 @@ function OfflineMethodPanel({ provider, orgId, method, onSaved }) {
       <div className="auth-actions">
         <button type="button" className="crm-submit-btn"
           disabled={saving} onClick={save}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('org.payments.offline.saving') : t('org.payments.offline.save')}
         </button>
       </div>
 
@@ -252,9 +252,10 @@ export default function OrgPayments() {
   const { org } = useOutletContext();
   const orgId = org?.id;
 
-  const [methods,            setMethods]            = useState([]);   // [{method,is_enabled,display_label,instructions}]
-  const [connectedProviders, setConnectedProviders] = useState([]);  // gateways with live (connected) creds
-  const [modal,              setModal]              = useState(null); // open provider id
+  const [methods,             setMethods]             = useState([]);   // [{method,is_enabled,display_label,instructions}]
+  const [connectedProviders,  setConnectedProviders]  = useState([]);  // gateways verified (is_connected)
+  const [configuredProviders, setConfiguredProviders] = useState([]);  // gateways with creds saved (awaiting check)
+  const [modal,               setModal]               = useState(null); // open provider id
   const [toast,           setToast]           = useState('');
 
   // Stripe Connect OAuth landing — show feedback, then strip the query param.
@@ -283,6 +284,7 @@ export default function OrgPayments() {
       const j = await r.json();
       setMethods(j.methods || []);
       setConnectedProviders(Array.isArray(j.connected_providers) ? j.connected_providers : []);
+      setConfiguredProviders(Array.isArray(j.configured_providers) ? j.configured_providers : []);
     } catch { /* network error — keep last state */ }
   }, [orgId]);
 
@@ -295,15 +297,13 @@ export default function OrgPayments() {
   return (
     <>
       <h1 className="crm-page-title">{t('org.payments.title')}</h1>
-      <p className="auth-page-subtitle">
-        Turn on the ways your customers can pay. Methods work together — the buyer
-        picks one at checkout.
-      </p>
+      <p className="auth-page-subtitle">{t('org.payments.subtitle')}</p>
 
       <div className="auth-providers-list">
         {CATALOG.map((p, idx) => (
           <MethodRow key={p.id} provider={p} method={methodFor(p.id)}
             connectedProviders={connectedProviders}
+            configuredProviders={configuredProviders}
             onOpen={setModal}
             first={idx === 0} last={idx === CATALOG.length - 1} />
         ))}

@@ -19,6 +19,7 @@ import {
 import { API_BASE, MAGAZ_BASE } from '../../api.js';
 import { safeHttpUrl } from '../../Utils/safeUrl.js';
 import Modal from '../../Elements/Modal.jsx';
+import { Combobox } from '../Project/Booking/BookingCreateModal.jsx';
 import '../../Style/Feedback.css';
 
 const MASKED_PLACEHOLDER = '••••••••';
@@ -424,17 +425,23 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
           <div className="auth-field">
             <label className="auth-label">{t('org.payments.panel.cabinet.title', { name: provider.label })}</label>
             <p className="auth-field-hint">{t('org.payments.panel.cabinet.hint', { name: provider.label })}</p>
+            <p className="auth-field-hint">{t('org.payments.panel.cabinet.purpose')}</p>
             {projects.length > 1 && (
-              <select className="crm-input" value={projIdx} style={{ marginBottom: 8 }}
-                onChange={e => setProjIdx(Number(e.target.value))}>
-                {projects.map((p, i) => (
-                  <option key={p.id} value={i}>{t('org.payments.panel.cabinet.store')}: {p.name}</option>
-                ))}
-              </select>
+              <div style={{ marginBottom: 8 }}>
+                <Combobox
+                  value={String(projIdx)}
+                  options={projects.map((p, i) => ({
+                    value: String(i),
+                    label: `${t('org.payments.panel.cabinet.store')}: ${p.name}`,
+                  }))}
+                  onChange={v => setProjIdx(Number(v))}
+                  searchable={projects.length > 8}
+                />
+              </div>
             )}
-            {cabinetRows.map(r => (
+            {cabinetRows.filter(r => r.url).map(r => (
               <div key={r.key} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ width: 132, flexShrink: 0, fontSize: 12, color: 'var(--muted)' }}>{r.label}</span>
+                <span style={{ width: 132, flexShrink: 0, fontSize: 12, color: 'var(--muted)' }}>{t('org.payments.panel.cabinet.urls.' + r.key, { defaultValue: r.label })}</span>
                 <input className="crm-input" readOnly value={r.url} onFocus={e => e.target.select()}
                   style={{ flex: 1, minWidth: 0, fontFamily: 'monospace', fontSize: 12 }} />
                 <button type="button" className="auth-btn-check" style={{ flexShrink: 0 }} disabled={!r.url}
