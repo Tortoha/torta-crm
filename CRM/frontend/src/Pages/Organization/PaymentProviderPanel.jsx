@@ -14,9 +14,9 @@ import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Eye, EyeSlash, Trash, ArrowSquareOut, CheckCircle, Warning, ArrowsClockwise,
+  Eye, EyeSlash, Trash, ArrowSquareOut, CheckCircle, Warning, ArrowsClockwise, Copy,
 } from '@phosphor-icons/react';
-import { API_BASE } from '../../api.js';
+import { API_BASE, MAGAZ_BASE } from '../../api.js';
 import { safeHttpUrl } from '../../Utils/safeUrl.js';
 import Modal from '../../Elements/Modal.jsx';
 import '../../Style/Feedback.css';
@@ -28,12 +28,28 @@ const PROVIDER_CONSOLE = {
   stripe: { url: 'https://dashboard.stripe.com/apikeys', name: 'Stripe Dashboard' },
   kaspi_aipay: { url: 'https://cabinet.aipay.kz', name: 'AiPay Dashboard' },
   halyk_epay: { url: 'https://epayment.kz', name: 'Halyk ePay' },
-  cloudpayments: { url: 'https://merchant.cloudpayments.kz', name: 'CloudPayments Cabinet' },
+  cloudpayments: { url: 'https://merchant.tiptoppay.kz', name: 'TipTop Pay Cabinet' },
   robokassa: { url: 'https://partner.robokassa.kz', name: 'Robokassa Cabinet' },
   paypal: { url: 'https://developer.paypal.com/dashboard/applications', name: 'PayPal Developer Dashboard' },
 };
 
 // Free-form hint keys (resolved via t('org.payments.panel.hint.<key>')).
+
+// Ready-to-paste URLs the merchant copies into the provider's own cabinet
+// (redirect gateways with a server callback). Built from the project's api_key +
+// site URL so the merchant never hand-types them. Keyed by provider id.
+const CABINET_URLS = {
+  robokassa: (proj) => {
+    const base = (MAGAZ_BASE || '').replace(/\/+$/, '');
+    const fe   = (proj.frontend_url || '').replace(/\/+$/, '');
+    return [
+      { key: 'home',    label: 'Homepage URL',      url: fe },
+      { key: 'result',  label: 'Result URL · POST', url: `${base}/${proj.api_key}/payments/robokassa/result` },
+      { key: 'success', label: 'Success URL',       url: fe ? `${fe}/checkout/return` : '' },
+      { key: 'fail',    label: 'Fail URL',          url: fe ? `${fe}/checkout` : '' },
+    ];
+  },
+};
 
 
 export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose }) {
@@ -65,6 +81,11 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
   const [reportBusy, setReportBusy] = useState(false);
   const [reportErr,  setReportErr]  = useState('');
 
+  // Org projects → feed the ready-to-paste cabinet URLs (api_key + site URL).
+  const [projects,  setProjects]  = useState([]);
+  const [projIdx,   setProjIdx]   = useState(0);
+  const [copiedKey, setCopiedKey] = useState('');
+
   const showToast = (msg) => {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -76,7 +97,7 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
     try {
       const [sRes, cRes] = await Promise.all([
         fetch(`${API_BASE}/api/orgs/${orgId}/payment-settings`, { credentials: 'include' }),
-        fetch(`${API_BASE}/api/orgs/${orgId}/payment-credentials`, { credentials: 'include' }),
+        fetch(`${API_BASE}/api/orgs/${orgId}/payment-credentials?provider=${providerKey}`, { credentials: 'include' }),
       ]);
       const s = sRes.ok ? await sRes.json() : null;
       const c = cRes.ok ? await cRes.json() : null;
@@ -107,6 +128,15 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
   }, [orgId, providerKey, t]);
 
   useEffect(() => { load(); }, [load]);
+
+  // The org's projects — their api_key + frontend_url build the copy-paste
+  // cabinet URLs (Result/Success/Fail) for redirect gateways like Robokassa.
+  useEffect(() => {
+    fetch(`${API_BASE}/api/orgs/${orgId}/projects`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : []))
+      .then(ps => setProjects(Array.isArray(ps) ? ps : []))
+      .catch(() => {});
+  }, [orgId]);
 
   const setField = (key, val) => {
     setCreds(prev => ({ ...prev, [key]: val }));
@@ -154,7 +184,7 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
   const test = async () => {
     setTesting(true); setErr('');
     try {
-      const r = await fetch(`${API_BASE}/api/orgs/${orgId}/payment-credentials/test`, {
+      const r = await fetch(`${API_BASE}/api/orgs/${orgId}/payment-credentials/test?provider=${providerKey}`, {
         method: 'POST', credentials: 'include',
       });
       const j = await r.json().catch(() => null);
@@ -170,7 +200,7 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
     if (!confirm(t('org.payments.panel.disconnectConfirm'))) return;
     setDeleting(true);
     try {
-      await fetch(`${API_BASE}/api/orgs/${orgId}/payment-credentials`, {
+      await fetch(`${API_BASE}/api/orgs/${orgId}/payment-credentials?provider=${providerKey}`, {
         method: 'DELETE', credentials: 'include',
       });
       showToast(t('org.payments.panel.disconnected'));
@@ -236,6 +266,8 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
   const fields = (data.provider_catalog || {})[providerKey] || [];
   const stripeConnectAvailable = !!data.stripe_connect_available;
   const connectMethod = isCurrentProvider ? (data.connect_method || 'manual') : 'manual';
+  const cabinetProj   = projects.length ? projects[Math.min(projIdx, projects.length - 1)] : null;
+  const cabinetRows   = (CABINET_URLS[providerKey] && cabinetProj) ? CABINET_URLS[providerKey](cabinetProj) : null;
 
   return (
     <>
@@ -382,6 +414,48 @@ export default function PaymentProviderPanel({ provider, orgId, onSaved, onClose
               )}
             </div>
           ))}
+        </>
+      )}
+
+      {/* ── Ready-to-paste cabinet URLs (redirect gateways with a server callback) ── */}
+      {cabinetRows && (
+        <>
+          <div className="auth-sep" />
+          <div className="auth-field">
+            <label className="auth-label">{t('org.payments.panel.cabinet.title', { name: provider.label })}</label>
+            <p className="auth-field-hint">{t('org.payments.panel.cabinet.hint', { name: provider.label })}</p>
+            {projects.length > 1 && (
+              <select className="crm-input" value={projIdx} style={{ marginBottom: 8 }}
+                onChange={e => setProjIdx(Number(e.target.value))}>
+                {projects.map((p, i) => (
+                  <option key={p.id} value={i}>{t('org.payments.panel.cabinet.store')}: {p.name}</option>
+                ))}
+              </select>
+            )}
+            {cabinetRows.map(r => (
+              <div key={r.key} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ width: 132, flexShrink: 0, fontSize: 12, color: 'var(--muted)' }}>{r.label}</span>
+                <input className="crm-input" readOnly value={r.url} onFocus={e => e.target.select()}
+                  style={{ flex: 1, minWidth: 0, fontFamily: 'monospace', fontSize: 12 }} />
+                <button type="button" className="auth-btn-check" style={{ flexShrink: 0 }} disabled={!r.url}
+                  onClick={async () => {
+                    if (!r.url) return;
+                    try {
+                      await navigator.clipboard.writeText(r.url);
+                      setCopiedKey(r.key);
+                      setTimeout(() => setCopiedKey(''), 1600);
+                    } catch { /* clipboard blocked — user can still select manually */ }
+                  }}>
+                  {copiedKey === r.key
+                    ? <><CheckCircle size={13} weight="fill" /> {t('org.payments.panel.cabinet.copied')}</>
+                    : <><Copy size={13} /> {t('org.payments.panel.cabinet.copy')}</>}
+                </button>
+              </div>
+            ))}
+            {cabinetProj && !cabinetProj.frontend_url && (
+              <p className="auth-field-hint" style={{ marginTop: 4 }}>{t('org.payments.panel.cabinet.noSite')}</p>
+            )}
+          </div>
         </>
       )}
 

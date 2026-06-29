@@ -123,7 +123,7 @@
       "provider": {
         "stripe": "Stripe",
         "tinkoff": "Tinkoff",
-        "cloudpayments": "CloudPayments",
+        "cloudpayments": "TipTop Pay (CloudPayments)",
         "yookassa": "YooKassa",
         "paypal": "PayPal",
         "manual": "Вручную",

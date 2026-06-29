@@ -33,8 +33,10 @@ const CATALOG = [
     blurb: 'Kaspi payments via AiPay', beta: true },
   { id: 'halyk_epay',  label: 'Halyk (ePay)', iconify: 'ph:bank-fill', color: '#0AA5A8', online: true,
     blurb: 'Card payments via Halyk Bank ePay', beta: true },
-  { id: 'cloudpayments', label: 'CloudPayments', iconify: 'ph:credit-card-fill', color: '#0085D1', online: true,
-    blurb: 'Card payments via CloudPayments', beta: true },
+  // TipTop Pay = the rebrand of CloudPayments KZ (cloudpayments.kz → tiptoppay.kz).
+  // Internal id stays 'cloudpayments' (DB enums, routes, existing order snapshots).
+  { id: 'cloudpayments', label: 'TipTop Pay (CloudPayments)', iconify: 'ph:credit-card-fill', color: '#0085D1', online: true,
+    blurb: 'Card payments via TipTop Pay (ex-CloudPayments)', beta: true },
   { id: 'robokassa', label: 'Robokassa', iconify: 'ph:wallet-fill', color: '#7A3FF2', online: true,
     blurb: 'Card payments via Robokassa', beta: true },
   { id: 'paypal', label: 'PayPal', iconify: 'logos:paypal', online: true,
@@ -61,12 +63,13 @@ const ROW_TILT = {
 
 // ── Method row (icon + name + enable toggle + open-config chevron) ───
 
-function MethodRow({ provider, method, stripeConnected, onOpen, first, last }) {
+function MethodRow({ provider, method, connectedProviders, onOpen, first, last }) {
   const { t } = useTranslation();
   const { ref, glossRef, handlers } = InteractiveSection(ROW_TILT, false);
 
-  const enabled  = !!method?.is_enabled;
-  const isStripe = provider.id === 'stripe';
+  const enabled   = !!method?.is_enabled;
+  const isOnline  = !!provider.online;
+  const connected = isOnline && connectedProviders.includes(provider.id);
 
   const cls = [
     'auth-provider-row',
@@ -75,12 +78,14 @@ function MethodRow({ provider, method, stripeConnected, onOpen, first, last }) {
   ].filter(Boolean).join(' ');
 
   // Status badge only — toggling on/off happens INSIDE the modal (click the
-  // row). Stripe shows its connection state; offline methods show enabled/off.
-  const on   = isStripe ? (enabled && stripeConnected) : enabled;
-  const desc = (isStripe && !stripeConnected)
-    ? 'Connect to enable card payments'
+  // row). Online gateways show their own connection state; offline methods
+  // (manual/other) show enabled/off. Multi-gateway: each gateway is connected
+  // independently, so several can be "Connected" at once and work together.
+  const on   = isOnline ? (enabled && connected) : enabled;
+  const desc = (isOnline && !connected)
+    ? (provider.blurb || 'Connect to enable card payments')
     : (provider.blurb || method?.display_label || t(`org.payments.providers.${provider.id}`));
-  const badgeLabel = isStripe
+  const badgeLabel = isOnline
     ? (on ? 'Connected' : 'Not connected')
     : (on ? 'Enabled'   : 'Off');
 
@@ -247,9 +252,9 @@ export default function OrgPayments() {
   const { org } = useOutletContext();
   const orgId = org?.id;
 
-  const [methods,         setMethods]         = useState([]);   // [{method,is_enabled,display_label,instructions}]
-  const [stripeConnected, setStripeConnected] = useState(false);
-  const [modal,           setModal]           = useState(null); // open provider id
+  const [methods,            setMethods]            = useState([]);   // [{method,is_enabled,display_label,instructions}]
+  const [connectedProviders, setConnectedProviders] = useState([]);  // gateways with live (connected) creds
+  const [modal,              setModal]              = useState(null); // open provider id
   const [toast,           setToast]           = useState('');
 
   // Stripe Connect OAuth landing — show feedback, then strip the query param.
@@ -277,7 +282,7 @@ export default function OrgPayments() {
       if (!r.ok) return;
       const j = await r.json();
       setMethods(j.methods || []);
-      setStripeConnected(!!j.stripe_connected);
+      setConnectedProviders(Array.isArray(j.connected_providers) ? j.connected_providers : []);
     } catch { /* network error — keep last state */ }
   }, [orgId]);
 
@@ -298,7 +303,7 @@ export default function OrgPayments() {
       <div className="auth-providers-list">
         {CATALOG.map((p, idx) => (
           <MethodRow key={p.id} provider={p} method={methodFor(p.id)}
-            stripeConnected={stripeConnected}
+            connectedProviders={connectedProviders}
             onOpen={setModal}
             first={idx === 0} last={idx === CATALOG.length - 1} />
         ))}

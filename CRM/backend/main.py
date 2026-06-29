@@ -3524,7 +3524,7 @@ def run_migrations():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS crm_payment_credentials (
                     id                  BIGSERIAL PRIMARY KEY,
-                    org_id              INTEGER     NOT NULL UNIQUE
+                    org_id              INTEGER     NOT NULL
                                                   REFERENCES crm_organizations(id) ON DELETE CASCADE,
                     provider            VARCHAR(30) NOT NULL,
                     credentials_encrypted TEXT      NOT NULL DEFAULT '',
@@ -3536,7 +3536,8 @@ def run_migrations():
                     stripe_account_id   VARCHAR(120) NOT NULL DEFAULT '',
                     connect_method      VARCHAR(20) NOT NULL DEFAULT 'manual',
                     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT crm_payment_credentials_org_provider_key UNIQUE (org_id, provider)
                 )
             """)
             cur.execute("ALTER TABLE crm_payment_credentials DROP CONSTRAINT IF EXISTS crm_payment_credentials_provider_check")
@@ -3550,6 +3551,33 @@ def run_migrations():
               IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='crm_payment_credentials_method_check') THEN
                 ALTER TABLE crm_payment_credentials ADD CONSTRAINT crm_payment_credentials_method_check
                   CHECK (connect_method IN ('manual','oauth'));
+              END IF;
+            END $$;""")
+            # 2026-06 multi-gateway: credentials are now per (org, provider), not one
+            # row per org — so Stripe + Robokassa + … can all be connected at once and
+            # work together (the buyer picks one at checkout). Drop the legacy
+            # single-row UNIQUE(org_id) and add the composite. Existing rows (≤1 per
+            # org) satisfy the composite trivially, so this is a safe in-place upgrade.
+            # Drop ANY legacy single-column UNIQUE on org_id alone (the old
+            # one-gateway-per-org constraint), matched by COLUMN not name so it works
+            # regardless of how Postgres named it — otherwise it would silently block
+            # a second gateway row even after we add the composite below.
+            cur.execute("""DO $$
+            DECLARE c text;
+            BEGIN
+              FOR c IN
+                SELECT con.conname FROM pg_constraint con
+                  JOIN pg_class rel ON rel.oid = con.conrelid
+                 WHERE rel.relname = 'crm_payment_credentials' AND con.contype = 'u'
+                   AND con.conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                                            WHERE attrelid = con.conrelid AND attname = 'org_id')]
+              LOOP
+                EXECUTE format('ALTER TABLE crm_payment_credentials DROP CONSTRAINT %I', c);
+              END LOOP;
+            END $$;""")
+            cur.execute("""DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='crm_payment_credentials_org_provider_key') THEN
+                ALTER TABLE crm_payment_credentials ADD CONSTRAINT crm_payment_credentials_org_provider_key UNIQUE (org_id, provider);
               END IF;
             END $$;""")
             conn.commit()
@@ -9168,7 +9196,7 @@ def get_projects(org_id: int, user: dict = Depends(get_current_user)):
     if not org: raise HTTPException(404, "Organization not found")
     if org["owner_id"] == user["id"]:
         rows = db_all("""
-            SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at
+            SELECT p.id, p.name, p.api_key, p.frontend_url, p.is_active, p.last_used_at, p.created_at
             FROM crm_projects p
             WHERE p.org_id = %s
             ORDER BY p.created_at DESC
@@ -9179,7 +9207,7 @@ def get_projects(org_id: int, user: dict = Depends(get_current_user)):
                       (org_id, user["id"])):
             raise HTTPException(404, "Organization not found")
         rows = db_all("""
-            SELECT p.id, p.name, p.api_key, p.is_active, p.last_used_at, p.created_at
+            SELECT p.id, p.name, p.api_key, p.frontend_url, p.is_active, p.last_used_at, p.created_at
             FROM crm_projects p
             JOIN crm_team_members tm ON tm.project_id = p.id AND tm.crm_user_id = %s
             WHERE p.org_id = %s
@@ -9723,10 +9751,11 @@ def halyk_test_connection(creds: dict, is_test_mode: bool) -> dict:
     return _err(msg or "Invalid Client ID or secret (Halyk token request failed).")
 
 
-# ── CloudPayments (cloudpayments.kz) — test-connection + refund ─────────────
-# HTTP Basic (Public ID : API Secret). Same host for test/live — test mode is
-# driven by using test vs live keys, not a different URL.
-_CP_API_BASE = os.getenv("CLOUDPAYMENTS_API_BASE", "https://api.cloudpayments.kz").rstrip("/")
+# ── TipTop Pay — ex-CloudPayments KZ (tiptoppay.kz) — test-connection + refund ─
+# Internal id stays `cloudpayments`. HTTP Basic (Public ID : API Secret); the REST
+# API stays CloudPayments-compatible. Same host for test/live — test mode = test
+# vs live keys, not a different URL.
+_CP_API_BASE = os.getenv("CLOUDPAYMENTS_API_BASE", "https://api.tiptoppay.kz").rstrip("/")
 
 
 def cloudpayments_test_connection(creds: dict, is_test_mode: bool) -> dict:
@@ -9740,21 +9769,21 @@ def cloudpayments_test_connection(creds: dict, is_test_mode: bool) -> dict:
                       headers={"Content-Type": "application/json"},
                       body=b"{}", basic_auth=(public_id, api_secret))
     if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success"):
-        return _ok({"note": "Connected — CloudPayments credentials are valid."})
+        return _ok({"note": "Connected — TipTop Pay credentials are valid."})
     if r["status"] == 401:
-        return _err("Invalid Public ID or API Secret (CloudPayments returned 401).")
+        return _err("Invalid Public ID or API Secret (TipTop Pay returned 401).")
     msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"CloudPayments test failed (HTTP {r['status']}).")
+    return _err(msg or f"TipTop Pay test failed (HTTP {r['status']}).")
 
 
 def cloudpayments_create_refund(creds: dict, transaction_id: str, amount: float,
                                  is_test_mode: bool) -> dict:
     """Refund a paid transaction — POST /payments/refund {TransactionId, Amount}.
-    Amount is MAJOR units (KZT/RUB decimal); CloudPayments does NOT use minor units."""
+    Amount is MAJOR units (KZT/RUB decimal); TipTop Pay does NOT use minor units."""
     public_id  = (creds.get("public_id") or "").strip()
     api_secret = (creds.get("api_secret") or "").strip()
     if not public_id or not api_secret:
-        return _err("Missing CloudPayments credentials.")
+        return _err("Missing TipTop Pay credentials.")
     if not transaction_id:
         return _err("Missing transaction id.")
     tid = int(transaction_id) if str(transaction_id).isdigit() else transaction_id
@@ -9766,7 +9795,7 @@ def cloudpayments_create_refund(creds: dict, transaction_id: str, amount: float,
     if r["status"] == 200 and isinstance(r["body"], dict) and r["body"].get("Success"):
         return _ok({"refund_id": str(transaction_id), "status": "accepted"})
     msg = (r["body"] or {}).get("Message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"CloudPayments refund failed (HTTP {r['status']}).")
+    return _err(msg or f"TipTop Pay refund failed (HTTP {r['status']}).")
 
 
 # ── Robokassa (robokassa.kz) — test-connection + refund ─────────────────────
@@ -9945,12 +9974,28 @@ def _ensure_payment_methods(org_id: int) -> None:
         conn.commit()
 
 
-def _org_stripe_connected(org_id: int) -> bool:
+def _org_provider_connected(org_id: int, provider: str) -> bool:
+    """True if THIS org has connected (verified) credentials for THIS gateway.
+    Multi-gateway: each provider has its own crm_payment_credentials row, so a
+    store can have Stripe + Robokassa + … all connected at once."""
     cred = db_one(
-        "SELECT provider, is_connected FROM crm_payment_credentials WHERE org_id=%s",
+        "SELECT is_connected FROM crm_payment_credentials WHERE org_id=%s AND provider=%s",
+        (org_id, provider)
+    )
+    return bool(cred and cred.get("is_connected"))
+
+
+def _org_stripe_connected(org_id: int) -> bool:
+    return _org_provider_connected(org_id, "stripe")
+
+
+def _org_connected_providers(org_id: int) -> set:
+    """Set of gateways this org has connected (verified) credentials for."""
+    rows = db_all(
+        "SELECT provider FROM crm_payment_credentials WHERE org_id=%s AND is_connected=TRUE",
         (org_id,)
     )
-    return bool(cred and cred.get("provider") == "stripe" and cred.get("is_connected"))
+    return {r["provider"] for r in rows}
 
 
 @app.get("/api/orgs/{org_id}/payment-methods")
@@ -9974,7 +10019,8 @@ def get_org_payment_methods(org_id: int, user: dict = Depends(get_current_user))
                 "sort_order":    r["sort_order"],
             } for r in rows
         ],
-        "stripe_connected": _org_stripe_connected(org_id),
+        "stripe_connected": _org_stripe_connected(org_id),          # back-compat
+        "connected_providers": sorted(_org_connected_providers(org_id)),
     }
 
 
@@ -9996,10 +10042,12 @@ def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMetho
         raise HTTPException(400, f"Unknown method. Allowed: {ALLOWED_PAY_METHODS}")
     _ensure_payment_methods(org_id)
 
-    # The online card gateway can only be turned on once Stripe is connected.
-    if method == "stripe" and body.is_enabled and not _org_stripe_connected(org_id):
-        raise HTTPException(400, "Connect your Stripe account first (add + test API "
-                                  "keys) before enabling card payments.")
+    # An online gateway can only be turned on once ITS OWN credentials are
+    # connected (multi-gateway: each provider is connected independently).
+    if (method in ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
+            and body.is_enabled and not _org_provider_connected(org_id, method)):
+        raise HTTPException(400, "Connect this gateway first (add + test its API keys) "
+                                  "before enabling it for checkout.")
 
     sets: list[str] = []
     params: list = []
@@ -10033,21 +10081,27 @@ def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMetho
 
 
 @app.get("/api/orgs/{org_id}/payment-credentials")
-def get_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
+def get_org_payment_credentials(org_id: int, provider: Optional[str] = None,
+                                 user: dict = Depends(get_current_user)):
     """Returns provider catalog (which fields are needed for each) + current state.
-    Secret values are masked (`••••••••<last4>`) — full plaintext is never exposed."""
+    Secret values are masked (`••••••••<last4>`) — full plaintext is never exposed.
+    Multi-gateway: credentials are per (org, provider). The modal passes
+    ?provider=<gateway> to load that specific gateway; without it we fall back to
+    the most-recently-updated row (legacy callers)."""
     require_org_page(user, org_id, "org_payments", "view")
 
-    row = db_one(
-        "SELECT provider, credentials_encrypted, is_test_mode, is_connected,"
-        "       connected_at, last_verified_at, last_error, stripe_account_id,"
-        "       connect_method"
-        "  FROM crm_payment_credentials WHERE org_id=%s",
-        (org_id,)
-    )
+    _cred_cols = ("SELECT provider, credentials_encrypted, is_test_mode, is_connected,"
+                  "       connected_at, last_verified_at, last_error, stripe_account_id,"
+                  "       connect_method"
+                  "  FROM crm_payment_credentials WHERE org_id=%s")
+    prov = (provider or "").strip().lower()
+    if prov:
+        row = db_one(_cred_cols + " AND provider=%s", (org_id, prov))
+    else:
+        row = db_one(_cred_cols + " ORDER BY updated_at DESC LIMIT 1", (org_id,))
 
     org = db_one("SELECT payment_provider FROM crm_organizations WHERE id=%s", (org_id,))
-    selected_provider = (row or {}).get("provider") or (org or {}).get("payment_provider") or "manual"
+    selected_provider = prov or (row or {}).get("provider") or (org or {}).get("payment_provider") or "manual"
 
     masked: dict = {}
     if row and row["credentials_encrypted"]:
@@ -10126,8 +10180,9 @@ def put_org_payment_credentials(org_id: int, body: dict = Body(...),
     # value, e.g. "••••••••abcd"). Detect that case and preserve the stored value.
     masked_indicator = "•"
     existing = db_one(
-        "SELECT credentials_encrypted, provider FROM crm_payment_credentials WHERE org_id=%s",
-        (org_id,)
+        "SELECT credentials_encrypted, provider FROM crm_payment_credentials"
+        " WHERE org_id=%s AND provider=%s",
+        (org_id, provider)
     )
     if existing and existing["credentials_encrypted"] and existing["provider"] == provider:
         try:
@@ -10155,8 +10210,7 @@ def put_org_payment_credentials(org_id: int, body: dict = Body(...),
             "  (org_id, provider, credentials_encrypted, is_test_mode, is_connected,"
             "   last_error, connect_method, updated_at)"
             " VALUES (%s, %s, %s, %s, FALSE, '', 'manual', NOW())"
-            " ON CONFLICT (org_id) DO UPDATE SET"
-            "   provider=EXCLUDED.provider,"
+            " ON CONFLICT (org_id, provider) DO UPDATE SET"
             "   credentials_encrypted=EXCLUDED.credentials_encrypted,"
             "   is_test_mode=EXCLUDED.is_test_mode,"
             "   is_connected=FALSE,"
@@ -10175,13 +10229,16 @@ def put_org_payment_credentials(org_id: int, body: dict = Body(...),
 
 
 @app.post("/api/orgs/{org_id}/payment-credentials/test")
-def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
+def test_org_payment_credentials(org_id: int, provider: Optional[str] = None,
+                                  user: dict = Depends(get_current_user)):
     require_org_page(user, org_id, "org_payments", "manage")
-    row = db_one(
-        "SELECT provider, credentials_encrypted, is_test_mode, stripe_account_id"
-        "  FROM crm_payment_credentials WHERE org_id=%s",
-        (org_id,)
-    )
+    prov = (provider or "").strip().lower()
+    _sel = ("SELECT provider, credentials_encrypted, is_test_mode, stripe_account_id"
+            "  FROM crm_payment_credentials WHERE org_id=%s")
+    if prov:
+        row = db_one(_sel + " AND provider=%s", (org_id, prov))
+    else:
+        row = db_one(_sel + " ORDER BY updated_at DESC LIMIT 1", (org_id,))
     if not row or not row["credentials_encrypted"]:
         raise HTTPException(404, "No credentials saved for this organization")
     try:
@@ -10200,15 +10257,15 @@ def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_u
                 "UPDATE crm_payment_credentials"
                 "   SET is_connected=TRUE, connected_at=COALESCE(connected_at, NOW()),"
                 "       last_verified_at=NOW(), last_error=''"
-                " WHERE org_id=%s",
-                (org_id,)
+                " WHERE org_id=%s AND provider=%s",
+                (org_id, row["provider"])
             )
         else:
             cur.execute(
                 "UPDATE crm_payment_credentials"
                 "   SET is_connected=FALSE, last_error=%s, last_verified_at=NOW()"
-                " WHERE org_id=%s",
-                (result["error"][:1000], org_id)
+                " WHERE org_id=%s AND provider=%s",
+                (result["error"][:1000], org_id, row["provider"])
             )
         conn.commit()
     # Connecting Stripe = the merchant wants card payments → auto-enable the
@@ -10229,16 +10286,27 @@ def test_org_payment_credentials(org_id: int, user: dict = Depends(get_current_u
 
 
 @app.delete("/api/orgs/{org_id}/payment-credentials")
-def delete_org_payment_credentials(org_id: int, user: dict = Depends(get_current_user)):
-    """Disconnect: clears stored credentials but keeps the provider selection.
-    Existing orders + returns retain their snapshot of which provider was used."""
+def delete_org_payment_credentials(org_id: int, provider: Optional[str] = None,
+                                    user: dict = Depends(get_current_user)):
+    """Disconnect ONE gateway: clears its stored credentials and disables its
+    method. Other connected gateways + offline methods (manual/other) are left
+    untouched. Existing orders + returns keep their snapshot of which provider
+    was used. Without ?provider (legacy), clears all gateway creds."""
     require_org_page(user, org_id, "org_payments", "manage")
+    prov = (provider or "").strip().lower()
     with db_cursor() as (conn, cur):
-        cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s", (org_id,))
-        # Card payments can't run without the gateway → disable the 'stripe'
-        # method. Offline methods (manual/other) are untouched.
-        cur.execute("UPDATE crm_payment_methods SET is_enabled=FALSE, updated_at=NOW() "
-                    "WHERE org_id=%s AND method='stripe'", (org_id,))
+        if prov:
+            cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s AND provider=%s",
+                        (org_id, prov))
+            # Card payments can't run without the gateway → disable just THIS method.
+            cur.execute("UPDATE crm_payment_methods SET is_enabled=FALSE, updated_at=NOW() "
+                        "WHERE org_id=%s AND method=%s", (org_id, prov))
+        else:
+            cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s", (org_id,))
+            cur.execute("UPDATE crm_payment_methods SET is_enabled=FALSE, updated_at=NOW() "
+                        "WHERE org_id=%s AND method IN "
+                        "('stripe','kaspi_aipay','halyk_epay','cloudpayments','robokassa','paypal')",
+                        (org_id,))
         # Keep the >=1-enabled invariant: if nothing is left on, fall back to manual.
         cur.execute("SELECT COUNT(*) AS c FROM crm_payment_methods "
                     "WHERE org_id=%s AND is_enabled", (org_id,))
@@ -10356,8 +10424,7 @@ def stripe_connect_oauth_callback(request: Request,
             "   connected_at, last_verified_at, last_error, stripe_account_id,"
             "   connect_method, updated_at)"
             " VALUES (%s, 'stripe', %s, %s, TRUE, NOW(), NOW(), '', %s, 'oauth', NOW())"
-            " ON CONFLICT (org_id) DO UPDATE SET"
-            "   provider='stripe',"
+            " ON CONFLICT (org_id, provider) DO UPDATE SET"
             "   credentials_encrypted=EXCLUDED.credentials_encrypted,"
             "   is_test_mode=EXCLUDED.is_test_mode,"
             "   is_connected=TRUE,"
@@ -17873,7 +17940,7 @@ def project_overview_extra(project_id: int, user: dict = Depends(get_current_use
           -- Advisor: payment (org-level; NULL when org_id missing)
           (SELECT slug              FROM crm_organizations    WHERE id = %s) AS org_slug,
           (SELECT payment_provider  FROM crm_organizations    WHERE id = %s) AS org_payment_provider,
-          (SELECT is_connected      FROM crm_payment_credentials WHERE org_id = %s) AS payment_connected,
+          (SELECT bool_or(is_connected) FROM crm_payment_credentials WHERE org_id = %s) AS payment_connected,
 
           -- Advisor: email
           (SELECT domain       FROM crm_email_domains WHERE project_id = %s) AS email_domain,
@@ -19274,11 +19341,14 @@ def refund_return(project_id: int, return_id: int, body: RefundReturnBody,
     refund_reference = sanitize(body.refund_method or "")[:40]
     real_ref = sanitize(body.refund_reference or "")[:120]
 
+    # Refund must use the gateway that ACTUALLY processed this order (the
+    # payment_provider snapshot), not an arbitrary org row — multi-gateway orgs
+    # have one credentials row per provider.
     cred = db_one(
         "SELECT credentials_encrypted, is_test_mode, provider, stripe_account_id"
         "  FROM crm_payment_credentials"
-        " WHERE org_id=%s",
-        (r["org_id"],)
+        " WHERE org_id=%s AND provider=%s",
+        (r["org_id"], r["payment_provider"])
     )
     can_call_api = (
         cred and cred["credentials_encrypted"]

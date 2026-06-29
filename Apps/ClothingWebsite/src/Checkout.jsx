@@ -50,37 +50,51 @@ function payHalyk(cfg) {
   });
 }
 
-// Loads CloudPayments' widget (once) then opens the popup via widget.charge().
-// The card is entered in CloudPayments' own popup (PCI-light — never touches us);
-// unlike Halyk there is NO redirect — onSuccess fires on the same page. We resolve,
-// then place the order, which re-verifies the charge server-side via /payments/find
-// before marking it paid (a forged onSuccess can't fake a paid order).
-function payCloudPayments(cfg) {
+// Loads TipTop Pay's widget (once, ex-CloudPayments) then opens the popup via
+// widget.start(). The card is entered in TipTop Pay's own popup (PCI-light — never
+// touches us); unlike Halyk there is NO redirect — `oncomplete` fires on the same
+// page. We resolve with the gateway TransactionId, then place the order, which
+// re-verifies that transaction server-side via /payments/get (Status=Completed +
+// amount) before marking it paid (a forged success can't fake a paid order).
+function payTipTopPay(cfg) {
   return new Promise((resolve, reject) => {
     const launch = () => {
       try {
-        const widget = new window.cp.CloudPayments();
-        widget.charge(
-          {
-            publicId:    cfg.public_id,
-            description: cfg.description,
-            amount:      cfg.amount,
-            currency:    cfg.currency || "KZT",
-            invoiceId:   cfg.invoice_id,
-            accountId:   cfg.account_id || cfg.invoice_id,
-          },
-          () => resolve(),                                                  // onSuccess
-          (reason) => reject(new Error(reason || "Payment was declined")),  // onFail
-        );
+        const widget = new window.tiptop.Widget();
+        widget.oncomplete = (result) => {
+          // result = { type: 'payment'|'cancel'|'error', status: 'success'|'fail'|…,
+          //            data: { transactionId }, message }
+          if (result && result.type === "payment" && result.status === "success") {
+            resolve(String(result?.data?.transactionId || ""));
+          } else {
+            reject(new Error(result?.message || "Payment was declined"));
+          }
+        };
+        // start() returns a thenable in the docs; wrap defensively so a launch
+        // error rejects even if a build returns undefined. The paid decision is
+        // driven by oncomplete above, never by this resolve.
+        Promise.resolve(
+          widget.start({
+            publicTerminalId: cfg.public_terminal_id,
+            amount:           cfg.amount,
+            currency:         cfg.currency || "KZT",
+            paymentSchema:    cfg.payment_schema || "Single",
+            description:      cfg.description,
+            externalId:       cfg.external_id,
+            // account_id is the email when given, else our numeric externalId — only
+            // forward it as receiptEmail when it's actually an email.
+            receiptEmail:     (cfg.account_id && cfg.account_id.includes("@")) ? cfg.account_id : undefined,
+          })
+        ).catch((e) => reject(e instanceof Error ? e : new Error(String(e || "Payment failed"))));
       } catch (e) { reject(e); }
     };
-    if (window.cp?.CloudPayments) return launch();
+    if (window.tiptop?.Widget) return launch();
     const existing = document.querySelector(`script[src="${cfg.widget_js}"]`);
     if (existing) { existing.addEventListener("load", launch); return; }
     const s = document.createElement("script");
     s.src = cfg.widget_js;
     s.onload = launch;
-    s.onerror = () => reject(new Error("Failed to load CloudPayments widget"));
+    s.onerror = () => reject(new Error("Failed to load TipTop Pay widget"));
     document.head.appendChild(s);
   });
 }
@@ -498,12 +512,13 @@ function Checkout() {
         return;
       }
       if (d.cloudpayments_widget) {
-        // CloudPayments — open the popup widget (no redirect). On success we place
-        // the order with the InvoiceId; place_order re-verifies server-side via
-        // /payments/find (Status=Completed) before it's marked paid.
+        // TipTop Pay (ex-CloudPayments) — open the popup widget (no redirect). On
+        // success it returns the gateway TransactionId; we place the order with it,
+        // and place_order re-verifies that transaction server-side via /payments/get
+        // (Status=Completed + amount) before it's marked paid.
         try {
-          await payCloudPayments(d.cloudpayments_widget);
-          const placed = await client.orders.place({ ...payload, payment_intent_id: d.intent_id });
+          const txnId = await payTipTopPay(d.cloudpayments_widget);
+          const placed = await client.orders.place({ ...payload, payment_intent_id: txnId });
           if (placed.ok) {
             navigate("/order-success", { state: { orderId: placed.data.order_id } });
           } else {
