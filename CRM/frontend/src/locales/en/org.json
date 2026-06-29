@@ -300,11 +300,34 @@
     },
     "payments": {
       "title": "Payments",
-      "subtitle": "Connect your payment provider so customers can pay directly during checkout. CRM never touches the money — payments flow straight to your provider account, and refunds are processed through the provider's API when you handle returns.",
+      "subtitle": "Turn on the ways your customers can pay — they all work together and the buyer picks one at checkout. CRM never touches the money: payments flow straight to your provider account, and refunds go through the provider's API when you handle returns.",
       "connected": "Connected",
-      "awaitingTest": "Awaiting test",
+      "awaitingTest": "Configured · awaiting check",
       "notConnected": "Not connected",
       "comingSoon": "Coming soon",
+      "enabled": "Enabled",
+      "off": "Off",
+      "connectToEnable": "Connect this gateway to accept card payments",
+      "labels": {
+        "manual": "Manual"
+      },
+      "offline": {
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "hintManual": "Cash, bank transfer or pay-on-delivery. The order is recorded; no card is charged online.",
+        "hintOther": "Any other gateway (Kaspi, your own payment link, a bank). The order is recorded; you collect the payment yourself and confirm it.",
+        "displayName": "Display name",
+        "displayNameHint": "What the customer sees at checkout.",
+        "phManual": "Cash / Pay on delivery",
+        "phOther": "Kaspi / Bank transfer",
+        "instructions": "Payment instructions (shown to the customer)",
+        "instructionsHint": "Shown on the order-confirmation screen so the buyer knows how to pay. E.g. \"Send the total to Kaspi +7 700 123 4567 and reply with the receipt photo.\"",
+        "instrPhManual": "Pay the courier in cash on delivery.",
+        "instrPhOther": "Send the total to Kaspi +7 …, then reply with the receipt.",
+        "save": "Save",
+        "saving": "Saving…",
+        "saved": "Saved"
+      },
       "providers": {
         "stripe": "Global card payments — 50+ countries, Stripe Payment Intents + Refunds API",
         "kaspi_aipay": "Kaspi payments via AiPay — async push to the buyer's Kaspi app (needs an active POS terminal). KZT only",
@@ -336,7 +359,14 @@
           "store": "Store",
           "copy": "Copy",
           "copied": "Copied",
-          "noSite": "Set this store's site URL (Authentication → URL config) to fill the Success / Fail links."
+          "noSite": "Set this store's site URL (Authentication → URL config) to fill the Success / Fail links.",
+          "purpose": "Result URL is required — the gateway POSTs the payment result there. Success / Fail are where the buyer returns after paying. Homepage is your store's front page.",
+          "urls": {
+            "home": "Homepage URL",
+            "result": "Result URL · POST",
+            "success": "Success URL",
+            "fail": "Fail URL"
+          }
         },
         "loading": "Loading…",
         "openConsole": "Open {{name}}",

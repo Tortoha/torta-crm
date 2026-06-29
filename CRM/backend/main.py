@@ -9998,6 +9998,17 @@ def _org_connected_providers(org_id: int) -> set:
     return {r["provider"] for r in rows}
 
 
+def _org_configured_providers(org_id: int) -> set:
+    """Set of gateways this org has SAVED credentials for (regardless of whether
+    they've been verified yet). Lets the UI show a 'Configured · awaiting check'
+    state distinct from 'Not connected' (no creds at all)."""
+    rows = db_all(
+        "SELECT provider FROM crm_payment_credentials WHERE org_id=%s AND credentials_encrypted <> ''",
+        (org_id,)
+    )
+    return {r["provider"] for r in rows}
+
+
 @app.get("/api/orgs/{org_id}/payment-methods")
 def get_org_payment_methods(org_id: int, user: dict = Depends(get_current_user)):
     """List the org's payment methods (enabled/label/instructions) + whether the
@@ -10020,7 +10031,8 @@ def get_org_payment_methods(org_id: int, user: dict = Depends(get_current_user))
             } for r in rows
         ],
         "stripe_connected": _org_stripe_connected(org_id),          # back-compat
-        "connected_providers": sorted(_org_connected_providers(org_id)),
+        "connected_providers":  sorted(_org_connected_providers(org_id)),
+        "configured_providers": sorted(_org_configured_providers(org_id)),
     }
 
 
