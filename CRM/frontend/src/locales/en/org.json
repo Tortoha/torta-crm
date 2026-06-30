@@ -416,7 +416,7 @@
         "stripeUnavailable": "Stripe Connect unavailable",
         "hint": {
           "stripe": "Process card payments globally. Test mode keys work without real money.",
-          "kaspi_aipay": "Enter your AiPay account email + password (cabinet.aipay.kz) and keep an ACTIVE Kaspi POS terminal logged in. The buyer enters their phone; AiPay pushes the charge to their Kaspi app and we confirm server-side. KZT only.",
+          "kaspi_aipay": "Enter your AiPay API Key (AiPay dashboard → API Keys; sent as the x-api-key header) and keep an ACTIVE Kaspi POS terminal logged in. The buyer enters their phone; AiPay pushes the charge to their Kaspi app and we confirm server-side. KZT only.",
           "halyk_epay": "Enter your Halyk ePay Client ID + Secret + Terminal ID. The buyer pays on Halyk's hosted page; we confirm via check-status server-side. KZT only.",
           "cloudpayments": "Enter your TipTop Pay (ex-CloudPayments) Public ID + API Secret from the cabinet (merchant.tiptoppay.kz). The buyer pays in a popup widget; we confirm the charge server-side. Test mode uses your test keys.",
           "robokassa": "Enter your Robokassa Merchant login + Password #1 and #2 (and hash algorithm — md5 by default). In your Robokassa cabinet set the Result URL to your store's …/payments/robokassa/result endpoint and the Success/Fail URLs to your store's /checkout/return. The buyer pays on Robokassa's page; we confirm via the OpState status check.",

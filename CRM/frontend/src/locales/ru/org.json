@@ -420,7 +420,7 @@
         "stripeUnavailable": "Stripe Connect недоступен",
         "hint": {
           "stripe": "Приём платежей картами по всему миру. Тестовые ключи работают без реальных денег.",
-          "kaspi_aipay": "Введите email + пароль аккаунта AiPay (cabinet.aipay.kz) и держите активный Kaspi POS-терминал залогиненным. Покупатель вводит телефон; AiPay шлёт запрос оплаты в его приложение Kaspi, оплату мы подтверждаем на сервере. Только KZT.",
+          "kaspi_aipay": "Введите API Key из дашборда AiPay (раздел «API Ключи»; отправляется в заголовке x-api-key) и держите активный Kaspi POS-терминал залогиненным. Покупатель вводит телефон; AiPay шлёт запрос оплаты в его приложение Kaspi, оплату мы подтверждаем на сервере. Только KZT.",
           "halyk_epay": "Введите Client ID + Secret + Terminal ID вашего Halyk ePay. Покупатель платит на hosted-странице Halyk; статус мы подтверждаем через check-status на сервере. Только KZT.",
           "cloudpayments": "Введите Public ID + API Secret из кабинета TipTop Pay (merchant.tiptoppay.kz). Покупатель платит в попап-виджете; оплату мы подтверждаем на сервере. В тестовом режиме используются ваши тестовые ключи.",
           "robokassa": "Введите Merchant login + Пароль #1 и #2 (и алгоритм хэша — по умолчанию md5). В кабинете Robokassa укажите Result URL = …/payments/robokassa/result вашего магазина и Success/Fail URL = /checkout/return. Покупатель платит на странице Robokassa; статус мы подтверждаем через OpState.",

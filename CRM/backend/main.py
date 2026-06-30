@@ -9453,14 +9453,15 @@ PROVIDER_FIELDS: dict[str, list[dict[str, Any]]] = {
          "placeholder": "whsec_…",      "secret": True,  "required": False,
          "validate_prefix": ["whsec_"]},
     ],
-    # Kaspi via AiPay (aipay.kz). Merchant's AiPay account email+password → we
-    # log in server-side for a short-lived JWT. The merchant must also have an
-    # ACTIVE POS terminal logged into their Kaspi in the AiPay dashboard.
+    # Kaspi via AiPay (paylab.kz/api/v2). Auth = the merchant's API Key in the
+    # `x-api-key` header (AiPay dashboard → API Keys); Company ID is optional/for
+    # reference. The merchant must also have an ACTIVE POS terminal logged into
+    # their Kaspi in the AiPay dashboard.
     "kaspi_aipay": [
-        {"key": "email",    "label": "AiPay account email", "type": "text",
-         "placeholder": "you@store.kz", "secret": False, "required": True},
-        {"key": "password", "label": "AiPay account password", "type": "password",
-         "placeholder": "",             "secret": True,  "required": True},
+        {"key": "api_key",    "label": "AiPay API Key", "type": "password",
+         "placeholder": "",  "secret": True,  "required": True},
+        {"key": "company_id", "label": "Company ID (optional)", "type": "text",
+         "placeholder": "00000000-0000-0000-0000-000000000000", "secret": False, "required": False},
     ],
     # Halyk Bank ePay (epayment.kz). OAuth client credentials (Client ID + secret)
     # + Terminal ID. Hosted widget/page (PCI-light, card on Halyk's page).
@@ -9683,35 +9684,22 @@ def _aipay_base(is_test_mode: bool) -> str:
     return _AIPAY_BASE_TEST if is_test_mode else (_AIPAY_BASE_LIVE or _AIPAY_BASE_TEST)
 
 
-def _aipay_login(creds: dict, is_test_mode: bool) -> tuple[str, str]:
-    email = (creds.get("email") or "").strip()
-    password = creds.get("password") or ""
-    if not email or not password:
-        return "", "Missing AiPay email/password"
-    body = json.dumps({"email": email, "password": password}).encode("utf-8")
-    r = _http_request("POST", f"{_aipay_base(is_test_mode)}/auth/login",
-                       headers={"Content-Type": "application/json"}, body=body)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        token = ((r["body"].get("data") or {}).get("access_token") or "").strip()
-        return (token, "") if token else ("", "AiPay login returned no access_token")
-    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return "", msg or f"AiPay login failed (HTTP {r['status']})"
-
-
 def aipay_test_connection(creds: dict, is_test_mode: bool) -> dict:
-    """Verify the merchant's AiPay login works AND they have an ACTIVE POS
-    terminal (without one, invoices can't reach customers' Kaspi apps)."""
-    token, err = _aipay_login(creds, is_test_mode)
-    if err:
-        return _err(err)
+    """Verify the AiPay API Key works AND there's an ACTIVE POS terminal (without
+    one, invoices can't reach customers' Kaspi apps). Auth = x-api-key header."""
+    api_key = (creds.get("api_key") or "").strip()
+    if not api_key:
+        return _err("Enter your AiPay API Key (AiPay dashboard → API Keys).")
     r = _http_request("GET", f"{_aipay_base(is_test_mode)}/pos",
-                       headers={"Content-Type": "application/json"}, bearer=token)
+                       headers={"Content-Type": "application/json", "x-api-key": api_key})
+    if r["status"] == 401:
+        return _err("Invalid AiPay API Key (got 401).")
     if r["status"] != 200 or not isinstance(r["body"], dict):
-        return _ok({"note": "Logged in, but couldn't read POS terminals."})
+        return _ok({"note": "API Key accepted, but couldn't read POS terminals."})
     terminals = r["body"].get("data") or []
     active = [t for t in terminals if (t or {}).get("status") == "active"]
     if not active:
-        return _err("Login OK, but no ACTIVE Kaspi POS terminal found. "
+        return _err("API Key OK, but no ACTIVE Kaspi POS terminal found. "
                     "Log a terminal into Kaspi in your AiPay dashboard first.")
     return _ok({"note": f"Connected — {len(active)} active Kaspi terminal(s)."})
 
@@ -9720,11 +9708,11 @@ def aipay_create_refund(creds: dict, invoice_id: str, is_test_mode: bool) -> dic
     """Full-invoice refund (AiPay has no partial refunds): PUT /invoices/{id}/refund."""
     if not invoice_id:
         return _err("Missing invoice id")
-    token, err = _aipay_login(creds, is_test_mode)
-    if err:
-        return _err(err)
+    api_key = (creds.get("api_key") or "").strip()
+    if not api_key:
+        return _err("Missing AiPay API Key")
     r = _http_request("PUT", f"{_aipay_base(is_test_mode)}/invoices/{invoice_id}/refund",
-                       headers={"Content-Type": "application/json"}, bearer=token)
+                       headers={"Content-Type": "application/json", "x-api-key": api_key})
     if r["status"] in (200, 202):
         return _ok({"refund_id": invoice_id, "status": "accepted"})
     msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
@@ -9950,7 +9938,7 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
 
 ALLOWED_PAY_METHODS = ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")
 _PAY_METHOD_DEFAULT_LABELS = {
-    "stripe": "Card", "kaspi_aipay": "Kaspi", "halyk_epay": "Halyk (ePay)",
+    "stripe": "Card", "kaspi_aipay": "AiPay (Kaspi)", "halyk_epay": "ePay (Halyk)",
     "cloudpayments": "CloudPayments", "robokassa": "Robokassa", "paypal": "PayPal",
     "manual": "Cash / Pay on delivery", "other": "Other",
 }
