@@ -5584,10 +5584,11 @@ def stripe_parse_event(raw_body: bytes) -> dict:
 # undocumented + unsigned, so we never trust it — at most a poll trigger).
 # Amounts are WHOLE TENGE (KZT), not minor units.
 #
-# Merchant credentials (stored encrypted in crm_payment_credentials): AiPay
-# account email + password → short-lived JWT (cached). The merchant must have
-# an ACTIVE POS terminal logged into their Kaspi (done in the AiPay dashboard
-# via OTP) before any invoice can be delivered.
+# Merchant credentials (stored encrypted in crm_payment_credentials): the AiPay
+# API Key (sent in the `x-api-key` header) + optional Company ID, both from the
+# AiPay dashboard → API Keys. (The old email/password→JWT model was wrong — current
+# AiPay at paylab.kz/api/v2 is x-api-key only.) The merchant must still have an
+# ACTIVE POS terminal logged into their Kaspi before any invoice can be delivered.
 #
 # ⚠️ NOT YET LIVE-TESTED — see Notes/Roadmap "AiPay" + Notes/Kaspi Integration.
 # Verify in AiPay sandbox (with a logged-in POS) before enabling for real money.
@@ -5595,67 +5596,23 @@ def stripe_parse_event(raw_body: bytes) -> dict:
 _AIPAY_BASE_TEST = os.getenv("AIPAY_API_BASE_TEST", "https://dev.paylab.kz/api/v2").rstrip("/")
 _AIPAY_BASE_LIVE = os.getenv("AIPAY_API_BASE", "").rstrip("/")  # set once AiPay gives a prod URL
 
-# JWT cache keyed by merchant email — avoids logging in on every API call.
-# Access tokens are short-lived; cache ~12 min and re-login on expiry/401.
-_AIPAY_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
-_AIPAY_TOKEN_TTL = 12 * 60
-
-
 def _aipay_base(is_test_mode: bool) -> str:
     if is_test_mode:
         return _AIPAY_BASE_TEST
     return _AIPAY_BASE_LIVE or _AIPAY_BASE_TEST
 
 
-def _aipay_login(creds: dict, is_test_mode: bool) -> tuple[str, str]:
-    """Returns (access_token, error). Logs in with the merchant's AiPay
-    email+password and returns a JWT bearer token."""
-    email = (creds.get("email") or "").strip()
-    password = creds.get("password") or ""
-    if not email or not password:
-        return "", "Missing AiPay email/password"
-    body = json.dumps({"email": email, "password": password}).encode("utf-8")
-    r = _http_request("POST", f"{_aipay_base(is_test_mode)}/auth/login",
-                       headers={"Content-Type": "application/json"}, body=body)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        token = ((r["body"].get("data") or {}).get("access_token") or "").strip()
-        if token:
-            return token, ""
-        return "", "AiPay login returned no access_token"
-    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return "", msg or f"AiPay login failed (HTTP {r['status']})"
-
-
-def _aipay_token(creds: dict, is_test_mode: bool, *, force: bool = False) -> tuple[str, str]:
-    """Cached JWT for the merchant. Re-logs in when missing/expired/forced."""
-    email = (creds.get("email") or "").strip().lower()
-    if not force and email in _AIPAY_TOKEN_CACHE:
-        token, exp = _AIPAY_TOKEN_CACHE[email]
-        if time.time() < exp:
-            return token, ""
-    token, err = _aipay_login(creds, is_test_mode)
-    if err:
-        return "", err
-    _AIPAY_TOKEN_CACHE[email] = (token, time.time() + _AIPAY_TOKEN_TTL)
-    return token, ""
-
-
 def _aipay_request(method: str, path: str, creds: dict, is_test_mode: bool,
                     *, body: bytes | None = None) -> dict:
-    """Authenticated AiPay request with one automatic re-auth on 401."""
-    token, err = _aipay_token(creds, is_test_mode)
-    if err:
-        return {"status": 0, "body": {"error": {"message": err}}}
+    """Authenticated AiPay request. Auth = the merchant's API Key in the `x-api-key`
+    header (AiPay dashboard → API Keys). The old email/password→JWT login flow is
+    gone — current AiPay (paylab.kz/api/v2) is x-api-key only."""
+    api_key = (creds.get("api_key") or "").strip()
+    if not api_key:
+        return {"status": 0, "body": {"error": {"message": "Missing AiPay API key"}}}
     url = f"{_aipay_base(is_test_mode)}{path}"
-    headers = {"Content-Type": "application/json"}
-    r = _http_request(method, url, headers=headers, body=body, bearer=token)
-    if r["status"] == 401:
-        # Token expired/invalidated — force a fresh login once and retry.
-        token, err = _aipay_token(creds, is_test_mode, force=True)
-        if err:
-            return {"status": 401, "body": {"error": {"message": err}}}
-        r = _http_request(method, url, headers=headers, body=body, bearer=token)
-    return r
+    headers = {"Content-Type": "application/json", "x-api-key": api_key}
+    return _http_request(method, url, headers=headers, body=body)
 
 
 # AiPay numeric status_code -> our canonical payment status. 9 = paid (terminal).
