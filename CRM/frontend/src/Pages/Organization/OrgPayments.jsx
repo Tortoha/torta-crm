@@ -315,6 +315,7 @@ export default function OrgPayments() {
             ? <PaymentProviderPanel
                 provider={modalProvider}
                 orgId={orgId}
+                method={methodFor(modalProvider.id)}
                 onClose={() => setModal(null)}
                 onSaved={reload} />
             : <OfflineMethodPanel

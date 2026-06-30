@@ -955,7 +955,26 @@ function Checkout() {
                       ))}
                     </div>
 
-                    {selected?.online ? (
+                    {selected?.method === "kaspi_aipay" ? (
+                      <>
+                        <p className="checkout-note">
+                          Kaspi payment — enter your Kaspi phone number below. We'll push the
+                          payment request to your Kaspi app; approve it there to finish.
+                          {storeConfig?.payment_test_mode ? " (Test mode)" : ""}
+                        </p>
+                        <div className="checkout-field" style={{ marginTop: 10 }}>
+                          <label>Kaspi phone number <span style={{ color: "#e11" }}>*</span></label>
+                          <input
+                            type="tel"
+                            className="checkout-input"
+                            value={form.phone}
+                            onChange={e => set("phone", e.target.value)}
+                            placeholder="+7 7XX XXX XX XX"
+                            autoComplete="tel"
+                          />
+                        </div>
+                      </>
+                    ) : selected?.online ? (
                       <p className="checkout-note">
                         Secure card payment — you'll enter your card on the next step.
                         Your card is handled directly by the payment provider; we never see it.

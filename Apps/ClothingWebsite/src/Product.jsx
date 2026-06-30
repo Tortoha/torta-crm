@@ -302,9 +302,9 @@ function Product() {
                     <h1 className="product-title">{page.title}</h1>
                     <p className="product-subtitle">{page.subtitle}</p>
                     <div className="product-price-row">
-                        <h2 className="product-price">${currentPrice}</h2>
+                        <h2 className="product-price">{fmtMoney(currentPrice)}</h2>
                         {compareAtPrice && compareAtPrice > currentPrice && (
-                            <span className="product-price-old">${compareAtPrice}</span>
+                            <span className="product-price-old">{fmtMoney(compareAtPrice)}</span>
                         )}
                         {onSale && <span className="product-badge product-badge--sale">On Sale</span>}
                         {page.is_pre_order && <span className="product-badge product-badge--preorder">Pre-order</span>}
