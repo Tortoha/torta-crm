@@ -5026,7 +5026,12 @@ def _reset_del(h):    _kv_delete(_reset_key(h))
 
 # CSRF double-submit cookie: GET /api/csrf sets readable cookie, frontend echoes it as X-CSRF-Token, middleware compares; exempt: inbound webhooks and X-Internal-Key chat endpoint.
 _CSRF_SAFE_METHODS  = {"GET", "HEAD", "OPTIONS", "TRACE"}
-_CSRF_EXEMPT_PREFIX = ("/api/chat/webhook/", "/api/chat/internal/", "/api/internal/")
+_CSRF_EXEMPT_PREFIX = ("/api/chat/webhook/", "/api/chat/internal/", "/api/internal/",
+                       # Anonymous landing-visit beacon — sent with credentials:'omit'
+                       # (no cookies, so no csrf_token cookie to match). No session to
+                       # protect; abuse is bounded by the 60/min rate-limit + per-day
+                       # dedup. Without this every beacon 403'd → funnel "Visited" = 0.
+                       "/api/track/")
 
 class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
