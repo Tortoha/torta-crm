@@ -5868,7 +5868,7 @@ def apipay_create_invoice(creds: dict, amount_tenge: int, phone: str,
     if r["status"] in (200, 201) and isinstance(r["body"], dict):
         inv = r["body"]   # ApiPay returns the invoice object directly (no data wrapper)
         return _ok({
-            "intent_id": inv.get("id", ""),
+            "intent_id": str(inv.get("id") or ""),   # ApiPay returns id as an INTEGER — stringify
             "status":    _apipay_canonical_status(inv),
         }, r["body"])
     msg = _apipay_error_msg(r["body"])
@@ -5884,11 +5884,11 @@ def apipay_get_invoice(creds: dict, invoice_id: str) -> dict:
     if r["status"] == 200 and isinstance(r["body"], dict):
         inv = r["body"]
         return _ok({
-            "intent_id":    inv.get("id", ""),
+            "intent_id":    str(inv.get("id") or ""),   # ApiPay returns id as an INTEGER — stringify
             "status":       _apipay_canonical_status(inv),
             "amount":       _apipay_amount(inv.get("amount")),   # major-unit tenge
             "currency":     "KZT",
-            "charge_id":    inv.get("kaspi_invoice_id") or inv.get("id", ""),
+            "charge_id":    str(inv.get("kaspi_invoice_id") or inv.get("id") or ""),
             "account_name": inv.get("client_name", ""),
             "paid_at":      inv.get("paid_at"),
         }, r["body"])
