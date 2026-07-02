@@ -3503,7 +3503,7 @@ def run_migrations():
             cur.execute("""
                 ALTER TABLE crm_organizations ADD CONSTRAINT crm_organizations_payment_provider_check
                   CHECK (payment_provider IN (
-                    'stripe','manual','other','kaspi_aipay','halyk_epay','cloudpayments','robokassa','paypal'
+                    'stripe','manual','other','kaspi_aipay','apipay','halyk_epay','cloudpayments','robokassa','paypal'
                   ))
             """)
             conn.commit()
@@ -3555,7 +3555,7 @@ def run_migrations():
             cur.execute("""
                 ALTER TABLE crm_payment_credentials ADD CONSTRAINT crm_payment_credentials_provider_check
                   CHECK (provider IN (
-                    'stripe','manual','other','kaspi_aipay','halyk_epay','cloudpayments','robokassa','paypal'
+                    'stripe','manual','other','kaspi_aipay','apipay','halyk_epay','cloudpayments','robokassa','paypal'
                   ))
             """)
             cur.execute("""DO $$ BEGIN
@@ -3621,7 +3621,7 @@ def run_migrations():
             cur.execute("ALTER TABLE crm_payment_methods DROP CONSTRAINT IF EXISTS crm_payment_methods_method_check")
             cur.execute("""
                 ALTER TABLE crm_payment_methods ADD CONSTRAINT crm_payment_methods_method_check
-                  CHECK (method IN ('stripe','manual','other','kaspi_aipay','halyk_epay','cloudpayments','robokassa','paypal'))
+                  CHECK (method IN ('stripe','manual','other','kaspi_aipay','apipay','halyk_epay','cloudpayments','robokassa','paypal'))
             """)
             conn.commit()
 
@@ -3633,6 +3633,11 @@ def run_migrations():
             cur.execute(
                 "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
                 "SELECT id, 'kaspi_aipay', FALSE, 'Kaspi', 1 FROM crm_organizations "
+                "ON CONFLICT (org_id, method) DO NOTHING"
+            )
+            cur.execute(
+                "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
+                "SELECT id, 'apipay', FALSE, 'ApiPay (Kaspi)', 2 FROM crm_organizations "
                 "ON CONFLICT (org_id, method) DO NOTHING"
             )
             cur.execute(
@@ -9488,6 +9493,12 @@ PROVIDER_FIELDS: dict[str, list[dict[str, Any]]] = {
         {"key": "company_id", "label": "Company ID (optional)", "type": "text",
          "placeholder": "00000000-0000-0000-0000-000000000000", "secret": False, "required": False},
     ],
+    "apipay": [
+        {"key": "api_key",        "label": "ApiPay API Key", "type": "password",
+         "placeholder": "",  "secret": True,  "required": True},
+        {"key": "webhook_secret", "label": "Webhook Secret (optional)", "type": "password",
+         "placeholder": "",  "secret": True,  "required": False},
+    ],
     # Halyk Bank ePay (epayment.kz). OAuth client credentials (Client ID + secret)
     # + Terminal ID. Hosted widget/page (PCI-light, card on Halyk's page).
     "halyk_epay": [
@@ -9744,6 +9755,48 @@ def aipay_create_refund(creds: dict, invoice_id: str, is_test_mode: bool) -> dic
     return _err(msg or f"AiPay refund failed (HTTP {r['status']})")
 
 
+# ── Kaspi via ApiPay (apipay.kz) — test-connection + refund ────────────────
+# Second Kaspi aggregator. Single base URL (sandbox = key/org property). Auth =
+# X-API-Key header. Test = GET /invoices (a valid key returns 200/422; 401 = bad key).
+_APIPAY_BASE = os.getenv("APIPAY_API_BASE", "https://bpapi.bazarbay.site/api/v1").rstrip("/")
+
+
+def apipay_test_connection(creds: dict, is_test_mode: bool) -> dict:
+    """Verify the ApiPay API Key works (X-API-Key). A connected Kaspi cashier is
+    still required for invoices to reach customers — set up in the ApiPay dashboard
+    (Settings → Kaspi Authorization)."""
+    api_key = (creds.get("api_key") or "").strip()
+    if not api_key:
+        return _err("Enter your ApiPay API Key (apipay.kz dashboard → API Keys).")
+    r = _http_request("GET", f"{_APIPAY_BASE}/invoices?per_page=1",
+                       headers={"Content-Type": "application/json",
+                                "Accept": "application/json", "X-API-Key": api_key})
+    if r["status"] == 401:
+        return _err("Invalid ApiPay API Key (got 401).")
+    if r["status"] in (200, 422):
+        return _ok({"note": "ApiPay API Key accepted. Make sure a Kaspi cashier is "
+                            "connected in your ApiPay dashboard."})
+    return _ok({"note": f"API Key accepted (HTTP {r['status']}). Ensure a Kaspi cashier is connected."})
+
+
+def apipay_create_refund(creds: dict, invoice_id: str, is_test_mode: bool) -> dict:
+    """Refund a paid invoice (POST /invoices/{id}/refund). Async on ApiPay's side;
+    an empty body refunds the full available sum."""
+    if not invoice_id:
+        return _err("Missing invoice id")
+    api_key = (creds.get("api_key") or "").strip()
+    if not api_key:
+        return _err("Missing ApiPay API Key")
+    r = _http_request("POST", f"{_APIPAY_BASE}/invoices/{invoice_id}/refund",
+                       headers={"Content-Type": "application/json",
+                                "Accept": "application/json", "X-API-Key": api_key},
+                       body=json.dumps({}).encode("utf-8"))
+    if r["status"] in (200, 201, 202):
+        return _ok({"refund_id": invoice_id, "status": "accepted"})
+    msg = (r["body"] or {}).get("message", "") if isinstance(r["body"], dict) else ""
+    return _err(msg or f"ApiPay refund failed (HTTP {r['status']})")
+
+
 # ── Halyk Bank ePay (epayment.kz) — test-connection ────────────────────────
 def halyk_test_connection(creds: dict, is_test_mode: bool) -> dict:
     """Validate Client ID / secret by requesting an OAuth token (no payment scope)."""
@@ -9912,6 +9965,7 @@ def test_connection(provider: str, creds: dict, *, is_test_mode: bool = True,
         return _ok({"note": "Manual / Other providers don't have a remote check — credentials are saved as-is."})
     if provider == "stripe":         return stripe_test_connection(creds, stripe_account_id)
     if provider == "kaspi_aipay":    return aipay_test_connection(creds, is_test_mode)
+    if provider == "apipay":         return apipay_test_connection(creds, is_test_mode)
     if provider == "halyk_epay":     return halyk_test_connection(creds, is_test_mode)
     if provider == "cloudpayments":  return cloudpayments_test_connection(creds, is_test_mode)
     if provider == "robokassa":      return robokassa_test_connection(creds, is_test_mode)
@@ -9943,6 +9997,8 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
     if provider == "kaspi_aipay":
         # AiPay refunds are full-invoice only (no partial amount in the API).
         return aipay_create_refund(creds, charge_or_intent_id, is_test_mode)
+    if provider == "apipay":
+        return apipay_create_refund(creds, charge_or_intent_id, is_test_mode)
     if provider == "halyk_epay":
         # Halyk refund API (operation refund) not wired yet — refund via Halyk cabinet.
         return _err("Halyk ePay refunds: use the Halyk merchant cabinet (API refund not wired yet).")
@@ -9961,9 +10017,9 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
 # checkout. Stripe is the online card gateway (needs connected credentials);
 # manual/other are offline (record-only) with a label + customer instructions.
 
-ALLOWED_PAY_METHODS = ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")
+ALLOWED_PAY_METHODS = ("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")
 _PAY_METHOD_DEFAULT_LABELS = {
-    "stripe": "Card", "kaspi_aipay": "AiPay (Kaspi)", "halyk_epay": "ePay (Halyk)",
+    "stripe": "Card", "kaspi_aipay": "AiPay (Kaspi)", "apipay": "ApiPay (Kaspi)", "halyk_epay": "ePay (Halyk)",
     "cloudpayments": "CloudPayments", "robokassa": "Robokassa", "paypal": "PayPal",
     "manual": "Cash / Pay on delivery", "other": "Other",
 }
@@ -9977,7 +10033,7 @@ def _ensure_payment_methods(org_id: int) -> None:
         cur.execute("SELECT 1 FROM crm_payment_methods WHERE org_id=%s LIMIT 1", (org_id,))
         if cur.fetchone():
             return
-        for idx, m in enumerate(("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")):
+        for idx, m in enumerate(("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")):
             cur.execute(
                 "INSERT INTO crm_payment_methods"
                 "  (org_id, method, is_enabled, display_label, sort_order)"
@@ -10069,7 +10125,7 @@ def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMetho
 
     # An online gateway can only be turned on once ITS OWN credentials are
     # connected (multi-gateway: each provider is connected independently).
-    if (method in ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
+    if (method in ("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
             and body.is_enabled and not _org_provider_connected(org_id, method)):
         raise HTTPException(400, "Connect this gateway first (add + test its API keys) "
                                   "before enabling it for checkout.")
@@ -10296,7 +10352,7 @@ def test_org_payment_credentials(org_id: int, provider: Optional[str] = None,
     # Connecting Stripe = the merchant wants card payments → auto-enable the
     # 'stripe' method (they can still toggle it off). Mirrors Shopify enabling
     # the gateway on activation.
-    if result["ok"] and row["provider"] in ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal"):
+    if result["ok"] and row["provider"] in ("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal"):
         _ensure_payment_methods(org_id)
         with db_cursor() as (conn, cur):
             # Upsert: orgs seeded before kaspi_aipay existed won't have its row yet.
@@ -10330,7 +10386,7 @@ def delete_org_payment_credentials(org_id: int, provider: Optional[str] = None,
             cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s", (org_id,))
             cur.execute("UPDATE crm_payment_methods SET is_enabled=FALSE, updated_at=NOW() "
                         "WHERE org_id=%s AND method IN "
-                        "('stripe','kaspi_aipay','halyk_epay','cloudpayments','robokassa','paypal')",
+                        "('stripe','kaspi_aipay','apipay','halyk_epay','cloudpayments','robokassa','paypal')",
                         (org_id,))
         # Keep the >=1-enabled invariant: if nothing is left on, fall back to manual.
         cur.execute("SELECT COUNT(*) AS c FROM crm_payment_methods "

@@ -955,7 +955,7 @@ function Checkout() {
                       ))}
                     </div>
 
-                    {selected?.method === "kaspi_aipay" ? (
+                    {(selected?.method === "kaspi_aipay" || selected?.method === "apipay") ? (
                       <>
                         <p className="checkout-note">
                           Kaspi payment — enter your Kaspi phone number below. We'll push the

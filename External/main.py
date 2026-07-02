@@ -5771,6 +5771,149 @@ def aipay_refund(creds: dict, invoice_id: str, *, is_test_mode: bool = True) -> 
                 r["body"] if isinstance(r["body"], dict) else {})
 
 
+# ── Kaspi via ApiPay (apipay.kz / API on bpapi.bazarbay.site) ──────────────
+# A SECOND Kaspi aggregator, same async push-payment model as AiPay above: we
+# create an invoice for the customer's Kaspi phone → ApiPay pushes a payment
+# request into their Kaspi app via the merchant's connected Kaspi cashier → the
+# customer approves in Kaspi. We confirm server-to-server via GET /invoices/{id}
+# (the source of truth). ApiPay ALSO sends an HMAC-signed webhook, used only as a
+# catch-up trigger (never trusted for the money decision — we re-fetch).
+# Amounts are WHOLE TENGE (KZT). Single base URL — sandbox is a property of the
+# merchant's API key / organization, so there is no live-vs-sandbox URL to
+# misconfigure. Auth = the merchant API Key in the `X-API-Key` header.
+#
+# Merchant credentials (encrypted in crm_payment_credentials): `api_key` (X-API-Key)
+# + `webhook_secret` (HMAC secret from the ApiPay dashboard). The merchant must have
+# a connected Kaspi cashier (ApiPay dashboard → Settings → Kaspi Authorization).
+_APIPAY_BASE = os.getenv("APIPAY_API_BASE", "https://bpapi.bazarbay.site/api/v1").rstrip("/")
+
+
+def _apipay_request(method: str, path: str, creds: dict, *, body: bytes | None = None) -> dict:
+    """Authenticated ApiPay request. Auth = the merchant's API Key in the
+    `X-API-Key` header (apipay.kz dashboard → API Keys)."""
+    api_key = (creds.get("api_key") or "").strip()
+    if not api_key:
+        return {"status": 0, "body": {"message": "Missing ApiPay API key"}}
+    url = f"{_APIPAY_BASE}{path}"
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "X-API-Key": api_key}
+    return _http_request(method, url, headers=headers, body=body)
+
+
+# ApiPay invoice status string -> our canonical payment status. paid /
+# partially_refunded = money received (money was collected — treat as paid);
+# pending/processing/cancelling = still waiting; cancelled/expired/error = terminal-fail.
+_APIPAY_STATUS_MAP = {
+    "pending": "pending", "processing": "pending", "cancelling": "pending",
+    "paid": "paid", "partially_refunded": "paid",
+    "cancelled": "canceled", "expired": "expired", "error": "error",
+}
+
+
+def _apipay_canonical_status(inv: dict) -> str:
+    s = (inv.get("status") or "").strip().lower()
+    return _APIPAY_STATUS_MAP.get(s, s or "unknown")
+
+
+def _apipay_amount(v) -> float:
+    """ApiPay amounts come as decimal STRINGS ('5000.00') in whole tenge (KZT)."""
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _apipay_error_msg(body) -> str:
+    """ApiPay error bodies: {message, errors:{field:[...]}} (422) or {message}."""
+    if not isinstance(body, dict):
+        return ""
+    if isinstance(body.get("message"), str) and body["message"]:
+        return body["message"]
+    return body["error"] if isinstance(body.get("error"), str) else ""
+
+
+def apipay_create_invoice(creds: dict, amount_tenge: int, phone: str,
+                           *, description: str = "", external_order_id: str = "") -> dict:
+    """Create a Kaspi invoice via ApiPay. amount_tenge is WHOLE tenge (KZT).
+    Phone format 8XXXXXXXXXX (ApiPay normalizes +7/7/8)."""
+    ph = (phone or "").strip()
+    if not ph:
+        return _err("Customer Kaspi phone number is required")
+    if int(amount_tenge) < 1:
+        return _err("Amount must be at least 1 tenge")
+    payload: dict = {"phone_number": ph[:20], "amount": int(amount_tenge)}
+    if description:
+        payload["description"] = description[:500]
+    if external_order_id:
+        payload["external_order_id"] = str(external_order_id)[:120]
+    body = json.dumps(payload).encode("utf-8")
+    r = _apipay_request("POST", "/invoices", creds, body=body)
+    if r["status"] in (200, 201) and isinstance(r["body"], dict):
+        inv = r["body"]   # ApiPay returns the invoice object directly (no data wrapper)
+        return _ok({
+            "intent_id": inv.get("id", ""),
+            "status":    _apipay_canonical_status(inv),
+        }, r["body"])
+    msg = _apipay_error_msg(r["body"])
+    return _err(msg or f"ApiPay invoice create failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def apipay_get_invoice(creds: dict, invoice_id: str) -> dict:
+    """Fetch invoice status server-to-server — the source of truth for 'paid'."""
+    if not invoice_id:
+        return _err("Missing invoice id")
+    r = _apipay_request("GET", f"/invoices/{invoice_id}", creds)
+    if r["status"] == 200 and isinstance(r["body"], dict):
+        inv = r["body"]
+        return _ok({
+            "intent_id":    inv.get("id", ""),
+            "status":       _apipay_canonical_status(inv),
+            "amount":       _apipay_amount(inv.get("amount")),   # major-unit tenge
+            "currency":     "KZT",
+            "charge_id":    inv.get("kaspi_invoice_id") or inv.get("id", ""),
+            "account_name": inv.get("client_name", ""),
+            "paid_at":      inv.get("paid_at"),
+        }, r["body"])
+    msg = _apipay_error_msg(r["body"])
+    return _err(msg or f"ApiPay invoice fetch failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def apipay_refund(creds: dict, invoice_id: str, *, amount_tenge: int | None = None,
+                   reason: str = "") -> dict:
+    """Refund a paid invoice (POST /invoices/{id}/refund). Async on ApiPay's side
+    (queued 'pending' → invoice.refunded webhook completed/failed). Omitting amount
+    refunds the full available sum."""
+    if not invoice_id:
+        return _err("Missing invoice id")
+    payload: dict = {}
+    if amount_tenge is not None:
+        payload["amount"] = int(amount_tenge)
+    if reason:
+        payload["reason"] = reason[:500]
+    body = json.dumps(payload).encode("utf-8")
+    r = _apipay_request("POST", f"/invoices/{invoice_id}/refund", creds, body=body)
+    if r["status"] in (200, 201, 202) and isinstance(r["body"], dict):
+        return _ok({"result": "accepted"}, r["body"])
+    msg = _apipay_error_msg(r["body"])
+    return _err(msg or f"ApiPay refund failed (HTTP {r['status']})",
+                r["body"] if isinstance(r["body"], dict) else {})
+
+
+def apipay_verify_webhook(raw_body: bytes, signature_header: str, secret: str) -> bool:
+    """Verify the ApiPay webhook HMAC. Header `X-Webhook-Signature: sha256=<hex>`,
+    secret from the ApiPay dashboard. Constant-time; fails closed on any gap."""
+    sig = (signature_header or "").strip()
+    if not sig or not secret or not raw_body:
+        return False
+    expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    try:
+        return hmac.compare_digest(expected, sig)
+    except Exception:
+        return False
+
+
 # ── Halyk Bank ePay (epayment.kz) ──────────────────────────────────────────
 # Hosted widget/page gateway (PCI-light — the card is entered on Halyk's page via
 # their payment-api.js; never touches us). OAuth2 client_credentials; the PAYMENT
@@ -6192,6 +6335,10 @@ def create_intent(provider: str, creds: dict, *, amount: float, currency: str,
         # Kaspi/AiPay needs the customer phone + runs an async push-payment flow,
         # so the invoice is created in init_payment (which has data.phone), not here.
         return _err("Kaspi (AiPay) payments are initialized via init-payment")
+    if provider == "apipay":
+        # ApiPay (Kaspi) is the same async push flow as AiPay — invoice created in
+        # init_payment (which has the customer's Kaspi phone), not here.
+        return _err("ApiPay (Kaspi) payments are initialized via init-payment")
     if provider == "halyk_epay":
         # Halyk mints a payment-scoped OAuth token + uses halyk.pay JS → init_payment.
         return _err("Halyk ePay payments are initialized via init-payment")
@@ -6216,6 +6363,8 @@ def get_intent(provider: str, creds: dict, *, intent_id: str,
         return stripe_get_intent(creds, intent_id, stripe_account_id)
     if provider == "kaspi_aipay":
         return aipay_get_invoice(creds, intent_id, is_test_mode=is_test_mode)
+    if provider == "apipay":
+        return apipay_get_invoice(creds, intent_id)
     if provider == "halyk_epay":
         return halyk_check_status(creds, intent_id, is_test_mode=is_test_mode)
     if provider == "cloudpayments":
@@ -6244,6 +6393,10 @@ def verify_webhook(provider: str, creds: dict, *, raw_body: bytes,
         # Kaspi payments are confirmed server-to-server via GET /invoices/{id}
         # (storefront polls payment-status; place_order re-verifies before paid).
         return False, "AiPay webhooks are unsigned — confirmed via API, not webhook"
+    if provider == "apipay":
+        # ApiPay has a signed webhook, but it's handled by its own dedicated route
+        # (/payments/apipay/webhook) which verifies HMAC + re-fetches status.
+        return False, "ApiPay uses its own webhook endpoint (/payments/apipay/webhook)"
     if provider == "halyk_epay":
         return False, "Halyk ePay uses its own postLink endpoint"
     if provider == "cloudpayments":
@@ -6308,7 +6461,7 @@ def _get_org_payment_config(project_id: int, provider: str | None = None) -> tup
 # here makes _get_enabled_payment_methods mark it `online: true` so the storefront
 # launches its gateway UI, and is the gate for strict server-side verification in
 # place_order. Keep in sync with the init_payment + place_order branches.
-_ONLINE_PAY_METHODS = ("stripe", "kaspi_aipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
+_ONLINE_PAY_METHODS = ("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
 
 
 def _connected_online_providers(project_id: int) -> set:
@@ -6330,6 +6483,7 @@ def _connected_online_providers(project_id: int) -> set:
 # they accept many currencies (and PayPal rejects KZT on its own side at create-order).
 _GATEWAY_CCY = {
     "kaspi_aipay":   {"KZT"},
+    "apipay":        {"KZT"},
     "halyk_epay":    {"KZT"},
     "robokassa":     {"KZT"},
     "cloudpayments": {"KZT", "RUB"},
@@ -6617,6 +6771,40 @@ def init_payment(data: PlaceOrderRequest, request: Request,
             "is_test_mode":  is_test_mode,
         }
 
+    # ApiPay (Kaspi) — same async push flow as AiPay: create the invoice for the
+    # customer's Kaspi phone, the storefront then polls /orders/payment-status.
+    if chosen == "apipay":
+        if provider != "apipay" or not creds:
+            return {
+                "provider": "manual", "intent_id": "", "client_secret": "",
+                "redirect_url": "", "publishable_key": "",
+                "amount": totals["total"], "currency": totals["currency"],
+                "needs_payment_intent": False,
+                "warning": "ApiPay (Kaspi) not connected; falling back to manual",
+            }
+        phone = clean(data.phone, 20)
+        if not phone:
+            raise HTTPException(400, "Kaspi phone number is required")
+        amount_tenge = int(round(totals["total"]))
+        res = apipay_create_invoice(
+            creds, amount_tenge, phone,
+            description=(api_key_record.get("name") or "Online order"),
+        )
+        if not res["ok"]:
+            raise HTTPException(400, f"Kaspi payment error: {res['error']}")
+        return {
+            "provider":      "apipay",
+            "intent_id":     res["data"].get("intent_id", ""),
+            "client_secret": "",
+            "redirect_url":  "",
+            "publishable_key": "",
+            "amount":        totals["total"],
+            "currency":      totals["currency"],
+            "needs_payment_intent": False,
+            "kaspi_poll":    True,   # reuse the Kaspi poll flow: storefront polls payment-status
+            "is_test_mode":  is_test_mode,
+        }
+
     # Halyk ePay — hosted widget/page. Mint a payment-scoped OAuth token and hand
     # the storefront a `halyk_pay` config; the frontend loads payment-api.js and
     # calls halyk.pay({auth, …}). The card is entered on Halyk (PCI-light); the
@@ -6847,9 +7035,19 @@ def order_payment_status(intent_id: str, request: Request,
     to paid. Reads the authoritative status server-to-server from the provider —
     we never trust client claims or unsigned webhooks for the money decision."""
     project_id = api_key_record["id"]
-    # Kaspi (AiPay) is the only gateway that drives this async poll endpoint.
-    provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id, "kaspi_aipay")
-    if provider in ("manual", "other") or not creds:
+    # Both Kaspi aggregators (ApiPay and AiPay) drive this async poll endpoint.
+    # Resolve whichever the store has connected (an explicit ?provider= hint wins);
+    # they're mutually-exclusive in practice — ApiPay preferred if somehow both.
+    _hint = (request.query_params.get("provider") or "").strip()
+    _candidates = [_hint] if _hint in ("apipay", "kaspi_aipay") else ["apipay", "kaspi_aipay"]
+    provider = creds = None
+    is_test_mode, stripe_account_id = True, ""
+    for _cand in _candidates:
+        _p, _c, _tm, _sa = _get_org_payment_config(project_id, _cand)
+        if _p == _cand and _c:
+            provider, creds, is_test_mode, stripe_account_id = _p, _c, _tm, _sa
+            break
+    if not provider or provider in ("manual", "other") or not creds:
         return {"status": "manual", "paid": False}
     res = get_intent(provider, creds, intent_id=intent_id,
                       is_test_mode=is_test_mode, stripe_account_id=stripe_account_id)
@@ -6981,6 +7179,51 @@ async def robokassa_result(api_key: str, request: Request):
     # stops retrying. If OpState lagged below paid, the buyer's return to
     # /checkout/return re-verifies and places the order.
     return Response(content=f"OK{inv_id}", media_type="text/plain")
+
+
+@app.post("/{api_key}/payments/apipay/webhook")
+async def apipay_webhook(api_key: str, request: Request):
+    """ApiPay webhook — PUBLIC, no auth. ApiPay POSTs invoice.status_changed /
+    invoice.refunded with an HMAC-SHA256 signature (X-Webhook-Signature). We
+    (1) verify the signature, then (2) re-fetch the authoritative status
+    server-to-server and mark the matching order paid (idempotent). We NEVER trust
+    the payload's status for the money decision. Catch-up only: the storefront poll
+    normally places the order at pay-time, so this covers the tab-closed case.
+    Respond 200 fast."""
+    raw  = await request.body()
+    proj = db_one("SELECT id FROM crm_projects WHERE api_key=%s AND is_active=TRUE", (api_key,))
+    if not proj:
+        return {"received": True}
+    provider, creds, _is_test, _ = _get_org_payment_config(proj["id"], "apipay")
+    if provider != "apipay" or not creds:
+        return {"received": True}
+    # 1) Signature gate — never act on a forged/unsigned callback.
+    sig = request.headers.get("x-webhook-signature") or request.headers.get("X-Webhook-Signature") or ""
+    if not apipay_verify_webhook(raw, sig, creds.get("webhook_secret", "")):
+        return {"received": True}
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return {"received": True}
+    inv = (payload.get("invoice") or {}) if isinstance(payload, dict) else {}
+    invoice_id = str(inv.get("id", "") or "")
+    if not invoice_id:
+        return {"received": True}
+    # 2) Re-fetch authoritative status (defence in depth — don't trust the payload).
+    st = apipay_get_invoice(creds, invoice_id)
+    if st["ok"] and st["data"].get("status") == "paid":
+        _amt = _apipay_amount(st["data"].get("amount"))   # major-unit KZT
+        with db_cursor() as (conn, cur):
+            # Amount guard (mirrors place_order): flip to paid only when the provider
+            # amount matches the order total. `%s <= 0` skips if the amount is unknown.
+            cur.execute(
+                "UPDATE order_history SET payment_status='paid',"
+                "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
+                " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'"
+                "   AND (%s <= 0 OR ABS(COALESCE(total_amount, 0) - %s) <= 0.02)",
+                (proj["id"], invoice_id, _amt, _amt))
+            conn.commit()
+    return {"received": True}
 
 
 @app.post("/{api_key}/orders")
@@ -7402,6 +7645,9 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                 # amount is whole tenge (KZT) — falls through to the major-unit
                 # branch below (no /100), so the tolerance check compares tenge↔tenge.
                 "kaspi_aipay":   {"paid"},
+                # ApiPay (Kaspi): only "paid" is terminal-success (partially_refunded
+                # also maps to "paid" — money was collected). Whole tenge, major-unit.
+                "apipay":        {"paid"},
                 # Halyk ePay: only "paid" (statusName CHARGE). AUTH = held, not paid.
                 "halyk_epay":    {"paid"},
             }
