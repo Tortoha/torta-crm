@@ -27,7 +27,6 @@ const MASKED_PLACEHOLDER = '••••••••';
 // Console links per provider so merchant can quickly jump to "where do I get these keys".
 const PROVIDER_CONSOLE = {
   stripe: { url: 'https://dashboard.stripe.com/apikeys', name: 'Stripe Dashboard' },
-  kaspi_aipay: { url: 'https://cabinet.aipay.kz', name: 'AiPay Dashboard' },
   apipay: { url: 'https://apipay.kz', name: 'ApiPay Dashboard' },
   halyk_epay: { url: 'https://epayment.kz', name: 'Halyk ePay' },
   cloudpayments: { url: 'https://merchant.tiptoppay.kz', name: 'TipTop Pay Cabinet' },

@@ -3503,7 +3503,7 @@ def run_migrations():
             cur.execute("""
                 ALTER TABLE crm_organizations ADD CONSTRAINT crm_organizations_payment_provider_check
                   CHECK (payment_provider IN (
-                    'stripe','manual','other','kaspi_aipay','apipay','halyk_epay','cloudpayments','robokassa','paypal'
+                    'stripe','manual','other','apipay','halyk_epay','cloudpayments','robokassa','paypal'
                   ))
             """)
             conn.commit()
@@ -3555,7 +3555,7 @@ def run_migrations():
             cur.execute("""
                 ALTER TABLE crm_payment_credentials ADD CONSTRAINT crm_payment_credentials_provider_check
                   CHECK (provider IN (
-                    'stripe','manual','other','kaspi_aipay','apipay','halyk_epay','cloudpayments','robokassa','paypal'
+                    'stripe','manual','other','apipay','halyk_epay','cloudpayments','robokassa','paypal'
                   ))
             """)
             cur.execute("""DO $$ BEGIN
@@ -3621,20 +3621,15 @@ def run_migrations():
             cur.execute("ALTER TABLE crm_payment_methods DROP CONSTRAINT IF EXISTS crm_payment_methods_method_check")
             cur.execute("""
                 ALTER TABLE crm_payment_methods ADD CONSTRAINT crm_payment_methods_method_check
-                  CHECK (method IN ('stripe','manual','other','kaspi_aipay','apipay','halyk_epay','cloudpayments','robokassa','paypal'))
+                  CHECK (method IN ('stripe','manual','other','apipay','halyk_epay','cloudpayments','robokassa','paypal'))
             """)
             conn.commit()
 
-            # Backfill (2026-06): ensure every org has a kaspi_aipay method row so
-            # the new Kaspi (AiPay) gateway appears in Payments. Disabled by default
-            # (merchant enables it after connecting AiPay). The one-time seed below
-            # only fires for orgs with ZERO rows, so existing orgs need this explicit
-            # backfill. Idempotent.
-            cur.execute(
-                "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
-                "SELECT id, 'kaspi_aipay', FALSE, 'Kaspi', 1 FROM crm_organizations "
-                "ON CONFLICT (org_id, method) DO NOTHING"
-            )
+            # AiPay (kaspi_aipay) was removed (replaced by ApiPay) — drop any leftover
+            # seeded rows so it no longer appears in Payments. It was never live-tested,
+            # so no real orders reference it. Idempotent.
+            cur.execute("DELETE FROM crm_payment_methods WHERE method='kaspi_aipay'")
+            cur.execute("DELETE FROM crm_payment_credentials WHERE provider='kaspi_aipay'")
             cur.execute(
                 "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
                 "SELECT id, 'apipay', FALSE, 'ApiPay (Kaspi)', 2 FROM crm_organizations "
@@ -9483,16 +9478,6 @@ PROVIDER_FIELDS: dict[str, list[dict[str, Any]]] = {
          "placeholder": "whsec_…",      "secret": True,  "required": False,
          "validate_prefix": ["whsec_"]},
     ],
-    # Kaspi via AiPay (paylab.kz/api/v2). Auth = the merchant's API Key in the
-    # `x-api-key` header (AiPay dashboard → API Keys); Company ID is optional/for
-    # reference. The merchant must also have an ACTIVE POS terminal logged into
-    # their Kaspi in the AiPay dashboard.
-    "kaspi_aipay": [
-        {"key": "api_key",    "label": "AiPay API Key", "type": "password",
-         "placeholder": "",  "secret": True,  "required": True},
-        {"key": "company_id", "label": "Company ID (optional)", "type": "text",
-         "placeholder": "00000000-0000-0000-0000-000000000000", "secret": False, "required": False},
-    ],
     "apipay": [
         {"key": "api_key",        "label": "ApiPay API Key", "type": "password",
          "placeholder": "",  "secret": True,  "required": True},
@@ -9708,53 +9693,6 @@ def stripe_create_refund(creds: dict, charge_or_intent_id: str, amount_cents: in
 # manual/other are record-only). See git history. --
 
 
-# ── Kaspi via AiPay (aipay.kz) — test-connection + refund ──────────────────
-# Minimal AiPay client for the CRM side (the full payment client lives in
-# External/main.py): login → JWT, verify the merchant has a live POS terminal,
-# and full-invoice refunds. ⚠️ NOT YET LIVE-TESTED — verify in AiPay sandbox.
-_AIPAY_BASE_TEST = os.getenv("AIPAY_API_BASE_TEST", "https://dev.paylab.kz/api/v2").rstrip("/")
-_AIPAY_BASE_LIVE = os.getenv("AIPAY_API_BASE", "").rstrip("/")
-
-
-def _aipay_base(is_test_mode: bool) -> str:
-    return _AIPAY_BASE_TEST if is_test_mode else (_AIPAY_BASE_LIVE or _AIPAY_BASE_TEST)
-
-
-def aipay_test_connection(creds: dict, is_test_mode: bool) -> dict:
-    """Verify the AiPay API Key works AND there's an ACTIVE POS terminal (without
-    one, invoices can't reach customers' Kaspi apps). Auth = x-api-key header."""
-    api_key = (creds.get("api_key") or "").strip()
-    if not api_key:
-        return _err("Enter your AiPay API Key (AiPay dashboard → API Keys).")
-    r = _http_request("GET", f"{_aipay_base(is_test_mode)}/pos",
-                       headers={"Content-Type": "application/json", "x-api-key": api_key})
-    if r["status"] == 401:
-        return _err("Invalid AiPay API Key (got 401).")
-    if r["status"] != 200 or not isinstance(r["body"], dict):
-        return _ok({"note": "API Key accepted, but couldn't read POS terminals."})
-    terminals = r["body"].get("data") or []
-    active = [t for t in terminals if (t or {}).get("status") == "active"]
-    if not active:
-        return _err("API Key OK, but no ACTIVE Kaspi POS terminal found. "
-                    "Log a terminal into Kaspi in your AiPay dashboard first.")
-    return _ok({"note": f"Connected — {len(active)} active Kaspi terminal(s)."})
-
-
-def aipay_create_refund(creds: dict, invoice_id: str, is_test_mode: bool) -> dict:
-    """Full-invoice refund (AiPay has no partial refunds): PUT /invoices/{id}/refund."""
-    if not invoice_id:
-        return _err("Missing invoice id")
-    api_key = (creds.get("api_key") or "").strip()
-    if not api_key:
-        return _err("Missing AiPay API Key")
-    r = _http_request("PUT", f"{_aipay_base(is_test_mode)}/invoices/{invoice_id}/refund",
-                       headers={"Content-Type": "application/json", "x-api-key": api_key})
-    if r["status"] in (200, 202):
-        return _ok({"refund_id": invoice_id, "status": "accepted"})
-    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"AiPay refund failed (HTTP {r['status']})")
-
-
 # ── Kaspi via ApiPay (apipay.kz) — test-connection + refund ────────────────
 # Second Kaspi aggregator. Single base URL (sandbox = key/org property). Auth =
 # X-API-Key header. Test = GET /invoices (a valid key returns 200/422; 401 = bad key).
@@ -9964,7 +9902,6 @@ def test_connection(provider: str, creds: dict, *, is_test_mode: bool = True,
     if provider == "manual" or provider == "other":
         return _ok({"note": "Manual / Other providers don't have a remote check — credentials are saved as-is."})
     if provider == "stripe":         return stripe_test_connection(creds, stripe_account_id)
-    if provider == "kaspi_aipay":    return aipay_test_connection(creds, is_test_mode)
     if provider == "apipay":         return apipay_test_connection(creds, is_test_mode)
     if provider == "halyk_epay":     return halyk_test_connection(creds, is_test_mode)
     if provider == "cloudpayments":  return cloudpayments_test_connection(creds, is_test_mode)
@@ -9994,9 +9931,6 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
         amount_minor = int(round(amount * 100))
         return stripe_create_refund(creds, charge_or_intent_id, amount_minor,
                                      idempotency_key, stripe_account_id)
-    if provider == "kaspi_aipay":
-        # AiPay refunds are full-invoice only (no partial amount in the API).
-        return aipay_create_refund(creds, charge_or_intent_id, is_test_mode)
     if provider == "apipay":
         return apipay_create_refund(creds, charge_or_intent_id, is_test_mode)
     if provider == "halyk_epay":
@@ -10017,9 +9951,9 @@ def create_refund(provider: str, creds: dict, *, charge_or_intent_id: str,
 # checkout. Stripe is the online card gateway (needs connected credentials);
 # manual/other are offline (record-only) with a label + customer instructions.
 
-ALLOWED_PAY_METHODS = ("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")
+ALLOWED_PAY_METHODS = ("stripe", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")
 _PAY_METHOD_DEFAULT_LABELS = {
-    "stripe": "Card", "kaspi_aipay": "AiPay (Kaspi)", "apipay": "ApiPay (Kaspi)", "halyk_epay": "ePay (Halyk)",
+    "stripe": "Card", "apipay": "ApiPay (Kaspi)", "halyk_epay": "ePay (Halyk)",
     "cloudpayments": "CloudPayments", "robokassa": "Robokassa", "paypal": "PayPal",
     "manual": "Cash / Pay on delivery", "other": "Other",
 }
@@ -10033,7 +9967,7 @@ def _ensure_payment_methods(org_id: int) -> None:
         cur.execute("SELECT 1 FROM crm_payment_methods WHERE org_id=%s LIMIT 1", (org_id,))
         if cur.fetchone():
             return
-        for idx, m in enumerate(("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")):
+        for idx, m in enumerate(("stripe", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal", "manual", "other")):
             cur.execute(
                 "INSERT INTO crm_payment_methods"
                 "  (org_id, method, is_enabled, display_label, sort_order)"
@@ -10125,7 +10059,7 @@ def update_org_payment_method(org_id: int, method: str, body: UpdatePaymentMetho
 
     # An online gateway can only be turned on once ITS OWN credentials are
     # connected (multi-gateway: each provider is connected independently).
-    if (method in ("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
+    if (method in ("stripe", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
             and body.is_enabled and not _org_provider_connected(org_id, method)):
         raise HTTPException(400, "Connect this gateway first (add + test its API keys) "
                                   "before enabling it for checkout.")
@@ -10352,10 +10286,10 @@ def test_org_payment_credentials(org_id: int, provider: Optional[str] = None,
     # Connecting Stripe = the merchant wants card payments → auto-enable the
     # 'stripe' method (they can still toggle it off). Mirrors Shopify enabling
     # the gateway on activation.
-    if result["ok"] and row["provider"] in ("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal"):
+    if result["ok"] and row["provider"] in ("stripe", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal"):
         _ensure_payment_methods(org_id)
         with db_cursor() as (conn, cur):
-            # Upsert: orgs seeded before kaspi_aipay existed won't have its row yet.
+            # Upsert: guarantees the connected provider's method row exists + enabled.
             cur.execute(
                 "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label) "
                 "VALUES (%s, %s, TRUE, %s) "
@@ -10386,7 +10320,7 @@ def delete_org_payment_credentials(org_id: int, provider: Optional[str] = None,
             cur.execute("DELETE FROM crm_payment_credentials WHERE org_id=%s", (org_id,))
             cur.execute("UPDATE crm_payment_methods SET is_enabled=FALSE, updated_at=NOW() "
                         "WHERE org_id=%s AND method IN "
-                        "('stripe','kaspi_aipay','apipay','halyk_epay','cloudpayments','robokassa','paypal')",
+                        "('stripe','apipay','halyk_epay','cloudpayments','robokassa','paypal')",
                         (org_id,))
         # Keep the >=1-enabled invariant: if nothing is left on, fall back to manual.
         cur.execute("SELECT COUNT(*) AS c FROM crm_payment_methods "

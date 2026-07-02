@@ -443,7 +443,7 @@ export function createClient(baseUrl, publishableKey, options = {}) {
       },
       /**
        * Poll the authoritative payment status for an async push-payment provider
-       * (Kaspi via AiPay). The status is read server-to-server from the provider —
+       * (Kaspi via ApiPay). The status is read server-to-server from the provider —
        * never from client claims. Returns { ok, data: { status, paid, account_name } }.
        * @param {string} intentId - the intent/invoice id returned by initPayment()
        */

@@ -5651,128 +5651,8 @@ def stripe_parse_event(raw_body: bytes) -> dict:
     }
 
 
-# ── Kaspi via AiPay (aipay.kz / API on paylab.kz) ──────────────────────────
-# Kaspi has no public API; AiPay bridges it. This is an ASYNC push-payment,
-# NOT a card form: we create an invoice for the customer's Kaspi phone, AiPay
-# pushes a payment request into the customer's Kaspi app via the merchant's
-# logged-in POS terminal, and the customer approves inside Kaspi. We confirm
-# the payment server-to-server via GET /invoices/{id} (the webhook payload is
-# undocumented + unsigned, so we never trust it — at most a poll trigger).
-# Amounts are WHOLE TENGE (KZT), not minor units.
-#
-# Merchant credentials (stored encrypted in crm_payment_credentials): the AiPay
-# API Key (sent in the `x-api-key` header) + optional Company ID, both from the
-# AiPay dashboard → API Keys. (The old email/password→JWT model was wrong — current
-# AiPay at paylab.kz/api/v2 is x-api-key only.) The merchant must still have an
-# ACTIVE POS terminal logged into their Kaspi before any invoice can be delivered.
-#
-# ⚠️ NOT YET LIVE-TESTED — see Notes/Roadmap "AiPay" + Notes/Kaspi Integration.
-# Verify in AiPay sandbox (with a logged-in POS) before enabling for real money.
-
-_AIPAY_BASE_TEST = os.getenv("AIPAY_API_BASE_TEST", "https://dev.paylab.kz/api/v2").rstrip("/")
-_AIPAY_BASE_LIVE = os.getenv("AIPAY_API_BASE", "").rstrip("/")  # set once AiPay gives a prod URL
-
-def _aipay_base(is_test_mode: bool) -> str:
-    if is_test_mode:
-        return _AIPAY_BASE_TEST
-    # Fail closed: if a merchant flips Kaspi to LIVE but no prod base URL is
-    # configured, falling back to the sandbox would let a sandbox "paid" status
-    # mark a REAL order paid with zero money collected. Refuse instead.
-    if not _AIPAY_BASE_LIVE:
-        raise HTTPException(503,
-            "AiPay live mode is not configured (AIPAY_API_BASE unset). "
-            "Refusing to verify a live payment against the sandbox.")
-    return _AIPAY_BASE_LIVE
-
-
-def _aipay_request(method: str, path: str, creds: dict, is_test_mode: bool,
-                    *, body: bytes | None = None) -> dict:
-    """Authenticated AiPay request. Auth = the merchant's API Key in the `x-api-key`
-    header (AiPay dashboard → API Keys). The old email/password→JWT login flow is
-    gone — current AiPay (paylab.kz/api/v2) is x-api-key only."""
-    api_key = (creds.get("api_key") or "").strip()
-    if not api_key:
-        return {"status": 0, "body": {"error": {"message": "Missing AiPay API key"}}}
-    url = f"{_aipay_base(is_test_mode)}{path}"
-    headers = {"Content-Type": "application/json", "x-api-key": api_key}
-    return _http_request(method, url, headers=headers, body=body)
-
-
-# AiPay numeric status_code -> our canonical payment status. 9 = paid (terminal).
-_AIPAY_STATUS_BY_CODE = {
-    1: "created", 2: "pending", 3: "no_account", 5: "canceled",
-    7: "expired", 8: "canceled", 9: "paid", 11: "refunded", 12: "rejected",
-}
-
-
-def _aipay_canonical_status(inv: dict) -> str:
-    """Prefer the string status if present, else map the numeric status_code."""
-    s = (inv.get("status") or "").strip().lower()
-    if s:
-        return s
-    return _AIPAY_STATUS_BY_CODE.get(inv.get("status_code"), "unknown")
-
-
-def aipay_create_invoice(creds: dict, amount_tenge: int, account_phone: str,
-                          *, message: str = "", is_test_mode: bool = True) -> dict:
-    """Create a Kaspi invoice. amount_tenge is WHOLE tenge (KZT)."""
-    account = (account_phone or "").strip()
-    if not account:
-        return _err("Customer Kaspi phone number is required")
-    if int(amount_tenge) < 1:
-        return _err("Amount must be at least 1 tenge")
-    payload: dict = {"account": account[:20], "amount": int(amount_tenge)}
-    if message:
-        payload["message"] = message[:80]
-    body = json.dumps(payload).encode("utf-8")
-    r = _aipay_request("POST", "/invoices", creds, is_test_mode, body=body)
-    if r["status"] in (200, 201) and isinstance(r["body"], dict):
-        inv = r["body"].get("data") or {}
-        return _ok({
-            "intent_id": inv.get("id", ""),
-            "status":    _aipay_canonical_status(inv),
-            "ref":       inv.get("internal_id") or inv.get("ref"),
-        }, r["body"])
-    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"AiPay invoice create failed (HTTP {r['status']})",
-                r["body"] if isinstance(r["body"], dict) else {})
-
-
-def aipay_get_invoice(creds: dict, invoice_id: str, *, is_test_mode: bool = True) -> dict:
-    """Fetch invoice status server-to-server — the source of truth for 'paid'."""
-    if not invoice_id:
-        return _err("Missing invoice id")
-    r = _aipay_request("GET", f"/invoices/{invoice_id}", creds, is_test_mode)
-    if r["status"] == 200 and isinstance(r["body"], dict):
-        inv = r["body"].get("data") or {}
-        return _ok({
-            "intent_id":    inv.get("id", ""),
-            "status":       _aipay_canonical_status(inv),
-            "amount":       inv.get("amount", 0) or 0,   # whole tenge (KZT)
-            "currency":     "KZT",
-            "charge_id":    inv.get("id", ""),
-            "account_name": inv.get("account_name", ""),
-            "paid_at":      inv.get("paid_at"),
-        }, r["body"])
-    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"AiPay invoice fetch failed (HTTP {r['status']})",
-                r["body"] if isinstance(r["body"], dict) else {})
-
-
-def aipay_refund(creds: dict, invoice_id: str, *, is_test_mode: bool = True) -> dict:
-    """Refund a paid invoice (PUT /invoices/{id}/refund). Async on AiPay's side."""
-    if not invoice_id:
-        return _err("Missing invoice id")
-    r = _aipay_request("PUT", f"/invoices/{invoice_id}/refund", creds, is_test_mode)
-    if r["status"] in (200, 202) and isinstance(r["body"], dict):
-        return _ok({"result": "accepted"}, r["body"])
-    msg = (r["body"] or {}).get("error", {}).get("message", "") if isinstance(r["body"], dict) else ""
-    return _err(msg or f"AiPay refund failed (HTTP {r['status']})",
-                r["body"] if isinstance(r["body"], dict) else {})
-
-
 # ── Kaspi via ApiPay (apipay.kz / API on bpapi.bazarbay.site) ──────────────
-# A SECOND Kaspi aggregator, same async push-payment model as AiPay above: we
+# Kaspi aggregator (Kaspi has no public API; ApiPay bridges it). Async push-payment: we
 # create an invoice for the customer's Kaspi phone → ApiPay pushes a payment
 # request into their Kaspi app via the merchant's connected Kaspi cashier → the
 # customer approves in Kaspi. We confirm server-to-server via GET /invoices/{id}
@@ -6348,12 +6228,8 @@ def create_intent(provider: str, creds: dict, *, amount: float, currency: str,
                                      order_metadata=order_metadata,
                                      idempotency_key=idempotency_key,
                                      stripe_account_id=stripe_account_id)
-    if provider == "kaspi_aipay":
-        # Kaspi/AiPay needs the customer phone + runs an async push-payment flow,
-        # so the invoice is created in init_payment (which has data.phone), not here.
-        return _err("Kaspi (AiPay) payments are initialized via init-payment")
     if provider == "apipay":
-        # ApiPay (Kaspi) is the same async push flow as AiPay — invoice created in
+        # ApiPay (Kaspi) is an async push flow — the invoice is created in
         # init_payment (which has the customer's Kaspi phone), not here.
         return _err("ApiPay (Kaspi) payments are initialized via init-payment")
     if provider == "halyk_epay":
@@ -6378,8 +6254,6 @@ def get_intent(provider: str, creds: dict, *, intent_id: str,
         return _ok({"intent_id": intent_id, "status": "manual_required"})
     if provider == "stripe":
         return stripe_get_intent(creds, intent_id, stripe_account_id)
-    if provider == "kaspi_aipay":
-        return aipay_get_invoice(creds, intent_id, is_test_mode=is_test_mode)
     if provider == "apipay":
         return apipay_get_invoice(creds, intent_id)
     if provider == "halyk_epay":
@@ -6405,11 +6279,6 @@ def verify_webhook(provider: str, creds: dict, *, raw_body: bytes,
     if provider == "stripe":
         return stripe_verify_webhook(raw_body, h.get("stripe-signature", ""),
                                       creds.get("webhook_secret", ""))
-    if provider == "kaspi_aipay":
-        # AiPay webhooks are undocumented + unsigned — never trust the payload.
-        # Kaspi payments are confirmed server-to-server via GET /invoices/{id}
-        # (storefront polls payment-status; place_order re-verifies before paid).
-        return False, "AiPay webhooks are unsigned — confirmed via API, not webhook"
     if provider == "apipay":
         # ApiPay has a signed webhook, but it's handled by its own dedicated route
         # (/payments/apipay/webhook) which verifies HMAC + re-fetches status.
@@ -6478,7 +6347,7 @@ def _get_org_payment_config(project_id: int, provider: str | None = None) -> tup
 # here makes _get_enabled_payment_methods mark it `online: true` so the storefront
 # launches its gateway UI, and is the gate for strict server-side verification in
 # place_order. Keep in sync with the init_payment + place_order branches.
-_ONLINE_PAY_METHODS = ("stripe", "kaspi_aipay", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
+_ONLINE_PAY_METHODS = ("stripe", "apipay", "halyk_epay", "cloudpayments", "robokassa", "paypal")
 
 
 def _connected_online_providers(project_id: int) -> set:
@@ -6499,7 +6368,6 @@ def _connected_online_providers(project_id: int) -> set:
 # fallback) when the store currency isn't supported. Stripe/PayPal aren't listed —
 # they accept many currencies (and PayPal rejects KZT on its own side at create-order).
 _GATEWAY_CCY = {
-    "kaspi_aipay":   {"KZT"},
     "apipay":        {"KZT"},
     "halyk_epay":    {"KZT"},
     "robokassa":     {"KZT"},
@@ -6750,46 +6618,9 @@ def init_payment(data: PlaceOrderRequest, request: Request,
                        f"store currency is {_store_ccy} — falling back to manual.",
         }
 
-    # Kaspi (AiPay) — async push-payment. We have the customer phone here, so
-    # create the invoice now and tell the storefront to poll payment-status
-    # until it flips to paid. NOTE: amount is sent as WHOLE TENGE — this assumes
-    # the merchant's store currency is KZT (Kaspi only settles in tenge), so the
-    # cart-total number is already in tenge.
-    if chosen == "kaspi_aipay":
-        if provider != "kaspi_aipay" or not creds:
-            return {
-                "provider": "manual", "intent_id": "", "client_secret": "",
-                "redirect_url": "", "publishable_key": "",
-                "amount": totals["total"], "currency": totals["currency"],
-                "needs_payment_intent": False,
-                "warning": "Kaspi not connected; falling back to manual",
-            }
-        phone = clean(data.phone, 20)
-        if not phone:
-            raise HTTPException(400, "Kaspi phone number is required")
-        amount_tenge = int(round(totals["total"]))
-        res = aipay_create_invoice(
-            creds, amount_tenge, phone,
-            message=(api_key_record.get("name") or "Online order"),
-            is_test_mode=is_test_mode,
-        )
-        if not res["ok"]:
-            raise HTTPException(400, f"Kaspi payment error: {res['error']}")
-        return {
-            "provider":      "kaspi_aipay",
-            "intent_id":     res["data"].get("intent_id", ""),
-            "client_secret": "",
-            "redirect_url":  "",
-            "publishable_key": "",
-            "amount":        totals["total"],
-            "currency":      totals["currency"],
-            "needs_payment_intent": False,
-            "kaspi_poll":    True,   # storefront polls /orders/payment-status/{id}
-            "is_test_mode":  is_test_mode,
-        }
-
-    # ApiPay (Kaspi) — same async push flow as AiPay: create the invoice for the
-    # customer's Kaspi phone, the storefront then polls /orders/payment-status.
+    # ApiPay (Kaspi) — async Kaspi push: create the invoice for the customer's Kaspi
+    # phone, the storefront then polls /orders/payment-status. Amount is sent as WHOLE
+    # TENGE (Kaspi only settles in tenge; the store currency must be KZT).
     if chosen == "apipay":
         if provider != "apipay" or not creds:
             return {
@@ -7048,23 +6879,12 @@ def init_payment(data: PlaceOrderRequest, request: Request,
 @app.get("/{api_key}/orders/payment-status/{intent_id}")
 def order_payment_status(intent_id: str, request: Request,
                           api_key_record: dict = Depends(resolve_api_key)):
-    """Storefront polls this during Kaspi (AiPay) checkout until the status flips
+    """Storefront polls this during ApiPay (Kaspi) checkout until the status flips
     to paid. Reads the authoritative status server-to-server from the provider —
     we never trust client claims or unsigned webhooks for the money decision."""
     project_id = api_key_record["id"]
-    # Both Kaspi aggregators (ApiPay and AiPay) drive this async poll endpoint.
-    # Resolve whichever the store has connected (an explicit ?provider= hint wins);
-    # they're mutually-exclusive in practice — ApiPay preferred if somehow both.
-    _hint = (request.query_params.get("provider") or "").strip()
-    _candidates = [_hint] if _hint in ("apipay", "kaspi_aipay") else ["apipay", "kaspi_aipay"]
-    provider = creds = None
-    is_test_mode, stripe_account_id = True, ""
-    for _cand in _candidates:
-        _p, _c, _tm, _sa = _get_org_payment_config(project_id, _cand)
-        if _p == _cand and _c:
-            provider, creds, is_test_mode, stripe_account_id = _p, _c, _tm, _sa
-            break
-    if not provider or provider in ("manual", "other") or not creds:
+    provider, creds, is_test_mode, stripe_account_id = _get_org_payment_config(project_id, "apipay")
+    if provider != "apipay" or not creds:
         return {"status": "manual", "paid": False}
     res = get_intent(provider, creds, intent_id=intent_id,
                       is_test_mode=is_test_mode, stripe_account_id=stripe_account_id)
@@ -7658,10 +7478,6 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                 # uncaptured orders as paid and the merchant would ship for
                 # free if capture later failed.
                 "paypal":        {"COMPLETED"},
-                # Kaspi via AiPay: only "paid" (status_code 9) is terminal success.
-                # amount is whole tenge (KZT) — falls through to the major-unit
-                # branch below (no /100), so the tolerance check compares tenge↔tenge.
-                "kaspi_aipay":   {"paid"},
                 # ApiPay (Kaspi): only "paid" is terminal-success (partially_refunded
                 # also maps to "paid" — money was collected). Whole tenge, major-unit.
                 "apipay":        {"paid"},
@@ -7692,11 +7508,11 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             # total matches ANY of them (each is tied to THIS payment, so a tampered
             # cart still mismatches both); otherwise use the single normalised amount.
             amount_candidates = [float(a) for a in (v.get("amounts") or [provider_dollars])]
-            # Kaspi aggregators (AiPay / ApiPay) charge WHOLE tenge — init_payment sent
-            # int(round(total)) — so compare against the ROUNDED total, not the raw cart
-            # value. Otherwise a 349-tenge charge against a 349.30 cart reads as a
-            # mismatch and rejects an order the customer actually paid for.
-            _cmp_total = (round(float(total)) if provider in ("kaspi_aipay", "apipay")
+            # ApiPay (Kaspi) charges WHOLE tenge — init_payment sent int(round(total))
+            # — so compare against the ROUNDED total, not the raw cart value. Otherwise
+            # a 349-tenge charge against a 349.30 cart reads as a mismatch and rejects
+            # an order the customer actually paid for.
+            _cmp_total = (round(float(total)) if provider == "apipay"
                           else float(total))
             # Allow 0.02 tolerance for rounding (e.g. tax computed differently)
             if all(abs(a - _cmp_total) > 0.02 for a in amount_candidates):
