@@ -232,7 +232,7 @@ function Orders() {
                         <span className="os-info-row">
                           <Truck weight="bold" />
                           {order.carrier_name ? `${order.carrier_name}: ` : 'Tracking: '}
-                          {order.tracking_url
+                          {order.tracking_url && /^https?:\/\//i.test(order.tracking_url)
                             ? <a href={order.tracking_url} target="_blank" rel="noopener noreferrer"
                                 className="os-tracking-link">{order.tracking_number}</a>
                             : <span className="os-tracking-num">{order.tracking_number}</span>}

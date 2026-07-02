@@ -107,6 +107,22 @@ def _parse_auth_results(header_value: str) -> tuple[bool | None, bool | None]:
     return _flag("spf"), _flag("dkim")
 
 
+def _trusted_auth_results(msg) -> str | None:
+    """Return only the Authentication-Results header stamped by OUR mail host.
+    A spoofing sender can PREPEND their own Authentication-Results line, but they
+    can't forge our authserv-id — so we accept only a header whose authserv-id is
+    under tortacrm.com and ignore the rest, instead of blindly trusting whichever
+    one msg.get() happens to return first."""
+    for hv in (msg.get_all("Authentication-Results", []) or []):
+        if not hv:
+            continue
+        authserv = hv.split(";", 1)[0].strip().split()
+        authserv = authserv[0].lower() if authserv else ""
+        if authserv == "tortacrm.com" or authserv.endswith(".tortacrm.com"):
+            return hv
+    return None
+
+
 def main():
     if not INTERNAL_API_KEY:
         print("ERROR: INTERNAL_API_KEY env var not set", file=sys.stderr)
@@ -136,7 +152,7 @@ def main():
 
     from_header = msg.get("From") or ""
     text_body, html_body = _walk_bodies(msg)
-    spf_pass, dkim_pass  = _parse_auth_results(msg.get("Authentication-Results"))
+    spf_pass, dkim_pass  = _parse_auth_results(_trusted_auth_results(msg))
 
     body = {
         "message_id":  message_id,
