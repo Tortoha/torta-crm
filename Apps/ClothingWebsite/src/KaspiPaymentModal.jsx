@@ -31,6 +31,7 @@ const FAIL = {
   canceled:   "The payment was canceled.",
   rejected:   "The payment was rejected.",
   no_account: "No Kaspi account was found for this phone number.",
+  error:      "The payment couldn't be processed. Please check the number and try again.",
 };
 
 export default function KaspiPaymentModal({ intentId, amountLabel, phone, onPaid, onClose }) {

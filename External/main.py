@@ -5824,19 +5824,36 @@ def _apipay_amount(v) -> float:
 
 
 def _apipay_error_msg(body) -> str:
-    """ApiPay error bodies: {message, errors:{field:[...]}} (422) or {message}."""
+    """ApiPay error bodies: {message, errors:{field:[...]}} (422) or {message}.
+    Surface the first field error (e.g. phone_number format) so 422s are debuggable."""
     if not isinstance(body, dict):
         return ""
-    if isinstance(body.get("message"), str) and body["message"]:
-        return body["message"]
-    return body["error"] if isinstance(body.get("error"), str) else ""
+    msg = body.get("message") if isinstance(body.get("message"), str) else ""
+    errs = body.get("errors")
+    if isinstance(errs, dict) and errs:
+        first = next(iter(errs.values()))
+        detail = first[0] if isinstance(first, list) and first else (first if isinstance(first, str) else "")
+        if detail:
+            return (f"{msg}: {detail}" if msg else str(detail)).strip()
+    return msg or (body["error"] if isinstance(body.get("error"), str) else "")
+
+
+def _apipay_normalize_phone(phone: str) -> str:
+    """ApiPay's POST /invoices wants the KZ format 8XXXXXXXXXX — it does NOT accept
+    +7… . Normalize +7 / 7 / 8-prefixed input to 8 + the 10-digit subscriber number."""
+    digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+    if len(digits) == 11 and digits[0] in ("7", "8"):
+        return "8" + digits[1:]
+    if len(digits) == 10:
+        return "8" + digits
+    return digits or (phone or "").strip()
 
 
 def apipay_create_invoice(creds: dict, amount_tenge: int, phone: str,
                            *, description: str = "", external_order_id: str = "") -> dict:
     """Create a Kaspi invoice via ApiPay. amount_tenge is WHOLE tenge (KZT).
-    Phone format 8XXXXXXXXXX (ApiPay normalizes +7/7/8)."""
-    ph = (phone or "").strip()
+    Phone is normalized to ApiPay's 8XXXXXXXXXX format (it rejects +7…)."""
+    ph = _apipay_normalize_phone(phone)
     if not ph:
         return _err("Customer Kaspi phone number is required")
     if int(amount_tenge) < 1:
@@ -7675,13 +7692,19 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             # total matches ANY of them (each is tied to THIS payment, so a tampered
             # cart still mismatches both); otherwise use the single normalised amount.
             amount_candidates = [float(a) for a in (v.get("amounts") or [provider_dollars])]
+            # Kaspi aggregators (AiPay / ApiPay) charge WHOLE tenge — init_payment sent
+            # int(round(total)) — so compare against the ROUNDED total, not the raw cart
+            # value. Otherwise a 349-tenge charge against a 349.30 cart reads as a
+            # mismatch and rejects an order the customer actually paid for.
+            _cmp_total = (round(float(total)) if provider in ("kaspi_aipay", "apipay")
+                          else float(total))
             # Allow 0.02 tolerance for rounding (e.g. tax computed differently)
-            if all(abs(a - float(total)) > 0.02 for a in amount_candidates):
+            if all(abs(a - _cmp_total) > 0.02 for a in amount_candidates):
                 raise HTTPException(409,
                     f"Cart total changed since payment: provider charged {amount_candidates}, "
                     f"cart is {total}. Customer should re-init checkout.")
-            # The matched candidate (closest to the cart total) is the gross paid.
-            provider_dollars = min(amount_candidates, key=lambda a: abs(a - float(total)))
+            # The matched candidate (closest to the charged total) is the gross paid.
+            provider_dollars = min(amount_candidates, key=lambda a: abs(a - _cmp_total))
 
             pay_status      = "paid"
             pay_intent_id   = intent_id

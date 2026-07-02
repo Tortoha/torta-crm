@@ -523,7 +523,7 @@ export default function PaymentProviderPanel({ provider, orgId, method, onSaved,
                 </button>
               </div>
             ))}
-            {cabinetProj && !cabinetProj.frontend_url && (
+            {cabinetProj && cabinetRows.some(r => !r.url) && (
               <p className="auth-field-hint" style={{ marginTop: 4 }}>{t('org.payments.panel.cabinet.noSite')}</p>
             )}
           </div>
