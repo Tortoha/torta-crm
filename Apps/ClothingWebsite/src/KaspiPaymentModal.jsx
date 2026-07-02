@@ -1,6 +1,6 @@
-// Kaspi (via AiPay) payment step — an async push-payment, NOT a card form.
+// Kaspi (via ApiPay) payment step — an async push-payment, NOT a card form.
 // Opened by Checkout.jsx after client.payments.initPayment() returns
-// { kaspi_poll: true, intent_id }. AiPay has already pushed a payment request
+// { kaspi_poll: true, intent_id }. ApiPay has already pushed a payment request
 // into the customer's Kaspi app (via the merchant's POS terminal); here we just
 // wait and poll the authoritative status server-side until it flips to paid,
 // then hand the invoice id back so Checkout can POST /orders with it.

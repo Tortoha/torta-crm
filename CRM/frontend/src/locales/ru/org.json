@@ -334,7 +334,6 @@
       },
       "providers": {
         "stripe": "Глобальные платежи картами — 50+ стран, Stripe Payment Intents + Refunds API",
-        "kaspi_aipay": "Платежи Kaspi через AiPay — async-пуш в приложение Kaspi покупателя (нужен активный POS-терминал). Только KZT",
         "apipay": "Платежи Kaspi через ApiPay — async-пуш в приложение Kaspi покупателя (нужен подключённый кассир Kaspi). Только KZT",
         "halyk_epay": "Платежи картами через Halyk Bank ePay — hosted-страница (PCI-light), KZT, серверная проверка статуса",
         "cloudpayments": "Платежи картами через TipTop Pay (бывш. CloudPayments) — попап-виджет (PCI-light), KZT/RUB, Refunds API",
@@ -425,7 +424,6 @@
         "stripeUnavailable": "Stripe Connect недоступен",
         "hint": {
           "stripe": "Приём платежей картами по всему миру. Тестовые ключи работают без реальных денег.",
-          "kaspi_aipay": "Введите API Key из дашборда AiPay (раздел «API Ключи»; отправляется в заголовке x-api-key) и держите активный Kaspi POS-терминал залогиненным. Покупатель вводит телефон; AiPay шлёт запрос оплаты в его приложение Kaspi, оплату мы подтверждаем на сервере. Только KZT.",
           "apipay": "Введите API Key из дашборда ApiPay (apipay.kz → «API Ключи»; отправляется в заголовке X-API-Key) и, при желании, Webhook Secret. Подключите кассира Kaspi в дашборде ApiPay (Настройки → Авторизация Kaspi). Покупатель вводит телефон; ApiPay шлёт запрос оплаты в его приложение Kaspi, оплату мы подтверждаем на сервере. Только KZT.",
           "halyk_epay": "Введите Client ID + Secret + Terminal ID вашего Halyk ePay. Покупатель платит на hosted-странице Halyk; статус мы подтверждаем через check-status на сервере. Только KZT.",
           "cloudpayments": "Введите Public ID + API Secret из кабинета TipTop Pay (merchant.tiptoppay.kz). Покупатель платит в попап-виджете; оплату мы подтверждаем на сервере. В тестовом режиме используются ваши тестовые ключи.",

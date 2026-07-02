@@ -29,10 +29,8 @@ const CATALOG = [
   { id: 'stripe',      label: 'Stripe', iconify: 'logos:stripe', online: true },
   // beta:true — wired + unit-tested but NOT yet live-tested end-to-end (only Stripe
   // is fully verified). Shows a "Beta" pill so the merchant knows to test first.
-  { id: 'kaspi_aipay', label: 'AiPay (Kaspi)',  iconify: 'ph:wallet-fill', color: '#F14635', online: true,
-    blurb: 'Kaspi payments via AiPay', beta: true },
   { id: 'apipay', label: 'ApiPay (Kaspi)',  iconify: 'ph:wallet-fill', color: '#12B76A', online: true,
-    blurb: 'Kaspi payments via ApiPay', beta: true },
+    blurb: 'Kaspi payments via ApiPay' },
   { id: 'halyk_epay',  label: 'ePay (Halyk)', iconify: 'ph:bank-fill', color: '#0AA5A8', online: true,
     blurb: 'Card payments via Halyk Bank ePay', beta: true },
   // TipTop Pay = the rebrand of CloudPayments KZ (cloudpayments.kz → tiptoppay.kz).
