@@ -109,6 +109,10 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 SECRET_KEY            = os.getenv("SECRET_KEY",        "")
 JWT_ALGORITHM         = "HS256"
+# Per-service JWT audience — see CRM backend. Binding + verifying `aud` stops a
+# storefront token from being accepted by the CRM backend (and vice-versa) and
+# compartmentalizes a SECRET_KEY leak, since both services share the key.
+JWT_AUDIENCE          = "torta-storefront"
 # Short-lived access JWT + long-lived rotated refresh token (see CRM backend).
 ACCESS_TOKEN_MINUTES  = int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))
 REFRESH_TOKEN_DAYS    = int(os.getenv("REFRESH_TOKEN_DAYS",   "30"))
@@ -285,7 +289,13 @@ def db_all(sql, params=()):
     return _read(sql, params, many=True)
 
 
-app = FastAPI()
+app = FastAPI(
+    # Hide interactive API docs in production — no secrets leak, but the full
+    # schema broadens the recon surface for a live SaaS. Dev keeps them.
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+)
 
 
 # ── VALIDATION-ERROR FORMATTER ───────────────────────────
@@ -661,7 +671,7 @@ def validate_password(pwd: str):
         raise HTTPException(400, "Password must contain at least 1 digit")
 
 def create_token(user_id: int) -> str:
-    payload = {"sub": str(user_id),
+    payload = {"sub": str(user_id), "aud": JWT_AUDIENCE,
                "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_MINUTES)}
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
 
@@ -802,7 +812,7 @@ def get_current_user_id(request: Request) -> int:
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
-        return int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
+        return int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM], audience=JWT_AUDIENCE)["sub"])
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token expired")
     except jwt.InvalidTokenError:
@@ -862,13 +872,35 @@ def get_or_create_guest_user(request: Request, response: Response,
         pass
     return new_id
 
+# Trusted-proxy allowlist for client-IP resolution. CF-Connecting-IP /
+# X-Forwarded-For are attacker-SETTABLE headers; we honor them ONLY when the
+# immediate socket peer is a known proxy (loopback / RFC-1918 / platform edge).
+# Otherwise a direct internet client (hitting the Cloud Run URL past Cloudflare)
+# could rotate either header to spoof its IP and defeat the per-IP brute-force
+# lockouts on send-code / verify-code / forgot-password. Mirrors CRM get_ip.
+_TRUSTED_PROXY_PREFIXES = (
+    "127.",          # IPv4 loopback
+    "::1",           # IPv6 loopback
+    "10.",           # RFC 1918
+    "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.",
+    "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
+    "172.28.", "172.29.", "172.30.", "172.31.",
+    "192.168.",      # RFC 1918
+)
+
 def get_client_ip(request: Request) -> str:
-    # CloudFlare puts the real client IP in `CF-Connecting-IP`, otherwise the
-    # standard `X-Forwarded-For` chain. Falls back to the direct socket.
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip: return cf_ip.strip()
-    fwd = request.headers.get("x-forwarded-for")
-    return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+    # CF-Connecting-IP / X-Forwarded-For are honored ONLY when the direct socket
+    # peer is a trusted proxy — a direct client can otherwise spoof them to evade
+    # IP-keyed rate limits. Falls back to the raw peer address.
+    direct = request.client.host if request.client else None
+    if direct and any(direct.startswith(p) for p in _TRUSTED_PROXY_PREFIXES):
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip.strip()
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            return fwd.split(",")[0].strip() or direct
+    return direct or "unknown"
 
 
 # ── Analytics enrichment helpers ───────────────────────────────────────
@@ -1209,16 +1241,20 @@ SAFE_VIDEO_HOSTS = (
 
 def _is_safe_media_url(url):
     if not url: return False
-    u = str(url).lower()
-    if u.startswith("https://torta-crm.s3.") or "/torta-crm." in u:
-        return True
     try:
         from urllib.parse import urlparse
-        p = urlparse(u)
+        p = urlparse(str(url))
     except Exception:
         return False
     if p.scheme != "https": return False
-    return p.hostname in SAFE_VIDEO_HOSTS
+    host = (p.hostname or "").lower()
+    if not host: return False
+    # Own object storage: the bucket token must be in the HOSTNAME (S3/R2
+    # virtual-host) — NOT anywhere in the URL. The old `"/torta-crm." in u`
+    # substring let `https://evil.com/torta-crm.jpg` pass.
+    if host.startswith("torta-crm.s3.") or "torta-crm" in host:
+        return True
+    return host in SAFE_VIDEO_HOSTS
 
 
 def _resolve_active_sale(now, *layers):
@@ -2233,6 +2269,16 @@ _PRIVATE_NET_RE = _re_global.compile(
     r"^(?:127\.|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|"
     r"::1$|fc00:|fd00:|fe80:|0\.0\.0\.0)"
 )
+
+# SSRF: never follow HTTP redirects on merchant-controlled outbound fetches.
+# _url_is_safe_for_outbound validates only the INITIAL host, so a 3xx pointing at
+# an internal target (cloud metadata / localhost) would otherwise bypass it.
+# Returning None from redirect_request stops the follow (urllib raises HTTPError,
+# which every call site already catches as a failed fetch).
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirectHandler)
 def _url_is_safe_for_outbound(url: str) -> tuple:
     """SSRF guard for merchant-supplied webhook URLs, mirroring the CRM backend's
     check. MUST run at DELIVERY time (every dispatch), not only at registration —
@@ -2259,10 +2305,22 @@ def _url_is_safe_for_outbound(url: str) -> tuple:
         infos = socket.getaddrinfo(host, None)
     except Exception:
         return False, f"Could not resolve hostname '{host}'"
+    import ipaddress as _ipaddr
     for _fam, _t, _p, _c, sockaddr in infos:
         ip = sockaddr[0]
-        if _PRIVATE_NET_RE.match(ip):
-            return False, f"URL resolves to a private/loopback address ({ip})"
+        # Normalize via ipaddress so IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254),
+        # link-local, unique-local, reserved, etc. are ALL caught — a bare string
+        # regex misses the mapped/embedded forms.
+        try:
+            _ipo = _ipaddr.ip_address(ip.split("%")[0])   # strip any zone id
+            if getattr(_ipo, "ipv4_mapped", None):
+                _ipo = _ipo.ipv4_mapped
+            if (_ipo.is_private or _ipo.is_loopback or _ipo.is_link_local
+                    or _ipo.is_reserved or _ipo.is_multicast or _ipo.is_unspecified):
+                return False, f"URL resolves to a private/internal address ({ip})"
+        except ValueError:
+            if _PRIVATE_NET_RE.match(ip):
+                return False, f"URL resolves to a private/loopback address ({ip})"
     return True, ""
 
 
@@ -2413,7 +2471,7 @@ def _post_webhook_one(sub: dict, event: str, data: dict, attempt: int = 1):
             return out
     try:
         req = urllib.request.Request(target_url, data=body, headers=headers, method=method)
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _NO_REDIRECT_OPENER.open(req, timeout=10) as resp:
             text = resp.read(4096).decode("utf-8", errors="replace")
             out.update({"status": "success" if 200 <= resp.status < 300 else "failed",
                         "http_code": resp.status, "response_body": text[:2000],
@@ -2689,11 +2747,17 @@ def _build_header(branding, palette):
                 # locally hosted via External/static; skip — external can serve later
                 logo_cell = ""
             else:
-                # 5-second fetch budget; on failure fall back silently
-                with urlopen(logo_url, timeout=5) as r:
-                    logo_bytes = r.read(2_000_000)
-                logo_cell = Image(BytesIO(logo_bytes), width=28*mm, height=28*mm,
-                                   kind="proportional")
+                # SSRF guard: logo_url is merchant-controlled — validate it (and
+                # don't follow redirects) before fetching it into the PDF.
+                _lok, _ = _url_is_safe_for_outbound(logo_url)
+                if not _lok:
+                    logo_cell = ""
+                else:
+                    # 5-second fetch budget; on failure fall back silently
+                    with _NO_REDIRECT_OPENER.open(logo_url, timeout=5) as r:
+                        logo_bytes = r.read(2_000_000)
+                    logo_cell = Image(BytesIO(logo_bytes), width=28*mm, height=28*mm,
+                                       kind="proportional")
         except Exception:
             logo_cell = ""
 
@@ -3329,7 +3393,7 @@ def verify_code(request: VerifyCodeRequest, response: Response, req: Request,
     pending["attempts"] = int(pending.get("attempts", 0)) + 1
     _pv_set(project_id, email, pending,
             ttl=int(max(float(pending["expires_ts"]) - now_ts, 1)))
-    if pending["attempts"] > MAX_FAILED_ATTEMPTS:
+    if pending["attempts"] >= MAX_FAILED_ATTEMPTS:
         _pv_del(project_id, email)
         raise HTTPException(429, "Too many invalid attempts. Request a new code.")
     if not verify_otp(code, pending.get("code_hash", "")): fail("Invalid code")
@@ -3827,13 +3891,21 @@ def reset_password(request: ResetPasswordRequest, api_key_record: dict = Depends
             # Org-shared: the account's home row may live under another branch,
             # so scope the password update to the org, not this single project.
             cursor.execute(
-                "UPDATE users SET password_hash = %s WHERE email = %s AND org_id = %s",
+                "UPDATE users SET password_hash = %s WHERE email = %s AND org_id = %s RETURNING id",
                 (hash_password(request.password), token_data["email"], org_id)
             )
         else:
             cursor.execute(
-                "UPDATE users SET password_hash = %s WHERE email = %s AND project_id = %s",
+                "UPDATE users SET password_hash = %s WHERE email = %s AND project_id = %s RETURNING id",
                 (hash_password(request.password), token_data["email"], project_id)
+            )
+        _urow = cursor.fetchone()
+        # Revoke all sessions on reset so a stolen refresh token can't outlive it.
+        if _urow:
+            cursor.execute(
+                "UPDATE refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+                "WHERE user_id=%s AND revoked_at IS NULL",
+                ("password_reset", _urow["id"]),
             )
         conn.commit()
     _reset_del(token_hash)
@@ -5114,9 +5186,13 @@ def unvote_review(review_id: int, request: Request,
                    api_key_record: dict = Depends(resolve_api_key)):
     user_id = get_current_user_id(request)
     with db_cursor() as (conn, cursor):
+        # Scope the delete to THIS project's reviews (mirror the vote endpoint) so a
+        # vote row can only be removed within its own store — defense-in-depth.
         cursor.execute(
-            "DELETE FROM product_review_votes WHERE review_id=%s AND user_id=%s",
-            (review_id, user_id)
+            "DELETE FROM product_review_votes v USING product_reviews r "
+            "WHERE v.review_id=%s AND v.user_id=%s AND r.id=v.review_id "
+            "AND r.project_id=%s",
+            (review_id, user_id, api_key_record["id"])
         )
         conn.commit()
     return {"success": True}
@@ -5599,7 +5675,14 @@ _AIPAY_BASE_LIVE = os.getenv("AIPAY_API_BASE", "").rstrip("/")  # set once AiPay
 def _aipay_base(is_test_mode: bool) -> str:
     if is_test_mode:
         return _AIPAY_BASE_TEST
-    return _AIPAY_BASE_LIVE or _AIPAY_BASE_TEST
+    # Fail closed: if a merchant flips Kaspi to LIVE but no prod base URL is
+    # configured, falling back to the sandbox would let a sandbox "paid" status
+    # mark a REAL order paid with zero money collected. Refuse instead.
+    if not _AIPAY_BASE_LIVE:
+        raise HTTPException(503,
+            "AiPay live mode is not configured (AIPAY_API_BASE unset). "
+            "Refusing to verify a live payment against the sandbox.")
+    return _AIPAY_BASE_LIVE
 
 
 def _aipay_request(method: str, path: str, creds: dict, is_test_mode: bool,
@@ -6797,12 +6880,17 @@ async def halyk_postlink(api_key: str, request: Request):
     if provider == "halyk_epay" and creds:
         st = halyk_check_status(creds, invoice_id, is_test_mode=is_test_mode)
         if st["ok"] and st["data"].get("status") == "paid":
+            _amt = float(st["data"].get("amount") or 0)   # major-unit KZT
             with db_cursor() as (conn, cur):
+                # Amount guard (mirrors place_order / the generic webhook): flip to
+                # paid only when the provider amount matches the order total. `%s <= 0`
+                # skips the check if the provider reported no amount (no false-negative).
                 cur.execute(
                     "UPDATE order_history SET payment_status='paid',"
                     "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
-                    " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
-                    (proj["id"], invoice_id))
+                    " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'"
+                    "   AND (%s <= 0 OR ABS(COALESCE(total_amount, 0) - %s) <= 0.02)",
+                    (proj["id"], invoice_id, _amt, _amt))
                 conn.commit()
     return {"received": True}
 
@@ -6833,12 +6921,16 @@ async def cloudpayments_pay_webhook(api_key: str, request: Request):
     # 2) Re-fetch authoritative status (defence in depth — don't trust the payload).
     st = cloudpayments_get(creds, txn_id)
     if st["ok"] and st["data"].get("status") == "paid":
+        _amt = float(st["data"].get("amount") or 0)   # major-unit KZT
         with db_cursor() as (conn, cur):
+            # Amount guard (mirrors place_order / the generic webhook): flip to paid
+            # only when the provider amount matches the order total.
             cur.execute(
                 "UPDATE order_history SET payment_status='paid',"
                 "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
-                " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
-                (proj["id"], txn_id))
+                " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'"
+                "   AND (%s <= 0 OR ABS(COALESCE(total_amount, 0) - %s) <= 0.02)",
+                (proj["id"], txn_id, _amt, _amt))
             conn.commit()
     return {"code": 0}
 
@@ -6869,13 +6961,22 @@ async def robokassa_result(api_key: str, request: Request):
     # 2) Re-verify server-to-server (defence in depth — don't trust the callback).
     st = robokassa_opstate(creds, inv_id)
     if st["ok"] and st["data"].get("status") == "paid":
-        with db_cursor() as (conn, cur):
-            cur.execute(
-                "UPDATE order_history SET payment_status='paid',"
-                "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
-                " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
-                (proj["id"], inv_id))
-            conn.commit()
+        # Amount guard: Robokassa may report net (OutSum) OR gross (IncSum), so accept
+        # a match against ANY returned candidate (mirrors place_order). No candidates
+        # → skip the check rather than risk stranding a genuinely-paid order.
+        _cands = [float(a) for a in (st["data"].get("amounts") or [st["data"].get("amount") or 0]) if a]
+        _ord = db_one("SELECT total_amount FROM order_history WHERE project_id=%s"
+                      " AND payment_intent_id=%s AND payment_status='pending'",
+                      (proj["id"], inv_id))
+        _tot = float((_ord or {}).get("total_amount") or 0)
+        if _ord and (not _cands or any(abs(c - _tot) <= 0.02 for c in _cands)):
+            with db_cursor() as (conn, cur):
+                cur.execute(
+                    "UPDATE order_history SET payment_status='paid',"
+                    "   payment_paid_at=COALESCE(payment_paid_at, NOW()), updated_at=NOW()"
+                    " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
+                    (proj["id"], inv_id))
+                conn.commit()
     # Signature is valid (genuine Robokassa) → acknowledge with OK{InvId} so it
     # stops retrying. If OpState lagged below paid, the buyer's return to
     # /checkout/return re-verifies and places the order.
@@ -7249,6 +7350,20 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             pay_provider = "manual"   # online method chosen but gateway not connected
 
         if do_strict:
+            # Currency guard — mirrors the one in init_payment. A KZ-only gateway
+            # settles the raw cart-total NUMBER as its fixed currency (KZT/RUB), so
+            # for a store priced in anything else the amount check below would compare
+            # mismatched-currency numbers (e.g. a 50 KZT payment ≈ $0.10 vs a 50.00 USD
+            # cart, within the 0.02 tolerance) and mark the order paid for a fraction of
+            # its value. init_payment refuses to offer such a gateway, but place_order is
+            # the authoritative money decision and must NOT assume init_payment ran —
+            # a client can POST here directly. Refuse rather than mischarge.
+            _supported_ccy = _GATEWAY_CCY.get(provider)
+            if _supported_ccy and (project_currency or "").upper() not in _supported_ccy:
+                raise HTTPException(400,
+                    f"{provider} settles only in {'/'.join(sorted(_supported_ccy))}; "
+                    f"store currency is {(project_currency or '').upper()} — cannot verify "
+                    f"this payment safely. Use a matching-currency gateway.")
             intent_id = (data.payment_intent_id or "").strip()
             if not intent_id:
                 raise HTTPException(402,
@@ -7650,6 +7765,19 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
     return {"success": True, "order_id": order_id}
 
 
+def _own_project_file(url, project_id: int) -> bool:
+    """A digital-file download URL must resolve to THIS project's own storage
+    prefix (projects/{id}/…). The CRM write-time validation closes the source;
+    this is belt-and-suspenders for any row that predates it — so a field_value
+    pointing at another tenant's object can never be delivered to buyers."""
+    try:
+        from urllib.parse import urlparse
+        key = urlparse(str(url or "")).path.lstrip("/")
+    except Exception:
+        return False
+    return key.startswith(f"projects/{project_id}/")
+
+
 def _digital_downloads(project_id: int, items: list,
                        _prod_cache: dict | None = None,
                        _file_cache: dict | None = None) -> list:
@@ -7692,6 +7820,8 @@ def _digital_downloads(project_id: int, items: list,
         if _file_cache is not None:
             for pid in per_file_ids:
                 for r in _file_cache.get(pid, []):
+                    if not _own_project_file(r["field_value"], project_id):
+                        continue
                     out.append({"title": titles.get(pid) or "",
                                 "label": r["field_key"], "url": r["field_value"]})
         else:
@@ -7702,7 +7832,7 @@ def _digital_downloads(project_id: int, items: list,
                 tuple([project_id] + per_file_ids)
             )
             out += [{"title": titles.get(r["product_id"]) or "", "label": r["field_key"], "url": r["field_value"]}
-                    for r in rows]
+                    for r in rows if _own_project_file(r["field_value"], project_id)]
     return out
 
 
@@ -7714,7 +7844,7 @@ def get_my_orders(request: Request, api_key_record: dict = Depends(resolve_api_k
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
-        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
+        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM], audience=JWT_AUDIENCE)["sub"])
     except Exception:
         raise HTTPException(401, "Invalid or expired token")
 
@@ -7926,7 +8056,7 @@ def get_my_order_returns(api_key: str, order_id: int, request: Request,
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
-        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
+        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM], audience=JWT_AUDIENCE)["sub"])
     except Exception:
         raise HTTPException(401, "Invalid or expired token")
 
@@ -8104,7 +8234,7 @@ def cancel_order(api_key: str, order_id: int, request: Request,
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
-        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
+        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM], audience=JWT_AUDIENCE)["sub"])
     except Exception:
         raise HTTPException(401, "Invalid or expired token")
 
@@ -8151,7 +8281,7 @@ def request_return(api_key: str, order_id: int, body: RequestReturnBody,
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
-        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
+        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM], audience=JWT_AUDIENCE)["sub"])
     except Exception:
         raise HTTPException(401, "Invalid or expired token")
 
@@ -8288,7 +8418,7 @@ def cancel_return(api_key: str, order_id: int, return_id: int, request: Request,
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
-        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])["sub"])
+        user_id = int(jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM], audience=JWT_AUDIENCE)["sub"])
     except Exception:
         raise HTTPException(401, "Invalid or expired token")
 
@@ -8921,6 +9051,10 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
         g_id  = idinfo["sub"]
         email = idinfo["email"]
         name  = idinfo.get("name", email.split("@")[0])
+        # Google asserts email ownership; only email_verified=false (rare) is unsafe
+        # to auto-link. The response is server-to-server from Google (aud-checked),
+        # so a MISSING flag is a Google quirk, not attacker-controlled → treat as ok.
+        google_email_verified = str(idinfo.get("email_verified", "true")).lower() == "true"
     except Exception as e:
         print(f"Google verify error: {e}")
         return RedirectResponse(f"{frontend}/login?error=google_verify")
@@ -8936,6 +9070,11 @@ def _magaz_google_callback_inner(api_key, project_id, code, error, frontend, req
                            (email, scope_val))
             user = cursor.fetchone()
             if user:
+                # SECURITY: never link a Google identity onto an existing password
+                # account unless Google says the email is verified — otherwise an
+                # unverified-email Google account could take over the victim's login.
+                if not google_email_verified:
+                    return RedirectResponse(f"{frontend}/login?error=google_email_taken")
                 cursor.execute("UPDATE users SET google_id=%s WHERE id=%s", (g_id, user["id"]))
                 conn.commit()
         if not user:
@@ -9589,20 +9728,35 @@ def _oauth_finish(provider, cfg, code, client_id, client_secret,
             (provider, oid, scope_val),
         )
         user = cursor.fetchone()
-        # 4b. Try linking by email if user already registered
+        # 4b. Try linking by email onto an existing NATIVE (password) account.
         if not user and email:
             cursor.execute(
                 f"SELECT id FROM users WHERE email=%s AND {scope_sql} "
                 "AND oauth_provider IS NULL AND google_id IS NULL",
                 (email, scope_val),
             )
-            user = cursor.fetchone()
-            if user:
+            native = cursor.fetchone()
+            if native:
+                # SECURITY: only auto-link when the provider ASSERTS the email is
+                # verified — otherwise an attacker who signs up at a provider with
+                # the victim's (unverified) email would take over the victim's
+                # password account. github/bitbucket emails were already filtered to
+                # verified/confirmed above; OIDC providers expose an email_verified
+                # claim; anything without a verified signal is treated as unverified.
+                _ev = user_info.get("email_verified", user_info.get("verified_email"))
+                _email_verified = (
+                    provider in ("github", "bitbucket")
+                    or _ev is True
+                    or (isinstance(_ev, str) and _ev.lower() == "true")
+                )
+                if not _email_verified:
+                    return RedirectResponse(f"{frontend}/login?error={provider}_email_taken")
                 cursor.execute(
                     "UPDATE users SET oauth_provider=%s, oauth_provider_id=%s WHERE id=%s",
-                    (provider, oid, user["id"]),
+                    (provider, oid, native["id"]),
                 )
                 conn.commit()
+                user = native
         # 4c. Create new user
         is_new_user = False
         if not user:

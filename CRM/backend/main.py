@@ -62,6 +62,11 @@ from email_engine import (
 
 SECRET_KEY       = os.getenv("SECRET_KEY", "")
 ALGORITHM        = "HS256"
+# Per-service JWT audience. Both backends share SECRET_KEY (built so they *can*
+# cross-validate), so without an audience a token minted by one service is
+# accepted by the other — and a SECRET_KEY leak from EITHER service would forge
+# sessions for BOTH. Binding + verifying `aud` compartmentalizes them.
+JWT_AUDIENCE     = "torta-crm"
 ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))
 REFRESH_TOKEN_DAYS   = int(os.getenv("REFRESH_TOKEN_DAYS",   "30"))
 JWT_HOURS        = ACCESS_TOKEN_MINUTES / 60
@@ -373,7 +378,13 @@ def s3_ensure_cors() -> None:
         print(f"[storage] CORS setup skipped ({e}) — set it in the R2 dashboard if direct uploads 403")
 
 
-app = FastAPI()
+app = FastAPI(
+    # Hide interactive API docs in production — no secrets leak, but the full
+    # schema broadens the recon surface for a live SaaS. Dev keeps them.
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
+)
 
 
 # ── anyio threadpool size ──────────────────────────────────────────
@@ -406,7 +417,7 @@ try:
         try:
             tok = request.cookies.get("crm_token")
             if tok:
-                payload = jwt.decode(tok, SECRET_KEY, algorithms=[ALGORITHM])
+                payload = jwt.decode(tok, SECRET_KEY, algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
                 uid = payload.get("sub")
                 if uid:
                     return f"u:{uid}"
@@ -5720,7 +5731,7 @@ def get_ip(req: Request) -> str:
 
 def make_token(user_id: int) -> str:
     return jwt.encode(
-        {"sub": str(user_id), "type": "crm",
+        {"sub": str(user_id), "type": "crm", "aud": JWT_AUDIENCE,
          "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_MINUTES)},
         SECRET_KEY, algorithm=ALGORITHM,
     )
@@ -5890,7 +5901,7 @@ def get_current_user(request: Request) -> dict:
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         if payload.get("type") != "crm":
             raise HTTPException(401, "Invalid token")
         user_id = int(payload["sub"])
@@ -7735,7 +7746,7 @@ def refresh_session(request: Request, response: Response):
         raise HTTPException(401, "Invalid or expired refresh token")
     user_id, new_raw = result
     # Verify user still exists and is active (might have been deactivated)
-    if not db_one("SELECT 1 FROM crm_users WHERE id=%s AND is_active=TRUE", (user_id,)):
+    if not db_one("SELECT 1 FROM crm_users WHERE id=%s AND is_active=TRUE AND ban_level IS NULL", (user_id,)):
         clear_auth_cookies(response)
         raise HTTPException(401, "Account disabled")
     set_cookie(response, make_token(user_id))
@@ -7846,8 +7857,17 @@ def reset_password(request: ResetPasswordRequest):
     data["used"] = True
     _reset_set(h, data)
     with db_cursor() as (conn, cur):
-        cur.execute("UPDATE crm_users SET password = %s WHERE email = %s",
+        cur.execute("UPDATE crm_users SET password = %s WHERE email = %s RETURNING id",
                     (hash_pw(request.password), data["email"]))
+        _urow = cur.fetchone()
+        # Revoke every active session on reset — otherwise a thief holding a stolen
+        # refresh token keeps minting access tokens after the owner resets.
+        if _urow:
+            cur.execute(
+                "UPDATE crm_refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+                "WHERE user_id=%s AND revoked_at IS NULL",
+                (REVOKE_REASON_MANUAL, _urow["id"]),
+            )
         conn.commit()
     _reset_del(h)
     return {"success": True}
@@ -13202,7 +13222,12 @@ def _rebuild_digital_zip(project_id: int, product_id: int) -> None:
         "WHERE project_id=%s AND product_id=%s AND field_type='file' AND field_value <> ''",
         (project_id, product_id)
     )
-    keys = [k for k in (s3_key_from_url(r["field_value"]) for r in rows) if k]
+    # Defensive: only bundle files that live under THIS project's own prefix, so a
+    # field_value pointing at another tenant's object can never reach this project's
+    # buyers even if a bad value predates the write-time validation above.
+    _proj_prefix = f"projects/{project_id}/"
+    keys = [k for k in (s3_key_from_url(r["field_value"]) for r in rows)
+            if k and k.startswith(_proj_prefix)]
     if not keys:
         if prod.get("digital_zip_url"):
             _clear_digital_zip(project_id, product_id)
@@ -14154,6 +14179,13 @@ def upsert_custom_field(product_id: int, request: UpsertCustomFieldRequest, proj
         raise HTTPException(404, "Product not found")
     key = request.field_key.strip().lower().replace(" ", "_")
     if not key: raise HTTPException(400, "Field key is required")
+    # A file custom-field's value is an R2 URL that gets bundled into the digital
+    # product ZIP and delivered to buyers. Bind it to THIS project's prefix so a
+    # merchant can't point it at another tenant's object (cross-tenant file theft).
+    if request.field_type == "file" and (request.field_value or "").strip():
+        _fk = s3_key_from_url(request.field_value)
+        if not _fk or not _fk.startswith(f"projects/{project_id}/"):
+            raise HTTPException(400, "File must be uploaded to this project.")
 
     project_has_global = db_one(
         "SELECT 1 FROM product_custom_fields WHERE project_id=%s AND field_key=%s AND is_global=TRUE LIMIT 1",
@@ -16546,16 +16578,20 @@ SAFE_MEDIA_HOSTS = (
 
 def _is_safe_media_url(url: str) -> bool:
     if not url: return False
-    u = str(url).lower()
-    if u.startswith("https://torta-crm.s3.") or "/torta-crm." in u:
-        return True
     try:
         from urllib.parse import urlparse
-        p = urlparse(u)
+        p = urlparse(str(url))
     except Exception:
         return False
     if p.scheme != "https": return False
-    return p.hostname in SAFE_MEDIA_HOSTS
+    host = (p.hostname or "").lower()
+    if not host: return False
+    # Own object storage: the bucket token must be in the HOSTNAME (S3/R2
+    # virtual-host) — NOT anywhere in the URL. The old `"/torta-crm." in u`
+    # substring let `https://evil.com/torta-crm.jpg` pass.
+    if host.startswith("torta-crm.s3.") or "torta-crm" in host:
+        return True
+    return host in SAFE_MEDIA_HOSTS
 
 
 class AddMediaUrlRequest(BaseModel):
@@ -16721,6 +16757,22 @@ def presign_upload(body: PresignRequest, project_id: int = Query(...),
                   else f"projects/{project_id}/files")
         key = f"{folder}/{secrets.token_hex(16)}" + (f".{ext}" if ext else "")
     ctype = body.content_type or "application/octet-stream"
+    # Images/media are served INLINE (no attachment disposition), so restrict them to
+    # safe, non-script-capable content types — otherwise a merchant could presign an
+    # image/svg+xml (or text/html) that runs script when rendered from the CDN. The
+    # served Content-Type is the one we set here, so gating the claimed type is
+    # sufficient. Digital "file" downloads are exempt (forced attachment below + they
+    # legitimately sell arbitrary types).
+    if kind in ("image", "media"):
+        _SAFE_INLINE_TYPES = {
+            "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
+            "image/bmp", "image/x-icon",
+            "video/mp4", "video/webm", "video/quicktime", "video/ogg",
+        }
+        if ctype.split(";")[0].strip().lower() not in _SAFE_INLINE_TYPES:
+            raise HTTPException(400,
+                f"Unsupported media type '{ctype}'. Allowed: JPEG/PNG/GIF/WebP/AVIF "
+                "images and MP4/WebM/MOV/OGG video.")
     # Digital downloads: ANY file type is allowed, but forced as `attachment` so
     # it can never render/execute — it's a download from the R2 (cdn) domain,
     # not our app origin.
@@ -20173,7 +20225,7 @@ def _user_from_token(token: str) -> dict | None:
     if not token:
         return None
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         if payload.get("type") != "crm":
             return None
         user_id = int(payload["sub"])
@@ -20629,8 +20681,13 @@ def _fetch_channel_media(channel: str, ref: str, cfg: dict) -> tuple[bytes, str]
             with urllib.request.urlopen(req, timeout=10) as r:
                 meta_url = (json.loads(r.read()) or {}).get("url")
             if not meta_url: return None
+            # SSRF guard: meta_url comes from the provider response; a malicious
+            # integration config could steer it at an internal host — validate it
+            # and don't follow redirects before fetching the bytes.
+            _mok, _ = _url_is_safe_for_outbound(meta_url)
+            if not _mok: return None
             req2 = urllib.request.Request(meta_url, headers={"Authorization": f"Bearer {token}"})
-            with urllib.request.urlopen(req2, timeout=30) as r:
+            with _NO_REDIRECT_OPENER.open(req2, timeout=30) as r:
                 return r.read(), r.headers.get("Content-Type", "application/octet-stream")
         except Exception: return None
     return None
@@ -22353,11 +22410,32 @@ def _url_is_safe_for_outbound(url: str) -> tuple[bool, str]:
         infos = socket.getaddrinfo(host, None)
     except Exception:
         return False, f"Could not resolve hostname '{host}'"
+    import ipaddress as _ipaddr
     for fam, _t, _p, _c, sockaddr in infos:
         ip = sockaddr[0]
-        if _PRIVATE_NET_RE.match(ip):
-            return False, f"URL resolves to a private/loopback address ({ip})"
+        # Normalize via ipaddress so IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254),
+        # link-local, unique-local, reserved, etc. are ALL caught — a bare string
+        # regex misses the mapped/embedded forms.
+        try:
+            _ipo = _ipaddr.ip_address(ip.split("%")[0])   # strip any zone id
+            if getattr(_ipo, "ipv4_mapped", None):
+                _ipo = _ipo.ipv4_mapped
+            if (_ipo.is_private or _ipo.is_loopback or _ipo.is_link_local
+                    or _ipo.is_reserved or _ipo.is_multicast or _ipo.is_unspecified):
+                return False, f"URL resolves to a private/internal address ({ip})"
+        except ValueError:
+            if _PRIVATE_NET_RE.match(ip):
+                return False, f"URL resolves to a private/loopback address ({ip})"
     return True, ""
+
+# SSRF: never follow HTTP redirects on merchant-controlled outbound fetches.
+# _url_is_safe_for_outbound validates only the INITIAL host, so a 3xx pointing at
+# an internal target (cloud metadata / localhost) would otherwise bypass it.
+# Returning None stops the follow (urllib raises HTTPError, caught at each site).
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirectHandler)
 
 
 def _post_webhook(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
@@ -22493,7 +22571,7 @@ def _post_webhook(sub: dict, event: str, data: dict, attempt: int = 1) -> dict:
         "attempt": attempt,
     }
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _NO_REDIRECT_OPENER.open(req, timeout=10) as resp:
             response_text = resp.read(4096).decode("utf-8", errors="replace")
             out.update({
                 "status": "success" if 200 <= resp.status < 300 else "failed",
@@ -22729,10 +22807,20 @@ def _validate_api_connector(t: str, url: str, cfg: dict):
 
 def _mailchimp_dc(api_key: str) -> str:
     """Mailchimp encodes the datacenter as the suffix of the API key
-    (e.g. 'abc123-us21' → 'us21'). Returns empty string if malformed."""
+    (e.g. 'abc123-us21' → 'us21'). Returns empty string if malformed.
+
+    SECURITY: `dc` is interpolated straight into the request HOST
+    (`https://{dc}.api.mailchimp.com/...`). It MUST match the real Mailchimp
+    DC-token shape ([a-z]+[0-9]+); otherwise a crafted key like
+    'x-127.0.0.1:8001/' or 'x-169.254.169.254/x' terminates the authority and
+    redirects the request to an arbitrary internal host (SSRF + Basic-auth key
+    exfiltration). Mirrors the guard in External/main.py:_build_mailchimp."""
     if not api_key or "-" not in api_key:
         return ""
-    return api_key.rsplit("-", 1)[-1].strip()
+    dc = api_key.rsplit("-", 1)[-1].strip()
+    if not re.match(r"^[a-z]{2,}[0-9]{1,3}$", dc):
+        return ""
+    return dc
 
 
 def _mask_integration_secret(v) -> str:
@@ -22761,6 +22849,11 @@ def _redact_integration_row(d: dict) -> dict:
         if k in _INTEGRATION_SECRET_CONFIG_KEYS and cfg[k]:
             cfg[k] = _mask_integration_secret(cfg[k])
     d["config"] = cfg
+    # Mixpanel stores its project token in the `url` column (not config), so the
+    # loop above misses it — mask it explicitly. Any project team-member can read
+    # this row, and the token authorizes writing events to the merchant's project.
+    if d.get("type") == "mixpanel" and d.get("url"):
+        d["url"] = _mask_integration_secret(d["url"])
     return d
 
 
@@ -22967,6 +23060,12 @@ def integrations_update(sub_id: int, req: IntegrationUpdateRequest,
         fields.append("name=%s");  values.append(sanitize(req.name.strip())[:200])
     if req.url is not None:
         u = req.url.strip()
+        # Mixpanel's token lives in `url` and is masked on read — if the merchant
+        # left it masked (didn't retype it), keep the stored token instead of
+        # persisting the mask string.
+        if sub_type == "mixpanel" and _is_masked_secret(u):
+            _cur_row = db_one("SELECT url FROM crm_webhook_subscriptions WHERE id=%s", (sub_id,))
+            u = (_cur_row or {}).get("url") or u
         if is_accounting:
             if u and ("@" not in u or len(u) > 200):
                 raise HTTPException(400, "Recipient email looks invalid.")
@@ -23261,6 +23360,19 @@ def _accounting_filename(provider: str, period_label: str) -> str:
 
 # ── Format builders ─────────────────────────────────────
 
+def _csv_safe_cell(v):
+    """CSV formula-injection guard (CWE-1236). Excel/Sheets/LibreOffice treat a
+    cell beginning with = + - @ (or a leading tab/CR/newline) as a formula. Prefix
+    a single quote so it's read as literal text. Apply ONLY to free-text cells —
+    never to numbers/dates, or valid negative numbers would be corrupted."""
+    if v is None:
+        return ""
+    s = str(v)
+    if s and s[0] in ('=', '+', '-', '@', '\t', '\r', '\n'):
+        return "'" + s
+    return s
+
+
 def _b_1c(orders: list[dict], project_currency: str) -> bytes:
     buf = io.StringIO()
     w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_ALL, lineterminator="\r\n")
@@ -23271,8 +23383,8 @@ def _b_1c(orders: list[dict], project_currency: str) -> bytes:
         date = dt.strftime("%d.%m.%Y") if dt else ""
         w.writerow([
             date, "Заказ", str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{float(o['total_amount'] or 0):.2f}".replace(".", ","),
             (o.get("payment_currency") or project_currency or "USD").upper(),
             o.get("payment_method") or "",
@@ -23301,9 +23413,9 @@ def _b_kompra(orders: list[dict], project_currency: str) -> bytes:
         vat   = round(total - net, 2)
         w.writerow([
             str(o["id"]), date, "",  # ИИН/БИН blank — merchant fills it in Kompra
-            o.get("customer_name") or o.get("recipient_name") or "",
-            o.get("customer_email") or "",
-            o.get("phone") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
+            _csv_safe_cell(o.get("customer_email") or ""),
+            _csv_safe_cell(o.get("phone") or ""),
             f"{net:.2f}", f"{vat:.2f}", f"{total:.2f}",
             (o.get("payment_currency") or project_currency or "KZT").upper(),
             f"Заказ #{o['id']}",
@@ -23324,7 +23436,7 @@ def _b_quickbooks(orders: list[dict], project_currency: str) -> bytes:
         dt = o.get("payment_paid_at") or o["created_at"]
         date = dt.strftime("%m/%d/%Y") if dt else ""
         total = float(o["total_amount"] or 0)
-        name  = (o.get("customer_name") or o.get("recipient_name") or "Customer").replace("\t", " ")
+        name  = _csv_safe_cell((o.get("customer_name") or o.get("recipient_name") or "Customer").replace("\t", " "))
         memo  = f"Order #{o['id']}"
         lines.append(f"TRNS\t\tINVOICE\t{date}\tAccounts Receivable\t{name}\t{total:.2f}\t{o['id']}\t{memo}")
         lines.append(f"SPL\t\tINVOICE\t{date}\tSales\t{name}\t{-total:.2f}\t{o['id']}\t{memo}")
@@ -23347,8 +23459,8 @@ def _b_xero(orders: list[dict], project_currency: str) -> bytes:
         due  = (dt + timedelta(days=14)).strftime("%Y-%m-%d") if dt else ""
         total = float(o["total_amount"] or 0)
         w.writerow([
-            o.get("customer_name") or o.get("recipient_name") or "Customer",
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or "Customer"),
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"INV-{o['id']}", date, due,
             f"Order #{o['id']} ({int(o.get('items_count') or 0)} item(s))",
             "1", f"{total:.2f}",
@@ -23380,7 +23492,7 @@ def _b_datev(orders: list[dict], project_currency: str) -> bytes:
         cur   = (o.get("payment_currency") or project_currency or "EUR").upper()
         name  = (o.get("customer_name") or o.get("recipient_name") or "Kunde")[:60]
         w.writerow([amt, "S", cur, "1400", "8400", "", beleg, str(o["id"]),
-                    f"Order #{o['id']} {name}"])
+                    _csv_safe_cell(f"Order #{o['id']} {name}")])
     text = buf.getvalue()
     return text.encode("cp1252", errors="replace")
 
@@ -23403,9 +23515,9 @@ def _b_conta_azul(orders: list[dict], project_currency: str) -> bytes:
         icms  = round(total - net, 2)
         w.writerow([
             "Venda", date, str(o["id"]), "",  # CPF/CNPJ blank — merchant fills it in Conta Azul
-            o.get("customer_name") or o.get("recipient_name") or "",
-            o.get("customer_email") or "",
-            o.get("phone") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
+            _csv_safe_cell(o.get("customer_email") or ""),
+            _csv_safe_cell(o.get("phone") or ""),
             f"{net:.2f}".replace(".", ","),
             f"{icms:.2f}".replace(".", ","),
             f"{total:.2f}".replace(".", ","),
@@ -23431,9 +23543,9 @@ def _b_nibo(orders: list[dict], project_currency: str) -> bytes:
         total = float(o["total_amount"] or 0)
         w.writerow([
             str(o["id"]), date,
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # Documento — merchant fills in Nibo
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{total:.2f}".replace(".", ","),
             "0,00",
             f"{total:.2f}".replace(".", ","),
@@ -23460,9 +23572,9 @@ def _b_contpaqi(orders: list[dict], project_currency: str) -> bytes:
         iva   = round(total - subt, 2)
         w.writerow([
             str(o["id"]), date,
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # RFC — assigned in Contpaqi
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{subt:.2f}",
             f"{iva:.2f}",
             f"{total:.2f}",
@@ -23487,7 +23599,7 @@ def _b_aspel(orders: list[dict], project_currency: str) -> bytes:
         date = dt.strftime("%d/%m/%Y") if dt else ""
         total = float(o["total_amount"] or 0)
         name  = (o.get("customer_name") or o.get("recipient_name") or "Cliente")[:60]
-        memo  = f"Pedido #{o['id']} {name}"
+        memo  = _csv_safe_cell(f"Pedido #{o['id']} {name}")
         cur   = (o.get("payment_currency") or project_currency or "MXN").upper()
         w.writerow([str(o["id"]), date, memo, "105-001", f"{total:.2f}", "0.00", "01", "", cur])
         w.writerow([str(o["id"]), date, memo, "401-001", "0.00", f"{total:.2f}", "01", "", cur])
@@ -23512,7 +23624,7 @@ def _b_tally(orders: list[dict], project_currency: str) -> bytes:
         gst_half = round((total - taxable) / 2, 2)
         w.writerow([
             date, "Sales", str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # GSTIN — merchant maps in Tally
             f"{taxable:.2f}",
             f"{gst_half:.2f}",
@@ -23541,8 +23653,8 @@ def _b_zoho_books(orders: list[dict], project_currency: str) -> bytes:
         total = float(o["total_amount"] or 0)
         w.writerow([
             date, f"INV-{o['id']}",
-            o.get("customer_name") or o.get("recipient_name") or "Customer",
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or "Customer"),
+            _csv_safe_cell(o.get("customer_email") or ""),
             "consumer", "", "",
             (o.get("payment_currency") or project_currency or "INR").upper(),
             f"Order #{o['id']} ({int(o.get('items_count') or 0)} item(s))",
@@ -23569,9 +23681,9 @@ def _b_bas(orders: list[dict], project_currency: str) -> bytes:
         pdv   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # ЄДРПОУ — merchant fills in BAS
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}".replace(".", ","),
             f"{pdv:.2f}".replace(".", ","),
             f"{total:.2f}".replace(".", ","),
@@ -23598,9 +23710,9 @@ def _b_1c_uz(orders: list[dict], project_currency: str) -> bytes:
         nds   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # ИНН — merchant maps in 1C
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}".replace(".", ","),
             f"{nds:.2f}".replace(".", ","),
             f"{total:.2f}".replace(".", ","),
@@ -23628,9 +23740,9 @@ def _b_logo_tiger(orders: list[dict], project_currency: str) -> bytes:
         kdv   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]), "",  # Cari Kod auto-generated in Logo
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # VKN/TCKN — assigned in Logo
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}".replace(".", ","),
             f"{kdv:.2f}".replace(".", ","),
             f"{total:.2f}".replace(".", ","),
@@ -23657,9 +23769,9 @@ def _b_mikro_bulut(orders: list[dict], project_currency: str) -> bytes:
         kdv   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # Vergi No — assigned in Mikro
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}".replace(".", ","),
             f"{kdv:.2f}".replace(".", ","),
             f"{total:.2f}".replace(".", ","),
@@ -23686,9 +23798,9 @@ def _b_comarch(orders: list[dict], project_currency: str) -> bytes:
         vat   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # NIP — assigned in Optima
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}".replace(".", ","),
             f"{vat:.2f}".replace(".", ","),
             f"{total:.2f}".replace(".", ","),
@@ -23716,9 +23828,9 @@ def _b_ifirma(orders: list[dict], project_currency: str) -> bytes:
         vat   = round(total - net, 2)
         w.writerow([
             date, f"FV-{o['id']}",
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # NIP — assigned in iFirma
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}".replace(".", ","),
             "23%",
             f"{vat:.2f}".replace(".", ","),
@@ -23746,9 +23858,9 @@ def _b_yonyou(orders: list[dict], project_currency: str) -> bytes:
         vat   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # USCC (统一社会信用代码) — assigned in Yonyou
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}",
             f"{vat:.2f}",
             f"{total:.2f}",
@@ -23778,9 +23890,9 @@ def _b_freee(orders: list[dict], project_currency: str) -> bytes:
         tax   = round(total - net, 2)
         w.writerow([
             date,
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # 取引先コード — auto in Freee
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.0f}",  # JPY has 0 decimals
             f"{tax:.0f}",
             f"{total:.0f}",
@@ -23808,7 +23920,7 @@ def _b_money_forward(orders: list[dict], project_currency: str) -> bytes:
         cur   = (o.get("payment_currency") or project_currency or "JPY").upper()
         # JPY has 0 decimals; non-JPY currencies fall back to 2.
         amt   = f"{total:.0f}" if cur == "JPY" else f"{total:.2f}"
-        w.writerow([date, name, "売掛金", amt, "売上高", amt, cur, memo])
+        w.writerow([date, _csv_safe_cell(name), "売掛金", amt, "売上高", amt, cur, _csv_safe_cell(memo)])
     text = "﻿" + buf.getvalue()
     return text.encode("utf-8")
 
@@ -23829,9 +23941,9 @@ def _b_douzone(orders: list[dict], project_currency: str) -> bytes:
         vat   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # 사업자번호 — assigned in Douzone
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.0f}",  # KRW has 0 decimals
             f"{vat:.0f}",
             f"{total:.0f}",
@@ -23858,9 +23970,9 @@ def _b_mekari_jurnal(orders: list[dict], project_currency: str) -> bytes:
         ppn   = round(total - dpp, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # NPWP — assigned in Jurnal
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{dpp:.2f}",
             f"{ppn:.2f}",
             f"{total:.2f}",
@@ -23888,9 +24000,9 @@ def _b_flow_account(orders: list[dict], project_currency: str) -> bytes:
         vat   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # เลขประจำตัวผู้เสียภาษี — assigned in FlowAccount
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}",
             f"{vat:.2f}",
             f"{total:.2f}",
@@ -23921,9 +24033,9 @@ def _b_misa_sme(orders: list[dict], project_currency: str) -> bytes:
         fmt = "{:.0f}" if is_vnd else "{:.2f}"
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # Mã số thuế — assigned in MISA
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             fmt.format(net),
             fmt.format(vat),
             fmt.format(total),
@@ -23951,9 +24063,9 @@ def _b_sql_account(orders: list[dict], project_currency: str) -> bytes:
         sst   = round(total - net, 2)
         w.writerow([
             date, str(o["id"]),
-            o.get("customer_name") or o.get("recipient_name") or "",
+            _csv_safe_cell(o.get("customer_name") or o.get("recipient_name") or ""),
             "",  # BRN (Business Registration Number) — assigned in SQL
-            o.get("customer_email") or "",
+            _csv_safe_cell(o.get("customer_email") or ""),
             f"{net:.2f}",
             f"{sst:.2f}",
             f"{total:.2f}",
@@ -25104,8 +25216,12 @@ def email_media_delete(mid: int, project_id: int = Query(...), user: dict = Depe
         raise HTTPException(404, "Not found")
     # Best-effort: drop the R2 object + give the org its storage back.
     try:
+        # Guard: only delete (and refund storage for) an object that lives under
+        # THIS project's own prefix. email_media_add stores the url WITHOUT binding
+        # it to the project, so an unguarded s3_delete could remove another tenant's
+        # R2 object (cross-tenant deletion).
         key = s3_key_from_url(row["url"])
-        if key:
+        if key and key.startswith(f"projects/{project_id}/"):
             s3_delete(key)
             org_id = _project_org_id(project_id)
             if org_id and row.get("size"):
@@ -28591,7 +28707,7 @@ async def project_events_ws(ws: WebSocket, project_id: int):
     if not cookie:
         await ws.accept(); await ws.close(code=4401); return
     try:
-        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         user_id = int(payload.get("sub"))
     except Exception:
         await ws.accept(); await ws.close(code=4401); return
@@ -29155,7 +29271,7 @@ async def notifications_ws(ws: WebSocket):
         await ws.close(code=4401)
         return
     try:
-        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         user_id = int(payload.get("sub"))
     except Exception:
         await ws.close(code=4401)
@@ -29189,7 +29305,7 @@ async def presence_ws(ws: WebSocket):
     if not cookie:
         await ws.close(code=4401); return
     try:
-        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(cookie, SECRET_KEY, algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         user_id = int(payload.get("sub"))
     except Exception:
         await ws.close(code=4401); return
@@ -29920,6 +30036,14 @@ def admin_ban_user(
             # customers' storefronts go dark (Magaz /api/{api_key}/* lookups
             # filter by `is_active=TRUE`).
             cur.execute("UPDATE crm_projects SET is_active = FALSE WHERE crm_user_id = %s", (user_id,))
+        # Revoke all refresh tokens so the ban is an immediate hard stop — otherwise
+        # the banned user keeps minting fresh access tokens via /api/refresh (which
+        # only checked is_active, still TRUE for a ban).
+        cur.execute(
+            "UPDATE crm_refresh_tokens SET revoked_at=NOW(), revoke_reason=%s "
+            "WHERE user_id=%s AND revoked_at IS NULL",
+            (REVOKE_REASON_MANUAL, user_id),
+        )
         conn.commit()
     # Drop the cached crm_users row so get_current_user re-reads ban_level on the
     # very next request, instead of serving the still-valid cached session for up

@@ -600,7 +600,7 @@ function MessageBubble({ msg, onImageClick, onDelete, onDownloadPng, showToast }
     }] : []),
     ...(msg.attachments?.length ? [{
       icon: DownloadSimple, label: t('comms.chat.openOriginal'),
-      onClick: () => window.open(msg.attachments[0].url, '_blank'),
+      onClick: () => window.open(msg.attachments[0].url, '_blank', 'noopener,noreferrer'),
     }] : []),
     'sep',
     { icon: Trash, label: t('common.delete'), onClick: () => onDelete?.(msg.id), danger: true },
