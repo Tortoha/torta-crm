@@ -23,20 +23,24 @@
     },
     "funnel": {
       "visited": "Посетили (30 дн)",
-      "registered": "Зарегистрировались",
-      "active": "Активны (7 дн)",
-      "paid": "Платная подписка"
+      "registered": "Регистрации (30 дн)",
+      "active": "Активны (30 дн)",
+      "paid": "Платящие"
     },
     "chart": {
       "signups_one": "{{count}} регистрация",
       "signups_few": "{{count}} регистрации",
       "signups_many": "{{count}} регистраций",
-      "active": "{{count}} активных"
+      "active": "{{count}} активных",
+      "visits_one": "{{count}} посетитель",
+      "visits_few": "{{count}} посетителя",
+      "visits_many": "{{count}} посетителей"
     },
     "sections": {
       "overview": "Обзор",
       "engagement": "Вовлечённость",
       "salesFunnel": "Воронка продаж",
+      "visitsOverTime": "Посещения сайта по времени",
       "signupsOverTime": "Регистрации по времени",
       "activeUsersOverTime": "Активные пользователи по времени",
       "subscriptionPlans": "Тарифы подписки",

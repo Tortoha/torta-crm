@@ -29878,11 +29878,25 @@ def admin_stats(period: str = "30d", user: dict = Depends(get_current_user)):
          WHERE visit_day >= CURRENT_DATE - INTERVAL '30 days'
     """) or {}
 
+    # New signups in the last 30 days. The funnel is a CONSISTENT 30-day
+    # acquisition view (visited → registered → active → paying) — every stage now
+    # uses the same window instead of mixing 30d / all-time / 7d, so the stage-to-
+    # stage conversion %s are actually meaningful.
+    reg_row = db_one("""
+        SELECT COUNT(*) AS registered_30d
+          FROM crm_users
+         WHERE created_at >= NOW() - INTERVAL '30 days'
+    """) or {}
+
     funnel = [
-        {"key": "visited",    "label": "Visited (30d)",      "value": int(vis_row.get("visitors_30d") or 0)},
-        {"key": "registered", "label": "Registered",         "value": int(totals.get("users_total") or 0)},
-        {"key": "active",     "label": "Active (7d)",         "value": int(eng.get("wau") or 0)},
-        {"key": "paid",       "label": "Paid subscription",   "value": int(paid_row.get("paid_customers") or 0)},
+        {"key": "visited",    "label": "Visited (30d)",     "value": int(vis_row.get("visitors_30d") or 0)},
+        {"key": "registered", "label": "Registered (30d)",  "value": int(reg_row.get("registered_30d") or 0)},
+        {"key": "active",     "label": "Active (30d)",       "value": int(eng.get("mau") or 0)},
+        # Paid = current paying base (the funnel endpoint). We don't store a clean
+        # "first became paid" timestamp (the sub row is seeded 'free' at org creation
+        # and current_period_start rolls over monthly), so this stays a state, not a
+        # 30d event. Add a first_paid_at column if a true 30d-conversion count is wanted.
+        {"key": "paid",       "label": "Paying",            "value": int(paid_row.get("paid_customers") or 0)},
     ]
 
     # Active users per day (distinct successful logins) — the "are people coming
@@ -29899,6 +29913,24 @@ def admin_stats(period: str = "30d", user: dict = Depends(get_current_user)):
                AND created_at >= CURRENT_DATE - INTERVAL '{int(period_days) - 1} days'
              GROUP BY 1
         ) a ON a.day = d::date
+        ORDER BY day ASC
+    """)
+
+    # Landing visits per day (unique daily visitors) — "when / how many people
+    # came to the site". Rows in crm_landing_visits are already one-per-visitor-
+    # per-day (ON CONFLICT), so COUNT(DISTINCT visitor_id) per visit_day = unique
+    # visitors that day. Same gap-filled daily shape as signups / actives.
+    visits_series = db_all(f"""
+        SELECT d::date AS day, COALESCE(v.visitors, 0) AS visitors
+        FROM generate_series(
+                (CURRENT_DATE - INTERVAL '{int(period_days) - 1} days')::date,
+                CURRENT_DATE::date, INTERVAL '1 day') AS d
+        LEFT JOIN (
+            SELECT visit_day AS day, COUNT(DISTINCT visitor_id) AS visitors
+              FROM crm_landing_visits
+             WHERE visit_day >= CURRENT_DATE - INTERVAL '{int(period_days) - 1} days'
+             GROUP BY visit_day
+        ) v ON v.day = d::date
         ORDER BY day ASC
     """)
 
@@ -29921,6 +29953,7 @@ def admin_stats(period: str = "30d", user: dict = Depends(get_current_user)):
         "engagement":     engagement,
         "funnel":         funnel,
         "active_series":  active_series,
+        "visits_series":  visits_series,
         "period":         period,
     }
 

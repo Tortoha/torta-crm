@@ -23,19 +23,22 @@
     },
     "funnel": {
       "visited": "Visited (30d)",
-      "registered": "Registered",
-      "active": "Active (7d)",
-      "paid": "Paid subscription"
+      "registered": "Registered (30d)",
+      "active": "Active (30d)",
+      "paid": "Paying"
     },
     "chart": {
       "signups_one": "{{count}} signup",
       "signups_other": "{{count}} signups",
-      "active": "{{count}} active"
+      "active": "{{count}} active",
+      "visits_one": "{{count}} visitor",
+      "visits_other": "{{count}} visitors"
     },
     "sections": {
       "overview": "Overview",
       "engagement": "Engagement",
       "salesFunnel": "Sales funnel",
+      "visitsOverTime": "Site visits over time",
       "signupsOverTime": "Signups over time",
       "activeUsersOverTime": "Active users over time",
       "subscriptionPlans": "Subscription plans",
