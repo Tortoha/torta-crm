@@ -28,6 +28,7 @@ const MASKED_PLACEHOLDER = '••••••••';
 const PROVIDER_CONSOLE = {
   stripe: { url: 'https://dashboard.stripe.com/apikeys', name: 'Stripe Dashboard' },
   kaspi_aipay: { url: 'https://cabinet.aipay.kz', name: 'AiPay Dashboard' },
+  apipay: { url: 'https://apipay.kz', name: 'ApiPay Dashboard' },
   halyk_epay: { url: 'https://epayment.kz', name: 'Halyk ePay' },
   cloudpayments: { url: 'https://merchant.tiptoppay.kz', name: 'TipTop Pay Cabinet' },
   robokassa: { url: 'https://partner.robokassa.kz', name: 'Robokassa Cabinet' },
@@ -48,6 +49,15 @@ const CABINET_URLS = {
       { key: 'result',  label: 'Result URL · POST', url: `${base}/${proj.api_key}/payments/robokassa/result` },
       { key: 'success', label: 'Success URL',       url: fe ? `${fe}/checkout/return` : '' },
       { key: 'fail',    label: 'Fail URL',          url: fe ? `${fe}/checkout` : '' },
+    ];
+  },
+  // ApiPay (Kaspi): one webhook URL the merchant pastes into the ApiPay dashboard
+  // (Settings → Connection → Webhooks). Pre-filled with THIS project's api_key so
+  // the merchant never hand-types it.
+  apipay: (proj) => {
+    const base = (MAGAZ_BASE || '').replace(/\/+$/, '');
+    return [
+      { key: 'webhook', label: 'Webhook URL · POST', url: `${base}/${proj.api_key}/payments/apipay/webhook` },
     ];
   },
 };
@@ -477,7 +487,9 @@ export default function PaymentProviderPanel({ provider, orgId, method, onSaved,
           <div className="auth-field">
             <label className="auth-label">{t('org.payments.panel.cabinet.title', { name: provider.label })}</label>
             <p className="auth-field-hint">{t('org.payments.panel.cabinet.hint', { name: provider.label })}</p>
-            <p className="auth-field-hint">{t('org.payments.panel.cabinet.purpose')}</p>
+            {t('org.payments.panel.cabinet.purpose.' + providerKey, { defaultValue: '' })
+              ? <p className="auth-field-hint">{t('org.payments.panel.cabinet.purpose.' + providerKey, { defaultValue: '' })}</p>
+              : null}
             {projects.length > 1 && (
               <div style={{ marginBottom: 8 }}>
                 <Combobox

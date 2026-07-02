@@ -331,6 +331,7 @@
       "providers": {
         "stripe": "Жаһандық карта төлемдері — 50+ ел, Stripe Payment Intents + Refunds API",
         "kaspi_aipay": "AiPay арқылы Kaspi төлемдері — сатып алушының Kaspi қосымшасына async-push (белсенді POS-терминал қажет). Тек KZT",
+        "apipay": "ApiPay арқылы Kaspi төлемдері — сатып алушының Kaspi қосымшасына async-push (қосылған Kaspi кассирі қажет). Тек KZT",
         "halyk_epay": "Halyk Bank ePay арқылы карта төлемдері — hosted-бет (PCI-light), KZT, статусты серверде тексеру",
         "cloudpayments": "TipTop Pay (бұрынғы CloudPayments) арқылы карта төлемдері — попап-виджет (PCI-light), KZT/RUB, Refunds API",
         "robokassa": "Robokassa арқылы карта төлемдері — hosted редирект-бет (PCI-light), KZT, статусты серверде тексеру",
@@ -360,12 +361,16 @@
           "copy": "Көшіру",
           "copied": "Көшірілді",
           "noSite": "Success / Fail сілтемелерін толтыру үшін осы дүкеннің сайт URL-ін орнатыңыз (Authentication → URL config).",
-          "purpose": "Result URL міндетті — шлюз төлем нәтижесін сонда жібереді (POST). Success / Fail — сатып алушы төлегеннен кейін қайда оралады. Homepage — сайтыңыздың басты беті.",
+          "purpose": {
+            "robokassa": "Result URL міндетті — шлюз төлем нәтижесін сонда жібереді (POST). Success / Fail — сатып алушы төлегеннен кейін қайда оралады. Homepage — сайтыңыздың басты беті.",
+            "apipay": "Осы Webhook URL-ді ApiPay дашбордына қойыңыз (Баптаулар → Қосылу → Вебхуктар). ApiPay төлем оқиғаларын сонда жібереді. Вебхук жасағанда Webhook Secret аласыз — оны жоғарыдағы «Webhook Secret» өрісіне енгізіңіз."
+          },
           "urls": {
             "home": "Homepage URL",
             "result": "Result URL · POST",
             "success": "Success URL",
-            "fail": "Fail URL"
+            "fail": "Fail URL",
+            "webhook": "Webhook URL · POST"
           }
         },
         "loading": "Жүктелуде…",
@@ -417,6 +422,7 @@
         "hint": {
           "stripe": "Карта төлемдерін бүкіл әлемде қабылдаңыз. Сынақ режимінің кілттері нақты ақшасыз жұмыс істейді.",
           "kaspi_aipay": "AiPay дашбордынан API Key енгізіңіз («API Кілттер» бөлімі; x-api-key тақырыбында жіберіледі) және белсенді Kaspi POS-терминалын кірген күйде ұстаңыз. Сатып алушы телефонын енгізеді; AiPay төлем сұрауын оның Kaspi қосымшасына жібереді, төлемді біз серверде растаймыз. Тек KZT.",
+          "apipay": "ApiPay дашбордынан API Key енгізіңіз (apipay.kz → «API Кілттер»; X-API-Key тақырыбында жіберіледі) және қаласаңыз Webhook Secret. ApiPay дашбордында Kaspi кассирін қосыңыз (Баптаулар → Kaspi авторизациясы). Сатып алушы телефонын енгізеді; ApiPay төлем сұрауын оның Kaspi қосымшасына жібереді, төлемді біз серверде растаймыз. Тек KZT.",
           "halyk_epay": "Halyk ePay-дің Client ID + Secret + Terminal ID енгізіңіз. Сатып алушы Halyk-тің hosted-бетінде төлейді; статусты check-status арқылы серверде растаймыз. Тек KZT.",
           "cloudpayments": "TipTop Pay (merchant.tiptoppay.kz) кабинетінен Public ID + API Secret енгізіңіз. Сатып алушы попап-виджетте төлейді; төлемді біз серверде растаймыз. Сынақ режимінде сіздің сынақ кілттеріңіз қолданылады.",
           "robokassa": "Merchant login + Пароль #1 және #2 енгізіңіз (хэш алгоритмі — әдепкі md5). Robokassa кабинетінде Result URL = дүкеніңіздің …/payments/robokassa/result, Success/Fail URL = /checkout/return деп көрсетіңіз. Сатып алушы Robokassa бетінде төлейді; статусты OpState арқылы растаймыз.",

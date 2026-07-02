@@ -331,6 +331,7 @@
       "providers": {
         "stripe": "Global card payments — 50+ countries, Stripe Payment Intents + Refunds API",
         "kaspi_aipay": "Kaspi payments via AiPay — async push to the buyer's Kaspi app (needs an active POS terminal). KZT only",
+        "apipay": "Kaspi payments via ApiPay — async push to the buyer's Kaspi app (needs a connected Kaspi cashier). KZT only",
         "halyk_epay": "Card payments via Halyk Bank ePay — hosted page (PCI-light), KZT, server-verified status",
         "cloudpayments": "Card payments via TipTop Pay (ex-CloudPayments) — popup widget (PCI-light), KZT/RUB, Refunds API",
         "robokassa": "Card payments via Robokassa — hosted redirect page (PCI-light), KZT, server-verified status",
@@ -360,12 +361,16 @@
           "copy": "Copy",
           "copied": "Copied",
           "noSite": "Set this store's site URL (Authentication → URL config) to fill the Success / Fail links.",
-          "purpose": "Result URL is required — the gateway POSTs the payment result there. Success / Fail are where the buyer returns after paying. Homepage is your store's front page.",
+          "purpose": {
+            "robokassa": "Result URL is required — the gateway POSTs the payment result there. Success / Fail are where the buyer returns after paying. Homepage is your store's front page.",
+            "apipay": "Paste this Webhook URL into your ApiPay dashboard (Settings → Connection → Webhooks). ApiPay POSTs payment events there. When you create the webhook you'll get a Webhook Secret — put that in the Webhook Secret field above."
+          },
           "urls": {
             "home": "Homepage URL",
             "result": "Result URL · POST",
             "success": "Success URL",
-            "fail": "Fail URL"
+            "fail": "Fail URL",
+            "webhook": "Webhook URL · POST"
           }
         },
         "loading": "Loading…",
@@ -417,6 +422,7 @@
         "hint": {
           "stripe": "Process card payments globally. Test mode keys work without real money.",
           "kaspi_aipay": "Enter your AiPay API Key (AiPay dashboard → API Keys; sent as the x-api-key header) and keep an ACTIVE Kaspi POS terminal logged in. The buyer enters their phone; AiPay pushes the charge to their Kaspi app and we confirm server-side. KZT only.",
+          "apipay": "Enter your ApiPay API Key (apipay.kz dashboard → API Keys; sent as the X-API-Key header) and optionally the Webhook Secret. Connect your Kaspi cashier in the ApiPay dashboard (Settings → Kaspi Authorization). The buyer enters their phone; ApiPay pushes the charge to their Kaspi app and we confirm server-side. KZT only.",
           "halyk_epay": "Enter your Halyk ePay Client ID + Secret + Terminal ID. The buyer pays on Halyk's hosted page; we confirm via check-status server-side. KZT only.",
           "cloudpayments": "Enter your TipTop Pay (ex-CloudPayments) Public ID + API Secret from the cabinet (merchant.tiptoppay.kz). The buyer pays in a popup widget; we confirm the charge server-side. Test mode uses your test keys.",
           "robokassa": "Enter your Robokassa Merchant login + Password #1 and #2 (and hash algorithm — md5 by default). In your Robokassa cabinet set the Result URL to your store's …/payments/robokassa/result endpoint and the Success/Fail URLs to your store's /checkout/return. The buyer pays on Robokassa's page; we confirm via the OpState status check.",

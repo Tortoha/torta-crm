@@ -14,7 +14,7 @@ import { useOutletContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ChartLine, UsersThree, Buildings, Package, Receipt, Globe, Wallet,
-  Pulse, FunnelSimple,
+  Pulse, FunnelSimple, Eye,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import '../Style/Analytics.css';
@@ -150,6 +150,23 @@ function ActiveChart({ data }) {
   );
 }
 
+// ── Site-visits-over-time chart (unique daily visitors) ────────────────
+function VisitsChart({ data }) {
+  const { t } = useTranslation();
+  if (!data?.length) return <div className="an-chart-empty">{t('analytics.noDataPeriod')}</div>;
+  const vpb = Math.max(7, Math.min(data.length, 60));
+  return (
+    <LineChart
+      data={data}
+      valueKey="visitors"
+      dateKey="day"
+      height={300}
+      viewportBuckets={vpb}
+      formatValue={(v) => t('analytics.chart.visits', { count: Math.round(+v || 0) })}
+    />
+  );
+}
+
 // ── Sales funnel — stage bars with stage-to-stage conversion % ─────────
 function FunnelView({ stages }) {
   const { t } = useTranslation();
@@ -263,6 +280,7 @@ export default function Analytics() {
   const engagement = data?.engagement || {};
   const funnel     = data?.funnel || [];
   const activeSrs  = data?.active_series || [];
+  const visitsSrs  = data?.visits_series || [];
 
   // MRR = Σ (orgs on a plan × that plan's monthly price). Price comes from the
   // backend (real crm_subscription_plans.price_usd), so it never goes stale.
@@ -330,6 +348,13 @@ export default function Analytics() {
               <p className="an-funnel-hint">{t('analytics.funnelHint')}</p>
             )}
           </>
+        )}
+      </Section>
+
+      {/* SECTION — Site visits over time (unique daily visitors) */}
+      <Section title={t('analytics.sections.visitsOverTime')} Icon={Eye} period={period} onPeriodChange={setPeriod}>
+        {!data ? <div className="an-chart-empty">{t('common.loading')}</div> : (
+          <VisitsChart data={visitsSrs} />
         )}
       </Section>
 
