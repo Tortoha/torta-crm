@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation, Trans } from 'react-i18next';
 import { CheckCircle, SignOut, Warning } from '@phosphor-icons/react';
 import { API_BASE } from './api.js';
+import { trackSignup } from './Utils/ads.js';
 import './Style/AcceptTerms.css';
 
 const TERMS_VERSION = '1.0';
@@ -68,6 +69,11 @@ export default function AcceptTerms() {
         setErr(j.detail || 'Failed to save. Try again.');
         return;
       }
+      // Google Ads "Sign up" conversion for GOOGLE-OAuth registrations — this
+      // page is the completion point for a new Google account (the email flow
+      // fires it in Verification.jsx). terms_accepted_at was NULL to reach here
+      // and is set by the call above, so this runs exactly once per new account.
+      trackSignup();
       // Consent recorded — head straight to the dashboard.
       navigate('/dashboard', { replace: true });
     } catch {
