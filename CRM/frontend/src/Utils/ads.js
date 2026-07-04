@@ -18,25 +18,38 @@ const LABEL = {
   purchase: 'DpZSCNmW2b0cEIC5lvZD',
 };
 
-function _gtag(...args) {
-  if (typeof window === 'undefined' || typeof window.gtag !== 'function') return;
-  try { window.gtag(...args); } catch { /* never let tracking throw */ }
+// Fire a conversion, then run `onDone` once the hit is on its way. Uses gtag's
+// event_callback so a caller that navigates/reloads right after can WAIT for the
+// beacon: an immediate window.location.reload() otherwise tears the page down
+// before gtag sends the hit and the conversion is silently lost — this is why
+// "Регистрация" stayed at 0 / "Требуется действие". A timeout fallback guarantees
+// onDone still runs when gtag is blocked (ad-blocker/CSP) or never calls back, so
+// tracking can never strand the user mid-flow.
+function _fireConversion(sendTo, extra, onDone) {
+  let called = false;
+  const done = () => { if (called) return; called = true; try { onDone && onDone(); } catch { /* ignore */ } };
+  if (typeof window === 'undefined' || typeof window.gtag !== 'function') { done(); return; }
+  setTimeout(done, 1200);   // fallback: proceed even if gtag never calls back
+  try {
+    window.gtag('event', 'conversion', { send_to: sendTo, ...(extra || {}), event_callback: done });
+  } catch { done(); }
 }
 
-/** Fire the "Регистрация / Sign up" conversion — call once per new account. */
-export function trackSignup() {
-  _gtag('event', 'conversion', { send_to: `${AW_ID}/${LABEL.signup}` });
+/**
+ * Fire the "Регистрация / Sign up" conversion — call once per new account.
+ * Pass `onDone` to run AFTER the hit is sent (e.g. a navigate/reload) so the
+ * conversion isn't killed by the page tearing down.
+ */
+export function trackSignup(onDone) {
+  _fireConversion(`${AW_ID}/${LABEL.signup}`, null, onDone);
 }
 
 /**
  * Fire the "Оплата подписки / Purchase" conversion with the real plan price.
  * `value` is the amount charged (USD) so Google reports true revenue/ROAS
  * across the different plans. Caller must skip card-update transactions.
+ * Optional `onDone` runs once the hit is sent (see trackSignup).
  */
-export function trackPurchase(value, currency = 'USD') {
-  _gtag('event', 'conversion', {
-    send_to:  `${AW_ID}/${LABEL.purchase}`,
-    value:    Number(value) || 0,
-    currency,
-  });
+export function trackPurchase(value, currency = 'USD', onDone) {
+  _fireConversion(`${AW_ID}/${LABEL.purchase}`, { value: Number(value) || 0, currency }, onDone);
 }

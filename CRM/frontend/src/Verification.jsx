@@ -82,16 +82,18 @@ function Verification() {
       const data = await res.json();
 
       if (res.ok) {
-        // Google Ads "Sign up" conversion — only for a real registration.
-        // This same screen also verifies logins, which must NOT count.
-        if (localStorage.getItem("pendingVerificationType") === "register") {
-          trackSignup();
-        }
+        const wasRegister = localStorage.getItem("pendingVerificationType") === "register";
         localStorage.removeItem("pendingEmail");
         localStorage.removeItem("pendingVerificationType");
         localStorage.removeItem("pendingResendUntil");
-        navigate("/dashboard");
-        window.location.reload();
+        // Full reload so the app re-inits with the authenticated session.
+        const go = () => { navigate("/dashboard"); window.location.reload(); };
+        // Google Ads "Sign up" conversion — only for a real registration (this
+        // screen also verifies logins, which must NOT count). Fire it FIRST and
+        // let the hit send before the reload — trackSignup runs `go` via gtag's
+        // event_callback (timeout fallback inside), so the reload no longer
+        // kills the beacon and the user always proceeds.
+        if (wasRegister) trackSignup(go); else go();
       } else {
         setGeneralError(data.detail || t('auth.verify.failed'));
       }

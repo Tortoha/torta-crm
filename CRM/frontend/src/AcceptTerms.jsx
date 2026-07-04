@@ -73,9 +73,8 @@ export default function AcceptTerms() {
       // page is the completion point for a new Google account (the email flow
       // fires it in Verification.jsx). terms_accepted_at was NULL to reach here
       // and is set by the call above, so this runs exactly once per new account.
-      trackSignup();
-      // Consent recorded — head straight to the dashboard.
-      navigate('/dashboard', { replace: true });
+      // Navigate only AFTER the hit is sent (event_callback + timeout fallback).
+      trackSignup(() => navigate('/dashboard', { replace: true }));
     } catch {
       setErr(t('auth.common.networkError'));
     } finally {
