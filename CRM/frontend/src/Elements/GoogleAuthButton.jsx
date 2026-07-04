@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { API_BASE } from '../api.js';
 
 function GoogleAuthButton() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [error, setError] = useState('');
@@ -17,8 +17,11 @@ function GoogleAuthButton() {
   }, [searchParams, t]);
 
   const handleClick = () => {
+    // Carry the current UI language so a NEW Google account opens in it (an
+    // existing user is unaffected — the backend only seeds language on creation).
+    const lang = (i18n.language || "en").slice(0, 2);
     // Redirect the whole page to backend — backend redirects to Google
-    window.location.href = `${API_BASE}/api/auth/google/login`;
+    window.location.href = `${API_BASE}/api/auth/google/login?lang=${encodeURIComponent(lang)}`;
   };
 
   return (
