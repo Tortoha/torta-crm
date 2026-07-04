@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useTranslation, Trans } from 'react-i18next';
 import "./Style/Login.css";
 import { API_BASE } from "./api.js";
+import { syncLang } from "./i18n.js";
 import PasswordInput from "./Elements/PasswordInput.jsx";
 import GoogleAuthButton from "./Elements/GoogleAuthButton.jsx";
 
@@ -11,7 +12,7 @@ import GoogleAuthButton from "./Elements/GoogleAuthButton.jsx";
 const TERMS_VERSION = "1.0";
 
 function Register() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [name, setName]                     = useState("");
   const [email, setEmail]                   = useState("");
   const [password, setPassword]             = useState("");
@@ -79,6 +80,10 @@ function Register() {
       return;
     }
     setLoading(true);
+    // Language the user is registering in (the landing/form language). Sent to
+    // the backend so the new account's console opens in it, and persisted
+    // locally so a hard reload doesn't flash English before /api/me syncs.
+    const lang = (i18n.language || "en").slice(0, 2);
     try {
       const res  = await fetch(`${API_BASE}/api/send-code`, {
         method:      "POST",
@@ -88,10 +93,12 @@ function Register() {
           name, email, password, type: "register",
           terms_accepted: true,
           terms_version:  TERMS_VERSION,
+          language: lang,
         }),
       });
       const data = await res.json();
       if (res.ok) {
+        syncLang(lang);
         localStorage.setItem("pendingEmail", email);
         localStorage.setItem("pendingVerificationType", "register");
         localStorage.setItem("pendingResendUntil", String(Date.now() + Number(data.resend_available_in || 60) * 1000));

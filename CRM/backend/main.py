@@ -5218,6 +5218,10 @@ async def add_cache_headers(request, call_next):
 
 class SendCodeRequest(BaseModel):
     email: str; type: str; name: str = None; password: str = None
+    # UI language of the landing the user registered on (en/ru/kk). Carried into
+    # crm_settings.language at account creation so the console opens in the same
+    # language instead of defaulting to English.
+    language: str = None
     # Frontend sets `terms_accepted=True` after the user ticks the checkbox.
     # Required on `type="register"` only — we never re-prompt existing users.
     terms_accepted: bool = False
@@ -7324,7 +7328,16 @@ def make_slug(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")
     return slug or "org"
 
-def _upsert_google_user(g_id: str, email: str, name: str, picture: str, email_verified: bool = False) -> int:
+# CRM console UI languages (mirror of the frontend SUPPORTED_LANGS in
+# locales/languages.js). Validates a language carried from the landing so a
+# new account is created in that language instead of defaulting to English.
+_SUPPORTED_LANGS = {"en", "ru", "kk"}
+def _norm_lang(v):
+    v = (v or "").strip().lower()[:2]
+    return v if v in _SUPPORTED_LANGS else None
+
+
+def _upsert_google_user(g_id: str, email: str, name: str, picture: str, email_verified: bool = False, language: str = None) -> int:
     # 1) Returning Google user — match on the Google subject id (stable, trusted).
     user = db_one("SELECT id FROM crm_users WHERE google_id=%s", (g_id,))
     if not user:
@@ -7373,7 +7386,10 @@ def _upsert_google_user(g_id: str, email: str, name: str, picture: str, email_ve
             )
             user_id = cur.fetchone()["id"]
             conn.commit()
-            cur.execute("INSERT INTO crm_settings (crm_user_id, theme) VALUES(%s, 'system')", (user_id,))
+            # Seed the console language from the landing (carried via the OAuth
+            # ?lang cookie). NULL when absent/unsupported → old default behaviour.
+            cur.execute("INSERT INTO crm_settings (crm_user_id, theme, language) VALUES(%s, 'system', %s)",
+                        (user_id, _norm_lang(language)))
             conn.commit()
     return user_id
 
@@ -7511,6 +7527,8 @@ def send_code(body: SendCodeRequest, request: Request):
         # higher than the verify-time IP, which can be a different network).
         "terms_version":     body.terms_version,
         "terms_ip":          ip,
+        # Landing language → seeded into crm_settings.language in verify_code.
+        "language":          _norm_lang(body.language),
     })
     if not send_code_email(email, code):
         _pv_del(email)
@@ -7574,7 +7592,10 @@ def verify_code(body: VerifyCodeRequest, response: Response, request: Request):
             )
             user_id = cur.fetchone()["id"]
             conn.commit()
-            cur.execute("INSERT INTO crm_settings (crm_user_id, theme) VALUES (%s, 'system')", (user_id,))
+            # Seed console language from the landing (carried through the OTP in
+            # `pending`). NULL when absent/unsupported → old default behaviour.
+            cur.execute("INSERT INTO crm_settings (crm_user_id, theme, language) VALUES (%s, 'system', %s)",
+                        (user_id, pending.get("language")))
             conn.commit()
         else:
             row = db_one("SELECT id FROM crm_users WHERE email = %s", (email,))
@@ -16912,6 +16933,15 @@ def google_login(request: Request):
             key="crm_oa_from", value="admin", httponly=True, max_age=600,
             samesite="lax", secure=COOKIE_SECURE, path="/",
         )
+    # Carry the landing UI language through the OAuth round-trip so a NEW account
+    # is created in that language instead of English (login of an existing user
+    # is unaffected — _upsert_google_user only seeds language on creation).
+    _oa_lang = _norm_lang(request.query_params.get("lang"))
+    if _oa_lang:
+        redirect.set_cookie(
+            key="crm_oa_lang", value=_oa_lang, httponly=True, max_age=600,
+            samesite="lax", secure=COOKIE_SECURE, path="/",
+        )
     return redirect
 
 
@@ -16964,13 +16994,15 @@ def google_callback(request: Request, code: str = None, error: str = None, state
     # gets created), and we never set the auth cookies. The redirect goes
     # back to the admin login screen with an error param the UI can show.
     from_admin = (request.cookies.get("crm_oa_from") or "").lower() == "admin"
+    _oa_lang   = _norm_lang(request.cookies.get("crm_oa_lang"))
     if from_admin and email.lower() != ADMIN_LOCKED_EMAIL:
         r = RedirectResponse(f"{ADMIN_FRONTEND_URL}/login?error=admin_not_allowed", status_code=302)
         r.delete_cookie("crm_oa_state", path="/")
         r.delete_cookie("crm_oa_from",  path="/")
+        r.delete_cookie("crm_oa_lang",  path="/")
         return r
 
-    user_id   = _upsert_google_user(g_id, email, name, picture, email_verified)
+    user_id   = _upsert_google_user(g_id, email, name, picture, email_verified, language=_oa_lang)
     jwt_token = make_token(user_id)
     refresh   = issue_refresh_token(user_id, request, label="Google login")
     landing   = f"{ADMIN_FRONTEND_URL}/" if from_admin else f"{CRM_FRONTEND_URL}/dashboard"
@@ -16983,6 +17015,7 @@ def google_callback(request: Request, code: str = None, error: str = None, state
                         max_age=REFRESH_TOKEN_DAYS * 86400, path="/")
     redirect.delete_cookie("crm_oa_state", path="/")
     redirect.delete_cookie("crm_oa_from",  path="/")
+    redirect.delete_cookie("crm_oa_lang",  path="/")
     return redirect
 
 
