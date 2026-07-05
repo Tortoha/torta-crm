@@ -5257,7 +5257,7 @@ class CustomersSharingRequest(BaseModel):
 
 class CreateProjectRequest(BaseModel):
     name: str
-    frontend_url: str
+    frontend_url: str = ""   # optional — storefront URL can be added later in URL config
     # Optional — frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone`.
     # Used to seed booking_settings.timezone so customer-facing slot times match
     # the merchant's actual operating timezone from day 1.
@@ -10502,11 +10502,14 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
     if not name:          raise HTTPException(400, "Name is required")
     if len(name) > 100:   raise HTTPException(400, "Name too long (max 100)")
 
+    # Frontend URL is OPTIONAL — a project can be created without a storefront URL
+    # (the merchant can add it later in Authentication → URL configuration). If one
+    # IS supplied, still validate scheme + length.
     frontend_url = request.frontend_url.strip()
-    if not frontend_url:  raise HTTPException(400, "Frontend URL is required")
-    if not frontend_url.startswith(("http://", "https://")):
-        raise HTTPException(400, "Frontend URL must start with http:// or https://")
-    if len(frontend_url) > 500: raise HTTPException(400, "Frontend URL too long")
+    if frontend_url:
+        if not frontend_url.startswith(("http://", "https://")):
+            raise HTTPException(400, "Frontend URL must start with http:// or https://")
+        if len(frontend_url) > 500: raise HTTPException(400, "Frontend URL too long")
 
     new_key = next(
         (c for _ in range(5)
@@ -10528,8 +10531,11 @@ def create_project(org_id: int, request: CreateProjectRequest, req: Request, use
         # No per-project role row for the creator — the project creator is the
         # org owner and gets full access via _is_full_access / require_page.
         # Employees + their roles are managed at the org level (Team page).
-        cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (new_id, frontend_url))
-        cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s) ON CONFLICT DO NOTHING", (new_id, frontend_url))
+        # Always create the url_config row (frontend_url NULL when none supplied,
+        # so a later PUT just UPDATEs). Only add a redirect entry when there's a URL.
+        cur.execute("INSERT INTO crm_url_config (project_id, frontend_url) VALUES (%s,%s)", (new_id, frontend_url or None))
+        if frontend_url:
+            cur.execute("INSERT INTO crm_redirect_urls (project_id, url) VALUES (%s,%s) ON CONFLICT DO NOTHING", (new_id, frontend_url))
 
         # Seed booking_settings.timezone from the merchant's browser TZ (if supplied).
         # Without this, the default 'UTC' silently breaks slot-time intuition for the
@@ -17896,8 +17902,11 @@ def project_overview_status(project_id: int, user: dict = Depends(get_current_us
         checks.append({"key": "url_config", "labelKey": "urlConfig",
                        "status": "ok", "detailKey": "siteUrlConnected"})
     else:
+        # Frontend URL is optional at creation but still gates OAuth redirects +
+        # email links — flag an unset URL as a WARNING (yellow), not a quiet gray
+        # "info", so it's visibly actionable on the overview.
         checks.append({"key": "url_config", "labelKey": "urlConfig",
-                       "status": "info", "detailKey": "notConfigured"})
+                       "status": "warn", "detailKey": "notConfigured"})
 
     # 2. Customer Authentication — any sign-in method live for the storefront?
     methods = []

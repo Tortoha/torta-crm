@@ -93,7 +93,11 @@ function Verification() {
         // let the hit send before the reload — trackSignup runs `go` via gtag's
         // event_callback (timeout fallback inside), so the reload no longer
         // kills the beacon and the user always proceeds.
-        if (wasRegister) trackSignup(go); else go();
+        if (wasRegister) {
+          // First-time signup → tell the dashboard to auto-open "New organization".
+          sessionStorage.setItem('crm_onboard_new_org', '1');
+          trackSignup(go);
+        } else go();
       } else {
         setGeneralError(data.detail || t('auth.verify.failed'));
       }

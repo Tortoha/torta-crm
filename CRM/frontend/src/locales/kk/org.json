@@ -35,7 +35,7 @@
         "title": "Жаңа жоба",
         "nameLabel": "Атауы",
         "namePlaceholder": "Жобаның атауы",
-        "urlLabel": "Фронтенд URL",
+        "urlLabel": "Фронтенд URL (міндетті емес)",
         "urlPlaceholder": "https://your-store.com",
         "invalidUrl": "Жарамды URL енгізіңіз: http://... немесе https://...",
         "creating": "Жасалуда…",

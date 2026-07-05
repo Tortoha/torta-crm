@@ -27,7 +27,7 @@
       "modalTitle": "Жаңа жоба",
       "nameLabel": "Атауы",
       "namePlaceholder": "Жоба атауы",
-      "urlLabel": "URL",
+      "urlLabel": "URL (міндетті емес)",
       "urlPlaceholder": "Сайтыңыздың URL мекенжайы, мысалы https://shop.com"
     },
     "product": {

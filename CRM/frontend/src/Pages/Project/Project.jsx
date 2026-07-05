@@ -191,7 +191,7 @@ function StatusCard({ status }) {
   const navigate = useNavigate();
   // Where each subsystem links to when clicked.
   const ROUTES = {
-    url_config: 'authentication',
+    url_config: 'authentication?tab=urls',
     auth:       'authentication',
     alerts:     'alerts',
     inventory:  'products/inventory',
