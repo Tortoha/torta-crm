@@ -305,8 +305,9 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
   const handleSubmit = async e => {
     e.preventDefault();
     const trimName = name.trim(), trimUrl = url.trim();
-    if (!trimName)            return setErr(t('org.projects.nameRequired'));
-    if (!isValidUrl(trimUrl)) return setErr(t('org.projects.create.invalidUrl'));
+    if (!trimName)                       return setErr(t('org.projects.nameRequired'));
+    // Frontend URL is optional — only validate it when the merchant entered one.
+    if (trimUrl && !isValidUrl(trimUrl)) return setErr(t('org.projects.create.invalidUrl'));
     setSaving(true); setErr('');
     try {
       // Send merchant's browser TZ so booking_settings.timezone seeds correctly
@@ -346,7 +347,7 @@ function CreateProjectModal({ orgId, onClose, onCreated }) {
         </div>
         {err && <span className="hdr-modal-err">{err}</span>}
         <button className="hdr-modal-submit" type="submit"
-          disabled={saving || !name.trim() || !isValidUrl(url.trim())}>
+          disabled={saving || !name.trim() || (!!url.trim() && !isValidUrl(url.trim()))}>
           {saving ? t('org.projects.create.creating') : t('org.projects.create.create')}
         </button>
       </form>
@@ -510,7 +511,7 @@ function Organization() {
       )}
 
       {modal    && <CreateProjectModal orgId={org.id} onClose={() => setModal(false)}
-                     onCreated={data => setProjects(prev => [data, ...prev])} />}
+                     onCreated={data => navigate(`/project/${data.api_key}`)} />}
       {renaming && <RenameModal project={renaming} onClose={() => setRenaming(null)}
                      onSaved={u => setProjects(prev => prev.map(p => p.id === u.id ? u : p))} />}
     </>

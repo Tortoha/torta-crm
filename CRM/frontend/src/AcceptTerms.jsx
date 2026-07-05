@@ -73,6 +73,8 @@ export default function AcceptTerms() {
       // page is the completion point for a new Google account (the email flow
       // fires it in Verification.jsx). terms_accepted_at was NULL to reach here
       // and is set by the call above, so this runs exactly once per new account.
+      // First-time signup → tell the dashboard to auto-open "New organization".
+      sessionStorage.setItem('crm_onboard_new_org', '1');
       // Navigate only AFTER the hit is sent (event_callback + timeout fallback).
       trackSignup(() => navigate('/dashboard', { replace: true }));
     } catch {

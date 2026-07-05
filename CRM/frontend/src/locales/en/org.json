@@ -35,7 +35,7 @@
         "title": "New project",
         "nameLabel": "Name",
         "namePlaceholder": "Project name",
-        "urlLabel": "Frontend URL",
+        "urlLabel": "Frontend URL (optional)",
         "urlPlaceholder": "https://your-store.com",
         "invalidUrl": "Enter a valid URL: http://... or https://...",
         "creating": "Creating…",

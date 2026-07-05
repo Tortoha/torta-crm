@@ -78,6 +78,13 @@ function Dashboard() {
       // until they click through the consent screen.
       if (!u?.terms_accepted_at) { navigate('/accept-terms', { replace: true }); return; }
       setUser(u); setOrgs(Array.isArray(o) ? o : []);
+      // Just registered → auto-open "New organization" once to guide the new user
+      // straight into creating their first org. One-shot (cleared on read) and
+      // signup-only, so returning users never get the auto-prompt; still dismissible.
+      if (sessionStorage.getItem('crm_onboard_new_org')) {
+        sessionStorage.removeItem('crm_onboard_new_org');
+        setModal(true);
+      }
     })
     .catch(() => navigate('/login'))
     .finally(() => setLoading(false));
@@ -136,7 +143,7 @@ function Dashboard() {
               error:           t('dashboard.error'),
             }}
             onOrgCreated={addOrg}
-            onDone={(org, { paid }) => { closeOrgModal(); if (paid) navigate(`/org/${org.slug}`); }}
+            onDone={(org) => { closeOrgModal(); navigate(`/org/${org.slug}`); }}
           />
         </Modal>
       )}

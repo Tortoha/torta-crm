@@ -27,7 +27,7 @@
       "modalTitle": "New project",
       "nameLabel": "Name",
       "namePlaceholder": "Project name",
-      "urlLabel": "URL",
+      "urlLabel": "URL (optional)",
       "urlPlaceholder": "The URL of your website, e.g. https://shop.com"
     },
     "product": {

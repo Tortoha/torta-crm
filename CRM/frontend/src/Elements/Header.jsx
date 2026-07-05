@@ -283,8 +283,8 @@ function ProjectSwitcher({ project }) {
     const name = newName.trim();
     const url  = newUrl.trim();
     if (!name) return setErr(t('header.form.nameRequired'));
-    if (!url)  return setErr(t('header.form.frontendUrlRequired'));
-    if (!isValidUrl(url)) return setErr(t('header.form.invalidUrl'));
+    // Frontend URL is optional — only validate it when one was entered.
+    if (url && !isValidUrl(url)) return setErr(t('header.form.invalidUrl'));
     setSaving(true); setErr('');
     try {
       // Send the merchant's browser TZ so booking slot times default to their
@@ -402,7 +402,7 @@ function ProjectSwitcher({ project }) {
               />
             </div>
             {err && <span className="hdr-modal-err">{err}</span>}
-            <button className="hdr-modal-submit" type="submit" disabled={saving || !newName.trim() || !isValidUrl(newUrl.trim())}>
+            <button className="hdr-modal-submit" type="submit" disabled={saving || !newName.trim() || (!!newUrl.trim() && !isValidUrl(newUrl.trim()))}>
               {saving ? t('header.form.creating') : t('header.form.create')}
             </button>
           </form>

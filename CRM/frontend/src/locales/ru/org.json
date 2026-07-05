@@ -35,7 +35,7 @@
         "title": "Новый проект",
         "nameLabel": "Название",
         "namePlaceholder": "Название проекта",
-        "urlLabel": "URL фронтенда",
+        "urlLabel": "URL фронтенда (необязательно)",
         "urlPlaceholder": "https://your-store.com",
         "invalidUrl": "Введите корректный URL: http://... или https://...",
         "creating": "Создание…",
