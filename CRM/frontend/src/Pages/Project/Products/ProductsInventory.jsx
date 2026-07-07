@@ -357,9 +357,9 @@ function ProductsInventory() {
           <CategoryFilter value={categoryFilter} categories={categories}
             onChange={setCategoryFilter} />
           <FilterToggle value={filter} onChange={setFilter} counters={counters} />
-          <BulkReceiveButton onClick={() => setShowReceive(true)}
-            disabled={products.length === 0} />
           <BulkTransferButton onClick={() => setShowWizard(true)}
+            disabled={products.length === 0} />
+          <BulkReceiveButton onClick={() => setShowReceive(true)}
             disabled={products.length === 0} />
         </div>
       </div>

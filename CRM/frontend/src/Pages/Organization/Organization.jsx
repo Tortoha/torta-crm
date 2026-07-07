@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Plus, MagnifyingGlass, SquaresFour, List,
   DotsThreeOutline, PencilSimple, Copy, Gear, Trash,
-  ArrowDown,
+  ArrowDown, SmileyMelting, Info,
 } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
@@ -448,7 +448,20 @@ function Organization() {
 
   return (
     <>
-      <h1 className="crm-page-title org-page-title">{t('org.projects.title')}</h1>
+      <h1 className="crm-page-title org-page-title">
+        {t('org.projects.title')}
+        <span className="org-title-info">
+          <Info className="org-title-info-icon" weight="regular" />
+          <span className="org-title-tip">
+            <span className="org-title-tip-inner">
+              <span className="org-title-tip-title">{t('org.projects.info.title')}</span>
+              <span className="org-title-tip-p">{t('org.projects.info.p1')}</span>
+              <span className="org-title-tip-p">{t('org.projects.info.p2')}</span>
+              <span className="org-title-tip-p">{t('org.projects.info.p3')}</span>
+            </span>
+          </span>
+        </span>
+      </h1>
 
       <div className="org-toolbar">
         <div className="org-search-wrap">
@@ -482,11 +495,22 @@ function Organization() {
       </div>
 
       {sorted.length === 0 ? (
-        <div className="crm-placeholder">
-          {projects.length === 0
-            ? t('org.projects.empty')
-            : t('org.projects.noResults')}
-        </div>
+        projects.length === 0 ? (
+          <div className="org-empty">
+            <div className="org-empty-icon"><SmileyMelting size={32} weight="regular" /></div>
+            <h2 className="org-empty-title">{t('org.projects.emptyTitle')}</h2>
+            <p className="org-empty-text">
+              {isOwner ? t('org.projects.emptyText') : t('org.projects.emptyMember')}
+            </p>
+            {isOwner && (
+              <button className="org-new-btn" onClick={() => setModal(true)} type="button">
+                <Plus className="org-new-icon" /> {t('org.projects.emptyCreate')}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="crm-placeholder">{t('org.projects.noResults')}</div>
+        )
       ) : view === 'grid' ? (
         <div className="org-grid">
           {sorted.map(p => (
