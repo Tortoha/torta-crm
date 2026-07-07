@@ -1,7 +1,8 @@
 /* AcceptTerms — gating page shown to users with terms_accepted_at IS NULL
    (Google-OAuth sign-ups, mostly). Centred card on the page bg. Aesthetic
-   matches Login.css minus the giant form — short header + summary list +
-   two compact checkboxes + button row. No 1px borders, only theme tokens. */
+   matches Login.css minus the giant form — short header + one consent
+   checkbox + soft acceptable-use note + button row. No 1px borders, only
+   theme tokens. */
 
 .at-page {
   min-height: 100vh;
@@ -17,10 +18,10 @@
 
 .at-card {
   width: 100%;
-  max-width: 560px;
+  max-width: 420px;
   background: var(--card);
   border-radius: 24px;
-  padding: 32px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -37,7 +38,7 @@
 .at-head {
   display: flex;
   gap: 16px;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .at-icon {
@@ -45,8 +46,8 @@
   width: 48px;
   height: 48px;
   border-radius: 12px;
-  background: rgba(217, 119, 6, 0.12);
-  color: #d97706;
+  background: rgba(0, 113, 227, 0.1);
+  color: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -55,7 +56,7 @@
 .at-head-text { flex: 1; min-width: 0; }
 
 .at-title {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.015em;
@@ -67,46 +68,6 @@
   font-size: 14px;
   line-height: 1.55;
   color: var(--muted);
-}
-
-/* ── Summary block ──────────────────────────────────────────────── */
-.at-summary {
-  background: rgba(var(--fg-rgb), 0.035);
-  border-radius: 16px;
-  padding: 18px 20px;
-}
-
-.at-summary-title {
-  margin: 0 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.at-summary-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.at-summary-list li {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  color: var(--text);
-}
-
-.at-summary-list svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-  color: var(--accent);
 }
 
 /* ── Checkbox rows (re-uses the visual style from Register) ─────── */
@@ -225,22 +186,4 @@
 .at-btn--ghost:hover {
   color: var(--text);
   background: rgba(var(--fg-rgb), 0.05);
-}
-
-.at-foot {
-  margin: 4px 0 0;
-  font-size: 11px;
-  text-align: center;
-  color: rgba(var(--fg-rgb), 0.45);
-}
-
-.at-foot a {
-  color: var(--muted);
-  text-decoration: none;
-  border-bottom: 1px dotted rgba(var(--fg-rgb), 0.3);
-}
-
-.at-foot a:hover {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
 }
