@@ -4,6 +4,7 @@
       "pricing": "Pricing",
       "docs":    "Docs"
     },
+    "upgrade": "Upgrade",
     "userMenu": {
       "ariaLabel": "User menu",
       "settings": "Settings",

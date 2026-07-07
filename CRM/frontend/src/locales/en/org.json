@@ -19,6 +19,16 @@
       "inactive": "Inactive",
       "empty": "No projects yet. Create one to get started.",
       "noResults": "No projects match your search.",
+      "emptyTitle": "No projects yet",
+      "emptyText": "Let's create your first project to start connecting Torta CRM to your business.",
+      "emptyCreate": "Create your first project",
+      "emptyMember": "This organization doesn't have any projects yet.",
+      "info": {
+        "title": "What's a project?",
+        "p1": "A project is one store, website or branch you connect to Torta CRM.",
+        "p2": "An organization groups your projects — like a company with several branches in different cities or countries.",
+        "p3": "Each project is fully independent — its own products, orders, customers and currency. Change one project's currency and it won't touch the other projects or the organization's main currency."
+      },
       "table": {
         "project": "Project",
         "publicKey": "Public Key",

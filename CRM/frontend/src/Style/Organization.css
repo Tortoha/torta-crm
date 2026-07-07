@@ -198,6 +198,118 @@
 }
 
 /* ══════════════════════════════
+   EMPTY STATE (no projects yet)
+   ══════════════════════════════ */
+
+.org-empty {
+  width: 100%;
+  min-height: 300px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 56px 24px;
+  background: var(--card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.org-empty-icon {
+  width: 60px;
+  height: 60px;
+  margin-bottom: 22px;
+  border-radius: 16px;
+  background: rgba(0, 113, 227, 0.1);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.org-empty-title {
+  margin: 0 0 10px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.org-empty-text {
+  margin: 0 0 26px;
+  max-width: 400px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ── Projects-title info tooltip (hover → bubbles out of the icon) ── */
+.org-title-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
+.org-title-info-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+  cursor: help;
+  transition: color 0.15s ease;
+}
+
+.org-title-info:hover .org-title-info-icon { color: var(--text); }
+
+.org-title-tip {
+  position: absolute;
+  top: 100%;
+  left: -6px;
+  z-index: 60;
+  padding-top: 10px;               /* transparent bridge so hover survives the gap */
+  pointer-events: none;
+}
+
+.org-title-info:hover .org-title-tip { pointer-events: auto; }
+
+.org-title-tip-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 320px;
+  max-width: 80vw;
+  padding: 16px;
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+  text-align: left;
+  opacity: 0;
+  transform: scale(0.88);
+  transform-origin: top left;
+  transition: transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.16s ease;
+}
+
+.org-title-info:hover .org-title-tip-inner {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.org-title-tip-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.org-title-tip-p {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* ══════════════════════════════
    GRID VIEW
    ══════════════════════════════ */
 

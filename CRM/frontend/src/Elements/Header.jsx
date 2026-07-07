@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen, Tag, List, Stack, Code, X } from '@phosphor-icons/react';
+import { CaretDown, GearSix, SignOut, MagnifyingGlass, Plus, BookOpen, Tag, List, Stack, Code, X, ArrowUp } from '@phosphor-icons/react';
 import { API_BASE } from '../api.js';
 import Modal from './Modal.jsx';
 import CreateOrgForm from './CreateOrgForm.jsx';
@@ -906,6 +906,11 @@ function Header({ user, project, org, productContext, settingsMode, docsMode, la
   // logo ends up misaligned with the sidebar's left edge. So on docs we
   // skip the modifier even when the landing prop is on.
   const landingWide = landing && !location.pathname.startsWith('/docs');
+
+  // "Upgrade" CTA — shown only inside an org/project context that's still on Free.
+  const upgradeOrgSlug = org?.slug ?? project?.org_slug ?? '';
+  const upgradeOrgPlan = org?.plan_slug ?? project?.plan_slug ?? null;
+  const showUpgrade    = !!upgradeOrgSlug && (!upgradeOrgPlan || upgradeOrgPlan === 'free');
   // Hamburger button visible only on tablet/mobile (<1024px via CSS) — shown
   // whenever the layout passes a nav toggle. The marketing landing page has no
   // sidebar and never passes one; Docs (rendered with the landing header via
@@ -1002,6 +1007,12 @@ function Header({ user, project, org, productContext, settingsMode, docsMode, la
               </button>
             )}
             {user && <FeedbackWidget />}
+            {user && showUpgrade && (
+              <button className="hdr-upgrade-btn" onClick={() => navigate(`/org/${upgradeOrgSlug}/billing?upgrade=pro`)} type="button">
+                <ArrowUp className="hdr-upgrade-icon" weight="bold" />
+                <span className="hdr-upgrade-label">{t('header.upgrade')}</span>
+              </button>
+            )}
             {user && <NotificationsBell />}
             {user && <UserMenu user={user} project={project} />}
           </>
