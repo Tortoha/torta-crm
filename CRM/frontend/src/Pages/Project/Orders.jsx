@@ -3,13 +3,25 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { CaretDown, Package, MagnifyingGlass, List, SquaresFour, ArrowDown,
-         Receipt, ArrowUUpLeft, Printer, ShoppingCart } from '@phosphor-icons/react';
+         Receipt, ArrowUUpLeft, Printer, ShoppingCart, Warning } from '@phosphor-icons/react';
 import { API_BASE } from '../../api.js';
 import { formatMoney } from '../../Utils/currency.js';
 import MediaThumb from '../../Utils/MediaThumb.jsx';
 import { InteractiveSection } from '../../Utils/InteractiveSection.js';
 import { useInfiniteList } from '../../Utils/useInfiniteList.js';
 import { useInfiniteScroll } from '../../Utils/useInfiniteScroll.js';
+
+// Canonical gateway slug → merchant-facing name. Brands need no translation. Every ONLINE
+// provider must be listed: a missing key silently reads as "pay on delivery", which once
+// mislabelled real card charges (Kaspi/Halyk/TipTop/Robokassa/PayPal) as unpaid.
+const GATEWAY_LABEL = {
+  stripe:        'Stripe',
+  apipay:        'Kaspi (ApiPay)',
+  halyk_epay:    'ePay (Halyk)',
+  cloudpayments: 'TipTop Pay',
+  robokassa:     'Robokassa',
+  paypal:        'PayPal',
+};
 import PrintShippingLabelModal from './Products/PrintShippingLabelModal.jsx';
 import Modal from '../../Elements/Modal.jsx';
 import PosSaleModal from './PosSaleModal.jsx';
@@ -506,12 +518,12 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
               {detail.address ? ` — ${detail.address}` : ''}
             </div>
             {(() => {
-              // payment_method now stores the canonical provider (stripe/manual/other).
+              // payment_method stores the canonical provider slug — see GATEWAY_LABEL.
               const prov = detail.payment_provider || detail.payment_method || 'manual';
-              const methodLabel = prov === 'stripe' ? t('orders.modal.cardPayment')
-                : prov === 'other' ? 'Other (offline)'
-                : t('orders.modal.payOnDelivery');
+              const methodLabel = GATEWAY_LABEL[prov]
+                || (prov === 'other' ? 'Other (offline)' : t('orders.modal.payOnDelivery'));
               const ps = detail.payment_status || '';
+              // Only these two are merchant-settled; every online gateway is server-verified.
               const isOffline = prov === 'other' || prov === 'manual';
               const psLabel = ps === 'paid' ? 'Paid'
                 : ps === 'pending' ? 'Payment pending'
@@ -692,6 +704,76 @@ function Orders() {
 
 // ── Orders tab (the original orders list) ─────────────────────
 
+// ── Unclaimed payments ────────────────────────────────────────────────────────
+// Money that reached the gateway but never became an order. External's recovery path
+// normally rebuilds these automatically, so this list is empty in the happy case. A row
+// here means a real customer WAS charged and the order could not be built (stock ran out,
+// cart changed) — `last_error` says why. Deliberately loud and above the list: it's money
+// the merchant is already holding.
+const AMBER      = '#d97706';
+const AMBER_TINT = 'rgba(217,119,6,0.10)';
+
+function UnclaimedPayments({ rows }) {
+  const [copied, setCopied] = useState('');
+  const fmt = iso => (iso ? new Date(iso).toLocaleString() : '—');
+
+  return (
+    <div style={{ background: AMBER_TINT, borderRadius: 16, padding: 16, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: AMBER, fontWeight: 700 }}>
+        <Warning size={18} weight="bold" />
+        <span>
+          {rows.length === 1
+            ? '1 payment was received without an order'
+            : `${rows.length} payments were received without an order`}
+        </span>
+      </div>
+      <p style={{ margin: '6px 0 14px', fontSize: 13, lineHeight: 1.5, color: 'var(--muted)' }}>
+        The customer was charged at the payment gateway, but the order could not be created
+        automatically. Fulfil it manually, or refund the customer in your provider’s dashboard.
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {rows.map(r => (
+          <div key={r.intent_id}
+            style={{ background: 'var(--card)', borderRadius: 12, padding: '10px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 14 }}>
+                {Number(r.amount || 0).toFixed(2)} {r.currency}
+              </strong>
+              <span style={{ fontSize: 13, color: 'var(--muted)' }}>
+                {GATEWAY_LABEL[r.provider] || r.provider}
+              </span>
+              <span style={{ fontSize: 13, color: 'var(--muted)' }}>
+                {r.customer_email || r.customer_name || '—'}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 'auto' }}>
+                {fmt(r.gateway_paid_at)}
+              </span>
+              <button type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(r.intent_id);
+                  setCopied(r.intent_id);
+                  setTimeout(() => setCopied(''), 1500);
+                }}
+                style={{
+                  border: 'none', borderRadius: 999, padding: '6px 14px', fontSize: 12,
+                  cursor: 'pointer', background: 'var(--accent-tint)', color: 'var(--accent)',
+                }}>
+                {copied === r.intent_id ? 'Copied' : 'Copy payment id'}
+              </button>
+            </div>
+            {r.last_error && (
+              <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
+                {r.last_error}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OrdersTab() {
   const { t } = useTranslation();
   const { projectId, project } = useOutletContext();
@@ -713,6 +795,18 @@ function OrdersTab() {
   // bar. Same modal handles both cases.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [labelOrderIds, setLabelOrderIds] = useState(null); // [int]
+
+  // Gateway took the money, no order exists. Normally empty (External auto-recovers) —
+  // a non-empty list is money the merchant already holds and must act on.
+  const [unclaimed, setUnclaimed] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE}/api/payments/unclaimed${pq}`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : []))
+      .then(rows => { if (alive) setUnclaimed(Array.isArray(rows) ? rows : []); })
+      .catch(() => { /* never block the Orders page on this */ });
+    return () => { alive = false; };
+  }, [pq]);
 
   const toggleSelect = useCallback((orderId, on) => {
     setSelectedIds(prev => {
@@ -801,6 +895,8 @@ function OrdersTab() {
   return (
     <>
       <h1 className="crm-page-title">{t('orders.list.title')}</h1>
+
+      {unclaimed.length > 0 && <UnclaimedPayments rows={unclaimed} />}
 
       {/* ── Toolbar ── */}
       <div className="org-toolbar">
