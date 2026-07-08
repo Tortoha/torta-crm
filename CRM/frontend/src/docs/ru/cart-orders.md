@@ -73,14 +73,15 @@ const r = await client.orders.place({
   address_street: "Абая 10",
   address_apartment: "12",
   comment: "Позвонить перед приездом",
-  payment_method: "stripe",          // выбранный метод: "stripe" | "manual" | "other"
+  payment_method: "stripe",          // "stripe" | "apipay" | "halyk_epay"
+                                     // | "cloudpayments" | "robokassa" | "paypal" | "manual"
   promo_code: "SUMMER10",            // необязательно
 });
 ```
 
 > Предпочтительны структурированные поля `address_*`. Устаревшая единая строка `address` тоже работает — бэкенд соберёт её за вас.
 
-> `payment_method` — это метод, который выбрал клиент; список включённых берите из `client.config.get().payment_methods`. Для заказа картой (`stripe`) сначала запустите поток `initPayment`; офлайн-методы (`manual` / `other`) оформляются напрямую. См. [Платежи](/docs/payments-api).
+> `payment_method` — это метод, который выбрал клиент; список включённых берите из `client.config.get().payment_methods`. Любой **онлайн**-шлюз (любая запись с `online: true`) обязан сначала пройти поток `initPayment`, а полученный `payment_intent_id` передаётся сюда; напрямую оформляется только `manual`. См. [Платежи](/docs/payments-api).
 
 ## История заказов
 

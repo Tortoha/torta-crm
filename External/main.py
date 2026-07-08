@@ -7562,43 +7562,54 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
             it.get("product_type") == "digital" for it in items)
         order_status = "delivered" if is_digital_only else "new"
         # Создаём заказ
-        cursor.execute(
-            """INSERT INTO order_history
-               (project_id, user_id, total_amount, status,
-                delivery_method, recipient_name, phone, address, comment, payment_method,
-                payment_intent_id, payment_charge_id, payment_status, payment_provider,
-                payment_currency, payment_amount_paid, payment_paid_at,
-                fulfillment_type, pickup_warehouse_id,
-                address_country, address_city, address_postal_code,
-                address_street, address_apartment, address_floor,
-                address_entrance, address_intercom,
-                recipient_first_name, recipient_last_name, recipient_middle_name,
-                customer_email)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                       %s,%s,%s,%s,%s,%s, CASE WHEN %s='paid' THEN NOW() ELSE NULL END,
-                       %s,%s,
-                       %s,%s,%s,%s,%s,%s,
-                       %s,%s,
-                       %s,%s,%s,
-                       %s)
-               RETURNING id""",
-            (project_id, user_id, round(float(total), 2), order_status,
-             data.delivery_method, rn,
-             sanitize(data.phone or ""), address_str,
-             sanitize(data.comment or ""), pay_provider,
-             pay_intent_id, pay_charge_id, pay_status, pay_provider,
-             pay_currency, round(pay_amount_paid, 2), pay_status,
-             fulfillment_type, pickup_wh_id,
-             sa_country or None, sa_city or None, sa_postal or None,
-             sa_street or None, sa_apartment or None, sa_floor or None,
-             sa_entrance or None, sa_intercom or None,
-             sn_first or None, sn_last or None, sn_middle or None,
-             # customer_email — snapshot of the email at order time
-             # (the users row may later change email, but historical
-             # orders should preserve "what was sent").
-             effective_email or None)
-        )
-        order_id = cursor.fetchone()["id"]
+        try:
+            cursor.execute(
+                """INSERT INTO order_history
+                   (project_id, user_id, total_amount, status,
+                    delivery_method, recipient_name, phone, address, comment, payment_method,
+                    payment_intent_id, payment_charge_id, payment_status, payment_provider,
+                    payment_currency, payment_amount_paid, payment_paid_at,
+                    fulfillment_type, pickup_warehouse_id,
+                    address_country, address_city, address_postal_code,
+                    address_street, address_apartment, address_floor,
+                    address_entrance, address_intercom,
+                    recipient_first_name, recipient_last_name, recipient_middle_name,
+                    customer_email)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           %s,%s,%s,%s,%s,%s, CASE WHEN %s='paid' THEN NOW() ELSE NULL END,
+                           %s,%s,
+                           %s,%s,%s,%s,%s,%s,
+                           %s,%s,
+                           %s,%s,%s,
+                           %s)
+                   RETURNING id""",
+                (project_id, user_id, round(float(total), 2), order_status,
+                 data.delivery_method, rn,
+                 sanitize(data.phone or ""), address_str,
+                 sanitize(data.comment or ""), pay_provider,
+                 pay_intent_id, pay_charge_id, pay_status, pay_provider,
+                 pay_currency, round(pay_amount_paid, 2), pay_status,
+                 fulfillment_type, pickup_wh_id,
+                 sa_country or None, sa_city or None, sa_postal or None,
+                 sa_street or None, sa_apartment or None, sa_floor or None,
+                 sa_entrance or None, sa_intercom or None,
+                 sn_first or None, sn_last or None, sn_middle or None,
+                 # customer_email — snapshot of the email at order time
+                 # (the users row may later change email, but historical
+                 # orders should preserve "what was sent").
+                 effective_email or None)
+            )
+            order_id = cursor.fetchone()["id"]
+        except psycopg2.errors.UniqueViolation as _uv:
+            # Race-proof backstop behind the SELECT-then-INSERT guard above. The partial
+            # UNIQUE index idx_order_history_intent_uniq(project_id, payment_intent_id)
+            # lets only ONE of two concurrent POST /orders carrying the same intent win —
+            # one payment can never become two orders. db_cursor() rolls the transaction
+            # back for us; surface the same clean 409 the pre-check would have, not a 500.
+            _ix = getattr(getattr(_uv, "diag", None), "constraint_name", "") or ""
+            if _ix == "idx_order_history_intent_uniq" or pay_intent_id:
+                raise HTTPException(409, f"Intent {pay_intent_id} already used for an order")
+            raise
 
         # ── Auto-save address (silent default) ─────────────────────
         if (fulfillment_type == "courier"

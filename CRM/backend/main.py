@@ -3771,6 +3771,23 @@ def run_migrations():
                 EXCEPTION WHEN unique_violation THEN
                   RAISE NOTICE 'idx_order_history_intent_uniq: duplicate payment_intent_id rows exist — skipped';
                 END $$;""")
+            # The DO$$ above swallows the failure so a legacy duplicate can't abort the
+            # whole migration — but a MISSING money-path guard must never be silent
+            # (without it one payment can become two orders). Verify and shout.
+            cur.execute("SELECT to_regclass('public.idx_order_history_intent_uniq') "
+                        "IS NOT NULL AS present")
+            _row = cur.fetchone()
+            _present = (_row.get("present") if isinstance(_row, dict) else _row[0]) if _row else False
+            if not _present:
+                cur.execute("""SELECT project_id, payment_intent_id, COUNT(*) AS c
+                                 FROM order_history
+                                WHERE payment_intent_id <> ''
+                             GROUP BY project_id, payment_intent_id
+                               HAVING COUNT(*) > 1
+                                LIMIT 5""")
+                print("[migrate] CRITICAL: idx_order_history_intent_uniq is MISSING — one "
+                      f"payment could become two orders. Duplicate intents: {cur.fetchall()}",
+                      flush=True)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_order_history_payment_status "
                         "ON order_history(project_id, payment_status, created_at DESC)")
             # Backfill: pre-strict-mode orders left 'pending' and never confirmed are

@@ -506,12 +506,24 @@ function OrderModal({ order, pq, onClose, onUpdated }) {
               {detail.address ? ` — ${detail.address}` : ''}
             </div>
             {(() => {
-              // payment_method now stores the canonical provider (stripe/manual/other).
+              // payment_method stores the canonical provider slug. Every online gateway
+              // must be named explicitly — falling through to "pay on delivery" would
+              // mislabel a real card charge (Kaspi/Halyk/TipTop/Robokassa/PayPal).
+              // Gateway names are brands, so they need no translation; only the offline
+              // labels go through i18n.
+              const GATEWAY_LABEL = {
+                stripe:        'Stripe',
+                apipay:        'Kaspi (ApiPay)',
+                halyk_epay:    'ePay (Halyk)',
+                cloudpayments: 'TipTop Pay',
+                robokassa:     'Robokassa',
+                paypal:        'PayPal',
+              };
               const prov = detail.payment_provider || detail.payment_method || 'manual';
-              const methodLabel = prov === 'stripe' ? t('orders.modal.cardPayment')
-                : prov === 'other' ? 'Other (offline)'
-                : t('orders.modal.payOnDelivery');
+              const methodLabel = GATEWAY_LABEL[prov]
+                || (prov === 'other' ? 'Other (offline)' : t('orders.modal.payOnDelivery'));
               const ps = detail.payment_status || '';
+              // Only these two are merchant-settled; every online gateway is server-verified.
               const isOffline = prov === 'other' || prov === 'manual';
               const psLabel = ps === 'paid' ? 'Paid'
                 : ps === 'pending' ? 'Payment pending'
