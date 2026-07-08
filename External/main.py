@@ -592,6 +592,43 @@ def run_migrations():
         except Exception as e:
             conn.rollback()
             print(f"[migration] refresh_tokens table failed: {e}")
+        # Pending checkouts — the "paid at the gateway, but no order" safety net.
+        #
+        # For Stripe/Kaspi/Halyk/TipTop/Robokassa the money is captured AT THE GATEWAY
+        # before POST /orders ever runs. If the buyer's tab dies in between (very likely on
+        # mobile Kaspi: the browser is backgrounded while they approve in the Kaspi app),
+        # the payment exists and the order never does — and the gateway webhooks can only
+        # UPDATE an existing order, never create one.
+        #
+        # So init-payment snapshots the checkout payload here, keyed by the intent id. When a
+        # webhook confirms a payment whose order is missing, _recover_order_from_intent()
+        # replays this payload through the SAME verified money path.
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pending_checkouts (
+                    id              BIGSERIAL PRIMARY KEY,
+                    project_id      INTEGER      NOT NULL,
+                    intent_id       VARCHAR(160) NOT NULL,
+                    provider        VARCHAR(30)  NOT NULL,
+                    user_id         INTEGER      NOT NULL,
+                    payload         JSONB        NOT NULL DEFAULT '{}'::jsonb,
+                    amount          NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    currency        VARCHAR(10)  NOT NULL DEFAULT '',
+                    order_id        INTEGER      NULL,
+                    gateway_paid_at TIMESTAMPTZ  NULL,
+                    last_error      TEXT         NOT NULL DEFAULT '',
+                    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    UNIQUE (project_id, intent_id)
+                )
+            """)
+            # The money-leak query: paid at the gateway, still no order.
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_checkouts_unclaimed "
+                        "ON pending_checkouts(project_id, gateway_paid_at) "
+                        "WHERE order_id IS NULL")
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[migration] pending_checkouts table failed: {e}")
         # Fix reviews with NULL project_id — copy from their product
         try:
             cur.execute("""
@@ -6572,6 +6609,109 @@ def _compute_cart_total(cursor, project_id: int, user_id: int,
     }
 
 
+# ─── Pending-checkout safety net ───────────────────────────────────────────
+# Providers whose money is captured AT THE GATEWAY before POST /orders runs, so a dead
+# browser tab leaves a payment with no order. PayPal is deliberately ABSENT: its capture
+# happens inside place_order, so an abandoned approval charges nothing — "recovering" it
+# would CHARGE a buyer who walked away.
+_RECOVERABLE_PROVIDERS = ("stripe", "apipay", "halyk_epay", "cloudpayments", "robokassa")
+
+
+def _remember_pending_checkout(project_id: int, intent_id: str, provider: str,
+                               user_id: int, data: PlaceOrderRequest,
+                               amount, currency: str) -> None:
+    """Snapshot the checkout payload so a webhook can rebuild the order later.
+    Best-effort: a failure here must never break a live checkout."""
+    if not intent_id or provider not in _RECOVERABLE_PROVIDERS:
+        return
+    try:
+        payload = data.dict() if hasattr(data, "dict") else data.model_dump()
+    except Exception:
+        return
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute(
+                "INSERT INTO pending_checkouts"
+                "  (project_id, intent_id, provider, user_id, payload, amount, currency)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s)"
+                " ON CONFLICT (project_id, intent_id) DO UPDATE"
+                "   SET payload=EXCLUDED.payload, amount=EXCLUDED.amount,"
+                "       currency=EXCLUDED.currency, provider=EXCLUDED.provider",
+                (project_id, intent_id, provider, user_id,
+                 json.dumps(payload, default=str), round(float(amount or 0), 2),
+                 (currency or "")[:10]))
+            conn.commit()
+    except Exception as e:
+        print(f"[pending_checkout] save failed project={project_id} "
+              f"intent={intent_id}: {e}", flush=True)
+
+
+def _mark_gateway_paid(project_id: int, intent_id: str) -> None:
+    """The gateway says this intent is paid while no order exists yet — record it so the
+    merchant can see unclaimed money even if recovery below fails."""
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE pending_checkouts"
+                        "   SET gateway_paid_at = COALESCE(gateway_paid_at, NOW())"
+                        " WHERE project_id=%s AND intent_id=%s AND order_id IS NULL",
+                        (project_id, intent_id))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _recover_order_from_intent(project_id: int, intent_id: str,
+                               background_tasks) -> Optional[int]:
+    """A gateway confirmed a payment but no order exists — rebuild it from the snapshot.
+
+    We never trust the webhook: the replayed payload goes through the exact same strict
+    path as a normal checkout (_place_order_core re-fetches the intent from the provider,
+    checks the terminal status and the charged amount). The partial UNIQUE index on
+    (project_id, payment_intent_id) makes this safe to race with the buyer's own
+    POST /orders — one payment can never become two orders.
+    """
+    try:
+        row = db_one("SELECT user_id, provider, payload FROM pending_checkouts"
+                     " WHERE project_id=%s AND intent_id=%s AND order_id IS NULL",
+                     (project_id, intent_id))
+    except Exception as e:
+        # Table missing/lagging — the webhook must still answer 200 so the gateway stops
+        # retrying. Recovery is a bonus; it can never be allowed to break a webhook.
+        print(f"[recover] lookup failed project={project_id} intent={intent_id}: {e}", flush=True)
+        return None
+    if not row or row["provider"] not in _RECOVERABLE_PROVIDERS:
+        return None
+    _mark_gateway_paid(project_id, intent_id)
+    if background_tasks is None:
+        # No response cycle to drain them: the order is still created and the money is
+        # still reconciled — only the post-order email/webhook fan-out is skipped.
+        background_tasks = BackgroundTasks()
+    note = ""
+    try:
+        payload = dict(row["payload"] or {})
+        payload["payment_intent_id"] = intent_id
+        payload["payment_method"]    = row["provider"]
+        data = PlaceOrderRequest(**payload)
+        res  = _place_order_core(data, project_id, int(row["user_id"]), background_tasks)
+        oid  = (res or {}).get("order_id")
+        print(f"[recover] project={project_id} intent={intent_id} → order #{oid}", flush=True)
+        return oid
+    except HTTPException as e:
+        note = f"HTTP {e.status_code}: {e.detail}"
+    except Exception as e:
+        note = f"{type(e).__name__}: {e}"
+    print(f"[recover] FAILED project={project_id} intent={intent_id}: {note}", flush=True)
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("UPDATE pending_checkouts SET last_error=%s"
+                        " WHERE project_id=%s AND intent_id=%s",
+                        (note[:500], project_id, intent_id))
+            conn.commit()
+    except Exception:
+        pass
+    return None
+
+
 @app.post("/{api_key}/orders/init-payment")
 def init_payment(data: PlaceOrderRequest, request: Request,
                   api_key_record: dict = Depends(resolve_api_key)):
@@ -6640,6 +6780,8 @@ def init_payment(data: PlaceOrderRequest, request: Request,
         )
         if not res["ok"]:
             raise HTTPException(400, f"Kaspi payment error: {res['error']}")
+        _remember_pending_checkout(project_id, res["data"].get("intent_id", ""), "apipay",
+                                   user_id, data, totals["total"], totals["currency"])
         return {
             "provider":      "apipay",
             "intent_id":     res["data"].get("intent_id", ""),
@@ -6679,6 +6821,8 @@ def init_payment(data: PlaceOrderRequest, request: Request,
         })
         if not tok["ok"]:
             raise HTTPException(400, f"Halyk payment error: {tok['error']}")
+        _remember_pending_checkout(project_id, invoice_id, "halyk_epay",
+                                   user_id, data, totals["total"], totals["currency"])
         return {
             "provider":             "halyk_epay",
             "intent_id":            invoice_id,
@@ -6720,6 +6864,8 @@ def init_payment(data: PlaceOrderRequest, request: Request,
                 "warning": "TipTop Pay not connected; falling back to manual",
             }
         invoice_id = str(secrets.randbelow(10**12)).zfill(12)   # our externalId, unique per checkout
+        _remember_pending_checkout(project_id, invoice_id, "cloudpayments",
+                                   user_id, data, totals["total"], totals["currency"])
         return {
             "provider":             "cloudpayments",
             "intent_id":            invoice_id,
@@ -6761,6 +6907,8 @@ def init_payment(data: PlaceOrderRequest, request: Request,
             creds, out_sum=out_sum, inv_id=inv_id,
             description=(api_key_record.get("name") or "Online order"),
             is_test_mode=is_test_mode)
+        _remember_pending_checkout(project_id, inv_id, "robokassa",
+                                   user_id, data, totals["total"], totals["currency"])
         return {
             "provider":             "robokassa",
             "intent_id":            inv_id,
@@ -6862,6 +7010,8 @@ def init_payment(data: PlaceOrderRequest, request: Request,
         raise HTTPException(400, f"Payment provider error: {result['error']}")
 
     d = result["data"]
+    _remember_pending_checkout(project_id, d.get("intent_id", ""), provider,
+                               user_id, data, totals["total"], totals["currency"])
     return {
         "provider":         provider,
         "intent_id":        d.get("intent_id", ""),
@@ -6899,7 +7049,7 @@ def order_payment_status(intent_id: str, request: Request,
 
 
 @app.post("/{api_key}/payments/halyk/postlink")
-async def halyk_postlink(api_key: str, request: Request):
+async def halyk_postlink(api_key: str, request: Request, background_tasks: BackgroundTasks):
     """Halyk ePay postLink — PUBLIC, no auth. Halyk POSTs the payment result JSON.
     We never trust the payload for the money decision: we re-fetch the authoritative
     status via check-status and mark the matching order paid (idempotent)."""
@@ -6927,11 +7077,19 @@ async def halyk_postlink(api_key: str, request: Request):
                     "   AND (%s <= 0 OR ABS(COALESCE(total_amount, 0) - %s) <= 0.02)",
                     (proj["id"], invoice_id, _amt, _amt))
                 conn.commit()
+            # rowcount==0 would also fire on an amount mismatch or an already-paid order,
+            # so probe for the order itself: NO order at all means the buyer paid and their
+            # tab died before POST /orders ran. Rebuild it from the checkout snapshot.
+            if not db_one("SELECT id FROM order_history"
+                          " WHERE project_id=%s AND payment_intent_id=%s",
+                          (proj["id"], invoice_id)):
+                _recover_order_from_intent(proj["id"], invoice_id, background_tasks)
     return {"received": True}
 
 
 @app.post("/{api_key}/payments/cloudpayments/pay")
-async def cloudpayments_pay_webhook(api_key: str, request: Request):
+async def cloudpayments_pay_webhook(api_key: str, request: Request,
+                                    background_tasks: BackgroundTasks):
     """CloudPayments Pay notification — PUBLIC, no auth (CloudPayments POSTs it as
     application/x-www-form-urlencoded). We (1) validate the Content-HMAC signature,
     then (2) re-fetch the authoritative status server-to-server and mark the
@@ -6967,11 +7125,17 @@ async def cloudpayments_pay_webhook(api_key: str, request: Request):
                 "   AND (%s <= 0 OR ABS(COALESCE(total_amount, 0) - %s) <= 0.02)",
                 (proj["id"], txn_id, _amt, _amt))
             conn.commit()
+        # No order at all for a genuinely-paid transaction → the buyer's tab died after
+        # the widget captured the money. Rebuild it from the checkout snapshot.
+        if not db_one("SELECT id FROM order_history"
+                      " WHERE project_id=%s AND payment_intent_id=%s",
+                      (proj["id"], txn_id)):
+            _recover_order_from_intent(proj["id"], txn_id, background_tasks)
     return {"code": 0}
 
 
 @app.post("/{api_key}/payments/robokassa/result")
-async def robokassa_result(api_key: str, request: Request):
+async def robokassa_result(api_key: str, request: Request, background_tasks: BackgroundTasks):
     """Robokassa ResultURL — PUBLIC, no auth (Robokassa POSTs the result). Validate
     the Password#2 signature, re-fetch authoritative status via OpStateExt (never
     trust the callback), mark the order paid (idempotent), and respond with the
@@ -7012,6 +7176,11 @@ async def robokassa_result(api_key: str, request: Request):
                     " WHERE project_id=%s AND payment_intent_id=%s AND payment_status='pending'",
                     (proj["id"], inv_id))
                 conn.commit()
+        elif not db_one("SELECT id FROM order_history"
+                        " WHERE project_id=%s AND payment_intent_id=%s",
+                        (proj["id"], inv_id)):
+            # Paid on Robokassa's page, but no order exists — the buyer never made it back.
+            _recover_order_from_intent(proj["id"], inv_id, background_tasks)
     # Signature is valid (genuine Robokassa) → acknowledge with OK{InvId} so it
     # stops retrying. If OpState lagged below paid, the buyer's return to
     # /checkout/return re-verifies and places the order.
@@ -7019,7 +7188,7 @@ async def robokassa_result(api_key: str, request: Request):
 
 
 @app.post("/{api_key}/payments/apipay/webhook")
-async def apipay_webhook(api_key: str, request: Request):
+async def apipay_webhook(api_key: str, request: Request, background_tasks: BackgroundTasks):
     """ApiPay webhook — PUBLIC, no auth. ApiPay POSTs invoice.status_changed /
     invoice.refunded with an HMAC-SHA256 signature (X-Webhook-Signature). We
     (1) verify the signature, then (2) re-fetch the authoritative status
@@ -7060,21 +7229,40 @@ async def apipay_webhook(api_key: str, request: Request):
                 "   AND (%s <= 0 OR ABS(COALESCE(total_amount, 0) - %s) <= 0.02)",
                 (proj["id"], invoice_id, _amt, _amt))
             conn.commit()
+        # The Kaspi tab-closed case this webhook exists for: money is in, no order row.
+        # Mobile buyers leave the browser to approve in the Kaspi app, so the poll that
+        # normally calls POST /orders often never resumes. Rebuild from the snapshot.
+        if not db_one("SELECT id FROM order_history"
+                      " WHERE project_id=%s AND payment_intent_id=%s",
+                      (proj["id"], invoice_id)):
+            _recover_order_from_intent(proj["id"], invoice_id, background_tasks)
     return {"received": True}
 
 
-@app.post("/{api_key}/orders")
-def place_order(data: PlaceOrderRequest, request: Request, response: Response,
-                background_tasks: BackgroundTasks,
-                api_key_record: dict = Depends(resolve_api_key)):
-    project_id = api_key_record["id"]
-    # Guest visitors arrive here with a guest user_id already minted
-    # by /cart/add — but we need to enforce they provide contact info
-    # at checkout. We also create a guest_user lazily here just in
-    # case a stale session somehow lost its cookie between cart and
-    # checkout (defensive).
-    user_id = get_or_create_guest_user(request, response, project_id)
-    _rate_limit_orders(request, user_id, max_per_min=12)
+def _place_order_core(data: PlaceOrderRequest, project_id: int, user_id: int,
+                      background_tasks: BackgroundTasks):
+    """Order creation, decoupled from the HTTP request.
+
+    Everything below needs only (data, project_id, user_id) + background_tasks — never
+    Request/Response — so _recover_order_from_intent() can replay a stored checkout
+    payload through this exact same verified money path when a gateway took the money
+    but the buyer's tab died before POST /orders ran. `place_order` is the thin HTTP
+    wrapper around this.
+    """
+    # Idempotency short-circuit: one payment → one order. This runs BEFORE the cart is
+    # read on purpose — a webhook may have already recovered this order (and cleared the
+    # cart) while the buyer was still on the gateway's page. Without it the buyer's
+    # returning POST /orders would die on "Cart is empty" instead of seeing their order.
+    _intent = (data.payment_intent_id or "").strip()
+    if _intent:
+        _existing = db_one("SELECT id, user_id FROM order_history"
+                           " WHERE project_id=%s AND payment_intent_id=%s",
+                           (project_id, _intent))
+        if _existing:
+            if int(_existing["user_id"] or 0) == int(user_id):
+                return {"success": True, "order_id": _existing["id"]}
+            # Someone else's intent — never leak another buyer's order.
+            raise HTTPException(409, f"Intent {_intent} already used for order #{_existing['id']}")
 
     # Structured name — compose into legacy recipient_name "{last} {first} {middle}".
     # If only the legacy field was sent (older clients), keep it as-is.
@@ -7611,6 +7799,24 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
                 raise HTTPException(409, f"Intent {pay_intent_id} already used for an order")
             raise
 
+        # Link the snapshot: this payment produced an order, so the recovery path (and the
+        # merchant's "paid but unclaimed" view) must never pick it up again.
+        #
+        # SAVEPOINT, because this runs inside the order's transaction: bookkeeping for the
+        # safety net must NEVER be able to roll back a real, paid order. A missing or
+        # lagging pending_checkouts table (its migration is deliberately non-fatal) would
+        # otherwise abort the transaction and lose the order the customer just paid for.
+        if pay_intent_id:
+            try:
+                cursor.execute("SAVEPOINT pc_link")
+                cursor.execute("UPDATE pending_checkouts SET order_id=%s"
+                               " WHERE project_id=%s AND intent_id=%s AND order_id IS NULL",
+                               (order_id, project_id, pay_intent_id))
+                cursor.execute("RELEASE SAVEPOINT pc_link")
+            except Exception as _pc_e:
+                cursor.execute("ROLLBACK TO SAVEPOINT pc_link")
+                print(f"[pending_checkout] link failed order={order_id}: {_pc_e}", flush=True)
+
         # ── Auto-save address (silent default) ─────────────────────
         if (fulfillment_type == "courier"
             and (sa_city or sa_street)):
@@ -7859,6 +8065,24 @@ def place_order(data: PlaceOrderRequest, request: Request, response: Response,
     except Exception:
         pass
     return {"success": True, "order_id": order_id}
+
+
+@app.post("/{api_key}/orders")
+def place_order(data: PlaceOrderRequest, request: Request, response: Response,
+                background_tasks: BackgroundTasks,
+                api_key_record: dict = Depends(resolve_api_key)):
+    """Thin HTTP wrapper. Everything the request carries (guest identity, rate limit) is
+    resolved here; the money path itself lives in _place_order_core so a payment webhook
+    can drive it too."""
+    project_id = api_key_record["id"]
+    # Guest visitors arrive here with a guest user_id already minted
+    # by /cart/add — but we need to enforce they provide contact info
+    # at checkout. We also create a guest_user lazily here just in
+    # case a stale session somehow lost its cookie between cart and
+    # checkout (defensive).
+    user_id = get_or_create_guest_user(request, response, project_id)
+    _rate_limit_orders(request, user_id, max_per_min=12)
+    return _place_order_core(data, project_id, user_id, background_tasks)
 
 
 def _own_project_file(url, project_id: int) -> bool:
@@ -8641,7 +8865,7 @@ async def receive_payment_webhook(api_key: str, provider: str, request: Request,
 
     # Process the event
     try:
-        _process_payment_event(project_id, provider, event)
+        _process_payment_event(project_id, provider, event, background_tasks)
         with db_cursor() as (conn, cur):
             cur.execute(
                 "UPDATE payment_webhook_events SET processed_ok=TRUE WHERE id=%s",
@@ -8660,9 +8884,11 @@ async def receive_payment_webhook(api_key: str, provider: str, request: Request,
     return {"received": True, "type": event["type"], "event_id": event_id}
 
 
-def _process_payment_event(project_id: int, provider: str, event: dict) -> None:
+def _process_payment_event(project_id: int, provider: str, event: dict,
+                           background_tasks=None) -> None:
     """Apply the canonical event to order_history / order_returns / notifications.
     Idempotent on its own: payment_status updates are conditional on current state.
+    `background_tasks` is only needed by the paid-but-no-order recovery path.
     """
     intent_id = event.get("intent_id") or ""
     charge_id = event.get("charge_id") or ""
@@ -8698,6 +8924,14 @@ def _process_payment_event(project_id: int, provider: str, event: dict) -> None:
                 _notify_payment_event(project_id, updated["id"],
                                        f"Payment confirmed for order #{updated['id']}",
                                        f"{event.get('amount', 0)/100:.2f} {event.get('currency','').upper()}")
+        # `updated` is also None on an amount mismatch or an already-paid order, so probe
+        # for the order itself. No order at all → the card was charged (Stripe confirms
+        # client-side, before POST /orders) but the buyer's tab died. Rebuild it.
+        # Runs outside the `with` above so recovery gets its own pool connections.
+        if intent_id and not db_one("SELECT id FROM order_history"
+                                    " WHERE project_id=%s AND payment_intent_id=%s",
+                                    (project_id, intent_id)):
+            _recover_order_from_intent(project_id, intent_id, background_tasks)
 
     elif canon == "payment.failed":
         with db_cursor() as (conn, cur):

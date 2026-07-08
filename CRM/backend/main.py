@@ -3733,6 +3733,39 @@ def run_migrations():
     except Exception as e:
         print(f"[migration] payment_webhook_events failed: {e}")
 
+    # Pending checkouts — the "paid at the gateway, but no order" safety net.
+    # External/main.py owns the writes (init-payment snapshots the checkout; a gateway
+    # webhook stamps gateway_paid_at when it confirms a payment with no order). CRM only
+    # READS it for the "Unclaimed payments" alert, so we create it here too: CRM may boot
+    # before External (which scales to zero), and a missing table must never break Orders.
+    # CREATE TABLE IF NOT EXISTS makes the duplicate definition harmless — keep the two in
+    # sync (see External/main.py run_migrations).
+    try:
+        with db_cursor() as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pending_checkouts (
+                    id              BIGSERIAL PRIMARY KEY,
+                    project_id      INTEGER      NOT NULL,
+                    intent_id       VARCHAR(160) NOT NULL,
+                    provider        VARCHAR(30)  NOT NULL,
+                    user_id         INTEGER      NOT NULL,
+                    payload         JSONB        NOT NULL DEFAULT '{}'::jsonb,
+                    amount          NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    currency        VARCHAR(10)  NOT NULL DEFAULT '',
+                    order_id        INTEGER      NULL,
+                    gateway_paid_at TIMESTAMPTZ  NULL,
+                    last_error      TEXT         NOT NULL DEFAULT '',
+                    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    UNIQUE (project_id, intent_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_checkouts_unclaimed "
+                        "ON pending_checkouts(project_id, gateway_paid_at) "
+                        "WHERE order_id IS NULL")
+            conn.commit()
+    except Exception as e:
+        print(f"[migration] pending_checkouts failed: {e}")
+
     # Payment-tracking columns on order_history. payment_status drives Order Lifecycle gates:
     #  • 'pending' — intent created, awaiting webhook OR client confirmation
     #  • 'paid' — webhook payment_intent.succeeded received OR confirmed directly
@@ -26334,6 +26367,37 @@ def analytics_margin(project_id: int = Query(...), period: str = Query("1mo"),
         "total_profit":     round(total_revenue - total_cogs, 2),
         "total_margin_pct": _margin_pct(total_revenue, total_cogs),
     }
+
+
+@app.get("/api/payments/unclaimed")
+def payments_unclaimed(project_id: int = Query(...),
+                       user: dict = Depends(get_current_user)):
+    """Money that reached the gateway but never became an order.
+
+    Rows appear only when BOTH are true: a gateway webhook confirmed the payment
+    (`gateway_paid_at`) and no order was ever created (`order_id IS NULL`). Normally the
+    automatic recovery in External rebuilds the order and this list stays empty; a row
+    here means recovery could not run (stock ran out, cart changed) and the buyer was
+    charged anyway — the merchant must fulfil manually or refund. `last_error` says why.
+    """
+    require_team_member_or_owner(user, project_id)
+    try:
+        rows = db_all(
+            "SELECT pc.intent_id, pc.provider, pc.amount, pc.currency,"
+            "       pc.gateway_paid_at, pc.created_at, pc.last_error,"
+            "       u.email AS customer_email, u.name AS customer_name"
+            "  FROM pending_checkouts pc"
+            "  LEFT JOIN users u ON u.id = pc.user_id"
+            " WHERE pc.project_id = %s AND pc.order_id IS NULL"
+            "   AND pc.gateway_paid_at IS NOT NULL"
+            " ORDER BY pc.gateway_paid_at DESC LIMIT 100",
+            (project_id,))
+    except Exception as e:
+        # Never 500 the Orders page over a missing/lagging table (e.g. External hasn't
+        # booted on a fresh DB). An empty list is the honest, safe answer here.
+        print(f"[payments/unclaimed] project={project_id}: {e}", flush=True)
+        rows = []
+    return rows or []
 
 
 @app.get("/api/analytics/inventory-health")
