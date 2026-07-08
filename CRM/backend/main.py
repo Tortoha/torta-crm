@@ -3619,17 +3619,26 @@ def run_migrations():
                 )
             """)
             cur.execute("ALTER TABLE crm_payment_methods DROP CONSTRAINT IF EXISTS crm_payment_methods_method_check")
+
+            # AiPay (kaspi_aipay) was removed (replaced by ApiPay) — drop leftover seeded
+            # rows so it no longer appears in Payments or on storefronts. Idempotent.
+            #
+            # ORDERING IS LOAD-BEARING: this DELETE must run BEFORE the CHECK below.
+            # Postgres validates ADD CONSTRAINT against existing rows, so while a
+            # kaspi_aipay row survives, the ADD fails → the whole migration block aborts →
+            # the DELETE that would have removed the row never runs. A perfect deadlock:
+            # the row blocks the constraint, the constraint blocks the row's removal. It
+            # kept a DEAD payment method live on real storefronts (labelled "Kaspi"),
+            # where — no longer being in _ONLINE_PAY_METHODS — it produced orders marked
+            # `manual`, i.e. "merchant already collected the money", for money nobody paid.
+            cur.execute("DELETE FROM crm_payment_methods WHERE method='kaspi_aipay'")
+            cur.execute("DELETE FROM crm_payment_credentials WHERE provider='kaspi_aipay'")
+
             cur.execute("""
                 ALTER TABLE crm_payment_methods ADD CONSTRAINT crm_payment_methods_method_check
                   CHECK (method IN ('stripe','manual','other','apipay','halyk_epay','cloudpayments','robokassa','paypal'))
             """)
             conn.commit()
-
-            # AiPay (kaspi_aipay) was removed (replaced by ApiPay) — drop any leftover
-            # seeded rows so it no longer appears in Payments. It was never live-tested,
-            # so no real orders reference it. Idempotent.
-            cur.execute("DELETE FROM crm_payment_methods WHERE method='kaspi_aipay'")
-            cur.execute("DELETE FROM crm_payment_credentials WHERE provider='kaspi_aipay'")
             cur.execute(
                 "INSERT INTO crm_payment_methods (org_id, method, is_enabled, display_label, sort_order) "
                 "SELECT id, 'apipay', FALSE, 'ApiPay (Kaspi)', 2 FROM crm_organizations "
