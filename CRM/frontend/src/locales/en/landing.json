@@ -2,17 +2,32 @@
   "landing": {
     "hero": {
       "eyebrow": "Torta CRM",
-      "title": "One CRM for|every|<br>|online store",
-      "titleAccentIndex": "1",
-      "subtitle": "Run your store from one place. Take orders and bookings, talk to customers live, send email campaigns, and track every metric — without juggling a dozen apps.",
-      "ctaPrimary": "Get started free",
+      "titleLead": "Run your whole store from",
+      "titleAccent": "one console.",
+      "subtitle": "Orders, inventory, payments, customer chat, email campaigns and live analytics — the entire back office of your online store in one place, instead of a dozen apps.",
+      "ctaPrimary": "Start free",
       "ctaSecondary": "See it in action",
-      "stat1Value": "All-in-one",
-      "stat1Label": "Products, orders, bookings and customers in one console",
-      "stat2Value": "Team-ready",
-      "stat2Label": "Invite teammates with the exact access they need",
-      "stat3Value": "Customer-first",
-      "stat3Label": "Email, live chat, and one-tap login built in"
+      "trust": ["Free to start", "Kaspi & card payments built in", "Your own domain & email"],
+      "tabs": { "overview": "Dashboard", "orders": "Orders", "products": "Products", "bookings": "Bookings", "analytics": "Analytics" }
+    },
+
+    "kz": {
+      "eyebrow": "Built for Kazakhstan",
+      "title": "Your own store — not a stall on a marketplace",
+      "subtitle": "Sell under your own brand and domain, and still let customers pay the way they already do. Local payments and KZ accounting are built in.",
+      "items": {
+        "pay":        { "title": "Kaspi & local payments", "desc": "Customers pay with Kaspi, card, Halyk or cash — the paid order lands in one console." },
+        "accounting": { "title": "Kazakhstan accounting",  "desc": "Export orders to 1C, Kompra (ЭСФ) and QuickBooks. VAT 12% ready out of the box." },
+        "brand":      { "title": "Your brand, your data",  "desc": "Your domain, your DKIM-signed email and your customer list — never the marketplace's." }
+      }
+    },
+
+    "pricing": {
+      "eyebrow": "Pricing",
+      "title": "Start free. Pay only when you grow.",
+      "subtitle": "No setup fees, no card to start, cancel anytime — with a 14-day money-back guarantee on your first payment.",
+      "perMo": "/mo",
+      "allPlans": "See all plans & compare"
     },
 
     "marquee": {

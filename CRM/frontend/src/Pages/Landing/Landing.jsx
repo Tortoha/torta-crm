@@ -10,15 +10,18 @@ import Hero           from './Hero.jsx';
 import FeatureMarquee from './FeatureMarquee.jsx';
 import ProductTour    from './ProductTour.jsx';
 import AllInOne       from './AllInOne.jsx';
+import KzWedge        from './KzWedge.jsx';
 import TeamReady      from './TeamReady.jsx';
 import CustomerFirst  from './CustomerFirst.jsx';
 import HowItWorks     from './HowItWorks.jsx';
 import UseCases       from './UseCases.jsx';
 import Security       from './Security.jsx';
+import PricingTeaser  from './PricingTeaser.jsx';
 import Faq            from './Faq.jsx';
 import FinalCta       from './FinalCta.jsx';
 import Footer         from './Footer.jsx';
 import '../../Style/Landing.css';
+import '../../Style/LandingMocks.css';
 
 export default function Landing() {
   // Best-effort user lookup — same pattern as the old Home.jsx. When the
@@ -40,22 +43,24 @@ export default function Landing() {
   }, []);
 
   return (
-    <>
+    <div className="ln-theme">
       <Header user={user} landing />
       <main className="ln-page">
         <Hero />
         <FeatureMarquee />
         <ProductTour />
         <AllInOne />
+        <KzWedge />
         <TeamReady />
         <CustomerFirst />
         <HowItWorks />
         <UseCases />
         <Security />
+        <PricingTeaser />
         <Faq />
         <FinalCta />
         <Footer />
       </main>
-    </>
+    </div>
   );
 }
