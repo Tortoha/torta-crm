@@ -1,75 +1,46 @@
-// "Customer-first" — bento layout, mirrored from TeamReady. The two small
-// cards (One-tap login + Live chat) sit on the left; the large card on the
-// right (Email campaigns) carries a small mock email preview. Mirroring
-// gives the page a left/right alternation rhythm — no two sections in a
-// row look the same.
+// "Customer-first" — the customer-facing tools, shown not told: a live chat
+// inbox mock (left) + copy with three points (right). Mirrors the KZ section's
+// layout inverted, so the page rhythm alternates.
 
 import { useTranslation } from 'react-i18next';
 import { SignIn, ChatCircleDots, EnvelopeSimple } from '@phosphor-icons/react';
 import { useInView } from '../../Utils/useInView.js';
+import BrowserFrame from './mocks/BrowserFrame.jsx';
+import MockChat from './mocks/MockChat.jsx';
+
+const ITEMS = [
+  { key: 'auth',       Icon: SignIn },
+  { key: 'chat',       Icon: ChatCircleDots },
+  { key: 'broadcasts', Icon: EnvelopeSimple },
+];
 
 export default function CustomerFirst() {
   const { t } = useTranslation();
-  const { ref, inView } = useInView({ threshold: 0.2 });
+  const { ref, inView } = useInView({ threshold: 0.15 });
 
   return (
-    <section className="ln-section">
+    <section className="ln-section ln-cf">
       <div className="ln-wrap">
-        <div ref={ref}
-          className={`ln-section-head ln-section-head--center ln-reveal${inView ? ' ln-in' : ''}`}>
-          <span className="ln-eyebrow">{t('landing.customerFirst.eyebrow')}</span>
-          <h2 className="ln-section-title">{t('landing.customerFirst.title')}</h2>
-          <p className="ln-section-sub">{t('landing.customerFirst.subtitle')}</p>
-        </div>
-
-        <div className="ln-bento ln-bento--right">
-          {/* Two smaller cards on the left */}
-          <div className={`ln-bento-card ln-reveal ln-d1${inView ? ' ln-in' : ''}`}>
-            <header className="ln-bento-card-head">
-              <div className="ln-feature-icon">
-                <SignIn weight="bold" />
-              </div>
-              <h3>{t('landing.customerFirst.items.auth.title')}</h3>
-            </header>
-            <p>{t('landing.customerFirst.items.auth.desc')}</p>
+        <div className="ln-cf-grid">
+          <div className={`ln-cf-visual ln-reveal${inView ? ' ln-in' : ''}`}>
+            <BrowserFrame url="app.tortacrm.com/project/aurora-threads/chat"><MockChat /></BrowserFrame>
           </div>
 
-          <div className={`ln-bento-card ln-reveal ln-d2${inView ? ' ln-in' : ''}`}>
-            <header className="ln-bento-card-head">
-              <div className="ln-feature-icon">
-                <ChatCircleDots weight="bold" />
-              </div>
-              <h3>{t('landing.customerFirst.items.chat.title')}</h3>
-            </header>
-            <p>{t('landing.customerFirst.items.chat.desc')}</p>
-          </div>
-
-          {/* Large card on the right — anchor */}
-          <div className={`ln-bento-card ln-bento-card--lg ln-reveal ln-d3${inView ? ' ln-in' : ''}`}>
-            <header className="ln-bento-card-head">
-              <div className="ln-feature-icon">
-                <EnvelopeSimple weight="bold" />
-              </div>
-              <h3>{t('landing.customerFirst.items.broadcasts.title')}</h3>
-            </header>
-            <p>{t('landing.customerFirst.items.broadcasts.desc')}</p>
-
-            {/* Mini email mockup — header lines that look like a composer
-                preview. Decorative; nothing to interact with. */}
-            <div className="ln-bento-mock ln-bento-mock--email">
-              <div className="ln-bento-mock-line">
-                <span>From</span>
-                <em>hello@your-store.com</em>
-              </div>
-              <div className="ln-bento-mock-line">
-                <span>To</span>
-                <em>1,248 subscribers</em>
-              </div>
-              <div className="ln-bento-mock-line ln-bento-mock-line--subj">
-                <span>Subject</span>
-                <em>Spring drop is live</em>
-              </div>
-            </div>
+          <div ref={ref} className={`ln-cf-copy ln-reveal ln-d2${inView ? ' ln-in' : ''}`}>
+            <span className="ln-eyebrow">{t('landing.customerFirst.eyebrow')}</span>
+            <h2 className="ln-section-title">{t('landing.customerFirst.title')}</h2>
+            <p className="ln-section-sub">{t('landing.customerFirst.subtitle')}</p>
+            <ul className="ln-kz-list">
+              {ITEMS.map(({ key, Icon }) => (
+                <li key={key} className="ln-kz-item">
+                  <span className="ln-kz-item-ic"><Icon weight="bold" /></span>
+                  <span className="ln-kz-item-txt">
+                    <b>{t(`landing.customerFirst.items.${key}.title`)}</b>
+                    <span>{t(`landing.customerFirst.items.${key}.desc`)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       </div>

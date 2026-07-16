@@ -53,7 +53,7 @@ export default function UseCases() {
   return (
     <section className="ln-section">
       <div className="ln-wrap">
-        <div ref={secRef} className={`ln-section-head ln-reveal${inView ? ' ln-in' : ''}`}>
+        <div ref={secRef} className={`ln-section-head ln-section-head--center ln-reveal${inView ? ' ln-in' : ''}`}>
           <span className="ln-eyebrow">{t('landing.useCases.eyebrow')}</span>
           <h2 className="ln-section-title">{t('landing.useCases.title')}</h2>
           <p className="ln-section-sub">{t('landing.useCases.subtitle')}</p>

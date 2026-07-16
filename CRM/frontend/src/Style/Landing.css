@@ -12,6 +12,17 @@
    - Bigger air. Section paddings up to 160px; grid gaps widened. ──── */
 
 
+/* ── Landing theme ───────────────────────────────────────────────
+   The landing follows the app theme (light + dark). Only nudge --muted: the
+   app's light --muted is pure black, too heavy for marketing body text, so use
+   a grey; dark keeps the app's grey. Everything else inherits the app tokens. */
+.ln-theme {
+  --muted: #5b5b66;
+  background: var(--bg);
+  color: var(--text);
+}
+[data-theme="dark"] .ln-theme { --muted: #9a9aa3; }
+
 /* ── Page shell + 1400px column ─────────────────────────────────── */
 .ln-page {
   min-height: 100vh;
@@ -60,6 +71,7 @@
 .ln-faq-item:first-child { border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
 .ln-faq-q {
   list-style: none;
+  box-sizing: border-box;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -87,6 +99,7 @@
 .ln-faq-item[open] .ln-faq-q::after { transform: rotate(225deg); }
 .ln-faq-a {
   margin: 0;
+  box-sizing: border-box;
   padding: 0 4px 22px;
   font-size: 15px;
   line-height: 1.65;
@@ -234,9 +247,8 @@
    ╰─────────────────────────────────────────────────────────────────╯ */
 .ln-hero {
   position: relative;
-  padding: 180px 0 48px;
+  padding: 148px 0 72px;
   overflow: hidden;
-  text-align: center;
 }
 
 /* `align-items: stretch` is the default — but I'm spelling it out because
@@ -245,9 +257,10 @@
    Children are centred horizontally via the parent's `text-align: center`
    (inherited from .ln-hero) and `margin: 0 auto` on the constrained blocks. */
 .ln-hero-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.18fr);
+  align-items: center;
+  gap: 48px;
 }
 
 /* The pill eyebrow is the only naturally inline-block child — needs an
@@ -262,14 +275,31 @@
 }
 
 .ln-hero-title {
-  margin: 24px auto 28px;
-  font-size: clamp(42px, 6.4vw, 72px);
-  font-weight: 600;
+  margin: 22px 0;
+  font-size: clamp(38px, 4.4vw, 60px);
+  font-weight: 700;
   letter-spacing: -0.035em;
-  line-height: 1.02;
+  line-height: 1.04;
   color: var(--text);
-  max-width: 1100px;
 }
+.ln-hero-title .ln-word { display: inline; margin-right: 0; }
+.ln-hero-accent {
+  display: block;
+  min-height: 1.05em;
+  color: var(--accent);
+}
+.ln-tw-cursor {
+  display: inline-block;
+  width: 3px;
+  height: 0.9em;
+  margin-left: 4px;
+  background: var(--accent);
+  border-radius: 1px;
+  vertical-align: -0.04em;
+  animation: ln-blink 1s step-end infinite;
+}
+.ln-tw-cursor--done { display: none; }
+@keyframes ln-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
 .ln-word {
   display: inline-block;
@@ -308,18 +338,70 @@
 }
 
 .ln-hero-sub {
-  margin: 0 auto 32px;
-  max-width: 620px;
-  font-size: 18px;
-  line-height: 1.55;
+  margin: 0 0 28px;
+  max-width: 540px;
+  font-size: 17px;
+  line-height: 1.6;
   color: var(--muted);
 }
 
 .ln-hero-cta {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
   gap: 12px;
+}
+
+.ln-hero-visual {
+  position: relative;
+  animation: ln-visual-in 900ms var(--ease-smooth) both;
+  animation-delay: 160ms;
+}
+@keyframes ln-visual-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ln-hero-visual { animation: none; }
+}
+
+.ln-hero-trust {
+  list-style: none;
+  margin: 26px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.ln-hero-trust li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.ln-hero-trust svg { width: 15px; height: 15px; color: var(--accent); flex: none; }
+
+.ln-hero-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.ln-hero-tab {
+  height: 30px; padding: 0 14px; border-radius: 999px; border: none; background: transparent;
+  font-family: inherit; font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.ln-hero-tab:hover { background: var(--accent-tint); color: var(--accent); }
+.ln-hero-tab--on, .ln-hero-tab--on:hover { background: var(--accent); color: #fff; }
+.ln-hero-shot { animation: ln-shot-in 0.42s var(--ease-smooth); }
+@keyframes ln-shot-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ln-hero-shot { animation: none; } }
+
+@media (max-width: 1023px) {
+  .ln-hero { padding: 124px 0 56px; }
+  .ln-hero-inner { grid-template-columns: minmax(0, 1fr); gap: 40px; text-align: center; }
+  .ln-hero-copy { min-width: 0; }
+  .ln-hero-sub { margin-left: auto; margin-right: auto; }
+  .ln-hero-cta { justify-content: center; }
+  .ln-hero-trust { justify-content: center; }
+  .ln-hero-tabs { justify-content: center; }
+  .ln-hero-visual { max-width: 640px; margin: 0 auto; width: 100%; min-width: 0; }
 }
 
 /* Quieter than before — values used to be 24px bold black, which made them
@@ -562,10 +644,11 @@
     height: auto;
   }
   .ln-tour-pin-inner {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 24px;
     padding: 0 24px;
   }
+  .ln-tour-text, .ln-tour-stage { min-width: 0; }
 }
 
 /* ── LEFT: stacked step text. The active step is fully opaque; the
@@ -1353,7 +1436,9 @@
 .ln-usecases-tabs {
   pointer-events: all;
   position: relative;
-  display: inline-flex;
+  display: flex;
+  width: fit-content;
+  margin: 0 auto;
   align-items: center;
   background: var(--card);
   border-radius: 999px;
@@ -1411,6 +1496,13 @@
 
 .ln-usecases-tab--active {
   color: var(--accent);
+}
+
+/* Below ~560px the 3 labels can't fit the pill — let the strip scroll. */
+@media (max-width: 560px) {
+  .ln-usecases-tabs { display: flex; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .ln-usecases-tabs::-webkit-scrollbar { display: none; }
+  .ln-usecases-tab { flex: 0 0 auto; }
 }
 
 .ln-usecase-card {
@@ -1503,6 +1595,68 @@
 
 [data-theme="dark"] .ln-usecase-art-tile {
   box-shadow: 0 14px 28px -10px rgba(0, 0, 0, 0.5);
+}
+
+/* ── KZ wedge ──────────────────────────────────────────────────────────── */
+.ln-kz-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+  gap: 56px;
+  align-items: center;
+}
+.ln-kz-list { list-style: none; margin: 28px 0 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
+.ln-kz-item { display: flex; gap: 14px; }
+.ln-kz-item-ic {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px; border-radius: 12px; background: var(--accent-tint); color: var(--accent);
+}
+.ln-kz-item-ic svg { width: 20px; height: 20px; }
+.ln-kz-item-txt { display: flex; flex-direction: column; gap: 3px; }
+.ln-kz-item-txt b { font-size: 15px; font-weight: 600; color: var(--text); }
+.ln-kz-item-txt span { font-size: 14px; line-height: 1.55; color: var(--muted); }
+
+@media (max-width: 1023px) {
+  .ln-kz-grid { grid-template-columns: minmax(0, 1fr); gap: 36px; }
+  .ln-kz-copy { min-width: 0; }
+  .ln-kz-visual { max-width: 640px; min-width: 0; margin: 0 auto; width: 100%; }
+}
+
+/* ── Pricing teaser ────────────────────────────────────────────────────── */
+.ln-pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; align-items: stretch; }
+.ln-plan { position: relative; display: flex; flex-direction: column; background: var(--card); border-radius: 24px; padding: 28px 24px; }
+.ln-plan--pop { background: #111114; }
+.ln-plan-badge { position: absolute; top: 18px; right: 18px; font-size: 11px; font-weight: 600; background: var(--accent); color: #fff; border-radius: 999px; padding: 4px 10px; }
+.ln-plan-name { font-size: 14px; font-weight: 600; color: var(--muted); }
+.ln-plan--pop .ln-plan-name { color: rgba(255, 255, 255, 0.7); }
+.ln-plan-price { display: flex; align-items: baseline; gap: 4px; margin: 8px 0 4px; }
+.ln-plan-price b { font-size: 40px; font-weight: 700; letter-spacing: -0.03em; color: var(--text); }
+.ln-plan--pop .ln-plan-price b { color: #fff; }
+.ln-plan-price span { font-size: 15px; color: var(--muted); }
+.ln-plan--pop .ln-plan-price span { color: rgba(255, 255, 255, 0.6); }
+.ln-plan-tag { font-size: 14px; color: var(--muted); line-height: 1.5; margin-bottom: 20px; }
+.ln-plan--pop .ln-plan-tag { color: rgba(255, 255, 255, 0.7); }
+.ln-plan-feats { list-style: none; margin: 0 0 24px; padding: 0; display: flex; flex-direction: column; gap: 11px; flex: 1; }
+.ln-plan-feats li { display: flex; align-items: flex-start; gap: 9px; font-size: 14px; color: var(--text); }
+.ln-plan--pop .ln-plan-feats li { color: rgba(255, 255, 255, 0.9); }
+.ln-plan-feats svg { width: 16px; height: 16px; color: var(--accent); flex: none; margin-top: 1px; }
+.ln-plan--pop .ln-plan-feats svg { color: #fff; }
+.ln-plan-cta { width: 100%; }
+.ln-plan--pop .ln-plan-cta.ln-btn--primary { background: #fff; color: #111114; }
+.ln-plan--pop .ln-plan-cta.ln-btn--primary:hover { background: rgba(255, 255, 255, 0.88); box-shadow: none; }
+.ln-pricing .pr-plans-grid { margin-top: 40px; }
+.ln-pricing-all { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 28px; font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.ln-pricing-all svg { width: 15px; height: 15px; }
+
+@media (max-width: 860px) {
+  .ln-pricing-grid { grid-template-columns: 1fr; max-width: 440px; margin-left: auto; margin-right: auto; }
+}
+
+/* ── Customer-first (chat inbox show-section) ──────────────────────────── */
+.ln-cf-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 56px; align-items: center; }
+@media (max-width: 1023px) {
+  .ln-cf-grid { grid-template-columns: minmax(0, 1fr); gap: 36px; }
+  .ln-cf-visual { order: 2; max-width: 640px; min-width: 0; margin: 0 auto; width: 100%; }
+  .ln-cf-copy { order: 1; min-width: 0; }
 }
 
 .ln-usecase-art-tile b {
@@ -1941,32 +2095,16 @@
   padding-top: 24px;
 }
 
-/* The plans + compare sections get a WIDER wrap than the standard 1400px
-   .ln-wrap — 5 cards need ~1760px to breathe the way 4 did at 1400px. */
-.pr-plans-section .ln-wrap,
-.pr-compare-section .ln-wrap {
-  max-width: 1760px;
-}
-
+/* Plan cards auto-fit: as many equal columns as fit (each ≥240px), filling the
+   row with no empty tracks — symmetric for ANY plan count (4 now, 5 if Max is
+   restored), so there's never a phantom empty column on the right. Responsive
+   for free: fewer columns wrap in as the viewport narrows. The wrap stays the
+   standard 1400px (4–5 cards sit comfortably; no special widening needed). */
 .pr-plans-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 16px;
   align-items: stretch;
-}
-
-/* 5 cols only while there's room (~1500px+ viewport). Below that, fall to
-   3 → 2 → 1 so cards never get squeezed thinner than ~300px. */
-@media (max-width: 1500px) {
-  .pr-plans-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-@media (max-width: 980px) {
-  .pr-plans-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (max-width: 600px) {
-  .pr-plans-grid { grid-template-columns: 1fr; }
 }
 
 /* ── Plan card ── */
@@ -2140,11 +2278,11 @@
    feature label + 4 plans. Doubled class name out-specifies the default
    7-col template from .po-set-row:not(--head). */
 .po-set-row.po-set-row--pricing {
-  grid-template-columns: minmax(220px, 2.2fr) repeat(5, minmax(80px, 1fr));
+  grid-template-columns: minmax(220px, 2.2fr) repeat(var(--pr-cols, 5), minmax(80px, 1fr));
 }
 
 .po-set-row--head.po-set-row--pricing {
-  grid-template-columns: minmax(220px, 2.2fr) repeat(5, minmax(80px, 1fr));
+  grid-template-columns: minmax(220px, 2.2fr) repeat(var(--pr-cols, 5), minmax(80px, 1fr));
   text-align: center;
 }
 

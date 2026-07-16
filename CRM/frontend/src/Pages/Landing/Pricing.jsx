@@ -27,7 +27,11 @@ import { useSeo } from '../../Utils/useSeo.js';
 import '../../Style/Landing.css';
 import '../../Style/Products.css';   // po-set-table + po-set-row primitives
 
-const PLAN_KEYS = ['free', 'standard', 'plus', 'pro', 'max'];
+// 'max' ($599) is hidden for now — the price scares prospects off. Re-add 'max'
+// here to restore it everywhere at once: the Pricing page cards + compare table
+// (the grid tracks follow PLAN_KEYS.length) AND the landing PricingTeaser (which
+// imports this same list). The in-app billing/upgrade modal is unaffected.
+export const PLAN_KEYS = ['free', 'standard', 'plus', 'pro'];
 const COMPARE_GROUPS = ['limits', 'features'];
 
 // Yearly numeric values — used to render the "billed as $X/year" sub-line
@@ -293,7 +297,7 @@ export default function Pricing() {
             {groups.map(g => (
               <div key={g.key} className="pr-cmp-group-wrap">
                 <h3 className="pr-cmp-group-title">{g.title}</h3>
-                <div className="po-set-table">
+                <div className="po-set-table" style={{ '--pr-cols': PLAN_KEYS.length }}>
                   <div className="po-set-row po-set-row--head po-set-row--pricing">
                     <span>{t('pricing.compare.headers.feature')}</span>
                     {PLAN_KEYS.map(k => (
@@ -301,7 +305,7 @@ export default function Pricing() {
                     ))}
                   </div>
                   {g.rows.map(([rowKey, row]) => (
-                    <CompareRow key={rowKey} label={row.label} values={row.values} />
+                    <CompareRow key={rowKey} label={row.label} values={row.values.slice(0, PLAN_KEYS.length)} />
                   ))}
                 </div>
               </div>

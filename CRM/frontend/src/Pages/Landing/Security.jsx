@@ -16,9 +16,9 @@ export default function Security() {
   const { t } = useTranslation();
   const { ref, inView } = useInView({ threshold: 0.2 });
   return (
-    <section className="ln-section ln-section--tight">
+    <section className="ln-section">
       <div className="ln-wrap">
-        <div ref={ref} className={`ln-section-head ln-reveal${inView ? ' ln-in' : ''}`}>
+        <div ref={ref} className={`ln-section-head ln-section-head--center ln-reveal${inView ? ' ln-in' : ''}`}>
           <span className="ln-eyebrow">{t('landing.security.eyebrow')}</span>
           <h2 className="ln-section-title">{t('landing.security.title')}</h2>
           <p className="ln-section-sub">{t('landing.security.subtitle')}</p>

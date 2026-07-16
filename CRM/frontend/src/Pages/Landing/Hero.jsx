@@ -1,55 +1,85 @@
-// Landing hero — centred copy + CTAs + a row of stats. That's it.
-// The previous "fake dashboard mockup" was misleading (it didn't look like
-// the actual CRM), so the merchant asked to remove it. Anything visual
-// from here on lives in the marquee, the product tour and the feature
-// sections below — all of which show real product surface area.
+// Landing hero — value copy (left) + an interactive console "screenshot"
+// (right). The accent line types itself in; the pills switch the live mock
+// (Overview / Orders / Products / Bookings / Analytics), each a faithful,
+// scaled render of the real page — not an image. Frame height is fixed so the
+// switch doesn't jump.
 
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, PlayCircle } from '@phosphor-icons/react';
+import { ArrowRight, PlayCircle, Check } from '@phosphor-icons/react';
+import { useTypewriter } from '../../Utils/useTypewriter.js';
+import BrowserFrame from './mocks/BrowserFrame.jsx';
+import MockOverview from './mocks/MockOverview.jsx';
+import MockOrders from './mocks/MockOrders.jsx';
+import MockBooking from './mocks/MockBooking.jsx';
+import MockAnalytics from './mocks/MockAnalytics.jsx';
+
+const BASE = 'app.tortacrm.com/project/aurora-threads';
+const VIEWS = [
+  { key: 'overview',  Mock: MockOverview,  url: BASE },
+  { key: 'orders',    Mock: MockOrders,    url: `${BASE}/orders` },
+  { key: 'bookings',  Mock: MockBooking,   url: `${BASE}/bookings` },
+  { key: 'analytics', Mock: MockAnalytics, url: `${BASE}/analytics` },
+];
 
 export default function Hero() {
   const { t } = useTranslation();
+  const [view, setView] = useState('overview');
+  const active = VIEWS.find((v) => v.key === view) ?? VIEWS[0];
 
-  // Split the title at the `|` delimiter so each word gets its own
-  // rise animation. `titleAccentIndex` (from locale) picks the word
-  // painted in --accent.
-  const titleWords = t('landing.hero.title').split('|');
-  const accentWordIdx = Number(t('landing.hero.titleAccentIndex'));
+  const accent = t('landing.hero.titleAccent');
+  const { displayed, done } = useTypewriter(accent, { speed: 55, startDelay: 700 });
+
+  const trust = t('landing.hero.trust', { returnObjects: true });
+  const trustList = Array.isArray(trust) ? trust : [];
 
   return (
     <section className="ln-hero">
       <div className="ln-wrap ln-hero-inner">
-        <span className="ln-eyebrow">{t('landing.hero.eyebrow')}</span>
-        <h1 className="ln-hero-title">
-          {titleWords.map((w, i) => {
-            // A `<br>` token in the locale forces an explicit line break — keeps
-            // the wrap predictable across viewports instead of relying on the
-            // natural break point shifting around with font-size + container width.
-            if (w === '<br>') return <br key={i} />;
-            return (
-              <span key={i}
-                className={`ln-word${i === accentWordIdx ? ' ln-word--accent' : ''}`}
-                style={{ animationDelay: `${i * 70}ms` }}>
-                {w}
-              </span>
-            );
-          })}
-        </h1>
-        <p className="ln-hero-sub">{t('landing.hero.subtitle')}</p>
+        <div className="ln-hero-copy">
+          <span className="ln-eyebrow">{t('landing.hero.eyebrow')}</span>
+          <h1 className="ln-hero-title">
+            <span className="ln-word">{t('landing.hero.titleLead')}</span>
+            <span className="ln-hero-accent">
+              {displayed}
+              <span className={`ln-tw-cursor${done ? ' ln-tw-cursor--done' : ''}`} aria-hidden="true" />
+            </span>
+          </h1>
+          <p className="ln-hero-sub">{t('landing.hero.subtitle')}</p>
 
-        <div className="ln-hero-cta">
-          <Link to="/login" className="ln-btn ln-btn--primary">
-            {t('landing.hero.ctaPrimary')} <ArrowRight weight="bold" />
-          </Link>
-          <a href="#tour" className="ln-btn ln-btn--ghost">
-            <PlayCircle weight="bold" /> {t('landing.hero.ctaSecondary')}
-          </a>
+          <div className="ln-hero-cta">
+            <Link to="/registration" className="ln-btn ln-btn--primary ln-btn--lg">
+              {t('landing.hero.ctaPrimary')} <ArrowRight weight="bold" />
+            </Link>
+            <a href="#tour" className="ln-btn ln-btn--ghost ln-btn--lg">
+              <PlayCircle weight="bold" /> {t('landing.hero.ctaSecondary')}
+            </a>
+          </div>
+
+          <ul className="ln-hero-trust">
+            {trustList.map((item, i) => (
+              <li key={i}><Check weight="bold" /> <span>{item}</span></li>
+            ))}
+          </ul>
         </div>
-        {/* Three angles on the value prop (all-in-one / team-ready /
-            customer-first) used to sit here as a compact stats row, but the
-            merchant asked to give each one its own dedicated section further
-            down. See AllInOne / TeamReady / CustomerFirst components below. */}
+
+        <div className="ln-hero-visual">
+          <div className="ln-hero-tabs" role="tablist">
+            {VIEWS.map((v) => (
+              <button key={v.key} type="button" role="tab" aria-selected={view === v.key}
+                className={`ln-hero-tab${view === v.key ? ' ln-hero-tab--on' : ''}`}
+                onClick={() => setView(v.key)}>
+                {t(`landing.hero.tabs.${v.key}`)}
+              </button>
+            ))}
+          </div>
+          <div key={view} className="ln-hero-shot">
+            <BrowserFrame url={active.url} screenHeight={418}>
+              <active.Mock />
+            </BrowserFrame>
+          </div>
+        </div>
       </div>
     </section>
   );
