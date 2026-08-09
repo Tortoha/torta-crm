@@ -168,6 +168,46 @@ EMAIL_FROM       = os.getenv("EMAIL_FROM",       "support@tortacrm.com")
 ENVIRONMENT             = os.getenv("ENVIRONMENT", "development").lower()
 IS_PRODUCTION           = ENVIRONMENT == "production"
 COOKIE_SECURE           = IS_PRODUCTION
+
+# ── Background-job cadence (Neon Free-tier compute control) ──────────────
+# Neon's Free tier scales the compute to zero after 5 min idle and includes
+# only 100 compute-hours/month. Each wake bills a ~5-min minimum, so the
+# quota is really "~40 distinct DB-touch windows per day" — shared between
+# background jobs AND real user traffic. Two things blow it:
+#   1. A PERMANENT connection (the LISTEN listener) — the compute can never
+#      suspend while it's held open.
+#   2. Any poll faster than the 5-min autosuspend window — it never sleeps.
+# LOW_COMPUTE_MODE drops the always-on listener and stretches every periodic
+# loop so the DB can actually sleep between touches. Defaults ON in production
+# (the Neon Free deployment) and OFF in dev (local Postgres = zero compute
+# cost, keep full realtime for testing). Set LOW_COMPUTE_MODE=0 to force full
+# realtime in prod, or =1 to force it on in dev. Trade-off when on: live push
+# (chat / bell / analytics / presence) falls back to on-refresh, and alerts /
+# campaigns / cohort analytics run on a coarser schedule.
+LOW_COMPUTE_MODE = os.getenv(
+    "LOW_COMPUTE_MODE", "1" if IS_PRODUCTION else "0") == "1"
+
+def _job_interval(env_name: str, normal: int, low: int) -> int:
+    """Seconds between runs of a background loop. An explicit env override
+    always wins; otherwise LOW_COMPUTE_MODE picks the stretched value."""
+    v = os.getenv(env_name, "").strip()
+    if v.isdigit() and int(v) > 0:
+        return int(v)
+    return low if LOW_COMPUTE_MODE else normal
+
+CAMPAIGN_POLL_SECONDS   = _job_interval("CAMPAIGN_POLL_SECONDS",        60,      30 * 60)
+ALERTS_POLL_SECONDS     = _job_interval("ALERTS_POLL_SECONDS",     60 * 60,   6 * 60 * 60)
+ACCOUNTING_POLL_SECONDS = _job_interval("ACCOUNTING_POLL_SECONDS", 60 * 60,   6 * 60 * 60)
+MV_REFRESH_SECONDS      = _job_interval("MV_REFRESH_SECONDS",      30 * 60,  12 * 60 * 60)
+# The realtime LISTEN task holds a permanent DIRECT connection to Neon, which
+# by itself prevents scale-to-zero. Default follows LOW_COMPUTE_MODE; an
+# explicit ENABLE_REALTIME env forces it either way.
+ENABLE_REALTIME = os.getenv(
+    "ENABLE_REALTIME", "0" if LOW_COMPUTE_MODE else "1") == "1"
+print(f"[compute] LOW_COMPUTE_MODE={'on' if LOW_COMPUTE_MODE else 'off'} "
+      f"realtime={'on' if ENABLE_REALTIME else 'off'} "
+      f"campaign={CAMPAIGN_POLL_SECONDS}s alerts={ALERTS_POLL_SECONDS}s "
+      f"accounting={ACCOUNTING_POLL_SECONDS}s mv={MV_REFRESH_SECONDS}s")
 MAX_FAILED_ATTEMPTS     = 5
 BLOCK_MINUTES           = 10
 CODE_TTL_MINUTES        = 10
@@ -24532,7 +24572,7 @@ def _start_accounting_scheduler():
                 _accounting_loop_body()
             except Exception as e:
                 print(f"[accounting scheduler] outer loop: {e}")
-            time.sleep(60 * 60)
+            time.sleep(ACCOUNTING_POLL_SECONDS)
 
     t = threading.Thread(target=loop, name="accounting-scheduler", daemon=True)
     t.start()
@@ -25089,7 +25129,7 @@ def _start_email_campaign_scheduler():
                 _email_campaign_loop_body()
             except Exception as e:
                 print(f"[email campaign scheduler] outer loop: {e}")
-            time.sleep(60)
+            time.sleep(CAMPAIGN_POLL_SECONDS)
 
     threading.Thread(target=loop, name="email-campaign-scheduler", daemon=True).start()
 
@@ -28878,6 +28918,12 @@ def _start_pg_event_listener():
     global _pg_listener_started
     if _pg_listener_started:
         return
+    if not ENABLE_REALTIME:
+        # Holding a permanent direct connection would pin Neon's compute
+        # awake. With realtime off, live push (chat/bell/analytics/presence)
+        # simply resolves on the next page refresh — WebSockets still accept.
+        print("[pg events listener] disabled (ENABLE_REALTIME=0) — live push off, updates on refresh")
+        return
     _pg_listener_started = True
     import threading
     main_loop = asyncio.get_event_loop()
@@ -29045,14 +29091,21 @@ def healthcheck_full():
             return {"ok": False, "reason": "no heartbeat yet"}
         return {"ok": age < max_age_s, "age_seconds": age}
 
-    out["components"]["pg_listener"] = _component(
-        _health_listener_last_ok,  max_age_s=300,
-        started=_pg_listener_started)
+    # Realtime listener is intentionally off in LOW_COMPUTE_MODE — report it as
+    # a healthy "disabled" state, not a fault, so /api/health isn't perma-red.
+    if ENABLE_REALTIME:
+        out["components"]["pg_listener"] = _component(
+            _health_listener_last_ok,  max_age_s=300,
+            started=_pg_listener_started)
+    else:
+        out["components"]["pg_listener"] = {"ok": True, "disabled": True}
+    # Grace = configured interval + slack, so stretched cadences under
+    # LOW_COMPUTE_MODE don't read as stale (12h refresh vs a fixed 2h window).
     out["components"]["mv_refresher"] = _component(
-        _health_mv_last_refresh,   max_age_s=60 * 60 * 2,  # 2h grace
+        _health_mv_last_refresh,   max_age_s=MV_REFRESH_SECONDS + 60 * 60,
         started=_mv_refresher_started)
     out["components"]["alerts_evaluator"] = _component(
-        _health_alerts_last_loop,  max_age_s=60 * 80,      # 80 min grace
+        _health_alerts_last_loop,  max_age_s=ALERTS_POLL_SECONDS + 20 * 60,
         started=_alerts_evaluator_started)
     if not all(c.get("ok") for c in out["components"].values()):
         out["ok"] = False
@@ -29346,7 +29399,7 @@ def _start_alerts_evaluator():
                 _health_alerts_last_loop = _utcnow()
             except Exception as e:
                 print(f"[alerts evaluator] outer loop: {e}")
-            time.sleep(60 * 60)  # once per hour
+            time.sleep(ALERTS_POLL_SECONDS)
 
     t = threading.Thread(target=loop, name="alerts-evaluator", daemon=True)
     t.start()
@@ -29379,7 +29432,7 @@ def _start_mv_refresher():
                 _health_mv_last_refresh = _utcnow()
             except Exception as e:
                 print(f"[mv refresher] cohort refresh failed: {e}")
-            time.sleep(30 * 60)
+            time.sleep(MV_REFRESH_SECONDS)
 
     t = threading.Thread(target=loop, name="mv-refresher", daemon=True)
     t.start()
