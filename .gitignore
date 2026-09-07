@@ -10,10 +10,11 @@ build/
 .env.*
 *.local
 !*.local.example
-# Keep templates committed — they document the required keys without
-# leaking real values.
+# Templates ARE committed — they document required keys without real values.
 !.env.example
 !.env.*.example
+# Frontend build-time config holds only public URLs, not secrets.
+!CRM/frontend/.env.production
 
 # ── Python ────────────────────────────────────────────────
 __pycache__/
@@ -25,19 +26,23 @@ venv/
 .venv/
 *.egg-info/
 
-# ── Uploads (user-generated files, served locally) ────────
+# ── Uploads (user-generated files) ────────────────────────
 uploads/
 
-# ── Obsidian ──────────────────────────────────────────────
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
-.obsidian/cache
-.obsidian/plugins/claude-code-mcp/
-.obsidian/plugins/terminal/
-
-# ── Claude Code (local session state, not project config) ─
-.claude/settings.local.json
-.claude/worktrees/
+# ── Private working notes / local-only files ──────────────
+# Project notes, editor state and assistant config are kept locally,
+# never committed. Diploma documents (PII) must never be added.
+Notes/
+.obsidian/
+.claude/
+CLAUDE.md
+.impeccable.md
+Отчет/
+*.docx
+*.doc
+make_deposit.py
+deposit.html
+response.json
 
 # ── OS & editor ───────────────────────────────────────────
 .DS_Store
